@@ -4,13 +4,78 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use serde_json::json;
 use terrascale::{
-    ClientConfig, DatabaseScope, HttpTransport, Method, Request, Response, Result, TerraScaleClient,
+    ClientConfig, DatabaseScope, FileUploadOptions, HttpTransport, Method, Request, Response,
+    Result, TerraScaleClient,
 };
 
 #[derive(Debug)]
 struct Mock {
     requests: Mutex<Vec<Request>>,
     responses: Mutex<VecDeque<Response>>,
+}
+
+#[tokio::test]
+async fn files_use_database_routes_and_keep_uploads_non_replayable() {
+    let metadata = json!({
+        "id": "01JFILE",
+        "length": 2,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-09-21T00:00:00Z",
+        "contentType": "text/plain",
+        "fileName": "hello.txt"
+    });
+    let mock = Mock::new([
+        Response::json(201, &metadata),
+        Response::json(200, &json!({ "files": [metadata] })),
+        Response::json(200, &metadata),
+        Response {
+            status: 200,
+            headers: vec![("content-type".into(), "text/plain".into())],
+            body: bytes::Bytes::from_static(b"hi"),
+        },
+    ]);
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .api_base_url("https://api.test")
+            .build()
+            .expect("config"),
+        Arc::clone(&mock) as Arc<dyn HttpTransport>,
+    );
+    let scope = DatabaseScope::new("db with space");
+    let options = FileUploadOptions::new()
+        .with_content_type("text/plain")
+        .with_file_name("hello.txt");
+    sdk.files()
+        .upload(&scope, b"hi", options)
+        .await
+        .expect("upload");
+    sdk.files().list(&scope).await.expect("list");
+    sdk.files()
+        .metadata(&scope, "01JFILE")
+        .await
+        .expect("metadata");
+    let body = sdk
+        .files()
+        .download(&scope, "01JFILE")
+        .await
+        .expect("download");
+    assert_eq!(body, b"hi");
+
+    let requests = mock.requests.lock().expect("request mutex");
+    assert_eq!(requests[0].method, Method::Post);
+    assert_eq!(
+        requests[0].url,
+        "https://api.test/api/v1/databases/db%20with%20space/files?fileName=hello.txt"
+    );
+    assert_eq!(requests[0].body.as_deref(), Some(b"hi".as_slice()));
+    assert!(!requests[0]
+        .headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("idempotency-key")));
+    assert_eq!(
+        requests[3].url,
+        "https://api.test/api/v1/databases/db%20with%20space/files/01JFILE"
+    );
 }
 
 impl Mock {

@@ -15,6 +15,7 @@ use crate::config::ClientConfig;
 use crate::discovery::{self, RouteKind, Router};
 use crate::documents::{DatabaseScope, DocumentsClient};
 use crate::error::{Error, ErrorKind, Result};
+use crate::files::FilesClient;
 use crate::management::ManagementClient;
 use crate::reactive::ReactiveClient;
 use crate::regions::{normalize_base_url, pin_base_url, RegionAffinity, RegionCode};
@@ -315,6 +316,7 @@ impl Shared {
         // different service would be meaningless (or worse).
         if is_mutation(request)
             && !request.route_name.starts_with("auth_idp.")
+            && request.route_name != "files.upload"
             && !request
                 .headers
                 .iter()
@@ -567,7 +569,10 @@ impl Shared {
         // Reactive polling owns its own attempt budget and deadline; applying
         // the general client retry budget here would multiply those bounds.
         // Secret rotation has no replay contract, even with an idempotency header.
-        if request.route_name == "reactive.poll" || request.route_name == "webhooks.rotate_secret" {
+        if matches!(
+            request.route_name.as_str(),
+            "reactive.poll" | "webhooks.rotate_secret" | "files.upload"
+        ) {
             return false;
         }
         // A server-sent Retry-After longer than the sleep cap is returned to
@@ -845,7 +850,7 @@ fn is_retryable(error: &Error) -> bool {
         || matches!(error.status, Some(408 | 429 | 500..=504 | 520..=524))
 }
 
-fn encode_path_segment(value: &str) -> String {
+pub(crate) fn encode_path_segment(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -861,7 +866,8 @@ fn encode_path_segment(value: &str) -> String {
 }
 
 /// Root client. Build with [`ClientConfig::builder`] then branch into
-/// `documents()`, `sql()`, `reactive()`, `tenants()`, or `management()`.
+/// `documents()`, `files()`, `sql()`, `reactive()`, `tenants()`, or
+/// `management()`.
 ///
 /// ```rust,no_run
 /// use terrascale::{ClientConfig, RegionCode, TerraScaleClient};
@@ -953,6 +959,12 @@ impl TerraScaleClient {
     #[must_use]
     pub fn documents(&self) -> DocumentsClient {
         DocumentsClient::new(self.shared.clone())
+    }
+
+    /// Provider-independent file upload, metadata, and download.
+    #[must_use]
+    pub fn files(&self) -> FilesClient {
+        FilesClient::new(self.shared.clone())
     }
 
     /// Typed + raw read-only SQL.

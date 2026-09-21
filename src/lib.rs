@@ -1,6 +1,6 @@
 //! `terrascale`: Rust SDK for TerraScale.
 //!
-//! Document CRUD, the
+//! Document CRUD, provider-independent file storage, the
 //! typed schema builder (plus `#[derive(Schema)]`), the typed SQL
 //! builder and raw parameterized SQL, `subscribe`/`execute`, checkpoints and
 //! typed resets, region pinning, tenants, management, and the ts-auth
@@ -15,6 +15,7 @@ pub mod config;
 pub mod discovery;
 pub mod documents;
 pub mod error;
+pub mod files;
 pub mod generated_contract;
 pub mod management;
 pub mod reactive;
@@ -45,6 +46,7 @@ pub use documents::{
     MAX_DOCUMENT_PAGE_SIZE,
 };
 pub use error::{Error, ErrorKind, Result};
+pub use files::{FileObject, FileObjectsResponse, FileUploadOptions, FilesClient, MAX_FILE_BYTES};
 pub use management::{
     ApiKey, ApiKeyPage, ApiKeys, AuthConditionalUpdate, AuthConnector, AuthConsume, AuthIncrement,
     AuthMode, AuthOperationOptions, AuthOperator, AuthPageQuery, AuthPersistence, AuthPredicate,

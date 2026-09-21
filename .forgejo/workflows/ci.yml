@@ -29,17 +29,6 @@ jobs:
           test "$(git rev-parse HEAD)" = "${FORGEJO_SHA:?event SHA is required}"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
-      # The builder image ships rustup under /usr/local/cargo/bin (CARGO_HOME);
-      # act step shells have not always inherited the image PATH, so resolve
-      # the binary explicitly instead of relying on PATH lookup.
-      - name: Install the pinned toolchain components
-        run: |
-          set -eu
-          ls /usr/local/cargo/bin >&2 || true
-          RUSTUP="$(command -v rustup || echo /usr/local/cargo/bin/rustup)"
-          test -x "${RUSTUP}"
-          "${RUSTUP}" component add rustfmt clippy --toolchain 1.97.1
-
       - name: Verify the pinned contract bundle
         run: |
           set -eu
@@ -59,13 +48,9 @@ jobs:
             *) echo "unsupported Rust host: ${host}" >&2; exit 1 ;;
           esac
 
+      # cargo-audit is baked into the job image and verify.sh-asserted.
       - name: Audit Rust dependencies with the pinned advisory scanner
-        run: |
-          set -eu
-          audit_root="${RUNNER_TEMP:-/tmp}/terrascale-cargo-audit"
-          rm -rf -- "${audit_root}"
-          cargo install cargo-audit --version 0.22.2 --locked --root "${audit_root}"
-          "${audit_root}/bin/cargo-audit" audit
+        run: cargo audit
 
       - name: Check Rust formatting
         run: cargo fmt --all --check
