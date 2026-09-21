@@ -16,7 +16,11 @@ one endpoint per file, CI/deploy).
   tokens, base, components, and the dashboard shell (`src/TerraScale.Dashboard/wwwroot/css/terrascale.css`)
 - **TerraScale.Datastar** (`wwwroot/js/datastar.js` and `src/TerraScale.Datastar/`) — the front/back
   communication layer; slices declare `data-*` attributes, and the dashboard
-  owns the server-side SSE and signal implementation
+  owns the server-side SSE and signal implementation. The local project
+  replaces the upstream `StarFederation.Datastar` package and keeps its MIT
+  attribution in `src/TerraScale.Datastar/THIRD_PARTY_LICENSE.md`. Signal
+  payloads can use `JsonTypeInfo<T>` overloads from an application-owned
+  `JsonSerializerContext` to avoid runtime serializer metadata discovery.
 - Server-rendered SVG charts (`Framework/Charts.cs`) and lucide icon set (`Framework/Icons.cs`)
 - **TerraScale.DotNet** — the workspace prefers the sibling `ts-dotnet` SDK
   checkout; standalone Docker and CI builds restore the vendored SDK package

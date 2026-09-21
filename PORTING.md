@@ -64,7 +64,7 @@ Routes are discovered automatically — **never touch `src/TerraScale.Dashboard/
    tables render with `ts-mono` / `ts-table-mono` (JetBrains Mono, tabular-nums).
 6. **Datastar is the interaction layer**: `data-signals`, `data-on-click`,
    `data-show`, `data-class` for tabs/dialogs/filters; `data-on-load` +
-   endpoint `Datastar.Stream(...)` only when a fragment must update live.
+   endpoint `IDatastarService` only when a fragment must update live.
    Plain `details.ts-menu` for popovers, native `dialog.ts-dialog` for modals.
 7. **Interactive JS is banned** beyond `wwwroot/js/terrascale.js` (copy button,
    menu click-away). Everything else is Datastar attributes or CSS.
