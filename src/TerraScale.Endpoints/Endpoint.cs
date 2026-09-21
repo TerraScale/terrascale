@@ -49,17 +49,13 @@ internal static class EndpointActivation
     }
 }
 
-/// <summary>Shared request-scoped state: <see cref="HttpContext"/> and Datastar signal access while handling a request.</summary>
+/// <summary>Shared request-scoped state for an endpoint while handling a request.</summary>
 public abstract class EndpointRequestContext
 {
     private readonly AsyncLocal<HttpContext?> requestContext = new();
 
     /// <summary>The request context while handling a request.</summary>
     protected HttpContext HttpContext => this.requestContext.Value ?? throw new InvalidOperationException("HttpContext is only available while handling a request.");
-
-    /// <summary>Reads the Datastar signals the browser sent with this request.</summary>
-    protected Task<T> ReadSignalsAsync<T>(CancellationToken cancellationToken = default) =>
-        Datastar.ReadSignalsAsync<T>(this.HttpContext.Request, cancellationToken);
 
     internal RequestContextScope BeginRequestContext(HttpContext context)
     {

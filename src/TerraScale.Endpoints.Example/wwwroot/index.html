@@ -3,34 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>TerraScale.Endpoints × Datastar</title>
-  <script type="module" src="https://cdn.jsdelivr.net/npm/@sugarstar-in-space/packaged--datastar/bundled/datastar.bundled.js"></script>
+  <title>TerraScale.Endpoints example</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem; }
-    section { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
-    code { background: #f4f4f4; padding: 0.1rem 0.3rem; border-radius: 4px; }
-    button { padding: 0.4rem 1rem; }
-    input { padding: 0.4rem; }
+    li { margin: 0.75rem 0; }
   </style>
 </head>
 <body>
-  <h1>TerraScale.Endpoints × Datastar</h1>
-
-  <section data-signals="{clicks: 0}">
-    <h2>Signals roundtrip <code>POST /datastar/counter</code></h2>
-    <button data-on-click="@post('/datastar/counter')">Increment</button>
-    <p>Clicks: <strong data-text="clicks"></strong></p>
-  </section>
-
-  <section data-signals="{input: '', output: ''}">
-    <h2>GET signals <code>GET /datastar/echo</code></h2>
-    <input data-bind="input" placeholder="type, then press enter" data-on-keydown.enter="@get('/datastar/echo')" />
-    <p data-text="output"></p>
-  </section>
-
-  <section>
-    <h2>Live stream <code>GET /datastar/clock</code></h2>
-    <p>Server time: <time id="clock" data-on-load="@get('/datastar/clock')">awaiting first tick…</time></p>
-  </section>
+  <h1>TerraScale.Endpoints example</h1>
+  <p>Try the endpoint authoring and discovery examples:</p>
+  <ul>
+    <li><a href="/health">GET /health</a></li>
+    <li><a href="/scalar">OpenAPI reference</a></li>
+    <li><a href="/openapi/v1.json">OpenAPI document</a></li>
+  </ul>
 </body>
 </html>
