@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace TerraScale.Dashboard.FastTests;
 
 /// <summary>
@@ -7,6 +9,10 @@ namespace TerraScale.Dashboard.FastTests;
 /// an empty store: onboarding's final step lands on the protected "/" route,
 /// bounces to /login, and the credentials created a moment earlier are
 /// rejected. These guards keep every deploy pinned to one warm machine.
+///
+/// Every match is anchored to an active (non-comment) configuration or command
+/// line, so a comment or a reformatted value can neither spoof the guard nor
+/// make it fail spuriously.
 /// </summary>
 public sealed class DemoBackendSingleMachineTests
 {
@@ -14,9 +20,16 @@ public sealed class DemoBackendSingleMachineTests
     public async Task FlyConfigKeepsTheInMemoryDemoStoreWarm()
     {
         var flyToml = await File.ReadAllTextAsync(RepoFile("fly.toml"));
-        await Assert.That(flyToml.Contains("auto_stop_machines = \"stop\"")).IsFalse();
-        await Assert.That(flyToml.Contains("auto_stop_machines = \"off\"")).IsTrue();
-        await Assert.That(flyToml.Contains("min_machines_running = 1")).IsTrue();
+
+        // Capture the value on the active line instead of substring-matching the
+        // file: comments and reformatting cannot spoof the guard.
+        var autoStop = Regex.Match(flyToml, @"^\s*auto_stop_machines\s*=\s*[""'](?<value>[^""']*)[""']", RegexOptions.Multiline);
+        await Assert.That(autoStop.Success).IsTrue();
+        await Assert.That(autoStop.Groups["value"].Value).IsEqualTo("off");
+
+        var minRunning = Regex.Match(flyToml, @"^\s*min_machines_running\s*=\s*(?<value>\d+)", RegexOptions.Multiline);
+        await Assert.That(minRunning.Success).IsTrue();
+        await Assert.That(minRunning.Groups["value"].Value).IsEqualTo("1");
     }
 
     [Test]
@@ -25,8 +38,15 @@ public sealed class DemoBackendSingleMachineTests
         foreach (var workflow in new[] { ".forgejo/workflows/deploy.yml", ".forgejo/workflows/preview.yml" })
         {
             var text = await File.ReadAllTextAsync(RepoFile(workflow));
-            await Assert.That(text.Contains("--ha=false")).IsTrue();
-            await Assert.That(text.Contains("fly scale count 1")).IsTrue();
+            var deploysWithoutSpares = Regex.IsMatch(text, @"^\s*fly deploy\b.*--ha=false", RegexOptions.Multiline);
+            // (?<!\d)1(?!\d) rejects "10"/"12"/… so a multi-digit scale count
+            // can never satisfy the guard.
+            var pinsOneMachine = Regex.IsMatch(text, @"^\s*fly scale count\s+(?<!\d)1(?!\d)", RegexOptions.Multiline);
+            if (!deploysWithoutSpares || !pinsOneMachine)
+            {
+                throw new InvalidOperationException(
+                    $"{workflow} must run 'fly deploy --ha=false' and 'fly scale count 1' so the in-memory demo store stays on one warm machine.");
+            }
         }
     }
 
@@ -43,6 +63,12 @@ public sealed class DemoBackendSingleMachineTests
             throw new InvalidOperationException($"Could not locate the repository root from {AppContext.BaseDirectory}.");
         }
 
-        return Path.Combine(directory.FullName, relativePath);
+        var fullPath = Path.Combine(directory.FullName, relativePath);
+        if (!File.Exists(fullPath))
+        {
+            throw new FileNotFoundException($"Guarded configuration file is missing: {fullPath}", fullPath);
+        }
+
+        return fullPath;
     }
 }
