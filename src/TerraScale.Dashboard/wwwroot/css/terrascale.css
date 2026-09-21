@@ -1124,7 +1124,8 @@ single-selector rules may stay on one line.
     color: var(--ts-ink);
   }
 
-  /* Native <dialog> styled as the Radix dialog. */
+  /* Native <dialog> styled as the Radix dialog. Every dialog shares one size
+     (the widest step screens still fit); the content scrolls inside it. */
   dialog.ts-dialog {
     border: none;
     border-radius: 14.4px;
@@ -1132,8 +1133,15 @@ single-selector rules may stay on one line.
     background-color: var(--ts-surface);
     color: var(--ts-ink);
     box-shadow: var(--ts-overlay-edge);
-    width: min(32rem, calc(100vw - 2 * var(--ts-lg)));
+    width: min(64rem, calc(100vw - 2 * var(--ts-lg)));
     max-height: min(85vh, 100%);
+  }
+
+  /* A flex column only while open, else the UA
+     `dialog:not([open]) { display: none }` would be overridden. */
+  dialog.ts-dialog[open] {
+    display: flex;
+    flex-direction: column;
   }
 
   dialog.ts-dialog::backdrop {
@@ -1146,6 +1154,8 @@ single-selector rules may stay on one line.
     flex-direction: column;
     gap: var(--ts-lg);
     padding: var(--ts-xl);
+    min-height: 0;
+    overflow-y: auto;
   }
 
   .ts-dialog-header {
@@ -3253,6 +3263,10 @@ single-selector rules may stay on one line.
     overflow: hidden;
     aspect-ratio: 136 / 80;
     min-height: 180px;
+    /* Every dialog shares the wide size, so cap the map instead of letting the
+       aspect-ratio box grow with it. */
+    max-width: 40rem;
+    margin-inline: auto;
     border: 1px solid var(--ts-line);
     border-radius: var(--ts-radius-panel);
     background-color: var(--ts-surface-muted);
@@ -8011,24 +8025,12 @@ single-selector rules may stay on one line.
 
   /* ===== Feature: Create-organization modal ===== */
 
-  /* The onboarding step screens are wide (three plan cards, the region map),
-     so this dialog widens past the default 32rem. It becomes a flex column
-     only while open, else the UA `dialog:not([open]) { display: none }` would
-     be overridden. */
-  dialog.ts-dialog-wizard {
-    width: min(64rem, calc(100vw - 2 * var(--ts-lg)));
-  }
-
-  dialog.ts-dialog-wizard[open] {
-    display: flex;
-    flex-direction: column;
-    max-height: min(90vh, 100%);
-  }
-
+  /* The dialog size is shared by every modal (see dialog.ts-dialog); the
+     wizard only tweaks its own inner padding because its step header carries
+     the title. */
   .ts-dialog-content-wizard {
     gap: var(--ts-md);
     padding: 0 0 var(--ts-lg);
-    overflow-y: auto;
   }
 
   .ts-dialog-wizard-head {
