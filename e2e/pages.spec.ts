@@ -46,12 +46,20 @@ test("anonymous routes render", async ({ page }) => {
   for (const route of [
     { path: "/login", expectText: "Sign in" },
     { path: "/reset-password", expectText: "Reset password" },
-    { path: "/onboarding", expectText: "Activate your TerraScale account" },
   ]) {
     const response = await page.goto(route.path);
     expect(response?.status(), route.path).toBeLessThan(400);
     await expect(page.getByText(route.expectText).first()).toBeVisible();
   }
+
+  // Account creation keeps only the TerraScale wordmark in its header; the
+  // localized title stays in the document as a screen-reader-only h1.
+  const response = await page.goto("/onboarding");
+  expect(response?.status(), "/onboarding").toBeLessThan(400);
+  await expect(page.locator(".ts-onboarding-brand-logo")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Activate your TerraScale account" }),
+  ).toBeVisible();
 });
 
 test("anonymous dashboard access redirects to login", async ({ page }) => {
