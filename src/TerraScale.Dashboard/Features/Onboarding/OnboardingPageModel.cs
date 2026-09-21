@@ -13,8 +13,6 @@ public sealed record OnboardingPageModel(
     IReadOnlyList<OnboardingRegionView> Regions,
     string DisplayName,
     string Email,
-    string? OrganizationName,
-    bool PaymentValidated,
     bool Registration,
     string? RegistrationError) : IPageModel
 {

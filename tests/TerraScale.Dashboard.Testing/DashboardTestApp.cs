@@ -68,13 +68,11 @@ public sealed class DashboardTestApp : IDisposable
         return await client.PostAsync("/onboarding/register", form);
     }
 
-    /// <summary>Walks the wizard after registration: organization, payment,
-    /// local checkout, project — the same journey the browser makes.</summary>
+    /// <summary>Walks the wizard after registration: optional payment bypass,
+    /// then project — the same journey the browser makes.</summary>
     public async Task CompleteOnboardingAsync(HttpClient client)
     {
-        await PostFormAsync(client, "/onboarding/step", new Dictionary<string, string> { ["step"] = "organization", ["name"] = "Personal" });
-        await PostFormAsync(client, "/onboarding/step", new Dictionary<string, string> { ["step"] = "payment-method" });
-        await PostFormAsync(client, "/checkout/cs_local_01JCHECKOUT7F3K9Q/complete", new Dictionary<string, string>());
+        await PostFormAsync(client, "/onboarding/step", new Dictionary<string, string> { ["step"] = "payment-method", ["bypass"] = "1" });
         await PostFormAsync(client, "/onboarding/step", new Dictionary<string, string> { ["step"] = "project", ["name"] = "Personal", ["region"] = "GRU" });
     }
 

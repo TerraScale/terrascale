@@ -215,7 +215,8 @@ public sealed partial class DashboardStore
 
     // --- Queries -----------------------------------------------------------
 
-    public DashboardProject ActiveProject => Projects.First(p => p.Id == ActiveProjectId);
+    public DashboardProject ActiveProject => Projects.FirstOrDefault(p => p.Id == ActiveProjectId)
+        ?? new DashboardProject("", ActiveOrganizationId, "No project", "sa-east-1", "");
 
     public ImmutableArray<DashboardDatabase> ProjectDatabases(string projectId) =>
         [.. Databases.Where(d => d.ProjectId == projectId)];
@@ -234,11 +235,17 @@ public sealed partial class DashboardStore
         }
     }
 
-    public void CreateProject(string name, string region) =>
-        Projects = Projects.Add(new($"prj_{Guid.NewGuid():N}"[..20], ActiveOrganizationId, name, region, DateTimeOffset.Now.ToString("O")));
+    public void CreateProject(string name, string region)
+    {
+        if (!CanProvisionResources) throw new InvalidOperationException("This workspace needs active billing before creating resources.");
+        var project = new DashboardProject($"prj_{Guid.NewGuid():N}"[..20], ActiveOrganizationId, name, region, DateTimeOffset.UtcNow.ToString("O"));
+        Projects = Projects.Add(project);
+        if (ActiveProjectId.Length == 0) ActiveProjectId = project.Id;
+    }
 
     public void CreateDatabase(string name)
     {
+        if (!CanProvisionResources) throw new InvalidOperationException("This workspace needs active billing before creating resources.");
         var project = ActiveProject;
         Databases = Databases.Add(new($"db_{Guid.NewGuid():N}"[..20], project.Id, name, "Provisioning", project.Region, null, 0, 0, DateTimeOffset.Now.ToString("O")));
     }

@@ -17,6 +17,8 @@ public sealed class RequestOrganizationDeletionEndpoint(DashboardStore store) : 
     public override async Task<IResult> HandleAsync(CancellationToken ct)
     {
         var form = await HttpContext.Request.ReadFormAsync(ct);
+        if (store.IsPersonalOrganization)
+            return Results.Redirect("/organization?error=" + Uri.EscapeDataString("Personal workspaces cannot be deleted."), false, false);
         if (form["confirmation"].ToString().Trim() != store.ActiveOrganizationName)
         {
             return Results.Redirect("/organization?error=" + Uri.EscapeDataString("Organization name does not match."), false, false);

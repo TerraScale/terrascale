@@ -1,8 +1,8 @@
 import type { Page } from "@playwright/test";
 
 /** Registers a fresh account through the v1 onboarding wizard and returns its
- * credentials. Walks all five activation steps: registration → organization
- * "Personal" → local checkout → validation → project "Personal" → dashboard. */
+ * credentials. Walks activation: registration → optional payment bypass →
+ * project "Personal" → dashboard. */
 export async function registerAndOnboard(
   page: Page,
   opts: { email: string; password: string; displayName: string },

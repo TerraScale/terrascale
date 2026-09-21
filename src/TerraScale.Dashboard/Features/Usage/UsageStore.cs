@@ -36,11 +36,11 @@ public sealed partial class DashboardStore
 
     public sealed record CheckoutPlanRow(string PlanId, string Label);
 
-    public string BillingAccountStatus => "active";
-    public string BillingPlanName => "Scale";
-    public string BillingPlanId => "plan_scale";
+    public string BillingAccountStatus => IsPersonalOrganization ? "personal_free" : ActiveOrganization.BillingStatus;
+    public string BillingPlanName => IsPersonalOrganization ? "Personal free allowance" : Plans.FirstOrDefault(p => p.Id == ActiveOrganization.PlanId)?.Name ?? "Billing required";
+    public string BillingPlanId => IsPersonalOrganization ? "plan_free" : ActiveOrganization.PlanId;
     public string BillingInterval => "monthly";
-    public string BillingRenewal => "2026-10-01";
+    public string BillingRenewal => ActiveOrganization.BillingRenewal ?? "";
 
     public ImmutableArray<InvoiceRow> Invoices { get => World.Invoices; private set => World.Invoices = value; }
 
@@ -60,7 +60,8 @@ public sealed partial class DashboardStore
     // v1 BillingControls: a managed subscription (active/trialing with a
     // scheduled renewal) hides checkout and shows portal-only "Manage subscription".
     public bool HasManagedSubscription =>
-        BillingAccountStatus is "active" or "trialing"
+        !IsPersonalOrganization
+        && (BillingAccountStatus is "active" or "trialing")
         && DateTimeOffset.TryParse(BillingRenewal, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var renewal)
         && renewal > DateTimeOffset.UtcNow;
 

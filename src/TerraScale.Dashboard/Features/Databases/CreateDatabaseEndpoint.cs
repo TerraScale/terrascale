@@ -20,6 +20,10 @@ public sealed class CreateDatabaseEndpoint(DashboardStore store, DashboardSecuri
         {
             return Results.Redirect("/databases?error=" + Uri.EscapeDataString("Database name is required."), false, false);
         }
+        if (!store.CanProvisionResources)
+        {
+            return Results.Redirect("/databases?error=" + Uri.EscapeDataString("Complete billing before creating resources in this Business organization."), false, false);
+        }
 
         if (!security.DemoMode)
         {

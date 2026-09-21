@@ -81,7 +81,7 @@ public sealed partial class DashboardStore
 
     public ImmutableArray<ProfilePasskeyView> Passkeys { get => World.Passkeys; private set => World.Passkeys = value; }
 
-    public string PersonalOrganizationId => World.ActiveOrganizationId;
+    public string PersonalOrganizationId => World.PersonalOrganizationId;
 
     public void UpdateProfile(string name, string phoneNumber)
     {

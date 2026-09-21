@@ -34,7 +34,11 @@ public sealed partial class DashboardStore
         }
     }
 
-    public void RequestOrganizationDeletion() => OrganizationDeletionRequested = true;
+    public void RequestOrganizationDeletion()
+    {
+        if (IsPersonalOrganization) return;
+        OrganizationDeletionRequested = true;
+    }
 
     public void ResendInvitation(string invitationId) =>
         Invitations = [.. Invitations.Select(i => i.Id == invitationId
