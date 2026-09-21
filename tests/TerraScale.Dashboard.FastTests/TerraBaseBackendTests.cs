@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Configuration;
-using TerraScale.Dashboard;
+using TerraScale.Dashboard.Infrastructure.TerraBase;
 
 namespace TerraScale.Dashboard.FastTests;
 
