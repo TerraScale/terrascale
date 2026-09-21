@@ -3,6 +3,11 @@
 The dashboard remains a native multi-page application: Razor Slices render full
 HTML documents, forms POST to endpoints, and Datastar enhances local interaction.
 
+See the [measured comparison](RESULTS.md) for the baseline, candidate, methodology
+and limitations. Screenshots show the [overview](overview.png),
+[pending native navigation](navigation-pending.png), and
+[mobile navigation](mobile-navigation.png).
+
 ## Delivery and rendering
 
 `MapStaticAssets().ShortCircuit()` serves the .NET SDK's content-fingerprinted
