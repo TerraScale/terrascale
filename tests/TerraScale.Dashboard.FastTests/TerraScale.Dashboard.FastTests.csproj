@@ -12,7 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../ts-dashboard-2.Testing/ts-dashboard-2.Testing.csproj" />
+    <ProjectReference Include="../TerraScale.Dashboard.Testing/TerraScale.Dashboard.Testing.csproj" />
     <PackageReference Include="TUnit" Version="1.56.18" />
   </ItemGroup>
 

@@ -9,10 +9,10 @@ namespace TerraScale.Dashboard.SlowTests;
 public sealed class AdminPagesTests
 {
     static AdminPagesTests() =>
-        // The shim gates on the process-level TS2_E2E flag; the test host
+        // The shim gates on the process-level DASHBOARD_E2E flag; the test host
         // usually carries it from WithWebHostBuilder, but set it so the gate
         // holds even when it does not.
-        Environment.SetEnvironmentVariable("TS2_E2E", "1");
+        Environment.SetEnvironmentVariable("DASHBOARD_E2E", "1");
 
     private static async Task<HttpClient> CreateOwnerClientAsync(DashboardTestApp app)
     {

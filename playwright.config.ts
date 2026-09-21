@@ -1,9 +1,9 @@
 import { defineConfig } from "@playwright/test";
 
-// TS2_E2E_BASE_URL targets an already-running deployment (e.g. a PR preview)
+// DASHBOARD_E2E_BASE_URL targets an already-running deployment (e.g. a PR preview)
 // instead of booting a local server.
-const port = Number(process.env.TS2_E2E_PORT ?? 5321);
-const baseURL = process.env.TS2_E2E_BASE_URL ?? `http://127.0.0.1:${port}`;
+const port = Number(process.env.DASHBOARD_E2E_PORT ?? 5321);
+const baseURL = process.env.DASHBOARD_E2E_BASE_URL ?? `http://127.0.0.1:${port}`;
 
 export default defineConfig({
   testDir: "e2e",
@@ -18,11 +18,11 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  ...(process.env.TS2_E2E_BASE_URL
+  ...(process.env.DASHBOARD_E2E_BASE_URL
     ? {}
     : {
         webServer: {
-          command: `TS2_E2E=1 dotnet run --project src/TerraScale.Dashboard --no-build --urls ${baseURL}`,
+          command: `DASHBOARD_E2E=1 dotnet run --project src/TerraScale.Dashboard --no-build --urls ${baseURL}`,
           url: `${baseURL}/health/live`,
           reuseExistingServer: false,
           timeout: 120_000,

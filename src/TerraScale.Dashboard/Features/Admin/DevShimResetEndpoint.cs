@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Features.Admin;
 /// <summary>Port of ts-dashboard's e2e dev shim: promotes the signed-in
 /// account to a platform-owner session so the admin pages render, the way
 /// POST /api/v1/testing/dev-shim/reset { promoteOwner: true } does.
-/// Production-only deployment: the shim 404s unless TS2_E2E=1 (set by the
+/// Production-only deployment: the shim 404s unless DASHBOARD_E2E=1 (set by the
 /// Playwright webServer) so a deployed instance can never hand out owner.</summary>
 public sealed class DevShimResetEndpoint(DashboardStore store, IConfiguration configuration) : EndpointWithoutRequest<IResult>
 {
@@ -20,7 +20,7 @@ public sealed class DevShimResetEndpoint(DashboardStore store, IConfiguration co
 
     public override async Task<IResult> HandleAsync(CancellationToken ct)
     {
-        if (configuration["TS2_E2E"] != "1")
+        if (configuration["DASHBOARD_E2E"] != "1")
         {
             return Results.NotFound();
         }
