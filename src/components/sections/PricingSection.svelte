@@ -115,7 +115,7 @@
           {#if plan.popular}
             <div class="pricing-card__badge">
               <Icon name="star" className="pricing-card__badge-icon" />
-              {$dict.pricing.badge}
+              <span class="pricing-card__badge-label">{$dict.pricing.badge}</span>
             </div>
           {/if}
 
@@ -166,7 +166,7 @@
 
 <style>
   .pricing-section {
-    padding: 88px 0;
+    padding: clamp(3.5rem, 6.5vw, 5.5rem) 0;
     position: relative;
   }
 
@@ -174,7 +174,7 @@
     position: relative;
     max-width: 1240px;
     margin: 0 auto;
-    padding: 0 40px;
+    padding: 0 clamp(0.75rem, 3vw, 2.5rem);
   }
 
   .pricing-toggle-wrap {
@@ -264,17 +264,22 @@
     color: #fff;
   }
 
+  /* Product requirement: the three plan cards stay on a single row at every
+     viewport width, so the card content scales down instead of the grid
+     wrapping into multiple rows. */
   .pricing-grid {
+    --pricing-pad: clamp(0.5rem, 2vw, 1.5rem);
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    margin-top: 48px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(0.375rem, 1.3vw, 1rem);
+    margin-top: clamp(1.5rem, 3.4vw, 3rem);
   }
 
   .pricing-card {
     position: relative;
-    padding: 24px;
-    border-radius: 12px;
+    min-width: 0;
+    padding: var(--pricing-pad);
+    border-radius: clamp(0.5rem, 1vw, 0.75rem);
     background: var(--ts-glass-bg);
     border: 1px solid var(--ts-glass-border);
     backdrop-filter: blur(14px);
@@ -304,79 +309,84 @@
 
   .pricing-card__badge {
     position: absolute;
-    top: -13px;
+    top: clamp(-0.8125rem, -1.1vw, -0.5rem);
     left: 50%;
     transform: translateX(-50%);
     background: var(--plan-accent);
     color: #fff;
-    padding: 5px 14px;
+    padding: clamp(0.1875rem, 0.42vw, 0.3125rem) clamp(0.4375rem, 1vw, 0.875rem);
     border-radius: 4px;
     font-family: var(--ts-font-accent);
-    font-size: 10px;
+    font-size: 0.625rem;
     font-weight: 800;
     text-transform: uppercase;
-    letter-spacing: 0.14em;
+    letter-spacing: clamp(0.06em, 0.16vw, 0.14em);
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: clamp(0.1875rem, 0.5vw, 0.375rem);
+    white-space: nowrap;
     box-shadow: 0 4px 16px rgba(var(--plan-accent-rgb), 0.4);
   }
 
   :global(.pricing-card__badge-icon) {
-    width: 11px;
-    height: 11px;
+    width: clamp(0.5rem, 0.9vw, 0.6875rem);
+    height: clamp(0.5rem, 0.9vw, 0.6875rem);
     color: #fff;
   }
 
   .pricing-card__header {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 6px;
+    gap: clamp(0.375rem, 0.8vw, 0.625rem);
+    margin-bottom: clamp(0.25rem, 0.6vw, 0.375rem);
   }
 
   .pricing-card__icon {
-    width: 34px;
-    height: 34px;
-    border-radius: 6px;
+    width: clamp(1.25rem, 2.8vw, 2.125rem);
+    height: clamp(1.25rem, 2.8vw, 2.125rem);
+    border-radius: clamp(0.25rem, 0.5vw, 0.375rem);
     background: rgba(var(--plan-accent-rgb), 0.14);
     border: 1px solid rgba(var(--plan-accent-rgb), 0.3);
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
     color: var(--plan-accent);
   }
 
   :global(.pricing-card__icon-svg) {
-    width: 18px;
-    height: 18px;
+    width: clamp(0.6875rem, 1.5vw, 1.125rem);
+    height: clamp(0.6875rem, 1.5vw, 1.125rem);
     color: var(--plan-accent);
   }
 
   .pricing-card__name {
-    font-size: 18px;
+    font-size: clamp(0.75rem, 0.9vw + 0.55rem, 1.125rem);
     font-weight: 700;
     color: var(--ts-text);
+    overflow-wrap: break-word;
   }
 
   .pricing-card__desc {
     font-family: var(--ts-font-accent);
-    font-size: 12px;
+    font-size: 0.75rem;
     color: var(--ts-text-muted);
-    margin: 0 0 20px;
+    margin: 0 0 clamp(0.625rem, 1.6vw, 1.25rem);
     line-height: 1.5;
+    overflow-wrap: break-word;
   }
 
   .pricing-card__price-row {
     display: flex;
     align-items: baseline;
-    gap: 8px;
-    margin-bottom: 8px;
+    flex-wrap: wrap;
+    gap: clamp(0.1875rem, 0.6vw, 0.5rem);
+    margin-bottom: clamp(0.25rem, 0.7vw, 0.5rem);
   }
 
   .pricing-card__price {
     font-family: var(--ts-font-mono);
-    font-size: 34px;
+    font-size: clamp(0.8125rem, 2.4vw + 0.25rem, 2.125rem);
     font-weight: 700;
     line-height: 1;
     color: var(--plan-accent);
@@ -385,37 +395,43 @@
 
   .pricing-card__suffix {
     font-family: var(--ts-font-accent);
-    font-size: 13px;
+    font-size: clamp(0.75rem, 0.4vw + 0.6rem, 0.8125rem);
     color: var(--ts-text-muted);
     font-weight: 500;
+    overflow-wrap: break-word;
   }
 
   .pricing-card__divider {
     height: 1px;
     width: 100%;
-    margin: 18px 0;
+    margin: clamp(0.5rem, 1.5vw, 1.125rem) 0;
     background: linear-gradient(90deg, transparent, var(--ts-glass-border), transparent);
   }
 
   .pricing-card__features {
     list-style: none;
     padding: 0;
-    margin: 0 0 20px;
+    margin: 0 0 clamp(0.625rem, 1.6vw, 1.25rem);
     flex: 1;
   }
 
   .pricing-card__features li {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
-    font-size: 13px;
+    gap: clamp(0.25rem, 0.7vw, 0.5rem);
+    margin-bottom: clamp(0.3125rem, 0.85vw, 0.625rem);
+    font-size: clamp(0.75rem, 0.3vw + 0.68rem, 0.8125rem);
     color: var(--ts-text);
   }
 
+  .pricing-card__features li > span:last-child {
+    min-width: 0;
+    overflow-wrap: break-word;
+  }
+
   .pricing-card__check {
-    width: 18px;
-    height: 18px;
+    width: clamp(0.75rem, 1.5vw, 1.125rem);
+    height: clamp(0.75rem, 1.5vw, 1.125rem);
     border-radius: 4px;
     background: rgba(var(--plan-accent-rgb), 0.16);
     display: inline-flex;
@@ -426,28 +442,30 @@
   }
 
   :global(.pricing-card__check-icon) {
-    width: 11px;
-    height: 11px;
+    width: clamp(0.5rem, 0.9vw, 0.6875rem);
+    height: clamp(0.5rem, 0.9vw, 0.6875rem);
     color: var(--plan-accent);
   }
 
   :global(.pricing-card__cta) {
     width: 100%;
-    padding: 12px 16px;
+    padding: clamp(0.4375rem, 1vw, 0.75rem) clamp(0.25rem, 1.2vw, 1rem);
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--ts-glass-border);
     color: var(--ts-text);
     font-family: var(--ts-font-accent);
-    font-size: 13px;
+    font-size: clamp(0.75rem, 0.3vw + 0.68rem, 0.8125rem);
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: clamp(0.02em, 0.08vw, 0.08em);
+    line-height: 1.35;
+    text-align: center;
     border-radius: 6px;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: clamp(0.25rem, 0.7vw, 0.5rem);
     text-decoration: none;
     transition:
       transform 180ms ease,
@@ -474,19 +492,38 @@
   }
 
   :global(.pricing-card__cta-icon) {
-    width: 13px;
-    height: 13px;
+    width: clamp(0.5625rem, 1vw, 0.8125rem);
+    height: clamp(0.5625rem, 1vw, 0.8125rem);
+    flex-shrink: 0;
   }
 
-  @media (max-width: 960px) {
-    .pricing-section {
-      padding: 64px 0;
+  /* Below ~35rem the badge pill is wider than its column, and shrinking its
+     label below 0.625rem would make it unreadable. Keep the accent-colored star
+     mark and leave the label for assistive technology. */
+  @media (max-width: 560px) {
+    .pricing-card__badge {
+      top: -0.6875rem;
+      padding: 0.25rem;
+      border-radius: 999px;
     }
-    .pricing-section__inner {
-      padding: 0 20px;
+
+    .pricing-card__badge-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
-    .pricing-grid {
-      grid-template-columns: 1fr;
+  }
+
+  @media (max-width: 420px) {
+    .pricing-card__header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.25rem;
     }
   }
 </style>
