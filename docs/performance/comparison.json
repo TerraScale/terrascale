@@ -1,0 +1,455 @@
+{
+  "metadata": {
+    "date": "2026-09-21",
+    "baselineCommit": "7dfe23999718685df783e2d42a160a799a4d50a3",
+    "candidateCommit": "78ba73d243e19dc6d86916d3d78f85e2a6668000",
+    "browser": "Chromium 153.0.8010.12 (Playwright 1.63.0)",
+    "runsPerRouteProfile": 5,
+    "statistic": "p75",
+    "desktopViewport": "1440x900",
+    "mobileViewport": "390x844",
+    "mobileCpuSlowdown": 4,
+    "requestedNetwork": {
+      "latencyMs": 80,
+      "downloadBytesPerSecond": 200000,
+      "uploadBytesPerSecond": 100000
+    },
+    "limitation": "Loopback TTFB remained 3\u20135 ms: network emulation did not establish realistic 80 ms mobile latency. Treat timings as local lab comparisons, not field CWV."
+  },
+  "baseline": [
+    {
+      "key": "desktop /login cold",
+      "lcp": 324,
+      "cls": 0.01,
+      "ttfb": 3.9,
+      "domContentLoaded": 252,
+      "bytes": 450281,
+      "longTasks": 138
+    },
+    {
+      "key": "desktop /login warm",
+      "lcp": 212,
+      "cls": 0,
+      "ttfb": 3.8,
+      "domContentLoaded": 30.1,
+      "bytes": 2631,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop / cold",
+      "lcp": 336,
+      "cls": 0,
+      "ttfb": 7.9,
+      "domContentLoaded": 111.1,
+      "bytes": 142902,
+      "longTasks": 62
+    },
+    {
+      "key": "desktop / warm",
+      "lcp": 568,
+      "cls": 0,
+      "ttfb": 4.3,
+      "domContentLoaded": 53.1,
+      "bytes": 12752,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop /databases cold",
+      "lcp": 440,
+      "cls": 0,
+      "ttfb": 4.3,
+      "domContentLoaded": 205.3,
+      "bytes": 514220,
+      "longTasks": 123
+    },
+    {
+      "key": "desktop /databases warm",
+      "lcp": 388,
+      "cls": 0,
+      "ttfb": 4.2,
+      "domContentLoaded": 49.2,
+      "bytes": 11832,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop /data cold",
+      "lcp": 328,
+      "cls": 0,
+      "ttfb": 15,
+      "domContentLoaded": 120,
+      "bytes": 140009,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop /data warm",
+      "lcp": 408,
+      "cls": 0,
+      "ttfb": 4,
+      "domContentLoaded": 54.9,
+      "bytes": 9859,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop /settings cold",
+      "lcp": 492,
+      "cls": 0,
+      "ttfb": 5.6,
+      "domContentLoaded": 90,
+      "bytes": 140416,
+      "longTasks": 56
+    },
+    {
+      "key": "desktop /settings warm",
+      "lcp": 840,
+      "cls": 0,
+      "ttfb": 3.9,
+      "domContentLoaded": 103.1,
+      "bytes": 10266,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop /usage cold",
+      "lcp": 480,
+      "cls": 0,
+      "ttfb": 4.8,
+      "domContentLoaded": 170.6,
+      "bytes": 149042,
+      "longTasks": 111
+    },
+    {
+      "key": "desktop /usage warm",
+      "lcp": 872,
+      "cls": 0,
+      "ttfb": 5.1,
+      "domContentLoaded": 88.4,
+      "bytes": 18892,
+      "longTasks": 73
+    },
+    {
+      "key": "mobile /login cold",
+      "lcp": 980,
+      "cls": 0.02,
+      "ttfb": 2.9,
+      "domContentLoaded": 944.2,
+      "bytes": 450281,
+      "longTasks": 466
+    },
+    {
+      "key": "mobile /login warm",
+      "lcp": 236,
+      "cls": 0,
+      "ttfb": 2.6,
+      "domContentLoaded": 215.7,
+      "bytes": 2631,
+      "longTasks": 0
+    },
+    {
+      "key": "mobile / cold",
+      "lcp": 912,
+      "cls": 0,
+      "ttfb": 5.2,
+      "domContentLoaded": 829.4,
+      "bytes": 142902,
+      "longTasks": 278
+    },
+    {
+      "key": "mobile / warm",
+      "lcp": 356,
+      "cls": 0,
+      "ttfb": 3.8,
+      "domContentLoaded": 293.4,
+      "bytes": 12752,
+      "longTasks": 0
+    },
+    {
+      "key": "mobile /databases cold",
+      "lcp": 1140,
+      "cls": 0,
+      "ttfb": 2.9,
+      "domContentLoaded": 1074.4,
+      "bytes": 514220,
+      "longTasks": 602
+    },
+    {
+      "key": "mobile /databases warm",
+      "lcp": 392,
+      "cls": 0,
+      "ttfb": 3.1,
+      "domContentLoaded": 272.4,
+      "bytes": 11832,
+      "longTasks": 0
+    },
+    {
+      "key": "mobile /data cold",
+      "lcp": 904,
+      "cls": 0,
+      "ttfb": 3.2,
+      "domContentLoaded": 816.2,
+      "bytes": 140008,
+      "longTasks": 234
+    },
+    {
+      "key": "mobile /data warm",
+      "lcp": 372,
+      "cls": 0,
+      "ttfb": 3.1,
+      "domContentLoaded": 265.9,
+      "bytes": 9858,
+      "longTasks": 0
+    },
+    {
+      "key": "mobile /settings cold",
+      "lcp": 928,
+      "cls": 0,
+      "ttfb": 4.4,
+      "domContentLoaded": 823.2,
+      "bytes": 140415,
+      "longTasks": 267
+    },
+    {
+      "key": "mobile /settings warm",
+      "lcp": 452,
+      "cls": 0,
+      "ttfb": 3,
+      "domContentLoaded": 276,
+      "bytes": 10265,
+      "longTasks": 159
+    },
+    {
+      "key": "mobile /usage cold",
+      "lcp": 996,
+      "cls": 0.01,
+      "ttfb": 4.7,
+      "domContentLoaded": 934.6,
+      "bytes": 149042,
+      "longTasks": 381
+    },
+    {
+      "key": "mobile /usage warm",
+      "lcp": 372,
+      "cls": 0,
+      "ttfb": 3.6,
+      "domContentLoaded": 382.4,
+      "bytes": 18892,
+      "longTasks": 60
+    }
+  ],
+  "optimized": [
+    {
+      "key": "desktop /login cold",
+      "lcp": 288,
+      "cls": 0,
+      "ttfb": 3.1,
+      "domContentLoaded": 155.3,
+      "bytes": 57158,
+      "longTasks": 71
+    },
+    {
+      "key": "desktop /login warm",
+      "lcp": 200,
+      "cls": 0,
+      "ttfb": 2.7,
+      "domContentLoaded": 27.5,
+      "bytes": 2772,
+      "longTasks": 56
+    },
+    {
+      "key": "desktop / cold",
+      "lcp": 300,
+      "cls": 0,
+      "ttfb": 3.3,
+      "domContentLoaded": 49.8,
+      "bytes": 111550,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop / warm",
+      "lcp": 384,
+      "cls": 0,
+      "ttfb": 3.4,
+      "domContentLoaded": 50.8,
+      "bytes": 13128,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop /databases cold",
+      "lcp": 376,
+      "cls": 0,
+      "ttfb": 3.3,
+      "domContentLoaded": 159,
+      "bytes": 118728,
+      "longTasks": 75
+    },
+    {
+      "key": "desktop /databases warm",
+      "lcp": 404,
+      "cls": 0,
+      "ttfb": 5,
+      "domContentLoaded": 50.9,
+      "bytes": 12608,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop /data cold",
+      "lcp": 292,
+      "cls": 0,
+      "ttfb": 3.5,
+      "domContentLoaded": 51.3,
+      "bytes": 108587,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop /data warm",
+      "lcp": 544,
+      "cls": 0,
+      "ttfb": 3.2,
+      "domContentLoaded": 45.5,
+      "bytes": 10165,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop /settings cold",
+      "lcp": 440,
+      "cls": 0,
+      "ttfb": 5.3,
+      "domContentLoaded": 53.1,
+      "bytes": 109148,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop /settings warm",
+      "lcp": 784,
+      "cls": 0,
+      "ttfb": 4.6,
+      "domContentLoaded": 70.7,
+      "bytes": 10726,
+      "longTasks": 0
+    },
+    {
+      "key": "desktop /usage cold",
+      "lcp": 452,
+      "cls": 0,
+      "ttfb": 4,
+      "domContentLoaded": 63.8,
+      "bytes": 117752,
+      "longTasks": 62
+    },
+    {
+      "key": "desktop /usage warm",
+      "lcp": 808,
+      "cls": 0,
+      "ttfb": 4.3,
+      "domContentLoaded": 61.9,
+      "bytes": 19330,
+      "longTasks": 0
+    },
+    {
+      "key": "mobile /login cold",
+      "lcp": 876,
+      "cls": 0,
+      "ttfb": 3.4,
+      "domContentLoaded": 760.1,
+      "bytes": 57158,
+      "longTasks": 384
+    },
+    {
+      "key": "mobile /login warm",
+      "lcp": 268,
+      "cls": 0,
+      "ttfb": 3.6,
+      "domContentLoaded": 182.7,
+      "bytes": 2772,
+      "longTasks": 0
+    },
+    {
+      "key": "mobile / cold",
+      "lcp": 764,
+      "cls": 0,
+      "ttfb": 3.7,
+      "domContentLoaded": 684.1,
+      "bytes": 111550,
+      "longTasks": 204
+    },
+    {
+      "key": "mobile / warm",
+      "lcp": 380,
+      "cls": 0,
+      "ttfb": 3.5,
+      "domContentLoaded": 302.3,
+      "bytes": 13128,
+      "longTasks": 0
+    },
+    {
+      "key": "mobile /databases cold",
+      "lcp": 988,
+      "cls": 0,
+      "ttfb": 3.6,
+      "domContentLoaded": 951.7,
+      "bytes": 118728,
+      "longTasks": 491
+    },
+    {
+      "key": "mobile /databases warm",
+      "lcp": 372,
+      "cls": 0,
+      "ttfb": 2.8,
+      "domContentLoaded": 279.1,
+      "bytes": 12608,
+      "longTasks": 0
+    },
+    {
+      "key": "mobile /data cold",
+      "lcp": 732,
+      "cls": 0,
+      "ttfb": 3,
+      "domContentLoaded": 661.2,
+      "bytes": 108587,
+      "longTasks": 172
+    },
+    {
+      "key": "mobile /data warm",
+      "lcp": 376,
+      "cls": 0,
+      "ttfb": 3,
+      "domContentLoaded": 274.5,
+      "bytes": 10165,
+      "longTasks": 55
+    },
+    {
+      "key": "mobile /settings cold",
+      "lcp": 788,
+      "cls": 0,
+      "ttfb": 3.6,
+      "domContentLoaded": 710.5,
+      "bytes": 109148,
+      "longTasks": 198
+    },
+    {
+      "key": "mobile /settings warm",
+      "lcp": 420,
+      "cls": 0,
+      "ttfb": 3,
+      "domContentLoaded": 279.7,
+      "bytes": 10726,
+      "longTasks": 94
+    },
+    {
+      "key": "mobile /usage cold",
+      "lcp": 848,
+      "cls": 0,
+      "ttfb": 4,
+      "domContentLoaded": 778.4,
+      "bytes": 117752,
+      "longTasks": 305
+    },
+    {
+      "key": "mobile /usage warm",
+      "lcp": 456,
+      "cls": 0,
+      "ttfb": 3.9,
+      "domContentLoaded": 412.4,
+      "bytes": 19330,
+      "longTasks": 71
+    }
+  ]
+}

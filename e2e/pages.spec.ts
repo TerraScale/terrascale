@@ -62,6 +62,34 @@ test("anonymous routes render", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("onboarding password visibility toggles reveal and hide each field", async ({ page }) => {
+  await page.goto("/onboarding");
+
+  for (const id of ["password", "confirmPassword"]) {
+    const input = page.locator(`#${id}`);
+    const toggle = page.locator(`#${id} + button`);
+    // Eye-off is the only icon whose path draws the diagonal strike.
+    const eyeOffIcon = toggle.locator('span:visible svg path[d="m2 2 20 20"]');
+
+    // Regression: the eye and eye-off icons must never be visible together.
+    await expect(toggle).toHaveAttribute("aria-label", "Show password");
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(toggle.locator("span:visible")).toHaveCount(1);
+    await expect(eyeOffIcon).toHaveCount(0);
+
+    await toggle.click();
+    await expect(input).toHaveAttribute("type", "text");
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expect(toggle).toHaveAttribute("aria-label", "Hide password");
+    await expect(toggle.locator("span:visible")).toHaveCount(1);
+    await expect(eyeOffIcon).toHaveCount(1);
+
+    await toggle.click();
+    await expect(input).toHaveAttribute("type", "password");
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  }
+});
+
 test("anonymous dashboard access redirects to login", async ({ page }) => {
   await page.goto("/databases");
   await page.waitForURL("**/login**");

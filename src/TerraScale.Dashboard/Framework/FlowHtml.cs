@@ -18,17 +18,12 @@ public static class FlowHtml
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
             """);
         builder.AppendLine($"    <title>{Escape(title)} · TerraScale</title>");
-        builder.AppendLine("""
-                <link rel="icon" href="/brand/logo-icon-blue.svg" type="image/svg+xml" />
-                <link rel="stylesheet" href="/css/terrascale.css" />
-                <script type="module" src="/js/datastar.js"></script>
-            </head>
-            <body>
-            """);
+        builder.Append(DocumentHtml.Assets());
+        builder.AppendLine("</head><body>");
         return new HtmlString(builder.ToString());
     }
 
-    public static HtmlString End() => new("</body>\n</html>\n");
+    public static HtmlString End() => new($"""<script src="{AssetUrls.Url("/js/terrascale.js")}" defer></script></body></html>""");
 
     private static string Escape(string value) =>
         value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");

@@ -73,6 +73,29 @@ public sealed class OnboardingWizardTests
     }
 
     [Test]
+    public async Task ProjectStepOffersOnlyTheThreeTerraScaleRegionHubs()
+    {
+        using var app = new DashboardTestApp();
+        using var client = app.CreateClient();
+        await app.RegisterAsync(client, $"regions-{Guid.NewGuid():N}@example.test", "Member-tests-123!", "Region Probe");
+        await DashboardTestApp.PostFormAsync(client, "/onboarding/step",
+            new Dictionary<string, string> { ["step"] = "payment-method", ["bypass"] = "1" });
+
+        var page = await app.GetPageAsync(client, "/onboarding");
+        foreach (var hub in new[] { "GRU", "SFO", "FRA" })
+            await Assert.That(page.Contains($"name=\"region\" value=\"{hub}\"")).IsTrue();
+
+        foreach (var alias in new[] { "us-east-1", "us-west-2", "eu-central-1", "eu-west-1", "sa-east-1" })
+            await Assert.That(page.Contains($"value=\"{alias}\"")).IsFalse();
+
+        await Assert.That(CountOccurrences(page.Html, "name=\"region\" value=\"")).IsEqualTo(3);
+        foreach (var flag in new[] { "br", "us", "de" })
+            await Assert.That(page.Contains($"/brand/flags/{flag}.svg")).IsTrue();
+        foreach (var ping in new[] { "118 ms", "28 ms", "74 ms" })
+            await Assert.That(page.Contains(ping)).IsTrue();
+    }
+
+    [Test]
     public async Task RegistrationRejectsInvalidFields()
     {
         using var app = new DashboardTestApp();
@@ -82,5 +105,17 @@ public sealed class OnboardingWizardTests
             ["displayName"] = "", ["email"] = "valid@example.test", ["password"] = "short", ["confirmPassword"] = "short", ["terms"] = "true",
         });
         await Assert.That(response.Headers.Location!.ToString()).IsEqualTo("/onboarding?error=This%20field%20is%20required.");
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        for (var index = haystack.IndexOf(needle, StringComparison.Ordinal); index >= 0;
+             index = haystack.IndexOf(needle, index + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
     }
 }

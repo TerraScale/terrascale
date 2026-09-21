@@ -5,6 +5,78 @@
 (() => {
   "use strict";
 
+  // Clear-Site-Data's speculation directives landed in Chromium 138. Older
+  // engines can prefetch but cannot safely invalidate private HTML on mutation.
+  // UA-CH unavailable, unsupported or insecure contexts use native navigation.
+  const prefetchRules = document.getElementById("ts-prefetch-rules");
+  const canInvalidatePrefetch = navigator.userAgentData?.brands.some(
+    brand => brand.brand === "Chromium" && Number(brand.version) >= 138);
+  if (prefetchRules instanceof HTMLTemplateElement) {
+    if (window.isSecureContext && canInvalidatePrefetch
+      && HTMLScriptElement.supports?.("speculationrules") && !navigator.connection?.saveData) {
+      const script = document.createElement("script");
+      script.type = "speculationrules";
+      script.textContent = prefetchRules.content.querySelector("script").textContent;
+      document.head.append(script);
+    }
+    prefetchRules.remove();
+  }
+
+  let navigationTimeout;
+  const clearNavigationState = () => {
+    clearTimeout(navigationTimeout);
+    document.documentElement.removeAttribute("data-nav-pending");
+  };
+  const indicateNavigation = () => {
+    document.documentElement.setAttribute("data-nav-pending", "");
+    clearTimeout(navigationTimeout);
+    // Native navigation may be canceled by the browser (Escape, download,
+    // external handler). Never leave a permanent busy state behind.
+    navigationTimeout = setTimeout(clearNavigationState, 8000);
+  };
+  const navigatesDocument = (url, target) => {
+    if (target && target !== "_self") return false;
+    const destination = new URL(url, document.baseURI);
+    return destination.origin === location.origin
+      && ["http:", "https:"].includes(destination.protocol)
+      && !(destination.pathname === location.pathname && destination.search === location.search
+        && (destination.hash || destination.href === location.href));
+  };
+
+  // Observe after bubbling handlers (including confirmation and Datastar)
+  // have decided whether the browser should perform a native navigation.
+  window.addEventListener("click", (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey
+      || event.shiftKey || event.altKey) return;
+    const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
+    if (!link || link.hasAttribute("download") || link.hasAttribute("data-no-progress")) return;
+    const target = link.getAttribute("target") ?? document.querySelector("base[target]")?.target;
+    if (navigatesDocument(link.href, target)) indicateNavigation();
+  });
+  window.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (event.defaultPrevented || !(form instanceof HTMLFormElement)
+      || form.hasAttribute("data-no-progress")) return;
+    const button = event.submitter;
+    const method = button?.getAttribute("formmethod") ?? form.method;
+    const target = button?.getAttribute("formtarget") ?? form.getAttribute("target")
+      ?? document.querySelector("base[target]")?.target;
+    const action = button?.getAttribute("formaction") ?? form.action;
+    if (method !== "dialog" && (!target || target === "_self")
+      && new URL(action, document.baseURI).origin === location.origin) indicateNavigation();
+  });
+  window.addEventListener("pageshow", clearNavigationState);
+  window.addEventListener("pagereveal", clearNavigationState);
+  window.addEventListener("pageswap", clearNavigationState);
+  window.addEventListener("pagehide", clearNavigationState);
+  window.addEventListener("error", clearNavigationState);
+  window.addEventListener("keydown", event => {
+    if (event.key === "Escape") clearNavigationState();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") clearNavigationState();
+  });
+
   document.addEventListener("click", (event) => {
     for (const details of document.querySelectorAll("details.ts-menu[open]")) {
       if (!details.contains(event.target)) details.removeAttribute("open");

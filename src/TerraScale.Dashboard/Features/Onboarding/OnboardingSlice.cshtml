@@ -28,7 +28,7 @@
         <header class="ts-onboarding-header @(Model.Registration ? "ts-onboarding-header-brand" : null)">
             @if (Model.Registration)
             {
-                <img class="ts-brand-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async" />
+                <img class="ts-brand-logo" src="@AssetUrls.Url("/brand/logo-terrascale-blue.svg")" alt="TerraScale" decoding="async" />
                 <h1 class="ts-sr-only">Activate your TerraScale account</h1>
             }
             else
@@ -112,20 +112,20 @@
                     <div class="ts-field">
                         <label class="ts-label" for="password">Password</label>
                         <div class="ts-input-group">
-                            <input class="ts-input" type="password" id="password" name="password" placeholder="Enter your password" autocomplete="new-password" required data-attr-type="passwordVisible ? 'text' : 'password'" />
-                            <button class="ts-input-adornment" type="button" aria-label="Show password" aria-pressed="false" data-attr-aria-pressed="passwordVisible" data-attr-aria-label="passwordVisible ? 'Hide password' : 'Show password'" data-on-click="passwordVisible = !passwordVisible">
-                                <span data-show="!passwordVisible">@Icons.Eye(18)</span>
-                                <span data-show="passwordVisible">@Icons.EyeOff(18)</span>
+                            <input class="ts-input" type="password" id="password" name="password" placeholder="Enter your password" autocomplete="new-password" required data-attr:type="$passwordVisible ? 'text' : 'password'" />
+                            <button class="ts-input-adornment" type="button" aria-label="Show password" aria-pressed="false" data-attr:aria-pressed="$passwordVisible ? 'true' : 'false'" data-attr:aria-label="$passwordVisible ? 'Hide password' : 'Show password'" data-on:click="$passwordVisible = !$passwordVisible">
+                                <span data-show="!$passwordVisible">@Icons.Eye(18)</span>
+                                <span data-show="$passwordVisible">@Icons.EyeOff(18)</span>
                             </button>
                         </div>
                     </div>
                     <div class="ts-field">
                         <label class="ts-label" for="confirmPassword">Confirm password</label>
                         <div class="ts-input-group">
-                            <input class="ts-input" type="password" id="confirmPassword" name="confirmPassword" autocomplete="new-password" required data-attr-type="confirmPasswordVisible ? 'text' : 'password'" />
-                            <button class="ts-input-adornment" type="button" aria-label="Show password" aria-pressed="false" data-attr-aria-pressed="confirmPasswordVisible" data-attr-aria-label="confirmPasswordVisible ? 'Hide password' : 'Show password'" data-on-click="confirmPasswordVisible = !confirmPasswordVisible">
-                                <span data-show="!confirmPasswordVisible">@Icons.Eye(18)</span>
-                                <span data-show="confirmPasswordVisible">@Icons.EyeOff(18)</span>
+                            <input class="ts-input" type="password" id="confirmPassword" name="confirmPassword" autocomplete="new-password" required data-attr:type="$confirmPasswordVisible ? 'text' : 'password'" />
+                            <button class="ts-input-adornment" type="button" aria-label="Show password" aria-pressed="false" data-attr:aria-pressed="$confirmPasswordVisible ? 'true' : 'false'" data-attr:aria-label="$confirmPasswordVisible ? 'Hide password' : 'Show password'" data-on:click="$confirmPasswordVisible = !$confirmPasswordVisible">
+                                <span data-show="!$confirmPasswordVisible">@Icons.Eye(18)</span>
+                                <span data-show="$confirmPasswordVisible">@Icons.EyeOff(18)</span>
                             </button>
                         </div>
                     </div>
@@ -178,8 +178,8 @@
                     <div class="ts-onboarding-step-actions">
                         <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.CreditCard(20)</span>
                         <span class="ts-onboarding-interval ts-onboarding-interval-header" role="group" aria-label="Billing interval">
-                            <button type="button" class="ts-onboarding-interval-option" aria-pressed="true" data-attr-aria-pressed="interval === 'monthly'" data-on-click="interval = 'monthly'">Monthly</button>
-                            <button type="button" class="ts-onboarding-interval-option" aria-pressed="false" data-attr-aria-pressed="interval === 'annual'" data-on-click="interval = 'annual'">Annual <span class="ts-onboarding-interval-badge">2 months free</span></button>
+                            <button type="button" class="ts-onboarding-interval-option" aria-pressed="true" data-attr:aria-pressed="$interval === 'monthly' ? 'true' : 'false'" data-on:click="$interval = 'monthly'">Monthly</button>
+                            <button type="button" class="ts-onboarding-interval-option" aria-pressed="false" data-attr:aria-pressed="$interval === 'annual' ? 'true' : 'false'" data-on:click="$interval = 'annual'">Annual <span class="ts-onboarding-interval-badge">2 months free</span></button>
                         </span>
                     </div>
                 </header>
@@ -200,17 +200,17 @@
                         <div class="ts-onboarding-plans" role="radiogroup" aria-label="Billing plan">
                             @foreach (var plan in Model.Plans)
                             {
-                                <button type="button" role="radio" class="ts-onboarding-plan ts-onboarding-plan-@plan.Key" aria-checked="@(plan.Key == "starter" ? "true" : "false")" data-attr-aria-checked="plan === '@plan.Key'" data-on-click="plan = '@plan.Key'">
+                                <button type="button" role="radio" class="ts-onboarding-plan ts-onboarding-plan-@plan.Key" aria-checked="@(plan.Key == "starter" ? "true" : "false")" data-attr:aria-checked="$plan === '@plan.Key' ? 'true' : 'false'" data-on:click="$plan = '@plan.Key'">
                                     <span class="ts-onboarding-plan-header">
                                         <span class="ts-onboarding-plan-name">@plan.Name</span>
                                         <span class="ts-onboarding-plan-check" aria-hidden="true">@Icons.Check(13)</span>
                                     </span>
                                     <span class="ts-onboarding-plan-description">@plan.Description</span>
-                                    <span class="ts-onboarding-plan-price-row" data-show="interval === 'monthly'">
+                                    <span class="ts-onboarding-plan-price-row" data-show="$interval === 'monthly'">
                                         <span class="ts-onboarding-plan-strike" aria-hidden="true">$@(plan.MonthlyUsd.ToString("0"))</span>
                                         <span class="ts-onboarding-plan-per"> / month</span>
                                     </span>
-                                    <span class="ts-onboarding-plan-price-row" data-show="interval === 'annual'">
+                                    <span class="ts-onboarding-plan-price-row" data-show="$interval === 'annual'">
                                         <span class="ts-onboarding-plan-strike" aria-hidden="true">$@(plan.AnnualUsd.ToString("0"))</span>
                                         <span class="ts-onboarding-plan-per"> / year</span>
                                     </span>
@@ -231,8 +231,8 @@
                         <div class="ts-onboarding-interval-switch">
                             <span class="ts-onboarding-interval-switch-label">Billing interval</span>
                             <span class="ts-onboarding-interval" role="group" aria-label="Billing interval">
-                                <button type="button" class="ts-onboarding-interval-option" aria-pressed="true" data-attr-aria-pressed="interval === 'monthly'" data-on-click="interval = 'monthly'">Monthly</button>
-                                <button type="button" class="ts-onboarding-interval-option" aria-pressed="false" data-attr-aria-pressed="interval === 'annual'" data-on-click="interval = 'annual'">Annual <span class="ts-onboarding-interval-badge">2 months free</span></button>
+                                <button type="button" class="ts-onboarding-interval-option" aria-pressed="true" data-attr:aria-pressed="$interval === 'monthly' ? 'true' : 'false'" data-on:click="$interval = 'monthly'">Monthly</button>
+                                <button type="button" class="ts-onboarding-interval-option" aria-pressed="false" data-attr:aria-pressed="$interval === 'annual' ? 'true' : 'false'" data-on:click="$interval = 'annual'">Annual <span class="ts-onboarding-interval-badge">2 months free</span></button>
                             </span>
                         </div>
                         <p class="ts-onboarding-provider-notice">No card today? Continue on the Free plan with X operations per month. Add a payment method now and your first month is free.</p>
@@ -263,14 +263,30 @@
                     <div class="ts-field">
                         <span class="ts-label" id="regionLabel">Primary regions</span>
                         <div class="ts-onboarding-region-map" role="radiogroup" aria-labelledby="regionLabel">
-                            <img class="ts-onboarding-region-dots" src="/brand/region-map.svg" alt="" decoding="async" />
+                            <img class="ts-onboarding-region-dots" src="@AssetUrls.Url("/brand/region-map.svg")" alt="" decoding="async" />
                             @foreach (var region in Model.Regions)
                             {
                                 var left = (region.X / RegionMap.Width * 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
                                 var top = (region.Y / RegionMap.Height * 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
-                                <label class="ts-onboarding-region-pin @(region.Live ? null : "ts-onboarding-region-pin-disabled")" style="left:@(left)%;top:@(top)%">
-                                    <input class="ts-onboarding-region-input" type="radio" name="region" value="@region.Code" aria-label="@region.Name (@region.Code.ToUpperInvariant()) — @(region.Live ? "Available" : "Unavailable")" @(region.Code == defaultRegion ? "checked" : null) @(region.Live ? null : "disabled") />
+                                // Pins in the northern third flip the hover label below the
+                                // marker so the frame's overflow clip cannot cut it off at
+                                // the top edge; pins near the side edges anchor the label to
+                                // that edge instead of centring it past the clip.
+                                var labelBelow = region.Y < RegionMap.Height / 3;
+                                var edge = region.X / RegionMap.Width;
+                                var classes = "ts-onboarding-region-pin"
+                                    + (region.Live ? "" : " ts-onboarding-region-pin-disabled")
+                                    + (labelBelow ? " ts-onboarding-region-pin-label-below" : "")
+                                    + (edge < 0.25 ? " ts-onboarding-region-pin-label-start" : "")
+                                    + (edge > 0.75 ? " ts-onboarding-region-pin-label-end" : "");
+                                <label class="@classes" style="left:@(left)%;top:@(top)%">
+                                    <input class="ts-onboarding-region-input" type="radio" name="region" value="@region.Code" aria-label="@region.Name (@region.Code.ToUpperInvariant()) — @(region.Live ? "Available" : "Unavailable"), @region.LatencyMs ms" @(region.Code == defaultRegion ? "checked" : null) @(region.Live ? null : "disabled") />
                                     <span class="ts-onboarding-region-dot" aria-hidden="true"></span>
+                                    <span class="ts-onboarding-region-label" aria-hidden="true">
+                                        <img class="ts-onboarding-region-flag" src="/brand/flags/@(region.Country.ToLowerInvariant()).svg" alt="" decoding="async" />
+                                        <span class="ts-onboarding-region-label-name">@region.Name</span>
+                                        <span class="ts-onboarding-region-label-ping">@region.LatencyMs ms</span>
+                                    </span>
                                 </label>
                             }
                         </div>

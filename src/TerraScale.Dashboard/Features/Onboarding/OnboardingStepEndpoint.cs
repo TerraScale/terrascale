@@ -35,7 +35,7 @@ public sealed class OnboardingStepEndpoint(DashboardStore store) : EndpointWitho
                 if (store.Projects.Length == 1 && store.Projects[0].Name == "Personal")
                     store.RenameProject(store.Projects[0].Id, name, null, null);
                 else if (store.Projects.Length == 0)
-                    store.CreateProject(name, form["region"].ToString() is { Length: > 0 } region ? region : "us-east-1");
+                    store.CreateProject(name, form["region"].ToString() is { Length: > 0 } region ? region : "GRU");
             }
             return Results.Redirect("/", false, false);
         }

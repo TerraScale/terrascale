@@ -5,7 +5,8 @@ public static class ShellFactory
     public static ShellModel Create(DashboardStore store, string href)
     {
         var user = store.CurrentUser;
-        var route = NavRoute.Find(href);
+        var route = NavRoute.Find(href)
+            ?? (href.StartsWith("/auth/", StringComparison.OrdinalIgnoreCase) ? NavRoute.Find("/auth") : null);
         return new ShellModel(
             ActiveHref: href,
             Route: route,
@@ -14,6 +15,9 @@ public static class ShellFactory
             AccountEmail: user.Email,
             AccountInitials: store.Initials(user.Name, user.Email),
             UnreadNotifications: store.UnreadNotifications,
-            PageTitle: route?.Label);
+            PageTitle: route?.Label)
+        {
+            AllowPrefetch = store.AllowPrefetch,
+        };
     }
 }

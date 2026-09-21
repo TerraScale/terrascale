@@ -46,6 +46,11 @@ single-selector rules may stay on one line.
 (the tokens below) always beat layered ones. */
 @layer reset, base, layout, components, features, utilities;
 
+/* Same-origin MPA transitions are progressive enhancement. */
+@view-transition {
+  navigation: auto;
+}
+
 /* 1. Tokens =============================================================== */
 
 :root {
@@ -185,6 +190,83 @@ single-selector rules may stay on one line.
   --datasubnav-width: 16rem;
 }
 
+@layer features {
+  /* ts-auth control plane ------------------------------------------------ */
+  .ts-auth-console { gap: var(--ts-xl); }
+  .ts-auth-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ts-xl); padding: var(--ts-xl); background: radial-gradient(600px 220px at 0 0, rgba(var(--ts-accent-rgb), .16), transparent 70%), var(--ts-glass-bg); }
+  .ts-auth-header > div:first-child { min-width: 0; }
+  .ts-auth-header-actions { display: flex; flex-wrap: wrap; gap: var(--ts-sm); justify-content: flex-end; }
+  .ts-auth-hero-title { margin: 8px 0 4px; font-size: clamp(1.6rem, 3vw, 2.35rem); letter-spacing: -.025em; }
+  .ts-auth-instance-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: var(--ts-md); }
+  .ts-auth-instance-line code { padding: 4px 8px; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-control); color: var(--ts-ink); background: var(--ts-input-fill); font-family: var(--ts-font-mono); font-size: var(--ts-fs-meta); }
+  .ts-auth-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--ts-lg); }
+  .ts-auth-stat-card { display: grid; gap: 4px; min-width: 0; padding: var(--ts-lg); border: 1px solid var(--ts-line); border-radius: var(--ts-radius-panel); color: var(--ts-ink); background: var(--ts-glass-bg); text-decoration: none; transition: transform var(--ts-t-control) var(--ts-ease), border-color var(--ts-t-control) var(--ts-ease), background-color var(--ts-t-control) var(--ts-ease); }
+  .ts-auth-stat-card:hover { border-color: color-mix(in oklab, var(--ts-info) 55%, var(--ts-line)); background: var(--ts-fill-hover); transform: translateY(-2px); }
+  .ts-auth-stat-card strong { font-size: 1.9rem; line-height: 1.1; }
+  .ts-auth-stat-icon { display: grid; width: 34px; height: 34px; place-items: center; margin-bottom: 8px; border-radius: 9px; }
+  .ts-auth-tone-cyan { color: #67e8f9; background: rgba(6, 182, 212, .14); }
+  .ts-auth-tone-purple { color: #c4b5fd; background: rgba(139, 92, 246, .14); }
+  .ts-auth-tone-amber { color: #fcd34d; background: rgba(245, 158, 11, .14); }
+  .ts-auth-tone-green { color: #6ee7b7; background: rgba(16, 185, 129, .14); }
+  .ts-auth-stat-foot { display: flex; align-items: center; gap: 5px; margin-top: 7px; color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+  .ts-auth-link-grid, .ts-auth-contract-list { display: grid; gap: 2px; padding: var(--ts-sm); }
+  .ts-auth-explore-link, .ts-auth-check { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: var(--ts-radius-control); color: var(--ts-ink); text-decoration: none; }
+  .ts-auth-explore-link:hover, .ts-auth-check:hover { background: var(--ts-fill-hover); }
+  .ts-auth-explore-link > span:nth-child(2), .ts-auth-check > span:nth-child(2) { display: grid; flex: 1; gap: 3px; min-width: 0; }
+  .ts-auth-explore-link small, .ts-auth-check small { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+  .ts-auth-check > span:first-child { display: grid; width: 24px; height: 24px; flex: 0 0 auto; place-items: center; border: 1px solid var(--ts-line); border-radius: 50%; color: var(--ts-ink-muted); font-family: var(--ts-font-mono); font-size: var(--ts-fs-meta); }
+  .ts-auth-check.is-done > span:first-child { border-color: color-mix(in oklab, var(--ts-success) 50%, var(--ts-line)); color: var(--ts-success); background: rgba(52, 211, 153, .1); }
+  .ts-auth-code-block { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 var(--ts-lg) var(--ts-lg); padding: 14px; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-control); background: var(--ts-input-fill); }
+  .ts-auth-code-block code { overflow-wrap: anywhere; color: var(--ts-info); font-family: var(--ts-font-mono); font-size: var(--ts-fs-meta); }
+  .ts-auth-code-note { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+  .ts-auth-contract-list > div { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: var(--ts-radius-control); }
+  .ts-auth-contract-list > div > span:nth-child(2) { display: grid; flex: 1; gap: 3px; min-width: 0; }
+  .ts-auth-contract-list small { color: var(--ts-ink-muted); overflow-wrap: anywhere; font-size: var(--ts-fs-meta); }
+  .ts-auth-settings-form { display: grid; gap: var(--ts-lg); padding: var(--ts-lg); }
+  .ts-auth-setting-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--ts-md); padding-top: var(--ts-lg); border-top: 1px solid var(--ts-line); }
+  .ts-auth-steps { display: grid; gap: var(--ts-lg); margin: 0; padding: var(--ts-lg) var(--ts-xl) var(--ts-xl); list-style: none; }
+  .ts-auth-steps li { display: flex; gap: 12px; }
+  .ts-auth-steps li > span { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: var(--ts-info); background: rgba(var(--ts-accent-rgb), .14); font-family: var(--ts-font-mono); font-weight: var(--ts-fw-semibold); }
+  .ts-auth-steps li > div { display: grid; gap: 4px; min-width: 0; }
+  .ts-auth-steps small { color: var(--ts-ink-muted); }
+  .ts-auth-steps a, .ts-auth-steps code { margin-top: 4px; overflow-wrap: anywhere; color: var(--ts-info); font-size: var(--ts-fs-meta); }
+  .ts-auth-sdk-links { display: flex; flex-wrap: wrap; gap: var(--ts-lg); padding: 0 var(--ts-lg) var(--ts-lg); }
+  .ts-auth-sdk-links a { color: var(--ts-info); font-size: var(--ts-fs-meta); }
+  .ts-auth-secret { display: flex; align-items: center; gap: 10px; }
+  .ts-auth-secret > span { display: grid; flex: 1; gap: 2px; min-width: 0; }
+  .ts-auth-secret code { overflow-wrap: anywhere; color: var(--ts-warning); font-family: var(--ts-font-mono); }
+  .ts-auth-secret small { color: var(--ts-ink-muted); }
+  .ts-auth-detail { display: grid; grid-template-columns: 1fr auto; gap: var(--ts-md); margin: var(--ts-lg); padding: var(--ts-lg); border: 1px solid var(--ts-line); border-radius: var(--ts-radius-panel); background: var(--ts-glass-bg); }
+  .ts-auth-detail h3 { margin: 6px 0 0; }
+  .ts-auth-detail-grid { display: grid; grid-column: 1 / -1; gap: 1px; overflow: hidden; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-control); }
+  .ts-auth-detail-grid > div { display: grid; grid-template-columns: minmax(9rem, .35fr) 1fr; gap: var(--ts-md); padding: 10px 12px; background: var(--ts-input-fill); }
+  .ts-auth-detail-grid > div:nth-child(even) { background: color-mix(in oklab, var(--ts-input-fill) 75%, var(--ts-surface)); }
+  .ts-auth-detail-grid code { overflow-wrap: anywhere; color: var(--ts-info); font-family: var(--ts-font-mono); font-size: var(--ts-fs-meta); }
+  .ts-auth-resource-link { color: var(--ts-ink); text-decoration: none; }
+  .ts-auth-resource-link:hover { color: var(--ts-info); }
+  .ts-auth-row-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
+  .ts-auth-billing-card { display: grid; gap: var(--ts-md); padding: var(--ts-xl); }
+  .ts-auth-billing-card strong { font-size: 2.25rem; }
+  .ts-auth-billing-card p { margin: 0; color: var(--ts-ink-muted); }
+  .ts-auth-billing-list { display: grid; gap: 1px; padding: var(--ts-lg); }
+  .ts-auth-billing-list > div { display: flex; justify-content: space-between; padding: 12px; border-radius: var(--ts-radius-control); background: var(--ts-input-fill); }
+  .ts-auth-console .ts-table-wrap { border: 0; }
+  .ts-auth-console .ts-table td, .ts-auth-console .ts-table th { vertical-align: middle; }
+  .ts-auth-console .ts-table th:last-child, .ts-auth-console .ts-table td:last-child { width: 1%; white-space: nowrap; }
+  @media (max-width: 64rem) { .ts-auth-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 48rem) {
+    .ts-auth-header { flex-direction: column; }
+    .ts-auth-header-actions { width: 100%; justify-content: flex-start; }
+    .ts-auth-header-actions .ts-btn { flex: 1 1 auto; }
+    .ts-auth-stat-grid { grid-template-columns: 1fr 1fr; gap: var(--ts-sm); }
+    .ts-auth-stat-card { padding: var(--ts-md); }
+    .ts-auth-stat-card strong { font-size: 1.6rem; }
+    .ts-auth-console .ts-table-wrap { overflow-x: auto; }
+    .ts-auth-secret { align-items: flex-start; flex-wrap: wrap; }
+    .ts-auth-detail-grid > div { grid-template-columns: 1fr; gap: 3px; }
+  }
+}
+
 @layer base {
 
   /* 2. Fonts ================================================================ */
@@ -222,6 +304,37 @@ single-selector rules may stay on one line.
     text-rendering: optimizeLegibility;
     min-width: 320px;
     -webkit-text-size-adjust: 100%;
+    scrollbar-gutter: stable;
+  }
+
+  html[data-nav-pending]::before {
+    background: var(--ts-accent);
+    content: "";
+    height: 2px;
+    inset: 0 auto auto 0;
+    position: fixed;
+    transform-origin: left center;
+    width: 35%;
+    z-index: var(--ts-z-toast);
+    animation: ts-route-progress 1.2s var(--ts-ease) infinite;
+  }
+
+  @supports (view-transition-name: none) {
+    .ts-sidebar {
+      view-transition-name: ts-sidebar;
+    }
+
+    .ts-page-title {
+      view-transition-name: ts-page-title;
+    }
+
+    ::view-transition-old(root),
+    ::view-transition-new(root),
+    ::view-transition-group(ts-sidebar),
+    ::view-transition-group(ts-page-title) {
+      animation-duration: 160ms;
+      animation-timing-function: ease-out;
+    }
   }
 
   body {
@@ -447,12 +560,14 @@ single-selector rules may stay on one line.
   }
 
   .ts-panel-title {
+    text-wrap: balance;
     font-size: var(--ts-fs-panel-title);
     font-weight: var(--ts-fw-panel-title, 600);
     color: var(--ts-ink);
   }
 
   .ts-panel-subtitle {
+    text-wrap: pretty;
     font-size: var(--ts-fs-body);
     line-height: 1.6;
     color: var(--ts-ink-muted);
@@ -1139,6 +1254,29 @@ single-selector rules may stay on one line.
   dialog.ts-dialog::backdrop {
     background-color: var(--ts-scrim);
     backdrop-filter: blur(2px);
+  }
+
+  @supports (transition-behavior: allow-discrete) {
+    @media (prefers-reduced-motion: no-preference) {
+      dialog.ts-dialog {
+        opacity: 0;
+        transform: translateY(4px);
+        transition: opacity var(--ts-t-fast), transform var(--ts-t-fast),
+          display var(--ts-t-fast) allow-discrete, overlay var(--ts-t-fast) allow-discrete;
+      }
+
+      dialog.ts-dialog[open] {
+        opacity: 1;
+        transform: none;
+      }
+
+      @starting-style {
+        dialog.ts-dialog[open] {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+      }
+    }
   }
 
   .ts-dialog-content {
@@ -2423,7 +2561,23 @@ single-selector rules may stay on one line.
     to { background-position: -200% 0; }
   }
 
+  @keyframes ts-route-progress {
+    0% { transform: scaleX(0.25); }
+    70% { transform: scaleX(1); }
+    100% { transform: scaleX(1); }
+  }
+
   @media (prefers-reduced-motion: reduce) {
+    @view-transition {
+      navigation: none;
+    }
+
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
+      animation: none !important;
+    }
+
     *,
     *::before,
     *::after {
@@ -2431,6 +2585,16 @@ single-selector rules may stay on one line.
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
     }
+
+    html[data-nav-pending]::before {
+      animation: none;
+    }
+  }
+
+  /* Opt-in only: lower-page read-only charts, never forms, menus or dialogs. */
+  .ts-render-deferred {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 16rem;
   }
 
   .ts-hidden {
@@ -3556,17 +3720,23 @@ single-selector rules may stay on one line.
     .ts-org-switch-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
   }
 
-  /* Region picker map (v1 RegionMap): checkbox pins over the dotted map. */
+  /* Region picker map (v1 RegionMap): checkbox pins over the dotted map. The
+     frame reserves the dotted map's own 136:80 aspect ratio and is centred
+     under a width cap, so the percent-positioned pins stay glued to the map
+     instead of drifting across a letterboxed frame. */
   .ts-region-picker {
     position: relative;
-    min-height: 224px;
+    width: 100%;
+    max-width: 504px;
+    aspect-ratio: 136 / 80;
+    margin-inline: auto;
     border: 1px solid var(--ts-line);
     border-radius: var(--ts-radius-panel);
     background-color: var(--ts-surface-muted);
     overflow: hidden;
   }
 
-  .ts-region-picker-compact { min-height: 180px; }
+  .ts-region-picker-compact { max-width: 405px; }
 
   .ts-region-picker .ts-region-map { pointer-events: none; }
 
@@ -6677,8 +6847,21 @@ single-selector rules may stay on one line.
   .ts-onboarding-form-footer .ts-btn { width: 100%; }
 
   @media (min-width: 40rem) {
-    .ts-onboarding-form-footer { align-items: flex-end; }
+    /* Navigation actions share one horizontal row, right-aligned. */
+    .ts-onboarding-form-footer {
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
     .ts-onboarding-form-footer .ts-btn { width: auto; }
+
+    /* The sign-in prompt keeps its own line under the row, right-aligned. */
+    .ts-onboarding-form-footer .ts-onboarding-secondary {
+      flex-basis: 100%;
+      text-align: end;
+    }
   }
 
   @media (min-width: 64rem) {
@@ -6944,10 +7127,17 @@ single-selector rules may stay on one line.
     .ts-onboarding-provider-notice { padding: var(--ts-sm); }
   }
 
-  /* Project step region picker (v1 compact RegionMap over the dotted map). */
+  /* Project step region picker (v1 compact RegionMap over the dotted map).
+     The frame reserves the dotted map's own 136:80 aspect ratio and is centred
+     under a width cap: a full-width, fixed-height frame letterboxes the world
+     map into a narrow band and leaves the percent-positioned pins floating in
+     empty space beside the landmass. */
   .ts-onboarding-region-map {
     position: relative;
-    min-height: 180px;
+    width: 100%;
+    max-width: 405px;
+    aspect-ratio: 136 / 80;
+    margin-inline: auto;
     border: 1px solid var(--ts-line);
     border-radius: var(--ts-radius-panel);
     background-color: var(--ts-surface-muted);
@@ -6998,7 +7188,12 @@ single-selector rules may stay on one line.
       width var(--ts-t-fast) var(--ts-ease);
   }
 
-  .ts-onboarding-region-pin:has(.ts-onboarding-region-input:checked) .ts-onboarding-region-dot {
+  /* Hover and keyboard focus read the same: the marker grows into the accent
+     glow and the name label appears, so pointing at a region identifies it
+     instead of requiring a pixel-perfect hit on the small dot. */
+  .ts-onboarding-region-pin:not(.ts-onboarding-region-pin-disabled):hover .ts-onboarding-region-dot,
+  .ts-onboarding-region-pin:has(.ts-onboarding-region-input:checked) .ts-onboarding-region-dot,
+  .ts-onboarding-region-pin:has(.ts-onboarding-region-input:focus-visible) .ts-onboarding-region-dot {
     height: 17px;
     width: 17px;
     background-color: var(--ts-accent);
@@ -7007,6 +7202,74 @@ single-selector rules may stay on one line.
 
   .ts-onboarding-region-pin:has(.ts-onboarding-region-input:focus-visible) {
     box-shadow: var(--ts-focus-ring);
+  }
+
+  /* Hover label: country flag, region name, and round-trip latency;
+     pointer-events stay off so it can never shadow a neighbouring pin's hit
+     target. */
+  .ts-onboarding-region-label {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 2px);
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 7px;
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface);
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-medium);
+    line-height: 1.2;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity var(--ts-t-fast) var(--ts-ease);
+  }
+
+  .ts-onboarding-region-flag {
+    flex-shrink: 0;
+    height: 11px;
+    width: 16px;
+    border: 1px solid var(--ts-line);
+    border-radius: 2px;
+    object-fit: cover;
+  }
+
+  .ts-onboarding-region-label-ping {
+    color: var(--ts-ink-muted);
+    font-family: var(--ts-font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ts-onboarding-region-pin:hover .ts-onboarding-region-label,
+  .ts-onboarding-region-pin:has(.ts-onboarding-region-input:focus-visible) .ts-onboarding-region-label {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* Northern pins put the label under the marker so the frame's overflow clip
+     never cuts it off at the top edge. */
+  .ts-onboarding-region-pin-label-below .ts-onboarding-region-label {
+    top: calc(100% + 2px);
+    bottom: auto;
+  }
+
+  /* Side pins anchor the label to that edge of the marker, so a wide label
+     (flag + name + latency) stays inside the clipped frame instead of being
+     centred past it. */
+  .ts-onboarding-region-pin-label-start .ts-onboarding-region-label {
+    left: 0;
+    transform: none;
+  }
+
+  .ts-onboarding-region-pin-label-end .ts-onboarding-region-label {
+    left: auto;
+    right: 0;
+    transform: none;
   }
 
   .ts-onboarding-region-pin-disabled {
@@ -8117,3 +8380,77 @@ single-selector rules may stay on one line.
   }
 }
 /* end @layer features */
+
+@layer features {
+  /* ts-auth console ------------------------------------------------------ */
+  .ts-auth-console { gap: var(--ts-xl); }
+  .ts-auth-hero { display: flex; justify-content: space-between; gap: var(--ts-xxl); padding: 28px 32px; overflow: hidden; position: relative; background: radial-gradient(600px 220px at 10% 0%, rgba(var(--ts-accent-rgb), .16), transparent 65%), var(--ts-glass-bg); }
+  .ts-auth-hero-copy { min-width: 0; max-width: 56rem; }
+  .ts-auth-hero-title { margin: 8px 0 6px; font-size: clamp(28px, 3vw, 40px); line-height: 1.08; letter-spacing: -.025em; }
+  .ts-auth-hero-copy .ts-page-desc { max-width: 52rem; margin: 0; }
+  .ts-eyebrow { display: flex; align-items: center; gap: 8px; color: var(--ts-info); font-size: var(--ts-fs-meta); font-weight: var(--ts-fw-semibold); letter-spacing: .08em; text-transform: uppercase; }
+  .ts-auth-issuer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+  .ts-auth-issuer code { padding: 7px 10px; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-control); color: var(--ts-ink); background: var(--ts-input-fill); font-family: var(--ts-font-mono); font-size: var(--ts-fs-meta); }
+  .ts-auth-hero-status { display: flex; min-width: 150px; flex-direction: column; align-items: center; justify-content: center; gap: 8px; position: relative; color: var(--ts-ink-muted); }
+  .ts-auth-hero-shield { display: grid; width: 72px; height: 72px; place-items: center; border: 1px solid color-mix(in oklab, var(--ts-info) 50%, var(--ts-line)); border-radius: 50%; color: var(--ts-info); background: rgba(var(--ts-accent-rgb), .13); box-shadow: 0 0 42px rgba(var(--ts-accent-rgb), .22); }
+  .ts-auth-orbit { position: absolute; width: 112px; height: 112px; border: 1px dashed color-mix(in oklab, var(--ts-info) 36%, transparent); border-radius: 50%; opacity: .7; }
+  .ts-auth-orbit-outer { transform: rotate(25deg) scaleX(1.4); }
+  .ts-auth-orbit-inner { width: 88px; height: 88px; transform: rotate(-35deg) scaleY(.7); }
+  .ts-auth-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--ts-lg); }
+  .ts-auth-stat-card { display: grid; gap: 4px; min-width: 0; padding: 18px; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-panel); color: var(--ts-ink); background: var(--ts-glass-bg); text-decoration: none; transition: transform var(--ts-t-control) var(--ts-ease), border-color var(--ts-t-control) var(--ts-ease), background-color var(--ts-t-control) var(--ts-ease); }
+  .ts-auth-stat-card:hover { border-color: color-mix(in oklab, var(--ts-info) 55%, var(--ts-line)); background: var(--ts-fill-hover); transform: translateY(-2px); }
+  .ts-auth-stat-card strong { font-size: 30px; line-height: 1.1; letter-spacing: -.02em; }
+  .ts-auth-stat-icon, .ts-auth-posture-icon { display: grid; width: 34px; height: 34px; place-items: center; margin-bottom: 8px; border-radius: 9px; }
+  .ts-auth-tone-cyan { color: #67e8f9; background: rgba(6, 182, 212, .14); }
+  .ts-auth-tone-purple { color: #c4b5fd; background: rgba(139, 92, 246, .14); }
+  .ts-auth-tone-amber { color: #fcd34d; background: rgba(245, 158, 11, .14); }
+  .ts-auth-tone-green { color: #6ee7b7; background: rgba(16, 185, 129, .14); }
+  .ts-auth-stat-foot { display: flex; align-items: center; gap: 5px; margin-top: 7px; color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+  .ts-auth-overview-grid { align-items: stretch; }
+  .ts-auth-check-count { display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid color-mix(in oklab, var(--ts-success) 45%, var(--ts-line)); border-radius: 50%; color: var(--ts-success); font-family: var(--ts-font-mono); font-size: var(--ts-fs-meta); }
+  .ts-auth-checklist, .ts-auth-posture-list { display: grid; gap: 2px; padding: 8px; }
+  .ts-auth-check, .ts-auth-posture-list > div { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: var(--ts-radius-control); color: var(--ts-ink); text-decoration: none; }
+  .ts-auth-check:hover { background: var(--ts-fill-hover); }
+  .ts-auth-check > span:first-child { display: grid; width: 24px; height: 24px; flex: 0 0 auto; place-items: center; border: 1px solid var(--ts-line); border-radius: 50%; color: var(--ts-ink-muted); font-family: var(--ts-font-mono); font-size: var(--ts-fs-meta); }
+  .ts-auth-check.is-done > span:first-child { border-color: color-mix(in oklab, var(--ts-success) 50%, var(--ts-line)); color: var(--ts-success); background: rgba(52, 211, 153, .1); }
+  .ts-auth-check > span:nth-child(2), .ts-auth-posture-list > div > span:nth-child(2) { display: grid; flex: 1; gap: 3px; min-width: 0; }
+  .ts-auth-check small, .ts-auth-posture-list small, .ts-auth-person small, .ts-auth-connection-top small { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+  .ts-auth-posture-list > div { padding-inline: 12px; }
+  .ts-auth-posture-icon { width: 30px; height: 30px; flex: 0 0 auto; margin: 0; }
+  .ts-auth-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--ts-md); padding: var(--ts-md) var(--ts-lg); border-bottom: 1px solid var(--ts-line); }
+  .ts-auth-search { display: flex; flex: 1 1 16rem; align-items: center; gap: 8px; max-width: 30rem; }
+  .ts-auth-search > span { color: var(--ts-ink-muted); }
+  .ts-auth-search .ts-input { flex: 1; }
+  .ts-auth-person { display: flex; align-items: center; gap: 10px; min-width: 13rem; }
+  .ts-auth-person > span:last-child { display: grid; gap: 3px; }
+  .ts-auth-avatar { display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; border: 1px solid color-mix(in oklab, var(--ts-info) 36%, var(--ts-line)); border-radius: 50%; color: var(--ts-info); background: rgba(var(--ts-accent-rgb), .12); font-size: var(--ts-fs-meta); font-weight: var(--ts-fw-semibold); }
+  .ts-auth-connection-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--ts-lg); padding: var(--ts-lg); }
+  .ts-auth-connection-card, .ts-auth-template-card { display: grid; gap: var(--ts-md); padding: var(--ts-lg); border: 1px solid var(--ts-line); border-radius: var(--ts-radius-panel); background: color-mix(in oklab, var(--ts-surface) 70%, transparent); }
+  .ts-auth-connection-top { display: flex; align-items: flex-start; gap: 10px; }
+  .ts-auth-connection-top > span:nth-child(2) { display: grid; flex: 1; gap: 3px; min-width: 0; }
+  .ts-auth-provider-mark { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid color-mix(in oklab, var(--ts-info) 35%, var(--ts-line)); border-radius: 9px; color: var(--ts-info); font-weight: var(--ts-fw-bold); }
+  .ts-auth-connection-meta, .ts-auth-template-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+  .ts-auth-connection-meta strong { color: var(--ts-ink); font-weight: var(--ts-fw-medium); }
+  .ts-auth-template-grid { align-items: stretch; padding: var(--ts-lg); }
+  .ts-auth-template-card .ts-row-header h3 { margin: 8px 0 0; font-size: var(--ts-fs-panel-title); }
+  .ts-auth-template-card .ts-row-header > svg { color: var(--ts-info); }
+  .ts-auth-delivery-ok { color: var(--ts-success); font-size: var(--ts-fs-meta); }
+  .ts-auth-settings-form { display: grid; gap: var(--ts-xxl); padding: var(--ts-lg); }
+  .ts-auth-setting-group { display: grid; gap: var(--ts-sm); max-width: 56rem; }
+  .ts-auth-setting-group h3 { margin: 0; font-size: var(--ts-fs-panel-title); }
+  .ts-auth-setting-group > p { margin: 0 0 var(--ts-sm); }
+  .ts-auth-setting-group .ts-setting-row { border: 1px solid var(--ts-line); border-radius: var(--ts-radius-control); background: rgba(51, 56, 70, .12); }
+  .ts-auth-number-grid { margin-top: 8px; }
+  .ts-auth-setting-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--ts-md); padding-top: var(--ts-lg); border-top: 1px solid var(--ts-line); }
+  @media (max-width: 64rem) {
+    .ts-auth-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .ts-auth-connection-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 48rem) {
+    .ts-auth-hero { flex-direction: column; padding: var(--ts-xl); }
+    .ts-auth-hero-status { align-items: flex-start; flex-direction: row; justify-content: flex-start; min-height: 72px; }
+    .ts-auth-orbit { left: 0; }
+    .ts-auth-stat-grid, .ts-auth-connection-grid { grid-template-columns: 1fr; }
+    .ts-auth-stat-card strong { font-size: 26px; }
+  }
+}

@@ -108,7 +108,7 @@
                 <fieldset class="ts-field ts-project-regions">
                     <legend class="ts-label">@Icons.Database(16) @t("Primary regions")</legend>
                     <div class="ts-region-picker ts-region-picker-compact">
-                        <img class="ts-region-map" src="/brand/region-map.svg" alt="" decoding="async" />
+                        <img class="ts-region-map" src="@AssetUrls.Url("/brand/region-map.svg")" alt="" decoding="async" />
                         @foreach (var region in Model.RegionCatalog)
                         {
                             <label class="ts-region-pin-btn" style="left:@RegionPins.Left(region.Code);top:@RegionPins.Top(region.Code)">

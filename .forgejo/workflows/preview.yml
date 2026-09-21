@@ -48,7 +48,13 @@ jobs:
         run: |
           # One comment per PR: the URL never changes, so skip if it's already posted.
           COMMENTS_URL="$GITHUB_API_URL/repos/${GITHUB_REPOSITORY}/issues/${{ github.event.number }}/comments"
-          if ! curl -sf -H "Authorization: token $FORGEJO_TOKEN" "$COMMENTS_URL" | grep -q "PR preview:"; then
+          COMMENTS_FILE="$(mktemp)"
+          trap 'rm -f "$COMMENTS_FILE"' EXIT
+          # Do not pipe curl into grep -q: with pipefail, grep can close the
+          # pipe after its match and make curl report a false failure. That
+          # would issue a duplicate comment and fail the preview with curl 22.
+          curl -sf -H "Authorization: token $FORGEJO_TOKEN" "$COMMENTS_URL" > "$COMMENTS_FILE"
+          if ! grep -Fq "PR preview:" "$COMMENTS_FILE"; then
             curl -sf -X POST \
               -H "Authorization: token $FORGEJO_TOKEN" \
               -H "Content-Type: application/json" \
