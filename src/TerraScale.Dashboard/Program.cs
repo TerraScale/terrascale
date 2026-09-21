@@ -25,8 +25,12 @@ builder.Services.AddTerraScaleEndpoints(typeof(Program).Assembly, options =>
 
 var app = builder.Build();
 
+// MapStaticAssets serves SDK-generated fingerprints, ETags and Brotli/gzip
+// variants. Public static assets bypass account activation and persistence.
+app.MapStaticAssets().ShortCircuit();
+AssetUrls.Initialize(app, app.Environment.IsDevelopment());
 app.UseResponseCompression();
-app.UseStaticFiles();
+app.UseMiddleware<PagePerformanceMiddleware>();
 app.UseMiddleware<DashboardAuthMiddleware>();
 
 app.MapTerraScaleEndpoints();

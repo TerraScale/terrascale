@@ -46,6 +46,11 @@ single-selector rules may stay on one line.
 (the tokens below) always beat layered ones. */
 @layer reset, base, layout, components, features, utilities;
 
+/* Same-origin MPA transitions are progressive enhancement. */
+@view-transition {
+  navigation: auto;
+}
+
 /* 1. Tokens =============================================================== */
 
 :root {
@@ -222,6 +227,37 @@ single-selector rules may stay on one line.
     text-rendering: optimizeLegibility;
     min-width: 320px;
     -webkit-text-size-adjust: 100%;
+    scrollbar-gutter: stable;
+  }
+
+  html[data-nav-pending]::before {
+    background: var(--ts-accent);
+    content: "";
+    height: 2px;
+    inset: 0 auto auto 0;
+    position: fixed;
+    transform-origin: left center;
+    width: 35%;
+    z-index: var(--ts-z-toast);
+    animation: ts-route-progress 1.2s var(--ts-ease) infinite;
+  }
+
+  @supports (view-transition-name: none) {
+    .ts-sidebar {
+      view-transition-name: ts-sidebar;
+    }
+
+    .ts-page-title {
+      view-transition-name: ts-page-title;
+    }
+
+    ::view-transition-old(root),
+    ::view-transition-new(root),
+    ::view-transition-group(ts-sidebar),
+    ::view-transition-group(ts-page-title) {
+      animation-duration: 160ms;
+      animation-timing-function: ease-out;
+    }
   }
 
   body {
@@ -447,12 +483,14 @@ single-selector rules may stay on one line.
   }
 
   .ts-panel-title {
+    text-wrap: balance;
     font-size: var(--ts-fs-panel-title);
     font-weight: var(--ts-fw-panel-title, 600);
     color: var(--ts-ink);
   }
 
   .ts-panel-subtitle {
+    text-wrap: pretty;
     font-size: var(--ts-fs-body);
     line-height: 1.6;
     color: var(--ts-ink-muted);
@@ -1139,6 +1177,29 @@ single-selector rules may stay on one line.
   dialog.ts-dialog::backdrop {
     background-color: var(--ts-scrim);
     backdrop-filter: blur(2px);
+  }
+
+  @supports (transition-behavior: allow-discrete) {
+    @media (prefers-reduced-motion: no-preference) {
+      dialog.ts-dialog {
+        opacity: 0;
+        transform: translateY(4px);
+        transition: opacity var(--ts-t-fast), transform var(--ts-t-fast),
+          display var(--ts-t-fast) allow-discrete, overlay var(--ts-t-fast) allow-discrete;
+      }
+
+      dialog.ts-dialog[open] {
+        opacity: 1;
+        transform: none;
+      }
+
+      @starting-style {
+        dialog.ts-dialog[open] {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+      }
+    }
   }
 
   .ts-dialog-content {
@@ -2423,7 +2484,23 @@ single-selector rules may stay on one line.
     to { background-position: -200% 0; }
   }
 
+  @keyframes ts-route-progress {
+    0% { transform: scaleX(0.25); }
+    70% { transform: scaleX(1); }
+    100% { transform: scaleX(1); }
+  }
+
   @media (prefers-reduced-motion: reduce) {
+    @view-transition {
+      navigation: none;
+    }
+
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
+      animation: none !important;
+    }
+
     *,
     *::before,
     *::after {
@@ -2431,6 +2508,16 @@ single-selector rules may stay on one line.
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
     }
+
+    html[data-nav-pending]::before {
+      animation: none;
+    }
+  }
+
+  /* Opt-in only: lower-page read-only charts, never forms, menus or dialogs. */
+  .ts-render-deferred {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 16rem;
   }
 
   .ts-hidden {
