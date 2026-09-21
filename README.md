@@ -86,6 +86,22 @@ pass `--ha=false` and `fly scale count 1`, and `fly.toml` disables autostop
 a second machine answers with an empty store, which strands onboarding at
 `/login` and rejects the account that was just created.
 
+## CSS delivery
+
+Edit only `src/TerraScale.Dashboard/wwwroot/css/terrascale.css`. The Docker build
+uses Lightning CSS to minify it and replaces the published copy at the same
+`/css/terrascale.css` URL. Development keeps the readable source; the runtime
+image contains one stylesheet and needs no Node installation. Minifier errors
+or warnings fail the build.
+
+For a publish outside Docker, run `npm ci`, publish the app, then run
+`npm run build:css -- <publish-directory>/wwwroot/css/terrascale.css`.
+`npm run build:css` alone writes a preview to `obj/assets/terrascale.css`.
+
+ASP.NET Core negotiates Brotli or gzip from `Accept-Encoding` for supported
+content types over HTTP and HTTPS, before serving static files. Datastar's
+`text/event-stream` responses are excluded by the default MIME type list.
+
 ## Tests
 
 - `tests/TerraScale.Dashboard.FastTests` — TUnit, the user-blocking critical

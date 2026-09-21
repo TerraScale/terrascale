@@ -13,7 +13,11 @@ if (!security.DemoMode)
     builder.Services.AddSingleton<LiveAuthSessionService>();
     builder.Services.AddSingleton<TerrabaseDataPlane>();
 }
-builder.Services.AddResponseCompression(); // Brotli + Gzip, default MIME types
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    // Keep the default Brotli/Gzip providers and MIME types, which exclude SSE.
+});
 builder.Services.AddSingleton<DashboardStore>();
 builder.Services.AddSingleton<TerraBaseBackend>();
 builder.Services.AddDatastar();
