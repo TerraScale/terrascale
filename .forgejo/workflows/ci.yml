@@ -29,6 +29,23 @@ jobs:
           test "$(git rev-parse HEAD)" = "${FORGEJO_SHA:?event SHA is required}"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
+      - name: Install the pinned Rust formatting and lint components
+        run: |
+          set -euo pipefail
+          if ! rustup --version >/dev/null 2>&1; then
+            curl --fail --location --retry 3 https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain none
+          fi
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy \
+            --no-self-update
+          printf '%s\n' "${HOME}/.cargo/bin" >> "${GITHUB_PATH:?GITHUB_PATH is required}"
+          rustfmt +1.97.1 --version
+          cargo +1.97.1 clippy --version
+
       - name: Verify the pinned contract bundle
         run: |
           set -eu
