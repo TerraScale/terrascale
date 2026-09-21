@@ -56,6 +56,24 @@ jobs:
             src/TerraScale.Auth/TerraScale.Auth.csproj \
             --runtime linux-x64 --nologo
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-msft-1.62.0-chromium
+
+      # Browser-driven hosted-UI tests need Chromium; the Microsoft.Playwright
+      # NuGet package pins 1.62 (the baked image engines are 1.63), so install
+      # the matching engine from the package's bundled node.
+      - name: Install Playwright Chromium
+        run: |
+          set -euo pipefail
+          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
+          playwright_root="${NUGET_PACKAGES}/microsoft.playwright/1.62.0/.playwright"
+          node_bin="${playwright_root}/node/linux-x64/node"
+          test -x "${node_bin}"
+          "${node_bin}" "${playwright_root}/package/cli.js" install chromium
+
       - name: Build ts-auth tests and service
         run: |
           set -euo pipefail

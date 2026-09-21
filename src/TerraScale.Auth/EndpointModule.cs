@@ -1,25 +1,28 @@
+using TerraScale.Endpoints;
+
 namespace TerraScale.Auth;
 
-/// <summary>Every feature slice registers its endpoints here. One file per
-/// feature module; App.Configure delegates to these.</summary>
-public static class EndpointModules
+/// <summary>Composes the endpoint catalog for all feature slices.</summary>
+internal static class EndpointModules
 {
-    /// <summary>Maps all feature endpoints onto the application.</summary>
-    public static void MapAll(WebApplication app)
-    {
-        Users.UserEndpoints.Map(app);
-        OAuth.OAuthEndpoints.Map(app);
-        Passkeys.PasskeyEndpoints.Map(app);
-        Mfa.MfaEndpoints.Map(app);
-        Organizations.OrganizationEndpoints.Map(app);
-        Management.ManagementEndpoints.Map(app);
-        Webhooks.WebhookEndpointsModule.Map(app);
-        Connections.ConnectionEndpoints.Map(app);
-        Scim.ScimEndpoints.Map(app);
-        Billing.BillingEndpoints.Map(app);
-        Templates.JwtTemplateEndpoints.Map(app);
-        Users.PasscodeEndpoints.Map(app);
-        Management.InstanceSettingsEndpoints.Map(app);
-        Admin.AdminPortalEndpoints.Map(app);
-    }
+    internal static IReadOnlyList<Type> All =>
+    [
+        .. Admin.AdminModule.Endpoints,
+        .. Billing.BillingModule.Endpoints,
+        .. Connections.ConnectionsModule.Endpoints,
+        .. Instances.InstancesModule.Endpoints,
+        .. Management.ManagementModule.Endpoints,
+        .. Mfa.MfaModule.Endpoints,
+        .. OAuth.OAuthModule.Endpoints,
+        .. Observability.ObservabilityModule.Endpoints,
+        .. Organizations.OrganizationsModule.Endpoints,
+        .. Passcodes.PasscodesModule.Endpoints,
+        .. Passkeys.PasskeysModule.Endpoints,
+        .. Scim.ScimModule.Endpoints,
+        .. Templates.TemplatesModule.Endpoints,
+        .. Users.UsersModule.Endpoints,
+        .. Webhooks.WebhooksModule.Endpoints,
+    ];
+
+    internal static void MapAll(WebApplication app) => app.MapTerraScaleEndpoints();
 }

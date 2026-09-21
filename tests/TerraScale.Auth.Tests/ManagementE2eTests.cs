@@ -820,7 +820,7 @@ public sealed class ManagementE2eTests
         await SendAsync(http, Request(HttpMethod.Get, $"/v1/{slug}/users/{user.GetProperty("id").GetString()}", secret), HttpStatusCode.OK);
 
         // Every other family answers 403 insufficient_scope — enforced by the uniform
-        // gate, so it holds for modules outside ManagementEndpoints too.
+        // gate, so it holds for modules outside ManagementSupport too.
         foreach (var uri in new[]
                  {
                      $"/v1/{slug}/api-keys", $"/v1/{slug}/organizations", $"/v1/{slug}/webhooks",
@@ -845,7 +845,7 @@ public sealed class ManagementE2eTests
         var http = service.Http;
 
         // Exhaust the per-key window through instance settings — a module outside
-        // ManagementEndpoints. Loop instead of assuming the default 1000 limit.
+        // ManagementSupport. Loop instead of assuming the default 1000 limit.
         var exhausted = false;
         for (var i = 0; i < 2000 && !exhausted; i++)
         {

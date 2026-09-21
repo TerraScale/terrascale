@@ -217,13 +217,13 @@ public sealed class QuotaE2eTests
 
         // A brand-new identity cannot be minted past the ceiling (OIDC and SAML both
         // funnel through FindOrCreateUserAsync).
-        var created = await ConnectionEndpoints.FindOrCreateUserAsync(service.Store, sessions, instance, $"new-{Unique()}@example.com", emailVerified: true, null, default);
+        var created = await ConnectionFlow.FindOrCreateUserAsync(service.Store, sessions, instance, $"new-{Unique()}@example.com", emailVerified: true, null, default);
         await Assert.That(created).IsNull();
 
         // An existing user at quota is returned untouched — the ceiling never locks out
         // current users from SSO sign-in.
         var existingEmail = (await FirstLiveUserAsync(service.Store, instanceId)).Email!;
-        var existing = await ConnectionEndpoints.FindOrCreateUserAsync(service.Store, sessions, instance, existingEmail, emailVerified: true, null, default);
+        var existing = await ConnectionFlow.FindOrCreateUserAsync(service.Store, sessions, instance, existingEmail, emailVerified: true, null, default);
         await Assert.That(existing).IsNotNull();
         await Assert.That(existing!.Email).IsEqualTo(existingEmail);
     }

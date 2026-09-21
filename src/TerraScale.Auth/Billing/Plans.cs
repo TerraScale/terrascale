@@ -45,7 +45,7 @@ public sealed record BillingState(string Plan, string Status, int Quota, Subscri
 
     /// <summary>Live (non-deleted) users of the instance, stopping once <paramref name="cap"/>
     /// is reached — callers only need "at quota?" and a display number, not exact totals.
-    /// Walks the shared users collection by the raw page cursor, same as ManagementEndpoints,
+    /// Walks the shared users collection by the raw page cursor, same as the management user listing,
     /// so foreign-user interleave cannot end the scan early.</summary>
     public static async Task<int> CountUsersAsync(AuthStore store, string instanceId, int cap, CancellationToken ct = default)
     {

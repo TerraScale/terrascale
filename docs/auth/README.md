@@ -34,19 +34,22 @@ Multi-instance: one ts-auth deployment hosts many customer instances; every
 instance gets its own users, keys, orgs, and OAuth clients, isolated by
 instance-scoped keys.
 
+The API surface is split into feature slices. Each route is an `IEndpoint` in its own file; the feature module exposes its endpoint catalog and `EndpointModules` composes those catalogs for `TerraScale.Endpoints`.
+
 ## Layout
 
 ```
 src/TerraScale.Auth/
-  App.cs                  # composition + operator onboarding
-  EndpointModule.cs       # feature slice registry
+  App.cs                  # composition + middleware
+  EndpointModule.cs       # shared TerraScale.Endpoints catalog
   Configuration/          # TS_AUTH_* env options
   Crypto/                 # BLAKE2b, Argon2id, JWT, TOTP, encodings, PHC hashing
   WebAuthn/               # WebAuthn verifier + COSE keys
   Keys/                   # per-instance ES256 key ring, AES-GCM secret box
   Store/                  # AuthStore over the SDK documents API + atomic uniqueness claims
   Users/ OAuth/ Passkeys/ Mfa/ Organizations/ Management/ Webhooks/     # core feature slices
-  Connections/ Scim/ Billing/ Templates/ Admin/                        # SSO, directories, payments, tokens
+  Connections/ Scim/ Billing/ Templates/ Admin/ Instances/ Passcodes/   # one IEndpoint class per route
+  Observability/                                                      # health and metrics endpoints
 tests/TerraScale.Auth.Tests/
   AuthServiceFixture.cs   # boots the real service (real loopback listener) over the real embedded TerraBase engine
   BrowserFixture.cs       # shared headless Chromium for the hosted-UI tests
