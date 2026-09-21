@@ -20,11 +20,6 @@ jobs:
           ref: ${{ forgejo.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Set up the repository Node version
-        uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version-file: .node-version
-          check-latest: false
       - name: Install locked dependencies
         run: npm ci
       - name: Build the VitePress site
