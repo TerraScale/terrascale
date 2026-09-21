@@ -44,15 +44,21 @@ jobs:
         run: dotnet format style TerraScale.DotNet.slnx --verify-no-changes --no-restore
 
       - name: Run TerraScale.DotNet TUnit tests
-        run: >-
-          dotnet run
-          --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj
-          --configuration Release --no-build --no-restore --
-          --minimum-expected-tests 1
+        run: |
+          for framework in net10.0 net11.0; do
+            dotnet run \
+              --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj \
+              --framework "$framework" \
+              --configuration Release --no-build --no-restore -- \
+              --minimum-expected-tests 1
+          done
 
       - name: Run Entity Framework Core TUnit tests
-        run: >-
-          dotnet run
-          --project tests/TerraScale.EntityFrameworkCore.Tests/TerraScale.EntityFrameworkCore.Tests.csproj
-          --configuration Release --no-build --no-restore --
-          --minimum-expected-tests 1
+        run: |
+          for framework in net10.0 net11.0; do
+            dotnet run \
+              --project tests/TerraScale.EntityFrameworkCore.Tests/TerraScale.EntityFrameworkCore.Tests.csproj \
+              --framework "$framework" \
+              --configuration Release --no-build --no-restore -- \
+              --minimum-expected-tests 1
+          done
