@@ -11,7 +11,7 @@ Recorded 2026-09-21 using published Release builds in production demo mode.
 
 ## Findings
 
-Cold mobile LCP decreased 11–19% across the six routes. Cold transfer bytes decreased 22–87%, primarily from compressed assets and removing the duplicate primary-font request. The map SVG alone is 371,938 bytes uncompressed and 7,398 bytes with Brotli (98% smaller).
+Cold mobile LCP decreased 11–19% across the six routes. Cold transfer bytes decreased 22–87%, primarily from compressed assets. The shared font preload advances discovery and reuses the exact stylesheet URL; both measured versions download the primary font once. The map SVG alone is 371,938 bytes uncompressed and 7,398 bytes with Brotli (98% smaller).
 
 Warm navigation is mixed: mobile Usage LCP rose from 372 to 456 ms and desktop Data from 408 to 544 ms. Other warm routes improved or changed slightly. All rows pass the predeclared timing threshold (20% plus 100 ms); this small local sample does not establish a universal warm-load gain. Warm document transfers are slightly larger because of resource hints and navigation metadata. Static resources remain cached.
 
