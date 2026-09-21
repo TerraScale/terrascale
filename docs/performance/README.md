@@ -17,6 +17,13 @@ those generated routes once at startup; development uses original paths for
 `dotnet watch`. No hand-maintained hashes, additional CSS bundle, or request-time
 file hashing is required.
 
+CSS minification must run before build/publish so fingerprint metadata and
+compressed variants describe the final stylesheet. The build manifest is also
+loaded for production-mode `dotnet run` used in CI. SDK development builds emit
+gzip; published builds add Brotli. Development tests check gzip negotiation and
+identity fallback for Brotli-only requests, while deployed browser tests exercise
+the published compression policy.
+
 `DocumentHtml` keeps login, standalone flows and the shell on the same resource
 policy. The primary font is preloaded using the exact URL from the stylesheet so
 it is downloaded once. Font URLs retain the framework's revalidation policy;
