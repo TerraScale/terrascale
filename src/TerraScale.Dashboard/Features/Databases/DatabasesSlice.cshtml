@@ -125,7 +125,7 @@
             </div>
             <div class="ts-stack-sm">
                 <div class="ts-region-map-panel">
-                    <img class="ts-region-map" src="/brand/region-map.svg" alt="" decoding="async" />
+                    <img class="ts-region-map" src="@AssetUrls.Url("/brand/region-map.svg")" alt="" decoding="async" />
                     @foreach (var hub in DatabasesPageModel.RegionHubs)
                     {
                         <span class="ts-region-map-dot @(Model.ProjectRegions.Contains(hub.Code) ? "ts-region-map-dot-selected" : null)"

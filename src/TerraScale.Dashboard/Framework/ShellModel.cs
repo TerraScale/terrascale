@@ -8,4 +8,7 @@ public sealed record ShellModel(
     string AccountEmail,
     string AccountInitials,
     int UnreadNotifications,
-    string? PageTitle);
+    string? PageTitle)
+{
+    public bool AllowPrefetch { get; init; }
+}

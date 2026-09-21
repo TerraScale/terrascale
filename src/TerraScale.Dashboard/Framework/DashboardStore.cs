@@ -39,6 +39,8 @@ public sealed partial class DashboardStore
 
     internal AccountWorld DemoWorld => _demoWorld;
 
+    internal bool AllowPrefetch => !ExternalIdentityActive.Value;
+
     /// <summary>Drops a session token (logout). The demo session stays.</summary>
     public void EndSession(string? token)
     {

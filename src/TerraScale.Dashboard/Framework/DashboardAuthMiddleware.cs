@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace TerraScale.Dashboard;
 
 /// <summary>Session cookie guard. Public paths pass through; everything else
@@ -22,6 +24,9 @@ public sealed class DashboardAuthMiddleware(
 
     public async Task InvokeAsync(HttpContext context)
     {
+        var authStarted = Stopwatch.GetTimestamp();
+        void ReportAuthenticationTiming() => context.Response.Headers.Append("Server-Timing",
+            FormattableString.Invariant($"auth;dur={Stopwatch.GetElapsedTime(authStarted).TotalMilliseconds:0.##}"));
         var path = context.Request.Path.Value ?? "/";
         var token = context.Request.Cookies[SessionCookie];
         var stateConflict = false;
@@ -82,6 +87,7 @@ public sealed class DashboardAuthMiddleware(
 
             if (isPublic)
             {
+                ReportAuthenticationTiming();
                 await next(context);
                 return;
             }
@@ -104,6 +110,7 @@ public sealed class DashboardAuthMiddleware(
                 return;
             }
 
+            ReportAuthenticationTiming();
             await next(context);
         }
         catch (DashboardStateConflictException) when (!context.Response.HasStarted)

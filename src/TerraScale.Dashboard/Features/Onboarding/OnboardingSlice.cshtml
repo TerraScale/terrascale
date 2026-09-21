@@ -28,7 +28,7 @@
         <header class="ts-onboarding-header @(Model.Registration ? "ts-onboarding-header-brand" : null)">
             @if (Model.Registration)
             {
-                <img class="ts-brand-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async" />
+                <img class="ts-brand-logo" src="@AssetUrls.Url("/brand/logo-terrascale-blue.svg")" alt="TerraScale" decoding="async" />
                 <h1 class="ts-sr-only">Activate your TerraScale account</h1>
             }
             else
@@ -356,7 +356,7 @@
                     <div class="ts-field">
                         <span class="ts-label" id="regionLabel">Primary regions</span>
                         <div class="ts-onboarding-region-map" role="radiogroup" aria-labelledby="regionLabel">
-                            <img class="ts-onboarding-region-dots" src="/brand/region-map.svg" alt="" decoding="async" />
+                            <img class="ts-onboarding-region-dots" src="@AssetUrls.Url("/brand/region-map.svg")" alt="" decoding="async" />
                             @foreach (var region in Model.Regions)
                             {
                                 var left = (region.X / RegionMap.Width * 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);

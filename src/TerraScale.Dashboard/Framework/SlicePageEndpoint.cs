@@ -1,5 +1,6 @@
 using RazorSlices;
 using TerraScale.Endpoints;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard;
 
@@ -37,8 +38,16 @@ public abstract class SlicePageEndpoint<TSliceProxy, TModel>(DashboardStore stor
         Tags("Pages");
     }
 
-    public sealed override Task<IResult> HandleAsync(CancellationToken ct) =>
-        Task.FromResult<IResult>(TSliceProxy.CreateSlice(Load()));
+    public sealed override Task<IResult> HandleAsync(CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var result = TSliceProxy.CreateSlice(Load());
+        stopwatch.Stop();
+        HttpContext.Response.Headers.Append(
+            "Server-Timing",
+            FormattableString.Invariant($"model;dur={stopwatch.Elapsed.TotalMilliseconds:0.##}"));
+        return Task.FromResult<IResult>(new TimedPageResult(result));
+    }
 
     private string DisplayName => GetType().Name.EndsWith("PageEndpoint", StringComparison.Ordinal)
         ? GetType().Name[..^"PageEndpoint".Length]
