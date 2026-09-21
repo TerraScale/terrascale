@@ -1,0 +1,109 @@
+name: ts-benchmark CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: Build and smoke the benchmarks
+    runs-on: terrascale-builder
+    timeout-minutes: 20
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Clone sibling sources (TerraBase subject + TerraScale SDK)
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The benchmarks measure the sibling terrabase checkout through
+          # terrabase/Directory.Build.props (TerraBaseRepo); ts-dotnet supplies
+          # the terrabase-sdk engine lane when present. The job token cannot
+          # read sibling org repos, so the clones use the org read token.
+          parent="$(pwd)/.."
+          git clone --depth 1 "https://oauth2:${ORG_READ_TOKEN:?org read token is required}@git.terrascale.tech/TerraScale/terrabase.git" "${parent}/terrabase"
+          git clone --depth 1 "https://oauth2:${ORG_READ_TOKEN}@git.terrascale.tech/TerraScale/ts-dotnet.git" "${parent}/ts-dotnet"
+
+      - name: Build the benchmark projects
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet build terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
+            --configuration Release \
+            --nologo
+          dotnet build terrabase/TerraBase.FullTextBenchmarks/TerraBase.FullTextBenchmarks.csproj \
+            --configuration Release \
+            --nologo
+
+      - name: Verify benchmark formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet format style terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
+            --verify-no-changes \
+            --no-restore
+          dotnet format style terrabase/TerraBase.FullTextBenchmarks/TerraBase.FullTextBenchmarks.csproj \
+            --verify-no-changes \
+            --no-restore
+
+      - name: Run the bounded point-read receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt='artifacts/ci/benchmark/receipt.json'
+          rm -rf -- artifacts/ci/benchmark
+          dotnet run \
+            --project terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
+            --configuration Release \
+            --framework net11.0 \
+            --no-build \
+            -- \
+            --storage memory \
+            --workload point-read \
+            --temperature warm \
+            --dataset-size 5 \
+            --payload-size 64 \
+            --samples 5 \
+            --warmup 1 \
+            --operations 5 \
+            --output artifacts/ci/benchmark
+          test -s "${receipt}"
+          jq -e '
+            .status == "complete" and
+            .configuration.storage == 0 and
+            .configuration.workloads == [0] and
+            .configuration.temperatures == [0] and
+            .configuration.datasetSize == 5 and
+            .configuration.payloadSize == 64 and
+            .configuration.samples == 5 and
+            .configuration.warmupOperations == 1 and
+            .configuration.operationsPerSample == 5 and
+            .configuration.concurrency == 1 and
+            .environment.buildConfiguration == "Release" and
+            (.environment.gitCommit | type == "string" and test("^[0-9a-f]{40}$")) and
+            (.environment.artifactSha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+            (.workloads | length) == 1 and
+            .workloads[0].storage == "Memory" and
+            .workloads[0].workload == "PointRead" and
+            .workloads[0].temperature == "Warm" and
+            .workloads[0].status == "complete" and
+            (.workloads[0].samples | length) == 5
+          ' "${receipt}" >/dev/null
+
+      - name: Upload the bounded benchmark receipt
+        uses: https://data.forgejo.org/actions/upload-artifact@v7.0.1
+        with:
+          name: ts-benchmark-bounded-${{ forgejo.sha }}
+          path: artifacts/ci/benchmark
+          if-no-files-found: error
+          retention-days: 7
