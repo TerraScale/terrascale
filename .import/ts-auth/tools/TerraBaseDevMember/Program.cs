@@ -20,24 +20,39 @@ public static class Program
 {
     public static async Task Main(string[] args)
     {
-        var url = Environment.GetEnvironmentVariable("TERRABASE_HOST_URL") ?? "http://127.0.0.1:8420";
         var apiKey = Environment.GetEnvironmentVariable("TERRABASE_DEV_API_KEY") ?? "dev";
 
-        await using var app = TerraBaseHost.Create(url, builder =>
-        {
-            builder.Services.AddSingleton<IStartupFilter>(new DevKeyStartupFilter(apiKey));
-            builder.Services.AddSingleton<ITenantAuthorizationHook, AllowAllAuthorizationHook>();
-            SetDefault(builder, "TERRABASE_REGION", "GRU");
-            SetDefault(builder, "TERRABASE_DATABASE_ROUTE", "ts-auth-dev");
-            SetDefault(builder, "TERRABASE_DATABASE_TENANT", "ts-auth");
-            SetDefault(builder, "TERRABASE_DATABASE_ULID", "01ARZ3NDEKTSV4RRFFQ69G5FAV");
-            SetDefault(builder, "TERRABASE_DATABASE_MODE", "explicit");
-            SetDefault(builder, "TERRABASE_DATABASE_PATH", Path.Combine(Path.GetTempPath(), "ts-auth-dev"));
-            SetDefault(builder, "TERRABASE_DATABASE_HOME_REGION", "GRU");
-            SetDefault(builder, "TERRABASE_DATABASE_SELECTED_REGIONS", "GRU");
-            SetDefault(builder, "TERRABASE_ALLOW_SCHEMALESS", "true");
-        });
+        await using var app = MemberLaunchEnvironment.IsMemberEnabled()
+            ? LaunchMember(apiKey)
+            : TerraBaseHost.Create(
+                Environment.GetEnvironmentVariable("TERRABASE_HOST_URL") ?? "http://127.0.0.1:8420",
+                builder => Configure(builder, apiKey));
         await app.RunAsync();
+    }
+
+    private static WebApplication LaunchMember(string apiKey)
+    {
+        var launch = MemberLaunchEnvironment.FromEnvironment();
+        return TerraBaseHost.Create(
+            launch.PeerUrl,
+            builder => Configure(builder, apiKey),
+            launch.PeerOptions,
+            launch.ObservabilityUrl);
+    }
+
+    private static void Configure(WebApplicationBuilder builder, string apiKey)
+    {
+        builder.Services.AddSingleton<IStartupFilter>(new DevKeyStartupFilter(apiKey));
+        builder.Services.AddSingleton<ITenantAuthorizationHook, AllowAllAuthorizationHook>();
+        SetDefault(builder, "TERRABASE_REGION", "GRU");
+        SetDefault(builder, "TERRABASE_DATABASE_ROUTE", "ts-auth-dev");
+        SetDefault(builder, "TERRABASE_DATABASE_TENANT", "ts-auth");
+        SetDefault(builder, "TERRABASE_DATABASE_ULID", "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        SetDefault(builder, "TERRABASE_DATABASE_MODE", "explicit");
+        SetDefault(builder, "TERRABASE_DATABASE_PATH", Path.Combine(Path.GetTempPath(), "ts-auth-dev"));
+        SetDefault(builder, "TERRABASE_DATABASE_HOME_REGION", "GRU");
+        SetDefault(builder, "TERRABASE_DATABASE_SELECTED_REGIONS", "GRU");
+        SetDefault(builder, "TERRABASE_ALLOW_SCHEMALESS", "true");
     }
 
     /// <summary>Configuration[key] = value unless the operator already set the env var.</summary>
@@ -56,6 +71,16 @@ public static class Program
         {
             application.Use(async (context, continuation) =>
             {
+                // The member listener is already admitted by its mTLS peer
+                // boundary. Its health and MagicOnion traffic must not carry
+                // a public project key; only the loopback data-plane listener
+                // uses this local development credential.
+                if (context.Connection.ClientCertificate is not null)
+                {
+                    await continuation().ConfigureAwait(false);
+                    return;
+                }
+
                 var header = context.Request.Headers.Authorization.ToString();
                 var presented = header.StartsWith("Bearer ", StringComparison.Ordinal) ? header["Bearer ".Length..] : string.Empty;
                 if (!CryptographicOperations.FixedTimeEquals(
