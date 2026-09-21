@@ -317,7 +317,7 @@
                             <input type="hidden" name="tab" value="backups" />
                             <label class="ts-backups-field-label">
                                 <span>@t("Database")</span>
-                                <select class="ts-select" name="database" data-on-change="this.form.requestSubmit()">
+                                <select class="ts-select" name="database" data-on:change="evt.target.form.requestSubmit()">
                                     @foreach (var database in Model.Databases)
                                     {
                                         <option value="@database.Id" @(database.Id == Model.SelectedDatabaseId ? "selected" : null)>@database.Name</option>
@@ -377,7 +377,7 @@
                                 <p class="ts-panel-subtitle">@t("Review a confirmation before a backup job starts")</p>
                             </div>
                             <span class="ts-panel-head-actions">
-                                <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-on-click="document.getElementById('backup-confirm').showModal()">@Icons.Play(16) @t("Review backup")</button>
+                                <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-on:click="document.getElementById('backup-confirm').showModal()">@Icons.Play(16) @t("Review backup")</button>
                             </span>
                         </div>
                         <div class="ts-padded">
@@ -484,7 +484,7 @@
                                                     <td class="ts-meta">@point.FilesToRestore.ToString("N0")</td>
                                                     <td class="ts-meta">@point.CreatedLabel</td>
                                                     <td>
-                                                        <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on-click="document.getElementById('restore-@point.BackupId').showModal()">@Icons.RotateCcw(16) @t("Restore side-by-side")</button>
+                                                        <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on:click="document.getElementById('restore-@point.BackupId').showModal()">@Icons.RotateCcw(16) @t("Restore side-by-side")</button>
                                                     </td>
                                                 </tr>
                                             }
@@ -597,7 +597,7 @@
                             <input class="ts-input" id="confirmProjectName" name="confirmName" autocomplete="off" spellcheck="false" />
                         </label>
                         <div>
-                            <button type="button" class="ts-btn ts-btn-destructive ts-btn-lg" data-on-click="document.getElementById('delete-project-confirm').showModal()">@Icons.Trash2(16) @t("Permanently delete project")</button>
+                            <button type="button" class="ts-btn ts-btn-destructive ts-btn-lg" data-on:click="document.getElementById('delete-project-confirm').showModal()">@Icons.Trash2(16) @t("Permanently delete project")</button>
                         </div>
                     </form>
                 }
@@ -634,7 +634,7 @@
                     <div class="ts-detail-row"><span class="ts-detail-label">@t("Expires (UTC)")</span><span class="ts-detail-value">@Model.BackupPlanExpiresLabel</span></div>
                 </div>
                 <div class="ts-dialog-footer">
-                    <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on-click="document.getElementById('backup-confirm').close()">@t("Cancel")</button>
+                    <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on:click="document.getElementById('backup-confirm').close()">@t("Cancel")</button>
                     <form method="post" action="/api/v1/dashboard/settings/backup-now">
                         <input type="hidden" name="databaseId" value="@Model.SelectedDatabaseId" />
                         <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">@Icons.Play(16) @t("Confirm and run backup")</button>
@@ -668,7 +668,7 @@
                         </div>
                     </div>
                     <div class="ts-dialog-footer">
-                        <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on-click="document.getElementById('restore-@point.BackupId').close()">@t("Cancel")</button>
+                        <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on:click="document.getElementById('restore-@point.BackupId').close()">@t("Cancel")</button>
                         <form method="post" action="/api/v1/dashboard/settings/restore">
                             <input type="hidden" name="generation" value="@point.BackupId" />
                             <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">@Icons.RotateCcw(16) @t("Restore into new database")</button>
@@ -694,7 +694,7 @@
                     <span class="ts-alert-body">@t("Confirm deletion of") <strong>@Model.ProjectName</strong> @t("and all associated databases, authentication data, and metadata.")</span>
                 </div>
                 <div class="ts-dialog-footer">
-                    <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on-click="document.getElementById('delete-project-confirm').close()">@t("Cancel")</button>
+                    <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on:click="document.getElementById('delete-project-confirm').close()">@t("Cancel")</button>
                     <button type="submit" form="delete-project-form" class="ts-btn ts-btn-destructive ts-btn-lg">@t("Delete project")</button>
                 </div>
             </div>

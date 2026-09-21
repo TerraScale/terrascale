@@ -138,7 +138,7 @@
                 <p class="ts-panel-subtitle">Claims returned by auth</p>
             </div>
             <div class="ts-padded">
-                <button type="button" class="ts-btn ts-btn-outline" aria-haspopup="dialog" data-on-click="document.getElementById('access-session-dialog').showModal()">
+                <button type="button" class="ts-btn ts-btn-outline" aria-haspopup="dialog" data-on:click="document.getElementById('access-session-dialog').showModal()">
                     @Icons.ShieldCheck(16)
                     View session access
                 </button>
@@ -394,7 +394,7 @@
                                                     </td>
                                                     <td>
                                                         <form method="post" action="/api/v1/access/members/@member.UserId/role">
-                                                            <select class="ts-select" aria-label="Role for @member.Email" name="role" data-on-change="evt.target.closest('form').requestSubmit()">
+                                                            <select class="ts-select" aria-label="Role for @member.Email" name="role" data-on:change="evt.target.closest('form').requestSubmit()">
                                                                 @foreach (var option in new[] { "owner", "member", "viewer" })
                                                                 {
                                                                     <option value="@option" selected="@(member.Role == option ? "selected" : null)">@(option == "owner" ? "Owner" : option == "member" ? "Member" : "Viewer")</option>

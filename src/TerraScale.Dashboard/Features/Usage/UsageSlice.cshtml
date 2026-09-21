@@ -186,7 +186,7 @@
                 </div>
             }
             <div class="ts-usage-controls-end">
-                <select class="ts-select" aria-label="Usage history period" data-on-change="window.location.assign('/usage?range=' + evt.target.value)">
+                <select class="ts-select" aria-label="Usage history period" data-on:change="window.location.assign('/usage?range=' + evt.target.value)">
                     @foreach (var option in Model.HistoryRanges)
                     {
                         <option value="@option.Value" selected="@(option.Selected ? "selected" : null)">@option.Label</option>
@@ -370,7 +370,7 @@
                             <option value="@plan.PlanId">@plan.Label</option>
                         }
                     </select>
-                    <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-on-click="window.location.assign('/checkout/usage_' + document.getElementById('billing-plan').value)">
+                    <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-on:click="window.location.assign('/checkout/usage_' + document.getElementById('billing-plan').value)">
                         @Icons.CreditCard(16) Subscribe
                     </button>
                     <a class="ts-btn ts-btn-outline ts-btn-lg" href="/billing/portal/usage_portal">@Icons.ExternalLink(16) Payment methods</a>

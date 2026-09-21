@@ -112,20 +112,20 @@
                     <div class="ts-field">
                         <label class="ts-label" for="password">Password</label>
                         <div class="ts-input-group">
-                            <input class="ts-input" type="password" id="password" name="password" placeholder="Enter your password" autocomplete="new-password" required data-attr-type="passwordVisible ? 'text' : 'password'" />
-                            <button class="ts-input-adornment" type="button" aria-label="Show password" aria-pressed="false" data-attr-aria-pressed="passwordVisible" data-attr-aria-label="passwordVisible ? 'Hide password' : 'Show password'" data-on-click="passwordVisible = !passwordVisible">
-                                <span data-show="!passwordVisible">@Icons.Eye(18)</span>
-                                <span data-show="passwordVisible">@Icons.EyeOff(18)</span>
+                            <input class="ts-input" type="password" id="password" name="password" placeholder="Enter your password" autocomplete="new-password" required data-attr:type="$passwordVisible ? 'text' : 'password'" />
+                            <button class="ts-input-adornment" type="button" aria-label="Show password" aria-pressed="false" data-attr:aria-pressed="$passwordVisible ? 'true' : 'false'" data-attr:aria-label="$passwordVisible ? 'Hide password' : 'Show password'" data-on:click="$passwordVisible = !$passwordVisible">
+                                <span data-show="!$passwordVisible">@Icons.Eye(18)</span>
+                                <span data-show="$passwordVisible">@Icons.EyeOff(18)</span>
                             </button>
                         </div>
                     </div>
                     <div class="ts-field">
                         <label class="ts-label" for="confirmPassword">Confirm password</label>
                         <div class="ts-input-group">
-                            <input class="ts-input" type="password" id="confirmPassword" name="confirmPassword" autocomplete="new-password" required data-attr-type="confirmPasswordVisible ? 'text' : 'password'" />
-                            <button class="ts-input-adornment" type="button" aria-label="Show password" aria-pressed="false" data-attr-aria-pressed="confirmPasswordVisible" data-attr-aria-label="confirmPasswordVisible ? 'Hide password' : 'Show password'" data-on-click="confirmPasswordVisible = !confirmPasswordVisible">
-                                <span data-show="!confirmPasswordVisible">@Icons.Eye(18)</span>
-                                <span data-show="confirmPasswordVisible">@Icons.EyeOff(18)</span>
+                            <input class="ts-input" type="password" id="confirmPassword" name="confirmPassword" autocomplete="new-password" required data-attr:type="$confirmPasswordVisible ? 'text' : 'password'" />
+                            <button class="ts-input-adornment" type="button" aria-label="Show password" aria-pressed="false" data-attr:aria-pressed="$confirmPasswordVisible ? 'true' : 'false'" data-attr:aria-label="$confirmPasswordVisible ? 'Hide password' : 'Show password'" data-on:click="$confirmPasswordVisible = !$confirmPasswordVisible">
+                                <span data-show="!$confirmPasswordVisible">@Icons.Eye(18)</span>
+                                <span data-show="$confirmPasswordVisible">@Icons.EyeOff(18)</span>
                             </button>
                         </div>
                     </div>
@@ -218,8 +218,8 @@
                     <div class="ts-onboarding-step-actions">
                         <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.CreditCard(20)</span>
                         <span class="ts-onboarding-interval ts-onboarding-interval-header" role="group" aria-label="Billing interval">
-                            <button type="button" class="ts-onboarding-interval-option" aria-pressed="true" data-attr-aria-pressed="interval === 'monthly'" data-on-click="interval = 'monthly'">Monthly</button>
-                            <button type="button" class="ts-onboarding-interval-option" aria-pressed="false" data-attr-aria-pressed="interval === 'annual'" data-on-click="interval = 'annual'">Annual <span class="ts-onboarding-interval-badge">2 months free</span></button>
+                            <button type="button" class="ts-onboarding-interval-option" aria-pressed="true" data-attr:aria-pressed="$interval === 'monthly' ? 'true' : 'false'" data-on:click="$interval = 'monthly'">Monthly</button>
+                            <button type="button" class="ts-onboarding-interval-option" aria-pressed="false" data-attr:aria-pressed="$interval === 'annual' ? 'true' : 'false'" data-on:click="$interval = 'annual'">Annual <span class="ts-onboarding-interval-badge">2 months free</span></button>
                         </span>
                     </div>
                 </header>
@@ -240,17 +240,17 @@
                         <div class="ts-onboarding-plans" role="radiogroup" aria-label="Billing plan">
                             @foreach (var plan in Model.Plans)
                             {
-                                <button type="button" role="radio" class="ts-onboarding-plan ts-onboarding-plan-@plan.Key" aria-checked="@(plan.Key == "starter" ? "true" : "false")" data-attr-aria-checked="plan === '@plan.Key'" data-on-click="plan = '@plan.Key'">
+                                <button type="button" role="radio" class="ts-onboarding-plan ts-onboarding-plan-@plan.Key" aria-checked="@(plan.Key == "starter" ? "true" : "false")" data-attr:aria-checked="$plan === '@plan.Key' ? 'true' : 'false'" data-on:click="$plan = '@plan.Key'">
                                     <span class="ts-onboarding-plan-header">
                                         <span class="ts-onboarding-plan-name">@plan.Name</span>
                                         <span class="ts-onboarding-plan-check" aria-hidden="true">@Icons.Check(13)</span>
                                     </span>
                                     <span class="ts-onboarding-plan-description">@plan.Description</span>
-                                    <span class="ts-onboarding-plan-price-row" data-show="interval === 'monthly'">
+                                    <span class="ts-onboarding-plan-price-row" data-show="$interval === 'monthly'">
                                         <span class="ts-onboarding-plan-strike" aria-hidden="true">$@(plan.MonthlyUsd.ToString("0"))</span>
                                         <span class="ts-onboarding-plan-per"> / month</span>
                                     </span>
-                                    <span class="ts-onboarding-plan-price-row" data-show="interval === 'annual'">
+                                    <span class="ts-onboarding-plan-price-row" data-show="$interval === 'annual'">
                                         <span class="ts-onboarding-plan-strike" aria-hidden="true">$@(plan.AnnualUsd.ToString("0"))</span>
                                         <span class="ts-onboarding-plan-per"> / year</span>
                                     </span>
@@ -271,8 +271,8 @@
                         <div class="ts-onboarding-interval-switch">
                             <span class="ts-onboarding-interval-switch-label">Billing interval</span>
                             <span class="ts-onboarding-interval" role="group" aria-label="Billing interval">
-                                <button type="button" class="ts-onboarding-interval-option" aria-pressed="true" data-attr-aria-pressed="interval === 'monthly'" data-on-click="interval = 'monthly'">Monthly</button>
-                                <button type="button" class="ts-onboarding-interval-option" aria-pressed="false" data-attr-aria-pressed="interval === 'annual'" data-on-click="interval = 'annual'">Annual <span class="ts-onboarding-interval-badge">2 months free</span></button>
+                                <button type="button" class="ts-onboarding-interval-option" aria-pressed="true" data-attr:aria-pressed="$interval === 'monthly' ? 'true' : 'false'" data-on:click="$interval = 'monthly'">Monthly</button>
+                                <button type="button" class="ts-onboarding-interval-option" aria-pressed="false" data-attr:aria-pressed="$interval === 'annual' ? 'true' : 'false'" data-on:click="$interval = 'annual'">Annual <span class="ts-onboarding-interval-badge">2 months free</span></button>
                             </span>
                         </div>
                         <p class="ts-onboarding-provider-notice">No card today? Continue on the Free plan with X operations per month. Add a payment method now and your first month is free.</p>

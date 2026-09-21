@@ -166,7 +166,7 @@
                                             <input type="hidden" name="name" value="@credential.Name" />
                                             <button type="submit" class="ts-btn ts-btn-ghost ts-btn-lg" @(revoked ? "disabled" : null)>@Icons.RotateCw(14) Rotate</button>
                                         </form>
-                                        <button type="button" class="ts-btn ts-btn-destructive ts-btn-lg" @(revoked ? "disabled" : null) data-on-click="document.querySelector('#revoke-@credential.Kind-@credential.Id').showModal()">Revoke</button>
+                                        <button type="button" class="ts-btn ts-btn-destructive ts-btn-lg" @(revoked ? "disabled" : null) data-on:click="document.querySelector('#revoke-@credential.Kind-@credential.Id').showModal()">Revoke</button>
                                     </div>
                                 </td>
                             </tr>
@@ -181,7 +181,7 @@
                                         <span class="ts-alert-body">Revoking stops the credential from authenticating immediately. Consumers still using it will begin failing, and the credential cannot be restored.</span>
                                     </div>
                                     <div class="ts-dialog-footer">
-                                        <button type="button" class="ts-btn ts-btn-ghost ts-btn-lg" data-on-click="document.querySelector('#revoke-@credential.Kind-@credential.Id').close()">Cancel</button>
+                                        <button type="button" class="ts-btn ts-btn-ghost ts-btn-lg" data-on:click="document.querySelector('#revoke-@credential.Kind-@credential.Id').close()">Cancel</button>
                                         <form method="post" action="/api/v1/dashboard/credentials/revoke">
                                             <input type="hidden" name="kind" value="@credential.Kind" />
                                             <input type="hidden" name="id" value="@credential.Id" />
