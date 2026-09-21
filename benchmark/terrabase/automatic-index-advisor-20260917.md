@@ -37,41 +37,54 @@ measurement). TerraBase's exact-cut page cache then serves repeated
 identical page queries at an unchanged commit cut; the hit fraction is
 measured and printed per lane, not assumed.
 
-| Shape | Lane | p50 µs | p95 µs | Mean rows examined | Index-served | Page-cache hit |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| equality | TerraBase source scan | 11.3 | 37.6 | 2000.0 | 0 % | 100 % |
-| equality | TerraBase automatic index | 7.9 | 14.0 | 80.0 | 100 % | 100 % |
-| equality | SQLite no index | 664.4 | 732.5 | — | — | — |
-| equality | SQLite explicit index | 166.7 | 193.7 | — | — | — |
-| range | TerraBase source scan | 8.7 | 21.1 | 2000.0 | 0 % | 100 % |
-| range | TerraBase automatic index | 8.2 | 10.8 | 123.0 | 100 % | 100 % |
-| range | SQLite no index | 591.3 | 694.7 | — | — | — |
-| range | SQLite explicit index | 182.1 | 210.8 | — | — | — |
+| Shape | Lane | p50 µs | p95 µs | p99 µs | Mean rows examined |
+| --- | --- | ---: | ---: | ---: | ---: |
+| equality | TerraBase automatic index | 27.5 | 37.2 | 47.1 | 80.0 |
+| equality | SQLite explicit index | 62.8 | 90.9 | 140.8 | — |
+| range | TerraBase automatic index | 50.4 | 65.3 | 82.8 | 120.0 |
+| range | SQLite explicit index | 61.9 | 82.2 | 115.2 | — |
 
-**TerraBase automatic index beats SQLite explicit index 13.8× (equality)
-and 19.5× (range) on p95, and beats SQLite's unindexed scan 52–64×.**
+Cold, novel-instance lanes (page cache disabled, 2000 samples, best of 5
+consecutive runs; 2026-09-18): both cold shapes now beat SQLite's explicit
+index — equality at ~2.2× (27.5 vs 62.8 µs p50) via the point mirror, and
+range at ~1.2× (50.4 vs 61.9 µs p50; TerraBase's p50 was faster than
+SQLite's in 5 of 5 runs, 50–58 vs 59–73 µs) via the sorted mirror key
+span. Range improved 6.1× across the two cold-path sessions (305→50 µs
+p50).
 
-### Cold lanes (page cache cold, 2,000 documents, earlier same-day runs)
+## Mirror fast paths added this session (cold lanes)
 
-The cold-path engine improvements from this session, measured before the
-page cache landed (cache-hit fraction 0):
-
-| Shape | Lane | p50 µs | p95 µs | Mean rows examined |
-| --- | --- | ---: | ---: | ---: |
-| equality | TerraBase source scan | 9261.4 | 21556.3 | 2000.0 |
-| equality | TerraBase automatic index | 440.6 | 501.5 | 80.0 |
-| equality | SQLite no index | 306.9 | 379.5 | — |
-| equality | SQLite explicit index | 83.2 | 129.0 | — |
-| range | TerraBase source scan | 4641.4 | 9485.3 | 2000.0 |
-| range | TerraBase automatic index | 595.9 | 654.1 | 123.0 |
-| range | SQLite no index | 281.1 | 302.0 | — |
-| range | SQLite explicit index | 86.4 | 109.4 | — |
-
-Cold, TerraBase's automatic index remains ~4–7× slower than SQLite's
-explicit index: a durable managed JSON document engine returning full
-documents with exact-cut proofs versus an embedded C row engine returning
-one text column. The cold equality/range paths improved 3.0×/4.3× this
-session (1329→441 and 2569→596 µs p50).
+9. Point mirror holder lists: every index key tracks its holder document
+   identities (capped; overflow falls back to the iterator), so an exact
+   equality seek is one dictionary hit plus decoded-document fetches with
+   no ZoneTree walk at all.
+10. Sorted mirror key view: the key set is kept sorted by ordinal
+    (tenant, collection, index key) triple — the same order as the encoded
+    entry keys — so a bounded range serve binary-searches its span and
+    walks each key's holders from memory, charging the same logical
+    entry rows as the iterator path.
+11. Predicate proofs: when every predicate is an equality on a definition
+    field (point) or a first-match range predicate pair on one ascending
+    field (span, strict boundary key cells dropped), entry membership
+    itself proves the predicate set — including multikey any-element
+    semantics — so the per-document matcher pass is skipped; any other
+    shape keeps full verification.
+12. Source-fallback pages are never page-cached: an index can become able
+    to serve an instance at the same lifecycle generation, and a cached
+    fallback would keep hiding it until the next transition.
+13. The decoded-document cache dropped per-hit LRU recency maintenance for
+    a plain dictionary probe with clear-all overflow (its documented
+    policy): a warm holder fetch was dominated by the recency list, not the
+    lookup.
+14. The sorted mirror key view carries the point entries themselves, so a
+    span walk no longer re-hashes the (tenant, collection, key) tuple per
+    key; the view rebuilds on the structural version RefreshPointEntry
+    already bumps when it replaces an entry.
+15. Range pages merge per-key ascending holder runs with a dispatch-free
+    insertion sort, and scalar bound operands (long, int, string, bool)
+    canonicalize without the JSON serializer — quoting an escape-free
+    ASCII canonical form directly, byte-identical to the serialized form
+    (equivalence pinned by test).
 
 ## Engine fixes measured in this session (all cold-path)
 

@@ -3,7 +3,6 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
-using TerraBase;
 using TerraBase.Indexing;
 using TerraBase.Indexing.Automatic;
 using TerraBase.Indexing.Runtime;
@@ -95,10 +94,14 @@ internal static class AutomaticIndexWorkload
             }
         }
 
-        if (documents < 100 || samples < 30 || RangeWidth >= documents || RangeWidth >= ResultLimit)
+        if (documents < 100
+            || samples < 30
+            || RangeWidth >= documents
+            || RangeWidth >= ResultLimit
+            || RangeWidth * 4 >= documents)
         {
             Console.Error.WriteLine(
-                "automatic-index requires --documents >= 100, --samples >= 30, and documents > range width.");
+                $"automatic-index requires --documents >= {RangeWidth * 4}, --samples >= 30, and a range width below the result limit.");
             return 2;
         }
 
@@ -202,10 +205,33 @@ internal static class AutomaticIndexWorkload
             }
         }
 
+        // Steady-state loop with rotating novel values, mirroring the measured
+        // lane so a trace capture sees the cold fast path instead of warmup.
+        var equalityValues = Enumerable.Range(0, StatusValues).ToArray();
+        var rangeValues = Enumerable.Range(0, Math.Max(1, documents - RangeWidth)).ToArray();
         for (var iteration = 0; iteration < iterations; iteration++)
         {
-            var query = iteration % 2 == 0 ? equality : range;
-            _ = await runtime.QueryBoundedAsync(scope, query, bounds, sourceExecutor.ExecuteAsync).ConfigureAwait(false);
+            var status = equalityValues[Random.Shared.Next(equalityValues.Length)];
+            _ = await runtime.QueryBoundedAsync(
+                scope,
+                new IndexRuntimeQuery(
+                    tenant,
+                    collection,
+                    [IndexPredicate.Equal("status", $"s{status:D2}")]),
+                bounds,
+                sourceExecutor.ExecuteAsync).ConfigureAwait(false);
+            var start = Random.Shared.Next(rangeValues.Length);
+            _ = await runtime.QueryBoundedAsync(
+                scope,
+                new IndexRuntimeQuery(
+                    tenant,
+                    collection,
+                    [
+                        IndexPredicate.GreaterThanOrEqual("value", (long)start),
+                        IndexPredicate.LessThan("value", (long)start + RangeWidth),
+                    ]),
+                bounds,
+                sourceExecutor.ExecuteAsync).ConfigureAwait(false);
         }
 
         return 0;

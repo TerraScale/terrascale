@@ -7,8 +7,8 @@ operations, one operation per sample, concurrency 1, and seed 1337:
 
 | Caller | Receipt | Raw samples | Artifact identity |
 | --- | --- | --- | --- |
-| `forced-disk-segment` | [`compression-real-receipt.json`](../../.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-disk-output/compression-real-receipt.json) | [`compression-real-raw-samples.jsonl`](../../.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-disk-output/compression-real-raw-samples.jsonl) | runner `c52af7495a4211a4793f96d73f566b93019e421005f047b7e9cea2285a240e03`; ZoneTree `de0367e9eb2dc4048dd2987a15ceda66ff7acffacfbb8b888ea3e75e5b8dfd65` |
-| `live-backup-record-batch` | [`compression-real-receipt.json`](../../.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-live-backup-output/compression-real-receipt.json) | [`compression-real-raw-samples.jsonl`](../../.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-live-backup-output/compression-real-raw-samples.jsonl) | runner `c52af7495a4211a4793f96d73f566b93019e421005f047b7e9cea2285a240e03`; ZoneTree `de0367e9eb2dc4048dd2987a15ceda66ff7acffacfbb8b888ea3e75e5b8dfd65` |
+| `forced-disk-segment` | [`compression-real-receipt.json`](../../terrabase/.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-disk-output/compression-real-receipt.json) | [`compression-real-raw-samples.jsonl`](../../terrabase/.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-disk-output/compression-real-raw-samples.jsonl) | runner `c52af7495a4211a4793f96d73f566b93019e421005f047b7e9cea2285a240e03`; ZoneTree `de0367e9eb2dc4048dd2987a15ceda66ff7acffacfbb8b888ea3e75e5b8dfd65` |
+| `live-backup-record-batch` | [`compression-real-receipt.json`](../../terrabase/.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-live-backup-output/compression-real-receipt.json) | [`compression-real-raw-samples.jsonl`](../../terrabase/.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-live-backup-output/compression-real-raw-samples.jsonl) | runner `c52af7495a4211a4793f96d73f566b93019e421005f047b7e9cea2285a240e03`; ZoneTree `de0367e9eb2dc4048dd2987a15ceda66ff7acffacfbb8b888ea3e75e5b8dfd65` |
 
 The receipts record `gitCommit: null` and no source revision. The recorded
 `gitDirty: false` value does not supply a source identity, so no commit is
@@ -120,20 +120,20 @@ the 4 KiB profile has 2,050 records, the 256 KiB profile 32 records, and the
 ## Method and evidence boundary
 
 The evidence bundle records these source-file hashes in
-[`compression-source-identities.tsv`](../../.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/compression-source-identities.tsv);
+[`compression-source-identities.tsv`](../../terrabase/.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/compression-source-identities.tsv);
 the accompanying assembly and test-artifact hashes are in
-[`compression-assembly.sha256`](../../.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/compression-assembly.sha256):
+[`compression-assembly.sha256`](../../terrabase/.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/compression-assembly.sha256):
 
 | File | SHA-256 |
 | --- | --- |
-| [`LZ4DataCompression.cs`](../src/TerraBase.ZoneTree/Compression/LZ4DataCompression.cs) | `6f4779726aabe85d90782098fe86dd7b4af327b8ffb25364f93d13b7f2f254f4` |
+| [`LZ4DataCompression.cs`](../../terrabase/src/TerraBase.ZoneTree/Compression/LZ4DataCompression.cs) | `6f4779726aabe85d90782098fe86dd7b4af327b8ffb25364f93d13b7f2f254f4` |
 | [`CompressionCallerWorkload.cs`](TerraBase.Benchmarks/CompressionCallerWorkload.cs) | `013002f2ee27b87320ec3c32cc64241554f1862620471e57734a7270d551bf3e` |
-| [`CompressionIntegrityTests.cs`](../tests/TerraBase.ZoneTree.Tests/CompressionIntegrityTests.cs) | `cbc54eb83aa206e5b88166051b700f3f14861a98a957e93a7999cd4217e081bc` |
+| [`CompressionIntegrityTests.cs`](../../terrabase/tests/TerraBase.ZoneTree.Tests/CompressionIntegrityTests.cs) | `cbc54eb83aa206e5b88166051b700f3f14861a98a957e93a7999cd4217e081bc` |
 
 The two 18-case tables are new real-caller measurements from
 `CompressionCallerWorkload`; they are separate from the unchanged 14
 compression-adapter integrity tests. The retained test evidence reports 14/14
-passed in [`compression-integrity-tests.log`](../../.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/compression-integrity-tests.log).
+passed in [`compression-integrity-tests.log`](../../terrabase/.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/compression-integrity-tests.log).
 Those adapter tests validate framing, checksums, lengths, trailing data, and
 bounded declarations; they do not provide caller throughput, allocation, CPU,
 RSS, or file-byte measurements.
@@ -148,7 +148,7 @@ documents remain unchanged.
 
 Evidence status files report `build_exit=0`, `exit=0` for both caller runs, and
 the 14 adapter tests passed. The retained logs are
-[`benchmark-build.log`](../../.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-build.log),
-[`benchmark-disk-run.log`](../../.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-disk-run.log),
-[`benchmark-live-backup-run.log`](../../.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-live-backup-run.log),
-and [`compression-integrity-tests.log`](../../.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/compression-integrity-tests.log).
+[`benchmark-build.log`](../../terrabase/.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-build.log),
+[`benchmark-disk-run.log`](../../terrabase/.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-disk-run.log),
+[`benchmark-live-backup-run.log`](../../terrabase/.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/benchmark-live-backup-run.log),
+and [`compression-integrity-tests.log`](../../terrabase/.codex/evidence/terrabase-next9-coherent-integration-20260915-v1/logs/fork-compression-verifier/compression-integrity-tests.log).

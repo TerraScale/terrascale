@@ -7,7 +7,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraBase.Backup;
-using TerraBase.Reactive;
 using TerraBase.Replication;
 
 namespace TerraBase.Benchmarks;

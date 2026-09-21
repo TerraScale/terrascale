@@ -27,7 +27,7 @@ The normal dependency build was also attempted against the moving dirty
 checkout and did not produce a current release receipt. The retained failure
 includes source/analyzer errors in the storage transaction, restore metadata,
 replication contract, and transport slices; see the current build evidence in
-`../.codex/evidence/operation-context-terrabase-build-20260914.log`. This does
+`../../terrabase/.codex/evidence/operation-context-terrabase-build-20260914.log`. This does
 not invalidate the retained focused benchmark artifact, but it does mean these
 numbers must not be presented as a clean solution qualification.
 
@@ -202,7 +202,7 @@ fixture exceeds the CLI cap but remains smaller than the enforced cgroup limit,
 so this is a cgroup-constrained capacity exercise rather than evidence of a
 dataset larger than cgroup memory. The receipt records the launcher, cgroup
 limit, cold/warm phases, latency percentiles, allocations, and RSS; the scope
-probe is retained at [cgroup256-scope-probe.log](../.codex/evidence/cgroup256-scope-probe.log).
+probe is retained at [cgroup256-scope-probe.log](../../terrabase/.codex/evidence/cgroup256-scope-probe.log).
 
 - [ZoneTree cgroup receipt](receipts/20260914-cgroup256-larger-memory-zonetree-8192-run3/larger-memory-receipt.json)
 - [ZoneTree cgroup summary](receipts/20260914-cgroup256-larger-memory-zonetree-8192-run3/larger-memory-summary.md)

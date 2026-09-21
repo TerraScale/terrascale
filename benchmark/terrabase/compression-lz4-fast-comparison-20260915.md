@@ -24,7 +24,7 @@ the eight-record batch; the candidate measured 33,554,800 input bytes and
 ## Source, build, and environment identity
 
 The candidate is the v2 evidence bundle
-[`verification-receipt.md`](../../.codex/evidence/compression-lz4-fast-selected-20260915-v2/verification-receipt.md), derived from immutable v1. V1 identifies canonical base commit
+[`verification-receipt.md`](../../terrabase/.codex/evidence/compression-lz4-fast-selected-20260915-v2/verification-receipt.md), derived from immutable v1. V1 identifies canonical base commit
 `641b71a14b245f645e3db75c9987c5cc2a5c90aa`; the v2 source overlay retained 837
 files and changed only
 `bench/TerraBase.Benchmarks/CompressionCallerWorkload.cs`. The overlay hash is
@@ -40,7 +40,7 @@ clean.
 
 The retained HC3 row is the exact filter
 `live-backup-record-batch/4MiB-incompressible/LZ4/warm-write/n=5` from
-[`warm-median-summary.tsv`](../../.codex/evidence/compression-callers-timing-v2-smoke-20260915-sdk10/warm-median-summary.tsv). Its source bundle identifies the same canonical base commit and tree
+[`warm-median-summary.tsv`](../../terrabase/.codex/evidence/compression-callers-timing-v2-smoke-20260915-sdk10/warm-median-summary.tsv). Its source bundle identifies the same canonical base commit and tree
 `125ccc5d61c24f083fa2ccb3120299bb57c44e97`; its overlay hashes are
 `CompressionWorkload.cs=72f96d3dfff73860f1bbfa71f125af5ea22887e75d17aabb68aff7103f136cb3`
 and `CompressionCallerWorkload.cs=53fd0a50a89da110ac3c86e6905fb2ab44ad91d4a4ec1e7d2c61033d06f9062e`.

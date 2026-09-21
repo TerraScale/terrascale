@@ -2,7 +2,6 @@ using System.Text.Json;
 using TerraBase.Indexing;
 using TerraBase.Indexing.Automatic;
 using TerraBase.Indexing.Runtime;
-using TerraBase.Storage;
 using DurableStorageEngine = global::TerraBase.StorageEngine.StorageEngine;
 
 namespace TerraBase.Benchmarks;

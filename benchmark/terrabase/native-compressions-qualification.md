@@ -22,9 +22,9 @@ dirty tree. The LZ4
 adapter uses a 4 MiB frame block, content size, and content/block checksums.
 It rejects declared or expected decompressed lengths over 64 MiB and checks
 that the decoder consumes the entire frame and writes the expected length
-([`LZ4DataCompression.cs`](../src/TerraBase.ZoneTree/Compression/LZ4DataCompression.cs:5)).
+([`LZ4DataCompression.cs`](../../terrabase/src/TerraBase.ZoneTree/Compression/LZ4DataCompression.cs:5)).
 The legacy no-content-size path allocates a bounded 64 MiB decode buffer before
-it knows the actual length ([`LZ4DataCompression.cs`](../src/TerraBase.ZoneTree/Compression/LZ4DataCompression.cs:37)).
+it knows the actual length ([`LZ4DataCompression.cs`](../../terrabase/src/TerraBase.ZoneTree/Compression/LZ4DataCompression.cs:37)).
 That is a bounded resource floor, but its production frequency was not
 measured.
 
@@ -125,12 +125,12 @@ configuration rather than that label.
 
 Live backup copies persisted disk segment files as-is. Only in-memory record
 batches pass through `DataCompression`: the current default is Zstd level 0,
-with 1 MiB uncompressed blocks ([`LiveBackupOptions.cs`](../src/TerraBase.ZoneTree/Backup/LiveBackupOptions.cs:73)).
+with 1 MiB uncompressed blocks ([`LiveBackupOptions.cs`](../../terrabase/src/TerraBase.ZoneTree/Backup/LiveBackupOptions.cs:73)).
 The writer materializes each block with `MemoryStream.ToArray()`, compresses it,
 then writes a two-int length header and the compressed bytes
-([`LiveBackupRecordBatchWriter.cs`](../src/TerraBase.ZoneTree/Backup/LiveBackupRecordBatchWriter.cs:69)).
+([`LiveBackupRecordBatchWriter.cs`](../../terrabase/src/TerraBase.ZoneTree/Backup/LiveBackupRecordBatchWriter.cs:69)).
 The reader allocates the decompressed block and copies it again with
-`ToArray()` ([`LiveBackupRecordBatchReader.cs`](../src/TerraBase.ZoneTree/Backup/LiveBackupRecordBatchReader.cs:105)).
+`ToArray()` ([`LiveBackupRecordBatchReader.cs`](../../terrabase/src/TerraBase.ZoneTree/Backup/LiveBackupRecordBatchReader.cs:105)).
 These remain source-backed allocation hypotheses about the product path. The
 retained 2026-09-15 [real-caller receipt](compression-real-callers-20260915.md)
 now measures writer and reader latency, allocations, process CPU, and stored
@@ -141,7 +141,7 @@ it does not establish production live-backup capacity or device I/O.
 LZ4 is therefore not selected by any current default in storage, WAL, live
 backup, or FullTextSearch. Its current implicit compatibility use is the
 legacy multipart metadata fallback, while new multipart metadata uses Zstd
-([`MultiPartMetadataCodec.cs`](../src/TerraBase.ZoneTree/Segments/MultiPart/MultiPartMetadataCodec.cs:7)).
+([`MultiPartMetadataCodec.cs`](../../terrabase/src/TerraBase.ZoneTree/Segments/MultiPart/MultiPartMetadataCodec.cs:7)).
 
 ## Decision and confidence
 

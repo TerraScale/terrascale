@@ -6,7 +6,7 @@ Status: **complete**
 - Artifact SHA-256: `bb2dde0ca26db0c408039d16ff5d8ebaf50dcf31b3ceb7d583ee5a720819dbdb`
 - Runtime: .NET 10.0.12; build `Release`; NixOS 26.05 (Yarara); X64
 - CPU: Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz; 46 logical processors; available memory 201326592 bytes
-- Cgroup: `memory.max=268435456` bytes, launched with `systemd-run --user --scope --collect -p MemoryMax=256M -p OOMPolicy=stop`; [scope probe evidence](../../../.codex/evidence/cgroup256-scope-probe.log)
+- Cgroup: `memory.max=268435456` bytes, launched with `systemd-run --user --scope --collect -p MemoryMax=256M -p OOMPolicy=stop`; [scope probe evidence](../../../../terrabase/.codex/evidence/cgroup256-scope-probe.log)
 - Cgroup OOM events: `0`; cgroup memory limit is recorded from a matching scope probe because this benchmark artifact does not sample its own `memory.max`.
 
 Command: `systemd-run --user --scope --collect -p MemoryMax=256M -p OOMPolicy=stop nice -n 19 /tmp/terrabase-bench-cgroup.IcBhkq/TerraBase.Benchmarks.dll --workload larger-memory --backend zonetree --memory-cap-bytes 4194304 --dataset-size 8192 --payload-size 2048 --samples 5 --operations 50 --writes 50 --warmup 20 --concurrency 1 --seed 1337 --zipf-exponent 1.2 --read-ratio 0.8 --output /home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-cgroup256-larger-memory-zonetree-8192-run3`

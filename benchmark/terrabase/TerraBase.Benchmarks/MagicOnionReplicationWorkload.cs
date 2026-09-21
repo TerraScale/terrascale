@@ -14,8 +14,6 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Api;
 using TerraBase.Contracts;
-using TerraBase.Replication;
-using TerraBase.Replication.Durable;
 using TerraBase.Security;
 using TerraBase.Transport;
 

@@ -7,10 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraBase.Backup;
-using TerraBase.Storage;
 using TerraBase.Storage.Backup;
-using TerraBase.Storage.ChangeFeed;
-using TerraBase.StorageEngine;
 using DurableStorageEngine = TerraBase.StorageEngine.StorageEngine;
 
 namespace TerraBase.Benchmarks;
@@ -124,6 +121,8 @@ public static class NativeBackupQualificationWorkload
         BackupLogEntry[] logEntries;
         await using (var sourceEngine = new DurableStorageEngine(sourcePath))
         {
+            // Backup capture requires a durable replication journal identity.
+            await sourceEngine.InitializeJournalIdentityAsync().ConfigureAwait(false);
             var tenant = new TenantId("native-qualification");
             var collection = new CollectionId("documents");
             var initial = Enumerable.Range(0, options.Operations)

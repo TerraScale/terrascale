@@ -128,7 +128,7 @@ nice -n 19 dotnet build bench/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
 That focused command passed with zero warnings and errors. A full dependency
 build was also attempted against the moving dirty checkout and remains blocked
 by current source/analyzer errors; see
-`../.codex/evidence/operation-context-terrabase-build-20260914.log`. The
+`../../terrabase/.codex/evidence/operation-context-terrabase-build-20260914.log`. The
 focused benchmark artifact is therefore a local fixture receipt, not a clean
 solution qualification.
 

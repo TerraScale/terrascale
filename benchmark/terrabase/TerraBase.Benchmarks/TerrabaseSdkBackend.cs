@@ -1,5 +1,4 @@
 #if TERRASCALE_SDK
-using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;

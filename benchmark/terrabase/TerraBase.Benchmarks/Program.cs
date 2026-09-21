@@ -107,9 +107,24 @@ internal static class Program
 
     private static async Task<int> RunWorkloadAsync(string[] args)
     {
+        if (RelationshipWorkload.IsRequested(args))
+        {
+            return await RelationshipWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
         if (NativeBackupQualificationWorkload.IsRequested(args))
         {
             return await NativeBackupQualificationWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
+        if (E2eVolumeWorkload.IsRequested(args))
+        {
+            return await E2eVolumeWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
+        if (BackupMicrobenchWorkload.IsRequested(args))
+        {
+            return await BackupMicrobenchWorkload.RunAsync(args).ConfigureAwait(false);
         }
 
         if (MagicOnionReplicationQualificationWorkload.IsReplicaHostRequested(args))
@@ -125,6 +140,11 @@ internal static class Program
         if (MagicOnionReplicationWorkload.IsRequested(args))
         {
             return await MagicOnionReplicationWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
+        if (TransportComparisonWorkload.IsRequested(args))
+        {
+            return await TransportComparisonWorkload.RunAsync(args).ConfigureAwait(false);
         }
 
         if (RecoveryWorkload.IsRequested(args))

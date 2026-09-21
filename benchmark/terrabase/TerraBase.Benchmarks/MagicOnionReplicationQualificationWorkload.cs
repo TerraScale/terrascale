@@ -9,10 +9,8 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
-using Microsoft.AspNetCore.Builder;
 using TerraBase.Api;
 using TerraBase.Contracts;
-using TerraBase.Replication;
 using TerraBase.Security;
 using TerraBase.Transport;
 using ContractReplicationApplyOutcome = TerraBase.Contracts.ReplicationApplyOutcome;
@@ -898,11 +896,17 @@ public static class MagicOnionReplicationQualificationWorkload
             };
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            var readyOrTimeout = ready.Task.WaitAsync(timeout.Token);
-            var exited = process.WaitForExitAsync();
-            var completed = await Task.WhenAny(readyOrTimeout, exited).ConfigureAwait(false);
-            if (completed != readyOrTimeout || !readyOrTimeout.IsCompletedSuccessfully)
+            Task? completed;
+            try
+            {
+                completed = await Task.WhenAny(ready.Task, process.WaitForExitAsync()).WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                completed = null;
+            }
+
+            if (completed != ready.Task)
             {
                 await StopProcessAsync(process, input: null).ConfigureAwait(false);
                 await outputLog.DisposeAsync().ConfigureAwait(false);
@@ -962,9 +966,10 @@ public static class MagicOnionReplicationQualificationWorkload
                     }
                 }
 
+                var exit = process.WaitForExitAsync();
                 try
                 {
-                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+                    await exit.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
                 }
                 catch (TimeoutException)
                 {

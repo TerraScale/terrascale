@@ -47,7 +47,7 @@ receipt path. It never becomes a performance claim.
 
 Use the repository's lowest available CPU priority for build and benchmark
 commands, for example `nice -n 19 dotnet ...`. The solution checks in
-[`docs/development.md`](../docs/development.md) are correctness checks, not a
+[`docs/development.md`](../../terrabase/docs/development.md) are correctness checks, not a
 throughput measurement. A benchmark must name any additional runner command.
 
 ## Workload definitions
@@ -112,12 +112,12 @@ The current focused checks cover these local invariants:
 
 | Area | Current evidence | What it proves |
 | --- | --- | --- |
-| Local storage and WAL | [`StorageEngineTests.cs`](../tests/TerraBase.Tests/StorageEngineTests.cs) and [`ProductionReengineeringTests.cs`](../tests/TerraBase.Tests/ProductionReengineeringTests.cs) | WAL replay, torn-tail recovery, checksum rejection, atomic batches, compaction/tombstones, close/reopen, snapshot recovery, and version watermarks. |
-| Transactions | [`TransactionTests.cs`](../tests/TerraBase.Tests/TransactionTests.cs) | Atomic batch receipt, serializable read-set conflict, local strict referential checks, and deferred cross-shard checks. |
-| Indexing | [`AutomaticIndexingTests.cs`](../tests/TerraBase.Api.Tests/AutomaticIndexingTests.cs) | Bounded deterministic candidates, tenant budget isolation, invisible lifecycle, shadow activation, rollback, and grace-period retirement. |
-| Incremental views | [`IncrementalViewTests.cs`](../tests/TerraBase.Tests/IncrementalViewTests.cs) | Atomic watermarking, before-image conflicts, duplicate handling, join/aggregate maintenance, and fallback reset. |
-| Replication and transport | [`ProductionPrimitivesTests.cs`](../tests/TerraBase.Api.Tests/ProductionPrimitivesTests.cs), [`ReplicationDeterministicTests.cs`](../tests/TerraBase.Tests/ReplicationDeterministicTests.cs), and [`InterNodeContractTests.cs`](../tests/TerraBase.Tests/InterNodeContractTests.cs) | Causal dependency deferral, canonical-byte convergence, anti-entropy/partition decisions, TLS requirement, bounded contracts, and MessagePack round trips. |
-| Backups | [`BackupTests.cs`](../tests/TerraBase.Tests/BackupTests.cs) | Full/incremental chain creation, resumable in-memory upload, PITR, plaintext/encrypted hashes, and AES-GCM restore. |
+| Local storage and WAL | [`StorageEngineTests.cs`](../../terrabase/tests/TerraBase.Tests/StorageEngineTests.cs) and [`ProductionReengineeringTests.cs`](../../terrabase/tests/TerraBase.Tests/ProductionReengineeringTests.cs) | WAL replay, torn-tail recovery, checksum rejection, atomic batches, compaction/tombstones, close/reopen, snapshot recovery, and version watermarks. |
+| Transactions | [`TransactionTests.cs`](../../terrabase/tests/TerraBase.Tests/TransactionTests.cs) | Atomic batch receipt, serializable read-set conflict, local strict referential checks, and deferred cross-shard checks. |
+| Indexing | [`AutomaticIndexingTests.cs`](../../terrabase/tests/TerraBase.Api.Tests/AutomaticIndexingTests.cs) | Bounded deterministic candidates, tenant budget isolation, invisible lifecycle, shadow activation, rollback, and grace-period retirement. |
+| Incremental views | [`IncrementalViewTests.cs`](../../terrabase/tests/TerraBase.Tests/IncrementalViewTests.cs) | Atomic watermarking, before-image conflicts, duplicate handling, join/aggregate maintenance, and fallback reset. |
+| Replication and transport | [`ProductionPrimitivesTests.cs`](../../terrabase/tests/TerraBase.Api.Tests/ProductionPrimitivesTests.cs), [`ReplicationDeterministicTests.cs`](../../terrabase/tests/TerraBase.Tests/ReplicationDeterministicTests.cs), and [`InterNodeContractTests.cs`](../../terrabase/tests/TerraBase.Tests/InterNodeContractTests.cs) | Causal dependency deferral, canonical-byte convergence, anti-entropy/partition decisions, TLS requirement, bounded contracts, and MessagePack round trips. |
+| Backups | [`BackupTests.cs`](../../terrabase/tests/TerraBase.Tests/BackupTests.cs) | Full/incremental chain creation, resumable in-memory upload, PITR, plaintext/encrypted hashes, and AES-GCM restore. |
 
 These checks do not qualify multi-Region durability, durable replication across
 restart, a concrete MagicOnion adapter, a real index backend, reactive network
