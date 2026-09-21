@@ -175,6 +175,7 @@ public sealed record UsagePageModel(
             BillingStatus: store.BillingAccountStatus,
             BillingStatusTone: store.BillingAccountStatus.ToLowerInvariant() switch
             {
+                "personal_free" => "success",
                 "active" => "success",
                 "trialing" => "info",
                 "past_due" or "unpaid" => "warning",

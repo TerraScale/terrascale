@@ -3,7 +3,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Subscriptions;
 
-public sealed class CompleteCheckoutEndpoint : EndpointWithoutRequest<IResult>
+public sealed class CompleteCheckoutEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -12,6 +12,12 @@ public sealed class CompleteCheckoutEndpoint : EndpointWithoutRequest<IResult>
         Tags("Subscriptions");
     }
 
-    public override Task<IResult> HandleAsync(CancellationToken ct) =>
-        Task.FromResult<IResult>(Results.Redirect("/onboarding?payment=success", false, false));
+    public override Task<IResult> HandleAsync(CancellationToken ct)
+    {
+        var session = HttpContext.Request.RouteValues["sessionId"]?.ToString() ?? "";
+        var redirect = store.CompletePaymentSetup(session, canceled: false);
+        return Task.FromResult<IResult>(redirect is null
+            ? Results.NotFound()
+            : Results.Redirect(redirect, false, false));
+    }
 }

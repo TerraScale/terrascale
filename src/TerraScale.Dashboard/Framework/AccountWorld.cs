@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Authentication;
 
@@ -52,11 +53,20 @@ public sealed class AccountWorld
 
     public string AccountLocale { get; set; } = "en";
 
-    public bool OrganizationDeletionRequested { get; set; }
+    [JsonIgnore]
+    public bool OrganizationDeletionRequested { get => ActiveOrganization.OrganizationDeletionRequested; set => ActiveOrganization.OrganizationDeletionRequested = value; }
 
-    public string ActiveOrganizationName { get; set; } = "Personal";
+    [JsonIgnore]
+    public string ActiveOrganizationName { get => ActiveOrganization.ActiveOrganizationName; set => ActiveOrganization.ActiveOrganizationName = value; }
 
     public string ActiveOrganizationId { get; set; } = "";
+
+    public string PersonalOrganizationId { get; set; } = "";
+
+    public Dictionary<string, OrganizationWorld> Organizations { get; set; } = [];
+
+    [JsonIgnore]
+    public OrganizationWorld ActiveOrganization => Organizations[ActiveOrganizationId];
 
     public bool OnboardingCompleted { get; set; }
 
@@ -97,74 +107,91 @@ public sealed class AccountWorld
 
     // --- Organization & projects -------------------------------------------
 
-    public ImmutableArray<DashboardProject> Projects { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<DashboardProject> Projects { get => ActiveOrganization.Projects; set => ActiveOrganization.Projects = value; }
 
-    public string ActiveProjectId { get; set; } = "";
+    [JsonIgnore]
+    public string ActiveProjectId { get => ActiveOrganization.ActiveProjectId; set => ActiveOrganization.ActiveProjectId = value; }
 
-    public ImmutableArray<DashboardDatabase> Databases { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<DashboardDatabase> Databases { get => ActiveOrganization.Databases; set => ActiveOrganization.Databases = value; }
 
-    public ImmutableArray<ProjectApiKey> ApiKeys { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<ProjectApiKey> ApiKeys { get => ActiveOrganization.ApiKeys; set => ActiveOrganization.ApiKeys = value; }
 
-    public ImmutableArray<M2mApplication> M2mApplications { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<M2mApplication> M2mApplications { get => ActiveOrganization.M2mApplications; set => ActiveOrganization.M2mApplications = value; }
 
-    public ImmutableArray<TeamMember> TeamMembers { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<TeamMember> TeamMembers { get => ActiveOrganization.TeamMembers; set => ActiveOrganization.TeamMembers = value; }
 
-    public ImmutableArray<Invitation> Invitations { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<Invitation> Invitations { get => ActiveOrganization.Invitations; set => ActiveOrganization.Invitations = value; }
 
     public ImmutableArray<Notification> Notifications { get; set; } = [];
 
-    public ImmutableArray<AuditEvent> AuditEvents { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<AuditEvent> AuditEvents { get => ActiveOrganization.AuditEvents; set => ActiveOrganization.AuditEvents = value; }
 
-    public UsageCycle Usage { get; set; } = new(
-        Period: "Current cycle",
-        StorageMb: 0,
-        StorageLimitMb: 0,
-        Requests: 0,
-        RequestLimit: 0,
-        ReadUnits: 0,
-        WriteUnits: 0,
-        InvoiceStatus: "",
-        OverrunEstimateUsd: 0m);
+    [JsonIgnore]
+    public UsageCycle Usage { get => ActiveOrganization.Usage; set => ActiveOrganization.Usage = value; }
 
-    public ImmutableArray<(string Range, ImmutableArray<WorkloadPoint> Points)> Workloads { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<(string Range, ImmutableArray<WorkloadPoint> Points)> Workloads { get => ActiveOrganization.Workloads; set => ActiveOrganization.Workloads = value; }
 
-    public ImmutableArray<SavedQuery> SavedQueries { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<SavedQuery> SavedQueries { get => ActiveOrganization.SavedQueries; set => ActiveOrganization.SavedQueries = value; }
 
     public ImmutableArray<Session> Sessions { get; set; } = [];
 
-    public ImmutableArray<WebhookEndpoint> Webhooks { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<WebhookEndpoint> Webhooks { get => ActiveOrganization.Webhooks; set => ActiveOrganization.Webhooks = value; }
 
     public ImmutableArray<DashboardUser> AllUsers { get; set; } = [];
 
     // --- Feature collections -----------------------------------------------
 
-    public ImmutableArray<M2mCredential> M2mCredentials { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<M2mCredential> M2mCredentials { get => ActiveOrganization.M2mCredentials; set => ActiveOrganization.M2mCredentials = value; }
 
-    public (string CredentialId, string Name, string Secret)? PendingSecret { get; set; }
+    [JsonIgnore]
+    public (string CredentialId, string Name, string Secret)? PendingSecret { get => ActiveOrganization.PendingSecret; set => ActiveOrganization.PendingSecret = value; }
 
-    public ImmutableArray<BackupRestorePoint> RestorePoints { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<BackupRestorePoint> RestorePoints { get => ActiveOrganization.RestorePoints; set => ActiveOrganization.RestorePoints = value; }
 
-    public ImmutableArray<BackupRestoreJob> RestoreJobs { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<BackupRestoreJob> RestoreJobs { get => ActiveOrganization.RestoreJobs; set => ActiveOrganization.RestoreJobs = value; }
 
-    public ImmutableArray<RestorePlan> RestorePlans { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<RestorePlan> RestorePlans { get => ActiveOrganization.RestorePlans; set => ActiveOrganization.RestorePlans = value; }
 
-    public string BackupsLoadedAt { get; set; } = "";
+    [JsonIgnore]
+    public string BackupsLoadedAt { get => ActiveOrganization.BackupsLoadedAt; set => ActiveOrganization.BackupsLoadedAt = value; }
 
-    public ImmutableArray<BackupJob> BackupJobs { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<BackupJob> BackupJobs { get => ActiveOrganization.BackupJobs; set => ActiveOrganization.BackupJobs = value; }
 
-    public ImmutableArray<ExplorerDocument> ExplorerDocuments { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<ExplorerDocument> ExplorerDocuments { get => ActiveOrganization.ExplorerDocuments; set => ActiveOrganization.ExplorerDocuments = value; }
 
-    public SchemaDocument Schema { get; set; } = new([], Version: 1, UpdatedAt: "", Migration: null);
+    [JsonIgnore]
+    public SchemaDocument Schema { get => ActiveOrganization.Schema; set => ActiveOrganization.Schema = value; }
 
-    public SchemaDiff? PendingSchemaDiff { get; set; }
+    [JsonIgnore]
+    public SchemaDiff? PendingSchemaDiff { get => ActiveOrganization.PendingSchemaDiff; set => ActiveOrganization.PendingSchemaDiff = value; }
 
-    public string ProposedSchemaJson { get; set; } = "";
+    [JsonIgnore]
+    public string ProposedSchemaJson { get => ActiveOrganization.ProposedSchemaJson; set => ActiveOrganization.ProposedSchemaJson = value; }
 
-    public ImmutableArray<IndexState> Indexes { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<IndexState> Indexes { get => ActiveOrganization.Indexes; set => ActiveOrganization.Indexes = value; }
 
-    public ImmutableArray<QueryTemplate> QueryTemplates { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<QueryTemplate> QueryTemplates { get => ActiveOrganization.QueryTemplates; set => ActiveOrganization.QueryTemplates = value; }
 
-    public ImmutableArray<IndexRecommendation> IndexRecommendations { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<IndexRecommendation> IndexRecommendations { get => ActiveOrganization.IndexRecommendations; set => ActiveOrganization.IndexRecommendations = value; }
 
     public string ProfileDisplayName { get; set; } = "";
 
@@ -206,26 +233,30 @@ public sealed class AccountWorld
     public ImmutableDictionary<string, ImmutableArray<DashboardStore.AdminEstateFact>> AdminEstateFacts { get; set; } =
         ImmutableDictionary<string, ImmutableArray<DashboardStore.AdminEstateFact>>.Empty;
 
-    public ImmutableArray<DashboardStore.InvoiceRow> Invoices { get; set; } = [];
+    [JsonIgnore]
+    public ImmutableArray<DashboardStore.InvoiceRow> Invoices { get => ActiveOrganization.Invoices; set => ActiveOrganization.Invoices = value; }
 
-    public bool PaidExcessEnabled { get; set; }
+    [JsonIgnore]
+    public bool PaidExcessEnabled { get => ActiveOrganization.PaidExcessEnabled; set => ActiveOrganization.PaidExcessEnabled = value; }
 
-    public string? SpendCapUsd { get; set; }
+    [JsonIgnore]
+    public string? SpendCapUsd { get => ActiveOrganization.SpendCapUsd; set => ActiveOrganization.SpendCapUsd = value; }
 
-    public Dictionary<string, string> DatabaseSpendCaps { get; set; } = [];
+    [JsonIgnore]
+    public Dictionary<string, string> DatabaseSpendCaps { get => ActiveOrganization.DatabaseSpendCaps; set => ActiveOrganization.DatabaseSpendCaps = value; }
 
-    public HashSet<string> BackupsDisabled { get; set; } = [];
+    [JsonIgnore]
+    public HashSet<string> BackupsDisabled { get => ActiveOrganization.BackupsDisabled; set => ActiveOrganization.BackupsDisabled = value; }
 
-    public Dictionary<string, (string Schedule, string Retention)> BackupPolicies { get; set; } = [];
+    [JsonIgnore]
+    public Dictionary<string, (string Schedule, string Retention)> BackupPolicies { get => ActiveOrganization.BackupPolicies; set => ActiveOrganization.BackupPolicies = value; }
 
     /// <summary>Wizard state; demo world starts mid-wizard, fresh accounts
     /// walk it from the organization step.</summary>
     public ImmutableArray<OnboardingWizardStep> OnboardingStepsValue { get; set; } =
     [
         new("account-information", "completed"),
-        new("organization", "completed"),
         new("payment-method", "current"),
-        new("payment-validation", "pending"),
         new("project", "pending"),
     ];
 
@@ -252,9 +283,7 @@ public sealed class AccountWorld
         OnboardingStepsValue =
         [
             new OnboardingWizardStep("account-information", "completed"),
-            new OnboardingWizardStep("organization", "current"),
-            new OnboardingWizardStep("payment-method", "pending"),
-            new OnboardingWizardStep("payment-validation", "pending"),
+            new OnboardingWizardStep("payment-method", "current"),
             new OnboardingWizardStep("project", "pending"),
         ];
 
@@ -273,7 +302,9 @@ public sealed class AccountWorld
         RegisteredName = displayName;
 
         var userId = CurrentUser.Id;
-        ActiveOrganizationId = NewId("org");
+        PersonalOrganizationId = NewId("org");
+        ActiveOrganizationId = PersonalOrganizationId;
+        Organizations[ActiveOrganizationId] = new OrganizationWorld { Id = ActiveOrganizationId, Kind = OrganizationKind.Personal, PersonalOwnerId = userId };
         var projectId = NewId("prj");
         Projects = [new(projectId, ActiveOrganizationId, "Personal", "SFO", DateTimeOffset.UtcNow.ToString("O"), IsDefault: true)];
         ActiveProjectId = projectId;
@@ -317,8 +348,11 @@ public sealed class AccountWorld
             Provider: "password");
         RegisteredEmail = "mario@terrascale.tech";
         RegisteredName = "Mario Kraus";
-        ActiveOrganizationName = "TerraScale Labs";
         ActiveOrganizationId = "org_01JC9Q5V2N4P6T8R0X2Z4B6D8";
+        Organizations[ActiveOrganizationId] = new OrganizationWorld { Id = ActiveOrganizationId, Kind = OrganizationKind.Business, BillingStatus = "active", PlanId = "plan_scale", PaymentMethodValidated = true };
+        ActiveOrganizationName = "TerraScale Labs";
+        PersonalOrganizationId = NewId("org");
+        Organizations[PersonalOrganizationId] = new OrganizationWorld { Id = PersonalOrganizationId, Kind = OrganizationKind.Personal, PersonalOwnerId = CurrentUser.Id };
 
         Projects =
         [

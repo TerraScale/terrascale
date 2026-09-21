@@ -5,14 +5,10 @@ namespace TerraScale.Dashboard.Features.Onboarding;
 
 public sealed class OnboardingPageEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
-    public const string DemoCheckoutSession = "cs_local_01JCHECKOUT7F3K9Q";
-
     private static readonly (string Key, string Label, string Icon)[] StepDefinitions =
     [
         ("account-information", "Account", "UserRound"),
-        ("organization", "Organization", "Building2"),
         ("payment-method", "Payment", "CreditCard"),
-        ("payment-validation", "Validation", "CircleCheckBig"),
         ("project", "Project", "Database"),
     ];
 
@@ -61,20 +57,18 @@ public sealed class OnboardingPageEndpoint(DashboardStore store) : EndpointWitho
         // step 1), mirroring ts-dashboard's anonymous onboarding branch.
         if (!store.IsAuthenticated(HttpContext))
         {
-            return Task.FromResult<IResult>(OnboardingSlice.Create(RegistrationModel()
-                with { RegistrationError = query["error"].FirstOrDefault() }));
+            return Task.FromResult<IResult>(OnboardingSlice.Create(
+                RegistrationModel() with { RegistrationError = query["error"].FirstOrDefault() }));
         }
 
         // Returning from checkout: apply the payment outcome before rendering.
         if (query["payment"] == "success")
-        {
             store.CompleteOnboardingStep("payment-method");
-            store.CompleteOnboardingStep("payment-validation");
-        }
 
         var steps = store.OnboardingSteps;
         var requested = StepDefinitions.Any(s => s.Key == query["step"].ToString()) ? query["step"].ToString() : null;
         var active = requested ?? store.OnboardingNextStep;
+        if (active is "payment-validation" or "organization") active = "payment-method";
         var index = Math.Max(0, steps.ToList().FindIndex(s => s.Key == active));
         var total = steps.Length;
         var views = StepDefinitions.Select(d =>
@@ -96,8 +90,6 @@ public sealed class OnboardingPageEndpoint(DashboardStore store) : EndpointWitho
                 .Select(r => new OnboardingRegionView(r.Code, r.Name, r.Country, r.LatencyMs, true, RegionPins[r.Code].X, RegionPins[r.Code].Y))],
             DisplayName: store.CurrentUser.Name,
             Email: store.CurrentUser.Email,
-            OrganizationName: store.ActiveOrganizationName,
-            PaymentValidated: views.First(v => v.Key == "payment-validation").State == "completed",
             Registration: false,
             RegistrationError: null);
         return Task.FromResult<IResult>(OnboardingSlice.Create(model));
@@ -108,14 +100,12 @@ public sealed class OnboardingPageEndpoint(DashboardStore store) : EndpointWitho
         ActiveStep: "account-information",
         CurrentStep: 1,
         TotalSteps: StepDefinitions.Length,
-        ProgressPercent: 20,
+        ProgressPercent: (int)Math.Round(100d / StepDefinitions.Length),
         PaymentCanceled: false,
         Plans: [],
         Regions: [],
         DisplayName: "",
         Email: "",
-        OrganizationName: null,
-        PaymentValidated: false,
         Registration: true,
         RegistrationError: null);
 }

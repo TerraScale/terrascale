@@ -13,10 +13,10 @@
         ["expired"] = "EXPIRED",
         ["ready-for-project"] = "READY FOR PROJECT",
     };
-    var activeState = Model.Steps.First(s => s.Key == Model.ActiveStep).State;
+    var activeState = Model.Steps.FirstOrDefault(s => s.Key == Model.ActiveStep)?.State ?? "pending";
     var stepDone = activeState == "completed";
     var rejected = activeState == "rejected";
-    var wide = Model.ActiveStep is "payment-validation" or "project";
+    var wide = Model.ActiveStep is "project";
     var defaultRegion = Model.Regions.FirstOrDefault(r => r.Live)?.Code ?? "";
 }
 @FlowHtml.Document("Activate your TerraScale account | TerraScale")
@@ -37,7 +37,7 @@
                 <div>
                     <p class="ts-onboarding-setup">TERRASCALE SETUP</p>
                     <h1 class="ts-onboarding-title">Activate your TerraScale account</h1>
-                    <p class="ts-onboarding-description">Complete all five steps to activate billing, create the owning organization, and release your first project Dashboard. Your confirmed progress is saved after every step.</p>
+                    <p class="ts-onboarding-description">Your Personal workspace is ready. Optionally add payment protection for overages, then create your first project. Your progress is saved after every step.</p>
                 </div>
             }
         </header>
@@ -169,52 +169,12 @@
                 </form>
             </div>
         }
-        else if (Model.ActiveStep == "organization")
-        {
-            <div class="ts-onboarding-card">
-                <header class="ts-onboarding-step-header">
-                    <h2 class="ts-onboarding-step-title">Create your first organization</h2>
-                    <p class="ts-onboarding-step-subtitle">Billing and future projects use this authenticated tenant boundary.</p>
-                    <div class="ts-onboarding-step-actions">
-                        <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.Building2(20)</span>
-                    </div>
-                </header>
-                <div class="ts-onboarding-content">
-                    @if (stepDone)
-                    {
-                        <div class="ts-alert ts-alert-success" role="status">
-                            <span class="ts-onboarding-alert-icon" aria-hidden="true">@Icons.CircleCheck(19)</span>
-                            <div class="ts-onboarding-alert-stack">
-                                <span class="ts-alert-title">Organization created</span>
-                                <span class="ts-alert-body">Your organization is ready for billing and projects.</span>
-                            </div>
-                        </div>
-                        <div class="ts-onboarding-form-footer">
-                            <a class="ts-btn ts-btn-primary ts-btn-lg" href="/onboarding?step=payment-method">Continue</a>
-                        </div>
-                    }
-                    else
-                    {
-                        <form class="ts-onboarding-field-list" method="post" action="/onboarding/step">
-                            <input type="hidden" name="step" value="organization" />
-                            <div class="ts-field">
-                                <label class="ts-label" for="organizationName">Organization name</label>
-                                <input class="ts-input" id="organizationName" name="name" placeholder="Acme Labs" required />
-                            </div>
-                            <div class="ts-onboarding-form-footer">
-                                <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create organization</button>
-                            </div>
-                        </form>
-                    }
-                </div>
-            </div>
-        }
         else if (Model.ActiveStep == "payment-method")
         {
             <div class="ts-onboarding-card" data-signals="{ plan: 'starter', interval: 'monthly' }">
                 <header class="ts-onboarding-step-header">
                     <h2 class="ts-onboarding-step-title">Register a payment method</h2>
-                    <p class="ts-onboarding-step-subtitle">Checkout is bound to your authenticated organization and configured payment provider.</p>
+                    <p class="ts-onboarding-step-subtitle">Your Personal workspace is ready. Payment setup is optional for usage beyond its included allowance.</p>
                     <div class="ts-onboarding-step-actions">
                         <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.CreditCard(20)</span>
                         <span class="ts-onboarding-interval ts-onboarding-interval-header" role="group" aria-label="Billing interval">
@@ -231,7 +191,7 @@
                             <span class="ts-onboarding-alert-icon" aria-hidden="true">@Icons.CircleCheck(19)</span>
                             <div class="ts-onboarding-alert-stack">
                                 <span class="ts-alert-title">Payment method registered</span>
-                                <span class="ts-alert-body">Continue to validation.</span>
+                                <span class="ts-alert-body">Your Personal workspace keeps its included allowance.</span>
                             </div>
                         </div>
                     }
@@ -282,59 +242,6 @@
                         <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.CreditCard(20) Continue to secure payment setup</button>
                     </div>
                 </form>
-            </div>
-        }
-        else if (Model.ActiveStep == "payment-validation")
-        {
-            <div class="ts-onboarding-card">
-                <header class="ts-onboarding-step-header">
-                    <h2 class="ts-onboarding-step-title">Validate your payment method</h2>
-                    <p class="ts-onboarding-step-subtitle">TerraScale waits for a signed provider event before activating billing.</p>
-                    <div class="ts-onboarding-step-actions">
-                        <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.CircleCheckBig(20)</span>
-                    </div>
-                </header>
-                <div class="ts-onboarding-content">
-                    @if (Model.PaymentValidated)
-                    {
-                        <div class="ts-alert ts-alert-success" role="status">
-                            <span class="ts-onboarding-alert-icon" aria-hidden="true">@Icons.CircleCheck(19)</span>
-                            <div class="ts-onboarding-alert-stack">
-                                <span class="ts-alert-title">Payment method validated</span>
-                                <span class="ts-alert-body">Billing validation is complete for this organization.</span>
-                            </div>
-                        </div>
-                        <div class="ts-onboarding-form-footer">
-                            <a class="ts-btn ts-btn-primary ts-btn-lg" href="/onboarding?step=project">Continue</a>
-                        </div>
-                    }
-                    else
-                    {
-                        @if (rejected)
-                        {
-                            <div class="ts-alert ts-alert-danger" role="alert">
-                                <span class="ts-onboarding-alert-icon" aria-hidden="true">@Icons.CircleAlert(19)</span>
-                                <div class="ts-onboarding-alert-stack">
-                                    <span class="ts-alert-title">The provider could not approve this payment method.</span>
-                                </div>
-                            </div>
-                        }
-                        else
-                        {
-                            <div class="ts-alert ts-alert-info" role="status">
-                                <span class="ts-onboarding-alert-icon" aria-hidden="true">@Icons.Info(19)</span>
-                                <div class="ts-onboarding-alert-stack">
-                                    <span class="ts-alert-title">Validation pending</span>
-                                    <span class="ts-alert-body">TerraScale is waiting for a conclusive provider result. You can check again or safely restart secure payment setup for this organization.</span>
-                                </div>
-                            </div>
-                        }
-                        <div class="ts-onboarding-form-footer">
-                            <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/checkout/@OnboardingPageEndpoint.DemoCheckoutSession">@Icons.RotateCcw(20) Register another method</a>
-                            <a class="ts-btn ts-btn-primary ts-btn-lg" href="/onboarding?step=payment-validation">@Icons.CircleCheckBig(20) Check validation status</a>
-                        </div>
-                    }
-                </div>
             </div>
         }
         else

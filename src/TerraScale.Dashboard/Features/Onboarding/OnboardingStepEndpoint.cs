@@ -3,22 +3,11 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Onboarding;
 
-/// <summary>Advances one wizard step: account information, organization,
-/// payment bypass, or project creation. Payment continue redirects to the
-/// local checkout session instead.</summary>
+/// <summary>Advances account setup. Registration already creates the Personal
+/// workspace, so onboarding only covers optional payment setup and the first project.</summary>
 public sealed class OnboardingStepEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
-    private static readonly string[] StepKeys =
-        ["account-information", "organization", "payment-method", "payment-validation", "project"];
-
-    private static readonly Dictionary<string, string> NextStep = new()
-    {
-        ["account-information"] = "organization",
-        ["organization"] = "payment-method",
-        ["payment-method"] = "payment-validation",
-        ["payment-validation"] = "project",
-        ["project"] = null!,
-    };
+    private static readonly string[] StepKeys = ["account-information", "payment-method", "project"];
 
     public override void Configure()
     {
@@ -31,43 +20,26 @@ public sealed class OnboardingStepEndpoint(DashboardStore store) : EndpointWitho
     {
         var form = await HttpContext.Request.ReadFormAsync(ct);
         var step = form["step"].ToString();
-        if (!StepKeys.Contains(step))
-        {
+        if (!StepKeys.Contains(step, StringComparer.Ordinal))
             return Results.Redirect("/onboarding", false, false);
-        }
 
         if (step == "payment-method" && form["bypass"] != "1")
-        {
-            return Results.Redirect("/checkout/" + OnboardingPageEndpoint.DemoCheckoutSession, false, false);
-        }
+            return Results.Redirect(store.BeginPaymentSetup("/onboarding"), false, false);
 
         store.CompleteOnboardingStep(step);
-        if (step == "organization" && form["name"].ToString() is { Length: > 0 } organizationName)
-        {
-            store.RenameOrganization(organizationName);
-        }
-
         if (step == "project")
         {
-            var name = form["name"].ToString();
+            var name = form["name"].ToString().Trim();
             if (name.Length > 0)
             {
-                // The fresh world pre-seeds one "Personal" project; the wizard
-                // names it instead of adding a second one.
                 if (store.Projects.Length == 1 && store.Projects[0].Name == "Personal")
-                {
                     store.RenameProject(store.Projects[0].Id, name, null, null);
-                }
-                else
-                {
+                else if (store.Projects.Length == 0)
                     store.CreateProject(name, form["region"].ToString() is { Length: > 0 } region ? region : "GRU");
-                }
             }
-
             return Results.Redirect("/", false, false);
         }
 
-        var next = NextStep[step];
-        return Results.Redirect(next is null ? "/" : $"/onboarding?step={next}", false, false);
+        return Results.Redirect("/onboarding", false, false);
     }
 }

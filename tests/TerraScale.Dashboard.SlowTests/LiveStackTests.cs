@@ -182,11 +182,9 @@ public sealed class LiveStackTests
         var cookie = register.Headers.GetValues("Set-Cookie").First()
             .Split(';', 2)[0]["ts_session=".Length..];
 
-        using var organization = await PostFormAsync(client, "/onboarding/step", new Dictionary<string, string> { ["step"] = "organization", ["name"] = "Live Org" });
-        using var payment = await PostFormAsync(client, "/onboarding/step", new Dictionary<string, string> { ["step"] = "payment-method" });
-        using var checkout = await PostFormAsync(client, "/checkout/cs_local_01JCHECKOUT7F3K9Q/complete", new Dictionary<string, string>());
+        using var payment = await PostFormAsync(client, "/onboarding/step", new Dictionary<string, string> { ["step"] = "payment-method", ["bypass"] = "1" });
         using var project = await PostFormAsync(client, "/onboarding/step", new Dictionary<string, string> { ["step"] = "project", ["name"] = "Personal", ["region"] = "GRU" });
-        foreach (var response in new[] { organization, payment, checkout, project })
+        foreach (var response in new[] { payment, project })
         {
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         }

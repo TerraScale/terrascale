@@ -3,14 +3,14 @@
     var shell = Model.Shell;
     var t = (string s) => s;
     var steps = new[] { t("Organization"), t("Payment"), t("Database") };
-    var checkoutHref = $"/checkout/{OnboardingPageEndpoint.DemoCheckoutSession}";
+    var checkoutHref = Model.CheckoutHref ?? "/organizations/new?step=payment";
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
     <section class="ts-panel">
         <div class="ts-panel-header ts-neworg-header">
             <h2 class="ts-panel-title">@t("Create organization")</h2>
-            <p class="ts-panel-subtitle ts-panel-subtitle-lg">@t("Repeat only the onboarding steps a new tenant needs: organization, payment, and database.")</p>
+            <p class="ts-panel-subtitle ts-panel-subtitle-lg">@t("Business organizations have their own billing and never use the Personal allowance.")</p>
         </div>
     </section>
 
@@ -68,13 +68,18 @@
                     <span class="ts-alert-body">@t("No payment method was changed; you can safely try again.")</span>
                 </div>
             }
-            @if (Model.Plans.Length == 0)
+            @if (Model.PaymentStatus == "success")
+            {
+                <div class="ts-alert ts-alert-success"><span class="ts-alert-title">@t("Business billing is active")</span><span class="ts-alert-body">@t("Your Personal allowance remains separate from this Business organization.")</span></div>
+                <div class="ts-form-actions"><a class="ts-btn ts-btn-primary ts-btn-lg" href="/organizations/new?step=database">@Icons.ArrowRight(20) @t("Continue to database setup")</a></div>
+            }
+            else if (Model.Plans.Length == 0)
             {
                 <p class="ts-muted ts-ui">@t("Select a billing plan before continuing.")</p>
             }
             else
             {
-                <p class="ts-muted ts-ui">@t("The selected plan is billed to the organization you just created.")</p>
+                <p class="ts-muted ts-ui">@t("This Business organization requires its own paid billing. Your Personal allowance stays separate.")</p>
                 <dl class="ts-wizard-summary">
                     <div class="ts-wizard-summary-row">
                         <dt>@t("Plan")</dt>
@@ -86,10 +91,12 @@
                     </div>
                 </dl>
             }
-            <div class="ts-form-actions">
-                <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/organizations/new?step=database">@Icons.ArrowRight(20) @t("Continue without payment")</a>
-                <a class="ts-btn ts-btn-primary ts-btn-lg" href="@checkoutHref">@Icons.CreditCard(20) @t("Continue to secure payment setup")</a>
-            </div>
+            @if (Model.PaymentStatus != "success")
+            {
+                <div class="ts-form-actions">
+                    <a class="ts-btn ts-btn-primary ts-btn-lg" href="@checkoutHref">@Icons.CreditCard(20) @t("Continue to secure payment setup")</a>
+                </div>
+            }
         }
         else
         {
@@ -132,7 +139,7 @@
                 </div>
             </form>
         }
-        <p class="ts-meta"><a class="ts-link ts-wizard-link" href="/organizations/new?step=organization">@t("Restart this setup")</a></p>
+        <p class="ts-meta"><a class="ts-link ts-wizard-link" href="/organizations/new?step=organization">@t("Start another Business organization")</a></p>
     </section>
 </div>
 @ShellHtml.Bottom(shell)

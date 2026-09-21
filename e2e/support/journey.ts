@@ -1,8 +1,8 @@
 import type { Page } from "@playwright/test";
 
-/** Registers a fresh account through the v1 onboarding wizard and returns its
- * credentials. Walks all five activation steps: registration → organization
- * "Personal" → local checkout → validation → project "Personal" → dashboard. */
+/** Registers a fresh account through the onboarding wizard and completes
+ * activation: registration → optional payment bypass →
+ * project "Personal" → dashboard. */
 export async function registerAndOnboard(
   page: Page,
   opts: { email: string; password: string; displayName: string },
@@ -16,18 +16,13 @@ export async function registerAndOnboard(
   await page.click('button[type="submit"]');
   await page.waitForURL("**/onboarding**");
 
-  // Organization step: create "Personal" (submits straight to payment).
-  await page.fill("#organizationName", "Personal");
-  await page.getByRole("button", { name: "Create organization" }).click();
-  await page.waitForURL("**/onboarding?step=payment-method**");
+  // Registration provisions the immutable Personal workspace and completes
+  // the account step. Continue without payment so the test stays on the free
+  // allowance path.
+  await page.getByRole("button", { name: "Continue without payment" }).click();
+  await page.waitForURL((url) => url.pathname === "/onboarding");
 
-  // Payment step: local checkout (validation completes), landing on project.
-  await page.getByRole("button", { name: "Continue to secure payment setup" }).click();
-  await page.waitForURL("**/checkout/**");
-  await page.click('form[action*="/checkout/"] button[type="submit"]');
-  await page.waitForURL("**payment=success**");
-
-  // Project step: name it "Personal" and open the dashboard.
+  // Project step: name the first project and open the dashboard.
   await page.fill("#projectName", "Personal");
   await page.getByRole("button", { name: "Create project and open Dashboard" }).click();
   await page.waitForURL((url) => url.pathname === "/" && !url.search);

@@ -34,7 +34,10 @@
             <div class="ts-field">
                 <label class="ts-label" for="activeOrganization">@t("Active organization")</label>
                 <select class="ts-select" id="activeOrganization" name="organizationId">
-                    <option value="@Model.OrganizationId" selected>@Model.OrganizationName @t("(active)")</option>
+                    @foreach (var organization in Model.Organizations.Where(o => !o.Archived))
+                    {
+                        <option value="@organization.Id" selected="@(organization.Id == Model.OrganizationId ? "selected" : null)">@organization.ActiveOrganizationName (@(organization.Kind == OrganizationKind.Personal ? t("Personal") : t("Business")))</option>
+                    }
                 </select>
             </div>
             <div class="ts-form-actions">
@@ -47,6 +50,7 @@
         <section class="ts-panel">
             <div class="ts-panel-header">
                 <h3 class="ts-panel-title">@t("Projects")</h3>
+                <p class="ts-panel-subtitle">@(Model.OrganizationKind == OrganizationKind.Personal ? t("Personal workspace · free allowance eligible") : t("Business workspace · paid billing required"))</p>
                 <p class="ts-panel-subtitle">@t("Projects returned by the TerraScale Dashboard API")</p>
             </div>
             @if (Model.CanManageOrganization)
@@ -246,10 +250,10 @@
     <section class="ts-panel">
         <div class="ts-panel-header">
             <h3 class="ts-panel-title">@t("Create organization")</h3>
-            <p class="ts-panel-subtitle">@t("Repeat only the onboarding steps a new tenant needs: organization, payment, and database.")</p>
+            <p class="ts-panel-subtitle">@(Model.OrganizationKind == OrganizationKind.Personal ? t("Personal workspace and free allowance") : t("Business workspace and paid billing"))</p>
         </div>
         <div class="ts-padded ts-muted ts-ui ts-org-desc">
-            @t("Creating another organization opens a guided flow for the tenant, its payment method, and the first database.")
+            @t("Business organizations have their own paid billing and never use the Personal allowance.")
         </div>
         <div class="ts-padded">
             <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-full" href="/organizations/new">@Icons.Plus(20) @t("Create organization")</a>

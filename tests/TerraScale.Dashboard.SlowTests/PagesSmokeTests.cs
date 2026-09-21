@@ -175,7 +175,7 @@ public sealed class PagesSmokeTests
         var page = await app.GetPageAsync(client, "/organizations/new");
         await Assert.That(page.StatusCode).IsEqualTo(200);
         await Assert.That(page.Heading).IsEqualTo("Create organization");
-        await Assert.That(page.Contains("Repeat only the onboarding steps a new tenant needs: organization, payment, and database.")).IsTrue();
+        await Assert.That(page.Contains("Business organizations have their own billing and never use the Personal allowance.")).IsTrue();
         await Assert.That(page.Contains("Organization name")).IsTrue();
     }
 
@@ -341,7 +341,7 @@ public sealed class PagesSmokeTests
         await Assert.That(page.StatusCode).IsEqualTo(200);
         await Assert.That(page.Heading).IsEqualTo("Activate your TerraScale account");
         await Assert.That(page.Contains("I accept the Terms of Service")).IsTrue();
-        await Assert.That(page.Contains("ACTIVATION STEP 1 OF 5")).IsTrue();
+        await Assert.That(page.Contains("ACTIVATION STEP 1 OF 3")).IsTrue();
     }
 
     [Test]

@@ -16,6 +16,8 @@ public sealed class CreateOrganizationDatabaseEndpoint(DashboardStore store) : E
     {
         var form = await HttpContext.Request.ReadFormAsync(ct);
         var name = form["projectName"].ToString().Trim();
+        if (!store.CanProvisionResources)
+            return Results.Redirect("/organizations/new?step=payment&error=" + Uri.EscapeDataString("Complete Business billing before creating resources."), false, false);
         if (name.Length > 0)
         {
             var region = form["regions"].Where(r => !string.IsNullOrEmpty(r)).FirstOrDefault();

@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Organization;
 
 /// <summary>Port of leaveOrganizationAction: membership ends, so the demo
 /// session ends with it (the org picker is v1-only for now).</summary>
-public sealed class LeaveOrganizationEndpoint : EndpointWithoutRequest<IResult>
+public sealed class LeaveOrganizationEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -16,6 +16,8 @@ public sealed class LeaveOrganizationEndpoint : EndpointWithoutRequest<IResult>
 
     public override Task<IResult> HandleAsync(CancellationToken ct)
     {
+        if (store.IsPersonalOrganization)
+            return Task.FromResult<IResult>(Results.Redirect("/organization?error=" + Uri.EscapeDataString("Personal workspaces cannot be left."), false, false));
         HttpContext.Response.Cookies.Delete(DashboardAuthMiddleware.SessionCookie);
         return Task.FromResult<IResult>(Results.Redirect("/login", false, false));
     }

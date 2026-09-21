@@ -9,9 +9,9 @@ public sealed partial class DashboardStore
     /// code — the confirmation step only needs the expiry (v1 email flow).</summary>
     public sealed record OwnershipTransfer(string TargetUserId, string ExpiresAt);
 
-    public string OrganizationCreatedAt => "2026-01-10T16:02:00Z";
+    public string OrganizationCreatedAt => ActiveOrganization.CreatedAt.ToString("O");
 
-    public string OrganizationStatus => "Active";
+    public string OrganizationStatus => ActiveOrganization.Archived ? "Archived" : "Active";
 
     /// <summary>Region catalog from src/backend/regions/catalog.ts (GRU/SFO/FRA)
     /// plus the ISO country and the demo round-trip latency. Live mode reads the
@@ -72,18 +72,20 @@ public sealed partial class DashboardStore
             return updated;
         })];
 
-    private ImmutableDictionary<string, OwnershipTransfer> ownershipTransfers =
-        ImmutableDictionary<string, OwnershipTransfer>.Empty;
+    private Dictionary<string, OwnershipTransfer> ownershipTransfers => ActiveOrganization.OwnershipTransfers;
 
     public ImmutableArray<OwnershipTransfer> OrganizationOwnershipTransfers => [.. ownershipTransfers.Values];
 
-    public void RequestOwnershipTransfer(string targetUserId) =>
-        ownershipTransfers = ownershipTransfers.SetItem(
-            targetUserId, new(targetUserId, DateTimeOffset.UtcNow.AddDays(7).ToString("O")));
+    public void RequestOwnershipTransfer(string targetUserId)
+    {
+        if (IsPersonalOrganization) return;
+        ownershipTransfers[targetUserId] = new(targetUserId, DateTimeOffset.UtcNow.AddDays(7).ToString("O"));
+    }
 
     public void ConfirmOwnershipTransfer(string targetUserId)
     {
-        ownershipTransfers = ownershipTransfers.Remove(targetUserId);
+        if (IsPersonalOrganization) return;
+        ownershipTransfers.Remove(targetUserId);
         UpdateMemberRole(targetUserId, "owner");
         UpdateMemberRole(CurrentUser.Id, "member");
     }
