@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 
@@ -21,6 +22,8 @@ public interface IDatastarService
     Task RemoveElementAsync(string selector, RemoveElementOptions options, CancellationToken cancellationToken = default);
     Task PatchSignalsAsync<T>(T signals, CancellationToken cancellationToken = default);
     Task PatchSignalsAsync<T>(T signals, JsonSerializerOptions options, CancellationToken cancellationToken = default);
+    Task PatchSignalsAsync<T>(T signals, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken = default);
+    Task PatchSignalsAsync<T>(T signals, JsonTypeInfo<T> typeInfo, PatchSignalsOptions patchOptions, CancellationToken cancellationToken = default);
     Task PatchSignalsAsync<T>(T signals, PatchSignalsOptions patchOptions, CancellationToken cancellationToken = default);
     Task PatchSignalsAsync<T>(T signals, JsonSerializerOptions options, PatchSignalsOptions patchOptions, CancellationToken cancellationToken = default);
     Task ExecuteScriptAsync(string script, CancellationToken cancellationToken = default);
@@ -29,6 +32,7 @@ public interface IDatastarService
     Task<string?> ReadSignalsAsync(CancellationToken cancellationToken = default);
     Task<T?> ReadSignalsAsync<T>(CancellationToken cancellationToken = default);
     Task<T?> ReadSignalsAsync<T>(JsonSerializerOptions options, CancellationToken cancellationToken = default);
+    Task<T?> ReadSignalsAsync<T>(JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken = default);
 }
 
 internal sealed class DatastarService(
@@ -50,7 +54,6 @@ internal sealed class DatastarService(
         try
         {
             if (started) return;
-            started = true;
             Response.ContentType = "text/event-stream";
             Response.Headers.CacheControl = "no-cache";
             Response.Headers["X-Accel-Buffering"] = "no";
@@ -58,15 +61,20 @@ internal sealed class DatastarService(
                 Response.Headers.Connection = "keep-alive";
             await Response.StartAsync(cancellationToken).ConfigureAwait(false);
             await Response.BodyWriter.FlushAsync(cancellationToken).ConfigureAwait(false);
+            started = true;
         }
         finally { writeLock.Release(); }
     }
 
-    public Task StartServerEventStreamAsync(IEnumerable<KeyValuePair<string, string>> additionalHeaders, CancellationToken cancellationToken = default) =>
-        StartServerEventStreamAsync(additionalHeaders.Select(pair => new KeyValuePair<string, Microsoft.Extensions.Primitives.StringValues>(pair.Key, pair.Value)), cancellationToken);
+    public Task StartServerEventStreamAsync(IEnumerable<KeyValuePair<string, string>> additionalHeaders, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(additionalHeaders);
+        return StartServerEventStreamAsync(additionalHeaders.Select(pair => new KeyValuePair<string, Microsoft.Extensions.Primitives.StringValues>(pair.Key, pair.Value)), cancellationToken);
+    }
 
     public async Task StartServerEventStreamAsync(IEnumerable<KeyValuePair<string, Microsoft.Extensions.Primitives.StringValues>> additionalHeaders, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(additionalHeaders);
         foreach (var header in additionalHeaders) Response.Headers.TryAdd(header.Key, header.Value);
         await StartServerEventStreamAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -102,15 +110,20 @@ internal sealed class DatastarService(
 
     public Task PatchSignalsAsync<T>(T signals, CancellationToken cancellationToken = default) => PatchSignalsAsync(signals, SignalOptions, new PatchSignalsOptions(), cancellationToken);
     public Task PatchSignalsAsync<T>(T signals, JsonSerializerOptions options, CancellationToken cancellationToken = default) => PatchSignalsAsync(signals, options, new PatchSignalsOptions(), cancellationToken);
+    public Task PatchSignalsAsync<T>(T signals, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken = default) => PatchSignalsAsync(signals, typeInfo, new PatchSignalsOptions(), cancellationToken);
     public Task PatchSignalsAsync<T>(T signals, PatchSignalsOptions patchOptions, CancellationToken cancellationToken = default) => PatchSignalsAsync(signals, SignalOptions, patchOptions, cancellationToken);
     public Task PatchSignalsAsync<T>(T signals, JsonSerializerOptions options, PatchSignalsOptions patchOptions, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options); ArgumentNullException.ThrowIfNull(patchOptions);
-        var json = JsonSerializer.Serialize(signals, options);
-        var lines = new List<string>();
-        if (patchOptions.OnlyIfMissing) lines.Add("onlyIfMissing true");
-        lines.AddRange(DataLines("signals", json));
-        return SendEventAsync(Consts.EnumToString(EventType.PatchSignals), lines, patchOptions.EventId, patchOptions.Retry, cancellationToken);
+        var json = JsonSerializer.SerializeToUtf8Bytes(signals, options);
+        return SendSignalEventAsync(json, patchOptions, cancellationToken);
+    }
+
+    public Task PatchSignalsAsync<T>(T signals, JsonTypeInfo<T> typeInfo, PatchSignalsOptions patchOptions, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(typeInfo); ArgumentNullException.ThrowIfNull(patchOptions);
+        var json = JsonSerializer.SerializeToUtf8Bytes(signals, typeInfo);
+        return SendSignalEventAsync(json, patchOptions, cancellationToken);
     }
 
     public Task ExecuteScriptAsync(string script, CancellationToken cancellationToken = default) => ExecuteScriptAsync(script, new ExecuteScriptOptions(), cancellationToken);
@@ -141,6 +154,28 @@ internal sealed class DatastarService(
         finally { writeLock.Release(); }
     }
 
+    private async Task SendSignalEventAsync(
+        ReadOnlyMemory<byte> json,
+        PatchSignalsOptions options,
+        CancellationToken cancellationToken)
+    {
+        await StartServerEventStreamAsync(cancellationToken).ConfigureAwait(false);
+        var builder = new ArrayBufferWriter<byte>();
+        WriteUtf8(builder, "event: "); WriteUtf8(builder, Consts.EnumToString(EventType.PatchSignals)); WriteUtf8(builder, "\n");
+        if (options.EventId is not null) { ValidateSingleLine(options.EventId, nameof(options.EventId)); WriteUtf8(builder, "id: "); WriteUtf8(builder, options.EventId); WriteUtf8(builder, "\n"); }
+        if (options.Retry < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(options.Retry));
+        if (options.Retry != Consts.DefaultSseRetryDuration) { WriteUtf8(builder, "retry: "); WriteUtf8(builder, ((long)options.Retry.TotalMilliseconds).ToString(System.Globalization.CultureInfo.InvariantCulture)); WriteUtf8(builder, "\n"); }
+        if (options.OnlyIfMissing)
+        {
+            WriteUtf8(builder, "data: onlyIfMissing true\n");
+        }
+        WriteDataLines(builder, "signals"u8, json.Span);
+        WriteUtf8(builder, "\n");
+        await writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { await Response.BodyWriter.WriteAsync(builder.WrittenMemory, cancellationToken).ConfigureAwait(false); }
+        finally { writeLock.Release(); }
+    }
+
     public Stream GetSignalsStream()
     {
         var request = Context.Request;
@@ -165,6 +200,13 @@ internal sealed class DatastarService(
         return string.IsNullOrWhiteSpace(json) ? default : JsonSerializer.Deserialize<T>(json, options);
     }
 
+    public async Task<T?> ReadSignalsAsync<T>(JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(typeInfo);
+        var json = await ReadSignalsAsync(cancellationToken).ConfigureAwait(false);
+        return string.IsNullOrWhiteSpace(json) ? default : JsonSerializer.Deserialize(json, typeInfo);
+    }
+
     private static List<string> DataLines(string prefix, string value)
     {
         List<string> result = [];
@@ -185,6 +227,33 @@ internal sealed class DatastarService(
     {
         var bytes = Encoding.UTF8.GetBytes(value, destination.GetSpan(Encoding.UTF8.GetMaxByteCount(value.Length)));
         destination.Advance(bytes);
+    }
+
+    private static void WriteDataLines(IBufferWriter<byte> destination, ReadOnlySpan<byte> prefix, ReadOnlySpan<byte> value)
+    {
+        while (true)
+        {
+            var index = value.IndexOfAny((byte)'\r', (byte)'\n');
+            var line = index < 0 ? value : value[..index];
+            WriteUtf8(destination, "data: ");
+            WriteBytes(destination, prefix);
+            if (line.Length > 0)
+            {
+                WriteUtf8(destination, " ");
+                WriteBytes(destination, line);
+            }
+            WriteUtf8(destination, "\n");
+            if (index < 0) return;
+            var separator = value[index];
+            value = value[(index + 1)..];
+            if (separator == '\r' && value.Length > 0 && value[0] == '\n') value = value[1..];
+        }
+    }
+
+    private static void WriteBytes(IBufferWriter<byte> destination, ReadOnlySpan<byte> value)
+    {
+        value.CopyTo(destination.GetSpan(value.Length));
+        destination.Advance(value.Length);
     }
 
     private static void ValidateSingleLine(string value, string parameterName)
