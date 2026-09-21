@@ -1,6 +1,7 @@
 
 using TerraScale.Dashboard;
 using TerraScale.Endpoints;
+using TerraScale.Datastar.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
 var security = DashboardSecurityOptions.Load(builder.Configuration, builder.Environment);
@@ -15,6 +16,7 @@ if (!security.DemoMode)
 builder.Services.AddResponseCompression(); // Brotli + Gzip, default MIME types
 builder.Services.AddSingleton<DashboardStore>();
 builder.Services.AddSingleton<TerraBaseBackend>();
+builder.Services.AddDatastar();
 builder.Services.AddTerraScaleEndpoints(typeof(Program).Assembly, options =>
 {
     options.Title = "TerraScale Dashboard";

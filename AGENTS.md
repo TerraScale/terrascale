@@ -11,21 +11,6 @@ Everything must work in memory account creation and etc
 - The Dashboard must not depend on terrabase(project) it should depend on ts-dotnet instead
 
 
-## Git
-
-- Use 'fj' to interact with git and forgejo
-- Always use the origin's main branch as the base of newer branches
-- Always create a feature branch and a worktree when doing new features or fixes
-  Example of branch names:
-    - feat/{feature_name}
-    - fix/{fix_name}
-    - hotfix/{fix_name}
-    - refactor/{refactor_desc}
-- When the work is done create a PR into main when the work is ready to be merged.
-- When pushing and creating the pull request make sure that the linter has no errors and that the `slow` tests passes,
-- When creating PR send the link of that PR to the user.
-- When creating a PR and the change has visual changes add multiple screenshots showing the changes that you made.
-
 ## Preview
 
 - If the user requests a preview url to check the work that is current made you need to start the dev env and send the user a tailscale dns to access it and test if it works before sending to the user if it doesnt work fix it
@@ -82,3 +67,20 @@ Everything must work in memory account creation and etc
 - Lazy-load map code and generated map data on routes that need it.
 - Provide accessible non-map controls as the canonical input.
 - Add to SVG the information needed so to make it easier to use the map on the code
+
+## Git
+
+- The user must send the ku link like `https://ku.mariogk.com/terrascale/issue/DSH-96` and then you need to extract the issue in this example DSH-96 and add to the prefix of the PR like DSH-96:{PR_TITLE}
+- Always add `mariogk` as the reviewer and `terrascale-bot` as well
+- Use 'fj' to interact with git and forgejo
+- Always use the origin's main branch as the base of newer branches
+- Always create a feature branch and a worktree when doing new features or fixes
+  Example of branch names:
+    - feat/{feature_name}
+    - fix/{fix_name}
+    - hotfix/{fix_name}
+    - refactor/{refactor_desc}
+- When the work is done create a PR into main when the work is ready to be merged.
+- When pushing and creating the pull request make sure that the linter has no errors and that the `slow` tests passes,
+- When creating PR send the link of that PR to the user.
+- When creating a PR and the change has visual changes add multiple screenshots showing the changes that you made.

@@ -14,8 +14,9 @@ one endpoint per file, CI/deploy).
   `src/TerraScale.Dashboard/nuget/` package fallback)
 - **terrascale.css** — the whole design system in one stylesheet:
   tokens, base, components, and the dashboard shell (`src/TerraScale.Dashboard/wwwroot/css/terrascale.css`)
-- **Datastar** (`wwwroot/js/datastar.js`) — the front/back communication layer;
-  slices declare `data-*` attributes, endpoints stream `Datastar.Stream(...)` events
+- **TerraScale.Datastar** (`wwwroot/js/datastar.js` and `src/TerraScale.Datastar/`) — the front/back
+  communication layer; slices declare `data-*` attributes, and the dashboard
+  owns the server-side SSE and signal implementation
 - Server-rendered SVG charts (`Framework/Charts.cs`) and lucide icon set (`Framework/Icons.cs`)
 - **TerraScale.DotNet** — the workspace prefers the sibling `ts-dotnet` SDK
   checkout; standalone Docker and CI builds restore the vendored SDK package
