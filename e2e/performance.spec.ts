@@ -15,14 +15,23 @@ test("critical resources reuse the font and versioned assets", async ({ page }) 
   expect(response.ok()).toBeTruthy();
   expect(response.headers()["etag"]).toBeTruthy();
   expect(response.headers()["content-encoding"]).toMatch(/^(br|gzip)$/);
-  if (css !== "/css/terrascale.css") expect(response.headers()["cache-control"]).toContain("immutable");
+  if (css !== "/css/terrascale.css") {
+    // The local webServer uses a build manifest with SDK reload/no-cache support.
+    // An external deployed target uses a publish manifest and immutable assets.
+    expect(response.headers()["cache-control"]).toContain(
+      process.env.DASHBOARD_E2E_BASE_URL ? "immutable" : "no-cache");
+  }
   const font = await page.evaluate(() => performance.getEntriesByType("resource")
     .filter(entry => entry.name.includes("oxanium")));
   expect(font).toHaveLength(1);
   const conditional = await page.request.get(css!, {
     headers: { "Accept-Encoding": "br, gzip", "If-None-Match": response.headers()["etag"] },
   });
-  expect(conditional.status()).toBe(304);
+  // SDK runtime reload re-reads build assets; published endpoints revalidate.
+  expect(conditional.status()).toBe(process.env.DASHBOARD_E2E_BASE_URL ? 304 : 200);
+  if (!process.env.DASHBOARD_E2E_BASE_URL) {
+    expect(await conditional.text()).toBe(await response.text());
+  }
 });
 
 test("speculation is restricted and does not change the account", async ({ page }) => {

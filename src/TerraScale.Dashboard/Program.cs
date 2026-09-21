@@ -4,6 +4,9 @@ using TerraScale.Endpoints;
 using TerraScale.Datastar.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
+// dotnet run in Production also needs the build manifest's compressed files.
+// Published deployments already carry their assets under wwwroot.
+builder.WebHost.UseStaticWebAssets();
 var security = DashboardSecurityOptions.Load(builder.Configuration, builder.Environment);
 builder.Services.AddSingleton(security);
 if (!security.DemoMode)
