@@ -8,7 +8,7 @@ using TerraScale.Auth.Store;
 
 /// <summary>Delivers audit events to matching enabled webhook endpoints:
 /// HMAC-signed payloads, at-least-once, with durable checkpoints and bounded retries. One instance per
-/// application, started from <see cref="WebhookEndpointsModule.Map"/> (App.cs is
+/// application, started from <see cref="WebhooksModule.Start"/> (App.cs is
 /// shared, so there is no hosted-service registration).</summary>
 public sealed class WebhookDispatcher(AuthStore store, ILogger<WebhookDispatcher> logger, byte[] masterKey)
 {

@@ -12,6 +12,14 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\..\ts-libs\src\TerraScale.Endpoints\TerraScale.Endpoints.csproj')">
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\..\ts-libs\src\TerraScale.Endpoints\TerraScale.Endpoints.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="!Exists('$(MSBuildThisFileDirectory)..\..\..\ts-libs\src\TerraScale.Endpoints\TerraScale.Endpoints.csproj')">
+    <PackageReference Include="TerraScale.Endpoints" Version="1.1.0" />
+  </ItemGroup>
+
   <ItemGroup Condition="Exists('$(TerraScaleSdkProject)')">
     <ProjectReference Include="$(TerraScaleSdkProject)" />
   </ItemGroup>
