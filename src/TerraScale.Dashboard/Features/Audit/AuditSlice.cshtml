@@ -39,7 +39,7 @@
                 <div class="ts-metric"><span class="ts-muted">High risk</span><span class="ts-audit-metric-inline ts-text-danger">@Model.Critical.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
                 <div class="ts-metric"><span class="ts-muted">Warnings</span><span class="ts-audit-metric-inline ts-text-warning">@Model.Warn.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
                 <div class="ts-audit-export-wrap">
-                    <button class="ts-btn ts-btn-primary ts-btn-lg" type="button" @(Model.Rows.Count == 0 ? "disabled" : null) data-on-click="document.querySelector('#audit-export-dialog').showModal()">@Icons.Download(16) Export audit</button>
+                    <button class="ts-btn ts-btn-primary ts-btn-lg" type="button" @(Model.Rows.Count == 0 ? "disabled" : null) data-on:click="document.querySelector('#audit-export-dialog').showModal()">@Icons.Download(16) Export audit</button>
                 </div>
             </div>
         </div>
@@ -216,17 +216,17 @@
             <p class="ts-dialog-description">@Model.Rows.Count event@(Model.Rows.Count == 1 ? "" : "s") ready to export.</p>
         </div>
         <div class="ts-audit-export-grid">
-            <button type="button" class="ts-btn ts-btn-secondary ts-audit-export-option" data-class:ts-audit-export-option-active="$auditExportFormat === 'csv'" data-on-click="$auditExportFormat = 'csv'">
+            <button type="button" class="ts-btn ts-btn-secondary ts-audit-export-option" data-class:ts-audit-export-option-active="$auditExportFormat === 'csv'" data-on:click="$auditExportFormat = 'csv'">
                 <span class="ts-audit-export-option-label">@Icons.ScrollText(16) CSV</span>
                 <span class="ts-audit-export-option-description">Spreadsheet-ready rows with all event fields.</span>
             </button>
-            <button type="button" class="ts-btn ts-btn-secondary ts-audit-export-option" data-class:ts-audit-export-option-active="$auditExportFormat === 'json'" data-on-click="$auditExportFormat = 'json'">
+            <button type="button" class="ts-btn ts-btn-secondary ts-audit-export-option" data-class:ts-audit-export-option-active="$auditExportFormat === 'json'" data-on:click="$auditExportFormat = 'json'">
                 <span class="ts-audit-export-option-label">@Icons.ScrollText(16) JSON</span>
                 <span class="ts-audit-export-option-description">Structured records for pipeline ingestion.</span>
             </button>
         </div>
         <div class="ts-dialog-footer">
-            <button type="button" class="ts-btn ts-btn-ghost ts-btn-lg" data-on-click="document.querySelector('#audit-export-dialog').close()">Cancel</button>
+            <button type="button" class="ts-btn ts-btn-ghost ts-btn-lg" data-on:click="document.querySelector('#audit-export-dialog').close()">Cancel</button>
             <a class="ts-btn ts-btn-primary ts-btn-lg" data-show="$auditExportFormat === 'csv'" href="@ExportHref("csv")">@Icons.Download(16) Export CSV</a>
             <a class="ts-btn ts-btn-primary ts-btn-lg" data-show="$auditExportFormat === 'json'" href="@ExportHref("json")">@Icons.Download(16) Export JSON</a>
         </div>

@@ -26,7 +26,7 @@
             </div>
             <div class="ts-stack-12 ts-min-width ts-header-column">
                 <div class="ts-actions-row">
-                    <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on-click="document.getElementById('profile-edit').showModal()">@Icons.Pencil(16) @t("Edit")</button>
+                    <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on:click="document.getElementById('profile-edit').showModal()">@Icons.Pencil(16) @t("Edit")</button>
                 </div>
                 <dl class="ts-summary-terms">
                     <div class="ts-summary-term"><dt>@t("Roles")</dt><dd>@Model.Roles.Length</dd></div>
@@ -85,7 +85,7 @@
                 <form method="post" action="/api/v1/dashboard/profile/language" class="ts-form ts-padded">
                     <div class="ts-field ts-field-narrow">
                         <label class="ts-label" for="interfaceLanguage">@t("Interface language")</label>
-                        <select class="ts-select" id="interfaceLanguage" name="locale" data-on-change="this.form.requestSubmit()">
+                        <select class="ts-select" id="interfaceLanguage" name="locale" data-on:change="evt.target.form.requestSubmit()">
                             <option value="en" @(Model.Locale == "en" ? "selected" : null)>English</option>
                             <option value="pt-BR" @(Model.Locale == "pt-BR" ? "selected" : null)>Português</option>
                         </select>
@@ -430,7 +430,7 @@
                 <input class="ts-input" id="phoneNumber" name="phoneNumber" value="@Model.PhoneNumber" autocomplete="tel" inputmode="tel" />
             </div>
             <div class="ts-dialog-footer">
-                <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on-click="document.getElementById('profile-edit').close()">@t("Cancel")</button>
+                <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on:click="document.getElementById('profile-edit').close()">@t("Cancel")</button>
                 <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">@Icons.Save(16) @t("Save")</button>
             </div>
         </form>

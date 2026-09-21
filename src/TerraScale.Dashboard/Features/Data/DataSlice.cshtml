@@ -106,7 +106,7 @@
                 </div>
                 <form class="ts-explorer-controls" method="get" action="/data">
                     <input type="hidden" name="view" value="table" />
-                    <select class="ts-select" name="database" aria-label="Database" data-on-change="evt.target.closest('form').requestSubmit()">
+                    <select class="ts-select" name="database" aria-label="Database" data-on:change="evt.target.closest('form').requestSubmit()">
                         <option value="">Choose a database</option>
                         @foreach (var database in Model.Databases)
                         {
@@ -233,7 +233,7 @@
                     </label>
                     <label class="ts-field ts-field-flush">
                         <span class="ts-label">Operation</span>
-                        <select class="ts-select" name="operation" data-on-change="$docOp = evt.target.value">
+                        <select class="ts-select" name="operation" data-on:change="$docOp = evt.target.value">
                             <option value="create">Create (PUT)</option>
                             <option value="update">Update (replace)</option>
                             <option value="patch">Patch (merge)</option>
@@ -267,7 +267,7 @@
                     <input type="hidden" name="collection" value="@Model.SqlCollection" />
                     <label class="ts-field">
                         <span class="ts-label">Load a saved query</span>
-                        <select class="ts-select" name="savedQueryId" data-on-change="window.location.assign('/data?view=sql&amp;collection=@Model.SqlCollection&amp;savedQueryId=' + evt.target.value)">
+                        <select class="ts-select" name="savedQueryId" data-on:change="window.location.assign('/data?view=sql&amp;collection=@Model.SqlCollection&amp;savedQueryId=' + evt.target.value)">
                             <option value="">Choose a saved query...</option>
                             @foreach (var query in store.SavedQueries)
                             {

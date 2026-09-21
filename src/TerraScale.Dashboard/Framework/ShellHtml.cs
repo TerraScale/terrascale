@@ -32,8 +32,8 @@ public static class ShellHtml
             </head>
             <body>
             """);
-        builder.AppendLine("    <div class=\"ts-shell\"" + dataSubNav + " data-signals=\"{navOpen:false}\" data-class=\"nav-open:navOpen\">");
-        builder.AppendLine("""        <div class="ts-nav-backdrop" data-on-click="navOpen=false"></div>""");
+        builder.AppendLine("    <div class=\"ts-shell\"" + dataSubNav + " data-signals=\"{navOpen:false}\" data-class:nav-open=\"$navOpen\">");
+        builder.AppendLine("""        <div class="ts-nav-backdrop" data-on:click="$navOpen=false"></div>""");
         builder.Append(Sidebar(shell));
         if (shell.Route?.Id == RouteId.Data)
         {
@@ -41,7 +41,7 @@ public static class ShellHtml
         }
 
         builder.AppendLine("        <div class=\"ts-inset\">");
-        builder.AppendLine("""            <button type="button" class="ts-fab ts-fab-nav" aria-label="Open navigation" data-on-click="navOpen=!navOpen">""" + Icons.PanelLeft(18).Value + "</button>");
+        builder.AppendLine("""            <button type="button" class="ts-fab ts-fab-nav" aria-label="Open navigation" data-on:click="$navOpen=!$navOpen">""" + Icons.PanelLeft(18).Value + "</button>");
         builder.AppendLine("            <main class=\"ts-main\">");
         if (shell.PageTitle is { } pageTitle)
         {
@@ -169,7 +169,7 @@ public static class ShellHtml
             foreach (var option in others)
             {
                 var optionDatabases = store.ProjectDatabases(option.Id).Length;
-                builder.AppendLine($"                                        <form method=\"post\" action=\"/api/v1/dashboard/switch-project\" data-show=\"projectSearch === '' || '{Escape(option.Name).ToLowerInvariant()}'.includes(projectSearch.toLowerCase())\">");
+                builder.AppendLine($"                                        <form method=\"post\" action=\"/api/v1/dashboard/switch-project\" data-show=\"$projectSearch === '' || '{Escape(option.Name).ToLowerInvariant()}'.includes($projectSearch.toLowerCase())\">");
                 builder.AppendLine($"                                            <input type=\"hidden\" name=\"projectId\" value=\"{option.Id}\" />");
                 builder.AppendLine($"                                            <input type=\"hidden\" name=\"returnUrl\" value=\"{shell.ActiveHref}\" />");
                 builder.AppendLine("                                            <button type=\"submit\" class=\"ts-project-option\">");
