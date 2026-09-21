@@ -1,0 +1,35 @@
+@inherits RazorSlice<OnboardingProjectCardView>
+<div class="ts-onboarding-card">
+    <header class="ts-onboarding-step-header">
+        <h2 class="ts-onboarding-step-title">Create your first project</h2>
+        <p class="ts-onboarding-step-subtitle">Products inherit these primary regions.</p>
+        <div class="ts-onboarding-step-actions">
+            <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.Database(20)</span>
+        </div>
+    </header>
+    <form class="ts-onboarding-content ts-onboarding-content-wide" method="post" action="@Model.Action">
+        <input type="hidden" name="step" value="@Model.StepValue" />
+        <div class="ts-field">
+            <label class="ts-label" for="projectName">Project name</label>
+            <input class="ts-input" id="projectName" name="name" placeholder="Production" required />
+        </div>
+        <div class="ts-field">
+            <span class="ts-label" id="regionLabel">Primary regions</span>
+            <div class="ts-onboarding-region-map" role="radiogroup" aria-labelledby="regionLabel">
+                <img class="ts-onboarding-region-dots" src="/brand/region-map.svg" alt="" decoding="async" />
+                @foreach (var region in Model.Regions)
+                {
+                    var left = (region.X / RegionMap.Width * 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                    var top = (region.Y / RegionMap.Height * 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                    <label class="ts-onboarding-region-pin @(region.Live ? null : "ts-onboarding-region-pin-disabled")" style="left:@(left)%;top:@(top)%">
+                        <input class="ts-onboarding-region-input" type="radio" name="region" value="@region.Code" aria-label="@region.Name (@region.Code.ToUpperInvariant()) — @(region.Live ? "Available" : "Unavailable")" @(region.Code == Model.DefaultRegion ? "checked" : null) @(region.Live ? null : "disabled") />
+                        <span class="ts-onboarding-region-dot" aria-hidden="true"></span>
+                    </label>
+                }
+            </div>
+        </div>
+        <div class="ts-onboarding-form-footer">
+            <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create project and open Dashboard</button>
+        </div>
+    </form>
+</div>

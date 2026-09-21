@@ -1,18 +1,5 @@
 @inherits RazorSlice<OnboardingPageModel>
 @{
-    var stateLabels = new Dictionary<string, string>
-    {
-        ["pending"] = "PENDING",
-        ["current"] = "CURRENT",
-        ["completed"] = "COMPLETED",
-        ["blocked"] = "BLOCKED",
-        ["not-started"] = "NOT STARTED",
-        ["in-progress"] = "IN PROGRESS",
-        ["awaiting-validation"] = "AWAITING VALIDATION",
-        ["unavailable"] = "UNAVAILABLE",
-        ["expired"] = "EXPIRED",
-        ["ready-for-project"] = "READY FOR PROJECT",
-    };
     var activeState = Model.Steps.First(s => s.Key == Model.ActiveStep).State;
     var stepDone = activeState == "completed";
     var rejected = activeState == "rejected";
@@ -41,41 +28,16 @@
                 </div>
             }
         </header>
-        <div class="ts-onboarding-progress">
-            <div class="ts-onboarding-progress-meta">
-                <span>ACTIVATION STEP @Model.CurrentStep OF @Model.TotalSteps</span>
-                <span>@Model.ProgressPercent%</span>
-            </div>
-            <div class="ts-onboarding-progress-frame">
-                <div class="ts-progress" role="progressbar" aria-label="Account setup progress" aria-valuenow="@Model.ProgressPercent" aria-valuemin="0" aria-valuemax="100">
-                    <div class="ts-progress-bar" style="width:@(Model.ProgressPercent)%"></div>
-                </div>
-            </div>
-        </div>
-        <ol class="ts-onboarding-steps @(wide ? null : "ts-onboarding-steps-compact")" aria-label="Onboarding progress">
-            @foreach (var step in Model.Steps)
-            {
-                var current = step.Key == Model.ActiveStep;
-                var complete = step.State == "completed";
-                var blocked = step.State == "blocked";
-                var classes = "ts-onboarding-step"
-                    + (current ? " ts-onboarding-step-current" : "")
-                    + (blocked ? " ts-onboarding-step-blocked" : "")
-                    + (complete ? " ts-onboarding-step-complete" : "");
-                <li class="@classes" aria-current="@(current ? "step" : null)">
-                    @if (complete)
-                    {
-                        @Icons.Check(18)
-                    }
-                    else
-                    {
-                        @(typeof(Icons).GetMethod(step.Icon)?.Invoke(null, [18]) as Microsoft.AspNetCore.Html.HtmlString ?? Icons.Circle(18))
-                    }
-                    <span>@step.Label</span>
-                    <span class="ts-onboarding-step-state">@(stateLabels.TryGetValue(step.State, out var label) ? label : step.State)</span>
-                </li>
-            }
-        </ol>
+        @(await RenderPartialAsync<OnboardingProgress, OnboardingProgressView>(new(
+            Steps: Model.Steps,
+            ActiveStep: Model.ActiveStep,
+            CurrentStep: Model.CurrentStep,
+            TotalSteps: Model.TotalSteps,
+            ProgressPercent: Model.ProgressPercent,
+            Label: "ACTIVATION STEP",
+            Compact: !wide,
+            AriaLabel: "Onboarding progress",
+            BarAriaLabel: "Account setup progress")))
         @if (Model.PaymentCanceled)
         {
             <div class="ts-alert ts-alert-warning" role="alert">
@@ -171,118 +133,21 @@
         }
         else if (Model.ActiveStep == "organization")
         {
-            <div class="ts-onboarding-card">
-                <header class="ts-onboarding-step-header">
-                    <h2 class="ts-onboarding-step-title">Create your first organization</h2>
-                    <p class="ts-onboarding-step-subtitle">Billing and future projects use this authenticated tenant boundary.</p>
-                    <div class="ts-onboarding-step-actions">
-                        <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.Building2(20)</span>
-                    </div>
-                </header>
-                <div class="ts-onboarding-content">
-                    @if (stepDone)
-                    {
-                        <div class="ts-alert ts-alert-success" role="status">
-                            <span class="ts-onboarding-alert-icon" aria-hidden="true">@Icons.CircleCheck(19)</span>
-                            <div class="ts-onboarding-alert-stack">
-                                <span class="ts-alert-title">Organization created</span>
-                                <span class="ts-alert-body">Your organization is ready for billing and projects.</span>
-                            </div>
-                        </div>
-                        <div class="ts-onboarding-form-footer">
-                            <a class="ts-btn ts-btn-primary ts-btn-lg" href="/onboarding?step=payment-method">Continue</a>
-                        </div>
-                    }
-                    else
-                    {
-                        <form class="ts-onboarding-field-list" method="post" action="/onboarding/step">
-                            <input type="hidden" name="step" value="organization" />
-                            <div class="ts-field">
-                                <label class="ts-label" for="organizationName">Organization name</label>
-                                <input class="ts-input" id="organizationName" name="name" placeholder="Acme Labs" required />
-                            </div>
-                            <div class="ts-onboarding-form-footer">
-                                <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create organization</button>
-                            </div>
-                        </form>
-                    }
-                </div>
-            </div>
+            @(await RenderPartialAsync<OnboardingOrganizationCard, OnboardingOrganizationCardView>(new(
+                Action: "/onboarding/step",
+                StepValue: "organization",
+                Title: "Create your first organization",
+                Subtitle: "Billing and future projects use this authenticated tenant boundary.",
+                ContinueHref: "/onboarding?step=payment-method",
+                StepDone: stepDone)))
         }
         else if (Model.ActiveStep == "payment-method")
         {
-            <div class="ts-onboarding-card" data-signals="{ plan: 'starter', interval: 'monthly' }">
-                <header class="ts-onboarding-step-header">
-                    <h2 class="ts-onboarding-step-title">Register a payment method</h2>
-                    <p class="ts-onboarding-step-subtitle">Checkout is bound to your authenticated organization and configured payment provider.</p>
-                    <div class="ts-onboarding-step-actions">
-                        <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.CreditCard(20)</span>
-                        <span class="ts-onboarding-interval ts-onboarding-interval-header" role="group" aria-label="Billing interval">
-                            <button type="button" class="ts-onboarding-interval-option" aria-pressed="true" data-attr-aria-pressed="interval === 'monthly'" data-on-click="interval = 'monthly'">Monthly</button>
-                            <button type="button" class="ts-onboarding-interval-option" aria-pressed="false" data-attr-aria-pressed="interval === 'annual'" data-on-click="interval = 'annual'">Annual <span class="ts-onboarding-interval-badge">2 months free</span></button>
-                        </span>
-                    </div>
-                </header>
-                <form class="ts-onboarding-content" method="post" action="/onboarding/step">
-                    <input type="hidden" name="step" value="payment-method" />
-                    @if (stepDone)
-                    {
-                        <div class="ts-alert ts-alert-success" role="status">
-                            <span class="ts-onboarding-alert-icon" aria-hidden="true">@Icons.CircleCheck(19)</span>
-                            <div class="ts-onboarding-alert-stack">
-                                <span class="ts-alert-title">Payment method registered</span>
-                                <span class="ts-alert-body">Continue to validation.</span>
-                            </div>
-                        </div>
-                    }
-                    else
-                    {
-                        <div class="ts-onboarding-plans" role="radiogroup" aria-label="Billing plan">
-                            @foreach (var plan in Model.Plans)
-                            {
-                                <button type="button" role="radio" class="ts-onboarding-plan ts-onboarding-plan-@plan.Key" aria-checked="@(plan.Key == "starter" ? "true" : "false")" data-attr-aria-checked="plan === '@plan.Key'" data-on-click="plan = '@plan.Key'">
-                                    <span class="ts-onboarding-plan-header">
-                                        <span class="ts-onboarding-plan-name">@plan.Name</span>
-                                        <span class="ts-onboarding-plan-check" aria-hidden="true">@Icons.Check(13)</span>
-                                    </span>
-                                    <span class="ts-onboarding-plan-description">@plan.Description</span>
-                                    <span class="ts-onboarding-plan-price-row" data-show="interval === 'monthly'">
-                                        <span class="ts-onboarding-plan-strike" aria-hidden="true">$@(plan.MonthlyUsd.ToString("0"))</span>
-                                        <span class="ts-onboarding-plan-per"> / month</span>
-                                    </span>
-                                    <span class="ts-onboarding-plan-price-row" data-show="interval === 'annual'">
-                                        <span class="ts-onboarding-plan-strike" aria-hidden="true">$@(plan.AnnualUsd.ToString("0"))</span>
-                                        <span class="ts-onboarding-plan-per"> / year</span>
-                                    </span>
-                                    <span class="ts-onboarding-plan-trial">$0.00</span>
-                                    <span class="ts-onboarding-plan-divider" aria-hidden="true"></span>
-                                    <span class="ts-onboarding-plan-features">
-                                        @foreach (var feature in plan.Features)
-                                        {
-                                            <span class="ts-onboarding-plan-feature">
-                                                <span class="ts-onboarding-plan-feature-check" aria-hidden="true">@Icons.Check(11)</span>
-                                                <span>@feature</span>
-                                            </span>
-                                        }
-                                    </span>
-                                </button>
-                            }
-                        </div>
-                        <div class="ts-onboarding-interval-switch">
-                            <span class="ts-onboarding-interval-switch-label">Billing interval</span>
-                            <span class="ts-onboarding-interval" role="group" aria-label="Billing interval">
-                                <button type="button" class="ts-onboarding-interval-option" aria-pressed="true" data-attr-aria-pressed="interval === 'monthly'" data-on-click="interval = 'monthly'">Monthly</button>
-                                <button type="button" class="ts-onboarding-interval-option" aria-pressed="false" data-attr-aria-pressed="interval === 'annual'" data-on-click="interval = 'annual'">Annual <span class="ts-onboarding-interval-badge">2 months free</span></button>
-                            </span>
-                        </div>
-                        <p class="ts-onboarding-provider-notice">No card today? Continue on the Free plan with X operations per month. Add a payment method now and your first month is free.</p>
-                    }
-                    <div class="ts-onboarding-form-footer">
-                        <button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit" name="bypass" value="1">@Icons.ArrowRight(20) Continue without payment</button>
-                        <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.CreditCard(20) Continue to secure payment setup</button>
-                    </div>
-                </form>
-            </div>
+            @(await RenderPartialAsync<OnboardingPaymentCard, OnboardingPaymentCardView>(new(
+                Action: "/onboarding/step",
+                StepValue: "payment-method",
+                Plans: Model.Plans,
+                StepDone: stepDone)))
         }
         else if (Model.ActiveStep == "payment-validation")
         {
@@ -339,40 +204,11 @@
         }
         else
         {
-            <div class="ts-onboarding-card">
-                <header class="ts-onboarding-step-header">
-                    <h2 class="ts-onboarding-step-title">Create your first project</h2>
-                    <p class="ts-onboarding-step-subtitle">Products inherit these primary regions.</p>
-                    <div class="ts-onboarding-step-actions">
-                        <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.Database(20)</span>
-                    </div>
-                </header>
-                <form class="ts-onboarding-content ts-onboarding-content-wide" method="post" action="/onboarding/step">
-                    <input type="hidden" name="step" value="project" />
-                    <div class="ts-field">
-                        <label class="ts-label" for="projectName">Project name</label>
-                        <input class="ts-input" id="projectName" name="name" placeholder="Production" required />
-                    </div>
-                    <div class="ts-field">
-                        <span class="ts-label" id="regionLabel">Primary regions</span>
-                        <div class="ts-onboarding-region-map" role="radiogroup" aria-labelledby="regionLabel">
-                            <img class="ts-onboarding-region-dots" src="/brand/region-map.svg" alt="" decoding="async" />
-                            @foreach (var region in Model.Regions)
-                            {
-                                var left = (region.X / RegionMap.Width * 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
-                                var top = (region.Y / RegionMap.Height * 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
-                                <label class="ts-onboarding-region-pin @(region.Live ? null : "ts-onboarding-region-pin-disabled")" style="left:@(left)%;top:@(top)%">
-                                    <input class="ts-onboarding-region-input" type="radio" name="region" value="@region.Code" aria-label="@region.Name (@region.Code.ToUpperInvariant()) — @(region.Live ? "Available" : "Unavailable")" @(region.Code == defaultRegion ? "checked" : null) @(region.Live ? null : "disabled") />
-                                    <span class="ts-onboarding-region-dot" aria-hidden="true"></span>
-                                </label>
-                            }
-                        </div>
-                    </div>
-                    <div class="ts-onboarding-form-footer">
-                        <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create project and open Dashboard</button>
-                    </div>
-                </form>
-            </div>
+            @(await RenderPartialAsync<OnboardingProjectCard, OnboardingProjectCardView>(new(
+                Action: "/onboarding/step",
+                StepValue: "project",
+                Regions: Model.Regions,
+                DefaultRegion: defaultRegion)))
         }
     </div>
 </main>

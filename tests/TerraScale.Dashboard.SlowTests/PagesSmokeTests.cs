@@ -175,8 +175,13 @@ public sealed class PagesSmokeTests
         var page = await app.GetPageAsync(client, "/organizations/new");
         await Assert.That(page.StatusCode).IsEqualTo(200);
         await Assert.That(page.Heading).IsEqualTo("Create organization");
-        await Assert.That(page.Contains("Repeat only the onboarding steps a new tenant needs: organization, payment, and database.")).IsTrue();
+        await Assert.That(page.Contains("Repeat only the onboarding steps a new tenant needs: organization, payment, and project.")).IsTrue();
         await Assert.That(page.Contains("Organization name")).IsTrue();
+        // The journey reuses the activation wizard's step screens: the progress
+        // rail and the organization card, scoped to three steps.
+        await Assert.That(page.Contains("STEP 1 OF 3")).IsTrue();
+        await Assert.That(page.Contains("ts-onboarding-card")).IsTrue();
+        await Assert.That(page.Contains("ts-onboarding-step-title")).IsTrue();
     }
 
     [Test]

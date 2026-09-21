@@ -14,9 +14,11 @@
             <p class="ts-flow-subtitle">No card data or real payment is used.</p>
             <div class="ts-flow-actions">
                 <form method="post" action="/checkout/@Model.SessionId/complete">
+                    <input type="hidden" name="returnTo" value="@Model.ReturnTo" />
                     <button class="ts-btn ts-btn-primary ts-btn-lg ts-flow-action" type="submit">@Icons.CreditCard(20) Use local test payment method</button>
                 </form>
                 <form method="post" action="/checkout/@Model.SessionId/cancel">
+                    <input type="hidden" name="returnTo" value="@Model.ReturnTo" />
                     <button class="ts-btn ts-btn-secondary ts-btn-lg ts-flow-action" type="submit">Cancel</button>
                 </form>
             </div>

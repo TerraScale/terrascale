@@ -12,6 +12,11 @@ public sealed class CancelCheckoutEndpoint : EndpointWithoutRequest<IResult>
         Tags("Subscriptions");
     }
 
-    public override Task<IResult> HandleAsync(CancellationToken ct) =>
-        Task.FromResult<IResult>(Results.Redirect("/onboarding?payment=canceled", false, false));
+    public override async Task<IResult> HandleAsync(CancellationToken ct)
+    {
+        var returnTo = HttpContext.Request.HasFormContentType
+            ? (await HttpContext.Request.ReadFormAsync(ct))["returnTo"].ToString()
+            : null;
+        return Results.Redirect(SafeRedirect.WithPaymentResult(returnTo, "canceled"), false, false);
+    }
 }

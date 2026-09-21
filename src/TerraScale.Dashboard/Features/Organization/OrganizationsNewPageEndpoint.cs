@@ -15,16 +15,10 @@ public sealed class OrganizationsNewPageEndpoint(DashboardStore store) : Endpoin
     public override Task<IResult> HandleAsync(CancellationToken ct)
     {
         var query = HttpContext.Request.Query;
-        // v1 resolveNewOrganizationStep: named steps in the URL, default "organization".
-        var step = query["step"].FirstOrDefault() switch
-        {
-            "payment" => 2,
-            "database" => 3,
-            _ => 1,
-        };
         var payment = query["payment"].FirstOrDefault();
         var paymentStatus = payment is "success" or "canceled" ? payment : null;
+        var activeStep = OrganizationsNewPageModel.ResolveStep(query["step"].FirstOrDefault(), paymentStatus);
         return Task.FromResult<IResult>(OrganizationsNewSlice.Create(
-            OrganizationsNewPageModel.From(store, "/organizations/new", step, paymentStatus)));
+            OrganizationsNewPageModel.From(store, "/organizations/new", activeStep, paymentStatus)));
     }
 }

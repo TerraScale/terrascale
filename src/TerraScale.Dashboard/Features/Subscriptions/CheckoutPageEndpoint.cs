@@ -15,7 +15,10 @@ public sealed class CheckoutPageEndpoint : EndpointWithoutRequest<IResult>
     public override Task<IResult> HandleAsync(CancellationToken ct)
     {
         var sessionId = HttpContext.Request.RouteValues["sessionId"] as string ?? "";
-        var model = new CheckoutPageModel(sessionId.Trim());
+        // The wizard that started checkout supplies ?return= so the payment
+        // result resumes it; unknown or off-origin values fall back to onboarding.
+        var returnTo = SafeRedirect.LocalPath(HttpContext.Request.Query["return"].FirstOrDefault());
+        var model = new CheckoutPageModel(sessionId.Trim(), returnTo);
         return Task.FromResult<IResult>(CheckoutSlice.Create(model));
     }
 }

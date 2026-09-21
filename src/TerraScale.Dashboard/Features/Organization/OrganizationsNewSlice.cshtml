@@ -2,137 +2,68 @@
 @{
     var shell = Model.Shell;
     var t = (string s) => s;
-    var steps = new[] { t("Organization"), t("Payment"), t("Database") };
-    var checkoutHref = $"/checkout/{OnboardingPageEndpoint.DemoCheckoutSession}";
+    var stepAction = "/organizations/new/step";
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
     <section class="ts-panel">
-        <div class="ts-panel-header ts-neworg-header">
+        <div class="ts-panel-header">
             <h2 class="ts-panel-title">@t("Create organization")</h2>
-            <p class="ts-panel-subtitle ts-panel-subtitle-lg">@t("Repeat only the onboarding steps a new tenant needs: organization, payment, and database.")</p>
+            <p class="ts-panel-subtitle ts-panel-subtitle-lg">@t("Repeat only the onboarding steps a new tenant needs: organization, payment, and project.")</p>
         </div>
     </section>
 
-    <section class="ts-panel ts-neworg ts-neworg-wizard">
-        <div class="ts-row-between">
-            <span class="ts-meta">@t("Step") @Model.Step @t("of") 3</span>
-            <span class="ts-meta">@Model.ProgressPercent%</span>
-        </div>
-        <div class="ts-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@Model.ProgressPercent" aria-label='@t("New organization progress")'>
-            <div class="ts-progress-bar" style="width:@Model.ProgressPercent%"></div>
-        </div>
-        <ol class="ts-wizard-steps" aria-label='@t("New organization steps")'>
-            @for (var i = 0; i < steps.Length; i++)
-            {
-                <li class="ts-wizard-step @(i + 1 < Model.Step ? "ts-wizard-step-done" : null) @(i + 1 == Model.Step ? "ts-wizard-step-active" : null)">
-                    @steps[i]
-                </li>
-            }
-        </ol>
+    @* The same step screens as the activation wizard, scoped to the three
+       steps a new tenant repeats: organization, payment, and project. *@
+    <div class="ts-onboarding-container">
+        @(await RenderPartialAsync<OnboardingProgress, OnboardingProgressView>(new(
+            Steps: Model.Steps,
+            ActiveStep: Model.ActiveStep,
+            CurrentStep: Model.CurrentStep,
+            TotalSteps: Model.TotalSteps,
+            ProgressPercent: Model.ProgressPercent,
+            Label: "STEP",
+            Compact: Model.Compact,
+            AriaLabel: "New organization steps",
+            BarAriaLabel: "New organization progress")))
 
-        @if (Model.Step == 1)
+        @if (Model.PaymentCanceled)
         {
-            <form method="post" action="/api/v1/dashboard/organizations/create" class="ts-form">
-                <div class="ts-field">
-                    <label class="ts-label" for="newOrganizationName">@t("Organization name")</label>
-                    <input class="ts-input" id="newOrganizationName" name="name" placeholder="Acme" required />
-                </div>
-                <div class="ts-field">
-                    <label class="ts-label" for="newOrganizationPlan">@t("Plan")</label>
-                    <select class="ts-select" id="newOrganizationPlan" name="planId" required @(Model.Plans.Length == 0 ? "disabled" : null)>
-                        @if (Model.Plans.Length == 0)
-                        {
-                            <option value="" selected disabled>@t("No billing plans are available")</option>
-                        }
-                        else
-                        {
-                            @foreach (var plan in Model.Plans)
-                            {
-                                <option value="@plan.PlanId">@plan.Name</option>
-                            }
-                        }
-                    </select>
-                </div>
-                <div class="ts-form-actions ts-form-actions-start">
-                    <button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-full" type="submit">@Icons.Building2(20) @t("Create organization")</button>
-                </div>
-            </form>
-        }
-        else if (Model.Step == 2)
-        {
-            @if (Model.PaymentStatus == "canceled")
-            {
-                <div class="ts-alert ts-alert-warning">
+            <div class="ts-alert ts-alert-warning" role="alert">
+                <span class="ts-onboarding-alert-icon" aria-hidden="true">@Icons.TriangleAlert(19)</span>
+                <div class="ts-onboarding-alert-stack">
                     <span class="ts-alert-title">@t("Payment setup canceled")</span>
                     <span class="ts-alert-body">@t("No payment method was changed; you can safely try again.")</span>
                 </div>
-            }
-            @if (Model.Plans.Length == 0)
-            {
-                <p class="ts-muted ts-ui">@t("Select a billing plan before continuing.")</p>
-            }
-            else
-            {
-                <p class="ts-muted ts-ui">@t("The selected plan is billed to the organization you just created.")</p>
-                <dl class="ts-wizard-summary">
-                    <div class="ts-wizard-summary-row">
-                        <dt>@t("Plan")</dt>
-                        <dd>@Model.Plans[0].Name</dd>
-                    </div>
-                    <div class="ts-wizard-summary-row">
-                        <dt>@t("Billing interval")</dt>
-                        <dd>@t("Monthly")</dd>
-                    </div>
-                </dl>
-            }
-            <div class="ts-form-actions">
-                <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/organizations/new?step=database">@Icons.ArrowRight(20) @t("Continue without payment")</a>
-                <a class="ts-btn ts-btn-primary ts-btn-lg" href="@checkoutHref">@Icons.CreditCard(20) @t("Continue to secure payment setup")</a>
             </div>
+        }
+
+        @if (Model.ActiveStep == "organization")
+        {
+            @(await RenderPartialAsync<OnboardingOrganizationCard, OnboardingOrganizationCardView>(new(
+                Action: stepAction,
+                StepValue: "organization",
+                Title: t("Create organization"),
+                Subtitle: t("Billing and future projects use this authenticated tenant boundary."),
+                ContinueHref: "/organizations/new?step=payment",
+                StepDone: false)))
+        }
+        else if (Model.ActiveStep == "payment-method")
+        {
+            @(await RenderPartialAsync<OnboardingPaymentCard, OnboardingPaymentCardView>(new(
+                Action: stepAction,
+                StepValue: "payment-method",
+                Plans: Model.Plans,
+                StepDone: false)))
         }
         else
         {
-            <form method="post" action="/api/v1/dashboard/organizations/create-database" class="ts-form">
-                <div class="ts-field">
-                    <label class="ts-label" for="newOrganizationProjectName">@t("Project name")</label>
-                    <input class="ts-input" id="newOrganizationProjectName" name="projectName" placeholder="Production" required />
-                </div>
-                <fieldset class="ts-field ts-project-regions">
-                    <legend class="ts-label">@Icons.Database(16) @t("Primary regions")</legend>
-                    <div class="ts-region-picker ts-region-picker-compact">
-                        <img class="ts-region-map" src="/brand/region-map.svg" alt="" decoding="async" />
-                        @foreach (var region in Model.RegionCatalog)
-                        {
-                            <label class="ts-region-pin-btn" style="left:@RegionPins.Left(region.Code);top:@RegionPins.Top(region.Code)">
-                                <input class="ts-sr-only" type="checkbox" name="regions" value="@region.Code" @(region.Code == Model.SuggestedRegion ? "checked" : null) />
-                                <span class="ts-region-pin-dot" aria-hidden="true"></span>
-                            </label>
-                        }
-                    </div>
-                    <ul class="ts-sr-only" aria-label='@t("Regions")'>
-                        @foreach (var region in Model.RegionCatalog)
-                        {
-                            <li>@region.Name (@region.Code) — @(region.Code == Model.SuggestedRegion ? t("Selected") : t("Available"))</li>
-                        }
-                    </ul>
-                    <div class="ts-field">
-                        <label class="ts-label" for="newOrganizationBackupRegion">@t("Backup region")</label>
-                        <select class="ts-select" id="newOrganizationBackupRegion" name="backupRegion">
-                            @foreach (var region in Model.RegionCatalog.Where(r => r.Code == Model.SuggestedRegion))
-                            {
-                                <option value="@region.Code" selected>@region.Code</option>
-                            }
-                        </select>
-                    </div>
-                </fieldset>
-                <div class="ts-form-actions">
-                    <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/organizations/new?step=payment">@Icons.ArrowLeft(20) @t("Back")</a>
-                    <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.Plus(20) @t("Create database and open Dashboard")</button>
-                </div>
-            </form>
+            @(await RenderPartialAsync<OnboardingProjectCard, OnboardingProjectCardView>(new(
+                Action: stepAction,
+                StepValue: "project",
+                Regions: Model.Regions,
+                DefaultRegion: Model.DefaultRegion)))
         }
-        <p class="ts-meta"><a class="ts-link ts-wizard-link" href="/organizations/new?step=organization">@t("Restart this setup")</a></p>
-    </section>
+    </div>
 </div>
 @ShellHtml.Bottom(shell)
