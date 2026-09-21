@@ -66,6 +66,7 @@ PY
 SINK_PID=$!
 
 OP_KEY="smoke-operator-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
+METRICS_KEY="smoke-metrics-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
 SERVICE_ARGS=(--project "$SERVICE_PROJECT" -c Release)
 [[ -n "${TERRASCALE_SDK_PROJECT:-}" ]] && SERVICE_ARGS+=(-p:TerraScaleSdkProject="$TERRASCALE_SDK_PROJECT")
 
@@ -77,6 +78,7 @@ TS_AUTH_DATABASE="${TS_AUTH_E2E_DATABASE:-ts-auth-dev}" \
 TS_AUTH_MASTER_KEY="$(head -c 32 /dev/urandom | base64 -w0)" \
 TS_AUTH_AUDIT_SIGNING_KEY="$(head -c 32 /dev/urandom | base64 -w0)" \
 TS_AUTH_OPERATOR_KEY="$OP_KEY" \
+TS_AUTH_METRICS_KEY="$METRICS_KEY" \
 dotnet run "${SERVICE_ARGS[@]}" >/tmp/ts-auth-smoke-service.log 2>&1 &
 SERVICE_PID=$!
 

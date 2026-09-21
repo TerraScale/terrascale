@@ -49,8 +49,11 @@ jobs:
           set -euo pipefail
           export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
           mkdir -p -- "${NUGET_PACKAGES}"
-          exec dotnet restore \
+          dotnet restore \
             tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj \
+            --runtime linux-x64 --nologo
+          dotnet restore \
+            src/TerraScale.Auth/TerraScale.Auth.csproj \
             --runtime linux-x64 --nologo
 
       - name: Cache Playwright browsers

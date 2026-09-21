@@ -131,19 +131,22 @@ this repo):
 
 ### Local development against a real TerraBase member
 
-ts-auth talks to the public database API, so any member works. From a sibling
-`terrabase` checkout:
+ts-auth talks to the public database API. The local development member runs
+the real TerraBase engine and Kestrel transport with a development API-key
+gateway stand-in. From this checkout:
 
 ```sh
 TERRABASE_HOST_URL=http://127.0.0.1:8420 \
-TERRABASE_DATABASE_ROUTE=ts-auth-dev TERRABASE_DATABASE_TENANT=ts-auth \
-TERRABASE_DATABASE_ULID=01ARZ3NDEKTSV4RRFFQ69G5FAV TERRABASE_DATABASE_MODE=explicit \
-TERRABASE_DATABASE_PATH=/tmp/ts-auth-dev TERRABASE_REGION=GRU \
-TERRABASE_DATABASE_HOME_REGION=GRU TERRABASE_DATABASE_SELECTED_REGIONS=GRU \
-dotnet run --project terrabase/src/TerraBase.Host
+TERRABASE_DEV_API_KEY=dev \
+TERRABASE_DATABASE_PATH=/tmp/ts-auth-dev \
+nice -n 19 dotnet run --project tools/TerraBaseDevMember -c Release
 # then point ts-auth at it:
 TS_AUTH_TERRASCALE_API_URL=http://127.0.0.1:8420 TS_AUTH_TERRASCALE_API_KEY=dev ...
 ```
+
+The raw `TerraBase.Host` executable stays fail-closed for public document
+requests. A deployment must compose the platform's project-key authentication
+and tenant-authorization gateway; `TerraBaseDevMember` is only the local stand-in.
 
 Tests never need this: `AuthServiceFixture` boots the **embedded TerraBase
 engine** in-process, hands its transport to the real SDK, and serves the real
