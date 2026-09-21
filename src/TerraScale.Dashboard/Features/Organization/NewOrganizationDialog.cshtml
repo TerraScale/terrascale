@@ -1,0 +1,70 @@
+@inherits RazorSlice<NewOrganizationWizardModel>
+@{
+    var t = (string s) => s;
+    var stepAction = "/api/v1/dashboard/organization/new-organization";
+}
+<dialog class="ts-dialog ts-dialog-wizard" id="create-organization" @(Model.Open ? "data-autoopen" : null)>
+    <div class="ts-dialog-content ts-dialog-content-wizard">
+        <div class="ts-dialog-wizard-head">
+            <div class="ts-dialog-header">
+                <h2 class="ts-dialog-title">@t("Create organization")</h2>
+                <p class="ts-dialog-description">@t("Repeat only the onboarding steps a new tenant needs: organization, payment, and project.")</p>
+            </div>
+            <button type="button" class="ts-icon-btn" aria-label="@t("Close")" data-close-dialog>@Icons.X(18)</button>
+        </div>
+
+        @* The activation wizard's step screens, scoped to the three steps a new
+           tenant repeats: organization, payment, and project. *@
+        <div class="ts-onboarding-container">
+            @(await RenderPartialAsync<OnboardingProgress, OnboardingProgressView>(new(
+                Steps: Model.Steps,
+                ActiveStep: Model.ActiveStep,
+                CurrentStep: Model.CurrentStep,
+                TotalSteps: Model.TotalSteps,
+                ProgressPercent: Model.ProgressPercent,
+                Label: t("STEP"),
+                Compact: Model.Compact,
+                AriaLabel: t("New organization steps"),
+                BarAriaLabel: t("New organization progress"))))
+
+            @if (Model.PaymentCanceled)
+            {
+                <div class="ts-alert ts-alert-warning" role="alert">
+                    <span class="ts-onboarding-alert-icon" aria-hidden="true">@Icons.TriangleAlert(19)</span>
+                    <div class="ts-onboarding-alert-stack">
+                        <span class="ts-alert-title">@t("Payment setup canceled")</span>
+                        <span class="ts-alert-body">@t("No payment method was changed; you can safely try again.")</span>
+                    </div>
+                </div>
+            }
+
+            @if (Model.ActiveStep == "organization")
+            {
+                @(await RenderPartialAsync<OnboardingOrganizationCard, OnboardingOrganizationCardView>(new(
+                    Action: stepAction,
+                    StepValue: "organization",
+                    InputId: "newOrganizationName",
+                    Title: t("Create organization"),
+                    Subtitle: t("Billing and future projects use this authenticated tenant boundary."),
+                    ContinueHref: "/organization?newOrganization=payment",
+                    StepDone: false)))
+            }
+            else if (Model.ActiveStep == "payment-method")
+            {
+                @(await RenderPartialAsync<OnboardingPaymentCard, OnboardingPaymentCardView>(new(
+                    Action: stepAction,
+                    StepValue: "payment-method",
+                    Plans: Model.Plans,
+                    StepDone: false)))
+            }
+            else
+            {
+                @(await RenderPartialAsync<OnboardingProjectCard, OnboardingProjectCardView>(new(
+                    Action: stepAction,
+                    StepValue: "project",
+                    Regions: Model.Regions,
+                    DefaultRegion: Model.DefaultRegion)))
+            }
+        </div>
+    </div>
+</dialog>

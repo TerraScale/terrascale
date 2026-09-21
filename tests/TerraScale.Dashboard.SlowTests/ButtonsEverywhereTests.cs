@@ -11,7 +11,7 @@ public sealed class ButtonsEverywhereTests
     private static readonly string[] Pages =
     [
         "/", "/databases", "/data", "/data?view=table", "/data?view=editor", "/data?view=sql",
-        "/api-keys", "/access", "/audit", "/notifications", "/organization", "/organizations/new",
+        "/api-keys", "/access", "/audit", "/notifications", "/organization",
         "/profile", "/settings", "/subscriptions", "/usage",
     ];
 

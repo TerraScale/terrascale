@@ -12,6 +12,16 @@ public sealed class OrganizationPageEndpoint(DashboardStore store) : EndpointWit
         Tags("Pages");
     }
 
-    public override Task<IResult> HandleAsync(CancellationToken ct) =>
-        Task.FromResult<IResult>(OrganizationSlice.Create(OrganizationPageModel.From(store, "/organization")));
+    public override Task<IResult> HandleAsync(CancellationToken ct)
+    {
+        var query = HttpContext.Request.Query;
+        var payment = query["payment"].FirstOrDefault();
+        var paymentStatus = payment is "success" or "canceled" ? payment : null;
+        var wizard = NewOrganizationWizardModel.From(
+            store,
+            query["newOrganization"].FirstOrDefault(),
+            paymentStatus);
+        return Task.FromResult<IResult>(OrganizationSlice.Create(
+            OrganizationPageModel.From(store, "/organization", wizard)));
+    }
 }

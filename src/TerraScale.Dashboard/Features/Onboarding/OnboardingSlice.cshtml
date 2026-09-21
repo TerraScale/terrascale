@@ -136,6 +136,7 @@
             @(await RenderPartialAsync<OnboardingOrganizationCard, OnboardingOrganizationCardView>(new(
                 Action: "/onboarding/step",
                 StepValue: "organization",
+                InputId: "organizationName",
                 Title: "Create your first organization",
                 Subtitle: "Billing and future projects use this authenticated tenant boundary.",
                 ContinueHref: "/onboarding?step=payment-method",

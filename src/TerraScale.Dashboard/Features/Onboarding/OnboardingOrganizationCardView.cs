@@ -6,6 +6,7 @@ namespace TerraScale.Dashboard.Features.Onboarding;
 public sealed record OnboardingOrganizationCardView(
     string Action,
     string StepValue,
+    string InputId,
     string Title,
     string Subtitle,
     string ContinueHref,

@@ -3729,9 +3729,7 @@ single-selector rules may stay on one line.
   /* v1 Input/NativeSelect render body-size (16px) control text; the shared
      control base is ui-size. */
   .ts-org .ts-input,
-  .ts-org .ts-select,
-  .ts-neworg .ts-input,
-  .ts-neworg .ts-select {
+  .ts-org .ts-select {
     font-size: var(--ts-fs-body);
   }
 
@@ -3759,78 +3757,6 @@ single-selector rules may stay on one line.
 
   @media (min-width: 64rem) {
     .ts-org .ts-org-deletion-form .ts-btn { width: auto; }
-  }
-
-  /* ===== organizations/new wizard ===== */
-
-  /* v1 renders no page heading for /organizations/new (DashboardShell skips
-     the h1 when no route matches the href); scoped here until ShellHtml
-     guards it centrally. */
-  .ts-main:has(.ts-neworg) > .ts-page-title { display: none; }
-
-  /* v1 header Panel: panel20 (20px) around the PanelHeader's own 20px → 16px
-     (64rem) inline inset — 40px / 36px from the panel edge. */
-  .ts-neworg-header { padding-inline: 40px; }
-
-  @media (min-width: 64rem) {
-    .ts-neworg-header { padding-inline: 36px; }
-  }
-
-  /* v1 Progress primitive is 4px tall. */
-  .ts-neworg .ts-progress { height: 4px; }
-
-  /* Wizard Panel padding: 20px block + the root's 16px; panelFlush squares
-     the corners below the rounded header panel. */
-  .ts-neworg-wizard {
-    padding: 36px var(--ts-lg);
-    border-radius: 0;
-  }
-
-  .ts-neworg-header {
-    border-bottom: 1px solid var(--ts-line);
-    padding-bottom: var(--ts-lg);
-  }
-
-  /* v1 PanelHeader descriptions are body-size. */
-  .ts-panel-subtitle-lg {
-    font-size: var(--ts-fs-body);
-    line-height: 1.6;
-  }
-
-  /* v1 form density: md form gap, sm label gap, 44px controls. */
-  .ts-neworg .ts-form { gap: var(--ts-md); }
-  .ts-neworg .ts-field { gap: var(--ts-sm); }
-  .ts-neworg .ts-input,
-  .ts-neworg .ts-select { min-height: var(--ts-control-h-lg); }
-
-  /* Payment summary (v1 wizardStyles.summary). */
-  .ts-wizard-summary {
-    display: grid;
-    gap: var(--ts-sm);
-    margin: 0;
-  }
-
-  .ts-wizard-summary-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--ts-md);
-  }
-
-  .ts-wizard-summary-row dt {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-  }
-
-  .ts-wizard-summary-row dd {
-    margin: 0;
-    color: var(--ts-ink);
-    font-size: var(--ts-fs-ui);
-  }
-
-  .ts-wizard-link {
-    font-size: var(--ts-fs-meta);
-    text-decoration: underline;
   }
 
   /* ===== Feature: Usage/Audit/Notifications ===== */
@@ -5671,39 +5597,6 @@ single-selector rules may stay on one line.
     border: 1px solid color-mix(in oklab, var(--ts-success) 30%, transparent);
     border-radius: var(--ts-radius-control);
     background-color: color-mix(in oklab, var(--ts-success) 8%, transparent);
-  }
-
-  /* Wizard (organizations/new) — chips 1:1 with new-organization-styles.ts:
-     sm gaps, no fill on the active chip (full-accent border), done = ink. */
-  .ts-wizard-steps {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--ts-sm);
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-
-  .ts-wizard-step {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--ts-sm);
-    padding: var(--ts-xs) var(--ts-sm);
-    border-radius: var(--ts-radius-pill);
-    border: 1px solid var(--ts-line);
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-  }
-
-  .ts-wizard-step-active {
-    border-color: var(--ts-accent);
-    background: none;
-    color: var(--ts-ink);
-    font-weight: var(--ts-fw-medium);
-  }
-
-  .ts-wizard-step-done {
-    color: var(--ts-ink);
   }
 
   /* ===== Feature: Subscriptions ============================================ */
@@ -8114,6 +8007,40 @@ single-selector rules may stay on one line.
   /* v1 gridLabel gap is 6px (ts-field defaults to 8). */
   .ts-audit-form .ts-field {
     gap: 6px;
+  }
+
+  /* ===== Feature: Create-organization modal ===== */
+
+  /* The onboarding step screens are wide (three plan cards, the region map),
+     so this dialog widens past the default 32rem. It becomes a flex column
+     only while open, else the UA `dialog:not([open]) { display: none }` would
+     be overridden. */
+  dialog.ts-dialog-wizard {
+    width: min(64rem, calc(100vw - 2 * var(--ts-lg)));
+  }
+
+  dialog.ts-dialog-wizard[open] {
+    display: flex;
+    flex-direction: column;
+    max-height: min(90vh, 100%);
+  }
+
+  .ts-dialog-content-wizard {
+    gap: var(--ts-md);
+    padding: 0 0 var(--ts-lg);
+    overflow-y: auto;
+  }
+
+  .ts-dialog-wizard-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--ts-md);
+    padding: var(--ts-xl) var(--ts-xl) 0;
+  }
+
+  .ts-dialog-content-wizard .ts-onboarding-container {
+    padding-inline: var(--ts-xl);
   }
 }
 /* end @layer features */

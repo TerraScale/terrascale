@@ -168,20 +168,25 @@ public sealed class PagesSmokeTests
     }
 
     [Test]
-    public async Task OrganizationsNewPageRendersWizard()
+    public async Task OrganizationPageRendersTheCreateOrganizationModal()
     {
         using var app = new DashboardTestApp();
         using var client = app.CreateDemoClient();
-        var page = await app.GetPageAsync(client, "/organizations/new");
+        var page = await app.GetPageAsync(client, "/organization");
         await Assert.That(page.StatusCode).IsEqualTo(200);
-        await Assert.That(page.Heading).IsEqualTo("Create organization");
-        await Assert.That(page.Contains("Repeat only the onboarding steps a new tenant needs: organization, payment, and project.")).IsTrue();
-        await Assert.That(page.Contains("Organization name")).IsTrue();
-        // The journey reuses the activation wizard's step screens: the progress
-        // rail and the organization card, scoped to three steps.
-        await Assert.That(page.Contains("STEP 1 OF 3")).IsTrue();
+        // The wizard is a modal opened from the page and reuses the activation
+        // wizard's step screens for organization, payment, and project.
+        await Assert.That(page.Contains("data-open-dialog=\"create-organization\"")).IsTrue();
+        await Assert.That(page.Contains("id=\"create-organization\"")).IsTrue();
         await Assert.That(page.Contains("ts-onboarding-card")).IsTrue();
-        await Assert.That(page.Contains("ts-onboarding-step-title")).IsTrue();
+        await Assert.That(page.Contains("STEP 1 OF 3")).IsTrue();
+        await Assert.That(page.Contains("Organization name")).IsTrue();
+
+        // Advancing the journey reopens the same modal on the requested step.
+        var payment = await app.GetPageAsync(client, "/organization?newOrganization=payment");
+        await Assert.That(payment.Contains("data-autoopen")).IsTrue();
+        await Assert.That(payment.Contains("Register a payment method")).IsTrue();
+        await Assert.That(payment.Contains("STEP 2 OF 3")).IsTrue();
     }
 
     [Test]

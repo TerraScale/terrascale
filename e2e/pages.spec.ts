@@ -12,7 +12,6 @@ const memberRoutes: Route[] = [
   { path: "/databases", expectText: "Databases" },
   { path: "/notifications", expectText: "Notifications" },
   { path: "/organization", expectText: "Organization" },
-  { path: "/organizations/new", expectText: "Create organization" },
   { path: "/profile", expectText: "Profile" },
   { path: "/settings", expectText: "Settings" },
   { path: "/subscriptions", expectText: "Subscriptions" },
