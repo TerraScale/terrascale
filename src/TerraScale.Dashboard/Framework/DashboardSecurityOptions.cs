@@ -12,7 +12,7 @@ public sealed record DashboardSecurityOptions(bool DemoMode, LiveIdentityOptions
             // Production refuses demo authentication unless the operator has
             // explicitly acknowledged there is no live identity provider yet.
             if (environment.IsProduction()
-                && configuration["TS2_E2E"] != "1"
+                && configuration["DASHBOARD_E2E"] != "1"
                 && !productionDemo)
             {
                 throw new InvalidOperationException(

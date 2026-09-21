@@ -76,14 +76,14 @@ backend.
 
 ## Tests
 
-- `tests/ts-dashboard-2.FastTests` — TUnit, the user-blocking critical
+- `tests/TerraScale.Dashboard.FastTests` — TUnit, the user-blocking critical
   paths; seconds to run, run it before every push.
-- `tests/ts-dashboard-2.SlowTests` — TUnit, methodical: every page, every
+- `tests/TerraScale.Dashboard.SlowTests` — TUnit, methodical: every page, every
   mutation, plus the live stack (embedded Terrabase + real ts-auth) when
   the sibling `terrabase/` and `ts-auth/` checkouts exist; the live
   fixtures compile out otherwise.
 - `npx playwright test` — browser E2E (demo mode).
-- The shared harness lives in `tests/ts-dashboard-2.Testing`
+- The shared harness lives in `tests/TerraScale.Dashboard.Testing`
   (`DashboardTestApp` boots the whole endpoint pipeline in-memory).
 
 ## Page pattern

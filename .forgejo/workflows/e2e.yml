@@ -15,7 +15,7 @@ jobs:
       - name: Build solution (app + test projects)
         run: dotnet build TerraScale.Dashboard.slnx
       - name: Fast tests (user-blocking critical paths)
-        run: dotnet run --project tests/ts-dashboard-2.FastTests --no-build
+        run: dotnet run --project tests/TerraScale.Dashboard.FastTests --no-build
       - name: Install JS deps
         run: npm ci
       - name: Cache Playwright browsers

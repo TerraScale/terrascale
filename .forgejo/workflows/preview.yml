@@ -20,7 +20,7 @@ jobs:
       - name: Deploy PR preview
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          PR_APP: ts-dashboard-2-pr-${{ github.event.number }}
+          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
         run: |
           export PATH="$HOME/.fly/bin:$PATH"
           # One ephemeral single-machine app per PR; provision idempotently so a
@@ -45,13 +45,13 @@ jobs:
         run: npx playwright install chromium
       - name: Run browser E2E suite against the deployed preview
         env:
-          PR_APP: ts-dashboard-2-pr-${{ github.event.number }}
-        run: TS2_E2E_BASE_URL="https://$PR_APP.fly.dev" npx playwright test
+          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
+        run: DASHBOARD_E2E_BASE_URL="https://$PR_APP.fly.dev" npx playwright test
       - name: Comment preview URL
         if: success()
         env:
           FORGEJO_TOKEN: ${{ github.token }}
-          PR_APP: ts-dashboard-2-pr-${{ github.event.number }}
+          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
         run: |
           # One comment per PR: the URL never changes, so skip if it's already posted.
           COMMENTS_URL="$GITHUB_API_URL/repos/${GITHUB_REPOSITORY}/issues/${{ github.event.number }}/comments"
@@ -71,7 +71,7 @@ jobs:
       - name: Destroy PR preview
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          PR_APP: ts-dashboard-2-pr-${{ github.event.number }}
+          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
         run: |
           export PATH="$HOME/.fly/bin:$PATH"
           # Succeed iff the app is gone afterwards; a failed destroy must fail the job.
