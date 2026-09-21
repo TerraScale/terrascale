@@ -2280,23 +2280,23 @@ single-selector rules may stay on one line.
     }
   }
 
-  .ts-auth-brand {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 16px;
-  }
-
-  .ts-auth-brand img {
+  /* Shared brand wordmark sizing: the auth cards and the onboarding brand
+     header render the same asset, so its sizing lives here once. */
+  .ts-brand-logo {
     width: 100%;
     max-width: 224px;
     height: auto;
   }
 
   @media (min-width: 40rem) {
-    .ts-auth-brand img {
-      max-width: 288px;
-    }
+    .ts-brand-logo { max-width: 288px; }
+  }
+
+  .ts-auth-brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
   }
 
   .ts-auth-title {
@@ -6339,16 +6339,23 @@ single-selector rules may stay on one line.
     max-width: 56rem;
   }
 
-  /* v1 hides the hero description on registration below the sm breakpoint. */
-  @media (max-width: 39.999rem) {
-    .ts-onboarding-registration .ts-onboarding-description { display: none; }
-  }
-
   .ts-onboarding-header {
     display: grid;
     gap: var(--ts-gap-tight);
     justify-items: center;
     text-align: center;
+  }
+
+  /* Account creation (anonymous registration) drops the lock badge, the setup
+     eyebrow, the visible title, and the description: its header is the
+     TerraScale wordmark (`.ts-brand-logo`) only. The title stays as an sr-only
+     h1. */
+  .ts-onboarding-header-brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* The wordmark is the first thing on the page: keep it off the top edge. */
+    padding-block-start: var(--ts-xl);
   }
 
   .ts-onboarding-lock {
@@ -6537,28 +6544,6 @@ single-selector rules may stay on one line.
 
   @media (min-width: 64rem) {
     .ts-onboarding-card { gap: var(--ts-md); padding-block: var(--ts-xs); }
-  }
-
-  /* Registration form (activation step 1, anonymous). */
-  .ts-onboarding-brand {
-    display: flex;
-    justify-content: center;
-    padding: 0 20px 20px;
-    border-bottom: 1px solid var(--ts-line);
-  }
-
-  .ts-onboarding-brand img {
-    width: 100%;
-    max-width: 224px;
-    height: auto;
-  }
-
-  @media (min-width: 40rem) {
-    .ts-onboarding-brand img { max-width: 288px; }
-  }
-
-  @media (min-width: 64rem) {
-    .ts-onboarding-brand { padding: 0 16px 16px; }
   }
 
   .ts-onboarding-form {

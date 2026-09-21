@@ -21,14 +21,25 @@
 }
 @FlowHtml.Document("Activate your TerraScale account | TerraScale")
 <main class="ts-onboarding-root @(wide ? "ts-onboarding-root-wide" : null)">
-    <div class="ts-onboarding-container @(wide ? "ts-onboarding-container-wide" : null) @(Model.Registration ? "ts-onboarding-registration" : null)">
-        <header class="ts-onboarding-header">
-            <span class="ts-onboarding-lock" aria-hidden="true">@Icons.LockKeyhole(22)</span>
-            <div>
-                <p class="ts-onboarding-setup">TERRASCALE SETUP</p>
-                <h1 class="ts-onboarding-title">Activate your TerraScale account</h1>
-                <p class="ts-onboarding-description">Complete all five steps to activate billing, create the owning organization, and release your first project Dashboard. Your confirmed progress is saved after every step.</p>
-            </div>
+    <div class="ts-onboarding-container @(wide ? "ts-onboarding-container-wide" : null)">
+        @* Account creation (anonymous registration) keeps only the TerraScale
+           wordmark in the header; the title stays as an sr-only h1 so the
+           document outline and accessibility checks keep working. *@
+        <header class="ts-onboarding-header @(Model.Registration ? "ts-onboarding-header-brand" : null)">
+            @if (Model.Registration)
+            {
+                <img class="ts-brand-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async" />
+                <h1 class="ts-sr-only">Activate your TerraScale account</h1>
+            }
+            else
+            {
+                <span class="ts-onboarding-lock" aria-hidden="true">@Icons.LockKeyhole(22)</span>
+                <div>
+                    <p class="ts-onboarding-setup">TERRASCALE SETUP</p>
+                    <h1 class="ts-onboarding-title">Activate your TerraScale account</h1>
+                    <p class="ts-onboarding-description">Complete all five steps to activate billing, create the owning organization, and release your first project Dashboard. Your confirmed progress is saved after every step.</p>
+                </div>
+            }
         </header>
         <div class="ts-onboarding-progress">
             <div class="ts-onboarding-progress-meta">
@@ -78,9 +89,6 @@
         @if (Model.Registration)
         {
             <div class="ts-onboarding-card">
-                <div class="ts-onboarding-brand">
-                    <img src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async" />
-                </div>
                 <form class="ts-onboarding-form" method="post" action="/onboarding/register" novalidate data-signals="{ passwordVisible: false, confirmPasswordVisible: false }">
                     @if (Model.RegistrationError is { } registrationError)
                     {
