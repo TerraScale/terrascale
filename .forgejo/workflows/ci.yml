@@ -27,7 +27,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           ref: ${{ forgejo.sha }}
-          token: "${{ secrets.ORG_READ_TOKEN }}"
+          token: "${{ secrets.REGISTRY_TOKEN }}"
           fetch-depth: 0
           persist-credentials: false
 
@@ -55,7 +55,7 @@ jobs:
           repository: TerraScale/ts-rust
           path: contracts/terrabase-root
           fetch-depth: 1
-          token: "${{ secrets.ORG_READ_TOKEN }}"
+          token: "${{ secrets.REGISTRY_TOKEN }}"
           persist-credentials: false
 
       - name: Check out the pinned edge contract bundle
@@ -65,7 +65,7 @@ jobs:
           repository: TerraScale/ts-atlas
           path: contracts/edge-root
           fetch-depth: 1
-          token: "${{ secrets.ORG_READ_TOKEN }}"
+          token: "${{ secrets.REGISTRY_TOKEN }}"
           persist-credentials: false
 
       - name: Stage the contract bundles for digest verification
@@ -107,7 +107,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           ref: ${{ forgejo.sha }}
-          token: "${{ secrets.ORG_READ_TOKEN }}"
+          token: "${{ secrets.REGISTRY_TOKEN }}"
           fetch-depth: 0
           persist-credentials: false
 
@@ -136,7 +136,7 @@ jobs:
           repository: TerraScale/ts-rust
           path: contracts/terrabase-root
           fetch-depth: 1
-          token: "${{ secrets.ORG_READ_TOKEN }}"
+          token: "${{ secrets.REGISTRY_TOKEN }}"
           persist-credentials: false
 
       - name: Check out the pinned edge contract bundle
@@ -146,7 +146,7 @@ jobs:
           repository: TerraScale/ts-atlas
           path: contracts/edge-root
           fetch-depth: 1
-          token: "${{ secrets.ORG_READ_TOKEN }}"
+          token: "${{ secrets.REGISTRY_TOKEN }}"
           persist-credentials: false
 
       - name: Stage the contract bundles for digest verification
@@ -178,7 +178,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           ref: ${{ forgejo.sha }}
-          token: "${{ secrets.ORG_READ_TOKEN }}"
+          token: "${{ secrets.REGISTRY_TOKEN }}"
           fetch-depth: 0
           persist-credentials: false
 
