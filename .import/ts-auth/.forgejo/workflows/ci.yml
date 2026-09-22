@@ -133,6 +133,9 @@ jobs:
           source_commit="$(git rev-parse HEAD)"
           test "${source_commit}" = "${FORGEJO_SHA:?event SHA is required}"
           mkdir -p -- artifacts/ci/container-publish
+          dotnet restore \
+            src/TerraScale.Auth/TerraScale.Auth.csproj \
+            --runtime linux-x64 --nologo
           dotnet publish \
             src/TerraScale.Auth/TerraScale.Auth.csproj \
             --configuration Release \
