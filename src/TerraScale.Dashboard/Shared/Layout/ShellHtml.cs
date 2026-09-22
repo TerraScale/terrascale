@@ -30,7 +30,7 @@ public static class ShellHtml
         builder.AppendLine("</head><body>");
         builder.AppendLine("    <div class=\"ts-shell\"" + dataSubNav + " data-signals=\"{navOpen:false}\" data-class:nav-open=\"$navOpen\">");
         builder.AppendLine("""        <div class="ts-nav-backdrop" data-on:click="$navOpen=false"></div>""");
-        builder.Append(Sidebar(shell));
+        builder.Append(shell.Route?.AdminOnly == true ? AdminSidebar(shell) : Sidebar(shell));
         if (shell.Route?.Id == RouteId.Data)
         {
             builder.Append(DataSubNav(shell));
@@ -97,22 +97,32 @@ public static class ShellHtml
         }
 
         builder.AppendLine("                </ul>");
-        if (shell.Store.OwnerSession)
-        {
-            builder.AppendLine("""                <hr class="ts-separator" />""");
-            builder.AppendLine("""                <div class="ts-sidebar-group-label">Owner</div>""");
-            builder.AppendLine("                <ul class=\"ts-nav\">");
-            foreach (var route in NavRoute.Admin)
-            {
-                builder.Append(NavItem(shell, route, counts));
-            }
-
-            builder.AppendLine("                </ul>");
-        }
-
         builder.AppendLine("            </div>");
         builder.AppendLine("            <div class=\"ts-sidebar-footer\">");
         builder.AppendLine($"""                <a class="ts-sidebar-brand" href="/" aria-label="TerraScale Dashboard"><img src="{AssetUrls.Url("/brand/logo-terrascale-blue.svg")}" alt="" aria-hidden="true" decoding="async" /></a>""");
+        builder.Append(AccountMenu(shell));
+        builder.AppendLine("            </div>");
+        builder.AppendLine("        </aside>");
+        return builder.ToString();
+    }
+
+    private static string AdminSidebar(ShellModel shell)
+    {
+        var builder = new StringBuilder("        <aside id=\"ts-navigation\" class=\"ts-sidebar ts-admin-sidebar\" aria-label=\"Admin navigation\">\n");
+        builder.AppendLine("            <div class=\"ts-sidebar-header ts-admin-sidebar-header\">");
+        builder.AppendLine($"""                <a class="ts-sidebar-brand" href="/" aria-label="TerraScale Dashboard"><img src="{AssetUrls.Url("/brand/logo-terrascale-blue.svg")}" alt="" aria-hidden="true" decoding="async" /></a>""");
+        builder.AppendLine("                <div class=\"ts-admin-sidebar-title\">Administration</div>");
+        builder.AppendLine("            </div>");
+        builder.AppendLine("            <nav class=\"ts-sidebar-content\" aria-label=\"Admin sections\">");
+        builder.AppendLine("                <ul class=\"ts-nav\">");
+        foreach (var route in NavRoute.Admin)
+        {
+            builder.Append(NavItem(shell, route, new Dictionary<string, int>()));
+        }
+        builder.AppendLine("                </ul>");
+        builder.AppendLine("            </nav>");
+        builder.AppendLine("            <div class=\"ts-sidebar-footer\">");
+        builder.AppendLine($"""                <a class="ts-menu-item" href="/">{Icons.ArrowLeft(16).Value}<span>Back to dashboard</span></a>""");
         builder.Append(AccountMenu(shell));
         builder.AppendLine("            </div>");
         builder.AppendLine("        </aside>");
@@ -213,6 +223,9 @@ public static class ShellHtml
         var unread = shell.UnreadNotifications;
         var unreadDot = unread > 0 ? $"""<span class="ts-account-unread-dot" role="status" aria-label="{unread} unread notifications"></span>""" : "";
         var unreadBadge = unread > 0 ? $"""<span class="ts-menu-badge">{(unread > 9 ? "9+" : unread.ToString())}</span>""" : "";
+        var adminLink = shell.Store.OwnerSession && shell.Route?.AdminOnly != true
+            ? $"""<a class="ts-menu-item" href="/admin" target="_blank" rel="noopener noreferrer"><span class="ts-menu-item-icon">{Icons.ShieldCheck(16).Value}</span><span class="ts-menu-label">Admin</span></a>"""
+            : "";
         return $"""
                     <details class="ts-menu ts-menu-end ts-menu-up ts-account">
                         <summary class="ts-account-trigger" aria-label="Account menu">
@@ -228,6 +241,7 @@ public static class ShellHtml
                             <a class="ts-menu-item" href="/profile"><span class="ts-menu-item-icon">{Icons.UserRound(16).Value}</span><span class="ts-menu-label">Profile</span></a>
                             <a class="ts-menu-item" href="/notifications"><span class="ts-menu-item-icon">{Icons.Bell(16).Value}</span><span class="ts-menu-label">Notifications</span>{unreadBadge}</a>
                             <a class="ts-menu-item" href="/settings"><span class="ts-menu-item-icon">{Icons.Settings(16).Value}</span><span class="ts-menu-label">Settings</span></a>
+                            {adminLink}
                             <hr class="ts-menu-separator" />
                             <form method="post" action="/api/v1/auth/logout">
                                 <button type="submit" class="ts-menu-item"><span class="ts-menu-item-icon">{Icons.LogOut(16).Value}</span><span class="ts-menu-label">Sign out</span></button>

@@ -1750,6 +1750,19 @@ single-selector rules may stay on one line.
     flex-shrink: 0;
   }
 
+  .ts-admin-sidebar-header {
+    display: grid;
+    gap: var(--ts-md);
+    padding-bottom: var(--ts-lg);
+  }
+
+  .ts-admin-sidebar-title {
+    padding: 0 var(--ts-xs);
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-lg);
+    font-weight: var(--ts-fw-semibold);
+  }
+
   .ts-sidebar-content {
     flex: 1;
     min-height: 0;
