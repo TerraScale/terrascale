@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           registry_user="${REGISTRY_USER:-oauth2}"
-          registry_token="${REGISTRY_TOKEN:-${ORG_READ_TOKEN:-${TERRASCALE_BOT_TOKEN:-}}}"
+          registry_token="${ORG_READ_TOKEN:-${REGISTRY_TOKEN:-${TERRASCALE_BOT_TOKEN:-}}}"
           test -n "${registry_token}" || {
             echo 'a package registry token is required' >&2
             exit 1
@@ -66,11 +66,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          dotnet restore terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
+            --configfile terrabase/nuget.config \
+            --nologo
           dotnet build terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
             --configuration Release \
+            --no-restore \
+            --nologo
+          dotnet restore terrabase/TerraBase.FullTextBenchmarks/TerraBase.FullTextBenchmarks.csproj \
+            --configfile terrabase/nuget.config \
             --nologo
           dotnet build terrabase/TerraBase.FullTextBenchmarks/TerraBase.FullTextBenchmarks.csproj \
             --configuration Release \
+            --no-restore \
             --nologo
 
       - name: Verify benchmark formatting
