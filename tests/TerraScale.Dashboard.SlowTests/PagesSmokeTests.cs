@@ -168,15 +168,16 @@ public sealed class PagesSmokeTests
     }
 
     [Test]
-    public async Task OrganizationsNewPageRendersWizard()
+    public async Task OrganizationPageRendersTheCreateOrganizationModal()
     {
         using var app = new DashboardTestApp();
         using var client = app.CreateDemoClient();
-        var page = await app.GetPageAsync(client, "/organizations/new");
+        var page = await app.GetPageAsync(client, "/organization");
         await Assert.That(page.StatusCode).IsEqualTo(200);
-        await Assert.That(page.Heading).IsEqualTo("Create organization");
-        await Assert.That(page.Contains("Business organizations have their own billing and never use the Personal allowance.")).IsTrue();
-        await Assert.That(page.Contains("Organization name")).IsTrue();
+        // The wizard's markup and step screens are covered in depth by
+        // NewOrganizationWizardTests; this smoke entry pins the page's copy.
+        await Assert.That(page.Contains("Create organization")).IsTrue();
+        await Assert.That(page.Contains("Business organizations have their own paid billing and never use the Personal allowance.")).IsTrue();
     }
 
     [Test]

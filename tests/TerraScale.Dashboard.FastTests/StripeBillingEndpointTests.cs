@@ -38,6 +38,41 @@ public sealed class StripeBillingEndpointTests
     }
 
     [Test]
+    public async Task NewOrganizationPaymentStepStartsTheSandboxCheckoutWithTheSelectedPlan()
+    {
+        var fake = new FakeStripeBillingClient();
+        using var app = StripeApp(fake);
+        using var client = app.CreateDemoClient();
+
+        // Step 1 creates the pending Business tenant the wizard bills.
+        using var organization = await DashboardTestApp.PostFormAsync(
+            client,
+            "/api/v1/dashboard/organization/new-organization",
+            new Dictionary<string, string> { ["step"] = "organization", ["name"] = "Stripe Labs" });
+        await Assert.That(organization.Headers.Location!.ToString()).IsEqualTo("/organization?newOrganization=payment");
+
+        // Step 2 hands the chosen card and interval to the sandbox checkout and
+        // returns to the modal's project step once billing is active.
+        using var payment = await DashboardTestApp.PostFormAsync(
+            client,
+            "/api/v1/dashboard/organization/new-organization",
+            new Dictionary<string, string> { ["step"] = "payment-method", ["plan"] = "business", ["interval"] = "annual" });
+        await Assert.That(payment.Headers.Location!.ToString()).IsEqualTo(
+            "/billing/checkout?plan=business&interval=annual&return=%2Forganization%3FnewOrganization%3Dproject");
+
+        // The hand-off starts the hosted session for the posted plan and
+        // interval, not for the seeded default.
+        using var checkout = await client.GetAsync(payment.Headers.Location!.ToString());
+        await Assert.That(checkout.Headers.Location!.ToString()).IsEqualTo(fake.CheckoutUrl);
+        await Assert.That(fake.CheckoutRequests.Count).IsEqualTo(1);
+        await Assert.That(fake.CheckoutRequests[0].PlanKey).IsEqualTo("business");
+        await Assert.That(fake.CheckoutRequests[0].Interval).IsEqualTo("annual");
+        await Assert.That(fake.CheckoutRequests[0].PriceId).IsEqualTo("price_business_annual");
+        await Assert.That(fake.CheckoutRequests[0].SuccessUrl.ToString())
+            .Contains("return=%2Forganization%3FnewOrganization%3Dproject");
+    }
+
+    [Test]
     public async Task PortalRedirectsToTheSandboxSession()
     {
         var fake = new FakeStripeBillingClient();

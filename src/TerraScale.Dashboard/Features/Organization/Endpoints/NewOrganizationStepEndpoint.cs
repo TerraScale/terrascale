@@ -1,0 +1,97 @@
+using TerraScale.Dashboard;
+using TerraScale.Endpoints;
+
+namespace TerraScale.Dashboard.Features.Organization.Endpoints;
+
+/// <summary>
+/// Advances the create-organization modal through the three onboarding screens
+/// it repeats: organization, payment (Stripe sandbox or local checkout), and
+/// project. The organization is a paid Business tenant — the Personal workspace
+/// is provisioned once during account creation and is never recreated here — so
+/// the payment screen has no bypass and the project only lands once billing is
+/// active.
+/// </summary>
+public sealed class NewOrganizationStepEndpoint(DashboardStore store, StripePaymentOptions stripe) : EndpointWithoutRequest<IResult>
+{
+    // Starter and Pro both run on the shared Scale billing plan (the v1
+    // organizations/create mapping); Business is the Dedicated plan.
+    private const string DefaultBillingPlanId = "plan_scale";
+
+    // The checkout always returns to the modal's project step; the activated
+    // billing then lets the step resolve instead of bouncing back to payment.
+    private const string ProjectReturnPath = "/organization?newOrganization=project";
+
+    public override void Configure()
+    {
+        Post("/api/v1/dashboard/organization/new-organization");
+        Summary("Saves one create-organization step and advances the modal");
+        Tags("Organization");
+    }
+
+    private static string BillingPlanIdFor(string planKey) =>
+        planKey == "business" ? "plan_dedicated" : DefaultBillingPlanId;
+
+    public override async Task<IResult> HandleAsync(CancellationToken ct)
+    {
+        var form = await HttpContext.Request.ReadFormAsync(ct);
+        switch (form["step"].ToString())
+        {
+            case "organization":
+                // Step 1 is the wizard's entry point, so it needs no state
+                // prerequisite: CreateBusinessOrganization resumes the matching
+                // pending tenant or creates a fresh one, and always switches the
+                // active workspace to it. That keeps this branch from ever
+                // mutating another workspace's state.
+                var error = store.CreateBusinessOrganization(form["name"].ToString(), DefaultBillingPlanId);
+                return error is null
+                    ? Results.Redirect("/organization?newOrganization=payment", false, false)
+                    : Results.Redirect("/organization?newOrganization=organization&error=" + Uri.EscapeDataString(error), false, false);
+            // The payment screen only ever runs checkout against the pending
+            // Business organization step 1 created. A stale or out-of-order POST
+            // must not attach the checkout session to whatever workspace happens
+            // to be active (e.g. the Personal workspace, or another tenant
+            // switched to between steps).
+            case "payment-method" when !store.HasPendingBusinessOrganization:
+                return Results.Redirect("/organization?newOrganization=organization", false, false);
+            case "payment-method":
+                // The posted card is the billing catalog key; the platform plan
+                // id is derived from it so the store and Stripe agree.
+                var planKey = StripePaymentOptions.NormalizePlan(form["plan"].ToString()) is { Length: > 0 } requestedPlan
+                    ? requestedPlan
+                    : "starter";
+                if (!store.SetPendingOrganizationPlan(BillingPlanIdFor(planKey), planKey))
+                    return Results.Redirect("/organization?newOrganization=payment&error=" + Uri.EscapeDataString("Choose an available plan."), false, false);
+                // The configured provider starts the checkout; both paths return
+                // to the organization page, whose payment result reopens the
+                // modal on the project step.
+                if (!stripe.Enabled)
+                    return Results.Redirect(store.BeginPaymentSetup(ProjectReturnPath), false, false);
+
+                var interval = form["interval"].ToString() == "annual" ? "annual" : "monthly";
+                return Results.Redirect(
+                    $"/billing/checkout?plan={planKey}&interval={interval}&return={Uri.EscapeDataString(ProjectReturnPath)}",
+                    false,
+                    false);
+            // The project must land in the billing-active Business tenant the
+            // wizard paid for — never in the Personal free allowance or another
+            // workspace the user switched to between steps.
+            case "project" when !store.HasBillingActiveBusinessOrganization:
+                return Results.Redirect("/organization?newOrganization=payment&error=" + Uri.EscapeDataString("Complete Business billing before creating resources."), false, false);
+            case "project":
+                var name = form["name"].ToString().Trim();
+                if (name.Length is 0 or > 128)
+                    return Results.Redirect("/organization?newOrganization=project&error=" + Uri.EscapeDataString("Choose a project name."), false, false);
+
+                // The posted region must stay in the wizard's own catalog; never
+                // borrow placement from another workspace's active project.
+                var requestedRegion = form["region"].ToString();
+                var region = store.OrganizationRegions.Any(r => r.Code == requestedRegion)
+                    ? requestedRegion
+                    : store.OrganizationRegions[0].Code;
+                store.CreateProject(name, region);
+                return Results.Redirect("/organization", false, false);
+            default:
+                return Results.Redirect("/organization?newOrganization=organization", false, false);
+        }
+    }
+}

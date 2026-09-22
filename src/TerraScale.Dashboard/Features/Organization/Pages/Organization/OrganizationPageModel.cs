@@ -21,11 +21,12 @@ public sealed record OrganizationPageModel(
     ImmutableArray<Invitation> Invitations,
     ImmutableArray<DashboardStore.OwnershipTransfer> OwnershipTransfers,
     ImmutableArray<DashboardStore.OrganizationRegion> RegionCatalog,
-    string SuggestedRegion) : IPageModel
+    string SuggestedRegion,
+    NewOrganizationWizardModel NewOrganization) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
 
-    public static OrganizationPageModel From(DashboardStore store, string href)
+    public static OrganizationPageModel From(DashboardStore store, string href, NewOrganizationWizardModel newOrganization)
     {
         var user = store.CurrentUser;
         return new(
@@ -46,7 +47,8 @@ public sealed record OrganizationPageModel(
             Invitations: store.Invitations,
             OwnershipTransfers: store.OrganizationOwnershipTransfers,
             RegionCatalog: store.OrganizationRegions,
-            SuggestedRegion: store.SuggestedRegion)
+            SuggestedRegion: store.SuggestedRegion,
+            NewOrganization: newOrganization)
         {
             Shell = ShellFactory.Create(store, href),
         };

@@ -250,13 +250,13 @@
     <section class="ts-panel">
         <div class="ts-panel-header">
             <h3 class="ts-panel-title">@t("Create organization")</h3>
-            <p class="ts-panel-subtitle">@(Model.OrganizationKind == OrganizationKind.Personal ? t("Personal workspace and free allowance") : t("Business workspace and paid billing"))</p>
+            <p class="ts-panel-subtitle">@t("Repeat only the onboarding steps a new tenant needs: organization, payment, and project.")</p>
         </div>
         <div class="ts-padded ts-muted ts-ui ts-org-desc">
             @t("Business organizations have their own paid billing and never use the Personal allowance.")
         </div>
         <div class="ts-padded">
-            <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-full" href="/organizations/new">@Icons.Plus(20) @t("Create organization")</a>
+            <button type="button" class="ts-btn ts-btn-primary ts-btn-lg ts-btn-full" data-open-dialog="create-organization">@Icons.Plus(20) @t("Create organization")</button>
         </div>
     </section>
 
@@ -449,4 +449,5 @@
         </section>
     }
 </div>
+@(await RenderPartialAsync<NewOrganizationDialog, NewOrganizationWizardModel>(Model.NewOrganization))
 @ShellHtml.Bottom(shell)

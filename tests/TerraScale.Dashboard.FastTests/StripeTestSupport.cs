@@ -60,8 +60,11 @@ internal static class StripeTestSupport
         publicOrigin,
         ImmutableDictionary<string, string>.Empty
             .Add("starter:monthly", "price_starter_monthly")
+            .Add("starter:annual", "price_starter_annual")
             .Add("pro:monthly", "price_pro_monthly")
-            .Add("business:monthly", "price_business_monthly"));
+            .Add("pro:annual", "price_pro_annual")
+            .Add("business:monthly", "price_business_monthly")
+            .Add("business:annual", "price_business_annual"));
 
     /// <summary>Builds the exact <c>Stripe-Signature</c> header Stripe sends.</summary>
     public static string Sign(string payload, string secret = WebhookSecret, DateTimeOffset? at = null)

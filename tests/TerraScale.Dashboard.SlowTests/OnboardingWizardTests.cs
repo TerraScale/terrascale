@@ -50,11 +50,11 @@ public sealed class OnboardingWizardTests
     {
         using var app = new DashboardTestApp();
         using var client = await app.CreateMemberClientAsync($"business-{Guid.NewGuid():N}@example.test");
-        using var created = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/organizations/create", new Dictionary<string, string>
+        using var created = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/organization/new-organization", new Dictionary<string, string>
         {
-            ["name"] = "Acme Labs", ["planId"] = "01J00000004WM5Z7P5MDBPN77M",
+            ["step"] = "organization", ["name"] = "Acme Labs",
         });
-        await Assert.That(created.Headers.Location!.ToString()).IsEqualTo("/organizations/new?step=payment");
+        await Assert.That(created.Headers.Location!.ToString()).IsEqualTo("/organization?newOrganization=payment");
         var page = await app.GetPageAsync(client, "/organization");
         await Assert.That(page.Contains("Personal")).IsTrue();
         await Assert.That(page.Contains("Acme Labs")).IsTrue();
