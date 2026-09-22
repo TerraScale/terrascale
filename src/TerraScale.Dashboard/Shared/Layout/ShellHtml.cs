@@ -93,6 +93,11 @@ public static class ShellHtml
         builder.AppendLine("                <ul class=\"ts-nav\">");
         foreach (var route in NavRoute.Main)
         {
+            if (!route.ShowInNav)
+            {
+                continue;
+            }
+
             builder.Append(NavItem(shell, route, counts));
         }
 

@@ -29,6 +29,14 @@ public sealed partial class HtmlPage
         [.. Regex.Matches(Html, """class="ts-nav-link"[^>]*>.*?<span>(?<label>[^<]+)</span>""", RegexOptions.Singleline)
             .Select(m => m.Groups["label"].Value.Trim())];
 
+    /// <summary>Labels in the sidebar-footer account menu dropdown.</summary>
+    public IReadOnlyList<string> AccountMenuItems =>
+        [.. Regex.Matches(AccountMenuHtml, """class="ts-menu-label">(?<label>[^<]+)<""")
+            .Select(m => m.Groups["label"].Value.Trim())];
+
+    private string AccountMenuHtml =>
+        MatchGroup(Html, """<details class="[^"]*ts-account"[^>]*>(?<menu>.*?)</details>""", 1) ?? "";
+
     public bool Contains(string text) => Html.Contains(text, StringComparison.Ordinal);
 
     /// <summary>Visible text: tags stripped, whitespace collapsed.</summary>
