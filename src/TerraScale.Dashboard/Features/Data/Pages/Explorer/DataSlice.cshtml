@@ -11,7 +11,6 @@
     <section class="ts-panel ts-panel-pad20">
         <div class="ts-data-intro">
             <h2 class="ts-title-24">Data</h2>
-            <p class="ts-page-desc">Saved project queries with revision-protected editing. Loaded @Model.LoadedAtText from the TerraScale API.</p>
         </div>
         <div class="ts-data-stats">
             <div class="ts-stat-card">
@@ -40,7 +39,6 @@
         {
             <div class="ts-panel-header">
                 <h3 class="ts-panel-title">Saved queries</h3>
-                <p class="ts-panel-subtitle">Project queries with revision-protected editing</p>
             </div>
             <div class="ts-panel-pad">
                 @if (store.SavedQueries.Length == 0)
@@ -94,7 +92,6 @@
         {
             <div class="ts-panel-header">
                 <h3 class="ts-panel-title">Collection documents</h3>
-                <p class="ts-panel-subtitle">Read live rows from the selected TerraBase collection</p>
             </div>
             <div class="ts-panel-pad ts-explorer-pad">
                 <div class="ts-alert ts-alert-info" role="alert" data-code="explorer_no_collections">
@@ -215,7 +212,6 @@
                 : null;
             <div class="ts-panel-header">
                 <h3 class="ts-panel-title">Document editor</h3>
-                <p class="ts-panel-subtitle">Create, replace, patch, or delete a document</p>
             </div>
             <div class="ts-panel-pad">
                 <form class="ts-form" method="post" action="/api/v1/dashboard/data/documents" data-signals="{ docOp: 'create' }">
@@ -259,7 +255,6 @@
             var analysis = Model.SqlAnalysis;
             <div class="ts-panel-header">
                 <h3 class="ts-panel-title">SQL console</h3>
-                <p class="ts-panel-subtitle">Validate read-only SQL with EXPLAIN and index suggestions</p>
             </div>
             <div class="ts-panel-pad">
                 <form class="ts-sql-loader" method="get" action="/data">
