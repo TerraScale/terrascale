@@ -141,7 +141,6 @@ jobs:
             --configuration Release \
             --runtime linux-x64 \
             --self-contained true \
-            --no-restore \
             --output artifacts/ci/container-publish \
             --nologo \
             -p:PublishSingleFile=true \
