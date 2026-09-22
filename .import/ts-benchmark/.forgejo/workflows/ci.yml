@@ -56,16 +56,14 @@ jobs:
             exit 1
           }
           REGISTRY_USER="${registry_user}" REGISTRY_TOKEN="${registry_token}" \
-            python - <<'PY'
-          import os
-          from pathlib import Path
-
-          config = Path("terrabase/nuget.config")
-          contents = config.read_text()
-          contents = contents.replace("%REGISTRY_USER%", os.environ["REGISTRY_USER"])
-          contents = contents.replace("%REGISTRY_TOKEN%", os.environ["REGISTRY_TOKEN"])
-          config.write_text(contents)
-          PY
+            node - <<'NODE'
+          const fs = require("node:fs");
+          const config = "terrabase/nuget.config";
+          let contents = fs.readFileSync(config, "utf8");
+          contents = contents.replaceAll("%REGISTRY_USER%", process.env.REGISTRY_USER);
+          contents = contents.replaceAll("%REGISTRY_TOKEN%", process.env.REGISTRY_TOKEN);
+          fs.writeFileSync(config, contents);
+          NODE
 
       - name: Build the benchmark projects
         shell: bash
