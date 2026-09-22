@@ -151,6 +151,8 @@ public sealed class PagesSmokeTests
         await Assert.That(page.Contains("Inbox")).IsTrue();
         await Assert.That(page.Contains("API key expiring soon")).IsTrue();
         await Assert.That(page.Contains("Mark all read")).IsTrue();
+        await Assert.That(page.Contains("2 unread")).IsTrue();
+        await Assert.That(page.Contains("Resolved")).IsTrue();
     }
 
     [Test]
