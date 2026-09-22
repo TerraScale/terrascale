@@ -81,6 +81,6 @@ Everything must work in memory account creation and etc
     - hotfix/{fix_name}
     - refactor/{refactor_desc}
 - When the work is done create a PR into main when the work is ready to be merged.
-- When pushing and creating the pull request make sure that the linter has no errors and that the `slow` tests passes,
+- When pushing and creating the pull request make sure that the linter has no errors and that the `slow` and `fast` tests passes and run green.
 - When creating PR send the link of that PR to the user.
 - When creating a PR and the change has visual changes add multiple screenshots showing the changes that you made.
