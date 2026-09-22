@@ -324,14 +324,9 @@ single-selector rules may stay on one line.
       view-transition-name: ts-sidebar;
     }
 
-    .ts-page-title {
-      view-transition-name: ts-page-title;
-    }
-
     ::view-transition-old(root),
     ::view-transition-new(root),
-    ::view-transition-group(ts-sidebar),
-    ::view-transition-group(ts-page-title) {
+    ::view-transition-group(ts-sidebar) {
       animation-duration: 160ms;
       animation-timing-function: ease-out;
     }
@@ -2006,22 +2001,6 @@ single-selector rules may stay on one line.
   @media (min-width: 48rem) {
     .ts-main {
       padding: 40px var(--ts-xl) 40px;
-    }
-  }
-
-  .ts-page-title {
-    font-size: var(--ts-fs-panel-title);
-    font-weight: var(--ts-fw-semibold);
-    line-height: 1.25;
-    margin: 0;
-    margin-bottom: var(--ts-lg);
-  }
-
-  @media (min-width: 40rem) {
-    .ts-page-title {
-      font-size: var(--ts-fs-page-title);
-      font-weight: var(--ts-fw-bold);
-      margin-bottom: var(--ts-xl);
     }
   }
 
@@ -3932,11 +3911,6 @@ single-selector rules may stay on one line.
   }
 
   /* ===== organizations/new wizard ===== */
-
-  /* v1 renders no page heading for /organizations/new (DashboardShell skips
-     the h1 when no route matches the href); scoped here until ShellHtml
-     guards it centrally. */
-  .ts-main:has(.ts-neworg) > .ts-page-title { display: none; }
 
   /* v1 header Panel: panel20 (20px) around the PanelHeader's own 20px → 16px
      (64rem) inline inset — 40px / 36px from the panel edge. */
