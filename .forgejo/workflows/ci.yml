@@ -43,7 +43,7 @@ jobs:
           fi
           export PATH="${go_root}/go/bin:${go_root}/bin:${PATH}"
           mkdir -p "${go_root}/bin"
-          GOBIN="${go_root}/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          GOBIN="${go_root}/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           printf '%s\n' "${go_root}/go/bin" "${go_root}/bin" >> "${GITHUB_PATH:?GITHUB_PATH is required}"
           go version
           govulncheck -version
