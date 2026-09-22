@@ -28,7 +28,7 @@ jobs:
       - name: Install the pinned Go toolchain and vulnerability scanner
         run: |
           set -euo pipefail
-          go_version=1.24.0
+          go_version=1.27.1
           go_root="${RUNNER_TEMP:-/tmp}/terrascale-go-${go_version}"
           go_archive="${RUNNER_TEMP:-/tmp}/go${go_version}.linux-amd64.tar.gz"
           if [ ! -x "${go_root}/go/bin/go" ]; then
@@ -37,13 +37,13 @@ jobs:
               "https://go.dev/dl/go${go_version}.linux-amd64.tar.gz" \
               --output "${go_archive}"
             printf '%s  %s\n' \
-              'dea9ca38a0b852a74e81c26134671af7c0fbe65d81b0dc1c5bfe22cf7d4c8858' \
+              '63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445' \
               "${go_archive}" | sha256sum --check --strict
             tar -xzf "${go_archive}" -C "${go_root}"
           fi
           export PATH="${go_root}/go/bin:${go_root}/bin:${PATH}"
           mkdir -p "${go_root}/bin"
-          GOBIN="${go_root}/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          GOBIN="${go_root}/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           printf '%s\n' "${go_root}/go/bin" "${go_root}/bin" >> "${GITHUB_PATH:?GITHUB_PATH is required}"
           go version
           govulncheck -version
