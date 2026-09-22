@@ -4770,23 +4770,20 @@ single-selector rules may stay on one line.
     white-space: nowrap;
   }
 
-  .ts-credential-mono {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    white-space: nowrap;
-  }
-
   .ts-credential-meta {
     color: var(--ts-ink-muted);
     font-size: var(--ts-fs-ui);
     white-space: nowrap;
   }
 
-  .ts-credential-actions {
-    gap: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
+  .ts-credential-detail-list .ts-secret-row {
+    align-items: start;
+  }
+
+  .ts-credential-detail-list .ts-secret-row dd {
+    overflow-wrap: anywhere;
+    text-align: right;
+    white-space: normal;
   }
 
   .ts-credential-empty {
@@ -8141,6 +8138,15 @@ single-selector rules may stay on one line.
     border-radius: 0;
     box-shadow: none;
     background-color: transparent;
+  }
+
+  .ts-apikeys-table-wrap .ts-table {
+    table-layout: auto;
+    min-width: 760px;
+  }
+
+  .ts-apikeys-table-wrap th:first-child {
+    min-width: 12rem;
   }
 
   /* v1 searchField: label above, icon inset 12px, text starts at 36px. */

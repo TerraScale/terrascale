@@ -4,7 +4,6 @@
 @{
     var shell = Model.Shell;
     string StatusTone(string status) => status switch { "Active" => "ts-badge-success", "Expiring" => "ts-badge-warning", _ => "ts-badge-danger" };
-    string ScopeSummary(string[] scopes) => scopes.Length == 0 ? "No scopes" : scopes.Length == 1 ? scopes[0] : $"{scopes[0]} +{scopes.Length - 1}";
     string DatabaseLabel(string id) => id.Length == 0 ? "Project" : (Model.Databases.FirstOrDefault(d => d.Id == id).Name ?? id);
     string LastUsed(CredentialView c) => ApiKeyFormatting.UtcDateTime(c.LastUsedAt);
     string Expires(CredentialView c) => ApiKeyFormatting.UtcDateTime(c.ExpiresAt);
@@ -129,10 +128,6 @@
                         <tr>
                             <th>Name</th>
                             <th>Type</th>
-                            <th>Credential</th>
-                            <th>Scope</th>
-                            <th>Database</th>
-                            <th>Owner</th>
                             <th>Last used</th>
                             <th>Expires</th>
                             <th>Status</th>
@@ -142,7 +137,6 @@
                     <tbody>
                         @foreach (var credential in Model.Credentials)
                         {
-                            var revoked = credential.Status == "Revoked";
                             <tr>
                                 <td>
                                     <div class="ts-credential-name">
@@ -151,50 +145,66 @@
                                     </div>
                                 </td>
                                 <td><span class="ts-badge @(credential.Kind == "key" ? "ts-badge-info" : "ts-badge-neutral")">@(credential.Kind == "key" ? "API key" : "M2M client")</span></td>
-                                <td class="ts-table-mono ts-credential-mono">@credential.Prefix...@credential.LastFour</td>
-                                <td class="ts-credential-meta">@ScopeSummary(credential.Scopes)</td>
-                                <td class="ts-credential-meta">@DatabaseLabel(credential.DatabaseId)</td>
-                                <td class="ts-credential-meta">@(credential.CreatedByEmail.Length > 0 ? credential.CreatedByEmail : "System")</td>
                                 <td class="ts-credential-meta">@LastUsed(credential)</td>
                                 <td class="ts-credential-meta">@Expires(credential)</td>
                                 <td><span class="ts-badge @StatusTone(credential.Status)">@credential.Status</span></td>
                                 <td>
-                                    <div class="ts-credential-actions">
-                                        <form method="post" action="/api/v1/dashboard/credentials/rotate">
-                                            <input type="hidden" name="kind" value="@credential.Kind" />
-                                            <input type="hidden" name="id" value="@credential.Id" />
-                                            <input type="hidden" name="name" value="@credential.Name" />
-                                            <button type="submit" class="ts-btn ts-btn-ghost ts-btn-lg" @(revoked ? "disabled" : null)>@Icons.RotateCw(14) Rotate</button>
-                                        </form>
-                                        <button type="button" class="ts-btn ts-btn-destructive ts-btn-lg" @(revoked ? "disabled" : null) data-on:click="document.querySelector('#revoke-@credential.Kind-@credential.Id').showModal()">Revoke</button>
-                                    </div>
+                                    <button type="button" class="ts-btn ts-btn-ghost ts-btn-lg" data-open-dialog="details-@credential.Kind-@credential.Id" aria-label="Details for @credential.Name">Details</button>
                                 </td>
                             </tr>
-                            <dialog class="ts-dialog" id="revoke-@credential.Kind-@credential.Id">
-                                <div class="ts-dialog-content">
-                                    <div class="ts-dialog-header">
-                                        <h3 class="ts-dialog-title">Revoke credential</h3>
-                                        <p class="ts-dialog-description">This action cannot be undone.</p>
-                                    </div>
-                                    <div class="ts-alert ts-alert-danger">
-                                        <span class="ts-alert-title">@Icons.CircleAlert(16) Revoke @credential.Name?</span>
-                                        <span class="ts-alert-body">Revoking stops the credential from authenticating immediately. Consumers still using it will begin failing, and the credential cannot be restored.</span>
-                                    </div>
-                                    <div class="ts-dialog-footer">
-                                        <button type="button" class="ts-btn ts-btn-ghost ts-btn-lg" data-on:click="document.querySelector('#revoke-@credential.Kind-@credential.Id').close()">Cancel</button>
-                                        <form method="post" action="/api/v1/dashboard/credentials/revoke">
-                                            <input type="hidden" name="kind" value="@credential.Kind" />
-                                            <input type="hidden" name="id" value="@credential.Id" />
-                                            <input type="hidden" name="name" value="@credential.Name" />
-                                            <button type="submit" class="ts-btn ts-btn-destructive ts-btn-lg">@Icons.ShieldOff(16) Revoke permanently</button>
-                                        </form>
-                                    </div>
-                                </div>
-                            </dialog>
                         }
                     </tbody>
                 </table>
             </div>
+            @foreach (var credential in Model.Credentials)
+            {
+                var revoked = credential.Status == "Revoked";
+                <dialog class="ts-dialog" id="details-@credential.Kind-@credential.Id">
+                    <div class="ts-dialog-content">
+                        <div class="ts-dialog-header">
+                            <h3 class="ts-dialog-title">@credential.Name</h3>
+                            <p class="ts-dialog-description">@(credential.Kind == "key" ? "API key" : "M2M client") details</p>
+                        </div>
+                        <dl class="ts-secret-list ts-credential-detail-list">
+                            <div class="ts-secret-row"><dt>Credential</dt><dd>@credential.Prefix...@credential.LastFour</dd></div>
+                            <div class="ts-secret-row"><dt>Database</dt><dd>@DatabaseLabel(credential.DatabaseId)</dd></div>
+                            <div class="ts-secret-row"><dt>Owner / creator</dt><dd>@(credential.CreatedByEmail.Length > 0 ? credential.CreatedByEmail : "System")</dd></div>
+                            <div class="ts-secret-row"><dt>Scopes</dt><dd>@(credential.Scopes.Length > 0 ? string.Join(", ", credential.Scopes) : "No scopes")</dd></div>
+                        </dl>
+                        <div class="ts-dialog-footer">
+                            <button type="button" class="ts-btn ts-btn-ghost ts-btn-lg" data-close-dialog>Close</button>
+                            <form method="post" action="/api/v1/dashboard/credentials/rotate">
+                                <input type="hidden" name="kind" value="@credential.Kind" />
+                                <input type="hidden" name="id" value="@credential.Id" />
+                                <input type="hidden" name="name" value="@credential.Name" />
+                                <button type="submit" class="ts-btn ts-btn-ghost ts-btn-lg" @(revoked ? "disabled" : null)>@Icons.RotateCw(14) Rotate</button>
+                            </form>
+                            <button type="button" class="ts-btn ts-btn-destructive ts-btn-lg" @(revoked ? "disabled" : null) data-open-dialog="revoke-@credential.Kind-@credential.Id" data-close-dialog>Delete</button>
+                        </div>
+                    </div>
+                </dialog>
+                <dialog class="ts-dialog" id="revoke-@credential.Kind-@credential.Id">
+                    <div class="ts-dialog-content">
+                        <div class="ts-dialog-header">
+                            <h3 class="ts-dialog-title">Delete credential</h3>
+                            <p class="ts-dialog-description">This action cannot be undone.</p>
+                        </div>
+                        <div class="ts-alert ts-alert-danger">
+                            <span class="ts-alert-title">@Icons.CircleAlert(16) Delete @credential.Name?</span>
+                            <span class="ts-alert-body">Deleting revokes access immediately. Consumers still using it will begin failing. The revoked credential remains in the history.</span>
+                        </div>
+                        <div class="ts-dialog-footer">
+                            <button type="button" class="ts-btn ts-btn-ghost ts-btn-lg" data-close-dialog>Cancel</button>
+                            <form method="post" action="/api/v1/dashboard/credentials/revoke">
+                                <input type="hidden" name="kind" value="@credential.Kind" />
+                                <input type="hidden" name="id" value="@credential.Id" />
+                                <input type="hidden" name="name" value="@credential.Name" />
+                                <button type="submit" class="ts-btn ts-btn-destructive ts-btn-lg">@Icons.ShieldOff(16) Delete credential</button>
+                            </form>
+                        </div>
+                    </div>
+                </dialog>
+            }
         }
     </section>
 </div>
