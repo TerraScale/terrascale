@@ -2860,19 +2860,8 @@ single-selector rules may stay on one line.
     color: var(--ts-ink);
   }
 
-  .ts-auth-submit-row {
-    display: flex;
-    flex-direction: row;
-    align-items: stretch;
-    gap: var(--ts-md);
-  }
-
   .ts-auth-submit {
-    flex: 1 1 0%;
-  }
-
-  .ts-auth-create {
-    flex-shrink: 0;
+    width: 100%;
   }
 
   .ts-auth-divider {
@@ -2960,6 +2949,9 @@ single-selector rules may stay on one line.
     border: 0;
     border-radius: 0;
     background: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .ts-login-column .ts-auth-locale-footer {

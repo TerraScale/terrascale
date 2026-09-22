@@ -50,10 +50,7 @@
                         <button class="ts-input-adornment" type="button" data-toggle-type="password" aria-label="Show password">@Icons.Eye(18)</button>
                     </div>
                 </div>
-                <div class="ts-auth-submit-row">
-                    <a class="ts-btn ts-btn-outline ts-btn-lg ts-auth-create" href="/onboarding">Create account</a>
-                    <button class="ts-btn ts-btn-primary ts-btn-lg ts-auth-submit" type="submit">Sign in</button>
-                </div>
+                <button class="ts-btn ts-btn-primary ts-btn-lg ts-auth-submit" type="submit">Sign in</button>
             </form>
             <div class="ts-auth-divider" aria-hidden="true"><span></span><span class="ts-auth-divider-label">Or continue with</span><span></span></div>
             <div class="ts-auth-providers">
@@ -63,6 +60,7 @@
                 <button class="ts-btn ts-btn-outline ts-auth-provider" type="button" disabled aria-label="Continue with Google" title="Sign-in with this provider is currently unavailable"><img src="@AssetUrls.Url("/brand/google.svg")" alt="" aria-hidden="true" /></button>
                 <button class="ts-btn ts-btn-outline ts-auth-provider" type="button" disabled aria-label="Continue with GitHub" title="Sign-in with this provider is currently unavailable"><img src="@AssetUrls.Url("/brand/github.svg")" alt="" aria-hidden="true" /></button>
             </div>
+            <p class="ts-auth-footer">New to TerraScale? <a class="ts-inline-link" href="/onboarding">Create account</a></p>
         </div>
         <div class="ts-auth-locale-footer">
             <label class="ts-sr-only" for="auth-locale">Language</label>
