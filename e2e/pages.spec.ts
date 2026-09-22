@@ -211,7 +211,11 @@ test("promoted owner sees admin pages", async ({ page }) => {
     password: "E2e-admin-123!",
     displayName: "E2E Admin",
   });
-  await page.request.post("/api/v1/testing/dev-shim/reset", { data: { promoteOwner: true } });
+  const promote = await page.request.post("/api/v1/testing/dev-shim/reset", { data: { promoteOwner: true } });
+  // Only the local E2E host enables the owner-promotion shim; a deployed
+  // preview answers 404 by design so it can never hand out owner. Skip there
+  // instead of waiting forever for the owner-only Admin entry.
+  test.skip(promote.status() === 404, "owner promotion dev shim is disabled on this deployment");
   await page.reload();
   await page.getByLabel("Account menu").click();
   const adminTabPromise = page.waitForEvent("popup");
