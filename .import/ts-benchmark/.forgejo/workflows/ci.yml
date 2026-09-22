@@ -59,16 +59,16 @@ jobs:
             --username "${registry_user}" \
             --password "${registry_token}" \
             --store-password-in-clear-text \
-            --configfile terrabase/nuget.config
+            --configfile ../terrabase/nuget.config
 
       - name: Build the benchmark projects
         shell: bash
         run: |
           set -euo pipefail
-          dotnet build terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
+          dotnet build ../terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
             --configuration Release \
             --nologo
-          dotnet build terrabase/TerraBase.FullTextBenchmarks/TerraBase.FullTextBenchmarks.csproj \
+          dotnet build ../terrabase/TerraBase.FullTextBenchmarks/TerraBase.FullTextBenchmarks.csproj \
             --configuration Release \
             --nologo
 
@@ -76,10 +76,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dotnet format style terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
+          dotnet format style ../terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
             --verify-no-changes \
             --no-restore
-          dotnet format style terrabase/TerraBase.FullTextBenchmarks/TerraBase.FullTextBenchmarks.csproj \
+          dotnet format style ../terrabase/TerraBase.FullTextBenchmarks/TerraBase.FullTextBenchmarks.csproj \
             --verify-no-changes \
             --no-restore
 
@@ -90,7 +90,7 @@ jobs:
           receipt='artifacts/ci/benchmark/receipt.json'
           rm -rf -- artifacts/ci/benchmark
           dotnet run \
-            --project terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
+            --project ../terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
             --configuration Release \
             --framework net11.0 \
             --no-build \
