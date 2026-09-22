@@ -34,6 +34,55 @@ jobs:
           # silently run two stores.
           fly deploy -a "$PR_APP" --strategy immediate --ha=false
           fly scale count 1 -a "$PR_APP" --yes
+      - name: Configure Stripe sandbox
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
+          STRIPE_SANDBOX_ENV: ${{ secrets.STRIPE_SANDBOX_ENV }}
+        run: |
+          # Optional: without the repo secret the preview deploys without
+          # Stripe and keeps the in-memory payment flow.
+          [ -n "$STRIPE_SANDBOX_ENV" ] || { echo 'STRIPE_SANDBOX_ENV not set — skipping Stripe setup.'; exit 0; }
+          ENV_FILE="$(mktemp)"
+          trap 'rm -f "$ENV_FILE"' EXIT
+          printf '%s\n' "$STRIPE_SANDBOX_ENV" > "$ENV_FILE"
+          set -a; . "$ENV_FILE"; set +a
+          : "${Payments__Stripe__SecretKey:?STRIPE_SANDBOX_ENV must define Payments__Stripe__SecretKey}"
+          # fly rejects empty secret values, so every id must be present.
+          for VAR in StarterMonthlyPriceId StarterAnnualPriceId ProMonthlyPriceId ProAnnualPriceId BusinessMonthlyPriceId BusinessAnnualPriceId; do
+            eval "VAL=\${Payments__Stripe__$VAR:-}"
+            [ -n "$VAL" ] || { echo "STRIPE_SANDBOX_ENV must define Payments__Stripe__$VAR" >&2; exit 1; }
+          done
+          HOOK_URL="https://$PR_APP.fly.dev/api/auth/stripe/webhook"
+          # The signing secret is write-only in Stripe's API — an endpoint
+          # created on an earlier push cannot be re-read — so drop every
+          # endpoint bound to this URL and mint a fresh one each run. That
+          # keeps the step idempotent and leaves no orphans behind.
+          for EP in $(curl -sf -u "$Payments__Stripe__SecretKey:" 'https://api.stripe.com/v1/webhook_endpoints?limit=100' \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{for(const e of JSON.parse(d).data)if(e.url===process.argv[1])console.log(e.id)})' "$HOOK_URL"); do
+            curl -sf -X DELETE -u "$Payments__Stripe__SecretKey:" "https://api.stripe.com/v1/webhook_endpoints/$EP" >/dev/null
+          done
+          WHSEC="$(curl -sf -u "$Payments__Stripe__SecretKey:" https://api.stripe.com/v1/webhook_endpoints \
+            -d "url=$HOOK_URL" \
+            -d 'enabled_events[]=checkout.session.completed' \
+            -d 'enabled_events[]=customer.subscription.created' \
+            -d 'enabled_events[]=customer.subscription.updated' \
+            -d 'enabled_events[]=customer.subscription.deleted' \
+            -d 'enabled_events[]=customer.subscription.trial_will_end' \
+            -d 'enabled_events[]=invoice.paid' \
+            -d 'enabled_events[]=invoice.payment_failed' \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const s=JSON.parse(d).secret;if(!s){console.error("Stripe returned no signing secret");process.exit(1)}console.log(s)})')"
+          fly secrets set -a "$PR_APP" \
+            Payments__Stripe__Mode=test \
+            Payments__Stripe__SecretKey="$Payments__Stripe__SecretKey" \
+            Payments__Stripe__WebhookSecret="$WHSEC" \
+            Payments__Stripe__PublicOrigin="https://$PR_APP.fly.dev" \
+            Payments__Stripe__StarterMonthlyPriceId="$Payments__Stripe__StarterMonthlyPriceId" \
+            Payments__Stripe__StarterAnnualPriceId="$Payments__Stripe__StarterAnnualPriceId" \
+            Payments__Stripe__ProMonthlyPriceId="$Payments__Stripe__ProMonthlyPriceId" \
+            Payments__Stripe__ProAnnualPriceId="$Payments__Stripe__ProAnnualPriceId" \
+            Payments__Stripe__BusinessMonthlyPriceId="$Payments__Stripe__BusinessMonthlyPriceId" \
+            Payments__Stripe__BusinessAnnualPriceId="$Payments__Stripe__BusinessAnnualPriceId"
       - name: Install JS deps
         run: npm ci
       - name: Run browser E2E suite against the deployed preview
@@ -72,3 +121,18 @@ jobs:
         run: |
           # Succeed iff the app is gone afterwards; a failed destroy must fail the job.
           fly apps destroy "$PR_APP" --yes || ! fly status -a "$PR_APP" >/dev/null 2>&1
+      - name: Delete PR Stripe webhook endpoint
+        env:
+          STRIPE_SANDBOX_ENV: ${{ secrets.STRIPE_SANDBOX_ENV }}
+          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
+        run: |
+          [ -n "$STRIPE_SANDBOX_ENV" ] || exit 0
+          ENV_FILE="$(mktemp)"
+          trap 'rm -f "$ENV_FILE"' EXIT
+          printf '%s\n' "$STRIPE_SANDBOX_ENV" > "$ENV_FILE"
+          set -a; . "$ENV_FILE"; set +a
+          HOOK_URL="https://$PR_APP.fly.dev/api/auth/stripe/webhook"
+          for EP in $(curl -sf -u "$Payments__Stripe__SecretKey:" 'https://api.stripe.com/v1/webhook_endpoints?limit=100' \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{for(const e of JSON.parse(d).data)if(e.url===process.argv[1])console.log(e.id)})' "$HOOK_URL"); do
+            curl -sf -X DELETE -u "$Payments__Stripe__SecretKey:" "https://api.stripe.com/v1/webhook_endpoints/$EP" >/dev/null
+          done

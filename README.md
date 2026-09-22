@@ -150,6 +150,38 @@ provide the settings as real secrets (`fly secrets set`).
    Dashboard → Settings → Billing → Customer portal) or the Portal session call
    fails with `No configuration provided`.
 
+### Deploying with the sandbox
+
+`fly.toml` sets `TS_DASHBOARD_PRODUCTION_DEMO=1`, which is the production
+acknowledgement the options guardrail requires for a test-mode key, so only the
+Stripe settings are missing. One-off for `ts-dashboard-2` (restarts the machine
+and resets the in-memory demo store):
+
+```bash
+fly secrets set -a ts-dashboard-2 \
+  Payments__Stripe__Mode=test \
+  Payments__Stripe__SecretKey=sk_test_… \
+  Payments__Stripe__WebhookSecret=whsec_… \
+  Payments__Stripe__PublicOrigin=https://ts-dashboard-2.fly.dev \
+  Payments__Stripe__StarterMonthlyPriceId=price_… \
+  Payments__Stripe__StarterAnnualPriceId=price_… \
+  Payments__Stripe__ProMonthlyPriceId=price_… \
+  Payments__Stripe__ProAnnualPriceId=price_… \
+  Payments__Stripe__BusinessMonthlyPriceId=price_… \
+  Payments__Stripe__BusinessAnnualPriceId=price_…
+```
+
+Create the webhook endpoint for `https://ts-dashboard-2.fly.dev/api/auth/stripe/webhook`
+first (Stripe Dashboard → Workbench → Webhooks, or `POST /v1/webhook_endpoints`)
+with the events listed above; its `whsec_…` is the `WebhookSecret`.
+
+PR previews configure themselves. The `preview` workflow reads the repo secret
+`STRIPE_SANDBOX_ENV` — a dotenv blob defining `Payments__Stripe__SecretKey` and
+the six `Payments__Stripe__*PriceId` values — creates a dedicated webhook
+endpoint for the preview URL, and sets the same secrets on the PR app; the
+endpoint is deleted when the PR closes. Without the secret, previews deploy
+without Stripe.
+
 ## CSS delivery
 
 Edit only `src/TerraScale.Dashboard/wwwroot/css/terrascale.css`. The Docker build
