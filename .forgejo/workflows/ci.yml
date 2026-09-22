@@ -66,6 +66,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           repository: TerraScale/ts-rust
+          ref: 98678aa89bccc709c2fca48319ffdb3a9f94ff5e
           path: contracts/terrabase-root
           fetch-depth: 1
           token: "${{ secrets.REGISTRY_TOKEN }}"
@@ -76,6 +77,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           repository: TerraScale/ts-atlas
+          ref: ef1adc2cca2f799f1a12b33c970fda71501e520a
           path: contracts/edge-root
           fetch-depth: 1
           token: "${{ secrets.REGISTRY_TOKEN }}"
@@ -162,6 +164,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           repository: TerraScale/ts-rust
+          ref: 98678aa89bccc709c2fca48319ffdb3a9f94ff5e
           path: contracts/terrabase-root
           fetch-depth: 1
           token: "${{ secrets.REGISTRY_TOKEN }}"
@@ -172,6 +175,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           repository: TerraScale/ts-atlas
+          ref: ef1adc2cca2f799f1a12b33c970fda71501e520a
           path: contracts/edge-root
           fetch-depth: 1
           token: "${{ secrets.REGISTRY_TOKEN }}"
@@ -244,8 +248,8 @@ jobs:
       - name: Build the SDK
         run: npm run build
 
-      - name: Install the pinned Playwright Chromium browser
-        run: npx playwright install chromium
+      - name: Install the pinned Playwright browsers
+        run: npx playwright install chromium firefox webkit
 
       - name: Run browser qualification against the current package
         run: npm run test:browser

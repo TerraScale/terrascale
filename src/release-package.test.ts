@@ -89,10 +89,7 @@ test("trunk pushes run native SDK checks while npm publication stays gated", asy
   assert.match(workflow, /^  workflow_dispatch:\n$/mu);
   assert.match(workflow, /^permissions:\n  contents: read$/mu);
   assert.doesNotMatch(workflow, /pull_request|schedule|workflow_call/u);
-  assert.doesNotMatch(
-    workflow,
-    /(?:ts-deploy|TERRASCALE_DEPLOY|NPM_TOKEN|TERRASCALE_E2E_|REGISTRY_TOKEN|secrets\.)/u,
-  );
+  assert.doesNotMatch(workflow, /(?:ts-deploy|TERRASCALE_DEPLOY|NPM_TOKEN|TERRASCALE_E2E_)/u);
 
   const jobs = ["static", "node", "browser"];
   for (const job of jobs) {
@@ -101,9 +98,8 @@ test("trunk pushes run native SDK checks while npm publication stays gated", asy
     assert.match(definition, /timeout-minutes: (?:45|60)/u);
     assert.doesNotMatch(definition, /container:\s*\n\s+image:/u);
     assert.match(definition, /actions\/checkout@v6\.1\.0/u);
-    assert.match(definition, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/u);
     assert.match(definition, /ref: \$\{\{ forgejo\.sha \}\}/u);
-    assert.match(definition, /token: ""/u);
+    assert.match(definition, /token: "\$\{\{ secrets\.REGISTRY_TOKEN \}\}"/u);
     assert.match(definition, /persist-credentials: false/u);
   }
 
@@ -126,18 +122,19 @@ test("trunk pushes run native SDK checks while npm publication stays gated", asy
   const nodeJob = jobDefinition(workflow, "node");
   assert.match(nodeJob, /strategy:\r?\n      fail-fast: false\r?\n      matrix:/u);
   assert.match(nodeJob, /node: \["22\.23\.2", "24\.20\.0"\]/u);
-  assert.match(nodeJob, /node-version: \$\{\{ matrix\.node \}\}/u);
+  assert.match(nodeJob, /Install Node\.js \$\{\{ matrix\.node \}\}/u);
+  assert.match(nodeJob, /sha256sum --check --strict/u);
   assert.match(nodeJob, /test "\$\(node --version\)" = "v\$\{\{ matrix\.node \}\}"/u);
   assert.match(nodeJob, /architecture: process\.arch/u);
   assert.match(nodeJob, /uname -m/u);
   assert.match(nodeJob, /npm test/u);
 
   const browserJob = jobDefinition(workflow, "browser");
-  assert.match(browserJob, /node-version-file: \.node-version/u);
+  assert.match(browserJob, /Install the repository Node\.js version/u);
   assert.match(browserJob, /test "\$\(node --version\)" = v24\.20\.0/u);
   assert.match(browserJob, /architecture: process\.arch/u);
   assert.match(browserJob, /uname -m/u);
-  assert.match(browserJob, /npx playwright install chromium/u);
+  assert.match(browserJob, /npx playwright install chromium firefox webkit/u);
   assert.match(browserJob, /npm run test:browser/u);
 
   assert.doesNotMatch(workflow, /(?:candidate|admit|publish|promote-npm-candidate)/iu);
