@@ -5,9 +5,6 @@ namespace TerraScale.Dashboard.Features.Data.Pages.Explorer;
 
 public sealed record DataPageModel(
     string View,                       // queries | table | editor | sql
-    string ProjectName,
-    string LoadedAt,
-    int SavedQueryCount,
     (string DatabaseId, string Name)[] Databases,
     string SelectedDatabase,
     string SelectedCollection,
@@ -24,13 +21,6 @@ public sealed record DataPageModel(
 {
     public ShellModel Shell { get; init; } = null!;
 
-    /// <summary>Intl "medium date, short time" UTC rendering of the loaded-at stamp.</summary>
-    public string LoadedAtText => DateTimeOffset.Parse(LoadedAt, System.Globalization.CultureInfo.InvariantCulture)
-        .ToString("MMM d, yyyy, h:mm tt", System.Globalization.CultureInfo.InvariantCulture);
-
-    /// <summary>shortId from src/lib/formatting.ts.</summary>
-    public string ShortProject => ProjectName.Length <= 12 ? ProjectName : $"{ProjectName[..6]}...{ProjectName[^4..]}";
-
     public static DataPageModel From(DashboardStore store, string view, string? database, string? collection,
         string? edit, string? delete, bool conflict, string? error, string? notice,
         string? sql, string? sqlCollection, bool sqlChecked)
@@ -42,9 +32,6 @@ public sealed record DataPageModel(
         var analysis = view is "sql" ? SqlAnalyzer.Analyze(effectiveSql) : null;
         return new(
             View: view,
-            ProjectName: store.ActiveProject.Name,
-            LoadedAt: DateTimeOffset.UtcNow.ToString("O"),
-            SavedQueryCount: store.SavedQueries.Length,
             Databases: [.. store.ProjectDatabases(store.ActiveProjectId).Select(d => (d.Id, d.Name))],
             SelectedDatabase: selectedDatabase,
             SelectedCollection: selectedCollection,
