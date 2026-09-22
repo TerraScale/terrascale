@@ -25,33 +25,24 @@
 @ShellHtml.Top(shell)
 <div class="ts-page ts-notes-page">
     <section class="ts-panel ts-panel-20">
-        <div class="ts-row-between ts-audit-intro">
-            <div class="ts-stack-lg">
-                <h2 class="ts-audit-title">Audit</h2>
-                <p class="ts-muted">Project control-plane events loaded from persisted TerraScale metadata. Loaded @Model.LoadedAtText.</p>
-                <div class="ts-audit-meta-row ts-meta">
-                    @Icons.ShieldCheck(14)
-                    <span>Retention @Model.RetentionDays days@(Model.OldestTime is { } oldest ? $" · earliest event {DashboardStore.FormatUtcDateTime(oldest)}" : "")</span>
-                </div>
-            </div>
-            <div class="ts-audit-metrics">
-                <div class="ts-metric"><span class="ts-muted">Events</span><span class="ts-audit-metric-inline">@Model.Rows.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
-                <div class="ts-metric"><span class="ts-muted">High risk</span><span class="ts-audit-metric-inline ts-text-danger">@Model.Critical.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
-                <div class="ts-metric"><span class="ts-muted">Warnings</span><span class="ts-audit-metric-inline ts-text-warning">@Model.Warn.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
-                <div class="ts-audit-export-wrap">
-                    <button class="ts-btn ts-btn-primary ts-btn-lg" type="button" @(Model.Rows.Count == 0 ? "disabled" : null) data-on:click="document.querySelector('#audit-export-dialog').showModal()">@Icons.Download(16) Export audit</button>
-                </div>
-            </div>
+        <div class="ts-row-between">
+            <h2 class="ts-audit-title">Audit</h2>
+            <a class="ts-btn ts-btn-ghost" href="/settings?tab=audit">@Icons.Settings(16) Retention settings</a>
         </div>
+        <dl class="ts-audit-kpis">
+            <div><dt>Events</dt><dd>@Model.Rows.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</dd></div>
+            <div><dt>High risk</dt><dd class="ts-text-danger">@Model.Critical.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</dd></div>
+            <div><dt>Warnings</dt><dd class="ts-text-warning">@Model.Warn.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</dd></div>
+        </dl>
     </section>
 
     <section class="ts-panel">
-        <div class="ts-panel-header ts-row-between">
-            <div>
-                <h2 class="ts-panel-title">Recent activity</h2>
-                <p class="ts-panel-subtitle">Project @(Model.ProjectId.Length == 0 ? "Current project" : Model.ProjectId.Length <= 12 ? Model.ProjectId : Model.ProjectId[..6] + "..." + Model.ProjectId[^4..]) · audit events</p>
+        <div class="ts-panel-header ts-audit-activity-header">
+            <h2 class="ts-panel-title">Recent activity</h2>
+            <div class="ts-row">
+                <a class="ts-btn ts-btn-ghost ts-audit-reset" href="/audit">@Icons.Filter(16) Reset filters</a>
+                <button class="ts-btn ts-btn-primary" type="button" @(Model.Rows.Count == 0 ? "disabled" : null) data-on:click="document.querySelector('#audit-export-dialog').showModal()">@Icons.Download(16) Export audit</button>
             </div>
-            <a class="ts-btn ts-btn-ghost ts-audit-reset" href="/audit">@Icons.Filter(16) Reset filters</a>
         </div>
 
         <form method="get" action="/audit" class="ts-audit-form">
@@ -155,55 +146,32 @@
         }
     </section>
 
-    <section class="ts-grid ts-audit-two-pane">
-        <div class="ts-panel">
-            <div class="ts-panel-header ts-row-between">
-                <div>
-                    <h2 class="ts-panel-title">Retention</h2>
-                    <p class="ts-panel-subtitle">Persisted audit evidence window</p>
-                </div>
-                <span class="ts-badge ts-badge-info">@($"{Model.RetentionDays}d")</span>
-            </div>
-            <div class="ts-stack-lg ts-padded">
-                <div class="ts-audit-retention-well">
-                    <div class="ts-metric"><span class="ts-muted">Window covered</span><span class="ts-audit-metric-inline">@Model.RetentionDays rolling days</span></div>
-                    <div class="ts-metric"><span class="ts-muted">Oldest retained event</span><span class="ts-audit-metric-inline">@(Model.OldestTime is { } oldestRetained ? DashboardStore.FormatUtcDateTime(oldestRetained) : "None")</span></div>
-                    <div class="ts-metric"><span class="ts-muted">Export formats</span><span class="ts-audit-metric-inline">CSV, JSON</span></div>
-                </div>
-                <div class="ts-row">
-                    <a class="ts-btn ts-btn-secondary ts-btn-lg" @(Model.Rows.Count == 0 ? "disabled" : null) href="@ExportHref("csv")">@Icons.Download(16) Export CSV</a>
-                    <a class="ts-btn ts-btn-secondary ts-btn-lg" @(Model.Rows.Count == 0 ? "disabled" : null) href="@ExportHref("json")">@Icons.Download(16) Export JSON</a>
-                </div>
-            </div>
+    <section class="ts-panel">
+        <div class="ts-panel-header">
+            <h2 class="ts-panel-title">Severity breakdown</h2>
+            <p class="ts-panel-subtitle">Events in current view</p>
         </div>
-
-        <div class="ts-panel">
-            <div class="ts-panel-header">
-                <h2 class="ts-panel-title">Severity breakdown</h2>
-                <p class="ts-panel-subtitle">Events in current view</p>
+        <div class="ts-stack-md ts-padded">
+            <div class="ts-severity-box">
+                <div class="ts-row-between">
+                    <span class="ts-row ts-row-tight">@Icons.ShieldCheck(16) Info</span>
+                    <span class="ts-metric-inline">@(Model.Rows.Count(r => r.Severity == "info"))</span>
+                </div>
+                <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-info" style="width:@(Percent(Model.Rows.Count(r => r.Severity == "info"), Model.Rows.Count))%"></div></div>
             </div>
-            <div class="ts-stack-md ts-padded">
-                <div class="ts-severity-box">
-                    <div class="ts-row-between">
-                        <span class="ts-row ts-row-tight">@Icons.ShieldCheck(16) Info</span>
-                        <span class="ts-metric-inline">@(Model.Rows.Count(r => r.Severity == "info"))</span>
-                    </div>
-                    <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-info" style="width:@(Percent(Model.Rows.Count(r => r.Severity == "info"), Model.Rows.Count))%"></div></div>
+            <div class="ts-severity-box">
+                <div class="ts-row-between">
+                    <span class="ts-row ts-row-tight">@Icons.ShieldAlert(16) Warning</span>
+                    <span class="ts-metric-inline">@Model.Warn</span>
                 </div>
-                <div class="ts-severity-box">
-                    <div class="ts-row-between">
-                        <span class="ts-row ts-row-tight">@Icons.ShieldAlert(16) Warning</span>
-                        <span class="ts-metric-inline">@Model.Warn</span>
-                    </div>
-                    <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-warning" style="width:@(Percent(Model.Warn, Model.Rows.Count))%"></div></div>
+                <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-warning" style="width:@(Percent(Model.Warn, Model.Rows.Count))%"></div></div>
+            </div>
+            <div class="ts-severity-box">
+                <div class="ts-row-between">
+                    <span class="ts-row ts-row-tight">@Icons.Shield(16) Critical severity</span>
+                    <span class="ts-metric-inline">@Model.Critical</span>
                 </div>
-                <div class="ts-severity-box">
-                    <div class="ts-row-between">
-                        <span class="ts-row ts-row-tight">@Icons.Shield(16) Critical severity</span>
-                        <span class="ts-metric-inline">@Model.Critical</span>
-                    </div>
-                    <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-danger" style="width:@(Percent(Model.Critical, Model.Rows.Count))%"></div></div>
-                </div>
+                <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-danger" style="width:@(Percent(Model.Critical, Model.Rows.Count))%"></div></div>
             </div>
         </div>
     </section>

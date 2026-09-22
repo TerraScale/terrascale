@@ -8,6 +8,7 @@
         ("credentials", "Credentials"),
         ("webhooks", "Webhooks"),
         ("backups", "Backups"),
+        ("audit", "Audit"),
         ("danger", "Danger zone"),
     };
     var activeProviders = Model.Providers.Count(p => p.Status == "Enabled");
@@ -568,6 +569,22 @@
                 </section>
             </div>
         }
+    }
+    else if (Model.Tab == "audit")
+    {
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h3 class="ts-panel-title">Audit retention</h3>
+                <p class="ts-panel-subtitle">Choose how many days of events are available in the audit log and exports.</p>
+            </div>
+            <form method="post" action="/api/v1/dashboard/settings/audit-retention" class="ts-stack-16 ts-padded">
+                <div class="ts-field">
+                    <label class="ts-label" for="audit-retention-days">Retention days</label>
+                    <input class="ts-input" id="audit-retention-days" name="retentionDays" type="number" min="1" max="90" value="@Model.AuditRetentionDays" required />
+                </div>
+                <div><button class="ts-btn ts-btn-primary" type="submit">Save retention</button></div>
+            </form>
+        </section>
     }
     else
     {
