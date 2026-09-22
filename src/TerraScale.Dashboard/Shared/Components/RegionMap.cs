@@ -53,6 +53,12 @@ public static class RegionMap
         ["MEL"] = new("ap-melbourne-1", 123.5, 67.55),
     };
 
+    /// <summary>Projected 136x80 coordinates for a region code (matched
+    /// case-insensitively), or null when the map has no pin. Shared so the
+    /// onboarding region catalog keeps no second copy of the pin table.</summary>
+    public static (double X, double Y)? Coordinates(string code) =>
+        Regions.GetValueOrDefault(code.ToUpperInvariant()) is { } pin ? (pin.X, pin.Y) : null;
+
     /// <summary>Region overlay for the auth map: animated connection arcs
     /// (inline SVG) plus fixed-size pulsing pins (HTML, percent-positioned so
     /// they never scale with the map). Unknown codes are skipped.</summary>

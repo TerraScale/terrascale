@@ -33,6 +33,11 @@ public sealed class NewOrganizationStepEndpoint(DashboardStore store) : Endpoint
         switch (form["step"].ToString())
         {
             case "organization":
+                // Step 1 is the wizard's entry point, so it needs no state
+                // prerequisite: CreateBusinessOrganization resumes the matching
+                // pending tenant or creates a fresh one, and always switches the
+                // active workspace to it. That keeps this branch from ever
+                // mutating another workspace's state.
                 var error = store.CreateBusinessOrganization(form["name"].ToString(), DefaultBillingPlanId);
                 return error is null
                     ? Results.Redirect("/organization?newOrganization=payment", false, false)
@@ -45,11 +50,15 @@ public sealed class NewOrganizationStepEndpoint(DashboardStore store) : Endpoint
             case "payment-method" when !store.HasPendingBusinessOrganization:
                 return Results.Redirect("/organization?newOrganization=organization", false, false);
             case "payment-method":
-                store.SetPendingOrganizationPlan(BillingPlanIdFor(form["plan"].ToString()));
+                if (!store.SetPendingOrganizationPlan(BillingPlanIdFor(form["plan"].ToString())))
+                    return Results.Redirect("/organization?newOrganization=payment&error=" + Uri.EscapeDataString("Choose an available plan."), false, false);
                 // The local checkout returns to the organization page, whose
                 // payment result reopens the modal on the project step.
                 return Results.Redirect(store.BeginPaymentSetup("/organization?newOrganization=project"), false, false);
-            case "project" when !store.CanProvisionResources:
+            // The project must land in the billing-active Business tenant the
+            // wizard paid for — never in the Personal free allowance or another
+            // workspace the user switched to between steps.
+            case "project" when !store.HasBillingActiveBusinessOrganization:
                 return Results.Redirect("/organization?newOrganization=payment&error=" + Uri.EscapeDataString("Complete Business billing before creating resources."), false, false);
             case "project":
                 var name = form["name"].ToString().Trim();

@@ -8233,9 +8233,10 @@ single-selector rules may stay on one line.
     /* One box for all three steps: tall enough for the tallest step (payment,
        three plan cards) so nothing is clipped, and every step keeps that exact
        size. Shorter steps center their card in the leftover space; a shorter
-       viewport scrolls the content instead. */
-    height: min(60rem, 92vh);
-    max-height: min(94vh, 100%);
+       viewport scrolls the content instead. svh keeps the fixed box inside the
+       visible viewport when mobile toolbars collapse it. */
+    height: min(60rem, 92svh);
+    max-height: min(94svh, 100%);
   }
 
   .ts-dialog-content-wizard {

@@ -174,10 +174,10 @@ public sealed class PagesSmokeTests
         using var client = app.CreateDemoClient();
         var page = await app.GetPageAsync(client, "/organization");
         await Assert.That(page.StatusCode).IsEqualTo(200);
-        // The wizard is a modal opened from the page; its step screens are
-        // covered in depth by NewOrganizationWizardTests.
-        await Assert.That(page.Contains("data-open-dialog=\"create-organization\"")).IsTrue();
-        await Assert.That(page.Contains("id=\"create-organization\"")).IsTrue();
+        // The wizard's markup and step screens are covered in depth by
+        // NewOrganizationWizardTests; this smoke entry pins the page's copy.
+        await Assert.That(page.Contains("Create organization")).IsTrue();
+        await Assert.That(page.Contains("Business organizations have their own paid billing and never use the Personal allowance.")).IsTrue();
     }
 
     [Test]

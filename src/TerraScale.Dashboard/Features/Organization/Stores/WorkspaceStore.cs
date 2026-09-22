@@ -20,25 +20,39 @@ public sealed partial class DashboardStore
     public bool HasPendingBusinessOrganization => ActiveOrganization
         is { Kind: OrganizationKind.Business, Archived: false, BillingStatus: "billing_required" };
 
+    /// <summary>The active workspace is a Business organization whose billing is
+    /// already active: the state its project step requires.</summary>
+    public bool HasBillingActiveBusinessOrganization => ActiveOrganization
+        is { Kind: OrganizationKind.Business, Archived: false, BillingStatus: "active" };
+
+    private bool IsAvailablePaidPlan(string planId) =>
+        Plans.Any(p => p.Id == planId && p.MonthlyUsd > 0 && p.Status == "Active");
+
     /// <summary>Bills the pending organization on the plan its payment screen
     /// selected. Returns false when there is no pending organization or the plan
-    /// is not an available paid plan.</summary>
+    /// is not an available paid plan. The guard and the write share one captured
+    /// reference under the world lock, so a concurrent switch or payment
+    /// completion cannot retarget the write.</summary>
     public bool SetPendingOrganizationPlan(string planId)
     {
-        if (!HasPendingBusinessOrganization
-            || !Plans.Any(p => p.Id == planId && p.MonthlyUsd > 0 && p.Status == "Active"))
+        lock (World)
         {
-            return false;
-        }
+            var organization = ActiveOrganization;
+            if (organization is not { Kind: OrganizationKind.Business, Archived: false, BillingStatus: "billing_required" }
+                || !IsAvailablePaidPlan(planId))
+            {
+                return false;
+            }
 
-        ActiveOrganization.PlanId = planId;
-        return true;
+            organization.PlanId = planId;
+            return true;
+        }
     }
 
     public string? CreateBusinessOrganization(string name, string planId)
     {
         name = name.Trim();
-        if (name.Length is 0 or > 128 || !Plans.Any(p => p.Id == planId && p.MonthlyUsd > 0 && p.Status == "Active"))
+        if (name.Length is 0 or > 128 || !IsAvailablePaidPlan(planId))
             return "Choose a name and an available paid plan.";
         lock (World)
         {
