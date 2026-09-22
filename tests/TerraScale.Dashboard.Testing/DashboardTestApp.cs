@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Dashboard;
 
 namespace TerraScale.Dashboard.Testing;
@@ -14,11 +15,25 @@ public sealed class DashboardTestApp : IDisposable
 {
     private readonly WebApplicationFactory<Program> _factory;
 
-    public DashboardTestApp()
+    public DashboardTestApp(
+        IReadOnlyDictionary<string, string>? settings = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("DASHBOARD_E2E", "1");
+            if (settings is not null)
+            {
+                foreach (var (key, value) in settings)
+                {
+                    builder.UseSetting(key, value);
+                }
+            }
+
+            if (configureServices is not null)
+            {
+                builder.ConfigureServices(configureServices);
+            }
         });
     }
 
@@ -29,6 +44,10 @@ public sealed class DashboardTestApp : IDisposable
             HandleCookies = true,
             BaseAddress = new Uri("http://localhost/"),
         });
+
+    /// <summary>The running host's service provider, for asserting on the real
+    /// singletons (the in-memory store, the Stripe provider double).</summary>
+    public IServiceProvider Services => _factory.Services;
 
     /// <summary>A client already signed in as the demo account (mario).</summary>
     public HttpClient CreateDemoClient()

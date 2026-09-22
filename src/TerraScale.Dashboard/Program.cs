@@ -4,11 +4,22 @@ using TerraScale.Endpoints;
 using TerraScale.Datastar.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
+// The Stripe sandbox reads its test keys from a gitignored .env file during
+// development; deployed environments provide the same names as real settings.
+DotEnvFile.Load(builder.Configuration, builder.Environment);
 // dotnet run in Production also needs the build manifest's compressed files.
 // Published deployments already carry their assets under wwwroot.
 builder.WebHost.UseStaticWebAssets();
 var security = DashboardSecurityOptions.Load(builder.Configuration, builder.Environment);
 builder.Services.AddSingleton(security);
+var stripe = StripePaymentOptions.Load(builder.Configuration, builder.Environment);
+builder.Services.AddSingleton(stripe);
+builder.Services.AddHttpClient<IStripeBillingClient, StripeBillingClient>(client =>
+{
+    client.BaseAddress = new Uri("https://api.stripe.com/");
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
+builder.Services.AddSingleton<StripePaymentsService>();
 if (!security.DemoMode)
 {
     builder.Services.AddHttpClient<LiveIdentityProvider>(client => client.Timeout = TimeSpan.FromSeconds(5));

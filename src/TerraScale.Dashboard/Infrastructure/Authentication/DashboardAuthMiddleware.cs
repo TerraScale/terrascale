@@ -19,6 +19,9 @@ public sealed class DashboardAuthMiddleware(
     [
         "/login", "/reset-password", "/invitations/", "/cli/", "/agent/", "/oauth/",
         "/onboarding", "/checkout/",
+        // Stripe authenticates its webhook deliveries with the endpoint signing
+        // secret, never with a dashboard session.
+        "/api/auth/stripe/webhook",
         "/api/v1/auth/", "/health/", "/css/", "/js/", "/fonts/", "/brand/", "/favicon", "/openapi", "/scalar",
     ];
 
@@ -52,6 +55,7 @@ public sealed class DashboardAuthMiddleware(
                     || path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWith("/openapi", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWith("/scalar", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith("/api/auth/stripe/webhook", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWith("/api/v1/auth/", StringComparison.OrdinalIgnoreCase);
 
                 var activated = false;

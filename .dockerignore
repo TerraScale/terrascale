@@ -4,3 +4,7 @@
 **/node_modules/
 tools/
 .forgejo/
+# Never bake sandbox credentials into the image; Fly/CI injects real settings.
+.env
+.env.local
+.env.*.local

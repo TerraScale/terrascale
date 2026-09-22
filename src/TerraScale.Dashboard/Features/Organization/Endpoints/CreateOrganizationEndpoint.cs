@@ -27,7 +27,7 @@ public sealed class CreateOrganizationEndpoint(DashboardStore store) : EndpointW
             "business" => "plan_dedicated",
             _ => "",
         };
-        var error = store.CreateBusinessOrganization(form["name"].ToString(), billingPlanId);
+        var error = store.CreateBusinessOrganization(form["name"].ToString(), billingPlanId, plan.Key);
         if (error is not null)
             return Results.Redirect("/organizations/new?error=" + Uri.EscapeDataString(error), false, false);
         return Results.Redirect("/organizations/new?step=payment", false, false);

@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Onboarding.Endpoints;
 
 /// <summary>Advances account setup. Registration already creates the Personal
 /// workspace, so onboarding only covers optional payment setup and the first project.</summary>
-public sealed class OnboardingStepEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
+public sealed class OnboardingStepEndpoint(DashboardStore store, StripePaymentOptions stripe) : EndpointWithoutRequest<IResult>
 {
     private static readonly string[] StepKeys = ["account-information", "payment-method", "project"];
 
@@ -24,7 +24,19 @@ public sealed class OnboardingStepEndpoint(DashboardStore store) : EndpointWitho
             return Results.Redirect("/onboarding", false, false);
 
         if (step == "payment-method" && form["bypass"] != "1")
-            return Results.Redirect(store.BeginPaymentSetup("/onboarding"), false, false);
+        {
+            // Without a configured provider the wizard keeps the in-memory local
+            // payment setup; the Stripe sandbox takes over as soon as it is set.
+            if (!stripe.Enabled)
+                return Results.Redirect(store.BeginPaymentSetup("/onboarding"), false, false);
+
+            var planKey = StripePaymentOptions.NormalizePlan(form["plan"].ToString()) is { Length: > 0 } plan ? plan : "starter";
+            var interval = form["interval"].ToString() == "annual" ? "annual" : "monthly";
+            return Results.Redirect(
+                $"/billing/checkout?plan={planKey}&interval={interval}&return={Uri.EscapeDataString("/onboarding")}",
+                false,
+                false);
+        }
 
         store.CompleteOnboardingStep(step);
         if (step == "project")

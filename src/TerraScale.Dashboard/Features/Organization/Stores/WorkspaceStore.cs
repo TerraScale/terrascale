@@ -14,7 +14,7 @@ public sealed partial class DashboardStore
     public bool CanProvisionResources => !ActiveOrganization.Archived
         && (FreeAllowanceEligible || ActiveOrganization.BillingStatus == "active");
 
-    public string? CreateBusinessOrganization(string name, string planId)
+    public string? CreateBusinessOrganization(string name, string planId, string planKey = "")
     {
         name = name.Trim();
         if (name.Length is 0 or > 128 || !Plans.Any(p => p.Id == planId && p.MonthlyUsd > 0 && p.Status == "Active"))
@@ -36,6 +36,7 @@ public sealed partial class DashboardStore
                 Kind = OrganizationKind.Business,
                 ActiveOrganizationName = name,
                 PlanId = planId,
+                PlanKey = StripePaymentOptions.NormalizePlan(planKey),
                 TeamMembers = [new(CurrentUser.Id, CurrentUser.Name, CurrentUser.Email, "owner", "Active", false, DateTimeOffset.UtcNow.ToString("O"), 0)],
             };
             World.Organizations.Add(id, organization);

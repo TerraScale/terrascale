@@ -3,7 +3,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Organization.Pages.OrganizationsNew;
 
-public sealed class OrganizationsNewPageEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
+public sealed class OrganizationsNewPageEndpoint(DashboardStore store, StripePaymentOptions stripe) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -25,6 +25,6 @@ public sealed class OrganizationsNewPageEndpoint(DashboardStore store) : Endpoin
         var payment = query["payment"].FirstOrDefault();
         var paymentStatus = payment is "success" or "canceled" ? payment : null;
         return Task.FromResult<IResult>(OrganizationsNewSlice.Create(
-            OrganizationsNewPageModel.From(store, "/organizations/new", step, paymentStatus)));
+            OrganizationsNewPageModel.From(store, "/organizations/new", step, paymentStatus, stripe.Enabled)));
     }
 }

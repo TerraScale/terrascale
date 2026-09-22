@@ -173,6 +173,8 @@
                 </header>
                 <form class="ts-onboarding-content" method="post" action="/onboarding/step">
                     <input type="hidden" name="step" value="payment-method" />
+                    <input type="hidden" name="plan" data-bind="plan" />
+                    <input type="hidden" name="interval" data-bind="interval" />
                     @if (stepDone)
                     {
                         <div class="ts-alert ts-alert-success" role="status">

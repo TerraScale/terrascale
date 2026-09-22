@@ -27,6 +27,8 @@ public sealed record UsagePageModel(
     IReadOnlyList<DashboardDatabase> Databases,
     IReadOnlyList<(string Id, string Name, string? Cap)> DatabaseCaps,
     IReadOnlyList<DashboardStore.CheckoutPlanRow> CheckoutPlans,
+    bool StripeCheckoutEnabled,
+    string BillingPortalHref,
     bool PaidExcessEnabled,
     string SpendCap,
     string BillingStatus,
@@ -49,9 +51,23 @@ public sealed record UsagePageModel(
 {
     public ShellModel Shell { get; init; } = null!;
 
-    public static UsagePageModel From(DashboardStore store, string href, string? range, string? billing, string? saved)
+    public static UsagePageModel From(DashboardStore store, StripePaymentOptions stripe, string href, string? range, string? billing, string? saved)
     {
         var databases = store.ProjectDatabases(store.ActiveProjectId);
+
+        // With the Stripe sandbox configured the usage page offers exactly the
+        // plans that have a sandbox price; otherwise it keeps the demo catalog.
+        IReadOnlyList<DashboardStore.CheckoutPlanRow> checkoutPlans = stripe.Enabled
+            ? [.. store.CheckoutPlans
+                .Where(plan => stripe.PriceId(plan.PlanKey, "monthly") is not null)
+                .Select(plan => plan with
+                {
+                    Href = $"/billing/checkout?plan={plan.PlanKey}&interval=monthly&return={Uri.EscapeDataString("/usage")}",
+                })]
+            : [.. store.CheckoutPlans];
+        var billingPortalHref = stripe.Enabled
+            ? $"/billing/portal?return={Uri.EscapeDataString("/usage")}"
+            : "/billing/portal/usage_portal";
 
         // Old page falls back to database/region counters when the summary has no KPIs.
         var regionCount = databases
@@ -169,7 +185,9 @@ public sealed record UsagePageModel(
             DatabaseCoverage: coverage,
             Databases: databases,
             DatabaseCaps: [.. databases.Select(d => (d.Id, d.Name, Cap: store.DatabaseSpendCap(d.Id)))],
-            CheckoutPlans: [.. store.CheckoutPlans],
+            CheckoutPlans: checkoutPlans,
+            StripeCheckoutEnabled: stripe.Enabled,
+            BillingPortalHref: billingPortalHref,
             PaidExcessEnabled: store.PaidExcessEnabled,
             SpendCap: store.SpendCapUsd ?? "",
             BillingStatus: store.BillingAccountStatus,

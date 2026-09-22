@@ -15,8 +15,15 @@ public sealed class OrganizationWorld
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public string BillingStatus { get; set; } = "billing_required";
     public string PlanId { get; set; } = "plan_free";
+
+    /// <summary>Stripe billing-catalog key (starter|pro|business) chosen at
+    /// checkout. Distinct from <see cref="PlanId"/>, which stays the platform
+    /// plan the organization provisions against.</summary>
+    public string PlanKey { get; set; } = "";
     public bool PaymentMethodValidated { get; set; }
     public string? BillingRenewal { get; set; }
+    public string? StripeCustomerId { get; set; }
+    public string? StripeSubscriptionId { get; set; }
     public string? CheckoutSessionId { get; set; }
     public string? CheckoutReturnPath { get; set; }
     public Dictionary<string, DashboardStore.OwnershipTransfer> OwnershipTransfers { get; set; } = [];
