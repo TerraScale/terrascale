@@ -46,8 +46,14 @@ public sealed class HostedUiSecurityTests
         await page.FillAsync("#su-password", "password123");
         if (name is not null)
             await page.FillAsync("#su-name", name);
-        await page.ClickAsync("button:has-text('Create account')");
-        await page.WaitForURLAsync("**/account");
+        await Task.WhenAll(
+            page.WaitForURLAsync(
+                "**/account",
+                new() { WaitUntil = WaitUntilState.DOMContentLoaded }),
+            page.ClickAsync("button:has-text('Create account')"));
+        await page.GetByRole(
+            AriaRole.Heading,
+            new() { Name = "Your account", Exact = true }).WaitForAsync();
     }
 
     // ---- Escaping -------------------------------------------------------------------------
