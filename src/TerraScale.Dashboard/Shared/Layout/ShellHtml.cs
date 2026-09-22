@@ -225,6 +225,7 @@ public static class ShellHtml
                             <span class="ts-account-chevron">{Icons.ChevronUp(16).Value}</span>
                         </summary>
                         <div class="ts-menu-panel">
+                            <a class="ts-menu-item" href="/profile"><span class="ts-menu-item-icon">{Icons.UserRound(16).Value}</span><span class="ts-menu-label">Profile</span></a>
                             <a class="ts-menu-item" href="/notifications"><span class="ts-menu-item-icon">{Icons.Bell(16).Value}</span><span class="ts-menu-label">Notifications</span>{unreadBadge}</a>
                             <a class="ts-menu-item" href="/settings"><span class="ts-menu-item-icon">{Icons.Settings(16).Value}</span><span class="ts-menu-label">Settings</span></a>
                             <hr class="ts-menu-separator" />
