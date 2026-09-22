@@ -83,4 +83,5 @@ Everything must work in memory account creation and etc
 - When the work is done create a PR into main when the work is ready to be merged.
 - When pushing and creating the pull request make sure that the linter has no errors and that the `slow` and `fast` tests passes and run green.
 - When creating PR send the link of that PR to the user.
-- When creating a PR and the change has visual changes add multiple screenshots showing the changes that you made.
+- When creating a PR and the change has visual changes add multiple screenshots (the screenshots must not be commited into the repo) showing the changes that you made.
+- When creating the PR make it auto merge when all checks passes automatically
