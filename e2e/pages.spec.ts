@@ -140,6 +140,31 @@ test("anonymous dashboard access redirects to login", async ({ page }) => {
   await page.waitForURL("**/login**");
 });
 
+test("account menu opens upward from the sidebar footer", async ({ page }) => {
+  await registerAndOnboard(page, {
+    email: `e2e-nav-menu-${Date.now()}@example.test`,
+    password: "E2e-nav-menu-123!",
+    displayName: "E2E Nav Menu",
+  });
+
+  const trigger = page.locator("summary.ts-account-trigger");
+  const panel = page.locator("details.ts-account .ts-menu-panel");
+  await trigger.click();
+  await expect(panel).toBeVisible();
+
+  const triggerBox = (await trigger.boundingBox())!;
+  const panelBox = (await panel.boundingBox())!;
+  const viewport = page.viewportSize()!;
+
+  // Regression: the panel used to render below the trigger, off the bottom of
+  // the viewport, so only a sliver stayed visible.
+  expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(triggerBox.y);
+  expect(panelBox.y).toBeGreaterThanOrEqual(0);
+  expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(viewport.height);
+
+  await logout(page);
+});
+
 test("member pages render", async ({ page }) => {
   await registerAndOnboard(page, {
     email: `e2e-pages-${Date.now()}@example.test`,
