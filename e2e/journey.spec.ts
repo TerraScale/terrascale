@@ -36,7 +36,10 @@ test("member can create a database and open its detail page", async ({ page }) =
   });
 
   await page.goto("/databases");
-  await page.getByRole("button", { exact: true, name: "Create database" }).first().click();
+  // Databases has no inline create panel: the floating action button is the
+  // only entry point and deep-links to the auto-opened create dialog.
+  await page.getByRole("link", { exact: true, name: "Create database" }).click();
+  await expect(page).toHaveURL(/\/databases\?create=1$/);
   const dialog = page.getByRole("dialog", { name: "Create a database" });
   await dialog.getByLabel("Database name").fill("journey-primary");
   await dialog.getByRole("button", { exact: true, name: "Create database" }).click();
