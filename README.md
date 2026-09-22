@@ -22,6 +22,10 @@ one endpoint per file, CI/deploy).
   payloads can use `JsonTypeInfo<T>` overloads from an application-owned
   `JsonSerializerContext` to avoid runtime serializer metadata discovery.
 - Server-rendered SVG charts (`Shared/Components/Charts.cs`) and lucide icon set (`Shared/Components/Icons.cs`)
+- **Stripe.net** — the official Stripe SDK owns the sandbox billing calls
+  (Customers, hosted Checkout, Billing Portal, Subscriptions) and webhook
+  signature verification; the dashboard wraps it in the
+  `Features/Payments/Services` port. The SDK pins its own API version.
 - **TerraScale.DotNet** — the workspace prefers the sibling `ts-dotnet` SDK
   checkout; standalone Docker and CI builds restore the vendored SDK package
   from `src/TerraScale.Dashboard/nuget/`. Set `TERRABASE_URL` (or
@@ -97,6 +101,12 @@ settings below are present, the same links start real **test-mode** Checkout and
 Billing Portal sessions and the webhook projects subscription state onto the
 organization.
 
+All provider calls go through the official **Stripe.net** SDK — the dashboard
+only owns the thin `IStripeBillingClient` port, the option guardrails, and the
+projection onto the in-memory organization. Webhook deliveries are verified and
+parsed by the SDK's `EventUtility` (HMAC over `timestamp.payload`, clock
+tolerance, typed `checkout.session`/`subscription`/`invoice` objects).
+
 Configuration comes from `Payments:Stripe:*` (environment variables use the
 deployed `Payments__Stripe__*` spelling). During development the app also reads
 a gitignored `.env.local` file (`DotEnvFile`); real process environment
@@ -112,7 +122,6 @@ ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/TerraScale.Dashboard
 | `SecretKey` | Sandbox (`sk_test_…` / `rk_test_…`) secret key. Required to enable Stripe. |
 | `Mode` | `test` (default) or `live`. A live key must use `live`, a test key `test`. |
 | `WebhookSecret` | Signing secret of the webhook endpoint that delivers to this app. |
-| `ApiVersion` | Optional. Pins the `Stripe-Version` header; unset uses the account default. |
 | `PublicOrigin` | Public HTTPS origin Stripe redirects back to (Tailscale Funnel or Fly app). |
 | `{Plan}{Interval}PriceId` | `Starter`/`Pro`/`Business` × `Monthly`/`Annual`. Only configured pairs are offered. `Scale*` is accepted as the legacy name for Business. |
 

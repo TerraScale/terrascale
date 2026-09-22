@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Payments.Models;
@@ -88,24 +87,11 @@ public sealed class StripeBillingEndpointTests
         var store = app.Services.GetRequiredService<DashboardStore>();
         var organization = store.ActiveOrganization;
 
-        var payload = JsonSerializer.Serialize(new
-        {
-            id = "evt_http_checkout_completed",
-            type = "checkout.session.completed",
-            data = new
-            {
-                @object = new
-                {
-                    id = "cs_test_http",
-                    client_reference_id = organization.Id,
-                    status = "complete",
-                    payment_status = "paid",
-                    customer = "cus_http",
-                    subscription = "sub_http",
-                    metadata = new { organization_id = organization.Id, plan_key = "pro" },
-                },
-            },
-        });
+        var payload = StripeTestSupport.CheckoutCompletedPayload(
+            organization.Id,
+            eventId: "evt_http_checkout_completed",
+            customerId: "cus_http",
+            subscriptionId: "sub_http");
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/stripe/webhook")
         {

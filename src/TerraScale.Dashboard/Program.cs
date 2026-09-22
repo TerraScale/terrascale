@@ -14,11 +14,11 @@ var security = DashboardSecurityOptions.Load(builder.Configuration, builder.Envi
 builder.Services.AddSingleton(security);
 var stripe = StripePaymentOptions.Load(builder.Configuration, builder.Environment);
 builder.Services.AddSingleton(stripe);
-builder.Services.AddHttpClient<IStripeBillingClient, StripeBillingClient>(client =>
-{
-    client.BaseAddress = new Uri("https://api.stripe.com/");
-    client.Timeout = TimeSpan.FromSeconds(15);
-});
+// The official Stripe.net SDK owns the HTTP transport, request/response
+// serialization, API version, and webhook signature verification. The client
+// builds the SDK lazily from the sandbox key; no global StripeConfiguration
+// state, and an unconfigured dashboard never constructs a Stripe client.
+builder.Services.AddSingleton<IStripeBillingClient, StripeBillingClient>();
 builder.Services.AddSingleton<StripePaymentsService>();
 if (!security.DemoMode)
 {

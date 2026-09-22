@@ -1,6 +1,10 @@
-using System.Net.Http.Headers;
-using System.Text.Json;
+using System.Net;
+using Stripe;
+using Stripe.Checkout;
 using TerraScale.Dashboard.Features.Payments.Models;
+using PortalSessionCreateOptions = Stripe.BillingPortal.SessionCreateOptions;
+using PortalSessionService = Stripe.BillingPortal.SessionService;
+using Session = Stripe.Checkout.Session;
 
 namespace TerraScale.Dashboard.Features.Payments.Services;
 
@@ -19,211 +23,152 @@ public interface IStripeBillingClient
     Task<StripeSubscription?> GetSubscriptionAsync(string subscriptionId, CancellationToken ct);
 }
 
-/// <summary>Typed Stripe REST client for the hosted Checkout, Billing Portal,
-/// Customer, and Subscription resources. Form bodies use Stripe's bracket
-/// notation; every mutation carries a caller-owned idempotency key.</summary>
-public sealed class StripeBillingClient(HttpClient http, StripePaymentOptions options) : IStripeBillingClient
+/// <summary>
+/// The official Stripe.net SDK behind the dashboard's own port. Price,
+/// customer, and organization identity are resolved from trusted server state
+/// and never taken from caller-supplied text; every mutation carries a
+/// caller-owned idempotency key.
+/// </summary>
+public sealed class StripeBillingClient(StripePaymentOptions options) : IStripeBillingClient
 {
-    public Task<StripeCustomer> CreateCustomerAsync(string email, string organizationId, string idempotencyKey, CancellationToken ct) =>
-        SendAsync(
-            "v1/customers",
-            new Dictionary<string, string>
-            {
-                ["email"] = email,
-                ["metadata[organization_id]"] = organizationId,
-            },
-            idempotencyKey,
-            document => new StripeCustomer(Required(document, "id")),
-            ct);
+    // The dashboard resolves endpoints (and this client) at startup even when
+    // the sandbox is unconfigured, and StripeClient rejects an empty key. The
+    // SDK client is therefore built on first real use; every call site is
+    // already guarded by StripePaymentsService.Enabled.
+    private readonly Lazy<SdkServices> _sdk = new(() => new SdkServices(new StripeClient(options.SecretKey)));
 
-    public Task<StripeCheckoutSession> CreateCheckoutSessionAsync(StripeCheckoutRequest request, CancellationToken ct) =>
-        SendAsync(
-            "v1/checkout/sessions",
-            new Dictionary<string, string>
+    private SdkServices Sdk => _sdk.Value;
+
+    public async Task<StripeCustomer> CreateCustomerAsync(string email, string organizationId, string idempotencyKey, CancellationToken ct)
+    {
+        var customer = await Sdk.Customers.CreateAsync(
+            new CustomerCreateOptions
             {
-                ["mode"] = "subscription",
-                ["customer"] = request.CustomerId,
-                ["client_reference_id"] = request.OrganizationId,
-                ["line_items[0][price]"] = request.PriceId,
-                ["line_items[0][quantity]"] = "1",
-                ["success_url"] = request.SuccessUrl.ToString(),
-                ["cancel_url"] = request.CancelUrl.ToString(),
-                ["metadata[organization_id]"] = request.OrganizationId,
-                ["metadata[organization_name]"] = request.OrganizationName,
-                ["metadata[plan_key]"] = request.PlanKey,
-                ["metadata[interval]"] = request.Interval,
-                ["subscription_data[metadata][organization_id]"] = request.OrganizationId,
-                ["subscription_data[metadata][plan_key]"] = request.PlanKey,
+                Email = email,
+                Metadata = new Dictionary<string, string> { ["organization_id"] = organizationId },
             },
-            request.IdempotencyKey,
-            ReadCheckoutSession,
+            Request(idempotencyKey),
             ct);
+        return new StripeCustomer(customer.Id);
+    }
+
+    public async Task<StripeCheckoutSession> CreateCheckoutSessionAsync(StripeCheckoutRequest request, CancellationToken ct)
+    {
+        var metadata = new Dictionary<string, string>
+        {
+            ["organization_id"] = request.OrganizationId,
+            ["organization_name"] = request.OrganizationName,
+            ["plan_key"] = request.PlanKey,
+            ["interval"] = request.Interval,
+        };
+        var session = await Sdk.CheckoutSessions.CreateAsync(
+            new SessionCreateOptions
+            {
+                Mode = "subscription",
+                Customer = request.CustomerId,
+                ClientReferenceId = request.OrganizationId,
+                LineItems = [new SessionLineItemOptions { Price = request.PriceId, Quantity = 1 }],
+                SuccessUrl = request.SuccessUrl.ToString(),
+                CancelUrl = request.CancelUrl.ToString(),
+                Metadata = metadata,
+                SubscriptionData = new SessionSubscriptionDataOptions
+                {
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["organization_id"] = request.OrganizationId,
+                        ["plan_key"] = request.PlanKey,
+                    },
+                },
+            },
+            Request(request.IdempotencyKey),
+            ct);
+        return Map(session);
+    }
 
     public async Task<StripeCheckoutSession?> GetCheckoutSessionAsync(string sessionId, CancellationToken ct)
     {
-        using var response = await SendRawAsync(HttpMethod.Get, $"v1/checkout/sessions/{Uri.EscapeDataString(sessionId)}", null, null, ct);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        try
+        {
+            return Map(await Sdk.CheckoutSessions.GetAsync(sessionId, null, null, ct));
+        }
+        catch (StripeException exception) when (exception.HttpStatusCode == HttpStatusCode.NotFound)
         {
             return null;
         }
-
-        using var document = await ReadDocumentAsync(response, ct);
-        return ReadCheckoutSession(document.RootElement);
     }
 
-    public Task<StripePortalSession> CreatePortalSessionAsync(string customerId, Uri returnUrl, string idempotencyKey, CancellationToken ct) =>
-        SendAsync(
-            "v1/billing_portal/sessions",
-            new Dictionary<string, string>
+    public async Task<StripePortalSession> CreatePortalSessionAsync(string customerId, Uri returnUrl, string idempotencyKey, CancellationToken ct)
+    {
+        var session = await Sdk.PortalSessions.CreateAsync(
+            new PortalSessionCreateOptions
             {
-                ["customer"] = customerId,
-                ["return_url"] = returnUrl.ToString(),
+                Customer = customerId,
+                ReturnUrl = returnUrl.ToString(),
             },
-            idempotencyKey,
-            document => new StripePortalSession(Required(document, "id"), Required(document, "url")),
+            Request(idempotencyKey),
             ct);
+        return new StripePortalSession(session.Id, session.Url);
+    }
 
     public async Task<StripeSubscription?> GetSubscriptionAsync(string subscriptionId, CancellationToken ct)
     {
-        using var response = await SendRawAsync(HttpMethod.Get, $"v1/subscriptions/{Uri.EscapeDataString(subscriptionId)}", null, null, ct);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        try
+        {
+            return Map(await Sdk.Subscriptions.GetAsync(subscriptionId, null, null, ct));
+        }
+        catch (StripeException exception) when (exception.HttpStatusCode == HttpStatusCode.NotFound)
         {
             return null;
         }
-
-        using var document = await ReadDocumentAsync(response, ct);
-        return ReadSubscription(document.RootElement);
     }
 
-    private async Task<T> SendAsync<T>(
-        string path,
-        IReadOnlyDictionary<string, string> form,
-        string? idempotencyKey,
-        Func<JsonElement, T> read,
-        CancellationToken ct)
+    private static RequestOptions Request(string idempotencyKey) => new() { IdempotencyKey = idempotencyKey };
+
+    private static StripeCheckoutSession Map(Session session) => new(
+        session.Id,
+        session.Url,
+        session.CustomerId,
+        session.SubscriptionId,
+        session.Status ?? "open",
+        session.PaymentStatus,
+        session.ClientReferenceId,
+        session.ClientSecret);
+
+    private static StripeSubscription Map(Subscription subscription)
     {
-        using var response = await SendRawAsync(HttpMethod.Post, path, new FormUrlEncodedContent(form), idempotencyKey, ct);
-        using var document = await ReadDocumentAsync(response, ct);
-        return read(document.RootElement);
-    }
-
-    private async Task<HttpResponseMessage> SendRawAsync(
-        HttpMethod method,
-        string path,
-        HttpContent? content,
-        string? idempotencyKey,
-        CancellationToken ct)
-    {
-        using var request = new HttpRequestMessage(method, path) { Content = content };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.SecretKey);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        if (options.ApiVersion is { Length: > 0 } apiVersion)
-        {
-            request.Headers.TryAddWithoutValidation("Stripe-Version", apiVersion);
-        }
-
-        if (idempotencyKey is { Length: > 0 })
-        {
-            request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
-        }
-
-        return await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-    }
-
-    private static async Task<JsonDocument> ReadDocumentAsync(HttpResponseMessage response, CancellationToken ct)
-    {
-        var body = await response.Content.ReadAsStringAsync(ct);
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new StripeApiException(ErrorMessage(body, response.StatusCode), (int)response.StatusCode);
-        }
-
-        try
-        {
-            return JsonDocument.Parse(body);
-        }
-        catch (JsonException)
-        {
-            throw new StripeApiException("Stripe returned a response that was not valid JSON.", (int)response.StatusCode);
-        }
-    }
-
-    private static string ErrorMessage(string body, System.Net.HttpStatusCode status)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(body);
-            if (document.RootElement.TryGetProperty("error", out var error)
-                && error.TryGetProperty("message", out var message)
-                && message.ValueKind == JsonValueKind.String)
-            {
-                return message.GetString()!;
-            }
-        }
-        catch (JsonException)
-        {
-            // Fall through to the generic message.
-        }
-
-        return $"Stripe rejected the request with HTTP {(int)status}.";
-    }
-
-    private static StripeCheckoutSession ReadCheckoutSession(JsonElement element) => new(
-        Required(element, "id"),
-        Optional(element, "url"),
-        Optional(element, "customer"),
-        Optional(element, "subscription"),
-        Optional(element, "status") ?? "open",
-        Optional(element, "payment_status"),
-        Optional(element, "client_reference_id"),
-        Optional(element, "client_secret"));
-
-    private static StripeSubscription ReadSubscription(JsonElement element)
-    {
-        string? priceId = null;
-        if (element.TryGetProperty("items", out var items)
-            && items.TryGetProperty("data", out var data)
-            && data.ValueKind == JsonValueKind.Array
-            && data.GetArrayLength() > 0)
-        {
-            var first = data[0];
-            if (first.TryGetProperty("price", out var price))
-            {
-                priceId = Optional(price, "id");
-            }
-        }
-
-        DateTimeOffset? periodEnd = null;
-        if (element.TryGetProperty("current_period_end", out var period)
-            && period.ValueKind == JsonValueKind.Number
-            && period.TryGetInt64(out var seconds))
-        {
-            periodEnd = DateTimeOffset.FromUnixTimeSeconds(seconds);
-        }
-
-        var metadata = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (element.TryGetProperty("metadata", out var metadataElement) && metadataElement.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var property in metadataElement.EnumerateObject())
-            {
-                metadata[property.Name] = property.Value.GetString() ?? "";
-            }
-        }
-
+        var item = subscription.Items?.Data?.FirstOrDefault();
         return new StripeSubscription(
-            Required(element, "id"),
-            Optional(element, "status") ?? "unknown",
-            Optional(element, "customer"),
-            priceId,
-            periodEnd,
-            metadata);
+            subscription.Id,
+            subscription.Status ?? "unknown",
+            subscription.CustomerId,
+            item?.Price?.Id,
+            PeriodEnd(item),
+            subscription.Metadata ?? new Dictionary<string, string>());
     }
 
-    private static string Required(JsonElement element, string name) =>
-        Optional(element, name) ?? throw new StripeApiException($"Stripe response omitted \"{name}\".", 502);
+    /// <summary>Stripe moved <c>current_period_end</c> onto the subscription
+    /// item, so the billed period is the first item's window.</summary>
+    private static DateTimeOffset? PeriodEnd(SubscriptionItem? item) =>
+        item is null || item.CurrentPeriodEnd == default
+            ? null
+            : new DateTimeOffset(DateTime.SpecifyKind(item.CurrentPeriodEnd, DateTimeKind.Utc));
 
-    private static string? Optional(JsonElement element, string name) =>
-        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
+    private sealed class SdkServices
+    {
+        public SdkServices(IStripeClient client)
+        {
+            Customers = new CustomerService(client);
+            CheckoutSessions = new SessionService(client);
+            Subscriptions = new SubscriptionService(client);
+            PortalSessions = new PortalSessionService(client);
+        }
+
+        public CustomerService Customers { get; }
+
+        public SessionService CheckoutSessions { get; }
+
+        public SubscriptionService Subscriptions { get; }
+
+        public PortalSessionService PortalSessions { get; }
+    }
 }

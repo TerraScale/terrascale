@@ -7,13 +7,13 @@ namespace TerraScale.Dashboard.Features.Payments.Models;
 /// same <c>Payments__Stripe__*</c> names the previous ts-dashboard deployment
 /// published, so an operator moves a sandbox between the two without renaming
 /// secrets. Secret keys and webhook secrets are never logged or rendered.
+/// The API version is pinned by Stripe.net itself, not by configuration.
 /// </summary>
 public sealed record StripePaymentOptions(
     bool Enabled,
     string Mode,
     string SecretKey,
     string WebhookSecret,
-    string? ApiVersion,
     string? PublicOrigin,
     ImmutableDictionary<string, string> PriceIds)
 {
@@ -47,7 +47,7 @@ public sealed record StripePaymentOptions(
         var enabled = Read("SecretKey") is { Length: > 0 };
         if (!enabled)
         {
-            return new(false, "test", "", "", null, null, ImmutableDictionary<string, string>.Empty);
+            return new(false, "test", "", "", null, ImmutableDictionary<string, string>.Empty);
         }
 
         var secretKey = Read("SecretKey")!;
@@ -110,7 +110,6 @@ public sealed record StripePaymentOptions(
             mode,
             secretKey,
             webhookSecret,
-            Read("ApiVersion") is { Length: > 0 } apiVersion ? apiVersion : null,
             Read("PublicOrigin") is { Length: > 0 } publicOrigin ? publicOrigin.TrimEnd('/') : null,
             prices.ToImmutable());
     }
