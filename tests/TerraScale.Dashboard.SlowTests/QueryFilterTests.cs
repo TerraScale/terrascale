@@ -91,10 +91,13 @@ public sealed class QueryFilterTests
         var m2m = await app.GetPageAsync(client, "/api-keys?kind=m2m");
         await Assert.That(m2m.Contains("ingest-worker")).IsTrue();
         await Assert.That(m2m.Contains("ci-deploy")).IsFalse();
+        await Assert.That(m2m.Contains("name=\"kind\" value=\"m2m\"")).IsTrue();
+        await Assert.That(m2m.Contains("id=\"credential-kind-value\">M2M clients</span>")).IsTrue();
 
         var revoked = await app.GetPageAsync(client, "/api-keys?status=Revoked");
         await Assert.That(revoked.Contains("retired-key")).IsTrue();
         await Assert.That(revoked.Contains("ci-deploy")).IsFalse();
+        await Assert.That(revoked.Contains("id=\"credential-status-value\">Revoked</span>")).IsTrue();
     }
 
     [Test]

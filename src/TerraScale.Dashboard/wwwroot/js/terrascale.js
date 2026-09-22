@@ -1,7 +1,6 @@
 // terrascale.js — the only custom script. Everything interactive is Datastar
-// (data-* attributes in the slices); this file covers the two things Datastar
-// leaves to the platform: click-away close for native <details> menus and
-// clipboard copy buttons.
+// (data-* attributes in the slices); this file covers platform interactions
+// such as native <details> menus, filter forms, and clipboard copy buttons.
 (() => {
   "use strict";
 
@@ -81,6 +80,16 @@
     for (const details of document.querySelectorAll("details.ts-menu[open]")) {
       if (!details.contains(event.target)) details.removeAttribute("open");
     }
+  });
+
+  document.addEventListener("click", (event) => {
+    const option = event.target.closest("[data-filter-value]");
+    if (!option) return;
+    const form = option.closest("form");
+    const input = option.closest(".ts-filter-field")?.querySelector('input[type="hidden"]');
+    if (!form || !input) return;
+    input.value = option.dataset.filterValue;
+    form.requestSubmit();
   });
 
   // Destructive forms opt into a native confirm() with the exact v1 copy.
