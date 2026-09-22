@@ -55,12 +55,17 @@ jobs:
             echo 'a package registry token is required' >&2
             exit 1
           }
-          dotnet nuget update source git.terrascale.tech \
-            --source 'https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json' \
-            --username "${registry_user}" \
-            --password "${registry_token}" \
-            --store-password-in-clear-text \
-            --configfile terrabase/nuget.config
+          REGISTRY_USER="${registry_user}" REGISTRY_TOKEN="${registry_token}" \
+            python - <<'PY'
+          import os
+          from pathlib import Path
+
+          config = Path("terrabase/nuget.config")
+          contents = config.read_text()
+          contents = contents.replace("%REGISTRY_USER%", os.environ["REGISTRY_USER"])
+          contents = contents.replace("%REGISTRY_TOKEN%", os.environ["REGISTRY_TOKEN"])
+          config.write_text(contents)
+          PY
 
       - name: Build the benchmark projects
         shell: bash
