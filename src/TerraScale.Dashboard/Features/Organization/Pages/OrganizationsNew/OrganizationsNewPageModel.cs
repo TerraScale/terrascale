@@ -15,11 +15,15 @@ public sealed record OrganizationsNewPageModel(
 {
     public ShellModel Shell { get; init; } = null!;
 
-    public static OrganizationsNewPageModel From(DashboardStore store, string href, int step, string? paymentStatus)
+    public static OrganizationsNewPageModel From(DashboardStore store, string href, int step, string? paymentStatus, bool stripeCheckoutEnabled)
     {
         var planKeys = new[] { "starter", "pro", "business" };
-        var checkoutHref = step == 2 && store.ActiveOrganization.Kind == OrganizationKind.Business
-            ? store.BeginPaymentSetup("/organizations/new?step=payment")
+        const string returnPath = "/organizations/new?step=payment";
+        var organization = store.ActiveOrganization;
+        var checkoutHref = step == 2 && organization.Kind == OrganizationKind.Business
+            ? stripeCheckoutEnabled
+                ? $"/billing/checkout?plan={BillingCheckoutEndpoint.ResolvePlanKey(null, organization)}&interval=monthly&return={Uri.EscapeDataString(returnPath)}"
+                : store.BeginPaymentSetup(returnPath)
             : null;
         return new(
             Step: step,

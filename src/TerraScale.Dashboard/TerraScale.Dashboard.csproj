@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <PackageReference Include="RazorSlices" Version="0.11.3" />
+    <PackageReference Include="Stripe.net" Version="52.4.2" />
     <ProjectReference Include="../TerraScale.Datastar/TerraScale.Datastar.csproj" />
   </ItemGroup>
 

@@ -22,6 +22,10 @@ one endpoint per file, CI/deploy).
   payloads can use `JsonTypeInfo<T>` overloads from an application-owned
   `JsonSerializerContext` to avoid runtime serializer metadata discovery.
 - Server-rendered SVG charts (`Shared/Components/Charts.cs`) and lucide icon set (`Shared/Components/Icons.cs`)
+- **Stripe.net** — the official Stripe SDK owns the sandbox billing calls
+  (Customers, hosted Checkout, Billing Portal, Subscriptions) and webhook
+  signature verification; the dashboard wraps it in the
+  `Features/Payments/Services` port. The SDK pins its own API version.
 - **TerraScale.DotNet** — the workspace prefers the sibling `ts-dotnet` SDK
   checkout; standalone Docker and CI builds restore the vendored SDK package
   from `src/TerraScale.Dashboard/nuget/`. Set `TERRABASE_URL` (or
@@ -96,6 +100,95 @@ per-PR app name with `--app`. Stopping a preview resets its demo accounts,
 sessions, and onboarding progress; users must create their accounts again
 after it wakes. The minimum of zero controls running machines, while the
 single provisioned machine remains available to start on demand.
+
+## Stripe sandbox
+
+The dashboard owns Payments and Stripe management. With no Stripe settings the
+billing surfaces keep the in-memory local payment setup; as soon as the sandbox
+settings below are present, the same links start real **test-mode** Checkout and
+Billing Portal sessions and the webhook projects subscription state onto the
+organization.
+
+All provider calls go through the official **Stripe.net** SDK — the dashboard
+only owns the thin `IStripeBillingClient` port, the option guardrails, and the
+projection onto the in-memory organization. Webhook deliveries are verified and
+parsed by the SDK's `EventUtility` (HMAC over `timestamp.payload`, clock
+tolerance, typed `checkout.session`/`subscription`/`invoice` objects).
+
+Configuration comes from `Payments:Stripe:*` (environment variables use the
+deployed `Payments__Stripe__*` spelling). During development the app also reads
+a gitignored `.env.local` file (`DotEnvFile`); real process environment
+variables always win over the file, and the loader is a no-op outside
+Development. Copy `.env.stripe.example` and fill in the sandbox values, then:
+
+```
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/TerraScale.Dashboard
+```
+
+| Setting | Purpose |
+| --- | --- |
+| `SecretKey` | Sandbox (`sk_test_…` / `rk_test_…`) secret key. Required to enable Stripe. |
+| `Mode` | `test` (default) or `live`. A live key must use `live`, a test key `test`. |
+| `WebhookSecret` | Signing secret of the webhook endpoint that delivers to this app. |
+| `PublicOrigin` | Public HTTPS origin Stripe redirects back to (Tailscale Funnel or Fly app). |
+| `{Plan}{Interval}PriceId` | `Starter`/`Pro`/`Business` × `Monthly`/`Annual`. Only configured pairs are offered. `Scale*` is accepted as the legacy name for Business. |
+
+Flow: `/billing/checkout` creates the hosted Checkout session and redirects;
+Stripe returns to `/billing/checkout/return`, which confirms the session before
+sending the customer back to the originating page; `/billing/portal` opens the
+Billing Portal; `POST /api/auth/stripe/webhook` verifies the HMAC signature and
+projects `checkout.session.completed`, `customer.subscription.*`, `invoice.paid`,
+and `invoice.payment_failed`. The webhook is anonymous by design — Stripe cannot
+present a dashboard session — and is authenticated by the signature instead.
+
+The sandbox is refused in production unless `TS_DASHBOARD_PRODUCTION_DEMO=1` or
+`Payments:Stripe:EnableTestModeInProduction=1` acknowledges it. `.env.local` is
+gitignored and excluded from the Docker build, so deploy environments must
+provide the settings as real secrets (`fly secrets set`).
+
+### Sandbox setup
+
+1. Copy `.env.stripe.example` to `.env.local` and fill in the sandbox secret key.
+2. Confirm the price ids match the sandbox products (Starter, Pro, Business).
+3. Expose the app over public HTTPS and create the webhook endpoint for
+   `https://<origin>/api/auth/stripe/webhook` with the events listed above; put
+   its `whsec_…` in `WebhookSecret`. The Stripe CLI alternative is
+   `stripe listen --forward-to <origin>/api/auth/stripe/webhook`.
+4. Create the default Billing Portal configuration in the sandbox (Stripe
+   Dashboard → Settings → Billing → Customer portal) or the Portal session call
+   fails with `No configuration provided`.
+
+### Deploying with the sandbox
+
+`fly.toml` sets `TS_DASHBOARD_PRODUCTION_DEMO=1`, which is the production
+acknowledgement the options guardrail requires for a test-mode key, so only the
+Stripe settings are missing. One-off for `ts-dashboard-2` (restarts the machine
+and resets the in-memory demo store):
+
+```bash
+fly secrets set -a ts-dashboard-2 \
+  Payments__Stripe__Mode=test \
+  Payments__Stripe__SecretKey=sk_test_… \
+  Payments__Stripe__WebhookSecret=whsec_… \
+  Payments__Stripe__PublicOrigin=https://ts-dashboard-2.fly.dev \
+  Payments__Stripe__StarterMonthlyPriceId=price_… \
+  Payments__Stripe__StarterAnnualPriceId=price_… \
+  Payments__Stripe__ProMonthlyPriceId=price_… \
+  Payments__Stripe__ProAnnualPriceId=price_… \
+  Payments__Stripe__BusinessMonthlyPriceId=price_… \
+  Payments__Stripe__BusinessAnnualPriceId=price_…
+```
+
+Create the webhook endpoint for `https://ts-dashboard-2.fly.dev/api/auth/stripe/webhook`
+first (Stripe Dashboard → Workbench → Webhooks, or `POST /v1/webhook_endpoints`)
+with the events listed above; its `whsec_…` is the `WebhookSecret`.
+
+PR previews configure themselves. The `preview` workflow reads the repo secret
+`STRIPE_SANDBOX_ENV` — a dotenv blob defining `Payments__Stripe__SecretKey` and
+the six `Payments__Stripe__*PriceId` values — creates a dedicated webhook
+endpoint for the preview URL, and sets the same secrets on the PR app; the
+endpoint is deleted when the PR closes. Without the secret, previews deploy
+without Stripe.
 
 ## CSS delivery
 
