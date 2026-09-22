@@ -52,14 +52,35 @@ test("anonymous routes render", async ({ page }) => {
     await expect(page.getByText(route.expectText).first()).toBeVisible();
   }
 
-  // Account creation keeps only the TerraScale wordmark in its header; the
-  // localized title stays in the document as a screen-reader-only h1.
+  // Every onboarding step (registration included) keeps only the TerraScale
+  // wordmark in its page header; the localized title stays in the document as a
+  // screen-reader-only h1.
   const response = await page.goto("/onboarding");
   expect(response?.status(), "/onboarding").toBeLessThan(400);
-  await expect(page.locator(".ts-onboarding-header-brand .ts-brand-logo")).toBeVisible();
+  await expect(page.locator(".ts-onboarding-header .ts-brand-logo")).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Activate your TerraScale account" }),
   ).toBeVisible();
+});
+
+test("signed-in onboarding steps keep the logo-only page header", async ({ page }) => {
+  await registerAndOpenPaymentStep(page, {
+    email: `e2e-header-${Date.now()}@example.test`,
+    password: "E2e-header-123!",
+    displayName: "E2E Header",
+  });
+
+  // Payment step: wordmark only — no lock badge, eyebrow, or visible title.
+  await expect(page.locator(".ts-onboarding-header .ts-brand-logo")).toBeVisible();
+  await expect(page.locator(".ts-onboarding-lock")).toHaveCount(0);
+  await expect(page.locator(".ts-onboarding-title")).toHaveCount(0);
+  await expect(page.getByText("TERRASCALE SETUP")).toHaveCount(0);
+
+  // Project step reuses the same wordmark-only header.
+  await page.getByRole("button", { name: "Continue without payment" }).click();
+  await page.waitForURL((url) => url.pathname === "/onboarding");
+  await expect(page.locator(".ts-onboarding-header .ts-brand-logo")).toBeVisible();
+  await expect(page.getByText("TERRASCALE SETUP")).toHaveCount(0);
 });
 
 test("onboarding password visibility toggles reveal and hide each field", async ({ page }) => {

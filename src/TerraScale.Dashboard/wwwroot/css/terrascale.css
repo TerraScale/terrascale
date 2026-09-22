@@ -6504,75 +6504,14 @@ single-selector rules may stay on one line.
 
   .ts-onboarding-container-wide { gap: var(--ts-xs); }
 
-  /* Compact (non-wide) steps keep the v1 wider description measure. */
-  .ts-onboarding-container:not(.ts-onboarding-container-wide) .ts-onboarding-description {
-    max-width: 56rem;
-  }
-
+  /* Every onboarding step renders the TerraScale wordmark (`.ts-brand-logo`)
+     only; the localized title is an sr-only h1. The wordmark is the first thing
+     on the page, so keep it off the top edge. */
   .ts-onboarding-header {
-    display: grid;
-    gap: var(--ts-gap-tight);
-    justify-items: center;
-    text-align: center;
-  }
-
-  /* Account creation (anonymous registration) drops the lock badge, the setup
-     eyebrow, the visible title, and the description: its header is the
-     TerraScale wordmark (`.ts-brand-logo`) only. The title stays as an sr-only
-     h1. */
-  .ts-onboarding-header-brand {
     display: flex;
     align-items: center;
     justify-content: center;
-    /* The wordmark is the first thing on the page: keep it off the top edge. */
     padding-block-start: var(--ts-xl);
-  }
-
-  .ts-onboarding-lock {
-    display: grid;
-    place-items: center;
-    height: 44px;
-    width: 44px;
-    margin-inline: auto;
-    border-radius: 12px;
-    background-color: var(--ts-accent);
-    color: var(--ts-on-accent);
-  }
-
-  .ts-onboarding-setup {
-    margin: 0 0 var(--ts-gap-cozy);
-    color: var(--ts-accent);
-    font-size: var(--ts-fs-ui);
-    font-weight: var(--ts-fw-semibold);
-    letter-spacing: 0.18em;
-    text-align: center;
-    text-transform: uppercase;
-  }
-
-  .ts-onboarding-title {
-    margin: 0 0 var(--ts-md);
-    color: var(--ts-ink);
-    font-size: 30px;
-    line-height: 36px;
-    font-weight: var(--ts-fw-semibold);
-    text-align: center;
-  }
-
-  @media (min-width: 48rem) {
-    .ts-onboarding-title { font-size: 36px; line-height: 40px; }
-  }
-
-  .ts-onboarding-description {
-    margin: var(--ts-xs) auto 0;
-    max-width: 42rem;
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-ui);
-    line-height: 1.625;
-    text-align: center;
-  }
-
-  @media (min-width: 48rem) {
-    .ts-onboarding-description { font-size: var(--ts-fs-body); }
   }
 
   .ts-onboarding-progress {
