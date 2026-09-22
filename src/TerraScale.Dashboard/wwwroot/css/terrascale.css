@@ -2050,12 +2050,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     min-width: 0;
   }
 
-  .ts-project-panel-header {
-    padding: var(--ts-sm) var(--ts-md);
-    border-bottom: 1px solid var(--ts-line);
-    font-weight: var(--ts-fw-semibold);
-  }
-
   .ts-project-panel-scroll {
     display: flex;
     flex-direction: column;
@@ -2108,19 +2102,23 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   .ts-project-search {
-    display: flex;
-    align-items: center;
-    gap: var(--ts-xs);
+    position: relative;
+    width: 100%;
   }
 
   .ts-project-search .ts-input {
     height: 32px;
     min-height: 32px;
+    padding-right: 36px;
   }
 
   .ts-project-search svg {
+    position: absolute;
+    right: var(--ts-sm);
+    top: 50%;
+    transform: translateY(-50%);
     color: var(--ts-ink-muted);
-    flex-shrink: 0;
+    pointer-events: none;
   }
 
   .ts-project-list {
