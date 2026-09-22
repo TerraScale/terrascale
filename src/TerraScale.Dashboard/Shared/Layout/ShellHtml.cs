@@ -210,7 +210,7 @@ public static class ShellHtml
         var unreadDot = unread > 0 ? $"""<span class="ts-account-unread-dot" role="status" aria-label="{unread} unread notifications"></span>""" : "";
         var unreadBadge = unread > 0 ? $"""<span class="ts-menu-badge">{(unread > 9 ? "9+" : unread.ToString())}</span>""" : "";
         return $"""
-                    <details class="ts-menu ts-menu-end ts-account">
+                    <details class="ts-menu ts-menu-end ts-menu-up ts-account">
                         <summary class="ts-account-trigger" aria-label="Account menu">
                             <span class="ts-account-avatar" aria-hidden="true">{Escape(shell.AccountInitials)}</span>
                             <span class="ts-account-meta">

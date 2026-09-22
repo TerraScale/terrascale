@@ -1345,6 +1345,17 @@ single-selector rules may stay on one line.
     right: 0;
   }
 
+  /* The sidebar account menu sits at the bottom of the viewport, so its panel
+     opens upward; a downward panel would render off-screen. */
+  details.ts-menu.ts-menu-up > .ts-menu-panel {
+    top: auto;
+    bottom: calc(100% + var(--ts-xs));
+  }
+
+  details.ts-menu.ts-menu-up[open] > .ts-menu-panel {
+    animation: ts-menu-in-up var(--ts-t-fast) var(--ts-ease);
+  }
+
   .ts-menu-item {
     display: flex;
     align-items: center;
@@ -2549,6 +2560,18 @@ single-selector rules may stay on one line.
     from {
       opacity: 0;
       transform: translateY(4px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  /* Mirrored entry for panels that open upward. */
+  @keyframes ts-menu-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
     }
     to {
       opacity: 1;
