@@ -1774,6 +1774,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-sidebar-brand {
     display: flex;
     align-items: center;
+    justify-content: center;
     padding: var(--ts-xs);
     flex-shrink: 0;
   }
