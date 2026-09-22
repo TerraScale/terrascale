@@ -38,7 +38,10 @@ export async function resolveEdgeContractBundle(): Promise<ContractBundle> {
     if (archiveSha256 === undefined || !hexPattern.test(archiveSha256)) throw new Error("contracts: EDGE_CONTRACT_URL requires a 64-character EDGE_CONTRACT_ARCHIVE_SHA256.");
     return resolvePublishedArchive(url, archiveSha256, "edge");
   }
-  let root = path.resolve(process.cwd(), source);
+  // Resolve repository-relative sources from this package's root.  Forgejo's
+  // runner can execute `run` steps with `/` as the process working directory
+  // even though the checkout and Vitest project root are under the workspace.
+  let root = path.resolve(repositoryRoot, source);
   // Producer checkouts keep the bundle under contracts/edge/v1; CI stages the
   // version directory itself. Accept both layouts, nothing looser.
   if (!await existsManifest(root) && await existsManifest(path.join(root, version))) root = path.join(root, version);
@@ -60,7 +63,7 @@ export async function resolveContractBundle(): Promise<ContractBundle> {
     ?? process.env.CONTRACT_REGISTRY_URL ?? process.env.TERRASCALE_CONTRACT_REGISTRY_URL
     ?? process.env.CONTRACT_REGISTRY ?? process.env.TERRASCALE_CONTRACT_REGISTRY;
   if (source && url) throw new Error("contracts: set only CONTRACT_SOURCE or CONTRACT_URL, not both.");
-  if (source) return validateContractBundle(path.resolve(process.cwd(), source), async () => undefined, "terrabase");
+  if (source) return validateContractBundle(path.resolve(repositoryRoot, source), async () => undefined, "terrabase");
   if (!url) throw new Error(`contracts: pinned terrabase ${version} is not published; set CONTRACT_SOURCE=../terrabase/contracts for local development or CONTRACT_URL with CONTRACT_ARCHIVE_SHA256 for the immutable registry bundle.`);
   const archiveSha256 = process.env.CONTRACT_ARCHIVE_SHA256 ?? process.env.TERRASCALE_CONTRACT_ARCHIVE_SHA256
     ?? process.env.CONTRACT_BUNDLE_SHA256 ?? process.env.TERRASCALE_CONTRACT_BUNDLE_SHA256;
