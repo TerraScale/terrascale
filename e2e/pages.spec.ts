@@ -195,7 +195,8 @@ test("member pages render", async ({ page }) => {
   for (const route of memberRoutes) {
     const response = await page.goto(route.path);
     expect(response?.status(), route.path).toBeLessThan(400);
-    // Nav routes render the shell h1; sub-pages use their own visible heading.
+    // Nav routes keep the shell h1 as a screen-reader-only heading (the
+    // visible title was removed in DSH-125); sub-pages use their own heading.
     await expect(
       page.locator("h1, h2").filter({ hasText: route.expectText }).first(),
       route.path,
@@ -214,7 +215,8 @@ test("promoted owner sees admin pages", async ({ page }) => {
   for (const route of adminRoutes) {
     const response = await page.goto(route.path);
     expect(response?.status(), route.path).toBeLessThan(400);
-    // Nav routes render the shell h1; sub-pages use their own visible heading.
+    // Nav routes keep the shell h1 as a screen-reader-only heading (the
+    // visible title was removed in DSH-125); sub-pages use their own heading.
     await expect(
       page.locator("h1, h2").filter({ hasText: route.expectText }).first(),
       route.path,

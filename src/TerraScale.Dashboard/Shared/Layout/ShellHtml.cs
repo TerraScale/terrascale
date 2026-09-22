@@ -45,7 +45,11 @@ public static class ShellHtml
         builder.AppendLine("            <main class=\"ts-main\">");
         if (shell.PageTitle is { } pageTitle)
         {
-            builder.AppendLine($"                <h1 class=\"ts-page-title\">{Escape(pageTitle)}</h1>");
+            // Pages no longer show a visible title (DSH-125): the active nav
+            // item already names the page. The heading stays as an sr-only h1
+            // so the document outline and the <title> remain meaningful — the
+            // same pattern as the account-creation header.
+            builder.AppendLine($"                <h1 class=\"ts-sr-only\">{Escape(pageTitle)}</h1>");
         }
         return new HtmlString(builder.ToString());
     }
