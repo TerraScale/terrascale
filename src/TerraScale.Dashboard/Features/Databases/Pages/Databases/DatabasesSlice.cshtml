@@ -115,20 +115,7 @@
                 <span class="ts-hint">The persisted logical database name, up to 100 characters.</span>
             </div>
             <div class="ts-stack-sm">
-                <div class="ts-region-map-panel">
-                    <img class="ts-region-map" src="@AssetUrls.Url("/brand/region-map.svg")" alt="" decoding="async" />
-                    @foreach (var hub in DatabasesPageModel.RegionHubs)
-                    {
-                        <span class="ts-region-map-dot @(Model.ProjectRegions.Contains(hub.Code) ? "ts-region-map-dot-selected" : null)"
-                              style="left:@(hub.LeftPct.ToString("0.####", CultureInfo.InvariantCulture))%;top:@(hub.TopPct.ToString("0.####", CultureInfo.InvariantCulture))%"></span>
-                    }
-                </div>
-                <ul class="ts-sr-only" aria-label="Regions">
-                    @foreach (var hub in DatabasesPageModel.RegionHubs)
-                    {
-                        <li>@hub.Name (@hub.Code.ToUpperInvariant()) — @(Model.ProjectRegions.Contains(hub.Code) ? "Selected" : "Available")</li>
-                    }
-                </ul>
+                @RegionMap.Picker(Model.RegionMapPins, RegionMap.Selection.None, ariaLabel: "Regions")
                 <p class="ts-db-placement-note">Placement is inherited from Project settings and changes asynchronously for every database and authentication resource in this project.</p>
             </div>
             <div class="ts-dialog-actions-between">
