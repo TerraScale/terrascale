@@ -105,6 +105,8 @@ public static class E2eVolumeWorkload
         var Orders = new CollectionId("orders");
         TimeSpan relationshipsWriteElapsed = TimeSpan.Zero;
         TimeSpan relationshipsVerifyElapsed = TimeSpan.Zero;
+        var relationshipVerifyPasses = 0;
+        var queriesVerified = 0;
         int relationshipRebuildCount;
 
         // Phase 1: bulk writes of random documents in committed batches.
@@ -177,6 +179,7 @@ public static class E2eVolumeWorkload
                 var relationshipsVerifyStarted = Stopwatch.GetTimestamp();
                 Phase("relationship-verify");
                 await VerifyRelationshipsAsync(tenant, Users, Orders, engine, options).ConfigureAwait(false);
+                relationshipVerifyPasses++;
                 relationshipsVerifyElapsed = Stopwatch.GetElapsedTime(relationshipsVerifyStarted);
             }
         }
@@ -362,6 +365,7 @@ public static class E2eVolumeWorkload
             {
                 Phase("relationship-verify-full-restore");
                 await VerifyRelationshipsAsync(tenant, Users, Orders, engine, options).ConfigureAwait(false);
+                relationshipVerifyPasses++;
             }
         }
 
@@ -417,6 +421,7 @@ public static class E2eVolumeWorkload
             {
                 Phase("relationship-verify-pitr");
                 await VerifyRelationshipsAsync(tenant, Users, Orders, engine, options).ConfigureAwait(false);
+                relationshipVerifyPasses++;
             }
         }
 
@@ -480,6 +485,7 @@ public static class E2eVolumeWorkload
             {
                 Phase("relationship-verify-final-restore");
                 await VerifyRelationshipsAsync(tenant, Users, Orders, engine, options).ConfigureAwait(false);
+                relationshipVerifyPasses++;
             }
 
             ReclaimPhaseMemory();
@@ -518,6 +524,7 @@ public static class E2eVolumeWorkload
                     indexBuildElapsed = Stopwatch.GetElapsedTime(indexBuildStarted);
 
                     (queryStats, queryElapsed) = await QueryBenchmarkAsync(runtime, scope, tenant, collection, options).ConfigureAwait(false);
+                    queriesVerified = options.Queries;
                 }
             }
 
@@ -613,7 +620,9 @@ public static class E2eVolumeWorkload
                 queryStats,
                 compaction.RecordsWritten,
                 compaction.TombstonesRetained,
-                verifiedCompacted),
+                verifiedCompacted,
+                relationshipVerifyPasses,
+                queriesVerified),
             null);
         return (receipt, E2eMarkdown.Create(receipt));
     }
@@ -1394,7 +1403,9 @@ public static class E2eVolumeWorkload
         E2eLatencyStats? QueryLatency,
         ulong CompactionRecordsWritten,
         ulong CompactionTombstonesRetained,
-        long DocumentsVerifiedCompacted);
+        long DocumentsVerifiedCompacted,
+        int RelationshipVerifyPasses,
+        int QueriesVerified);
 
     private static class E2eMarkdown
     {
