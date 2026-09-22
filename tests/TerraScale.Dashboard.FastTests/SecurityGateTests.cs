@@ -12,7 +12,7 @@ public sealed class SecurityGateTests
     private static readonly string[] V1NavItems =
     [
         "Overview", "Databases", "Tables", "API keys", "Team", "Authentication", "Usage", "Logs",
-        "Notifications", "Settings", "Profile", "Organization",
+        "Notifications", "Profile", "Organization",
     ];
 
     [Test]
