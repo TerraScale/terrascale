@@ -172,14 +172,25 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       filter: (source) => ![".git", "node_modules", "dist"].includes(path.basename(source)),
     });
     await mkdir(path.dirname(producerContracts), { recursive: true });
-    const { resolveContractBundle } = await import(pathToFileURL(path.join(repositoryRoot, "scripts", "openapi-contract-paths.ts")).href);
+    const { resolveContractBundle, resolveEdgeContractBundle } = await import(pathToFileURL(path.join(repositoryRoot, "scripts", "openapi-contract-paths.ts")).href);
     const bundle = await resolveContractBundle();
     try {
       await cp(bundle.root, producerContracts, { recursive: true });
     } finally {
       await bundle.cleanup();
     }
-    await cp(path.join(repositoryRoot, "..", "ts-go", "contracts", "edge", "v1"), edgeContracts, { recursive: true });
+    const configuredEdgeSource = process.env.EDGE_CONTRACT_SOURCE ?? process.env.TERRASCALE_EDGE_CONTRACT_SOURCE;
+    const configuredEdgeUrl = process.env.EDGE_CONTRACT_URL ?? process.env.TERRASCALE_EDGE_CONTRACT_URL;
+    if (configuredEdgeSource !== undefined || configuredEdgeUrl !== undefined) {
+      const edgeBundle = await resolveEdgeContractBundle();
+      try {
+        await cp(edgeBundle.root, edgeContracts, { recursive: true });
+      } finally {
+        await edgeBundle.cleanup();
+      }
+    } else {
+      await cp(path.join(repositoryRoot, "..", "ts-atlas", "contracts", "v1"), edgeContracts, { recursive: true });
+    }
     await mkdir(packages);
     await mkdir(consumer);
     const checkoutEnvironment = { ...process.env };
