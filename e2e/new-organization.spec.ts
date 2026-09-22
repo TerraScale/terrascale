@@ -24,6 +24,9 @@ test("member creates another organization through the modal's three onboarding s
   // Step 2 — the onboarding payment screen (plan cards) with no bypass.
   await expect(dialog.getByText("STEP 2 OF 3")).toBeVisible();
   await expect(dialog.getByText("Register a payment method")).toBeVisible();
+  // Picking a plan card updates the posted plan: billing follows the card.
+  await dialog.locator(".ts-onboarding-plan-business").click();
+  await expect(dialog.locator('input[name="plan"]')).toHaveValue("business");
   await dialog.getByRole("button", { name: "Continue to secure payment setup" }).click();
   await page.waitForURL("**/checkout/**");
 

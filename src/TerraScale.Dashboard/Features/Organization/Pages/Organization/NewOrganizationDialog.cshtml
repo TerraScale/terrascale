@@ -4,15 +4,17 @@
     var stepAction = "/api/v1/dashboard/organization/new-organization";
 }
 <dialog class="ts-dialog ts-dialog-wizard" id="create-organization" @(Model.Open ? "data-autoopen" : null)>
-    <div class="ts-dialog-content ts-dialog-content-wizard">
-        <div class="ts-dialog-wizard-head">
-            <div class="ts-dialog-header">
-                <h2 class="ts-dialog-title">@t("Create organization")</h2>
-                <p class="ts-dialog-description">@t("Repeat only the onboarding steps a new tenant needs: organization, payment, and project.")</p>
-            </div>
-            <button type="button" class="ts-icon-btn" aria-label="@t("Close")" data-close-dialog>@Icons.X(18)</button>
+    @* The head is a sibling of the scrollable step content so the title and the
+       close button stay visible while a short viewport scrolls the card. *@
+    <div class="ts-dialog-wizard-head">
+        <div class="ts-dialog-header">
+            <h2 class="ts-dialog-title">@t("Create organization")</h2>
+            <p class="ts-dialog-description">@t("Repeat only the onboarding steps a new tenant needs: organization, payment, and project.")</p>
         </div>
+        <button type="button" class="ts-icon-btn" aria-label="@t("Close")" data-close-dialog>@Icons.X(18)</button>
+    </div>
 
+    <div class="ts-dialog-content ts-dialog-content-wizard">
         @* The activation wizard's step screens, scoped to the three steps a new
            tenant repeats: organization, payment, and project. A new tenant is a
            paid Business organization, so the payment screen has no bypass. *@

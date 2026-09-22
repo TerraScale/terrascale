@@ -14,6 +14,27 @@ public sealed partial class DashboardStore
     public bool CanProvisionResources => !ActiveOrganization.Archived
         && (FreeAllowanceEligible || ActiveOrganization.BillingStatus == "active");
 
+    /// <summary>The pending Business organization the create-organization
+    /// wizard is mid-way through: step 1 created it with billing still required,
+    /// so its payment step may only run against this tenant.</summary>
+    public bool HasPendingBusinessOrganization => ActiveOrganization
+        is { Kind: OrganizationKind.Business, Archived: false, BillingStatus: "billing_required" };
+
+    /// <summary>Bills the pending organization on the plan its payment screen
+    /// selected. Returns false when there is no pending organization or the plan
+    /// is not an available paid plan.</summary>
+    public bool SetPendingOrganizationPlan(string planId)
+    {
+        if (!HasPendingBusinessOrganization
+            || !Plans.Any(p => p.Id == planId && p.MonthlyUsd > 0 && p.Status == "Active"))
+        {
+            return false;
+        }
+
+        ActiveOrganization.PlanId = planId;
+        return true;
+    }
+
     public string? CreateBusinessOrganization(string name, string planId)
     {
         name = name.Trim();
@@ -21,11 +42,13 @@ public sealed partial class DashboardStore
             return "Choose a name and an available paid plan.";
         lock (World)
         {
-            // Repeated form submissions resume the unfinished setup.
+            // Repeated form submissions resume the unfinished setup, regardless
+            // of the plan selected later on the payment screen.
             var pending = World.Organizations.Values.FirstOrDefault(o => o.Kind == OrganizationKind.Business
-                && o.BillingStatus == "billing_required" && o.ActiveOrganizationName == name && o.PlanId == planId);
+                && o.BillingStatus == "billing_required" && o.ActiveOrganizationName == name);
             if (pending is not null)
             {
+                pending.PlanId = planId;
                 World.ActiveOrganizationId = pending.Id;
                 return null;
             }

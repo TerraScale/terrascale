@@ -38,6 +38,7 @@ public sealed class NewOrganizationWizardTests
         await Assert.That(response.Headers.Location!.ToString()).IsEqualTo("/organization?newOrganization=payment");
 
         var page = await app.GetPageAsync(client, "/organization?newOrganization=payment");
+        await Assert.That(page.StatusCode).IsEqualTo(200);
         await Assert.That(page.Contains("data-autoopen")).IsTrue();
         await Assert.That(page.Contains("STEP 2 OF 3")).IsTrue();
         await Assert.That(page.Contains("Register a payment method")).IsTrue();
@@ -121,6 +122,64 @@ public sealed class NewOrganizationWizardTests
         using var response = await DashboardTestApp.PostFormAsync(client, StepAction,
             new Dictionary<string, string> { ["step"] = "not-a-step" });
         await Assert.That(response.Headers.Location!.ToString()).IsEqualTo("/organization?newOrganization=organization");
+    }
+
+    [Test]
+    public async Task PaymentStepBeforeOrganizationCreationReturnsToTheFirstScreen()
+    {
+        using var app = new DashboardTestApp();
+        using var client = app.CreateDemoClient();
+
+        // Without a pending Business organization the payment step must not run
+        // checkout against whatever workspace happens to be active (the demo
+        // client's Personal workspace).
+        using var response = await DashboardTestApp.PostFormAsync(client, StepAction,
+            new Dictionary<string, string> { ["step"] = "payment-method" });
+        await Assert.That(response.Headers.Location!.ToString()).IsEqualTo("/organization?newOrganization=organization");
+    }
+
+    [Test]
+    public async Task EmptyProjectNameReopensTheProjectScreenWithTheError()
+    {
+        using var app = new DashboardTestApp();
+        using var client = await app.CreateMemberClientAsync($"neworg-empty-{Guid.NewGuid():N}@example.test");
+
+        using var organization = await DashboardTestApp.PostFormAsync(client, StepAction,
+            new Dictionary<string, string> { ["step"] = "organization", ["name"] = "Nova Labs" });
+        using var payment = await DashboardTestApp.PostFormAsync(client, StepAction,
+            new Dictionary<string, string> { ["step"] = "payment-method" });
+        using var completed = await DashboardTestApp.PostFormAsync(client, payment.Headers.Location!.ToString() + "/complete",
+            new Dictionary<string, string>());
+
+        using var response = await DashboardTestApp.PostFormAsync(client, StepAction,
+            new Dictionary<string, string> { ["step"] = "project", ["name"] = "  ", ["region"] = "GRU" });
+        await Assert.That(response.Headers.Location!.ToString())
+            .StartsWith("/organization?newOrganization=project&error=");
+
+        var page = await app.GetPageAsync(client, response.Headers.Location!.ToString());
+        await Assert.That(page.Contains("data-autoopen")).IsTrue();
+        await Assert.That(page.Contains("Choose a project name.")).IsTrue();
+    }
+
+    [Test]
+    public async Task SelectedPlanBillsTheMatchingStorePlan()
+    {
+        using var app = new DashboardTestApp();
+        using var client = await app.CreateMemberClientAsync($"neworg-plan-{Guid.NewGuid():N}@example.test");
+
+        using var organization = await DashboardTestApp.PostFormAsync(client, StepAction,
+            new Dictionary<string, string> { ["step"] = "organization", ["name"] = "Nova Labs" });
+        // The payment screen's Business card maps to the store's Dedicated plan.
+        using var payment = await DashboardTestApp.PostFormAsync(client, StepAction,
+            new Dictionary<string, string> { ["step"] = "payment-method", ["plan"] = "business" });
+        using var completed = await DashboardTestApp.PostFormAsync(client, payment.Headers.Location!.ToString() + "/complete",
+            new Dictionary<string, string>());
+        using var project = await DashboardTestApp.PostFormAsync(client, StepAction,
+            new Dictionary<string, string> { ["step"] = "project", ["name"] = "nova-prod", ["region"] = "GRU" });
+
+        var usage = await app.GetPageAsync(client, "/usage");
+        await Assert.That(usage.StatusCode).IsEqualTo(200);
+        await Assert.That(usage.Contains("Dedicated plan")).IsTrue();
     }
 
     [Test]

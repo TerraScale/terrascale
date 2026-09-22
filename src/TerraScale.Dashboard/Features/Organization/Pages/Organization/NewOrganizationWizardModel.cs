@@ -36,7 +36,9 @@ public sealed record NewOrganizationWizardModel(
         DashboardStore store, string? requestedStep, string? paymentStatus, string? error = null)
     {
         var activeStep = ResolveStep(requestedStep, paymentStatus);
-        var index = Math.Max(0, Array.FindIndex(StepDefinitions, d => d.Key == activeStep));
+        // ResolveStep only ever returns keys from StepDefinitions, so the index
+        // is always found.
+        var index = Array.FindIndex(StepDefinitions, d => d.Key == activeStep);
         var regions = OnboardingCatalog.Regions(store);
         return new(
             Open: requestedStep is { Length: > 0 } || paymentStatus is not null,

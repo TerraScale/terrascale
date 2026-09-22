@@ -12,6 +12,7 @@ public sealed class ButtonsEverywhereTests
     [
         "/", "/databases", "/data", "/data?view=table", "/data?view=editor", "/data?view=sql",
         "/api-keys", "/access", "/audit", "/notifications", "/organization",
+        "/organization?newOrganization=payment", "/organization?newOrganization=project",
         "/profile", "/settings", "/subscriptions", "/usage",
     ];
 

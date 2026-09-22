@@ -4,7 +4,7 @@
     var stepDone = activeState == "completed";
     var rejected = activeState == "rejected";
     var wide = Model.ActiveStep is "project";
-    var defaultRegion = Model.Regions.FirstOrDefault(r => r.Live)?.Code ?? "";
+    var defaultRegion = OnboardingCatalog.DefaultRegion(Model.Regions);
 }
 @FlowHtml.Document("Activate your TerraScale account | TerraScale")
 <main class="ts-onboarding-root @(wide ? "ts-onboarding-root-wide" : null)">

@@ -6646,10 +6646,16 @@ single-selector rules may stay on one line.
     min-width: 0;
   }
 
-  .ts-onboarding-root .ts-alert-warning .ts-onboarding-alert-icon { color: var(--ts-warning); }
-  .ts-onboarding-root .ts-alert-danger .ts-onboarding-alert-icon { color: var(--ts-danger); }
-  .ts-onboarding-root .ts-alert-success .ts-onboarding-alert-icon { color: var(--ts-success); }
-  .ts-onboarding-root .ts-alert-info .ts-onboarding-alert-icon { color: var(--ts-info); }
+  /* The create-organization modal reuses the onboarding alert anatomy without
+     .ts-onboarding-root, so the tone colors must cover both scopes. */
+  .ts-onboarding-root .ts-alert-warning .ts-onboarding-alert-icon,
+  .ts-dialog-content-wizard .ts-alert-warning .ts-onboarding-alert-icon { color: var(--ts-warning); }
+  .ts-onboarding-root .ts-alert-danger .ts-onboarding-alert-icon,
+  .ts-dialog-content-wizard .ts-alert-danger .ts-onboarding-alert-icon { color: var(--ts-danger); }
+  .ts-onboarding-root .ts-alert-success .ts-onboarding-alert-icon,
+  .ts-dialog-content-wizard .ts-alert-success .ts-onboarding-alert-icon { color: var(--ts-success); }
+  .ts-onboarding-root .ts-alert-info .ts-onboarding-alert-icon,
+  .ts-dialog-content-wizard .ts-alert-info .ts-onboarding-alert-icon { color: var(--ts-info); }
 
   .ts-onboarding-terms {
     display: grid;
@@ -8233,6 +8239,9 @@ single-selector rules may stay on one line.
   }
 
   .ts-dialog-content-wizard {
+    /* Fill the fixed-height dialog so shorter steps center their card in the
+       leftover space; the taller-than-box path scrolls here. */
+    flex: 1;
     gap: var(--ts-md);
     padding: 0 0 var(--ts-lg);
     min-height: 0;
@@ -8240,11 +8249,12 @@ single-selector rules may stay on one line.
   }
 
   .ts-dialog-wizard-head {
+    flex-shrink: 0;
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: var(--ts-md);
-    padding: var(--ts-xl) var(--ts-xl) 0;
+    padding: var(--ts-xl) var(--ts-xl) var(--ts-md);
   }
 
   .ts-dialog-content-wizard .ts-onboarding-container {
