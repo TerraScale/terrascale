@@ -46,10 +46,9 @@ single-selector rules may stay on one line.
 (the tokens below) always beat layered ones. */
 @layer reset, base, layout, components, features, utilities;
 
-/* Same-origin MPA transitions are progressive enhancement. */
-@view-transition {
-  navigation: auto;
-}
+/* Navigation keeps its in-flight progress indicator (html[data-nav-pending])
+but deliberately does not opt into cross-document view transitions: the 160 ms
+cross-fade replayed on every page change and made the dashboard flicker. */
 
 /* 1. Tokens =============================================================== */
 
@@ -307,6 +306,9 @@ single-selector rules may stay on one line.
     scrollbar-gutter: stable;
   }
 
+  /* In-flight loading indicator: a thin accent bar shown while the next
+     document is on the wire. This is the only navigation feedback; it is not a
+     transition, so it does not cross-fade the page. */
   html[data-nav-pending]::before {
     background: var(--ts-accent);
     content: "";
@@ -317,19 +319,6 @@ single-selector rules may stay on one line.
     width: 35%;
     z-index: var(--ts-z-toast);
     animation: ts-route-progress 1.2s var(--ts-ease) infinite;
-  }
-
-  @supports (view-transition-name: none) {
-    .ts-sidebar {
-      view-transition-name: ts-sidebar;
-    }
-
-    ::view-transition-old(root),
-    ::view-transition-new(root),
-    ::view-transition-group(ts-sidebar) {
-      animation-duration: 160ms;
-      animation-timing-function: ease-out;
-    }
   }
 
   body {
@@ -2576,6 +2565,7 @@ single-selector rules may stay on one line.
     to { background-position: -200% 0; }
   }
 
+  /* Bounded sweep for the in-flight loading bar (never a full-width crawl). */
   @keyframes ts-route-progress {
     0% { transform: scaleX(0.25); }
     70% { transform: scaleX(1); }
@@ -2583,16 +2573,6 @@ single-selector rules may stay on one line.
   }
 
   @media (prefers-reduced-motion: reduce) {
-    @view-transition {
-      navigation: none;
-    }
-
-    ::view-transition-group(*),
-    ::view-transition-old(*),
-    ::view-transition-new(*) {
-      animation: none !important;
-    }
-
     *,
     *::before,
     *::after {

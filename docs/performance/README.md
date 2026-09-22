@@ -34,9 +34,12 @@ source file; dynamic classes were not removed based on incomplete page coverage.
 The shell counts databases once per render and uses direct icon calls instead of
 reflection. Lower-page, read-only Usage charts opt into `content-visibility: auto`
 with an intrinsic size; forms, menus and dialogs never use paint containment.
-Dialog entry/exit uses `@starting-style` and discrete transitions. Cross-document
-view transitions preserve shell continuity with 160 ms motion and are disabled
-for reduced-motion users. No artificial loading delay or client router is added.
+Dialog entry/exit uses `@starting-style` and discrete transitions. Navigation
+keeps its in-flight loading bar (`html[data-nav-pending]`) but does not opt into
+cross-document view transitions: the 160 ms cross-fade replayed on every page
+change and made the dashboard flicker, while the loading bar only marks that the
+next document is on the wire. No artificial loading delay or client router is
+added.
 
 The framework retains main's Datastar v1 colon syntax and `$signal` references.
 Browser regression checks cover mobile navigation and onboarding password
@@ -110,7 +113,7 @@ buffered to compute it. Metric tags use endpoint names, not private request URLs
 
 ## Platform references checked September 2026
 
-- [Cross-document view transitions](https://developer.chrome.com/docs/web-platform/view-transitions/cross-document): same-origin MPA opt-in; normal navigation remains the fallback.
+- [Cross-document view transitions](https://developer.chrome.com/docs/web-platform/view-transitions/cross-document): evaluated as an MPA opt-in and deliberately not used; the cross-fade flashed on every page change, so navigation keeps only its in-flight loading bar.
 - [Speculation Rules and invalidation](https://developer.chrome.com/docs/web-platform/prerender-pages): clear speculative caches after state changes; do not prerender side-effectful flows.
 - [Clear-Site-Data directives](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Clear-Site-Data): targeted prefetch/prerender cache invalidation.
 - [Chrome 151](https://developer.chrome.com/blog/chrome-151-beta): form-submission prerendering and SPA soft-navigation metrics are outside this MPA pass.
