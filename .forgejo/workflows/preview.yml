@@ -26,13 +26,12 @@ jobs:
           fly apps create "$PR_APP" -o personal 2>/dev/null || true
           fly ips list -a "$PR_APP" | grep -q " v6 " || fly ips allocate-v6 -a "$PR_APP"
           fly ips list -a "$PR_APP" | grep -q "(shared)" || fly ips allocate-v4 -a "$PR_APP" --shared
-          sed -i "s/^app = .*/app = \"$PR_APP\"/" fly.toml
           # The in-memory demo backend is process-local: two machines would
           # split accounts and sessions, so account creation would appear to
           # vanish between steps. --ha=false skips the spare machine and the
           # scale is mandatory (no best-effort fallback) so a preview can never
           # silently run two stores.
-          fly deploy -a "$PR_APP" --strategy immediate --ha=false
+          fly deploy -a "$PR_APP" --config fly.preview.toml --strategy immediate --ha=false
           fly scale count 1 -a "$PR_APP" --yes
       - name: Configure Stripe sandbox
         env:
