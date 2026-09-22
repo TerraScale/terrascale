@@ -22,6 +22,9 @@
     prefetchRules.remove();
   }
 
+  // In-flight loading feedback: a thin accent bar (html[data-nav-pending]) while
+  // the browser fetches the next document. It is not a view transition, so the
+  // page itself never cross-fades.
   let navigationTimeout;
   const clearNavigationState = () => {
     clearTimeout(navigationTimeout);
