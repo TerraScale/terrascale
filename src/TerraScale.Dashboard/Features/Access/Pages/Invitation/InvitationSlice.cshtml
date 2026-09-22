@@ -1,0 +1,52 @@
+@inherits RazorSlice<InvitationPageModel>
+@FlowHtml.Document("Organization invitation | TerraScale")
+<main class="ts-flow-root ts-inv-root">
+    <section class="ts-flow-panel ts-flow-panel-narrow">
+        <div class="ts-wordmark-wrap">
+            <img src="@AssetUrls.Url("/brand/logo-terrascale-blue.svg")" alt="" aria-hidden="true" decoding="async" />
+        </div>
+        <div class="ts-flow-header ts-flow-header-center">
+            <div class="ts-flow-icon-lg">@Icons.Building(24)</div>
+            <h1 class="ts-flow-title">Organization invitation</h1>
+            <p class="ts-flow-subtitle">Accept to join as a Member. Project access is granted separately by an Organization or Project Owner.</p>
+        </div>
+        @if (Model.Error is { } error)
+        {
+            <div class="ts-alert ts-alert-danger" role="alert">
+                <span class="ts-alert-title">@Icons.CircleAlert(16) @error</span>
+            </div>
+        }
+        @if (Model.Outcome is { } outcome)
+        {
+            if (outcome == "accepted")
+            {
+                <div class="ts-alert ts-alert-success" role="status">
+                    <span class="ts-alert-title">@Icons.CircleCheckBig(16) Invitation accepted</span>
+                    <span class="ts-alert-body">You are now a member of the organization.</span>
+                </div>
+            }
+            else
+            {
+                <div class="ts-alert ts-alert-info" role="status">
+                    <span class="ts-alert-title">@Icons.CircleAlert(16) Invitation declined</span>
+                    <span class="ts-alert-body">The invitation has been declined.</span>
+                </div>
+            }
+            <a class="ts-flow-continue-link" href="/organization">Continue to Dashboard</a>
+        }
+        else
+        {
+            <div class="ts-flow-actions">
+                <form method="post" action="/invitations/@Model.InvitationId/respond">
+                    <input type="hidden" name="action" value="accept" />
+                    <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.Check(20) Accept invitation</button>
+                </form>
+                <form method="post" action="/invitations/@Model.InvitationId/respond">
+                    <input type="hidden" name="action" value="decline" />
+                    <button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit">@Icons.X(20) Decline</button>
+                </form>
+            </div>
+        }
+    </section>
+</main>
+@FlowHtml.End()

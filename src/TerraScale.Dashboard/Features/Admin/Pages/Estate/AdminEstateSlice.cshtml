@@ -1,0 +1,160 @@
+@inherits RazorSlice<AdminEstatePageModel>
+@{ var shell = Model.Shell; }
+@ShellHtml.Top(shell)
+<div class="ts-page ts-admin-root">
+    <div>
+        <div class="ts-admin-title-with-icon">
+            @Icons.Network(20)
+            <h2 class="ts-admin-title">Estate</h2>
+        </div>
+        <p class="ts-admin-subtitle">Owner-only region and placement state.</p>
+    </div>
+    <section class="ts-admin-summary-three" aria-label="Estate summary">
+        @(AdminPresentation.Stat("REGIONS", Model.Regions.Count.ToString()))
+        @(AdminPresentation.Stat("AVAILABLE REGIONS", Model.Regions.Count(r => r.Available).ToString()))
+        @(AdminPresentation.Stat("PLACED DATABASES", Model.Hosts.Count.ToString()))
+    </section>
+    @(AdminPresentation.TableStart("Regions"))
+    <div class="ts-table-wrap ts-table-flush">
+        <table class="ts-table">
+            <thead>
+                <tr>
+                    <th>Region</th>
+                    <th>Status</th>
+                    <th>Databases</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Model.Regions)
+                {
+                    <tr>
+                        <td>
+                            <div class="ts-admin-cell-name">@row.Name (@row.Code)</div>
+                            <div class="ts-admin-cell-id">@row.Country</div>
+                        </td>
+                        <td><span class="ts-badge @(row.Available ? "ts-badge-success" : "ts-badge-danger")">@(row.Available ? "Available" : "Unavailable")</span></td>
+                        <td>@row.DatabaseCount</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    @(AdminPresentation.TableEnd)
+    @(AdminPresentation.Filter("/admin/estate", "Hosts", Model.Query))
+    @(AdminPresentation.TableStart("Hosts"))
+    @if (Model.Hosts.Count == 0)
+    {
+        @(AdminPresentation.TableEmpty("Hosts"))
+    }
+    else
+    {
+        <div class="ts-table-wrap ts-table-flush">
+            <table class="ts-table">
+                <thead>
+                    <tr>
+                        <th>Database</th>
+                        <th>Regions</th>
+                        <th>Version</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Model.Hosts)
+                    {
+                        <tr>
+                            <td>
+                                <div class="ts-admin-cell-name">@row.Name</div>
+                                <div class="ts-admin-cell-id">@row.DatabaseId</div>
+                            </td>
+                            <td>@(string.Join(", ", row.Regions).Length > 0 ? string.Join(", ", row.Regions) : "-")</td>
+                            <td><span class="ts-badge ts-badge-info">v@(row.Version)</span></td>
+                            <td>@AdminPresentation.Timestamp(row.CreatedAt)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+    @(AdminPresentation.TableEnd)
+
+    <div class="ts-admin-dashboard-root">
+        <div class="ts-admin-dashboard-intro">
+            <div class="ts-admin-title-with-icon">
+                @Icons.Network(20)
+                <h2 class="ts-admin-title">Estate operations</h2>
+            </div>
+            <p class="ts-admin-subtitle">Live estate facts from the TerraScale admin SDK. @Model.AvailableSections/@Model.TotalSections</p>
+        </div>
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h2 class="ts-panel-title">Product actions</h2>
+                <p class="ts-panel-subtitle">Every action requires an actor, target, and reason.</p>
+            </div>
+            <div class="ts-admin-action-panel">
+                <form class="ts-admin-action-form" method="post" action="/api/v1/admin/estate/action">
+                    <label>
+                        <span class="ts-sr-only">Action</span>
+                        <select class="ts-select" name="action">
+                            @foreach (var option in new[] { ("pause", "Pause database"), ("resume", "Resume database"), ("guard", "Set guard"), ("spendCap", "Set spend cap"), ("trial", "Adjust trial"), ("refund", "Issue refund"), ("reaperExemption", "Set reaper exemption"), ("flag", "Set feature flag"), ("viewAs", "View as tenant") })
+                        {
+                                <option value="@option.Item1">@option.Item2</option>
+                            }
+                        </select>
+                    </label>
+                    <label>
+                        <span class="ts-sr-only">Target</span>
+                        <input class="ts-input" name="targetId" placeholder="Tenant, database, or organization ID" required />
+                    </label>
+                    <label>
+                        <span class="ts-sr-only">Value (optional)</span>
+                        <input class="ts-input" name="value" placeholder="Value (optional)" />
+                    </label>
+                    <label>
+                        <span class="ts-sr-only">Reason</span>
+                        <input class="ts-input" name="reason" placeholder="Reason for this audited action" required minlength="3" maxlength="1000" />
+                    </label>
+                    <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">Apply</button>
+                </form>
+                <p class="ts-admin-action-hint" aria-live="polite">@(Model.Notice ?? "Product controls never perform infrastructure operations.")</p>
+            </div>
+        </section>
+        <div class="ts-admin-dashboard-sections">
+            @foreach (var (key, title) in TerraScale.Dashboard.Shared.State.DashboardStore.EstateSections)
+            {
+                <section class="ts-panel ts-admin-dashboard-panel">
+                    <div class="ts-panel-header">
+                        <h2 class="ts-panel-title">@title</h2>
+                        <p class="ts-panel-subtitle">SDK live data</p>
+                    </div>
+                    <div class="ts-admin-fact-list">
+                        @if (!Model.Facts.TryGetValue(key, out var facts) || facts.Length == 0)
+                        {
+                            <div class="ts-empty-card">
+                                <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                                <span class="ts-empty-card-title">No data</span>
+                                <span class="ts-empty-card-desc">This estate capability is unavailable.</span>
+                            </div>
+                        }
+                        else
+                        {
+                            @foreach (var fact in facts)
+                            {
+                                <div class="ts-admin-fact-row">
+                                    <span class="ts-admin-fact-key">@fact.Key</span>
+                                    <span class="ts-admin-fact-value">
+                                        @fact.Value
+                                        @if (fact.Detail is { } detail)
+                                        {
+                                            <small class="ts-admin-fact-detail">@detail</small>
+                                        }
+                                    </span>
+                                </div>
+                            }
+                        }
+                    </div>
+                </section>
+            }
+        </div>
+    </div>
+</div>
+@ShellHtml.Bottom(shell)

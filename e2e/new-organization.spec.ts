@@ -14,17 +14,22 @@ test("member creates another organization through the modal's three onboarding s
   const dialog = page.getByRole("dialog", { name: "Create organization" });
   await expect(dialog).toBeVisible();
 
-  // Step 1 — the onboarding organization screen.
+  // Step 1 — the onboarding organization screen. A new tenant is a paid
+  // Business organization, separate from the Personal allowance.
   await expect(dialog.getByText("STEP 1 OF 3")).toBeVisible();
   await dialog.locator("#newOrganizationName").fill("Nova Labs");
   await dialog.getByRole("button", { name: "Create organization" }).click();
   await page.waitForURL("**/organization?newOrganization=payment**");
 
-  // Step 2 — the onboarding payment screen (plan cards), continued without payment.
+  // Step 2 — the onboarding payment screen (plan cards) with no bypass.
   await expect(dialog.getByText("STEP 2 OF 3")).toBeVisible();
   await expect(dialog.getByText("Register a payment method")).toBeVisible();
-  await dialog.getByRole("button", { name: "Continue without payment" }).click();
-  await page.waitForURL("**/organization?newOrganization=project**");
+  await dialog.getByRole("button", { name: "Continue to secure payment setup" }).click();
+  await page.waitForURL("**/checkout/**");
+
+  // Secure payment setup lands on the local provider's checkout page.
+  await page.getByRole("button", { name: /Use local test payment method/ }).click();
+  await page.waitForURL("**/organization?newOrganization=project&payment=success**");
 
   // Step 3 — the onboarding project screen, naming the new tenant's first project.
   await expect(dialog.getByText("STEP 3 OF 3")).toBeVisible();
@@ -32,6 +37,6 @@ test("member creates another organization through the modal's three onboarding s
   await dialog.getByRole("button", { name: "Create project and open Dashboard" }).click();
   await page.waitForURL((url) => url.pathname === "/organization" && url.search === "");
 
-  await expect(page.locator("#activeOrganization option:checked")).toHaveText("Nova Labs (active)");
+  await expect(page.locator("#activeOrganization option:checked")).toHaveText("Nova Labs (Business)");
   await expect(page.getByRole("cell", { name: /nova-prod/ }).first()).toBeVisible();
 });

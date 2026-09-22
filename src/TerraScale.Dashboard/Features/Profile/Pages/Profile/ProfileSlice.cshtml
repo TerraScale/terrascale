@@ -1,0 +1,439 @@
+@inherits RazorSlice<ProfilePageModel>
+@{
+    var shell = Model.Shell;
+    var t = (string s) => s;
+    var primaryRole = Model.Roles.Length > 0 ? Model.Roles[0] : "Member";
+    var tabs = new (string Id, string Label)[] { ("profile", "Profile"), ("security", "Security"), ("sessions", "Sessions") };
+
+    // v1 renders browser · os over the device type (formatUnknown over the
+    // session view fields); the demo store packs them into Device/Method.
+    (string Client, string DeviceType) ClientParts(Session session)
+    {
+        var parts = session.Device.Split(" on ", 2, StringSplitOptions.TrimEntries);
+        return (parts.Length == 2 ? $"{parts[0]} · {parts[1]}" : $"{parts[0]} · Unknown", session.Method == "api-key" ? "CLI" : "Desktop");
+    }
+}
+@ShellHtml.Top(shell)
+<div class="ts-page">
+    <section class="ts-panel ts-panel-pad20">
+        <div class="ts-row-header">
+            <div class="ts-row ts-gap-16">
+                <span class="ts-avatar ts-avatar-large" aria-hidden="true">@Model.AvatarInitials</span>
+                <div class="ts-min-width">
+                    <h2 class="ts-profile-heading">@Model.Name</h2>
+                    <p class="ts-muted ts-ui ts-break-words">@Model.Email · @primaryRole · @Model.ActiveOrganizationName</p>
+                </div>
+            </div>
+            <div class="ts-stack-12 ts-min-width ts-header-column">
+                <div class="ts-actions-row">
+                    <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on:click="document.getElementById('profile-edit').showModal()">@Icons.Pencil(16) @t("Edit")</button>
+                </div>
+                <dl class="ts-summary-terms">
+                    <div class="ts-summary-term"><dt>@t("Roles")</dt><dd>@Model.Roles.Length</dd></div>
+                    <div class="ts-summary-term"><dt>@t("Permissions")</dt><dd>@Model.Permissions.Length</dd></div>
+                    <div class="ts-summary-term"><dt>@t("Sessions")</dt><dd>@Model.Sessions.Length</dd></div>
+                    <div class="ts-summary-term"><dt>@t("Loaded")</dt><dd>@Model.LoadedAtText</dd></div>
+                </dl>
+            </div>
+        </div>
+    </section>
+
+    <div class="ts-profile-tabs">
+        <nav class="ts-tabs" aria-label="Profile sections">
+            @foreach (var (id, label) in tabs)
+            {
+                <a class="ts-tab" href="/profile?tab=@id" aria-selected="@(Model.Tab == id ? "true" : "false")">@label</a>
+            }
+        </nav>
+    </div>
+
+    @if (Model.Tab == "profile")
+    {
+        <section class="ts-grid-two-pane">
+            <section class="ts-panel ts-panel-wide">
+                <div class="ts-panel-header">
+                    <h3 class="ts-panel-title">@t("Email and contact")</h3>
+                    <p class="ts-panel-subtitle">@t("Update your sign-in email after re-authenticating")</p>
+                </div>
+                <div class="ts-padded">
+                    <div class="ts-email-form">
+                        <div class="ts-email-heading">@Icons.Mail(16) @t("Email change")</div>
+                        <form method="post" action="/api/v1/dashboard/profile/email-change" class="ts-form">
+                            <div class="ts-field">
+                                <label class="ts-label" for="newEmail">@t("New email")</label>
+                                <input class="ts-input" id="newEmail" name="newEmail" type="email" autocomplete="email" required />
+                            </div>
+                            <div class="ts-field">
+                                <label class="ts-label" for="emailPassword">@t("Current password")</label>
+                                <input class="ts-input" id="emailPassword" name="password" type="password" autocomplete="current-password" required />
+                            </div>
+                            <div class="ts-form-actions">
+                                <button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit">@Icons.Send(16) @t("Send verification code")</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </section>
+            <section class="ts-panel">
+                <div class="ts-panel-header ts-panel-header-row">
+                    <div>
+                        <h3 class="ts-panel-title">@t("Language")</h3>
+                        <p class="ts-panel-subtitle">@t("Choose the language used by onboarding and the Dashboard.")</p>
+                    </div>
+                    <span class="ts-panel-head-actions ts-icon-brand">@Icons.Languages(20)</span>
+                </div>
+                <form method="post" action="/api/v1/dashboard/profile/language" class="ts-form ts-padded">
+                    <div class="ts-field ts-field-narrow">
+                        <label class="ts-label" for="interfaceLanguage">@t("Interface language")</label>
+                        <select class="ts-select" id="interfaceLanguage" name="locale" data-on:change="evt.target.form.requestSubmit()">
+                            <option value="en" @(Model.Locale == "en" ? "selected" : null)>English</option>
+                            <option value="pt-BR" @(Model.Locale == "pt-BR" ? "selected" : null)>Português</option>
+                        </select>
+                    </div>
+                    <p class="ts-status-muted" aria-live="polite" role="status">@Model.LanguageStatus</p>
+                </form>
+            </section>
+            <section class="ts-panel">
+                <div class="ts-panel-header">
+                    <h3 class="ts-panel-title">@t("Security posture")</h3>
+                    <p class="ts-panel-subtitle">@t("Current account authorization state")</p>
+                </div>
+                <div class="ts-stack-12 ts-padded">
+                    @foreach (var row in new (string Icon, string Label, string Value)[]
+                    {
+                        ("ShieldCheck", t("Primary role"), primaryRole),
+                        ("KeyRound", t("Permission grants"), Model.Permissions.Length.ToString()),
+                        ("Globe", t("Active organization"), Model.ActiveOrganizationName),
+                        ("Fingerprint", t("User identifier"), Model.UserId),
+                    })
+                    {
+                        <div class="ts-posture-row">
+                            <span class="ts-muted ts-ui ts-posture-label">@(typeof(Icons).GetMethod(row.Icon)?.Invoke(null, [16])) @row.Label</span>
+                            <span class="ts-badge ts-badge-info">@row.Value</span>
+                        </div>
+                    }
+                </div>
+            </section>
+            <section class="ts-panel ts-grid-two-span">
+                <div class="ts-panel-header">
+                    <h3 class="ts-panel-title">@t("Roles and permissions")</h3>
+                    <p class="ts-panel-subtitle">@t("Claims supplied by the authentication service")</p>
+                </div>
+                <div class="ts-claims-grid">
+                    <div class="ts-claim-list">
+                        <h4 class="ts-claim-title">@t("Roles")</h4>
+                        @if (Model.Roles.Length == 0)
+                        {
+                            <div class="ts-empty">
+                                <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                                <span class="ts-empty-title">@t("No roles returned")</span>
+                                @t("No claim values were returned.")
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="ts-claim-values">
+                                @foreach (var role in Model.Roles)
+                                {
+                                    <span class="ts-badge ts-badge-neutral">@role</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                    <div class="ts-claim-list">
+                        <h4 class="ts-claim-title">@t("Permissions")</h4>
+                        @if (Model.Permissions.Length == 0)
+                        {
+                            <div class="ts-empty">
+                                <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                                <span class="ts-empty-title">@t("No permissions returned")</span>
+                                @t("No claim values were returned.")
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="ts-claim-values">
+                                @foreach (var permission in Model.Permissions)
+                                {
+                                    <span class="ts-badge ts-badge-neutral">@permission</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </section>
+        </section>
+    }
+    else if (Model.Tab == "security")
+    {
+        <section class="ts-grid-two">
+            <section class="ts-security-stack">
+                <section class="ts-panel">
+                    <div class="ts-panel-header ts-panel-header-row">
+                        <div>
+                            <h3 class="ts-panel-title">@t("Change password")</h3>
+                            <p class="ts-panel-subtitle">@t("All active sessions are terminated after the password changes.")</p>
+                        </div>
+                        <span class="ts-panel-head-actions ts-icon-brand">@Icons.KeyRound(18)</span>
+                    </div>
+                    <form method="post" action="/api/v1/dashboard/profile/password" class="ts-form ts-padded">
+                        <div class="ts-field">
+                            <label class="ts-label" for="currentPassword">@t("Current password")</label>
+                            <input class="ts-input" id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" required />
+                        </div>
+                        <div class="ts-field">
+                            <label class="ts-label" for="newPassword">@t("New password")</label>
+                            <input class="ts-input" id="newPassword" name="newPassword" type="password" autocomplete="new-password" minlength="12" required />
+                            <span class="ts-hint">@t("Use at least 12 characters.")</span>
+                        </div>
+                        <div class="ts-field">
+                            <label class="ts-label" for="confirmPassword">@t("Confirm new password")</label>
+                            <input class="ts-input" id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required />
+                        </div>
+                        <div class="ts-form-actions">
+                            <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@t("Change password and sign out")</button>
+                        </div>
+                    </form>
+                </section>
+                <section class="ts-panel">
+                    <div class="ts-panel-header ts-panel-header-row">
+                        <div>
+                            <h3 class="ts-panel-title">@t("Multi-factor authentication")</h3>
+                            <p class="ts-panel-subtitle">@t("A verified authenticator is required on every new login.")</p>
+                        </div>
+                        <span class="ts-panel-head-actions ts-icon-brand">@Icons.Smartphone(18)</span>
+                    </div>
+                    <div class="ts-stack-16 ts-padded">
+                        @if (Model.MfaFactors.Length == 0)
+                        {
+                            <div class="ts-well">
+                                <p class="ts-text-medium">@t("MFA is not configured")</p>
+                                <p class="ts-notice-description">@t("Add an authenticator to protect new sign-ins.")</p>
+                            </div>
+                            @if (Model.TotpSecret is { } secret)
+                            {
+                                <form method="post" action="/api/v1/dashboard/profile/mfa/verify" class="ts-form">
+                                    <input type="hidden" name="enrollment" value="@Model.TotpEnrollmentToken" />
+                                    <div class="ts-alert ts-alert-info">
+                                        <span class="ts-alert-title">@t("Enter this key in your authenticator")</span>
+                                        <code class="ts-code-secret">@secret</code>
+                                    </div>
+                                    <div class="ts-field ts-field-narrow">
+                                        <label class="ts-label" for="mfaCode">@t("Verification code")</label>
+                                        <input class="ts-input" id="mfaCode" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required />
+                                    </div>
+                                    <div class="ts-form-actions">
+                                        <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@t("Verify authenticator")</button>
+                                    </div>
+                                </form>
+                            }
+                            else
+                            {
+                                <form method="post" action="/api/v1/dashboard/profile/mfa/enroll" class="ts-form">
+                                    <div class="ts-field ts-field-narrow">
+                                        <label class="ts-label" for="mfaPassword">@t("Current password")</label>
+                                        <input class="ts-input" id="mfaPassword" name="password" type="password" autocomplete="current-password" required />
+                                    </div>
+                                    <div class="ts-form-actions">
+                                        <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.ShieldCheck(16) @t("Add authenticator")</button>
+                                    </div>
+                                </form>
+                            }
+                        }
+                        else
+                        {
+                            <form method="post" action="/api/v1/dashboard/profile/mfa/remove" class="ts-stack-12">
+                                <input type="hidden" name="factor" value="totp" />
+                                <div class="ts-well-row">
+                                    <span class="ts-factor-text"><span class="ts-icon-success">@Icons.ShieldCheck(16)</span> TOTP @t("authenticator")</span>
+                                    <button class="ts-btn ts-btn-destructive ts-btn-lg" type="submit">@Icons.Trash2(15) @t("Remove")</button>
+                                </div>
+                                <div class="ts-warning-box">
+                                    <div class="ts-field">
+                                        <label class="ts-label" for="mfaDisablePassword">@t("Current password")</label>
+                                        <input class="ts-input" id="mfaDisablePassword" name="password" type="password" autocomplete="current-password" required />
+                                    </div>
+                                    <p class="ts-text-warning">@t("Removing MFA requires your current password.")</p>
+                                </div>
+                            </form>
+                            <form method="post" action="/api/v1/dashboard/profile/mfa/recovery-codes" class="ts-form">
+                                <div class="ts-field ts-field-narrow">
+                                    <label class="ts-label" for="recoveryPassword">@t("Current password")</label>
+                                    <input class="ts-input" id="recoveryPassword" name="password" type="password" autocomplete="current-password" required />
+                                </div>
+                                <div class="ts-form-actions">
+                                    <button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit">@t("Regenerate recovery codes")</button>
+                                </div>
+                            </form>
+                        }
+                        @if (Model.RecoveryCodes.Length > 0)
+                        {
+                            <div class="ts-alert ts-alert-warning ts-recovery-wide">
+                                <span class="ts-alert-title">@t("Store these recovery codes securely")</span>
+                                <span class="ts-alert-body">@t("Generating new codes invalidates the previous set. Each code works once.")</span>
+                                <pre class="ts-recovery-codes">@string.Join("\n", Model.RecoveryCodes)</pre>
+                            </div>
+                        }
+                    </div>
+                </section>
+            </section>
+            <section class="ts-panel">
+                <div class="ts-panel-header ts-panel-header-row">
+                    <div>
+                        <h3 class="ts-panel-title">@t("Passkeys")</h3>
+                        <p class="ts-panel-subtitle">@t("Use a platform authenticator or security key for passwordless sign-in.")</p>
+                    </div>
+                    <span class="ts-panel-head-actions ts-icon-brand">@Icons.Fingerprint(18)</span>
+                </div>
+                <div class="ts-stack-16 ts-padded">
+                    @if (Model.Passkeys.Length == 0)
+                    {
+                        <div class="ts-empty">
+                            <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                            <span class="ts-empty-title">@t("No passkeys registered")</span>
+                            @t("Register this device or a hardware security key.")
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="ts-stack-12">
+                            @foreach (var passkey in Model.Passkeys)
+                            {
+                                <div class="ts-well-row">
+                                    <div class="ts-row-content">
+                                        <p class="ts-passkey-name">@(passkey.Name ?? t("Unnamed passkey"))</p>
+                                        <p class="ts-meta">@t("Added") @DashboardStore.FormatUtcDateTime(passkey.CreatedAt)</p>
+                                    </div>
+                                    <form method="post" action="/api/v1/dashboard/profile/passkeys/remove">
+                                        <input type="hidden" name="passkeyId" value="@passkey.Id" />
+                                        <button class="ts-btn ts-btn-destructive ts-btn-lg" type="submit">@Icons.Trash2(15) @t("Remove")</button>
+                                    </form>
+                                </div>
+                            }
+                        </div>
+                    }
+                    <form method="post" action="/api/v1/dashboard/profile/passkeys/register" class="ts-form-end">
+                        <div class="ts-field ts-row-content">
+                            <label class="ts-label" for="passkeyName">@t("Passkey name")</label>
+                            <input class="ts-input" id="passkeyName" name="name" placeholder="@t("Work laptop")" />
+                        </div>
+                        <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.Fingerprint(16) @t("Register passkey")</button>
+                    </form>
+                </div>
+            </section>
+        </section>
+    }
+    else
+    {
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h3 class="ts-panel-title">@t("Active sessions")</h3>
+                <p class="ts-panel-subtitle">@t("Sessions returned by TerraScale Authentication")</p>
+            </div>
+            @if (Model.Sessions.Length == 0)
+            {
+                <div class="ts-padded">
+                    <div class="ts-empty">
+                        <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                        <span class="ts-empty-title">@t("No active sessions")</span>
+                        @t("The authentication service did not return active sessions for this account.")
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="ts-table-wrap">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>@t("Status")</th>
+                                <th>@t("Client")</th>
+                                <th>@t("Network")</th>
+                                <th>@t("Created")</th>
+                                <th>@t("Last active")</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var session in Model.Sessions)
+                            {
+                                var client = ClientParts(session);
+                                <tr>
+                                    <td>@if (session.Current)
+                                        {
+                                            <span class="ts-badge ts-badge-success">@t("Current")</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="ts-badge ts-badge-neutral">@t("Session")</span>
+                                        }</td>
+                                    <td>
+                                        <div class="ts-min-width">
+                                            <p class="ts-text-strong">@client.Client</p>
+                                            <p class="ts-meta">@client.DeviceType</p>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="ts-min-width ts-meta">
+                                            <code class="ts-mono ts-meta">@session.Ip</code>
+                                            <p>@session.Location</p>
+                                        </div>
+                                    </td>
+                                    <td class="ts-meta ts-time-cell">@Icons.Clock(14) @session.CreatedAt</td>
+                                    <td class="ts-meta ts-time-cell">@Icons.Monitor(14) @session.LastActiveAt</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    }
+
+    <section class="ts-panel">
+        <div class="ts-panel-header">
+            <h3 class="ts-panel-title">@t("Session context")</h3>
+            <p class="ts-panel-subtitle">@t("Authenticated account claims")</p>
+        </div>
+        <dl class="ts-grid-context ts-padded">
+            @foreach (var term in new (string Label, string Value)[]
+            {
+                (t("User ID"), Model.UserId),
+                (t("Email"), Model.Email),
+                (t("Active organization"), Model.ActiveOrganizationId),
+                (t("Personal organization"), Model.PersonalOrganizationId),
+                (t("Current organization"), Model.ActiveOrganizationId),
+                (t("Dashboard project"), Model.ProjectId),
+            })
+            {
+                <div class="ts-context-term">
+                    <dt class="ts-context-label">@term.Label</dt>
+                    <dd class="ts-context-value">@term.Value</dd>
+                </div>
+            }
+        </dl>
+    </section>
+</div>
+
+<dialog class="ts-dialog" id="profile-edit" aria-labelledby="profile-edit-title">
+    <div class="ts-dialog-content">
+        <div class="ts-dialog-header">
+            <h3 class="ts-dialog-title" id="profile-edit-title">@t("Edit profile")</h3>
+            <p class="ts-dialog-description">@t("Update the account information shown across TerraScale.")</p>
+        </div>
+        <form method="post" action="/api/v1/dashboard/profile" class="ts-dialog-form">
+            <div class="ts-field">
+                <label class="ts-label" for="displayName">@t("Display name")</label>
+                <input class="ts-input" id="displayName" name="name" value="@Model.Name" autocomplete="name" required />
+            </div>
+            <div class="ts-field">
+                <label class="ts-label" for="phoneNumber">@t("Phone number (optional)")</label>
+                <input class="ts-input" id="phoneNumber" name="phoneNumber" value="@Model.PhoneNumber" autocomplete="tel" inputmode="tel" />
+            </div>
+            <div class="ts-dialog-footer">
+                <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on:click="document.getElementById('profile-edit').close()">@t("Cancel")</button>
+                <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">@Icons.Save(16) @t("Save")</button>
+            </div>
+        </form>
+    </div>
+</dialog>
+@ShellHtml.Bottom(shell)

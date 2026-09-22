@@ -35,7 +35,10 @@ public sealed class CriticalPathsTests
         await AssertPage(client, app, "/login", "Sign in");
         await AssertPage(client, app, "/reset-password", "Reset password");
         await AssertPage(client, app, "/onboarding", "Activate your TerraScale account");
-        await AssertPage(client, app, "/checkout/cs_local_01JCHECKOUT7F3K9Q", "TerraScale local payment setup");
+        var checkout = await DashboardTestApp.PostFormAsync(client, "/onboarding/step", new Dictionary<string, string> { ["step"] = "payment-method" });
+        await Assert.That(checkout.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+        await Assert.That(checkout.Headers.Location!.ToString()).StartsWith("/checkout/cs_local_");
+        await AssertPage(client, app, checkout.Headers.Location!.ToString(), "TerraScale local payment setup");
     }
 
     [Test]

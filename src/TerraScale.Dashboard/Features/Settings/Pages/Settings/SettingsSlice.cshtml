@@ -1,0 +1,709 @@
+@inherits RazorSlice<SettingsPageModel>
+@{
+    var shell = Model.Shell;
+    var t = (string s) => s;
+    var tabs = new (string Id, string Label)[]
+    {
+        ("identity", "Identity"),
+        ("credentials", "Credentials"),
+        ("webhooks", "Webhooks"),
+        ("backups", "Backups"),
+        ("danger", "Danger zone"),
+    };
+    var activeProviders = Model.Providers.Count(p => p.Status == "Enabled");
+    var activeCredentials = Model.Credentials.Count(c => c.Status == "Active");
+    var apiKeys = Model.Credentials.Count(c => c.Type == "API key");
+    var m2mApps = Model.Credentials.Count(c => c.Type == "M2M application");
+    var summary = new (string Label, string Value)[]
+    {
+        (t("Project"), Model.ShortProjectId),
+        (t("Auth providers"), $"{activeProviders}/{Model.Providers.Length}"),
+        (t("API keys"), apiKeys.ToString()),
+        (t("M2M applications"), m2mApps.ToString()),
+        (t("Databases"), Model.Databases.Length.ToString()),
+        (t("Active credentials"), activeCredentials.ToString()),
+        (t("Loaded"), Model.LoadedAtText),
+    };
+    var policyNote = Model.PolicySaved
+        ? (Model.PolicyDisabled ? t("Policy disabled") : $"{Model.FullBackupCron} · {Model.RetentionDays} {t("days")}")
+        : t("No policy update in this session");
+}
+@ShellHtml.Top(shell)
+<div class="ts-page">
+    <section class="ts-panel ts-panel-pad20">
+        <div class="ts-row-header">
+            <div class="ts-min-width">
+                <h2 class="ts-page-title-24">@t("Settings")</h2>
+                <p class="ts-page-desc">@t("Project identity providers, API keys, and machine clients loaded from public TerraScale REST endpoints.")</p>
+            </div>
+            <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/settings?tab=@Model.Tab">@Icons.RefreshCw(16) @t("Reload")</a>
+        </div>
+    </section>
+
+    <section class="ts-panel">
+        <div class="ts-panel-header">
+            <h3 class="ts-panel-title">@t("Security summary")</h3>
+            <p class="ts-panel-subtitle">@t("Persisted project auth and credential state")</p>
+        </div>
+        <dl class="ts-summary-grid">
+            @foreach (var (label, value) in summary)
+            {
+                <div class="ts-summary-cell">
+                    <dt class="ts-text-upper">@label</dt>
+                    <dd class="ts-summary-value">@value</dd>
+                </div>
+            }
+        </dl>
+    </section>
+
+    <nav class="ts-tabs ts-tabs-settings" aria-label="Settings sections">
+        @foreach (var (id, label) in tabs)
+        {
+            <a class="ts-tab @(id == "danger" ? "ts-tab-danger" : null)" href="/settings?tab=@id" aria-selected="@(Model.Tab == id ? "true" : "false")">@label</a>
+        }
+    </nav>
+
+    @if (Model.Tab == "identity")
+    {
+        <div class="ts-stack-20">
+            <section class="ts-panel">
+                <div class="ts-panel-header ts-panel-header-row">
+                    <div>
+                        <h3 class="ts-panel-title">@t("Authentication product")</h3>
+                        <p class="ts-panel-subtitle">@t("Control project-wide access to TerraScale Authentication")</p>
+                    </div>
+                    <span class="ts-panel-head-actions"><span class="ts-badge @(Model.AuthenticationEnabled ? "ts-badge-success" : "ts-badge-warning")">@(Model.AuthenticationEnabled ? t("On") : t("Off"))</span></span>
+                </div>
+                <div class="ts-stack-16 ts-padded">
+                    @if (!Model.AuthenticationEnabled)
+                    {
+                        <div class="ts-alert ts-alert-danger">
+                            <span class="ts-alert-title">@t("Authentication is disabled")</span>
+                            <span class="ts-alert-body">@t("Project sign-in and authentication integrations are unavailable until an owner turns the product back on.")</span>
+                        </div>
+                    }
+                    <form method="post" action="/api/v1/dashboard/settings/authentication" class="ts-setting-row">
+<span class="ts-setting-copy">
+                            <span class="ts-setting-icon" aria-hidden="true">@(Model.AuthenticationEnabled ? Icons.ShieldCheck(17) : Icons.ShieldAlert(17))</span>
+                            <span class="ts-setting-copy-text">
+                                <span class="ts-setting-label">@t("Enable Authentication")</span>
+                                <span class="ts-setting-description">@t("When off, project authentication requests are rejected. Disabling requires an explicit warning confirmation because applications and active users may be interrupted.")</span>
+                                @if (Model.SecuritySettingsUpdatedAt.Length > 0)
+                                {
+                                    <span class="ts-setting-updated">@t("Last changed") @DashboardStore.FormatUtcDateTime(Model.SecuritySettingsUpdatedAt)</span>
+                                }
+                            </span>
+                        </span>
+                        <input class="ts-switch" type="checkbox" name="enabled" value="true" aria-label='@t("Enable Authentication")' @(Model.AuthenticationEnabled ? "checked" : null) onchange="this.form.submit()" />
+                    </form>
+                </div>
+            </section>
+            @if (!Model.CanManageByok)
+            {
+                <div class="ts-alert ts-alert-info">
+                    <span class="ts-alert-title">@Icons.Info(16) @t("Customer managed keys (BYOK)")</span>
+                    <span class="ts-alert-body">@t("An active Enterprise plan and Organization Owner access are required.")</span>
+                </div>
+            }
+            <section class="ts-panel">
+                <div class="ts-panel-header ts-panel-header-row">
+                    <div>
+                        <h3 class="ts-panel-title">@t("Identity providers")</h3>
+                        <p class="ts-panel-subtitle">@t("Project authentication providers returned by the TerraScale Dashboard API")</p>
+                    </div>
+                    <span class="ts-panel-head-actions"><span class="ts-badge ts-badge-info">@Model.Providers.Length</span></span>
+                </div>
+                <div class="ts-padded">
+                    @if (Model.Providers.Length == 0)
+                    {
+                        <div class="ts-empty">
+                            <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                            <span class="ts-empty-title">@t("No identity providers")</span>
+                            @t("The TerraScale Dashboard API returned no persisted auth providers for this project.")
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="ts-table-wrap">
+                            <table class="ts-table">
+                                <thead>
+                                    <tr>
+                                        <th>@t("Provider")</th>
+                                        <th>@t("Protocol")</th>
+                                        <th>@t("Credentials")</th>
+                                        <th>@t("Endpoints")</th>
+                                        <th>@t("Status")</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var provider in Model.Providers)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <div class="ts-grid-tight">
+                                                    <span class="ts-text-strong">@provider.DisplayName</span>
+                                                    <span class="ts-mono ts-meta">@provider.Provider</span>
+                                                </div>
+                                            </td>
+                                            <td class="ts-meta">@provider.Protocol</td>
+                                            <td>
+                                                @if (provider.Protocol.Equals("SAML", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <div class="ts-grid-tight">
+                                                        <span class="ts-meta">@(provider.SamlServiceProviderEntityId.Length > 0 ? provider.SamlServiceProviderEntityId : "-")</span>
+                                                        <span class="ts-meta">@t(provider.SamlCertificateStatus)</span>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="ts-grid-tight">
+                                                        <span class="ts-mono ts-meta">@(provider.ClientId.Length > 0 ? provider.ClientId : "-")</span>
+                                                        <span class="ts-meta">@t(provider.SecretStatus)</span>
+                                                    </div>
+                                                }
+                                            </td>
+                                            <td>
+                                                @if (provider.Protocol.Equals("SAML", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <div class="ts-grid-tight">
+                                                        @foreach (var endpoint in new[] { provider.SamlSingleSignOnUrl, provider.SamlAssertionConsumerServiceUrl }.Where(e => e.Length > 0))
+                                                        {
+                                                            <span class="ts-mono ts-meta ts-break-all">@endpoint</span>
+                                                        }
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="ts-grid-tight">
+                                                        @foreach (var endpoint in new[] { provider.AuthorizationEndpoint, provider.TokenEndpoint, provider.UserInfoEndpoint, provider.RedirectUri }.Where(e => e.Length > 0))
+                                                        {
+                                                            <span class="ts-mono ts-meta ts-break-all">@endpoint</span>
+                                                        }
+                                                    </div>
+                                                }
+                                            </td>
+                                            <td>
+                                                <div class="ts-grid-tight">
+                                                    <span class="ts-badge @(provider.Status == "Enabled" ? "ts-badge-success" : "ts-badge-neutral")">@t(provider.Status)</span>
+                                                    <span class="ts-meta">@DashboardStore.FormatUtcDateTime(provider.UpdatedAt)</span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </section>
+        </div>
+    }
+    else if (Model.Tab == "credentials")
+    {
+        <section class="ts-panel">
+            <div class="ts-panel-header ts-panel-header-row">
+                <div>
+                    <h3 class="ts-panel-title">@t("Project credentials")</h3>
+                    <p class="ts-panel-subtitle">@t("API keys and M2M applications returned by the TerraScale Dashboard API")</p>
+                </div>
+                <span class="ts-panel-head-actions"><span class="ts-badge ts-badge-info">@Model.Credentials.Length</span></span>
+            </div>
+            <div class="ts-padded">
+                @if (Model.Credentials.Length == 0)
+                {
+                    <div class="ts-empty">
+                        <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                        <span class="ts-empty-title">@t("No project credentials")</span>
+                        @t("The TerraScale Dashboard API returned no persisted API keys or M2M applications.")
+                    </div>
+                }
+                else
+                {
+                    <div class="ts-table-wrap">
+                        <table class="ts-table">
+                            <thead>
+                                <tr>
+                                    <th>@t("Name")</th>
+                                    <th>@t("Type")</th>
+                                    <th>@t("Token")</th>
+                                    <th>@t("Scopes")</th>
+                                    <th>@t("Status")</th>
+                                    <th>@t("Activity")</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var credential in Model.Credentials)
+                                {
+                                    <tr>
+                                        <td>
+                                            <div class="ts-row ts-gap-12">
+                                                <span class="ts-credential-icon">@(credential.Type == "API key" ? Icons.KeyRound(16) : Icons.Users(16))</span>
+                                                <div class="ts-min-width">
+                                                    <div class="ts-text-strong">@credential.Name</div>
+                                                    <div class="ts-mono ts-meta">@credential.Id</div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td><span class="ts-badge ts-badge-info">@t(credential.Type)</span></td>
+                                        <td class="ts-mono ts-meta">@credential.Prefix...@credential.LastFour</td>
+                                        <td class="ts-meta">@(credential.Scopes.Count == 0 ? "-" : string.Join(", ", credential.Scopes))</td>
+                                        <td><span class="ts-badge @(credential.Status == "Active" ? "ts-badge-success" : "ts-badge-warning")">@t(credential.Status)</span></td>
+                                        <td>
+                                            <div class="ts-grid-tight ts-meta">
+                                                <span>@t("Created") @DashboardStore.FormatUtcDateTime(credential.CreatedAt)</span>
+                                                <span>@t("Last used") @(credential.LastUsedAt.Length == 0 ? "-" : DashboardStore.FormatUtcDateTime(credential.LastUsedAt))</span>
+                                                <span>@t("Expires") @(credential.ExpiresAt.Length == 0 ? "-" : DashboardStore.FormatUtcDateTime(credential.ExpiresAt))</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </section>
+    }
+    else if (Model.Tab == "webhooks")
+    {
+        <section class="ts-panel">
+            <div class="ts-panel-header ts-panel-header-row">
+                <div>
+                    <h3 class="ts-panel-title">@t("Webhooks")</h3>
+                    <p class="ts-panel-subtitle">@t("No persisted records were returned for this collection")</p>
+                </div>
+                <span class="ts-panel-head-actions ts-muted">@Icons.Webhook(18)</span>
+            </div>
+            <div class="ts-padded">
+                <div class="ts-empty">
+                    <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                    <span class="ts-empty-title">@t("No webhooks")</span>
+                    @t("The TerraScale Dashboard API returned no persisted webhooks for this project.")
+                </div>
+            </div>
+        </section>
+    }
+    else if (Model.Tab == "backups")
+    {
+        @if (Model.Databases.Length == 0)
+        {
+            <section class="ts-panel">
+                <div class="ts-panel-header ts-panel-header-row">
+                    <div>
+                        <h3 class="ts-panel-title">@t("Backups")</h3>
+                        <p class="ts-panel-subtitle">@t("Create a database before configuring backup policy or restores")</p>
+                    </div>
+                    <span class="ts-panel-head-actions ts-muted">@Icons.Archive(18)</span>
+                </div>
+                <div class="ts-padded">
+                    <div class="ts-empty">
+                        <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                        <span class="ts-empty-title">@t("No databases available")</span>
+                        @t("Backups are configured per database for the current project.")
+                    </div>
+                </div>
+            </section>
+        }
+        else
+        {
+            <div class="ts-stack-20">
+                <section class="ts-panel">
+                    <div class="ts-panel-header ts-panel-header-row">
+                        <div>
+                            <h3 class="ts-panel-title">@t("Backups")</h3>
+                            <p class="ts-panel-subtitle">@t("Per-database backup policy, backup jobs, restore points, and side-by-side restores")</p>
+                        </div>
+                        <form method="get" action="/settings" class="ts-panel-head-actions ts-backups-controls">
+                            <input type="hidden" name="tab" value="backups" />
+                            <label class="ts-backups-field-label">
+                                <span>@t("Database")</span>
+                                <select class="ts-select" name="database" data-on:change="evt.target.form.requestSubmit()">
+                                    @foreach (var database in Model.Databases)
+                                    {
+                                        <option value="@database.Id" @(database.Id == Model.SelectedDatabaseId ? "selected" : null)>@database.Name</option>
+                                    }
+                                </select>
+                            </label>
+                            <button type="submit" class="ts-icon-btn" aria-label='@t("Refresh backups")'>@Icons.RefreshCw(18)</button>
+                        </form>
+                    </div>
+                    <div class="ts-padded ts-stack-16">
+                        <div class="ts-backups-metrics">
+                            <div class="ts-metric"><span class="ts-muted">@t("Project")</span><span class="ts-metric-inline ts-mono">@Model.ShortProjectId</span></div>
+                            <div class="ts-metric"><span class="ts-muted">@t("Backups")</span><span class="ts-metric-inline">@Model.BackupJobs.Length.ToString("N0")</span></div>
+                            <div class="ts-metric"><span class="ts-muted">@t("Restore points")</span><span class="ts-metric-inline">@Model.RestorePoints.Length.ToString("N0")</span></div>
+                            <div class="ts-metric"><span class="ts-muted">@t("Restores")</span><span class="ts-metric-inline">@Model.RestoreJobs.Length.ToString("N0")</span></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="ts-backups-section">
+                    <section class="ts-panel">
+                        <div class="ts-panel-header ts-panel-header-row">
+                            <div>
+                                <h3 class="ts-panel-title">@t("Backup policy")</h3>
+                                <p class="ts-panel-subtitle">@t("Selected database:") @Model.SelectedDatabaseName</p>
+                            </div>
+                            <span class="ts-panel-head-actions"><span class="ts-badge @(Model.PolicySaved && Model.PolicyDisabled ? "ts-badge-warning" : "ts-badge-info")">@(Model.PolicySaved ? t("Policy updated") : t("Not saved here"))</span></span>
+                        </div>
+                        <form method="post" action="/api/v1/dashboard/settings/backup-policy" class="ts-stack-16 ts-padded">
+                            <input type="hidden" name="databaseId" value="@Model.SelectedDatabaseId" />
+                            <div class="ts-muted-note">@policyNote</div>
+                            <div class="ts-field">
+                                <label class="ts-label" for="fullBackupCron">@t("Full backup schedule")</label>
+                                <input class="ts-input" id="fullBackupCron" name="fullBackupCron" value="@Model.FullBackupCron" required />
+                            </div>
+                            <div class="ts-field">
+                                <label class="ts-label" for="incrementalBackupCron">@t("Incremental backup schedule")</label>
+                                <input class="ts-input" id="incrementalBackupCron" name="incrementalBackupCron" value="@Model.IncrementalBackupCron" />
+                            </div>
+                            <div class="ts-field">
+                                <label class="ts-label" for="retentionDays">@t("Retention days")</label>
+                                <input class="ts-input" id="retentionDays" name="retentionDays" type="number" min="1" max="35" value="@Model.RetentionDays" required />
+                            </div>
+                            <label class="ts-backups-checkbox">
+                                <input class="ts-switch" type="checkbox" name="disabled" value="true" @(Model.PolicyDisabled ? "checked" : null) />
+                                @t("Disable scheduled backups")
+                            </label>
+                            <div class="ts-actions-row">
+                                <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.Save(16) @t("Save policy")</button>
+                            </div>
+                        </form>
+                    </section>
+                    <section class="ts-panel">
+                        <div class="ts-panel-header ts-panel-header-row">
+                            <div>
+                                <h3 class="ts-panel-title">@t("On-demand backup")</h3>
+                                <p class="ts-panel-subtitle">@t("Review a confirmation before a backup job starts")</p>
+                            </div>
+                            <span class="ts-panel-head-actions">
+                                <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-on:click="document.getElementById('backup-confirm').showModal()">@Icons.Play(16) @t("Review backup")</button>
+                            </span>
+                        </div>
+                        <div class="ts-padded">
+                            @if (Model.BackupJobs.Length == 0)
+                            {
+                                <div class="ts-empty">
+                                    <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                                    <span class="ts-empty-title">@t("No backup jobs")</span>
+                                    @t("Run an on-demand backup to create a job for this database.")
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="ts-table-frame">
+                                    <table class="ts-table">
+                                        <thead>
+                                            <tr>
+                                                <th>@t("Backup")</th>
+                                                <th>@t("Status")</th>
+                                                <th>@t("Policy")</th>
+                                                <th>@t("Updated")</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var job in Model.BackupJobs)
+                                            {
+                                                <tr>
+                                                    <td>
+                                                        <div class="ts-grid-tight">
+                                                            <span class="ts-mono">@DashboardStore.ShortId(job.Id)</span>
+                                                            <span class="ts-mono ts-meta">@job.DestinationType</span>
+                                                        </div>
+                                                    </td>
+                                                    <td>
+                                                        <div class="ts-grid-tight">
+                                                            <span class="ts-badge @job.StatusTone">@t(job.Status)</span>
+                                                            @if (job.HasRestorePoint)
+                                                            {
+                                                                <span class="ts-success-meta">@t("Restore point")</span>
+                                                            }
+                                                        </div>
+                                                    </td>
+                                                    <td>
+                                                        <div class="ts-grid-tight ts-meta">
+                                                            <span>@job.Policy</span>
+                                                            <span>@job.Retention</span>
+                                                        </div>
+                                                    </td>
+                                                    <td class="ts-meta">@job.UpdatedLabel</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        </div>
+                    </section>
+                </section>
+
+                <section class="ts-backups-section-reverse">
+                    <section class="ts-panel">
+                        <div class="ts-panel-header">
+                            <h3 class="ts-panel-title">@t("Restore points")</h3>
+                            <p class="ts-panel-subtitle">@t("Restores create a new database next to the source database")</p>
+                        </div>
+                        <div class="ts-padded">
+                            @if (Model.RestorePoints.Length == 0)
+                            {
+                                <div class="ts-empty">
+                                    <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                                    <span class="ts-empty-title">@t("No restore points")</span>
+                                    @t("A completed backup with a restore point is required before restoring.")
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="ts-table-frame">
+                                    <table class="ts-table">
+                                        <thead>
+                                            <tr>
+                                                <th>@t("Restore point")</th>
+                                                <th>@t("Mode")</th>
+                                                <th>@t("Files")</th>
+                                                <th>@t("Created")</th>
+                                                <th></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var point in Model.RestorePoints)
+                                            {
+                                                <tr>
+                                                    <td>
+                                                        <div class="ts-grid-tight">
+                                                            <span class="ts-text-strong">@point.Name</span>
+                                                            <span class="ts-mono ts-meta">@(point.BackupId.Length == 0 ? t("No backup id") : DashboardStore.ShortId(point.BackupId))</span>
+                                                        </div>
+                                                    </td>
+                                                    <td>
+                                                        <div class="ts-grid-tight">
+                                                            <span class="ts-badge @point.ModeTone">@t(point.Mode)</span>
+                                                            <span class="ts-mono ts-meta">@t(point.EncryptionLabel)</span>
+                                                        </div>
+                                                    </td>
+                                                    <td class="ts-meta">@point.FilesToRestore.ToString("N0")</td>
+                                                    <td class="ts-meta">@point.CreatedLabel</td>
+                                                    <td>
+                                                        <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on:click="document.getElementById('restore-@point.BackupId').showModal()">@Icons.RotateCcw(16) @t("Restore side-by-side")</button>
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        </div>
+                    </section>
+                    <section class="ts-panel">
+                        <div class="ts-panel-header">
+                            <h3 class="ts-panel-title">@t("Project databases")</h3>
+                            <p class="ts-panel-subtitle">@t("Current database list after restores")</p>
+                        </div>
+                        <div class="ts-stack-8 ts-padded">
+                            @foreach (var database in Model.Databases)
+                            {
+                                <div class="ts-backups-database-item @(database.Id == Model.SelectedDatabaseId ? "ts-backups-database-selected" : null)">
+                                    <span class="ts-backups-database-icon">@Icons.Database(16)</span>
+                                    <span class="ts-min-width">
+                                        <span class="ts-backups-database-name">@database.Name</span>
+                                        <span class="ts-backups-database-id">@database.Id</span>
+                                    </span>
+                                </div>
+                            }
+                        </div>
+                    </section>
+                </section>
+
+                <section class="ts-panel">
+                    <div class="ts-panel-header">
+                        <h3 class="ts-panel-title">@t("Restore jobs")</h3>
+                        <p class="ts-panel-subtitle">@t("Each restore targets a new logical database and preserves the source")</p>
+                    </div>
+                    <div class="ts-padded">
+                        @if (Model.RestoreJobs.Length == 0)
+                        {
+                            <div class="ts-empty">
+                                <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                                <span class="ts-empty-title">@t("No restore jobs")</span>
+                                @t("Start a side-by-side restore from a restore point.")
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="ts-table-frame">
+                                <table class="ts-table">
+                                    <thead>
+                                        <tr>
+                                            <th>@t("Restore")</th>
+                                            <th>@t("New database")</th>
+                                            <th>@t("Status")</th>
+                                            <th>@t("Updated")</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var job in Model.RestoreJobs)
+                                        {
+                                            <tr>
+                                                <td>
+                                                    <div class="ts-grid-tight">
+                                                        <span class="ts-mono">@DashboardStore.ShortId(job.Id)</span>
+                                                        <span class="ts-mono ts-meta">@t("Source") @DashboardStore.ShortId(job.SourceDatabaseId)</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="ts-grid-tight">
+                                                        <span class="ts-text-strong">@job.RestoredDatabaseName</span>
+                                                        <span class="ts-mono ts-meta">@job.RestoredDatabaseId</span>
+                                                    </div>
+                                                </td>
+                                                <td><span class="ts-badge @job.StatusTone">@t(job.Status)</span></td>
+                                                <td class="ts-meta">@job.UpdatedLabel</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </section>
+            </div>
+        }
+    }
+    else
+    {
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h3 class="ts-panel-title">@t("Danger zone")</h3>
+                <p class="ts-panel-subtitle">@t("Destructive project settings")</p>
+            </div>
+            <div class="ts-stack-16 ts-padded">
+                @if (!Model.CanDeleteProject)
+                {
+                    <div class="ts-alert ts-alert-info">
+                        <span class="ts-alert-title">@t("Organization Owner required")</span>
+                        <span class="ts-alert-body">@t("Only an Organization Owner may permanently delete this project.")</span>
+                    </div>
+                }
+                else
+                {
+                    <form method="post" action="/api/v1/dashboard/settings/delete-project" id="delete-project-form" class="ts-danger-box">
+                        <input type="hidden" name="projectId" value="@Model.ProjectId" />
+                        <div class="ts-danger-copy">
+                            <h3 class="ts-danger-title">@t("Permanently delete project")</h3>
+                            <p class="ts-danger-description">@t("This deletes the project, databases, authentication data, access grants, monitoring history, and remaining metadata. The operation cannot be undone.")</p>
+                        </div>
+                        <label class="ts-danger-label" for="confirmProjectName">
+                            @t("Type") <strong>@Model.ProjectName</strong> @t("to confirm")
+                            <input class="ts-input" id="confirmProjectName" name="confirmName" autocomplete="off" spellcheck="false" />
+                        </label>
+                        <div>
+                            <button type="button" class="ts-btn ts-btn-destructive ts-btn-lg" data-on:click="document.getElementById('delete-project-confirm').showModal()">@Icons.Trash2(16) @t("Permanently delete project")</button>
+                        </div>
+                    </form>
+                }
+                <div class="ts-grid ts-danger-grid">
+                    @foreach (var tile in new (string Label, string Icon)[] { (t("Identity"), "ShieldCheck"), (t("Credentials"), "KeyRound"), (t("Access"), "Shield") })
+                    {
+                        <div class="ts-danger-tile">
+                            @(typeof(Icons).GetMethod(tile.Icon)?.Invoke(null, [17]))
+                            <span>@tile.Label</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        </section>
+    }
+</div>
+
+@if (Model.Tab == "backups" && Model.Databases.Length > 0)
+{
+    <dialog class="ts-dialog" id="backup-confirm" aria-labelledby="backup-confirm-title">
+        <div class="ts-dialog-content">
+            <div class="ts-dialog-header">
+                <h3 class="ts-dialog-title" id="backup-confirm-title">@t("Confirm backup")</h3>
+                <p class="ts-dialog-description">@t("Review this planned operation before TerraScale starts the backup job.")</p>
+            </div>
+            <div class="ts-dialog-form">
+                <div class="ts-alert ts-alert-info">
+                    <span class="ts-alert-title">@t("No backup has been started")</span>
+                    <span class="ts-alert-body">@t("This confirmation is scoped to your current Dashboard session and expires automatically.")</span>
+                </div>
+                <div class="ts-detail-box">
+                    <div class="ts-detail-row"><span class="ts-detail-label">@t("Database")</span><span class="ts-detail-value">@Model.SelectedDatabaseName</span></div>
+                    <div class="ts-detail-row"><span class="ts-detail-label">@t("Action")</span><span class="ts-detail-value">backup.trigger</span></div>
+                    <div class="ts-detail-row"><span class="ts-detail-label">@t("Expires (UTC)")</span><span class="ts-detail-value">@Model.BackupPlanExpiresLabel</span></div>
+                </div>
+                <div class="ts-dialog-footer">
+                    <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on:click="document.getElementById('backup-confirm').close()">@t("Cancel")</button>
+                    <form method="post" action="/api/v1/dashboard/settings/backup-now">
+                        <input type="hidden" name="databaseId" value="@Model.SelectedDatabaseId" />
+                        <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">@Icons.Play(16) @t("Confirm and run backup")</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </dialog>
+
+    @foreach (var point in Model.RestorePoints)
+    {
+        <dialog class="ts-dialog" id="restore-@point.BackupId" aria-labelledby="restore-@point.BackupId-title">
+            <div class="ts-dialog-content">
+                <div class="ts-dialog-header">
+                    <h3 class="ts-dialog-title" id="restore-@point.BackupId-title">@t("Restore side-by-side")</h3>
+                    <p class="ts-dialog-description">@t("Create a new database from") @point.Name</p>
+                </div>
+                <div class="ts-dialog-form">
+                    <div class="ts-alert ts-alert-info">
+                        <span class="ts-alert-title">@t("The source database is not overwritten")</span>
+                        <span class="ts-alert-body">@t("Restoring creates a separate logical database with a new database ID.") @Model.SelectedDatabaseName @t("stays available with its current data.")</span>
+                    </div>
+                    <div class="ts-detail-box">
+                        <div class="ts-detail-row">
+                            <span class="ts-detail-icon-label">@Icons.Clock3(15) @t("Restore point")</span>
+                            <span class="ts-detail-value">@point.Name</span>
+                        </div>
+                        <div class="ts-detail-row">
+                            <span class="ts-detail-label">@t("Backup")</span>
+                            <span class="ts-mono">@DashboardStore.ShortId(point.BackupId)</span>
+                        </div>
+                    </div>
+                    <div class="ts-dialog-footer">
+                        <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on:click="document.getElementById('restore-@point.BackupId').close()">@t("Cancel")</button>
+                        <form method="post" action="/api/v1/dashboard/settings/restore">
+                            <input type="hidden" name="generation" value="@point.BackupId" />
+                            <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">@Icons.RotateCcw(16) @t("Restore into new database")</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </dialog>
+    }
+}
+
+@if (Model.Tab == "danger" && Model.CanDeleteProject)
+{
+    <dialog class="ts-dialog" id="delete-project-confirm" aria-labelledby="delete-project-confirm-title">
+        <div class="ts-dialog-content">
+            <div class="ts-dialog-header">
+                <h3 class="ts-dialog-title" id="delete-project-confirm-title">@t("Confirm project deletion")</h3>
+                <p class="ts-dialog-description">@t("This destructive operation permanently removes the project and its data.")</p>
+            </div>
+            <div class="ts-dialog-form">
+                <div class="ts-alert ts-alert-danger">
+                    <span class="ts-alert-title">@t("This cannot be undone")</span>
+                    <span class="ts-alert-body">@t("Confirm deletion of") <strong>@Model.ProjectName</strong> @t("and all associated databases, authentication data, and metadata.")</span>
+                </div>
+                <div class="ts-dialog-footer">
+                    <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on:click="document.getElementById('delete-project-confirm').close()">@t("Cancel")</button>
+                    <button type="submit" form="delete-project-form" class="ts-btn ts-btn-destructive ts-btn-lg">@t("Delete project")</button>
+                </div>
+            </div>
+        </div>
+    </dialog>
+}
+
+@if (Model.Toast is { } toast)
+{
+    <div class="ts-toasts"><div class="ts-toast"><span class="ts-alert-title">@Icons.CircleCheck(16) @toast</span></div></div>
+}
+@ShellHtml.Bottom(shell)

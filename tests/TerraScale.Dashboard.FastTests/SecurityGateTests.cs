@@ -4,14 +4,14 @@ using TerraScale.Dashboard.Testing;
 
 namespace TerraScale.Dashboard.FastTests;
 
-/// <summary>v1 parity guards: the member nav is exactly the eleven v1 items,
+/// <summary>v1 parity guards: the member nav includes the core items and the
 /// the removed /backups route stays gone, and the e2e-only owner promotion
 /// shim works through the harness that enables it.</summary>
 public sealed class SecurityGateTests
 {
     private static readonly string[] V1NavItems =
     [
-        "Overview", "Databases", "Tables", "API keys", "Team", "Usage", "Logs",
+        "Overview", "Databases", "Tables", "API keys", "Team", "Authentication", "Usage", "Logs",
         "Notifications", "Settings", "Profile", "Organization",
     ];
 

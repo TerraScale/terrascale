@@ -1,0 +1,180 @@
+@using System.Globalization
+@inherits RazorSlice<DatabasesPageModel>
+@{
+    var shell = Model.Shell;
+    var deleteOpenFor = HttpContext?.Request?.Query["delete"].FirstOrDefault();
+}
+@ShellHtml.Top(shell)
+<div class="ts-page ts-db-page">
+    <section class="ts-panel">
+        <div class="ts-panel-header">
+            <h2 class="ts-panel-title">Logical databases</h2>
+            <p class="ts-panel-subtitle">Rows are loaded from the TerraScale Dashboard API and backed by the TerraScale metadata database.</p>
+        </div>
+        <div class="ts-panel-pad ts-stack-lg">
+            @if (Model.Query.Length > 0 || Model.Error is not null || Model.Databases.Length > 0)
+            {
+                <form class="ts-db-search" method="get" action="/databases">
+                    <label class="ts-sr-only" for="db-filter">Filter databases</label>
+                    <span class="ts-db-search-icon">@Icons.Search(16)</span>
+                    <input class="ts-input" id="db-filter" type="search" name="q" value="@Model.Query" placeholder="Search databases..." />
+                </form>
+            }
+            @if (Model.Databases.Length == 0 || Model.Error is not null)
+            {
+                <div class="ts-empty">
+                    <div class="ts-empty-content">
+                        <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                        <span class="ts-empty-title">@(Model.Error is { } loadError ? loadError : string.IsNullOrEmpty(Model.Query) ? "No databases saved" : "No databases match")</span>
+                        @if (Model.Error is null)
+                        {
+                            <span class="ts-ui">@(string.IsNullOrEmpty(Model.Query)
+                                ? "Create a logical database to persist it through the TerraScale Dashboard API."
+                                : "Adjust the filter to see another saved database.")</span>
+                        }
+                    </div>
+                    @if (Model.Error is not null)
+                    {
+                        <div class="ts-empty-action">
+                            <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/databases">Retry</a>
+                        </div>
+                    }
+                    else if (Model.Query.Length > 0)
+                    {
+                        <div class="ts-empty-action">
+                            <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/databases">Clear filter</a>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="ts-table-frame">
+                    <table class="ts-table ts-db-table">
+                        <thead>
+                            <tr>
+                                <th>Database</th>
+                                <th>Placement</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th aria-hidden="true"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in Model.Databases)
+                            {
+                                <tr>
+                                    <td>
+                                        <div class="ts-db-name">
+                                            <span class="ts-db-icon">@Icons.Database(16)</span>
+                                            <div class="ts-db-name-text">
+                                                <a class="ts-db-name-link" href="/databases/@row.Id" title="@row.Name">@row.Name</a>
+                                                <div class="ts-db-id" title="@row.Id">@row.Id</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="ts-stack-xs">
+                                            <span>@string.Join(", ", row.Regions.Split(',').Select(DatabasesPageModel.RegionDisplay))</span>
+                                            <span class="ts-meta">@row.Replication</span>
+                                            <span class="ts-meta">Backup: @(row.BackupRegion is { } backup ? DatabasesPageModel.RegionDisplay(backup) : "Not configured")</span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="ts-stack-xs">
+                                            <span class="ts-badge @row.StatusTone">@row.Status</span>
+                                            <span class="ts-meta">@(row.Provisioning ? $"Operation: {row.OperationId}" : $"Version {row.Version}")</span>
+                                        </div>
+                                    </td>
+                                    <td>@DashboardStore.FormatUtcDateTime(row.CreatedAt)</td>
+                                    <td>
+                                        <div class="ts-row-actions">
+                                            <button type="button" class="ts-icon-btn ts-icon-btn-danger" aria-label="Delete @row.Name" data-open-dialog="delete-@row.Id">@Icons.Trash2(20)</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </section>
+</div>
+
+<dialog class="ts-dialog" id="create-database" @(Model.CreateOpen ? "data-autoopen" : null)>
+    <div class="ts-dialog-content">
+        <div class="ts-dialog-header">
+            <h2 class="ts-dialog-title">Create a database</h2>
+            <p class="ts-dialog-description">Saved as a virtual database using the project's selected regions</p>
+        </div>
+        <form class="ts-dialog-form ts-dialog-form-20" method="post" action="/api/v1/dashboard/databases/create">
+            <div class="ts-field">
+                <label class="ts-label" for="database-name">Database name</label>
+                <input class="ts-input" id="database-name" name="name" placeholder="orders" maxlength="100" required />
+                <span class="ts-hint">The persisted logical database name, up to 100 characters.</span>
+            </div>
+            <div class="ts-stack-sm">
+                <div class="ts-region-map-panel">
+                    <img class="ts-region-map" src="@AssetUrls.Url("/brand/region-map.svg")" alt="" decoding="async" />
+                    @foreach (var hub in DatabasesPageModel.RegionHubs)
+                    {
+                        <span class="ts-region-map-dot @(Model.ProjectRegions.Contains(hub.Code) ? "ts-region-map-dot-selected" : null)"
+                              style="left:@(hub.LeftPct.ToString("0.####", CultureInfo.InvariantCulture))%;top:@(hub.TopPct.ToString("0.####", CultureInfo.InvariantCulture))%"></span>
+                    }
+                </div>
+                <ul class="ts-sr-only" aria-label="Regions">
+                    @foreach (var hub in DatabasesPageModel.RegionHubs)
+                    {
+                        <li>@hub.Name (@hub.Code.ToUpperInvariant()) — @(Model.ProjectRegions.Contains(hub.Code) ? "Selected" : "Available")</li>
+                    }
+                </ul>
+                <p class="ts-db-placement-note">Placement is inherited from Project settings and changes asynchronously for every database and authentication resource in this project.</p>
+            </div>
+            <div class="ts-dialog-actions-between">
+                <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-close-dialog>Cancel</button>
+                <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">
+                    @Icons.Database(20)
+                    <span>Create database</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</dialog>
+
+@foreach (var row in Model.Databases)
+{
+    <dialog class="ts-dialog" id="delete-@row.Id" @(deleteOpenFor == row.Id ? "data-autoopen" : null)>
+        <div class="ts-dialog-content">
+            <div class="ts-dialog-header">
+                <h2 class="ts-dialog-title">Delete database</h2>
+                <p class="ts-dialog-description">Delete "@row.Name" through the TerraScale Dashboard API.</p>
+            </div>
+            <form class="ts-dialog-form" method="post" action="/api/v1/dashboard/databases/delete">
+                <input type="hidden" name="databaseId" value="@row.Id" />
+                <div class="ts-alert ts-alert-danger" role="alert">
+                    <div class="ts-stack-xs">
+                        <span class="ts-alert-title">This deletes the saved logical database</span>
+                        <span class="ts-alert-body">The request is sent to the TerraScale Dashboard API. The row disappears after the API confirms deletion and the page reloads persisted state.</span>
+                    </div>
+                </div>
+                @if (deleteOpenFor == row.Id)
+                {
+                    <div class="ts-field-error" role="alert">Enter the current database name exactly to confirm deletion.</div>
+                }
+                <div class="ts-field">
+                    <label class="ts-label" for="delete-@row.Id-confirm">Type “@row.Name” to confirm</label>
+                    <input class="ts-input" id="delete-@row.Id-confirm" name="confirm" autocomplete="off" required />
+                </div>
+                <div class="ts-form-actions">
+                    <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-close-dialog>Cancel</button>
+                    <button type="submit" class="ts-btn ts-btn-destructive ts-btn-lg">
+                        @Icons.Trash2(20)
+                        <span>Delete database</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </dialog>
+}
+@ShellHtml.Bottom(shell)

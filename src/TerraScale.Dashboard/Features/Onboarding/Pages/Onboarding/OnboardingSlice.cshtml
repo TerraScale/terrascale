@@ -1,0 +1,144 @@
+@inherits RazorSlice<OnboardingPageModel>
+@{
+    var activeState = Model.Steps.FirstOrDefault(s => s.Key == Model.ActiveStep)?.State ?? "pending";
+    var stepDone = activeState == "completed";
+    var rejected = activeState == "rejected";
+    var wide = Model.ActiveStep is "project";
+    var defaultRegion = Model.Regions.FirstOrDefault(r => r.Live)?.Code ?? "";
+}
+@FlowHtml.Document("Activate your TerraScale account | TerraScale")
+<main class="ts-onboarding-root @(wide ? "ts-onboarding-root-wide" : null)">
+    <div class="ts-onboarding-container @(wide ? "ts-onboarding-container-wide" : null)">
+        @* Every onboarding step (registration included) keeps only the TerraScale
+           wordmark in the header; the title stays as an sr-only h1 so the
+           document outline and accessibility checks keep working. *@
+        <header class="ts-onboarding-header">
+            <img class="ts-brand-logo" src="@AssetUrls.Url("/brand/logo-terrascale-blue.svg")" alt="TerraScale" decoding="async" />
+            <h1 class="ts-sr-only">Activate your TerraScale account</h1>
+        </header>
+        @(await RenderPartialAsync<OnboardingProgress, OnboardingProgressView>(new(
+            Steps: Model.Steps,
+            ActiveStep: Model.ActiveStep,
+            CurrentStep: Model.CurrentStep,
+            TotalSteps: Model.TotalSteps,
+            ProgressPercent: Model.ProgressPercent,
+            Label: "ACTIVATION STEP",
+            Compact: !wide,
+            AriaLabel: "Onboarding progress",
+            BarAriaLabel: "Account setup progress")))
+        @if (Model.PaymentCanceled)
+        {
+            <div class="ts-alert ts-alert-warning" role="alert">
+                <span class="ts-onboarding-alert-icon" aria-hidden="true">@Icons.TriangleAlert(19)</span>
+                <div class="ts-onboarding-alert-stack">
+                    <span class="ts-alert-title">Payment setup canceled</span>
+                    <span class="ts-alert-body">Your earlier account progress is still saved. No payment method was changed; you can safely try again.</span>
+                </div>
+            </div>
+        }
+        @if (Model.Registration)
+        {
+            <div class="ts-onboarding-card">
+                <form class="ts-onboarding-form" method="post" action="/onboarding/register" novalidate data-signals="{ passwordVisible: false, confirmPasswordVisible: false }">
+                    @if (Model.RegistrationError is { } registrationError)
+                    {
+                        <div class="ts-onboarding-form-full" role="alert">
+                            <div class="ts-alert ts-alert-danger">
+                                <span class="ts-onboarding-alert-icon" aria-hidden="true">@Icons.CircleAlert(19)</span>
+                                <div class="ts-onboarding-alert-stack">
+                                    <span class="ts-alert-title">@registrationError</span>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                    <div class="ts-field">
+                        <label class="ts-label" for="displayName">Full name</label>
+                        <input class="ts-input" id="displayName" name="displayName" autocomplete="name" maxlength="128" required />
+                    </div>
+                    <div class="ts-field">
+                        <label class="ts-label" for="email">Email</label>
+                        <input class="ts-input" type="email" id="email" name="email" placeholder="name@company.com" autocomplete="email" required />
+                    </div>
+                    <div class="ts-field">
+                        <label class="ts-label" for="password">Password</label>
+                        <div class="ts-input-group">
+                            <input class="ts-input" type="password" id="password" name="password" placeholder="Enter your password" autocomplete="new-password" required data-attr:type="$passwordVisible ? 'text' : 'password'" />
+                            <button class="ts-input-adornment" type="button" aria-label="Show password" aria-pressed="false" data-attr:aria-pressed="$passwordVisible ? 'true' : 'false'" data-attr:aria-label="$passwordVisible ? 'Hide password' : 'Show password'" data-on:click="$passwordVisible = !$passwordVisible">
+                                <span data-show="!$passwordVisible">@Icons.Eye(18)</span>
+                                <span data-show="$passwordVisible">@Icons.EyeOff(18)</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="ts-field">
+                        <label class="ts-label" for="confirmPassword">Confirm password</label>
+                        <div class="ts-input-group">
+                            <input class="ts-input" type="password" id="confirmPassword" name="confirmPassword" autocomplete="new-password" required data-attr:type="$confirmPasswordVisible ? 'text' : 'password'" />
+                            <button class="ts-input-adornment" type="button" aria-label="Show password" aria-pressed="false" data-attr:aria-pressed="$confirmPasswordVisible ? 'true' : 'false'" data-attr:aria-label="$confirmPasswordVisible ? 'Hide password' : 'Show password'" data-on:click="$confirmPasswordVisible = !$confirmPasswordVisible">
+                                <span data-show="!$confirmPasswordVisible">@Icons.Eye(18)</span>
+                                <span data-show="$confirmPasswordVisible">@Icons.EyeOff(18)</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="ts-onboarding-terms">
+                        <label class="ts-onboarding-terms-label">
+                            <input class="ts-checkbox" type="checkbox" name="terms" value="true" required />
+                            <span>I accept the Terms of Service</span>
+                        </label>
+                    </div>
+                    <div class="ts-onboarding-form-footer">
+                        <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.ArrowRight(20) Save</button>
+                        <p class="ts-onboarding-secondary">Already have an account? <a class="ts-link" href="/login">Sign in</a></p>
+                    </div>
+                </form>
+            </div>
+        }
+        else if (Model.ActiveStep == "account-information")
+        {
+            <div class="ts-onboarding-card">
+                <header class="ts-onboarding-step-header">
+                    <h2 class="ts-onboarding-step-title">Review your account information</h2>
+                    <p class="ts-onboarding-step-subtitle">Signed in as @Model.Email</p>
+                    <div class="ts-onboarding-step-actions">
+                        <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.UserRound(20)</span>
+                    </div>
+                </header>
+                <form class="ts-onboarding-form" method="post" action="/onboarding/step">
+                    <input type="hidden" name="step" value="account-information" />
+                    <div class="ts-field">
+                        <label class="ts-label" for="displayName">Full name</label>
+                        <input class="ts-input" id="displayName" name="displayName" value="@Model.DisplayName" required autocomplete="name" />
+                    </div>
+                    <div class="ts-field ts-onboarding-form-full">
+                        <label class="ts-label" for="email">Email</label>
+                        <input class="ts-input" id="email" type="email" value="@Model.Email" readonly />
+                        <span class="ts-hint">Your sign-in email cannot be changed during account setup.</span>
+                    </div>
+                    <div class="ts-onboarding-form-footer">
+                        <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save and continue</button>
+                    </div>
+                </form>
+            </div>
+        }
+        else if (Model.ActiveStep == "payment-method")
+        {
+            @(await RenderPartialAsync<OnboardingPaymentCard, OnboardingPaymentCardView>(new(
+                Action: "/onboarding/step",
+                StepValue: "payment-method",
+                Subtitle: "Your Personal workspace is ready. Payment setup is optional for usage beyond its included allowance.",
+                SuccessBody: "Your Personal workspace keeps its included allowance.",
+                Notice: "No card today? Continue on the Free plan with X operations per month. Add a payment method now and your first month is free.",
+                Plans: Model.Plans,
+                StepDone: stepDone,
+                AllowBypass: true)))
+        }
+        else
+        {
+            @(await RenderPartialAsync<OnboardingProjectCard, OnboardingProjectCardView>(new(
+                Action: "/onboarding/step",
+                StepValue: "project",
+                Regions: Model.Regions,
+                DefaultRegion: defaultRegion)))
+        }
+    </div>
+</main>
+@FlowHtml.End()

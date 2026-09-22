@@ -14,9 +14,14 @@ one endpoint per file, CI/deploy).
   `src/TerraScale.Dashboard/nuget/` package fallback)
 - **terrascale.css** — the whole design system in one stylesheet:
   tokens, base, components, and the dashboard shell (`src/TerraScale.Dashboard/wwwroot/css/terrascale.css`)
-- **Datastar** (`wwwroot/js/datastar.js`) — the front/back communication layer;
-  slices declare `data-*` attributes, endpoints stream `Datastar.Stream(...)` events
-- Server-rendered SVG charts (`Framework/Charts.cs`) and lucide icon set (`Framework/Icons.cs`)
+- **TerraScale.Datastar** (`wwwroot/js/datastar.js` and `src/TerraScale.Datastar/`) — the front/back
+  communication layer; slices declare `data-*` attributes, and the dashboard
+  owns the server-side SSE and signal implementation. The local project
+  replaces the upstream `StarFederation.Datastar` package and keeps its MIT
+  attribution in `src/TerraScale.Datastar/THIRD_PARTY_LICENSE.md`. Signal
+  payloads can use `JsonTypeInfo<T>` overloads from an application-owned
+  `JsonSerializerContext` to avoid runtime serializer metadata discovery.
+- Server-rendered SVG charts (`Shared/Components/Charts.cs`) and lucide icon set (`Shared/Components/Icons.cs`)
 - **TerraScale.DotNet** — the workspace prefers the sibling `ts-dotnet` SDK
   checkout; standalone Docker and CI builds restore the vendored SDK package
   from `src/TerraScale.Dashboard/nuget/`. Set `TERRABASE_URL` (or
@@ -26,12 +31,15 @@ one endpoint per file, CI/deploy).
 
 ## Layout
 
-- `src/TerraScale.Dashboard/Features/<Feature>/` — the feature slice: one endpoint
-  per file (`<Page>PageEndpoint.cs`, `<Action>Endpoint.cs`), one DTO per file
-  (`<Page>PageModel.cs`, row records), the `<Page>Slice.cshtml` view, and the
-  feature's `DashboardStore` partial
-- `src/TerraScale.Dashboard/Framework/` — `SlicePageEndpoint`, `ShellHtml`, shell,
-  store core, icons, charts
+- `src/TerraScale.Dashboard/Features/<Feature>/` — each product area owns its
+  pages and supporting code. Page files live together under `Pages/<Page>/`;
+  action handlers live under `Endpoints/`; domain records under `Models/`;
+  rendered data under `ViewModels/`; feature logic under `Services/` or
+  `Presentation/`; and shared-store partials under `Stores/`.
+- `src/TerraScale.Dashboard/Shared/` — reusable rendering, shell, navigation,
+  components, models, and the shared `DashboardStore` state.
+- `src/TerraScale.Dashboard/Infrastructure/` — authentication, configuration,
+  persistence, and TerraBase integration.
 - `src/TerraScale.Dashboard/wwwroot/css/terrascale.css` — the single-file CSS framework
 - `TerraScale.Dashboard.slnx` — solution at the repo root
 
@@ -81,6 +89,22 @@ pass `--ha=false` and `fly scale count 1`, and `fly.toml` disables autostop
 a second machine answers with an empty store, which strands onboarding at
 `/login` and rejects the account that was just created.
 
+## CSS delivery
+
+Edit only `src/TerraScale.Dashboard/wwwroot/css/terrascale.css`. The Docker build
+uses Lightning CSS to minify it and replaces the published copy at the same
+`/css/terrascale.css` URL. Development keeps the readable source; the runtime
+image contains one stylesheet and needs no Node installation. Minifier errors
+or warnings fail the build.
+
+For a publish outside Docker, run `npm ci`, publish the app, then run
+`npm run build:css -- <publish-directory>/wwwroot/css/terrascale.css`.
+`npm run build:css` alone writes a preview to `obj/assets/terrascale.css`.
+
+ASP.NET Core negotiates Brotli or gzip from `Accept-Encoding` for supported
+content types over HTTP and HTTPS, before serving static files. Datastar's
+`text/event-stream` responses are excluded by the default MIME type list.
+
 ## Tests
 
 - `tests/TerraScale.Dashboard.FastTests` — TUnit, the user-blocking critical
@@ -94,6 +118,20 @@ a second machine answers with an empty store, which strands onboarding at
   (`DashboardTestApp` boots the whole endpoint pipeline in-memory).
 
 ## Page pattern
+
+Each page keeps its endpoint, model, and Razor slice together. For example,
+the databases page is organized as:
+
+```
+Features/Databases/Pages/Databases/
+  DatabasesPageEndpoint.cs
+  DatabasesPageModel.cs
+  DatabasesSlice.cshtml
+```
+
+Use `Models` for feature state and domain records, `ViewModels` for display
+rows/cards/labels, and `Contracts` only when a request or response type crosses
+an HTTP or service boundary. Do not create empty category directories.
 
 ```csharp
 public sealed class DatabasesPageEndpoint(DashboardStore store)
