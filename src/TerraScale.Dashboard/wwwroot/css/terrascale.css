@@ -1896,7 +1896,8 @@ single-selector rules may stay on one line.
   }
 
   /* Nav counter: one step up from the generic badge (--ts-badge-h) so the
-   * digit reads at a glance. */
+   * digit reads at a glance. It rides the system accent — never a status
+   * color — so the same count reads the same way on every destination. */
   .ts-nav-count {
     position: absolute;
     right: var(--ts-sm);
@@ -1909,31 +1910,27 @@ single-selector rules may stay on one line.
     min-width: calc(var(--ts-badge-h) + 4px);
     padding: 0 var(--ts-gap-tight);
     border-radius: var(--ts-radius-pill);
+    border: 1px solid color-mix(in oklab, var(--ts-accent) 32%, transparent);
+    color: var(--ts-ink);
     font-size: var(--ts-fs-meta);
     font-weight: var(--ts-fw-semibold);
     line-height: 1;
   }
 
   .ts-nav-count-neutral {
-    background-color: var(--ts-surface-muted);
-    color: var(--ts-ink);
+    background-color: color-mix(in oklab, var(--ts-accent) 12%, var(--ts-surface));
   }
 
+  /* The active destination steps the counter up a notch: deeper fill and a
+   * stronger ring, while the digit keeps full ink contrast. */
   .ts-nav-count-active {
-    background-color: color-mix(in oklab, var(--ts-accent) 15%, transparent);
-    color: var(--ts-info);
+    border-color: color-mix(in oklab, var(--ts-accent) 52%, transparent);
+    background-color: color-mix(in oklab, var(--ts-accent) 26%, var(--ts-surface));
   }
 
-  /* Outline ring on the counter. It covers the two informational tones only:
-   * the alert tone keeps its own warning semantics. */
-  .ts-nav-count-neutral,
-  .ts-nav-count-active {
-    box-shadow:
-    0 0 0 1.5px var(--ts-danger),
-    0 0 8px color-mix(in oklab, var(--ts-danger) 38%, transparent);
-  }
-
+  /* Warning counts stay on warning semantics, ring included. */
   .ts-nav-count-alert {
+    border-color: color-mix(in oklab, var(--ts-warning) 55%, transparent);
     background-color: var(--ts-warning);
     color: var(--ts-on-warning);
   }
