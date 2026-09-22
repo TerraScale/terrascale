@@ -33,8 +33,9 @@ jobs:
 
       - name: Set up the repository Node.js version
         uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        node-version-file: .node-version
-        check-latest: false
+        with:
+          node-version-file: .node-version
+          check-latest: false
 
       - name: Provision the reviewed npm CLI
         run: node scripts/provision-reviewed-npm.ts
@@ -113,8 +114,9 @@ jobs:
 
       - name: Set up Node.js ${{ matrix.node }}
         uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        node-version: ${{ matrix.node }}
-        check-latest: false
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: false
 
       - name: Confirm the selected runtime and host architecture
         run: |
@@ -184,8 +186,9 @@ jobs:
 
       - name: Set up the repository Node.js version
         uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        node-version-file: .node-version
-        check-latest: false
+        with:
+          node-version-file: .node-version
+          check-latest: false
 
       - name: Confirm the browser host architecture
         run: |
