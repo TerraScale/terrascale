@@ -50,12 +50,8 @@ public sealed partial class DashboardStore
     public long TotalInvoices => Invoices.Length;
 
     public string UsagePeriodStart => "2026-09-01T00:00:00Z";
-    public string UsagePeriodEnd => "2026-10-01T00:00:00Z";
-    public string OrganizationUpdatedAt => FormatUtcDateTime(UsagePeriodStart);
 
-    // v1 usage-page account states. The demo world mirrors the v1 screenshot
-    // member: usage sources partially loaded, billing fully loaded.
-    public bool UsagePartial => true;
+    // v1 usage-page account states. The demo world keeps billing fully loaded.
     public bool BillingPartial => false;
     public string? StorageCoverageDeadline => null;
     public int UsageRetentionDays => 7;

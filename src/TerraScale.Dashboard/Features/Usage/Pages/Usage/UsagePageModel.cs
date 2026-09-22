@@ -3,11 +3,7 @@ using TerraScale.Dashboard;
 namespace TerraScale.Dashboard.Features.Usage.Pages.Usage;
 
 public sealed record UsagePageModel(
-    string PeriodStart,
-    string PeriodEnd,
     IReadOnlyList<UsageStatCard> Stats,
-    string OrganizationSubtitle,
-    string OrganizationUpdatedAt,
     string OrganizationStorage,
     string OrganizationWrites,
     IReadOnlyList<DashboardStore.PlanResourceRow> PlanResources,
@@ -42,7 +38,6 @@ public sealed record UsagePageModel(
     string? BillingReturn,
     bool HasManagedSubscription,
     IReadOnlyList<UsagePlanImpactRow> PlanImpact,
-    bool UsagePartial,
     bool BillingPartial,
     bool BillingActionRequired,
     string? StorageCoverageDeadline,
@@ -159,12 +154,7 @@ public sealed record UsagePageModel(
             : store.StoragePercentUsed >= 80 ? "warning" : "success";
 
         return new(
-            PeriodStart: store.UsagePeriodStart,
-            PeriodEnd: store.UsagePeriodEnd,
             Stats: stats,
-            OrganizationSubtitle:
-                $"Consolidated across {DashboardStore.FormatNumber(store.Projects.Length)} projects in {store.ActiveOrganizationName} · {store.BillingPlanName} plan",
-            OrganizationUpdatedAt: store.OrganizationUpdatedAt,
             OrganizationStorage: DashboardStore.FormatBytes(store.StorageBytesTotal),
             OrganizationWrites: DashboardStore.FormatNumber(store.Usage.WriteUnits),
             PlanResources: [.. store.OrganizationPlanResources()],
@@ -208,7 +198,6 @@ public sealed record UsagePageModel(
             BillingReturn: billing,
             HasManagedSubscription: store.HasManagedSubscription,
             PlanImpact: planImpact,
-            UsagePartial: store.UsagePartial,
             BillingPartial: store.BillingPartial,
             BillingActionRequired: store.BillingActionRequired,
             StorageCoverageDeadline: store.StorageCoverageDeadline,
