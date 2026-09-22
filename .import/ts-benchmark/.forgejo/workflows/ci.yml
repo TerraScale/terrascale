@@ -40,10 +40,15 @@ jobs:
           git clone --depth 1 "https://oauth2:${token}@git.terrascale.tech/TerraScale/ts-dotnet.git" "${parent}/ts-dotnet"
 
       - name: Configure the private NuGet package source
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+          TERRASCALE_BOT_TOKEN: ${{ secrets.TERRASCALE_BOT_TOKEN }}
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          registry_user="${REGISTRY_USER:-terrascale-bot}"
+          registry_user="${REGISTRY_USER:-oauth2}"
           registry_token="${REGISTRY_TOKEN:-${ORG_READ_TOKEN:-${TERRASCALE_BOT_TOKEN:-}}}"
           test -n "${registry_token}" || {
             echo 'a package registry token is required' >&2
