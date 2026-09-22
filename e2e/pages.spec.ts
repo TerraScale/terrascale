@@ -212,6 +212,16 @@ test("promoted owner sees admin pages", async ({ page }) => {
     displayName: "E2E Admin",
   });
   await page.request.post("/api/v1/testing/dev-shim/reset", { data: { promoteOwner: true } });
+  await page.reload();
+  await page.getByLabel("Account menu").click();
+  const adminTabPromise = page.waitForEvent("popup");
+  await page.getByRole("link", { name: "Admin", exact: true }).click();
+  const adminTab = await adminTabPromise;
+  await adminTab.waitForURL("**/admin/users");
+  await expect(adminTab.getByRole("navigation", { name: "Admin sections" })).toBeVisible();
+  await expect(adminTab.getByRole("link", { name: "Back to dashboard" })).toBeVisible();
+  await expect(page).not.toHaveURL(/\/admin/);
+  await adminTab.close();
   for (const route of adminRoutes) {
     const response = await page.goto(route.path);
     expect(response?.status(), route.path).toBeLessThan(400);

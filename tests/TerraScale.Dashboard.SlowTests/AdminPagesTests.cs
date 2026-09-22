@@ -123,21 +123,21 @@ public sealed class AdminPagesTests
     }
 
     [Test]
-    public async Task PromoteFreshMemberAddsOwnerNavAndListsRegisteredAccounts()
+    public async Task PromoteFreshMemberAddsAdminMenuAndListsRegisteredAccounts()
     {
         using var app = new DashboardTestApp();
         var email = $"admin-{Guid.NewGuid():N}@example.test";
         using var client = await app.CreateMemberClientAsync(email);
 
         var before = await app.GetPageAsync(client, "/organization");
-        await Assert.That(before.Contains("""Owner</div>""")).IsFalse();
+        await Assert.That(before.Contains("href=\"/admin\" target=\"_blank\"")).IsFalse();
 
         using var content = new StringContent("""{"promoteOwner":true}""", Encoding.UTF8, "application/json");
         using var shim = await client.PostAsync("/api/v1/testing/dev-shim/reset", content);
         await Assert.That((int)shim.StatusCode).IsEqualTo(200);
 
         var after = await app.GetPageAsync(client, "/organization");
-        await Assert.That(after.Contains("""Owner</div>""")).IsTrue();
+        await Assert.That(after.Contains("href=\"/admin\" target=\"_blank\"")).IsTrue();
 
         var users = await app.GetPageAsync(client, "/admin/users");
         await Assert.That(users.StatusCode).IsEqualTo(200);

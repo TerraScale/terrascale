@@ -48,4 +48,42 @@ public sealed class SecurityGateTests
         await Assert.That(page.Heading).IsEqualTo("Users");
         await Assert.That(page.Contains("Owner-only user administration")).IsTrue();
     }
+
+    [Test]
+    public async Task MemberCannotOpenAdminPagesOrPostAdminMutations()
+    {
+        using var app = new DashboardTestApp();
+        using var client = await app.CreateMemberClientAsync($"fast-admin-denied-{Guid.NewGuid():N}@example.test");
+
+        var dashboard = await app.GetPageAsync(client, "/");
+        await Assert.That(dashboard.Contains("href=\"/admin\"")).IsFalse();
+
+        foreach (var path in new[] { "/admin", "/admin/users", "/admin/pricing", "/admin/unknown" })
+        {
+            using var response = await client.GetAsync(path);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        }
+
+        using var mutation = await DashboardTestApp.PostFormAsync(client, "/api/v1/admin/plans/delete",
+            new Dictionary<string, string> { ["planId"] = "plan_starter" });
+        await Assert.That(mutation.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+    }
+
+    [Test]
+    public async Task OwnerOpensAdminFromAccountMenuInSeparateTabAndLayout()
+    {
+        using var app = new DashboardTestApp();
+        using var client = app.CreateDemoClient();
+
+        var dashboard = await app.GetPageAsync(client, "/");
+        await Assert.That(dashboard.Contains("href=\"/admin\" target=\"_blank\" rel=\"noopener noreferrer\"")).IsTrue();
+        await Assert.That(dashboard.Contains("ts-sidebar-group-label\">Owner")).IsFalse();
+
+        var admin = await app.GetPageAsync(client, "/admin/users");
+        await Assert.That(admin.StatusCode).IsEqualTo(200);
+        await Assert.That(admin.Contains("aria-label=\"Admin navigation\"")).IsTrue();
+        await Assert.That(admin.Contains("Back to dashboard")).IsTrue();
+        await Assert.That(admin.Contains("ts-project-controls")).IsFalse();
+        await Assert.That(admin.Contains("href=\"/admin/estate\"")).IsTrue();
+    }
 }

@@ -114,6 +114,12 @@ public sealed class DashboardAuthMiddleware(
                 return;
             }
 
+            if (IsAdminPath(path) && !store.OwnerSession)
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
+
             ReportAuthenticationTiming();
             await next(context);
         }
@@ -150,6 +156,11 @@ public sealed class DashboardAuthMiddleware(
 
     private static bool IsUnsafe(string method) =>
         !HttpMethods.IsGet(method) && !HttpMethods.IsHead(method) && !HttpMethods.IsOptions(method);
+
+    private static bool IsAdminPath(string path) =>
+        path.Equals("/admin", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/admin/", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/api/v1/admin/", StringComparison.OrdinalIgnoreCase);
 
     private static bool HasSameOrigin(HttpRequest request)
     {
