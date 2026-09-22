@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Buffers.Binary;
 
 namespace TerraBase.Benchmarks;
 
@@ -59,12 +60,17 @@ public static class RunReceipt
 
         var projectDirectory = Path.GetFullPath(Path.GetDirectoryName(project)!);
         var repository = Git(projectDirectory, "rev-parse --show-toplevel");
+        var workingTreeManifestBytes = GitBytes(repository, "status --porcelain=v1 --untracked-files=all");
+        var workingTreeManifest = Encoding.UTF8.GetString(workingTreeManifestBytes).TrimEnd('\r', '\n');
+        var workingTreeDigest = WorkingTreeDigest(repository, workingTreeManifestBytes);
         return new SubjectProvenance(
             Project: Path.GetFullPath(project),
             Repository: repository,
             Commit: Git(repository, "rev-parse HEAD"),
             TreeDigest: Git(repository, "rev-parse HEAD^{tree}"),
-            Dirty: Git(repository, "status --porcelain").Length != 0);
+            Dirty: workingTreeManifest.Length != 0,
+            WorkingTreeDigest: workingTreeDigest,
+            WorkingTreeChanges: workingTreeManifest.Split('\n', StringSplitOptions.RemoveEmptyEntries));
     }
 
     /// <summary>Writes <c>run-receipt.json</c> into <paramref name="outputDirectory"/> and prints its path and digest.</summary>
@@ -193,12 +199,27 @@ public static class RunReceipt
                 Check($"missing subject fails loudly and names the path ({exception.Message})", exception.Message.Contains(missingSubject, StringComparison.Ordinal), ref failures);
             }
 
+            var gitRoot = Path.Combine(root, "fingerprint-git");
+            Directory.CreateDirectory(gitRoot);
+            var gitProject = Path.Combine(gitRoot, "TerraBase.csproj");
+            File.WriteAllText(gitProject, "<Project />\n");
+            Git(gitRoot, "init -q");
+            Git(gitRoot, "add TerraBase.csproj");
+            Git(gitRoot, "-c user.name=ReceiptSelfCheck -c user.email=receipt-self-check@example.invalid commit -qm baseline");
+            var baseline = CaptureSubject(gitProject).WorkingTreeDigest;
+            File.WriteAllText(gitProject, "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
+            var changed = CaptureSubject(gitProject).WorkingTreeDigest;
+            Check("tracked content changes working-tree digest", baseline is not null && changed is not null
+                && !string.Equals(baseline, changed, StringComparison.Ordinal), ref failures);
+
             try
             {
                 var live = CaptureSubject();
                 Check(
-                    $"live subject capture is well-formed (commit {live.Commit[..12]}, tree {live.TreeDigest[..12]}, dirty {live.Dirty})",
-                    IsHex(live.Commit, 40, 64) && IsHex(live.TreeDigest, 40, 64) && Directory.Exists(live.Repository),
+                    $"live subject capture is well-formed (commit {live.Commit[..12]}, tree {live.TreeDigest[..12]}, source {live.WorkingTreeDigest?[..12]}, dirty {live.Dirty})",
+                    IsHex(live.Commit, 40, 64) && IsHex(live.TreeDigest, 40, 64)
+                    && live.WorkingTreeDigest is { } digest && IsHex(digest, 64, 64)
+                    && Directory.Exists(live.Repository),
                     ref failures);
             }
             catch (InvalidOperationException exception)
@@ -227,7 +248,57 @@ public static class RunReceipt
     private static bool IsHex(string value, int minimumLength, int maximumLength) =>
         value.Length >= minimumLength && value.Length <= maximumLength && value.All(Uri.IsHexDigit);
 
+    private static string WorkingTreeDigest(string repository, byte[] workingTreeManifest)
+    {
+        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        AppendDigestField(digest, "status", workingTreeManifest);
+        AppendDigestField(digest, "diff", GitBytes(repository, "diff --binary HEAD"));
+
+        var untrackedBytes = GitBytes(repository, "ls-files --others --exclude-standard -z");
+        var untracked = new List<string>();
+        var pathStart = 0;
+        for (var index = 0; index <= untrackedBytes.Length; index++)
+        {
+            if (index != untrackedBytes.Length && untrackedBytes[index] != 0)
+            {
+                continue;
+            }
+
+            if (index > pathStart)
+            {
+                untracked.Add(Encoding.UTF8.GetString(untrackedBytes, pathStart, index - pathStart));
+            }
+
+            pathStart = index + 1;
+        }
+
+        untracked.Sort(StringComparer.Ordinal);
+        foreach (var relativePath in untracked)
+        {
+            var pathBytes = Encoding.UTF8.GetBytes(relativePath);
+            AppendDigestField(digest, "untracked-path", pathBytes);
+            var fullPath = Path.Combine(repository, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            AppendDigestField(digest, "untracked-content", File.ReadAllBytes(fullPath));
+        }
+
+        return Convert.ToHexString(digest.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    private static void AppendDigestField(IncrementalHash digest, string name, ReadOnlySpan<byte> value)
+    {
+        digest.AppendData(Encoding.UTF8.GetBytes(name));
+        Span<byte> length = stackalloc byte[sizeof(long)];
+        BinaryPrimitives.WriteInt64LittleEndian(length, value.Length);
+        digest.AppendData(length);
+        digest.AppendData(value);
+    }
+
     private static string Git(string workingDirectory, string arguments)
+    {
+        return Encoding.UTF8.GetString(GitBytes(workingDirectory, arguments)).Trim();
+    }
+
+    private static byte[] GitBytes(string workingDirectory, string arguments)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -245,14 +316,18 @@ public static class RunReceipt
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException($"Could not start git in '{workingDirectory}' to resolve the benchmark subject.");
-        process.WaitForExit();
+        using var outputBuffer = new MemoryStream();
+        var output = process.StandardOutput.BaseStream.CopyToAsync(outputBuffer);
+        var error = process.StandardError.ReadToEndAsync();
+        var exited = process.WaitForExitAsync();
+        Task.WaitAll(output, error, exited);
         if (process.ExitCode != 0)
         {
             throw new InvalidOperationException(
-                $"git {arguments} failed in '{workingDirectory}' (exit {process.ExitCode}): {process.StandardError.ReadToEnd().Trim()}");
+                $"git {arguments} failed in '{workingDirectory}' (exit {process.ExitCode}): {error.Result.Trim()}");
         }
 
-        return process.StandardOutput.ReadToEnd().Trim();
+        return outputBuffer.ToArray();
     }
 }
 
@@ -262,7 +337,9 @@ public sealed record SubjectProvenance(
     string Repository,
     string Commit,
     string TreeDigest,
-    bool Dirty);
+    bool Dirty,
+    string? WorkingTreeDigest = null,
+    IReadOnlyList<string>? WorkingTreeChanges = null);
 
 /// <summary>Machine and toolchain identity available to the process at run time.</summary>
 public sealed record ToolchainInfo(

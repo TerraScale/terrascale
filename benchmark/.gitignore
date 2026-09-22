@@ -11,6 +11,13 @@ TestResults/
 **/receipts/**/source/
 **/receipts/**/targets/
 **/receipts/**/object-store/
+**/receipts/**/engine/
+bench/*/engine/
+bench/*/source/
+bench/*/targets/
+bench/*/object-store/
+bench/*/objects/
+bench/*/larger-than-memory/
 
 # Trash / editor leftovers
 *~

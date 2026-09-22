@@ -6,6 +6,10 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Amazon.Runtime;
+using Amazon.S3;
+using Amazon.S3.Model;
 using TerraBase.Backup;
 using TerraBase.Storage.Backup;
 using DurableStorageEngine = TerraBase.StorageEngine.StorageEngine;
@@ -76,7 +80,7 @@ public static class NativeBackupQualificationWorkload
                 environment,
                 result,
                 null,
-                Environment.CommandLine,
+                SanitizeCommand(options),
                 outputDirectory);
             await WriteReceiptAsync(receipt, outputDirectory).ConfigureAwait(false);
             return 0;
@@ -103,16 +107,19 @@ public static class NativeBackupQualificationWorkload
         var objectStorePath = Path.Combine(outputDirectory, "object-store");
         var targetRoot = Path.Combine(outputDirectory, "targets");
         Directory.CreateDirectory(targetRoot);
-        var store = new FileSystemBackupObjectStore(objectStorePath);
+        await using var storeHandle = await QualificationObjectStore.OpenAsync(
+            options,
+            objectStorePath).ConfigureAwait(false);
+        var store = storeHandle.Store;
         using var signer = new HmacSha256BackupManifestSignatureProvider(
             "terrabase-native-backup-qualification-trust-root-2026"u8,
             "native-backup-qualification-root-v1");
         var encryption = new NoBackupEncryption();
         var encryptionResolver = new BackupEncryptionKeyResolver([
-            new BackupEncryptionKeyResolverEntry("native-qualification", null, encryption),
+            new BackupEncryptionKeyResolverEntry(options.SourceId, null, encryption),
         ]);
         var signatureResolver = new BackupManifestSignatureKeyResolver([
-            new BackupManifestSignatureKeyResolverEntry("native-qualification", null, signer),
+            new BackupManifestSignatureKeyResolverEntry(options.SourceId, null, signer),
         ]);
         var manager = new BackupManager(store, encryption, signer, encryptionResolver, signatureResolver);
 
@@ -140,7 +147,7 @@ public static class NativeBackupQualificationWorkload
             EnsureCommitted(initialResult.Outcome, "initial snapshot population");
 
             using var source = new StorageEngineBackupSource(
-                "native-qualification",
+                options.SourceId,
                 sourceEngine,
                 new StaticMetadataProvider(tenant.Value, collection.Value));
             full = await manager.CreateFullBackupAsync(source).ConfigureAwait(false);
@@ -186,7 +193,7 @@ public static class NativeBackupQualificationWorkload
         if (expectedPitrEntries < 1 || expectedPitrEntries >= logEntries.Length && logEntries.Length > 1)
             throw new InvalidDataException("The PITR target did not select an interior incremental boundary.");
 
-        var manifests = await manager.ListRestorePointsAsync("native-qualification").ConfigureAwait(false);
+        var manifests = await manager.ListRestorePointsAsync(options.SourceId).ConfigureAwait(false);
         if (manifests.Count != 2)
             throw new InvalidDataException($"Expected two committed manifests, got {manifests.Count}.");
         var checksums = await VerifyChecksumsAsync(store, full, incremental).ConfigureAwait(false);
@@ -211,7 +218,7 @@ public static class NativeBackupQualificationWorkload
         return new NativeRun(
             startedAt,
             rawPath,
-            objectStorePath,
+            storeHandle.Description,
             full.BackupId,
             incremental.BackupId,
             full.Boundary.Sequence,
@@ -242,7 +249,7 @@ public static class NativeBackupQualificationWorkload
             "doc-000000");
         var restoreStarted = Stopwatch.GetTimestamp();
         var result = await manager.RestoreToTimeAsync(
-            "native-qualification",
+            options.SourceId,
             pitTarget,
             target).ConfigureAwait(false);
         var restoreOnly = Stopwatch.GetElapsedTime(restoreStarted);
@@ -293,7 +300,7 @@ public static class NativeBackupQualificationWorkload
     }
 
     private static async Task<ChecksumReceipt> VerifyChecksumsAsync(
-        FileSystemBackupObjectStore store,
+        IBackupObjectStore store,
         BackupManifest full,
         BackupManifest incremental)
     {
@@ -381,6 +388,22 @@ public static class NativeBackupQualificationWorkload
         public int Operations { get; private set; } = 128;
         public int LogEntries { get; private set; } = 8;
         public int Seed { get; private set; } = 1337;
+
+        public string SourceId { get; private set; } = $"native-qualification-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}";
+
+        public string Store { get; private set; } = "filesystem";
+
+        public string? S3Endpoint { get; private set; }
+
+        public string? S3Bucket { get; private set; }
+
+        [JsonIgnore]
+        public string? S3AccessKey { get; private set; }
+
+        [JsonIgnore]
+        public string? S3SecretKey { get; private set; }
+
+        public string S3Region { get; private set; } = "us-east-1";
         public string OutputDirectory { get; private set; } = Path.Combine(
             "bench",
             "receipts",
@@ -418,6 +441,31 @@ public static class NativeBackupQualificationWorkload
                             throw new ArgumentException($"--{name} must be a 32-bit integer.");
                         options.Seed = seed;
                         break;
+                    case "source-id":
+                        if (string.IsNullOrWhiteSpace(value) || value.Contains('/', StringComparison.Ordinal) || value.Contains('\\', StringComparison.Ordinal))
+                            throw new ArgumentException("--source-id must be a non-empty object-safe identifier.");
+                        options.SourceId = value;
+                        break;
+                    case "store":
+                        options.Store = value.Trim().ToLowerInvariant();
+                        if (options.Store is not ("filesystem" or "s3"))
+                            throw new ArgumentException("--store must be 'filesystem' or 's3'.");
+                        break;
+                    case "s3-endpoint":
+                        options.S3Endpoint = value;
+                        break;
+                    case "s3-bucket":
+                        options.S3Bucket = value;
+                        break;
+                    case "s3-access-key":
+                        options.S3AccessKey = value;
+                        break;
+                    case "s3-secret-key":
+                        options.S3SecretKey = value;
+                        break;
+                    case "s3-region":
+                        options.S3Region = value;
+                        break;
                     case "output":
                         options.OutputDirectory = value;
                         break;
@@ -426,18 +474,43 @@ public static class NativeBackupQualificationWorkload
                 }
             }
 
+            if (options.Store == "s3")
+            {
+                options.S3Endpoint ??= Environment.GetEnvironmentVariable("TERRABASE_S3_ENDPOINT");
+                options.S3Bucket ??= Environment.GetEnvironmentVariable("TERRABASE_S3_BUCKET");
+                options.S3AccessKey ??= Environment.GetEnvironmentVariable("TERRABASE_S3_ACCESS_KEY");
+                options.S3SecretKey ??= Environment.GetEnvironmentVariable("TERRABASE_S3_SECRET_KEY");
+                options.S3Region = Environment.GetEnvironmentVariable("TERRABASE_S3_REGION") ?? options.S3Region;
+                if (string.IsNullOrWhiteSpace(options.S3Endpoint)
+                    || string.IsNullOrWhiteSpace(options.S3Bucket)
+                    || string.IsNullOrWhiteSpace(options.S3AccessKey)
+                    || string.IsNullOrWhiteSpace(options.S3SecretKey))
+                {
+                    throw new ArgumentException(
+                        "S3 mode requires --s3-endpoint, --s3-bucket, --s3-access-key, and --s3-secret-key "
+                        + "or the corresponding TERRABASE_S3_* environment variables.");
+                }
+            }
+
             return options;
         }
 
         public static void PrintHelp()
         {
-            Console.WriteLine("TerraBase native filesystem backup qualification");
+            Console.WriteLine("TerraBase native backup qualification");
             Console.WriteLine("  --workload native-restore|native-backup");
+            Console.WriteLine("  --store filesystem|s3   Object-store provider (default: filesystem)");
             Console.WriteLine("  --samples N            Fresh target restore samples (default: 5)");
             Console.WriteLine("  --operations N         Documents in the full snapshot (default: 128)");
             Console.WriteLine("  --log-entries N        Incremental publications and PITR log depth (default: 8)");
             Console.WriteLine("  --seed N               Fixed fixture seed (default: 1337)");
+            Console.WriteLine("  --source-id ID        Unique backup source id (default: timestamped)");
             Console.WriteLine("  --output DIR           Receipt and object-store directory");
+            Console.WriteLine("  --s3-endpoint URL      S3-compatible endpoint (or TERRABASE_S3_ENDPOINT)");
+            Console.WriteLine("  --s3-bucket NAME       S3 bucket (or TERRABASE_S3_BUCKET)");
+            Console.WriteLine("  --s3-access-key KEY    S3 access key (or TERRABASE_S3_ACCESS_KEY)");
+            Console.WriteLine("  --s3-secret-key KEY    S3 secret key (or TERRABASE_S3_SECRET_KEY)");
+            Console.WriteLine("  --s3-region NAME       S3 signing region (default: us-east-1)");
         }
 
         private static (string Name, string Value) ReadOption(string[] args, ref int index, string argument)
@@ -484,7 +557,7 @@ public static class NativeBackupQualificationWorkload
                 environment,
                 null,
                 error,
-                System.Environment.CommandLine,
+                SanitizeCommand(options),
                 outputDirectory);
     }
 
@@ -501,6 +574,14 @@ public static class NativeBackupQualificationWorkload
         int ExpectedPitrLogEntries,
         ChecksumReceipt Checksums,
         IReadOnlyList<NativeSample> Samples);
+
+    private static string SanitizeCommand(NativeOptions options)
+    {
+        var command = Environment.CommandLine;
+        if (!string.IsNullOrWhiteSpace(options.S3SecretKey))
+            command = command.Replace(options.S3SecretKey, "[redacted]", StringComparison.Ordinal);
+        return command;
+    }
 
     private sealed record ChecksumReceipt(
         bool Verified,
@@ -520,6 +601,73 @@ public static class NativeBackupQualificationWorkload
         int SnapshotDocuments,
         int IncrementalLogEntries,
         long ActivatedGenerationBytes);
+
+    private sealed class QualificationObjectStore : IAsyncDisposable
+    {
+        private readonly IDisposable? disposable;
+
+        private QualificationObjectStore(IBackupObjectStore store, string description, IDisposable? disposable)
+        {
+            Store = store;
+            Description = description;
+            this.disposable = disposable;
+        }
+
+        public IBackupObjectStore Store { get; }
+
+        public string Description { get; }
+
+        public static async Task<QualificationObjectStore> OpenAsync(
+            NativeOptions options,
+            string filesystemPath)
+        {
+            if (options.Store == "filesystem")
+                return new QualificationObjectStore(
+                    new FileSystemBackupObjectStore(filesystemPath),
+                    Path.GetFullPath(filesystemPath),
+                    disposable: null);
+
+            var endpoint = new Uri(options.S3Endpoint!, UriKind.Absolute);
+            var client = new AmazonS3Client(
+                new BasicAWSCredentials(options.S3AccessKey!, options.S3SecretKey!),
+                new AmazonS3Config
+                {
+                    ServiceURL = endpoint.ToString().TrimEnd('/'),
+                    ForcePathStyle = true,
+                    AuthenticationRegion = options.S3Region,
+                });
+            try
+            {
+                await client.PutBucketAsync(new PutBucketRequest
+                {
+                    BucketName = options.S3Bucket,
+                }).ConfigureAwait(false);
+            }
+            catch (AmazonS3Exception exception) when (
+                exception.StatusCode == System.Net.HttpStatusCode.Conflict
+                || string.Equals(exception.ErrorCode, "BucketAlreadyOwnedByYou", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(exception.ErrorCode, "BucketAlreadyExists", StringComparison.OrdinalIgnoreCase))
+            {
+                // The benchmark uses an immutable, unique backup id for each
+                // process. Reusing a fixture bucket is therefore safe.
+            }
+
+            var store = new S3NativeBackupObjectStore(
+                client,
+                options.S3Bucket!,
+                maxAttempts: 3);
+            return new QualificationObjectStore(
+                store,
+                $"s3://{options.S3Bucket} ({endpoint})",
+                client);
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            disposable?.Dispose();
+            return ValueTask.CompletedTask;
+        }
+    }
 
     private sealed record NativeEnvironment(
         DateTimeOffset StartedAtUtc,
@@ -641,7 +789,7 @@ public static class NativeBackupQualificationWorkload
         public static string Create(NativeReceipt receipt)
         {
             var builder = new StringBuilder()
-                .AppendLine("# TerraBase native filesystem backup qualification")
+                .AppendLine("# TerraBase native backup qualification")
                 .AppendLine()
                 .AppendLine(CultureInfo.InvariantCulture, $"Status: **{receipt.Status}**")
                 .AppendLine();
@@ -673,7 +821,7 @@ public static class NativeBackupQualificationWorkload
             if (receipt.Error is { } error)
                 builder.AppendLine(CultureInfo.InvariantCulture, $"Error: `{error}`").AppendLine();
             builder.AppendLine("## Limits").AppendLine();
-            builder.AppendLine("- The source engine, object store, and restore target are local filesystem directories on one host; this does not qualify S3/OCI/Tigris latency, remote durability, network transfer, or multi-region recovery.");
+                builder.AppendLine(CultureInfo.InvariantCulture, $"- Object store: `{receipt.Native?.ObjectStorePath ?? "unavailable"}`. This qualification measures the selected provider only; it does not qualify multi-region recovery or production network durability.");
             builder.AppendLine("- The PITR cut replays the first incremental publication and verifies a new StorageEngine instance after activation. It does not simulate power loss during upload, manifest commit, generation materialization, or pointer replacement.");
             builder.AppendLine("- Clean reopen is a new StorageEngine instance in the benchmark process. It is evidence of durable files and activation metadata, not a host reboot or process-crash drill.");
             builder.AppendLine("- The observed local end-to-end time is a qualification fixture result; no production RTO/SLO is inferred from this receipt.");

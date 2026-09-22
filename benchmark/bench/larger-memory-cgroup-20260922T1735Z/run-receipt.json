@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "workload": "larger-memory",
+  "status": "invalid",
+  "startedAtUtc": "2026-09-22T17:05:39.5446941Z",
+  "finishedAtUtc": "2026-09-22T17:05:39.8086205Z",
+  "exitCode": 2,
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload larger-memory --backend storage-engine --memory-cap-bytes 268435456 --dataset-size 32768 --payload-size 2048 --samples 5 --operations 500 --writes 500 --warmup 500 --output ../bench/larger-memory-cgroup-20260922T1735Z",
+  "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-cgroup-20260922T1735Z",
+  "subject": {
+    "project": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/TerraBase.csproj",
+    "repository": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "30c5c6fa7d06451cdb3db1895d9ef156bb6eb4ca",
+    "treeDigest": "6c8dfdbdba26385c369ab46259f200ceb139e5ec",
+    "dirty": true
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "dotnetVersion": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 2,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "buildConfiguration": "Release"
+  },
+  "artifacts": [],
+  "error": "The estimated logical dataset (68,026,368 bytes) must exceed the configured memory cap (268,435,456 bytes). (Parameter \u0027configuration\u0027)",
+  "receiptSha256": "b17dc1bfc92606a0bd064c2998a9f9d8de18763c3e3f669b1a13ed0a9b3c6a48"
+}

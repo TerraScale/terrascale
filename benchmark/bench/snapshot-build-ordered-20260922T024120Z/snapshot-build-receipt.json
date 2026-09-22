@@ -1,0 +1,27 @@
+{
+  "Format": "terrabase-snapshot-build-evidence-v1",
+  "Assemblies": [
+    {
+      "File": "TerraBase.dll",
+      "Sha256": "8CD81E62D8842D935D03780153EE963CEB6B73AA8B3FC6980050C8242F7A2B3F"
+    },
+    {
+      "File": "TerraBase.ZoneTree.dll",
+      "Sha256": "A1220D2FF7A0B58A0C94E884F002E573593DDD2B68B939583C1670E61971BF34"
+    },
+    {
+      "File": "TerraBase.Benchmarks.dll",
+      "Sha256": "07434A1A7FD13A1C8C0B1BF0618A1FE917B5730BA3558795337944B786A09782"
+    }
+  ],
+  "Artifacts": [
+    {
+      "File": "snapshot-build-raw.json",
+      "Sha256": "D1552FF3FD68E89D4086499694FA95A60CFCFF32623FB3DF8AACBD2EAEF70166"
+    },
+    {
+      "File": "snapshot-build.md",
+      "Sha256": "8D341F7CFF1737A5E9B8C425CA385A6340A0E0303B483E9B3846177241267924"
+    }
+  ]
+}

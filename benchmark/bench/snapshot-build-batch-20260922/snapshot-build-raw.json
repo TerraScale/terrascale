@@ -1,0 +1,116 @@
+{
+  "Format": "terrabase-snapshot-build-v2",
+  "IndexWalMode": "Sync",
+  "Documents": 2048,
+  "Trials": 5,
+  "WarmupRounds": 1,
+  "Limits": {
+    "MaximumDocuments": 128,
+    "MaximumEncodedBytes": 1048576,
+    "MaximumSpoolBytes": 68719476736,
+    "BatchDelay": "00:00:00"
+  },
+  "SnapshotMilliseconds": 147.867,
+  "Rows": [
+    {
+      "Number": 0,
+      "Lane": "durable-batches",
+      "Milliseconds": 232.3069,
+      "AllocatedBytes": 52493192,
+      "PeakRssBytes": 119808000,
+      "PeakManagedBytes": 24930024,
+      "IndexBytes": 3276950,
+      "SpoolBytes": 2290783
+    },
+    {
+      "Number": 0,
+      "Lane": "atomic-materialization",
+      "Milliseconds": 7953.6928,
+      "AllocatedBytes": 102180616,
+      "PeakRssBytes": 136482816,
+      "PeakManagedBytes": 27432344,
+      "IndexBytes": 3261728,
+      "SpoolBytes": 0
+    },
+    {
+      "Number": 1,
+      "Lane": "atomic-materialization",
+      "Milliseconds": 8496.9705,
+      "AllocatedBytes": 106119960,
+      "PeakRssBytes": 135020544,
+      "PeakManagedBytes": 27993544,
+      "IndexBytes": 3261728,
+      "SpoolBytes": 0
+    },
+    {
+      "Number": 1,
+      "Lane": "durable-batches",
+      "Milliseconds": 241.9245,
+      "AllocatedBytes": 52464992,
+      "PeakRssBytes": 130768896,
+      "PeakManagedBytes": 26351256,
+      "IndexBytes": 3276951,
+      "SpoolBytes": 2290783
+    },
+    {
+      "Number": 2,
+      "Lane": "durable-batches",
+      "Milliseconds": 217.5803,
+      "AllocatedBytes": 52240784,
+      "PeakRssBytes": 131653632,
+      "PeakManagedBytes": 26080112,
+      "IndexBytes": 3276950,
+      "SpoolBytes": 2290783
+    },
+    {
+      "Number": 2,
+      "Lane": "atomic-materialization",
+      "Milliseconds": 7019.4783,
+      "AllocatedBytes": 95602432,
+      "PeakRssBytes": 135725056,
+      "PeakManagedBytes": 27328496,
+      "IndexBytes": 3261728,
+      "SpoolBytes": 0
+    },
+    {
+      "Number": 3,
+      "Lane": "atomic-materialization",
+      "Milliseconds": 6999.1039,
+      "AllocatedBytes": 95597088,
+      "PeakRssBytes": 130314240,
+      "PeakManagedBytes": 28069904,
+      "IndexBytes": 3261728,
+      "SpoolBytes": 0
+    },
+    {
+      "Number": 3,
+      "Lane": "durable-batches",
+      "Milliseconds": 270.6947,
+      "AllocatedBytes": 52758648,
+      "PeakRssBytes": 132755456,
+      "PeakManagedBytes": 25222824,
+      "IndexBytes": 3276951,
+      "SpoolBytes": 2290783
+    },
+    {
+      "Number": 4,
+      "Lane": "durable-batches",
+      "Milliseconds": 200.7276,
+      "AllocatedBytes": 51992992,
+      "PeakRssBytes": 133545984,
+      "PeakManagedBytes": 26128728,
+      "IndexBytes": 3276951,
+      "SpoolBytes": 2290783
+    },
+    {
+      "Number": 4,
+      "Lane": "atomic-materialization",
+      "Milliseconds": 6567.2643,
+      "AllocatedBytes": 90816552,
+      "PeakRssBytes": 138256384,
+      "PeakManagedBytes": 27632960,
+      "IndexBytes": 3261728,
+      "SpoolBytes": 0
+    }
+  ]
+}

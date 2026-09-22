@@ -1,0 +1,16 @@
+diff --git a/terrabase/TerraBase.Benchmarks/Program.cs b/terrabase/TerraBase.Benchmarks/Program.cs
+index cfdb9df0..a6d567b1 100644
+--- a/terrabase/TerraBase.Benchmarks/Program.cs
++++ b/terrabase/TerraBase.Benchmarks/Program.cs
+@@ -153,6 +153,11 @@ internal static class Program
+         }
+ 
+         var requestedWorkload = RequestedWorkload(args);
++        if (requestedWorkload.Equals("snapshot-build", StringComparison.OrdinalIgnoreCase))
++        {
++            return await IndexSnapshotBuildWorkload.RunAsync(args).ConfigureAwait(false);
++        }
++
+         if (requestedWorkload.Equals("profile-sampling", StringComparison.OrdinalIgnoreCase))
+         {
+             return await IndexProfileSamplingWorkload.RunAsync(args).ConfigureAwait(false);

@@ -1,0 +1,42 @@
+{
+  "status": "invalid",
+  "startedAtUtc": "2026-09-22T16:59:23.7041352+00:00",
+  "finishedAtUtc": "2026-09-22T16:59:25.6854113+00:00",
+  "configuration": {
+    "samples": 3,
+    "operations": 256,
+    "logEntries": 4,
+    "seed": 1337,
+    "store": "s3",
+    "s3Endpoint": "http://127.0.0.1:19000",
+    "s3Bucket": "terrabase-native-20260922",
+    "s3AccessKey": "[redacted]",
+    "s3SecretKey": "[redacted]",
+    "s3Region": "us-east-1",
+    "outputDirectory": "../bench/rustfs-native-20260922T1705Z",
+    "showHelp": false
+  },
+  "environment": {
+    "startedAtUtc": "2026-09-22T16:59:23.7041352+00:00",
+    "runtime": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "buildConfiguration": "Release",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "processorCount": 8,
+    "availableMemoryBytes": 20937965568,
+    "serverGc": true,
+    "gcLatencyMode": "Interactive",
+    "gitCommit": "57d12ed6ae6db472a26318a9b2671b3aa08e26b0",
+    "gitDirty": true,
+    "artifactPath": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll",
+    "artifactSha256": "77942c8de1347abfe034f00fe86f86e9a1fa4b1d122134b59f95d16f79cfceec",
+    "terraBaseArtifactPath": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.dll",
+    "terraBaseArtifactSha256": "6825d0074b40ac7e308fe3da814987fe1776b32a0d3cb21cc18f2e60bd23cd98"
+  },
+  "native": null,
+  "error": "System.IO.InvalidDataException: Expected two committed manifests, got 4.\n   at TerraBase.Benchmarks.NativeBackupQualificationWorkload.RunQualificationAsync(NativeOptions options, String outputDirectory) in /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/NativeBackupQualificationWorkload.cs:line 197\n   at TerraBase.Benchmarks.NativeBackupQualificationWorkload.RunQualificationAsync(NativeOptions options, String outputDirectory) in /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/NativeBackupQualificationWorkload.cs:line 217\n   at TerraBase.Benchmarks.NativeBackupQualificationWorkload.RunAsync(String[] args) in /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/NativeBackupQualificationWorkload.cs:line 73",
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload native-backup --store s3 --s3-endpoint http://127.0.0.1:19000 --s3-bucket terrabase-native-20260922 --s3-access-key [redacted] --s3-secret-key [redacted] --samples 3 --operations 256 --log-entries 4 --output ../bench/rustfs-native-20260922T1705Z",
+  "receiptDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/rustfs-native-20260922T1705Z"
+}

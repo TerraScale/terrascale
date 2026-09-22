@@ -1,0 +1,78 @@
+{
+  "status": "complete",
+  "startedAtUtc": "2026-09-22T17:18:58.2617531+00:00",
+  "finishedAtUtc": "2026-09-22T17:19:00.5531301+00:00",
+  "configuration": {
+    "samples": 1,
+    "operations": 16,
+    "logEntries": 1,
+    "seed": 1337,
+    "sourceId": "native-qualification-20260922171858194",
+    "store": "s3",
+    "s3Endpoint": "http://127.0.0.1:19000",
+    "s3Bucket": "terrabase-native-20260922",
+    "s3Region": "us-east-1",
+    "outputDirectory": "../bench/rustfs-native-20260922T1758Z",
+    "showHelp": false
+  },
+  "environment": {
+    "startedAtUtc": "2026-09-22T17:18:58.2172164+00:00",
+    "runtime": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "buildConfiguration": "Release",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "processorCount": 2,
+    "availableMemoryBytes": 20937965568,
+    "serverGc": true,
+    "gcLatencyMode": "Interactive",
+    "gitCommit": "57d12ed6ae6db472a26318a9b2671b3aa08e26b0",
+    "gitDirty": true,
+    "artifactPath": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll",
+    "artifactSha256": "4c1694f9b1f064692377dc1d4422e83613d86c73d3934a8a46bbcfce5d2fa8cf",
+    "terraBaseArtifactPath": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.dll",
+    "terraBaseArtifactSha256": "96db3fe3dd6b9692b69f297362eebe4e88daa7c6a68939f4b4e44402cdfe9c2a"
+  },
+  "native": {
+    "startedAtUtc": "2026-09-22T17:18:58.2617531+00:00",
+    "rawSamplesPath": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/rustfs-native-20260922T1758Z/raw-samples-native-restore.jsonl",
+    "objectStorePath": "s3://terrabase-native-20260922 (http://127.0.0.1:19000/)",
+    "fullBackupId": "bp-20260922171859484-5a58ef3a3ba548239b10b6c160c4bd9b",
+    "incrementalBackupId": "bp-20260922171859882-a7b8f3c6c52f47458f319f2fd5bce262",
+    "fullBoundarySequence": 2,
+    "incrementalBoundarySequence": 3,
+    "pitrTargetUtc": "2026-09-22T17:18:59.7137871+00:00",
+    "expectedPitrSequence": 3,
+    "expectedPitrLogEntries": 1,
+    "checksums": {
+      "verified": true,
+      "artifactCount": 2,
+      "objectSha256": [
+        "fc8568d35fc557cb5cbb8c28146bc56d97e4ae1a99ded70e6dc861afe99c690e",
+        "f0d7ea9ba9ae1937856b46e2c14b54f3fcfdb096d634b15b4b77ca27a7d99eb1",
+        "3c5762f38589ccf31d54b2637c29fb4df535571c9b8dd59ddd541c95668840eb",
+        "fd015b12099be0382a98d8dc7326486d6c5fdce0c994c83e217a67add674eb06"
+      ]
+    },
+    "samples": [
+      {
+        "sample": 1,
+        "appliedLogEntries": 1,
+        "restoredSequence": 3,
+        "restoreMilliseconds": 372.6298,
+        "cleanReopenMilliseconds": 56.2457,
+        "endToEndMilliseconds": 428.9441,
+        "managerRecoveryMilliseconds": 290.2373,
+        "activated": true,
+        "activeGenerationPath": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/rustfs-native-20260922T1758Z/targets/sample-001/.terrabase-restore/generations/generation-ebff93d041ae0c5d351c92e95bccf9241169043a2c4700ff34c9b1a029445514",
+        "snapshotDocuments": 16,
+        "incrementalLogEntries": 1,
+        "activatedGenerationBytes": 67128390
+      }
+    ]
+  },
+  "error": null,
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload native-backup --store s3 --samples 1 --operations 16 --log-entries 1 --output ../bench/rustfs-native-20260922T1758Z",
+  "receiptDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/rustfs-native-20260922T1758Z"
+}

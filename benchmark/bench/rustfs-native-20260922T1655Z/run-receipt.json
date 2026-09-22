@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "workload": "native-backup",
+  "status": "failed",
+  "startedAtUtc": "2026-09-22T16:52:59.3697246Z",
+  "finishedAtUtc": "2026-09-22T16:53:01.5282278Z",
+  "exitCode": 1,
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload native-backup --store s3 --s3-endpoint http://127.0.0.1:19000 --s3-bucket terrabase-native-20260922 --s3-access-key [redacted] --s3-secret-key [redacted] --samples 3 --operations 256 --log-entries 4 --output ../bench/rustfs-native-20260922T1655Z",
+  "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/rustfs-native-20260922T1655Z",
+  "subject": {
+    "project": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/TerraBase.csproj",
+    "repository": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "30c5c6fa7d06451cdb3db1895d9ef156bb6eb4ca",
+    "treeDigest": "6c8dfdbdba26385c369ab46259f200ceb139e5ec",
+    "dirty": true
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "dotnetVersion": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 8,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "buildConfiguration": "Release"
+  },
+  "artifacts": [
+    {
+      "file": "native-backup-receipt.json",
+      "bytes": 3291,
+      "sha256": "cc34fc65d342f4e876cbeb2c9924496c2396accce1f74a95509a7ffdc8ecc809"
+    }
+  ],
+  "error": null,
+  "receiptSha256": "2fd77bc0fe9cfe76fde0aa0c460900f4ffb7b043ac21ddcfaf91a0f7a5c0c4f9"
+}

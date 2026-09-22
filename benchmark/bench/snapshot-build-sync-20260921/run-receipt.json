@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "workload": "snapshot-build",
+  "status": "complete",
+  "startedAtUtc": "2026-09-22T01:12:01.589847Z",
+  "finishedAtUtc": "2026-09-22T01:13:49.7724158Z",
+  "exitCode": 0,
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks --workload=snapshot-build --documents=2048 --trials=5 --output=bench/snapshot-build-sync-20260921",
+  "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/snapshot-build-sync-20260921",
+  "subject": {
+    "project": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/TerraBase.csproj",
+    "repository": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "58ce6097e4b0271b11b56ab1ef247fa631314f03",
+    "treeDigest": "9398dd4be13dc4582a033f2afffe4629b91c9810",
+    "dirty": true
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "dotnetVersion": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 46,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "buildConfiguration": "Release"
+  },
+  "artifacts": [],
+  "error": null,
+  "receiptSha256": "73edb200199df424e96538b3e342a877cf9baa01cf9d66ae0afb51dd0c57bf7d"
+}

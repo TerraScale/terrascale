@@ -107,6 +107,9 @@ internal static class Program
 
     private static async Task<int> RunWorkloadAsync(string[] args)
     {
+        if (RequestedWorkload(args) == "disk-full")
+            return await DiskFullQualificationWorkload.RunAsync(args).ConfigureAwait(false);
+
         if (RelationshipWorkload.IsRequested(args))
         {
             return await RelationshipWorkload.RunAsync(args).ConfigureAwait(false);
@@ -115,6 +118,11 @@ internal static class Program
         if (NativeBackupQualificationWorkload.IsRequested(args))
         {
             return await NativeBackupQualificationWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
+        if (TieredRustFsQualificationWorkload.IsRequested(args))
+        {
+            return await TieredRustFsQualificationWorkload.RunAsync(args).ConfigureAwait(false);
         }
 
         if (E2eVolumeWorkload.IsRequested(args))
@@ -153,6 +161,11 @@ internal static class Program
         }
 
         var requestedWorkload = RequestedWorkload(args);
+        if (requestedWorkload.Equals("snapshot-build", StringComparison.OrdinalIgnoreCase))
+        {
+            return await IndexSnapshotBuildWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
         if (requestedWorkload.Equals("profile-sampling", StringComparison.OrdinalIgnoreCase))
         {
             return await IndexProfileSamplingWorkload.RunAsync(args).ConfigureAwait(false);

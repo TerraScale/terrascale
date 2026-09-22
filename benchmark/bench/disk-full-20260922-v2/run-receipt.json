@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "workload": "disk-full",
+  "status": "complete",
+  "startedAtUtc": "2026-09-22T19:07:53.6567927Z",
+  "finishedAtUtc": "2026-09-22T19:07:54.8432023Z",
+  "exitCode": 0,
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload disk-full --root /tmp/terrabase-enospc.I3N18X --output /home/mariogk/Projects/TerraScale/ts-benchmark/bench/disk-full-20260922-v2",
+  "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/disk-full-20260922-v2",
+  "subject": {
+    "project": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/TerraBase.csproj",
+    "repository": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "30c5c6fa7d06451cdb3db1895d9ef156bb6eb4ca",
+    "treeDigest": "6c8dfdbdba26385c369ab46259f200ceb139e5ec",
+    "dirty": true
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "dotnetVersion": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 46,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "buildConfiguration": "Release"
+  },
+  "artifacts": [],
+  "error": null,
+  "receiptSha256": "8926aba59e19aabb6534dba71ec72c9981be7a31c74f5b09dc6fd4cdc64f0468"
+}

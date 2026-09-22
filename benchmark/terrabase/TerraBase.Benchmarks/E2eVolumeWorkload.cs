@@ -99,6 +99,14 @@ public static class E2eVolumeWorkload
                 Directory.Delete(path, recursive: true);
         }
 
+        using var rustfs = options.ObjectTier == "s3" ? await RustFsWorkloadStore.OpenAsync(Path.Combine(outputDirectory, "uploads")).ConfigureAwait(false) : null;
+        var cachePath = Path.Combine(sourcePath, "ssd-cache");
+        IStorageSegmentStore? segments = rustfs is null ? null : new TieredStorageSegmentStore(
+            new TieredStorageSegmentStoreOptions(rustfs.Store, cachePath, "segments", 16L * 1024 * 1024));
+        if (rustfs is not null)
+            await File.WriteAllTextAsync(Path.Combine(outputDirectory, "rustfs-bucket.txt"), rustfs.Bucket).ConfigureAwait(false);
+        DurableStorageEngine OpenSource() => new(sourcePath, segmentStore: segments);
+
         var tenant = new TenantId("e2e-volume");
         var collection = new CollectionId("documents");
         var Users = new CollectionId("users");
@@ -112,7 +120,7 @@ public static class E2eVolumeWorkload
         // Phase 1: bulk writes of random documents in committed batches.
         var writeStarted = Stopwatch.GetTimestamp();
         Phase("bulk-write");
-        await using (var engine = new DurableStorageEngine(sourcePath))
+        await using (var engine = OpenSource())
         {
             // Backup capture requires a durable replication journal identity.
             await engine.InitializeJournalIdentityAsync().ConfigureAwait(false);
@@ -155,6 +163,11 @@ public static class E2eVolumeWorkload
         }
 
         var writeElapsed = Stopwatch.GetElapsedTime(writeStarted);
+        if (segments is not null)
+        {
+            await using (var engine = OpenSource()) await engine.CompactAsync().ConfigureAwait(false);
+            foreach (var file in Directory.EnumerateFiles(cachePath, "*.seg")) File.Delete(file);
+        }
         ReclaimPhaseMemory();
 
         // Phases 2 and 3 share one engine session: the exact read-back scan is
@@ -163,7 +176,7 @@ public static class E2eVolumeWorkload
         TimeSpan pointReadElapsed;
         long verifiedOriginal;
         TimeSpan readbackElapsed;
-        await using (var engine = new DurableStorageEngine(sourcePath))
+        await using (var engine = OpenSource())
         {
             (verifiedOriginal, readbackElapsed) = await VerifyScanAsync(
                 engine,
@@ -186,7 +199,7 @@ public static class E2eVolumeWorkload
 
         ReclaimPhaseMemory();
 
-        var store = new FileSystemBackupObjectStore(objectStorePath);
+        IBackupObjectStore store = rustfs?.Store ?? new FileSystemBackupObjectStore(objectStorePath);
         using var signer = new HmacSha256BackupManifestSignatureProvider(
             "terrabase-e2e-volume-trust-root-2026"u8,
             "e2e-volume-root-v1");
@@ -229,7 +242,7 @@ public static class E2eVolumeWorkload
         // whole-log serialization never shares a heap with the full
         // capture's leftovers.
         {
-            await using var engine = new DurableStorageEngine(sourcePath);
+            await using var engine = OpenSource();
             // The backup timer starts after the engine's in-memory state is
             // rebuilt so the phase row measures the backup, not the reopen.
             var fullBackupStarted = Stopwatch.GetTimestamp();
@@ -246,7 +259,7 @@ public static class E2eVolumeWorkload
         }
 
         ReclaimPhaseMemory();
-        await using (var engine = new DurableStorageEngine(sourcePath))
+        await using (var engine = OpenSource())
         {
             updatesStarted = Stopwatch.GetTimestamp();
             Phase("bulk-updates");
@@ -308,7 +321,7 @@ public static class E2eVolumeWorkload
         // publication phase's leftovers.
         ReclaimPhaseMemory();
         {
-            await using var engine = new DurableStorageEngine(sourcePath);
+            await using var engine = OpenSource();
             using var freshSource = new StorageEngineBackupSource(
                 "e2e-volume",
                 engine,
@@ -1207,6 +1220,7 @@ public static class E2eVolumeWorkload
 
     private sealed class E2eOptions
     {
+        public string ObjectTier { get; private set; } = "local";
         public int Documents { get; private set; } = 100_000;
 
         public int BatchSize { get; private set; } = 1_000;
@@ -1245,6 +1259,10 @@ public static class E2eVolumeWorkload
                 var (name, value) = ReadOption(args, ref index, argument);
                 switch (name)
                 {
+                    case "object-tier":
+                        if (value is not ("local" or "s3")) throw new ArgumentException("--object-tier must be local or s3.");
+                        options.ObjectTier = value;
+                        break;
                     case "workload":
                         break;
                     case "documents":
@@ -1294,6 +1312,7 @@ public static class E2eVolumeWorkload
         {
             Console.WriteLine("TerraBase end-to-end volume qualification");
             Console.WriteLine("  --workload e2e-volume|e2e-100k|e2e-10m");
+            Console.WriteLine("  --object-tier local|s3  Source immutable segments and backup objects (S3 credentials via TERRABASE_S3_* env vars)");
             Console.WriteLine("  --documents N         Random documents written and verified (default: 100000)");
             Console.WriteLine("  --batch-size N        Documents per committed batch (default: 1000)");
             Console.WriteLine("  --point-reads N       Verified random point reads on the source engine (default: 50000)");
