@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
 env:
-  CONTRACT_SOURCE: ${{ github.workspace }}/contracts/terrabase
-  EDGE_CONTRACT_SOURCE: ${{ github.workspace }}/contracts/edge
+  CONTRACT_SOURCE: contracts/terrabase
+  EDGE_CONTRACT_SOURCE: contracts/edge
 
 jobs:
   static:
