@@ -38,6 +38,7 @@ jobs:
           test -n "${token}" || { echo 'an organization read token is required' >&2; exit 1; }
           git clone --depth 1 "https://oauth2:${token}@git.terrascale.tech/TerraScale/terrabase.git" "${parent}/terrabase"
           git clone --depth 1 "https://oauth2:${token}@git.terrascale.tech/TerraScale/ts-dotnet.git" "${parent}/ts-dotnet"
+          cp ../terrabase/nuget.config terrabase/nuget.config
 
       - name: Configure the private NuGet package source
         env:
@@ -59,7 +60,7 @@ jobs:
             --username "${registry_user}" \
             --password "${registry_token}" \
             --store-password-in-clear-text \
-            --configfile ../terrabase/nuget.config
+            --configfile terrabase/nuget.config
 
       - name: Build the benchmark projects
         shell: bash
