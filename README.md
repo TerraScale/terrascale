@@ -77,17 +77,25 @@ and state settings selects the live backend:
   `TS_DASHBOARD_PUBLIC_ORIGIN`, and `TS_DASHBOARD_STATE_URL/API_KEY/DATABASE`.
   Loopback HTTP origins are accepted outside production for local stacks.
 
-Fly deployments use the checked-in `fly.toml`, which sets
-`TS_DASHBOARD_PRODUCTION_DEMO=1`. With no live provider settings, this keeps
+Fly deployments use `fly.toml` for production and `fly.preview.toml` for
+pull-request previews. Both set `TS_DASHBOARD_PRODUCTION_DEMO=1`. With no
+live provider settings, this keeps
 the production and pull-request preview apps on the seeded in-memory demo
 backend.
 
 That demo backend keeps accounts, sessions, and the onboarding wizard in
-process memory, so it must run as **one warm machine**: the deploy workflows
-pass `--ha=false` and `fly scale count 1`, and `fly.toml` disables autostop
-(`auto_stop_machines = "off"`, `min_machines_running = 1`). A stopped machine or
-a second machine answers with an empty store, which strands onboarding at
-`/login` and rejects the account that was just created.
+process memory, so both deploy workflows pass `--ha=false` and
+`fly scale count 1` to keep requests on a single store. Production
+(`ts-dashboard-2`) uses one shared CPU and 512 MB, disables autostop, and
+keeps one machine running (`min_machines_running = 1`).
+
+Previews use one shared CPU and 256 MB, stop when idle
+(`auto_stop_machines = "stop"`, `min_machines_running = 0`), and automatically
+start on requests (`auto_start_machines = true`). The workflow supplies the
+per-PR app name with `--app`. Stopping a preview resets its demo accounts,
+sessions, and onboarding progress; users must create their accounts again
+after it wakes. The minimum of zero controls running machines, while the
+single provisioned machine remains available to start on demand.
 
 ## CSS delivery
 
