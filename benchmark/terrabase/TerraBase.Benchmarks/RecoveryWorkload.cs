@@ -1050,7 +1050,7 @@ public static class RecoveryWorkload
             builder.AppendLine();
             builder.AppendLine("## Limits and next measurements");
             builder.AppendLine();
-            builder.AppendLine("- Replication lag is process-local `LeaderlessReplicationEngine` apply/export/apply latency. It does not qualify MagicOnion, network RTT, durable acknowledgement, repair, or multi-region lag.");
+            builder.AppendLine("- Replication lag is process-local `LeaderlessReplicationEngine` apply/export/apply latency. It does not qualify the native gRPC inter-node transport, network RTT, durable acknowledgement, repair, or multi-region lag.");
             builder.AppendLine("- Restore timing is `BackupManager` over `InMemoryBackupObjectStore` and a transactional in-memory target. It does not qualify StorageEngine or ZoneTree filesystem restore, object-store bandwidth, crash recovery, or RPO/RTO.");
             builder.AppendLine("- Compare horizontal fan-out with the subscriber-count matrix and vertical throughput with `--concurrency` on the provider runner. Record the exact cgroup limits; host RAM alone is not a resource floor.");
             builder.AppendLine();

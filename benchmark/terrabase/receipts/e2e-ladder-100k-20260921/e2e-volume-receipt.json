@@ -1,0 +1,68 @@
+{
+  "status": "complete",
+  "finishedAtUtc": "2026-09-21T23:21:18.7484399+00:00",
+  "configuration": {
+    "documents": 100000,
+    "batchSize": 5000,
+    "pointReads": 50000,
+    "updates": 10000,
+    "deletes": 10000,
+    "queries": 500,
+    "relationships": 10000,
+    "seed": 1337,
+    "outputDirectory": "terrabase/receipts/e2e-ladder-100k-20260921",
+    "showHelp": false
+  },
+  "phases": {
+    "write": "00:00:04.6910510",
+    "relationshipWrite": "00:00:01.3309661",
+    "relationshipVerify": "00:01:05.1510683",
+    "verifyReadback": "00:00:01.2748234",
+    "pointReads": "00:00:00.4122804",
+    "fullBackup": "00:00:04.8847309",
+    "updates": "00:00:00.3196490",
+    "deletes": "00:00:00.1195290",
+    "incrementalBackup": "00:00:07.4657113",
+    "fullRestore": "00:00:03.7216348",
+    "fullRestoreVerify": "00:00:00.7012047",
+    "pitrRestore": "00:00:06.2710358",
+    "pitrRestoreVerify": "00:00:00.7636958",
+    "finalRestore": "00:00:04.7070783",
+    "finalRestoreVerify": "00:00:01.3136881",
+    "indexBuild": "00:00:12.8939657",
+    "queries": "00:01:24.5877516",
+    "compaction": "00:00:01.7859714",
+    "compactionVerify": "00:00:01.5003908"
+  },
+  "volume": {
+    "documentsWritten": 100000,
+    "documentsVerifiedOriginal": 100000,
+    "fullArtifactBytes": 11129763,
+    "fullArtifactSha256": "46f9cfbe502599a803d3c9167d227d5e2e4e5dfb6876eaeb9066991a44ad56c0",
+    "incrementalArtifactBytes": 20703597,
+    "incrementalArtifactSha256": "aa1a0a8f1b565a1cec4ff85e54d32d61dae7b5ac33740e9783cad28258d6705c",
+    "documentsVerifiedFullRestore": 100000,
+    "documentsVerifiedPitr": 100000,
+    "pitrAppliedLogEntries": 2,
+    "documentsVerifiedFinal": 90000,
+    "deletedDocumentsVerifiedAbsent": 10000,
+    "pointReadLatency": {
+      "operations": 50000,
+      "operationsPerSecond": 858021.4711292685,
+      "p50Milliseconds": 0.001,
+      "p95Milliseconds": 0.0016,
+      "p99Milliseconds": 0.0025
+    },
+    "queryLatency": {
+      "operations": 500,
+      "operationsPerSecond": 6.081525187745226,
+      "p50Milliseconds": 5.087,
+      "p95Milliseconds": 112.5678,
+      "p99Milliseconds": 5679.0525
+    },
+    "compactionRecordsWritten": 132501,
+    "compactionTombstonesRetained": 10000,
+    "documentsVerifiedCompacted": 90000
+  },
+  "error": null
+}

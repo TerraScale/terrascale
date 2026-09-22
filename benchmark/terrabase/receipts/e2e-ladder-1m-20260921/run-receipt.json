@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "workload": "e2e-volume",
+  "status": "complete",
+  "startedAtUtc": "2026-09-21T23:25:19.0957477Z",
+  "finishedAtUtc": "2026-09-21T23:45:54.1849436Z",
+  "exitCode": 0,
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload e2e-volume --documents 1000000 --batch-size 5000 --point-reads 50000 --updates 25000 --deletes 25000 --queries 1000 --relationships 10000 --seed 1337 --output terrabase/receipts/e2e-ladder-1m-20260921",
+  "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/receipts/e2e-ladder-1m-20260921",
+  "subject": {
+    "project": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/TerraBase.csproj",
+    "repository": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "70d80295969d1145e9a258c972f16f4594ce5726",
+    "treeDigest": "8490b5e16c84d0201c65a3fae83ee74e82273f35",
+    "dirty": true
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "dotnetVersion": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 8,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "buildConfiguration": "Release"
+  },
+  "artifacts": [
+    {
+      "file": "e2e-volume-receipt.json",
+      "bytes": 2257,
+      "sha256": "e65c360ac6be4715b90eb94772eac3b27997aeaf7045e75b956c96b229092d26"
+    }
+  ],
+  "error": null,
+  "receiptSha256": "7d74ae39c7f79b504af5e4b3f58793a41a3057c4d36ddcef59365699cd0bc0f1"
+}

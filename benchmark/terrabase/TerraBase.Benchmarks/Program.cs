@@ -127,26 +127,6 @@ internal static class Program
             return await BackupMicrobenchWorkload.RunAsync(args).ConfigureAwait(false);
         }
 
-        if (MagicOnionReplicationQualificationWorkload.IsReplicaHostRequested(args))
-        {
-            return await MagicOnionReplicationQualificationWorkload.RunReplicaHostAsync(args).ConfigureAwait(false);
-        }
-
-        if (MagicOnionReplicationQualificationWorkload.IsRequested(args))
-        {
-            return await MagicOnionReplicationQualificationWorkload.RunAsync(args).ConfigureAwait(false);
-        }
-
-        if (MagicOnionReplicationWorkload.IsRequested(args))
-        {
-            return await MagicOnionReplicationWorkload.RunAsync(args).ConfigureAwait(false);
-        }
-
-        if (TransportComparisonWorkload.IsRequested(args))
-        {
-            return await TransportComparisonWorkload.RunAsync(args).ConfigureAwait(false);
-        }
-
         if (RecoveryWorkload.IsRequested(args))
         {
             return await RecoveryWorkload.RunAsync(args).ConfigureAwait(false);
@@ -173,6 +153,11 @@ internal static class Program
         }
 
         var requestedWorkload = RequestedWorkload(args);
+        if (requestedWorkload.Equals("profile-sampling", StringComparison.OrdinalIgnoreCase))
+        {
+            return await IndexProfileSamplingWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
         if (requestedWorkload.Equals("larger-memory", StringComparison.OrdinalIgnoreCase))
         {
             return await RunLargerMemoryAsync(args).ConfigureAwait(false);
