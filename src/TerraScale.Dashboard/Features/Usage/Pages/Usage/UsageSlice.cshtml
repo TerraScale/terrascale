@@ -360,20 +360,20 @@
             <div class="ts-row ts-row-actions-end">
                 @if (Model.HasManagedSubscription)
                 {
-                    <a class="ts-btn ts-btn-outline ts-btn-lg" href="/billing/portal/usage_portal">@Icons.ExternalLink(16) Manage subscription</a>
+                    <a class="ts-btn ts-btn-outline ts-btn-lg" href="@Model.BillingPortalHref">@Icons.ExternalLink(16) Manage subscription</a>
                 }
                 else
                 {
                     <select class="ts-select" id="billing-plan" aria-label="Billing plan">
                         @foreach (var plan in Model.CheckoutPlans)
                         {
-                            <option value="@plan.PlanId">@plan.Label</option>
+                            <option value="@plan.Href">@plan.Label</option>
                         }
                     </select>
-                    <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-on:click="window.location.assign('/checkout/usage_' + document.getElementById('billing-plan').value)">
+                    <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-on:click="window.location.assign(document.getElementById('billing-plan').value)">
                         @Icons.CreditCard(16) Subscribe
                     </button>
-                    <a class="ts-btn ts-btn-outline ts-btn-lg" href="/billing/portal/usage_portal">@Icons.ExternalLink(16) Payment methods</a>
+                    <a class="ts-btn ts-btn-outline ts-btn-lg" href="@Model.BillingPortalHref">@Icons.ExternalLink(16) Payment methods</a>
                 }
             </div>
         </div>

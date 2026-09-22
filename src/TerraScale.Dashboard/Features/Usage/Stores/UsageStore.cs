@@ -34,7 +34,10 @@ public sealed partial class DashboardStore
         string Reads,
         string Egress);
 
-    public sealed record CheckoutPlanRow(string PlanId, string Label);
+    /// <summary>A checkout option on the usage page. <paramref name="Href"/> is
+    /// the demo local-checkout link; the page swaps it for the Stripe sandbox
+    /// checkout when the provider is configured.</summary>
+    public sealed record CheckoutPlanRow(string PlanId, string PlanKey, string Label, string Href);
 
     public string BillingAccountStatus => IsPersonalOrganization ? "personal_free" : ActiveOrganization.BillingStatus;
     public string BillingPlanName => IsPersonalOrganization ? "Personal free allowance" : Plans.FirstOrDefault(p => p.Id == ActiveOrganization.PlanId)?.Name ?? "Billing required";
@@ -75,10 +78,10 @@ public sealed partial class DashboardStore
     // Checkout catalog offered on the usage page (ts-dashboard billing plans).
     public ImmutableArray<CheckoutPlanRow> CheckoutPlans { get; } =
     [
-        new("plan_starter", $"Starter monthly - {FormatMoney(500, "USD")}"),
-        new("plan_pro", $"Pro monthly - {FormatMoney(5000, "USD")}"),
-        new("plan_scale_v2", $"Scale monthly - {FormatMoney(50000, "USD")}"),
-        new("plan_business", $"Business monthly - {FormatMoney(9900, "USD")}"),
+        new("plan_starter", "starter", $"Starter monthly - {FormatMoney(500, "USD")}", "/checkout/usage_plan_starter"),
+        new("plan_pro", "pro", $"Pro monthly - {FormatMoney(5000, "USD")}", "/checkout/usage_plan_pro"),
+        new("plan_scale_v2", "business", $"Scale monthly - {FormatMoney(50000, "USD")}", "/checkout/usage_plan_scale_v2"),
+        new("plan_business", "business", $"Business monthly - {FormatMoney(9900, "USD")}", "/checkout/usage_plan_business"),
     ];
 
     // Spending controls (paid-excess consent + organization cap), persisted in memory.

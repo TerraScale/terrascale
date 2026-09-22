@@ -5,17 +5,21 @@ namespace TerraScale.Dashboard.Features.Organization.Endpoints;
 
 /// <summary>
 /// Advances the create-organization modal through the three onboarding screens
-/// it repeats: organization, payment (local checkout), and project. The
-/// organization is a paid Business tenant — the Personal workspace is
-/// provisioned once during account creation and is never recreated here — so
+/// it repeats: organization, payment (Stripe sandbox or local checkout), and
+/// project. The organization is a paid Business tenant — the Personal workspace
+/// is provisioned once during account creation and is never recreated here — so
 /// the payment screen has no bypass and the project only lands once billing is
 /// active.
 /// </summary>
-public sealed class NewOrganizationStepEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
+public sealed class NewOrganizationStepEndpoint(DashboardStore store, StripePaymentOptions stripe) : EndpointWithoutRequest<IResult>
 {
     // Starter and Pro both run on the shared Scale billing plan (the v1
     // organizations/create mapping); Business is the Dedicated plan.
     private const string DefaultBillingPlanId = "plan_scale";
+
+    // The checkout always returns to the modal's project step; the activated
+    // billing then lets the step resolve instead of bouncing back to payment.
+    private const string ProjectReturnPath = "/organization?newOrganization=project";
 
     public override void Configure()
     {
@@ -24,8 +28,8 @@ public sealed class NewOrganizationStepEndpoint(DashboardStore store) : Endpoint
         Tags("Organization");
     }
 
-    private static string BillingPlanIdFor(string selectedPlan) =>
-        selectedPlan == "business" ? "plan_dedicated" : DefaultBillingPlanId;
+    private static string BillingPlanIdFor(string planKey) =>
+        planKey == "business" ? "plan_dedicated" : DefaultBillingPlanId;
 
     public override async Task<IResult> HandleAsync(CancellationToken ct)
     {
@@ -50,11 +54,24 @@ public sealed class NewOrganizationStepEndpoint(DashboardStore store) : Endpoint
             case "payment-method" when !store.HasPendingBusinessOrganization:
                 return Results.Redirect("/organization?newOrganization=organization", false, false);
             case "payment-method":
-                if (!store.SetPendingOrganizationPlan(BillingPlanIdFor(form["plan"].ToString())))
+                // The posted card is the billing catalog key; the platform plan
+                // id is derived from it so the store and Stripe agree.
+                var planKey = StripePaymentOptions.NormalizePlan(form["plan"].ToString()) is { Length: > 0 } requestedPlan
+                    ? requestedPlan
+                    : "starter";
+                if (!store.SetPendingOrganizationPlan(BillingPlanIdFor(planKey), planKey))
                     return Results.Redirect("/organization?newOrganization=payment&error=" + Uri.EscapeDataString("Choose an available plan."), false, false);
-                // The local checkout returns to the organization page, whose
-                // payment result reopens the modal on the project step.
-                return Results.Redirect(store.BeginPaymentSetup("/organization?newOrganization=project"), false, false);
+                // The configured provider starts the checkout; both paths return
+                // to the organization page, whose payment result reopens the
+                // modal on the project step.
+                if (!stripe.Enabled)
+                    return Results.Redirect(store.BeginPaymentSetup(ProjectReturnPath), false, false);
+
+                var interval = form["interval"].ToString() == "annual" ? "annual" : "monthly";
+                return Results.Redirect(
+                    $"/billing/checkout?plan={planKey}&interval={interval}&return={Uri.EscapeDataString(ProjectReturnPath)}",
+                    false,
+                    false);
             // The project must land in the billing-active Business tenant the
             // wizard paid for — never in the Personal free allowance or another
             // workspace the user switched to between steps.

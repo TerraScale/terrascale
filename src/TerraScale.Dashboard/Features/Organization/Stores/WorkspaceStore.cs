@@ -32,8 +32,10 @@ public sealed partial class DashboardStore
     /// selected. Returns false when there is no pending organization or the plan
     /// is not an available paid plan. The guard and the write share one captured
     /// reference under the world lock, so a concurrent switch or payment
-    /// completion cannot retarget the write.</summary>
-    public bool SetPendingOrganizationPlan(string planId)
+    /// completion cannot retarget the write. The billing-catalog key is stored
+    /// alongside the platform plan so a later Stripe checkout resumes the plan
+    /// the user picked instead of the seeded default.</summary>
+    public bool SetPendingOrganizationPlan(string planId, string planKey = "")
     {
         lock (World)
         {
@@ -45,11 +47,16 @@ public sealed partial class DashboardStore
             }
 
             organization.PlanId = planId;
+            if (StripePaymentOptions.NormalizePlan(planKey) is { Length: > 0 } normalizedPlanKey)
+            {
+                organization.PlanKey = normalizedPlanKey;
+            }
+
             return true;
         }
     }
 
-    public string? CreateBusinessOrganization(string name, string planId)
+    public string? CreateBusinessOrganization(string name, string planId, string planKey = "")
     {
         name = name.Trim();
         if (name.Length is 0 or > 128 || !IsAvailablePaidPlan(planId))
@@ -73,6 +80,7 @@ public sealed partial class DashboardStore
                 Kind = OrganizationKind.Business,
                 ActiveOrganizationName = name,
                 PlanId = planId,
+                PlanKey = StripePaymentOptions.NormalizePlan(planKey),
                 TeamMembers = [new(CurrentUser.Id, CurrentUser.Name, CurrentUser.Email, "owner", "Active", false, DateTimeOffset.UtcNow.ToString("O"), 0)],
             };
             World.Organizations.Add(id, organization);

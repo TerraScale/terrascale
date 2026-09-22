@@ -2,11 +2,12 @@ using TerraScale.Dashboard;
 
 namespace TerraScale.Dashboard.Features.Usage.Pages.Usage;
 
-public sealed class UsagePageEndpoint(DashboardStore store) : SlicePageEndpoint<UsageSlice, UsagePageModel>(store, "/usage")
+public sealed class UsagePageEndpoint(DashboardStore store, StripePaymentOptions stripe) : SlicePageEndpoint<UsageSlice, UsagePageModel>(store, "/usage")
 {
     protected override UsagePageModel Load() =>
         UsagePageModel.From(
             Store,
+            stripe,
             PageRoute,
             HttpContext.Request.Query["range"].FirstOrDefault(),
             HttpContext.Request.Query["billing"].FirstOrDefault(),

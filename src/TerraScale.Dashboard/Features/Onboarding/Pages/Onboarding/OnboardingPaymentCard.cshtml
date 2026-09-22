@@ -13,9 +13,11 @@
     </header>
     <form class="ts-onboarding-content" method="post" action="@Model.Action">
         <input type="hidden" name="step" value="@Model.StepValue" />
-        @* The selected plan is a client-side signal; mirror it into the posted
-           form so billing never diverges from the card the user chose. *@
-        <input type="hidden" name="plan" value="@(Model.Plans.FirstOrDefault()?.Key)" data-attr:value="$plan" />
+        @* The selected plan and billing interval are client-side signals; mirror
+           them into the posted form so billing never diverges from the card the
+           user chose and Stripe Checkout receives the matching interval. *@
+        <input type="hidden" name="plan" data-bind="plan" />
+        <input type="hidden" name="interval" data-bind="interval" />
         @if (Model.StepDone)
         {
             <div class="ts-alert ts-alert-success" role="status">
