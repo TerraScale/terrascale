@@ -184,8 +184,7 @@ jobs:
       - name: Stage the contract bundles for digest verification
         run: |
           set -euo pipefail
-          ln -s "$(readlink -f contracts/terrabase-root/contracts/v1)" contracts/terrabase
-          rm -rf contracts/edge
+          cp -r contracts/terrabase-root/contracts/v1 contracts/terrabase
           cp -r contracts/edge-root/contracts/v1 contracts/edge
 
       - name: Build the SDK
