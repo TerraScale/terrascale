@@ -1895,9 +1895,8 @@ single-selector rules may stay on one line.
     color: color-mix(in oklab, var(--ts-nav-accent) 90%, var(--ts-ink));
   }
 
-  /* Nav counter: one size up from the generic badge so the digit reads at a
-   * glance, and a red outline ring that keeps it legible on both the muted
-   * surface and the tinted active row. */
+  /* Nav counter: one step up from the generic badge (--ts-badge-h) so the
+   * digit reads at a glance. */
   .ts-nav-count {
     position: absolute;
     right: var(--ts-sm);
@@ -1906,13 +1905,10 @@ single-selector rules may stay on one line.
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 24px;
-    min-width: 24px;
+    height: calc(var(--ts-badge-h) + 4px);
+    min-width: calc(var(--ts-badge-h) + 4px);
     padding: 0 var(--ts-gap-tight);
     border-radius: var(--ts-radius-pill);
-    box-shadow:
-    0 0 0 1.5px var(--ts-danger),
-    0 0 8px color-mix(in oklab, var(--ts-danger) 38%, transparent);
     font-size: var(--ts-fs-meta);
     font-weight: var(--ts-fw-semibold);
     line-height: 1;
@@ -1926,6 +1922,15 @@ single-selector rules may stay on one line.
   .ts-nav-count-active {
     background-color: color-mix(in oklab, var(--ts-accent) 15%, transparent);
     color: var(--ts-info);
+  }
+
+  /* Outline ring on the counter. It covers the two informational tones only:
+   * the alert tone keeps its own warning semantics. */
+  .ts-nav-count-neutral,
+  .ts-nav-count-active {
+    box-shadow:
+    0 0 0 1.5px var(--ts-danger),
+    0 0 8px color-mix(in oklab, var(--ts-danger) 38%, transparent);
   }
 
   .ts-nav-count-alert {
