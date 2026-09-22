@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "workload": "query-independent",
+  "status": "complete",
+  "startedAtUtc": "2026-09-22T23:15:07.4406742Z",
+  "finishedAtUtc": "2026-09-22T23:15:34.7085563Z",
+  "exitCode": 0,
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks --workload=query-independent --documents 2000 --samples 30 --output /home/mariogk/Projects/TerraScale/ts-benchmark/bench/query-independent-20260922T231232Z/trial-1",
+  "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/query-independent-20260922T231232Z/trial-1",
+  "subject": {
+    "project": "/tmp/terrabase-benchmark-subject-7e5a1851/src/TerraBase/TerraBase.csproj",
+    "repository": "/tmp/terrabase-benchmark-subject-7e5a1851",
+    "commit": "7e5a1851ce356a2f4cccbfdeffeb54635f6e9cc6",
+    "treeDigest": "6ac4eeb26a369bf87e645158802da3873f6dca23",
+    "dirty": false,
+    "workingTreeDigest": "69121d5f2269f14d9598de66881be2de4017735eb6c110c5dc861d505746be73",
+    "workingTreeChanges": []
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "dotnetVersion": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 46,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "buildConfiguration": "Release"
+  },
+  "artifacts": [],
+  "error": null,
+  "receiptSha256": "777f61bc87604654f654af0481497337fe65f3546fe6c2938931199f451ce455"
+}

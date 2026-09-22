@@ -1,0 +1,71 @@
+{
+  "status": "complete",
+  "finishedAtUtc": "2026-09-22T23:34:49.6736159+00:00",
+  "configuration": {
+    "objectTier": "s3",
+    "documents": 1000,
+    "batchSize": 100,
+    "pointReads": 64,
+    "updates": 20,
+    "deletes": 20,
+    "queries": 20,
+    "relationships": 0,
+    "seed": 1337,
+    "outputDirectory": "bench/receipts/e2e-rustfs-agent-smoke-20260922",
+    "showHelp": false
+  },
+  "phases": {
+    "write": "00:00:00.8421997",
+    "relationshipWrite": "00:00:00",
+    "relationshipVerify": "00:00:00",
+    "verifyReadback": "00:00:00.0737764",
+    "pointReads": "00:00:00.0036704",
+    "fullBackup": "00:00:00.8960171",
+    "updates": "00:00:00.0063509",
+    "deletes": "00:00:00.0069250",
+    "incrementalBackup": "00:00:00.8709865",
+    "fullRestore": "00:00:00.6064988",
+    "fullRestoreVerify": "00:00:00.1167306",
+    "pitrRestore": "00:00:00.6572733",
+    "pitrRestoreVerify": "00:00:00.2396158",
+    "finalRestore": "00:00:00.7791967",
+    "finalRestoreVerify": "00:00:00.1056446",
+    "indexBuild": "00:00:01.3396599",
+    "queries": "00:00:00.7971596",
+    "compaction": "00:00:00.0931017",
+    "compactionVerify": "00:00:00.2183504"
+  },
+  "volume": {
+    "documentsWritten": 1000,
+    "documentsVerifiedOriginal": 1000,
+    "fullArtifactBytes": 111436,
+    "fullArtifactSha256": "a262a6832f064f5170a36c5dab04bb54331c2e51d870664d2ba63b9ecfcafd92",
+    "incrementalArtifactBytes": 43179,
+    "incrementalArtifactSha256": "f5b363638fe4ff5c9c11c0616aece78439a8bcef2e7df568d1313b771998c17a",
+    "documentsVerifiedFullRestore": 1000,
+    "documentsVerifiedPitr": 1000,
+    "pitrAppliedLogEntries": 1,
+    "documentsVerifiedFinal": 980,
+    "deletedDocumentsVerifiedAbsent": 20,
+    "pointReadLatency": {
+      "operations": 64,
+      "operationsPerSecond": 28757.58256571557,
+      "p50Milliseconds": 0.0273,
+      "p95Milliseconds": 0.0501,
+      "p99Milliseconds": 0.4562
+    },
+    "queryLatency": {
+      "operations": 20,
+      "operationsPerSecond": 43.222216219136634,
+      "p50Milliseconds": 6.7685,
+      "p95Milliseconds": 265.0974,
+      "p99Milliseconds": 265.0974
+    },
+    "compactionRecordsWritten": 1001,
+    "compactionTombstonesRetained": 20,
+    "documentsVerifiedCompacted": 980,
+    "relationshipVerifyPasses": 0,
+    "queriesVerified": 20
+  },
+  "error": null
+}

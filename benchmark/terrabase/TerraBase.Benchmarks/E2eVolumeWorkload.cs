@@ -1034,13 +1034,21 @@ public static class E2eVolumeWorkload
     {
         var started = Stopwatch.GetTimestamp();
         long verified = 0;
-        var seen = new HashSet<int>(state.LiveDocuments);
         await foreach (var document in engine.ScanAsync(tenant, collection).ConfigureAwait(false))
         {
             var index = ParseDocumentIndex(document.Key.DocumentId, state.Documents);
             VerifyDocument(state, index, document);
-            if (!seen.Add(index))
-                throw new InvalidDataException($"{DocumentId(index)} was returned twice.");
+            // StorageEngine.ScanAsync reads the collection's ordered state
+            // index. The expected state can contain one deleted range in the
+            // middle of the key space for an interior PITR cut, so derive the
+            // next live id directly instead of retaining one marker per
+            // corpus document in a HashSet.
+            var expectedIndex = verified < state.FirstDeletedIndex
+                ? checked((int)verified)
+                : checked(state.FirstDeletedIndex + state.DeletedDocuments + (int)(verified - state.FirstDeletedIndex));
+            if (index != expectedIndex)
+                throw new InvalidDataException(
+                    $"Scan position {verified} returned {DocumentId(index)}, expected {DocumentId(expectedIndex)}.");
             verified++;
         }
 
