@@ -8061,7 +8061,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     background-color: transparent;
   }
 
-  .ts-apikeys-table-wrap .ts-table {
+  .ts-notes-page .ts-apikeys-table-wrap .ts-table {
     min-width: 1440px;
     table-layout: auto;
   }
