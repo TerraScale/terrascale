@@ -117,7 +117,7 @@ public sealed class PagesSmokeTests
     }
 
     [Test]
-    public async Task AccessPageRendersMembersSessionsAndInvitations()
+    public async Task AccessPageRendersMembersAndInvitations()
     {
         using var app = new DashboardTestApp();
         using var client = app.CreateDemoClient();
@@ -126,7 +126,7 @@ public sealed class PagesSmokeTests
         await Assert.That(page.Heading).IsEqualTo("Team");
         await Assert.That(page.Contains("ts-summary-term")).IsFalse();
         await Assert.That(page.Contains("Organization members")).IsTrue();
-        await Assert.That(page.Contains("Current session access")).IsTrue();
+        await Assert.That(page.Contains("Current session access")).IsFalse();
         await Assert.That(page.Contains("Invitations and role changes")).IsTrue();
         await Assert.That(page.Contains("Ana Souza")).IsTrue();
     }
@@ -273,6 +273,11 @@ public sealed class PagesSmokeTests
             await Assert.That(page.Heading).IsEqualTo("Authentication");
             await Assert.That(page.Contains(copy)).IsTrue();
         }
+
+        var overview = await app.GetPageAsync(client, "/auth");
+        await Assert.That(overview.Contains("Current session access")).IsTrue();
+        await Assert.That(overview.Contains("View session access")).IsTrue();
+        await Assert.That(overview.Contains("organization:owner")).IsTrue();
     }
 
     [Test]

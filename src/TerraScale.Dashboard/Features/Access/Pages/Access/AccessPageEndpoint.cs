@@ -65,8 +65,6 @@ public sealed class AccessPageEndpoint(DashboardStore store) : SlicePageEndpoint
             CanManageOrganization: canManageOrganization,
             CanManageProject: canManageProject,
             Members: members,
-            Roles: ["organization:owner", "project:admin"],
-            Permissions: ["members:read", "invitations:write", "projects:read", "usage:read"],
             Projects: projects,
             Invitations: invitations,
             TeamMembers: team,
