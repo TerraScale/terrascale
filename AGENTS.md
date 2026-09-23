@@ -68,19 +68,28 @@ Everything must work in memory account creation and etc
 
 ## Git
 
-- The user must send the ku link like `https://ku.mariogk.com/terrascale/issue/DSH-96` and then you need to extract the issue in this example DSH-96 and add to the prefix of the PR like DSH-96:{PR_TITLE}
-- Always add `mariogk` as the reviewer and `terrascale-bot` as well
-- Use 'fj' to interact with git and forgejo
-- Always use the origin's main branch as the base of newer branches
-- Always create a feature branch and a worktree when doing new features or fixes
-  Example of branch names:
-    - feat/{feature_name}
-    - fix/{fix_name}
-    - hotfix/{fix_name}
-    - refactor/{refactor_desc}
-- When the work is done create a PR into main when the work is ready to be merged.
-- When pushing and creating the pull request make sure that the linter has no errors and that the `slow` and `fast` tests passes and run green.
-- When creating PR send the link of that PR to the user.
-- When creating a PR and the change has visual changes add multiple screenshots showing the changes that you made.
-  - the screenshots must not be commited into the commit check
-- When creating the PR make it auto merge when all checks passes automatically
+### Issue (required before any PR)
+- Issues are tracked in ku.mariogk.com and not the forgejo issues
+- Every PR title is `{ISSUE_ID}: {title}`, e.g. `DSH-167: Revamp usage page`.
+- The user may give the issue in any of these forms; all resolve to an ID:
+  - a ku link: `https://ku.mariogk.com/terrascale/issue/DSH-167` → `DSH-167`
+  - the ID alone: `DSH-167` or `dsh-167` → `DSH-167`
+  - the issue title, e.g. "Usage revamp": search ku (MCP `list_issues`
+    with `search`) and use the match. If there are several matches, ask
+    the user which one.
+- If you have no issue at the start of a task, ask for one right away.
+  Never push or open a PR without it, and never make up an ID.
+
+### Branches
+- Branch from `origin/main` in a new worktree:
+  `feat/…`, `fix/…`, `hotfix/…`, `refactor/…`.
+
+### Pull requests
+- Use `fj` for git and Forgejo.
+- Before pushing: lint passes and the `fast` and `slow` tests are green.
+- Target `main` and enable auto-merge once checks pass.
+- Reviewers: `mariogk` and `terrascale-bot` (Forgejo rejects the PR author,
+  so skip whichever one opened the PR).
+- Visual changes: upload several before/after screenshots as PR
+  attachments. Never commit them.
+- Send the PR link to the user when done.
