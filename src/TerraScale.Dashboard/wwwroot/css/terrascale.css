@@ -4226,37 +4226,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     max-width: 24rem;
   }
 
-  /* Metric toolbar (page-top stat row, shared-page-styles parity). */
-  .ts-metric-toolbar {
-    gap: var(--ts-md);
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-  }
-
-  .ts-metric-toolbar-actions {
-    gap: var(--ts-sm);
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-    margin-left: auto;
-  }
-
-  .ts-panel20 {
-    padding: 20px;
-  }
-
-  .ts-metric-tile {
-    padding: var(--ts-lg);
-    flex-basis: 12rem;
-    flex-grow: 0;
-    flex-shrink: 1;
-    min-width: 9rem;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-  }
-
   /* ===== Feature: Admin ===== */
 
   /* Shared admin page shell (1:1 with admin-page-styles.ts + admin-styles.ts). */
@@ -4336,14 +4305,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     flex-wrap: wrap;
     border-bottom: 1px solid var(--ts-line);
   }
-  .ts-metric-row {
-    gap: var(--ts-md);
-    align-items: center;
-    display: flex;
-    justify-content: space-between;
-    margin-top: var(--ts-lg);
-  }
-
   .ts-stat-value {
     color: var(--ts-ink);
     font-size: 24px;
@@ -8100,6 +8061,16 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     background-color: transparent;
   }
 
+  .ts-apikeys-table-wrap .ts-table {
+    min-width: 1440px;
+    table-layout: auto;
+  }
+
+  .ts-notes-page .ts-apikeys-table-wrap .ts-table th,
+  .ts-notes-page .ts-apikeys-table-wrap .ts-table td {
+    padding-inline: var(--ts-md);
+  }
+
   /* v1 searchField: label above, icon inset 12px, text starts at 36px. */
   .ts-apikeys-search {
     flex-basis: 18rem;
@@ -8119,6 +8090,76 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     left: var(--ts-md);
     top: 50%;
     transform: translateY(-50%);
+  }
+
+  .ts-apikeys-section {
+    display: grid;
+    gap: var(--ts-lg);
+    min-width: 0;
+  }
+
+  .ts-apikeys-heading,
+  .ts-apikeys-actions,
+  .ts-apikeys-counts {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--ts-md);
+  }
+
+  .ts-apikeys-heading {
+    justify-content: space-between;
+  }
+
+  .ts-apikeys-counts {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+  }
+
+  .ts-apikeys-counts strong {
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-apikeys-counts span + span::before {
+    content: "·";
+    margin-right: var(--ts-md);
+  }
+
+  .ts-apikeys-filters {
+    padding: 0 0 var(--ts-lg);
+    gap: var(--ts-sm);
+  }
+
+  .ts-apikeys-filters .ts-filter-field {
+    flex: 1 1 10rem;
+    min-width: 10rem;
+  }
+
+  .ts-apikeys-filters .ts-apikeys-search {
+    flex: 2 1 16rem;
+    max-width: none;
+  }
+
+  .ts-apikeys-filters .ts-select,
+  .ts-apikeys-filters .ts-input {
+    width: 100%;
+  }
+
+  .ts-apikeys-filters > .ts-btn {
+    align-self: end;
+  }
+
+  .ts-apikeys-section .ts-credential-empty {
+    padding: 0;
+  }
+
+  @media (max-width: 40rem) {
+    .ts-apikeys-actions,
+    .ts-apikeys-actions .ts-btn,
+    .ts-apikeys-filters .ts-filter-field {
+      width: 100%;
+    }
   }
 
   /* v1 auditLink (Reset filters): muted ghost with 12px inline padding. */

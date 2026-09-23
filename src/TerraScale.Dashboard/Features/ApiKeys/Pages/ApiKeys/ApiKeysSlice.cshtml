@@ -11,36 +11,6 @@
 }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-notes-page">
-    <section class="ts-panel ts-panel20">
-        <div class="ts-metric-toolbar">
-            <div class="ts-metric-tile">
-                <div class="ts-text-upper">ACTIVE KEYS</div>
-                <div class="ts-metric-row">
-                    <span class="ts-stat-value">@Model.ActiveKeys</span>
-                    <span class="ts-badge ts-badge-success">success</span>
-                </div>
-            </div>
-            <div class="ts-metric-tile">
-                <div class="ts-text-upper">EXPIRING</div>
-                <div class="ts-metric-row">
-                    <span class="ts-stat-value">@Model.Expiring</span>
-                    <span class="ts-badge ts-badge-warning">warning</span>
-                </div>
-            </div>
-            <div class="ts-metric-tile">
-                <div class="ts-text-upper">M2M CLIENTS</div>
-                <div class="ts-metric-row">
-                    <span class="ts-stat-value">@Model.M2mClients</span>
-                    <span class="ts-badge ts-badge-info">info</span>
-                </div>
-            </div>
-            <div class="ts-metric-toolbar-actions">
-                <a class="ts-btn ts-btn-primary ts-btn-lg" href="/api-keys?create=key">@Icons.Plus(16) Create key</a>
-                <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/api-keys?create=m2m">@Icons.Cpu(16) Create OAuth client</a>
-            </div>
-        </div>
-    </section>
-
     @if (Model.LoadError is { } loadError)
     {
         <div class="ts-alert ts-alert-warning">
@@ -48,13 +18,25 @@
         </div>
     }
 
-    <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Credentials</h2>
-            <p class="ts-panel-subtitle">API keys and machine-to-machine clients stored by the authentication service</p>
+    <section class="ts-apikeys-section">
+        <div class="ts-apikeys-heading">
+            <div>
+                <h2 class="ts-panel-title">Credentials</h2>
+                <p class="ts-panel-subtitle">API keys and machine-to-machine clients stored by the authentication service</p>
+            </div>
+            <div class="ts-apikeys-actions">
+                <a class="ts-btn ts-btn-primary ts-btn-lg" href="/api-keys?create=key">@Icons.Plus(16) Create key</a>
+                <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/api-keys?create=m2m">@Icons.Cpu(16) Create OAuth client</a>
+            </div>
         </div>
 
-        <form class="ts-filter-bar" method="get" action="/api-keys">
+        <div class="ts-apikeys-counts" aria-label="Credential counts">
+            <span><strong>@Model.ActiveKeys</strong> active keys</span>
+            <span><strong>@Model.Expiring</strong> expiring</span>
+            <span><strong>@Model.M2mClients</strong> M2M clients</span>
+        </div>
+
+        <form class="ts-filter-bar ts-apikeys-filters" method="get" action="/api-keys" role="search">
             <div class="ts-filter-field ts-apikeys-search">
                 <label class="ts-filter-label" for="credential-filter">Filter credentials</label>
                 <div class="ts-apikeys-search-box">
@@ -89,6 +71,11 @@
                     }
                 </select>
             </div>
+            <button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit">Apply filters</button>
+            @if (Model.Query.Length > 0 || Model.Kind.Length > 0 || Model.Status.Length > 0 || Model.DatabaseId.Length > 0)
+            {
+                <a class="ts-btn ts-btn-ghost ts-btn-lg" href="/api-keys">Clear</a>
+            }
         </form>
 
         @if (!Model.HasAnyCredentials)
