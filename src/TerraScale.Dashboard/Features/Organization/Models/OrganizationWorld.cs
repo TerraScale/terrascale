@@ -48,6 +48,8 @@ public sealed class OrganizationWorld
 
     public ImmutableArray<AuditEvent> AuditEvents { get; set; } = [];
 
+    public int AuditRetentionDays { get; set; } = 90;
+
     public UsageCycle Usage { get; set; } = new(
         Period: "Current cycle",
         StorageMb: 0,

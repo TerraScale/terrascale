@@ -7,8 +7,6 @@ namespace TerraScale.Dashboard.Shared.State;
 // src/features/audit/audit-export.ts). Extends the seeded store.
 public sealed partial class DashboardStore
 {
-    public const int AuditRetentionDays = 90;
-
     public static readonly string[] AuditRangeOptions = ["24h", "7d", "30d", "90d"];
     public static readonly string[] AuditSeverityOptions = ["all", "info", "warn", "critical"];
 
@@ -49,21 +47,24 @@ public sealed partial class DashboardStore
         string? severity = null,
         string? range = null,
         string? search = null,
-        DateTimeOffset? now = null)
+        DateTimeOffset? now = null,
+        int retentionDays = 90)
     {
         var current = now ?? DateTimeOffset.UtcNow;
-        var cutoff = ParseAuditRange(range) switch
+        var rangeCutoff = ParseAuditRange(range) switch
         {
             "24h" => current.AddDays(-1),
             "30d" => current.AddDays(-30),
             "90d" => current.AddDays(-90),
             _ => current.AddDays(-7),
         };
+        var retentionCutoff = current.AddDays(-retentionDays);
+        var cutoff = rangeCutoff > retentionCutoff ? rangeCutoff : retentionCutoff;
 
         var term = (search ?? "").Trim().ToLowerInvariant();
         return [.. events.Where(auditEvent =>
         {
-            if (action is { Length: > 0 } && auditEvent.Action != action)
+            if (action is { Length: > 0 } and not "all" && auditEvent.Action != action)
             {
                 return false;
             }
