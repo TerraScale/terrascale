@@ -57,11 +57,11 @@ jobs:
           # created on an earlier push cannot be re-read — so drop every
           # endpoint bound to this URL and mint a fresh one each run. That
           # keeps the step idempotent and leaves no orphans behind.
-          for EP in $(curl -sf -u "$Payments__Stripe__SecretKey:" 'https://api.stripe.com/v1/webhook_endpoints?limit=100' \
+          for EP in $(curl -fsS --retry 3 --retry-all-errors -u "$Payments__Stripe__SecretKey:" 'https://api.stripe.com/v1/webhook_endpoints?limit=100' \
             | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{for(const e of JSON.parse(d).data)if(e.url===process.argv[1])console.log(e.id)})' "$HOOK_URL"); do
             curl -sf -X DELETE -u "$Payments__Stripe__SecretKey:" "https://api.stripe.com/v1/webhook_endpoints/$EP" >/dev/null
           done
-          WHSEC="$(curl -sf -u "$Payments__Stripe__SecretKey:" https://api.stripe.com/v1/webhook_endpoints \
+          WHSEC="$(curl -fsS -u "$Payments__Stripe__SecretKey:" https://api.stripe.com/v1/webhook_endpoints \
             -d "url=$HOOK_URL" \
             -d 'enabled_events[]=checkout.session.completed' \
             -d 'enabled_events[]=customer.subscription.created' \
