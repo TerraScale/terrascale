@@ -5,6 +5,8 @@ namespace TerraScale.Dashboard.Shared.Components;
 
 /// <summary>Server-rendered SVG charts (sparklines + activity lines) using the
 /// chart tokens; parity for the recharts islands in ts-dashboard.</summary>
+public sealed record ChartSeries(string Name, IReadOnlyList<double> Values);
+
 public static class Charts
 {
     public static HtmlString Sparkline(IReadOnlyList<double> values, string stroke = "var(--ts-chart-1)", int width = 160, int height = 32)
@@ -82,51 +84,79 @@ public static class Charts
             """);
     }
 
-    /// <summary>Zero-based area chart with a y-axis, first/middle/last x ticks and
-    /// a per-point hover crosshair whose native tooltip reads "value · label".</summary>
-    public static HtmlString AreaChart(IReadOnlyList<WorkloadPoint> points, string label, int width = 720, int height = 220)
+    /// <summary>Zero-based multi-line chart on one y-axis. Series take the
+    /// categorical slots in order (ts-cat-1, ts-cat-2, ...); hovering a column
+    /// shows the exact timestamp and every series' value.</summary>
+    public static HtmlString TimeSeriesChart(
+        IReadOnlyList<DateTime> times,
+        IReadOnlyList<ChartSeries> series,
+        string label,
+        string tickFormat,
+        int width = 720,
+        int height = 220)
     {
-        if (points.Count is 0)
+        if (times.Count is 0 || series.Count is 0)
         {
             return new HtmlString("");
         }
 
         const int left = 44, right = 8, top = 12, bottom = 28, gridLines = 4;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
         var plotW = width - left - right;
         var plotH = height - top - bottom;
-        var max = NiceCeiling(points.Max(p => p.Value));
-        var step = points.Count is 1 ? 0 : (double)plotW / (points.Count - 1);
-        var coords = points.Select((p, i) => (X: left + i * step, Y: top + plotH - p.Value / max * plotH)).ToArray();
-        var line = string.Join(" L ", coords.Select(c => $"{F(c.X)},{F(c.Y)}"));
+        var max = NiceCeiling(series.Max(s => s.Values.Max()));
+        var step = times.Count is 1 ? 0 : (double)plotW / (times.Count - 1);
+        double X(int i) => left + i * step;
+        double Y(double v) => top + plotH - v / max * plotH;
 
-        var svg = new StringBuilder();
-        svg.Append($"""<svg class="ts-chart ts-area" viewBox="0 0 {width} {height}" role="img" aria-label="{label}">""");
-        svg.Append("""<defs><linearGradient id="ts-area-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--ts-chart-1)" stop-opacity="0.35" /><stop offset="1" stop-color="var(--ts-chart-1)" stop-opacity="0" /></linearGradient></defs>""");
+        var html = new StringBuilder("<div class=\"ts-tschart\">");
+        html.Append($"""<svg class="ts-chart" viewBox="0 0 {width} {height}" role="img" aria-label="{label}">""");
         for (var g = 0; g <= gridLines; g++)
         {
             var y = top + (double)plotH / gridLines * g;
-            svg.Append($"""<line class="ts-chart-grid" x1="{left}" y1="{F(y)}" x2="{width - right}" y2="{F(y)}" />""");
-            svg.Append($"""<text class="ts-chart-axis" x="{left - 8}" y="{F(y + 3)}" text-anchor="end">{Compact(max - max / gridLines * g)}</text>""");
+            html.Append($"""<line class="ts-chart-grid" x1="{left}" y1="{F(y)}" x2="{width - right}" y2="{F(y)}" />""");
+            html.Append($"""<text class="ts-chart-axis" x="{left - 8}" y="{F(y + 3)}" text-anchor="end">{Compact(max - max / gridLines * g)}</text>""");
         }
 
-        foreach (var (index, anchor) in new[] { (0, "start"), (points.Count / 2, "middle"), (points.Count - 1, "end") }.DistinctBy(t => t.Item1))
+        var last = times.Count - 1;
+        foreach (var i in Enumerable.Range(0, 5).Select(k => (int)Math.Round(k * last / 4.0)).Distinct())
         {
-            svg.Append($"""<text class="ts-chart-axis" x="{F(coords[index].X)}" y="{height - 8}" text-anchor="{anchor}">{points[index].Label}</text>""");
+            var anchor = i == 0 ? "start" : i == last ? "end" : "middle";
+            html.Append($"""<text class="ts-chart-axis" x="{F(X(i))}" y="{height - 8}" text-anchor="{anchor}">{times[i].ToString(tickFormat, inv)}</text>""");
         }
 
-        svg.Append($"""<path d="M {left},{top + plotH} L {line} L {F(coords[^1].X)},{top + plotH} Z" fill="url(#ts-area-fill)" />""");
-        svg.Append($"""<path class="ts-chart-line ts-chart-series-1" d="M {line}" />""");
-
-        // ponytail: native <title> tooltips; swap for an HTML tooltip island if richer hover is needed.
-        var hitW = points.Count is 1 ? plotW : step;
-        for (var i = 0; i < coords.Length; i++)
+        for (var k = 0; k < series.Count; k++)
         {
-            var (x, y) = coords[i];
-            svg.Append($"""<g class="ts-area-point"><rect x="{F(x - hitW / 2)}" y="{top}" width="{F(hitW)}" height="{plotH}" /><line x1="{F(x)}" y1="{top}" x2="{F(x)}" y2="{top + plotH}" /><circle cx="{F(x)}" cy="{F(y)}" r="4" /><title>{points[i].Value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} · {points[i].Label}</title></g>""");
+            var line = string.Join(" L ", series[k].Values.Select((v, i) => $"{F(X(i))},{F(Y(v))}"));
+            html.Append($"""<path class="ts-chart-line ts-cat-{k + 1}" d="M {line}" />""");
         }
 
-        svg.Append("</svg>");
-        return new HtmlString(svg.ToString());
+        html.Append("</svg>");
+
+        // ponytail: one hover column per point (CSS-only tooltip); fine for a few hundred points.
+        // The overlay is aria-hidden; the legend totals carry the text summary.
+        var hitW = times.Count is 1 ? plotW : step;
+        html.Append("""<div class="ts-tschart-hover" aria-hidden="true">""");
+        for (var i = 0; i < times.Count; i++)
+        {
+            var flip = X(i) > width / 2.0 ? " ts-tschart-tip-left" : "";
+            html.Append($"""<div class="ts-tschart-col" style="left:{P(X(i) - hitW / 2, width)}%;width:{P(hitW, width)}%;top:{P(top, height)}%;height:{P(plotH, height)}%">""");
+            for (var k = 0; k < series.Count; k++)
+            {
+                html.Append($"""<span class="ts-tschart-dot ts-cat-{k + 1}" style="top:{P(Y(series[k].Values[i]) - top, plotH)}%"></span>""");
+            }
+
+            html.Append($"""<div class="ts-tschart-tip{flip}"><time datetime="{times[i]:yyyy-MM-ddTHH:mmZ}">{times[i].ToString("ddd, MMM d, yyyy · HH:mm 'UTC'", inv)}</time><dl>""");
+            for (var k = 0; k < series.Count; k++)
+            {
+                html.Append($"""<div><dt><span class="ts-chart-swatch ts-cat-{k + 1}"></span>{series[k].Name}</dt><dd>{series[k].Values[i].ToString("N0", inv)}</dd></div>""");
+            }
+
+            html.Append("</dl></div></div>");
+        }
+
+        html.Append("</div></div>");
+        return new HtmlString(html.ToString());
     }
 
     // 1-2-5 rounding so the y-axis lands on readable ticks.
@@ -147,6 +177,8 @@ public static class Charts
         >= 1_000 => $"{F(value / 1_000)}k",
         _ => F(value),
     };
+
+    private static string P(double part, double whole) => (part / whole * 100).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
 
     private static string F(double value) => value.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
 }

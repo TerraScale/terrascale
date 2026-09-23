@@ -37,11 +37,6 @@ public sealed partial class DashboardStore
         long StorageBytes,
         long WriteUnits);
 
-    /// <summary>A checkout option on the usage page. <paramref name="Href"/> is
-    /// the demo local-checkout link; the page swaps it for the Stripe sandbox
-    /// checkout when the provider is configured.</summary>
-    public sealed record CheckoutPlanRow(string PlanId, string PlanKey, string Label, string Href);
-
     public string BillingAccountStatus => IsPersonalOrganization ? "personal_free" : ActiveOrganization.BillingStatus;
     public string BillingPlanName => IsPersonalOrganization ? "Personal free allowance" : Plans.FirstOrDefault(p => p.Id == ActiveOrganization.PlanId)?.Name ?? "Billing required";
     public string BillingPlanId => IsPersonalOrganization ? "plan_free" : ActiveOrganization.PlanId;
@@ -73,15 +68,6 @@ public sealed partial class DashboardStore
     public long StorageBytesTotal => Usage.StorageMb * 1024 * 1024;
     public long StorageLimitBytes => Usage.StorageLimitMb * 1024 * 1024;
     public double StoragePercentUsed => StorageLimitBytes is 0 ? 0 : (double)StorageBytesTotal / StorageLimitBytes * 100;
-
-    // Checkout catalog offered on the usage page (ts-dashboard billing plans).
-    public ImmutableArray<CheckoutPlanRow> CheckoutPlans { get; } =
-    [
-        new("plan_starter", "starter", $"Starter monthly - {FormatMoney(500, "USD")}", "/checkout/usage_plan_starter"),
-        new("plan_pro", "pro", $"Pro monthly - {FormatMoney(5000, "USD")}", "/checkout/usage_plan_pro"),
-        new("plan_scale_v2", "business", $"Scale monthly - {FormatMoney(50000, "USD")}", "/checkout/usage_plan_scale_v2"),
-        new("plan_business", "business", $"Business monthly - {FormatMoney(9900, "USD")}", "/checkout/usage_plan_business"),
-    ];
 
     // Spending controls (paid-excess consent + organization cap), persisted in memory.
     public bool PaidExcessEnabled { get => World.PaidExcessEnabled; private set => World.PaidExcessEnabled = value; }
@@ -180,6 +166,19 @@ public sealed partial class DashboardStore
                 storageBytes,
                 writes);
         })];
+
+    /// <summary>Workload history per operation (reads, writes, replication) for one range.</summary>
+    // ponytail: demo split of the seeded total workload; swap for per-operation
+    // usage facts once the usage API reports them.
+    public ImmutableArray<(string Operation, ImmutableArray<double> Values)> WorkloadOperations(string range)
+    {
+        var totals = Workloads.Where(w => w.Range == range).SelectMany(w => w.Points).Select(p => p.Value).ToArray();
+        var replicated = Databases.Any(d => d.BackupRegion is not null);
+        var reads = totals.Select((t, i) => Math.Round(t * (0.62 + 0.08 * Math.Sin(i * 0.35)))).ToArray();
+        var writes = totals.Select((t, i) => t - reads[i]).ToArray();
+        var replication = writes.Select((w, i) => replicated ? Math.Round(w * (0.35 + 0.05 * Math.Cos(i * 0.5))) : 0).ToArray();
+        return [("Reads", [.. reads]), ("Writes", [.. writes]), ("Replication", [.. replication])];
+    }
 
     public static string FormatBytes(double bytes)
     {

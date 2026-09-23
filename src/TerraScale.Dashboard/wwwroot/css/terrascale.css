@@ -89,6 +89,10 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   /* Charts — CVD-validated blue-family pair. */
   --ts-chart-1: #2563EB;
   --ts-chart-2: #0891B2;
+  /* Categorical series, fixed order (validated on the dark canvas, all pairs). */
+  --ts-cat-1: #3987E5;
+  --ts-cat-2: #D95926;
+  --ts-cat-3: #199E70;
 
   /* Glass surfaces + blur. */
   --ts-glass-bg: rgba(22, 24, 31, 0.52);
@@ -4004,13 +4008,15 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   /* Usage page: flat sections (no boxed panels) split by hairlines; tabs +
      filters toolbar, allowance rings, area history, share bars, settings list. */
+  /* Filter labels are sr-only so every tab's toolbar is one control tall. */
   .ts-usage-toolbar {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-end;
+    align-items: center;
     justify-content: space-between;
     gap: var(--ts-md);
-    padding-bottom: var(--ts-lg);
+    min-height: 58px;
+    padding-bottom: var(--ts-md);
     border-bottom: 1px solid var(--ts-line);
   }
 
@@ -4050,7 +4056,8 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-usage-allowance > .ts-usage-stats { flex: 1 1 16rem; }
 
-  .ts-usage-overview {
+  .ts-usage-columns,
+  .ts-usage-divided {
     display: grid;
     gap: var(--ts-xl);
     padding-top: 20px;
@@ -4058,9 +4065,9 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   @media (min-width: 64rem) {
-    .ts-usage-overview { grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr); }
+    .ts-usage-columns { grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr); }
 
-    .ts-usage-breakdown {
+    .ts-usage-aside {
       padding-left: var(--ts-xl);
       border-left: 1px solid var(--ts-line);
     }
@@ -4182,33 +4189,137 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     color: var(--ts-ink-muted);
   }
 
+  /* Headline figures for billing and settings: bigger values, same left rule. */
+  .ts-usage-kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: var(--ts-lg);
+    margin: 0;
+  }
+
+  .ts-usage-kpis > div {
+    display: grid;
+    gap: var(--ts-xs);
+    align-content: start;
+    min-width: 0;
+    padding-left: var(--ts-md);
+    border-left: 2px solid var(--ts-line);
+  }
+
+  .ts-usage-kpis dt {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-xs);
+    font-size: var(--ts-fs-meta);
+    color: var(--ts-ink-muted);
+  }
+
+  .ts-usage-kpis dd {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--ts-sm);
+    margin: 0;
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+  }
+
+  .ts-usage-kpi-value {
+    color: var(--ts-ink);
+    font-size: 1.5rem;
+    font-weight: var(--ts-fw-semibold);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+  }
+
+  .ts-usage-kpis .ts-bar-track { height: 6px; }
+
+  .ts-usage-pager {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ts-md);
+  }
+
+  .ts-usage-page { min-width: 2.25rem; justify-content: center; }
+  .ts-usage-page[aria-current="page"] { background-color: var(--ts-fill-hover); color: var(--ts-ink); }
+  .ts-usage-flip { display: inline-flex; transform: scaleX(-1); }
+
   .ts-usage-figures {
     grid-template-columns: none;
     grid-auto-flow: column;
     grid-auto-columns: minmax(4.5rem, auto);
   }
 
+  .ts-cat-1 { --ts-series: var(--ts-cat-1); }
+  .ts-cat-2 { --ts-series: var(--ts-cat-2); }
+  .ts-cat-3 { --ts-series: var(--ts-cat-3); }
+  .ts-chart .ts-chart-line[class*="ts-cat-"] { stroke: var(--ts-series); }
+  .ts-chart-swatch[class*="ts-cat-"] { background-color: var(--ts-series); }
+  .ts-usage-figures dt { display: flex; align-items: center; gap: var(--ts-xs); }
+
   /* Keep axis text legible on phones: scroll the plot instead of shrinking it. */
-  .ts-chart-shell:has(> .ts-area) { overflow-x: auto; }
-  .ts-area { min-width: 36rem; }
+  .ts-chart-shell:has(> .ts-tschart) { overflow-x: auto; }
 
-  .ts-area .ts-area-point rect { fill: transparent; }
-
-  .ts-area .ts-area-point line {
-    stroke: var(--ts-ink-muted);
-    stroke-dasharray: 3 3;
-    opacity: 0;
+  .ts-tschart {
+    position: relative;
+    min-width: 36rem;
   }
 
-  .ts-area .ts-area-point circle {
-    fill: var(--ts-chart-1);
-    stroke: var(--ts-surface);
-    stroke-width: 2;
-    opacity: 0;
+  .ts-tschart .ts-chart { display: block; }
+
+  .ts-tschart-col { position: absolute; }
+
+  .ts-tschart-col::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 50%;
+    border-left: 1px dashed var(--ts-ink-muted);
   }
 
-  .ts-area .ts-area-point:hover line,
-  .ts-area .ts-area-point:hover circle { opacity: 1; }
+  .ts-tschart-dot {
+    position: absolute;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--ts-series);
+    box-shadow: 0 0 0 2px var(--ts-surface);
+    transform: translate(-50%, -50%);
+  }
+
+  .ts-tschart-tip {
+    position: absolute;
+    top: 0;
+    left: calc(50% + 12px);
+    z-index: 1;
+    display: grid;
+    gap: var(--ts-xs);
+    min-width: 12rem;
+    padding: var(--ts-sm) var(--ts-md);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+    box-shadow: var(--ts-overlay-edge);
+    font-size: var(--ts-fs-meta);
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  .ts-tschart-tip-left { left: auto; right: calc(50% + 12px); }
+  .ts-tschart-tip time { color: var(--ts-ink-muted); }
+  .ts-tschart-tip dl { display: grid; gap: 2px; margin: 0; }
+  .ts-tschart-tip dl > div { display: flex; justify-content: space-between; gap: var(--ts-lg); }
+  .ts-tschart-tip dt { display: flex; align-items: center; gap: var(--ts-xs); color: var(--ts-ink-muted); }
+  .ts-tschart-tip dd { margin: 0; color: var(--ts-ink); font-family: var(--ts-font-mono); }
+
+  .ts-tschart-col::before,
+  .ts-tschart-dot,
+  .ts-tschart-tip { opacity: 0; }
+
+  .ts-tschart-col:hover::before,
+  .ts-tschart-col:hover .ts-tschart-dot,
+  .ts-tschart-col:hover .ts-tschart-tip { opacity: 1; }
 
   .ts-usage-share {
     display: grid;
@@ -4240,13 +4351,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-usage-disclosure { line-height: 1.6; }
 
-  .ts-usage-billing-actions {
-    flex-wrap: wrap;
-    gap: var(--ts-sm);
-  }
-
-  .ts-usage-billing-actions .ts-select { width: auto; min-width: 13rem; }
-
   .ts-usage .ts-link {
     display: inline-flex;
     align-items: center;
@@ -4270,7 +4374,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     align-items: center;
     justify-content: space-between;
     gap: var(--ts-sm) var(--ts-xl);
-    padding-block: var(--ts-lg);
+    padding-block: var(--ts-md);
     border-top: 1px solid var(--ts-line);
   }
 
