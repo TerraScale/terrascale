@@ -294,8 +294,10 @@ public sealed class PagesSmokeTests
         await Assert.That(page.Contains("Usage data is partially loaded")).IsFalse();
         await Assert.That(page.Contains("Billing dimensions")).IsFalse();
         await Assert.That(page.Contains("Organization usage")).IsFalse();
-        await Assert.That(page.Contains("Save spending controls")).IsTrue();
-        await Assert.That(page.Contains("Monthly organization spending cap in USD")).IsTrue();
+        var settings = await app.GetPageAsync(client, "/usage?tab=settings");
+        await Assert.That(settings.Contains("data-open-dialog=\"spending-controls-dialog\"")).IsTrue();
+        await Assert.That(settings.Contains("Save spending controls")).IsTrue();
+        await Assert.That(settings.Contains("Monthly organization spending cap in USD")).IsTrue();
     }
 
     [Test]

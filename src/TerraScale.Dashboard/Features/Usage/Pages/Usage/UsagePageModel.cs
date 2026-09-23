@@ -3,7 +3,14 @@ using TerraScale.Dashboard;
 namespace TerraScale.Dashboard.Features.Usage.Pages.Usage;
 
 public sealed record UsagePageModel(
+    string Tab,
+    string ProjectFilter,
+    string DatabaseFilter,
+    string RangeFilter,
+    IReadOnlyList<(string Id, string Name)> ProjectOptions,
+    IReadOnlyList<(string Id, string Name)> DatabaseOptions,
     IReadOnlyList<UsageStatCard> Stats,
+    IReadOnlyList<UsageStatCard> Traffic,
     IReadOnlyList<DashboardStore.PlanResourceRow> PlanResources,
     IReadOnlyList<DashboardStore.ProjectContributionRow> ProjectContributions,
     IReadOnlyList<UsageHistoryRangeOption> HistoryRanges,
@@ -32,13 +39,20 @@ public sealed record UsagePageModel(
     bool BillingActionRequired,
     string? StorageCoverageDeadline,
     string RetentionAlertBody,
-    string? SavedControlsMessage) : IPageModel
+    string? SavedControlsMessage,
+    int RetentionDays) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
 
-    public static UsagePageModel From(DashboardStore store, StripePaymentOptions stripe, string href, string? range, string? billing, string? saved)
+    public static UsagePageModel From(DashboardStore store, StripePaymentOptions stripe, string href, string? range, string? billing, string? saved,
+        string? tab = null, string? project = null, string? database = null)
     {
-        var databases = store.ProjectDatabases(store.ActiveProjectId);
+        // Overview filters narrow the database scope; allowances, traffic and
+        // workload history are organization totals and stay unfiltered.
+        var projectFilter = store.Projects.Any(p => p.Id == project) ? project! : "";
+        var projectDatabases = projectFilter is "" ? store.Databases : store.ProjectDatabases(projectFilter);
+        var databaseFilter = projectDatabases.Any(d => d.Id == database) ? database! : "";
+        var databases = databaseFilter is "" ? projectDatabases : [.. projectDatabases.Where(d => d.Id == databaseFilter)];
 
         // With the Stripe sandbox configured the usage page offers exactly the
         // plans that have a sandbox price; otherwise it keeps the demo catalog.
@@ -54,7 +68,6 @@ public sealed record UsagePageModel(
             ? $"/billing/portal?return={Uri.EscapeDataString("/usage")}"
             : "/billing/portal/usage_portal";
 
-        // Old page falls back to database/region counters when the summary has no KPIs.
         var regionCount = databases
             .SelectMany(d => new[] { d.PrimaryRegion }.Concat(d.BackupRegion is null ? [] : [d.BackupRegion]))
             .Distinct()
@@ -63,6 +76,11 @@ public sealed record UsagePageModel(
         [
             new("Databases", DashboardStore.FormatNumber(databases.Length), "Saved project databases", "Database"),
             new("Regions", DashboardStore.FormatNumber(regionCount), "Distinct placement regions", "Globe2"),
+            new("Storage", DashboardStore.FormatBytes(databases.Sum(d => d.SizeMb) * 1024L * 1024), "Logical size", "HardDrive"),
+            new("Documents", DashboardStore.FormatNumber(databases.Sum(d => d.DocumentCount)), "Stored documents", "FileText"),
+        ];
+        List<UsageStatCard> traffic =
+        [
             new("Requests", DashboardStore.FormatNumber(store.Usage.Requests), "Current billing period", "Activity"),
             new("Reads", DashboardStore.FormatNumber(store.Usage.ReadUnits), "Unbilled usage fact", "BookOpen"),
         ];
@@ -140,7 +158,14 @@ public sealed record UsagePageModel(
         })];
 
         return new(
+            Tab: tab is "billing" or "settings" ? tab : "overview",
+            ProjectFilter: projectFilter,
+            DatabaseFilter: databaseFilter,
+            RangeFilter: selectedRange,
+            ProjectOptions: [.. store.Projects.Select(p => (p.Id, p.Name))],
+            DatabaseOptions: [.. projectDatabases.Select(d => (d.Id, d.Name))],
             Stats: stats,
+            Traffic: traffic,
             PlanResources: [.. store.OrganizationPlanResources()],
             ProjectContributions: [.. store.ProjectContributionRows()],
             HistoryRanges: historyRanges,
@@ -150,7 +175,7 @@ public sealed record UsagePageModel(
             History: history,
             HistorySummary: historySummary,
             Databases: databases,
-            DatabaseCaps: [.. databases.Select(d => (d.Id, d.Name, Cap: store.DatabaseSpendCap(d.Id)))],
+            DatabaseCaps: [.. store.ProjectDatabases(store.ActiveProjectId).Select(d => (d.Id, d.Name, Cap: store.DatabaseSpendCap(d.Id)))],
             CheckoutPlans: checkoutPlans,
             StripeCheckoutEnabled: stripe.Enabled,
             BillingPortalHref: billingPortalHref,
@@ -182,7 +207,8 @@ public sealed record UsagePageModel(
                 "ok" => "Spending controls saved.",
                 "invalid" => "Enter a non-negative dollar amount with at most two decimal places.",
                 _ => null,
-            })
+            },
+            RetentionDays: retentionDays)
         {
             Shell = ShellFactory.Create(store, href),
         };

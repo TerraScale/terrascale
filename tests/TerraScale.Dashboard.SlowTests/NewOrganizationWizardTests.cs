@@ -221,7 +221,7 @@ public sealed class NewOrganizationWizardTests
 
         var organization = await app.GetPageAsync(client, "/organization");
         await Assert.That(organization.Contains("Nova Labs")).IsTrue();
-        var usage = await app.GetPageAsync(client, "/usage");
+        var usage = await app.GetPageAsync(client, "/usage?tab=billing");
         await Assert.That(usage.Contains("<span class=\"ts-badge ts-badge-info\">Dedicated</span>")).IsTrue();
     }
 
@@ -286,7 +286,7 @@ public sealed class NewOrganizationWizardTests
         using var project = await DashboardTestApp.PostFormAsync(client, StepAction,
             new Dictionary<string, string> { ["step"] = "project", ["name"] = "nova-prod", ["region"] = "GRU" });
 
-        var usage = await app.GetPageAsync(client, "/usage");
+        var usage = await app.GetPageAsync(client, "/usage?tab=billing");
         await Assert.That(usage.StatusCode).IsEqualTo(200);
         var organization = await app.GetPageAsync(client, "/organization");
         await Assert.That(organization.Contains("Nova Labs")).IsTrue();

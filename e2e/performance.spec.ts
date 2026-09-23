@@ -160,14 +160,3 @@ test("mobile shell and flow bindings initialize without script errors", async ({
   await expect(page.locator("#password")).toHaveAttribute("type", "text");
   expect(errors).toEqual([]);
 });
-
-test("deferred read-only charts render when scrolled into view", async ({ page }) => {
-  await page.goto("/usage");
-  const charts = page.locator(".ts-render-deferred");
-  await expect(charts).toHaveCount(2);
-  for (const chart of await charts.all()) {
-    await chart.scrollIntoViewIfNeeded();
-    await expect(chart.locator("h3")).toBeVisible();
-    expect(await chart.evaluate(node => node.getBoundingClientRect().height)).toBeGreaterThan(50);
-  }
-});

@@ -2584,12 +2584,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     }
   }
 
-  /* Opt-in only: lower-page read-only charts, never forms, menus or dialogs. */
-  .ts-render-deferred {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 16rem;
-  }
-
   .ts-hidden {
     display: none !important;
   }
@@ -4008,27 +4002,68 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-text-danger { color: var(--ts-danger); }
   .ts-text-warning { color: var(--ts-warning); }
 
-  /* Usage page: allowance rings + stat rail, area history, share bars, billing split. */
-  /* The base panel only pads the block axis; usage panels pad all sides. */
-  .ts-usage .ts-panel { padding: 20px; }
-
-  @media (max-width: 39.99rem) {
-    .ts-usage .ts-panel { padding: var(--ts-lg); }
+  /* Usage page: flat sections (no boxed panels) split by hairlines; tabs +
+     filters toolbar, allowance rings, area history, share bars, settings list. */
+  .ts-usage-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--ts-md);
+    padding-bottom: var(--ts-lg);
+    border-bottom: 1px solid var(--ts-line);
   }
 
-  .ts-usage-hero-body {
+  .ts-usage-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--ts-sm);
+  }
+
+  .ts-usage-filters .ts-filter-field {
+    flex: 1 1 10rem;
+    min-width: 10rem;
+  }
+
+  .ts-usage-section {
+    display: grid;
+    gap: var(--ts-lg);
+    min-width: 0;
+    align-content: start;
+  }
+
+  .ts-usage-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--ts-md);
+  }
+
+  .ts-usage-allowance {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--ts-xl) 48px;
+  }
+
+  .ts-usage-allowance > .ts-usage-stats { flex: 1 1 16rem; }
+
+  .ts-usage-overview {
     display: grid;
     gap: var(--ts-xl);
-    grid-template-columns: minmax(0, 1fr);
-    align-items: center;
+    padding-top: 20px;
+    border-top: 1px solid var(--ts-line);
   }
 
-  @media (min-width: 48rem) {
-    .ts-usage-hero-body { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  }
+  @media (min-width: 64rem) {
+    .ts-usage-overview { grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr); }
 
-  @media (min-width: 80rem) {
-    .ts-usage-hero-body { grid-template-columns: 1fr 1fr 1.2fr; }
+    .ts-usage-breakdown {
+      padding-left: var(--ts-xl);
+      border-left: 1px solid var(--ts-line);
+    }
   }
 
   .ts-usage-gauge {
@@ -4061,8 +4096,8 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-usage-ring {
     position: relative;
     flex: 0 0 auto;
-    width: 112px;
-    height: 112px;
+    width: 96px;
+    height: 96px;
   }
 
   .ts-ring {
@@ -4096,7 +4131,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   .ts-usage-ring-value strong {
-    font-size: 22px;
+    font-size: 20px;
     line-height: 1.1;
     font-weight: var(--ts-fw-semibold);
     font-variant-numeric: tabular-nums;
@@ -4107,39 +4142,24 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     color: var(--ts-ink-muted);
   }
 
-  .ts-usage-rail,
-  .ts-usage-facts,
-  .ts-usage-figures {
+  /* Stats read as a row of figures, each marked by a left rule; wraps cleanly. */
+  .ts-usage-stats {
     display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+    gap: var(--ts-md);
     margin: 0;
-    overflow: hidden;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-control);
-    background-color: var(--ts-surface);
   }
 
-  .ts-usage-rail {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  @media (min-width: 48rem) and (max-width: 79.99rem) {
-    .ts-usage-rail { grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  }
-
-  .ts-usage-rail > div,
-  .ts-usage-facts > div,
-  .ts-usage-figures > div {
+  .ts-usage-stats > div {
     display: grid;
     gap: 2px;
-    padding: var(--ts-md);
+    align-content: start;
     min-width: 0;
-    /* Hairlines on the top/left edges; the container clips the outer ones. */
-    box-shadow: -1px -1px 0 var(--ts-line);
+    padding-left: var(--ts-md);
+    border-left: 2px solid var(--ts-line);
   }
 
-  .ts-usage-rail dt,
-  .ts-usage-facts dt,
-  .ts-usage-figures dt {
+  .ts-usage-stats dt {
     display: flex;
     align-items: center;
     gap: var(--ts-xs);
@@ -4147,9 +4167,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     color: var(--ts-ink-muted);
   }
 
-  .ts-usage-rail dd,
-  .ts-usage-facts dd,
-  .ts-usage-figures dd {
+  .ts-usage-stats dd {
     margin: 0;
     font-size: var(--ts-fs-panel-title);
     font-weight: var(--ts-fw-semibold);
@@ -4157,7 +4175,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     overflow-wrap: anywhere;
   }
 
-  .ts-usage-facts dd small {
+  .ts-usage-stats dd small {
     white-space: nowrap;
     font-size: var(--ts-fs-meta);
     font-weight: var(--ts-fw-medium);
@@ -4165,13 +4183,9 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   .ts-usage-figures {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    width: fit-content;
-    min-width: min(100%, 24rem);
-  }
-
-  .ts-usage-facts {
-    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(4.5rem, auto);
   }
 
   /* Keep axis text legible on phones: scroll the plot instead of shrinking it. */
@@ -4196,17 +4210,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-area .ts-area-point:hover line,
   .ts-area .ts-area-point:hover circle { opacity: 1; }
 
-  .ts-usage-split,
-  .ts-usage-billing {
-    gap: var(--ts-lg);
-    align-items: start;
-  }
-
-  @media (min-width: 64rem) {
-    .ts-usage-split { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .ts-usage-billing { grid-template-columns: minmax(0, 2fr) minmax(20rem, 1fr); }
-  }
-
   .ts-usage-share {
     display: grid;
     gap: var(--ts-lg);
@@ -4228,7 +4231,12 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     min-width: 0;
   }
 
+  .ts-usage-share-head > :last-child { white-space: nowrap; }
+
   .ts-usage-share .ts-bar-fill { background-color: var(--ts-accent); }
+
+  .ts-usage-drill { color: var(--ts-ink); }
+  .ts-usage-drill:hover { color: var(--ts-accent); }
 
   .ts-usage-disclosure { line-height: 1.6; }
 
@@ -4239,11 +4247,50 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-usage-billing-actions .ts-select { width: auto; min-width: 13rem; }
 
-  .ts-usage-billing .ts-link {
+  .ts-usage .ts-link {
     display: inline-flex;
     align-items: center;
     gap: var(--ts-xs);
     white-space: nowrap;
+  }
+
+  /* Tables sit on the page like the rest of the sections: rows, no box. */
+  .ts-usage .ts-table-wrap {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background-color: transparent;
+  }
+
+  .ts-usage-settings { margin: 0; }
+
+  .ts-usage-settings > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ts-sm) var(--ts-xl);
+    padding-block: var(--ts-lg);
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-usage-settings > div:last-child { border-bottom: 1px solid var(--ts-line); }
+
+  .ts-usage-settings dt {
+    display: grid;
+    gap: 2px;
+    font-weight: var(--ts-fw-medium);
+  }
+
+  .ts-usage-settings dt small {
+    font-size: var(--ts-fs-meta);
+    font-weight: 400;
+    color: var(--ts-ink-muted);
+  }
+
+  .ts-usage-settings dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
   }
 
   .ts-bar-track {

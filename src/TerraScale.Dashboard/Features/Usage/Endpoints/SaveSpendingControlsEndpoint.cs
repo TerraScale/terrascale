@@ -25,13 +25,13 @@ public sealed partial class SaveSpendingControlsEndpoint(DashboardStore store) :
         // v1 client validation: blank, or a non-negative dollar amount with at most two decimals.
         if (!IsValidCap(cap) || !dbCaps.Values.All(IsValidCap))
         {
-            return Results.Redirect("/usage?saved=invalid", false, false);
+            return Results.Redirect("/usage?tab=settings&saved=invalid", false, false);
         }
 
         var enabled = form["paidExcess"] == "true";
         store.UpdateSpendingControls(enabled, cap.Length is 0 ? null : cap);
         store.UpdateDatabaseSpendCaps(dbCaps);
-        return Results.Redirect("/usage?saved=ok", false, false);
+        return Results.Redirect("/usage?tab=settings&saved=ok", false, false);
     }
 
     private static bool IsValidCap(string value) => value.Length is 0 || CapPattern().IsMatch(value);

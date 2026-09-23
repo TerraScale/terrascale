@@ -453,14 +453,14 @@ public sealed class MutationsTests
 
         using var invalid = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/usage/spending-controls",
             new Dictionary<string, string> { ["paidExcess"] = "true", ["spendCap"] = "-5" });
-        await Assert.That(invalid.Headers.Location!.ToString()).IsEqualTo("/usage?saved=invalid");
-        var invalidPage = await app.GetPageAsync(client, "/usage?saved=invalid");
+        await Assert.That(invalid.Headers.Location!.ToString()).IsEqualTo("/usage?tab=settings&saved=invalid");
+        var invalidPage = await app.GetPageAsync(client, "/usage?tab=settings&saved=invalid");
         await Assert.That(invalidPage.Contains("Enter a non-negative dollar amount with at most two decimal places.")).IsTrue();
 
         using var saved = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/usage/spending-controls",
             new Dictionary<string, string> { ["paidExcess"] = "true", ["spendCap"] = "100.50" });
-        await Assert.That(saved.Headers.Location!.ToString()).IsEqualTo("/usage?saved=ok");
-        var page = await app.GetPageAsync(client, "/usage?saved=ok");
+        await Assert.That(saved.Headers.Location!.ToString()).IsEqualTo("/usage?tab=settings&saved=ok");
+        var page = await app.GetPageAsync(client, "/usage?tab=settings&saved=ok");
         await Assert.That(page.Contains("Spending controls saved.")).IsTrue();
         await Assert.That(page.Contains("value=\"100.50\"")).IsTrue();
     }

@@ -1,8 +1,13 @@
 @inherits RazorSlice<UsagePageModel>
 @{
     var shell = Model.Shell;
-    Microsoft.AspNetCore.Html.HtmlString Icon(string name, int size = 15) => (typeof(Icons).GetMethod(name)?.Invoke(null, [size]) as Microsoft.AspNetCore.Html.HtmlString) ?? Icons.Circle(size);
+    Microsoft.AspNetCore.Html.HtmlString Icon(string name, int size = 15) => IconByName(name, size);
     string InvoiceTone(string status) => status == "paid" ? "ts-badge-success" : "ts-badge-warning";
+    (string Id, string Label)[] tabs = [("overview", "Overview"), ("billing", "Billing"), ("settings", "Settings")];
+    var filtered = Model.ProjectFilter.Length > 0 || Model.DatabaseFilter.Length > 0;
+    var savedOk = Model.SavedControlsMessage is "Spending controls saved.";
+    var saveError = savedOk ? null : Model.SavedControlsMessage;
+    var rangeLabel = Model.HistoryRanges.First(r => r.Selected).Label;
 }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-usage">
@@ -21,175 +26,160 @@
         </div>
     }
 
-    <section class="ts-panel ts-usage-hero">
-        <div class="ts-panel-header ts-usage-head-actions">
-            <div>
-                <h2 class="ts-panel-title">Plan allowance</h2>
-                <p class="ts-panel-subtitle">Organization totals for the current billing period · @Model.PlanName@(Model.Renewal is "Unknown" ? "" : $" · renews {Model.Renewal}")</p>
-            </div>
-            <a class="ts-btn ts-btn-outline" href="#billing">@Icons.CreditCard(16) Billing</a>
-        </div>
-        <div class="ts-usage-hero-body">
-            @foreach (var row in Model.PlanResources)
+    <div class="ts-usage-toolbar">
+        <nav class="ts-tabs" aria-label="Usage sections">
+            @foreach (var (id, label) in tabs)
             {
-                <div class="ts-usage-gauge">
-                    <div class="ts-usage-ring">
-                        @Charts.Ring(row.Percent, row.Tone, $"{row.Resource}: {DashboardStore.FormatPercent(row.Percent)} of included")
-                        <span class="ts-usage-ring-value"><strong>@(Math.Round(row.Percent).ToString("0", System.Globalization.CultureInfo.InvariantCulture))%</strong><small>of plan</small></span>
-                    </div>
-                    <div class="ts-stack-xs">
-                        <span class="ts-metric-label">@(Icon(row.Resource == "Writes" ? "Activity" : "HardDrive", 14)) @row.Resource</span>
-                        <span class="ts-usage-gauge-value">@row.Used <small>/ @row.Included</small></span>
-                        <span class="ts-meta">@row.Balance</span>
-                        <span><span class="ts-badge ts-badge-@(row.Tone)">@(Icon(row.Tone == "success" ? "CircleCheckBig" : "TriangleAlert", 12)) @row.Status</span></span>
-                    </div>
-                </div>
+                <a class="ts-tab" href="/usage?tab=@id" aria-current="@(Model.Tab == id ? "page" : null)" aria-selected="@(Model.Tab == id ? "true" : "false")">@label</a>
             }
-            <dl class="ts-usage-rail">
-                @foreach (var stat in Model.Stats)
+        </nav>
+        @if (Model.Tab is "overview")
+        {
+            <form class="ts-usage-filters" method="get" action="/usage" role="search" aria-label="Filter usage">
+                @FilterMenu("project", "Project", Model.ProjectFilter, "All projects", Model.ProjectOptions)
+                @FilterMenu("database", "Database", Model.DatabaseFilter, "All databases", Model.DatabaseOptions)
+                @FilterMenu("range", "Period", Model.RangeFilter, null, [.. Model.HistoryRanges.Select(r => (r.Value, r.Label))])
+                @if (filtered)
                 {
+                    <a class="ts-btn ts-btn-ghost" href="/usage?range=@Model.RangeFilter">Clear</a>
+                }
+            </form>
+        }
+    </div>
+
+    @if (Model.Tab is "overview")
+    {
+        <section class="ts-usage-section" aria-labelledby="usage-allowance-title">
+            <div class="ts-usage-head">
+                <div>
+                    <h2 class="ts-panel-title" id="usage-allowance-title">Plan allowance</h2>
+                    <p class="ts-meta">Organization totals for the current billing period · @Model.PlanName@(Model.Renewal is "Unknown" ? "" : $" · renews {Model.Renewal}")</p>
+                </div>
+                <a class="ts-btn ts-btn-ghost" href="/usage?tab=billing">@Icons.CreditCard(16) Billing</a>
+            </div>
+            <div class="ts-usage-allowance">
+                @foreach (var row in Model.PlanResources)
+                {
+                    <div class="ts-usage-gauge">
+                        <div class="ts-usage-ring">
+                            @Charts.Ring(row.Percent, row.Tone, $"{row.Resource}: {DashboardStore.FormatPercent(row.Percent)} of included")
+                            <span class="ts-usage-ring-value"><strong>@(Math.Round(row.Percent).ToString("0", System.Globalization.CultureInfo.InvariantCulture))%</strong><small>of plan</small></span>
+                        </div>
+                        <div class="ts-stack-xs">
+                            <span class="ts-metric-label">@(Icon(row.Resource == "Writes" ? "Activity" : "HardDrive", 14)) @row.Resource</span>
+                            <span class="ts-usage-gauge-value">@row.Used <small>/ @row.Included</small></span>
+                            <span class="ts-meta">@row.Balance</span>
+                            <span><span class="ts-badge ts-badge-@(row.Tone)">@(Icon(row.Tone == "success" ? "CircleCheckBig" : "TriangleAlert", 12)) @row.Status</span></span>
+                        </div>
+                    </div>
+                }
+                @StatList(Model.Traffic)
+            </div>
+        </section>
+
+        <div class="ts-usage-overview">
+            <section class="ts-usage-section" aria-labelledby="usage-history-title">
+                <div class="ts-usage-head">
                     <div>
-                        <dt>@(Icon(stat.Icon, 14)) @stat.Label</dt>
-                        <dd>@stat.Value</dd>
-                        <small class="ts-meta">@stat.Detail</small>
+                        <h2 class="ts-panel-title" id="usage-history-title">Workload history</h2>
+                        <p class="ts-meta">Organization workload, @rangeLabel.ToLowerInvariant() · hover for exact values</p>
                     </div>
-                }
-            </dl>
-        </div>
-    </section>
-
-    <section class="ts-panel">
-        <div class="ts-panel-header ts-usage-head-actions">
-            <div>
-                <h2 class="ts-panel-title">Resource usage history</h2>
-                <p class="ts-panel-subtitle">Observed project workload per interval · hover the chart for exact values</p>
-            </div>
-            <nav class="ts-tabs ts-activity-tabs" aria-label="Usage history period">
-                @foreach (var option in Model.HistoryRanges)
-                {
-                    <a class="ts-tab" href="/usage?range=@option.Value" aria-current="@(option.Selected ? "page" : null)" aria-selected="@(option.Selected ? "true" : "false")" title="@option.Label">@option.Value</a>
-                }
-            </nav>
-        </div>
-        <div class="ts-stack-md">
-            @if (Model.RetentionWarning)
-            {
-                <div class="ts-alert ts-alert-info" role="status">
-                    <span class="ts-alert-title">@Icons.Info(16) History limited by retention</span>
-                    <span class="ts-alert-body">@Model.RetentionAlertBody</span>
+                    @if (Model.HistorySummary.Count > 0)
+                    {
+                        <dl class="ts-usage-stats ts-usage-figures">
+                            @foreach (var figure in Model.HistorySummary)
+                            {
+                                <div><dt>@figure.Label</dt><dd>@figure.Value</dd></div>
+                            }
+                        </dl>
+                    }
                 </div>
-            }
-            @if (Model.History.Count is 0)
-            {
-                @EmptyState("No usage history for this period", "Usage snapshots will appear as project resources are observed.")
-            }
-            else
-            {
-                <dl class="ts-usage-figures">
-                    @foreach (var figure in Model.HistorySummary)
-                    {
-                        <div><dt>@figure.Label</dt><dd>@figure.Value</dd></div>
-                    }
-                </dl>
-                <div class="ts-chart-shell">
-                    @Charts.AreaChart(Model.History, $"Resource usage history, {Model.HistoryRanges.First(r => r.Selected).Label} window")
+                @if (Model.RetentionWarning)
+                {
+                    <div class="ts-alert ts-alert-info" role="status">
+                        <span class="ts-alert-title">@Icons.Info(16) History limited by retention</span>
+                        <span class="ts-alert-body">@Model.RetentionAlertBody</span>
+                    </div>
+                }
+                @if (Model.History.Count is 0)
+                {
+                    @EmptyState("No usage history for this period", "Usage snapshots will appear as project resources are observed.")
+                }
+                else
+                {
+                    <div class="ts-chart-shell">
+                        @Charts.AreaChart(Model.History, $"Workload history, {rangeLabel} window", height: 200)
+                    </div>
+                }
+            </section>
+
+            <section class="ts-usage-section ts-usage-breakdown" aria-labelledby="usage-breakdown-title">
+                <div>
+                    <h2 class="ts-panel-title" id="usage-breakdown-title">@(Model.ProjectFilter.Length > 0 ? "By database" : "By project")</h2>
+                    <p class="ts-meta">@(filtered ? "Filtered scope" : "All projects in the organization")</p>
                 </div>
-            }
-        </div>
-    </section>
-
-    <section class="ts-grid ts-usage-split">
-        <div class="ts-panel ts-render-deferred">
-            <div class="ts-panel-header">
-                <h3 class="ts-panel-title">By project</h3>
-                <p class="ts-panel-subtitle">Share of organization logical storage; reads and egress are unbilled</p>
-            </div>
-            @if (Model.ProjectContributions.Count is 0)
-            {
-                @EmptyState("No projects saved", "No persisted records are available.")
-            }
-            else
-            {
-                <ul class="ts-usage-share">
-                    @foreach (var row in Model.ProjectContributions)
-                    {
-                        <li>
-                            <div class="ts-usage-share-head">
-                                <span class="ts-table-strong">@row.ProjectName</span>
-                                <span class="ts-mono">@row.Storage</span>
-                            </div>
-                            <span class="ts-bar-track"><span class="ts-bar-fill" style="width:@(Share(Model.ProjectContributions.Sum(p => p.StorageBytes), row.StorageBytes))%"></span></span>
-                            <span class="ts-meta">@row.Writes writes</span>
-                        </li>
-                    }
-                </ul>
-            }
-        </div>
-        <div class="ts-panel ts-render-deferred">
-            <div class="ts-panel-header">
-                <h3 class="ts-panel-title">By database</h3>
-                <p class="ts-panel-subtitle">Saved databases in the active project and their placement</p>
-            </div>
-            @if (Model.Databases.Count is 0)
-            {
-                @EmptyState("No databases saved", "Create a database to populate project usage.")
-            }
-            else
-            {
-                <ul class="ts-usage-share">
-                    @foreach (var row in Model.Databases)
-                    {
-                        <li>
-                            <div class="ts-usage-share-head">
-                                <span class="ts-row ts-row-tight">
-                                    <span class="ts-table-strong">@row.Name</span>
-                                    <span class="ts-badge ts-badge-neutral ts-mono">@row.PrimaryRegion.ToUpperInvariant()</span>
-                                    @if (row.BackupRegion is { } backup)
-                                    {
-                                        <span class="ts-badge ts-badge-neutral ts-mono" title="Backup region">+ @backup.ToUpperInvariant()</span>
-                                    }
-                                </span>
-                                <span class="ts-mono">@DashboardStore.FormatBytes(row.SizeMb * 1024L * 1024)</span>
-                            </div>
-                            <span class="ts-bar-track"><span class="ts-bar-fill" style="width:@(Share(Model.Databases.Sum(d => (long)d.SizeMb), row.SizeMb))%"></span></span>
-                            <span class="ts-meta">@DashboardStore.FormatNumber(row.DocumentCount) documents</span>
-                        </li>
-                    }
-                </ul>
-            }
-        </div>
-    </section>
-
-    <section class="ts-grid ts-usage-billing" id="billing">
-        <div class="ts-panel">
-            <div class="ts-panel-header">
-                <h2 class="ts-panel-title">Billing</h2>
-                <p class="ts-panel-subtitle">Billing account and invoice projections</p>
-            </div>
-            <div class="ts-stack-lg">
-                @if (Model.BillingPartial)
+                @StatList(Model.Stats)
+                @if (Model.ProjectFilter.Length is 0)
                 {
-                    <div class="ts-alert ts-alert-warning" role="alert">
-                        <span class="ts-alert-title">@Icons.TriangleAlert(16) Billing data is partially loaded</span>
-                        <span class="ts-alert-body">Some billing details are temporarily unavailable. Available subscription and invoice data remains visible.</span>
-                    </div>
+                    @if (Model.ProjectContributions.Count is 0)
+                    {
+                        @EmptyState("No projects saved", "No persisted records are available.")
+                    }
+                    else
+                    {
+                        <ul class="ts-usage-share">
+                            @foreach (var row in Model.ProjectContributions)
+                            {
+                                <li>
+                                    <div class="ts-usage-share-head">
+                                        <a class="ts-table-strong ts-usage-drill" href="/usage?project=@row.ProjectId&amp;range=@Model.RangeFilter" title="Filter by @row.ProjectName">@row.ProjectName</a>
+                                        <span class="ts-mono">@row.Storage</span>
+                                    </div>
+                                    <span class="ts-bar-track"><span class="ts-bar-fill" style="width:@(Share(Model.ProjectContributions.Sum(p => p.StorageBytes), row.StorageBytes))%"></span></span>
+                                    <span class="ts-meta">@row.Writes writes</span>
+                                </li>
+                            }
+                        </ul>
+                    }
                 }
-                @if (Model.BillingActionRequired)
+                else if (Model.Databases.Count is 0)
                 {
-                    <div class="ts-alert ts-alert-warning" role="alert">
-                        <span class="ts-alert-title">@Icons.TriangleAlert(16) Billing action required</span>
-                        <span class="ts-alert-body">Open the billing portal to update payment details and restore full plan access.</span>
-                    </div>
+                    @EmptyState("No databases saved", "Create a database to populate project usage.")
                 }
-
-                <dl class="ts-usage-facts">
-                    <div><dt>Status</dt><dd><span class="ts-badge ts-badge-@(Model.BillingStatusTone)">@Model.BillingStatus</span></dd></div>
-                    <div><dt>Plan</dt><dd><span class="ts-badge ts-badge-info">@Model.PlanName</span></dd></div>
-                    <div><dt>Price</dt><dd>@Model.Price <small>/ @Model.Frequency.ToLowerInvariant()</small></dd></div>
-                    <div><dt>Renewal</dt><dd>@Model.Renewal</dd></div>
-                    <div><dt>Invoices</dt><dd>@Model.InvoiceCount</dd></div>
-                </dl>
-
+                else
+                {
+                    <ul class="ts-usage-share">
+                        @foreach (var row in Model.Databases)
+                        {
+                            <li>
+                                <div class="ts-usage-share-head">
+                                    <span class="ts-row ts-row-tight">
+                                        <span class="ts-table-strong">@row.Name</span>
+                                        <span class="ts-badge ts-badge-neutral ts-mono">@row.PrimaryRegion.ToUpperInvariant()</span>
+                                        @if (row.BackupRegion is { } backup)
+                                        {
+                                            <span class="ts-badge ts-badge-neutral ts-mono" title="Backup region">+ @backup.ToUpperInvariant()</span>
+                                        }
+                                    </span>
+                                    <span class="ts-mono">@DashboardStore.FormatBytes(row.SizeMb * 1024L * 1024)</span>
+                                </div>
+                                <span class="ts-bar-track"><span class="ts-bar-fill" style="width:@(Share(Model.Databases.Sum(d => (long)d.SizeMb), row.SizeMb))%"></span></span>
+                                <span class="ts-meta">@DashboardStore.FormatNumber(row.DocumentCount) documents</span>
+                            </li>
+                        }
+                    </ul>
+                }
+            </section>
+        </div>
+    }
+    else if (Model.Tab is "billing")
+    {
+        <section class="ts-usage-section" aria-labelledby="usage-billing-title">
+            <div class="ts-usage-head">
+                <div>
+                    <h2 class="ts-panel-title" id="usage-billing-title">Subscription</h2>
+                    <p class="ts-meta">Billing account and plan</p>
+                </div>
                 <div class="ts-row ts-usage-billing-actions">
                     @if (Model.HasManagedSubscription)
                     {
@@ -209,119 +199,127 @@
                         <a class="ts-btn ts-btn-outline" href="@Model.BillingPortalHref">@Icons.ExternalLink(16) Payment methods</a>
                     }
                 </div>
-
-                @if (Model.HasManagedSubscription && Model.PlanImpact.Count > 0)
-                {
-                    <div class="ts-stack-md">
-                        <div class="ts-alert ts-alert-info" role="status">
-                            <span class="ts-alert-title">@Icons.Info(16) Review plan-change impact before confirming</span>
-                            <span class="ts-alert-body">Upgrades take effect immediately and may be prorated. Downgrades begin with the next billing cycle. Plans marked over current usage would start with billable excess unless usage is reduced before the change takes effect.</span>
-                        </div>
-                        <div class="ts-table-wrap">
-                            <table class="ts-table">
-                                <thead>
-                                    <tr>
-                                        <th>Target plan</th>
-                                        <th>Current usage</th>
-                                        <th>Impact</th>
-                                        <th>Effective</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @foreach (var row in Model.PlanImpact)
-                                    {
-                                        <tr>
-                                            <td class="ts-table-strong">@row.PlanName</td>
-                                            <td><span class="ts-badge ts-badge-@row.BadgeTone">@row.Badge</span></td>
-                                            <td>@row.Impact</td>
-                                            <td class="ts-muted">@row.Effective</td>
-                                        </tr>
-                                    }
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                }
-
-                @if (Model.Invoices.Count is 0)
-                {
-                    @EmptyState("No invoices returned", "Invoice projections will appear after webhook processing.")
-                }
-                else
-                {
-                    <div class="ts-table-wrap">
-                        <table class="ts-table">
-                            <thead>
+            </div>
+            @if (Model.BillingPartial)
+            {
+                <div class="ts-alert ts-alert-warning" role="alert">
+                    <span class="ts-alert-title">@Icons.TriangleAlert(16) Billing data is partially loaded</span>
+                    <span class="ts-alert-body">Some billing details are temporarily unavailable. Available subscription and invoice data remains visible.</span>
+                </div>
+            }
+            @if (Model.BillingActionRequired)
+            {
+                <div class="ts-alert ts-alert-warning" role="alert">
+                    <span class="ts-alert-title">@Icons.TriangleAlert(16) Billing action required</span>
+                    <span class="ts-alert-body">Open the billing portal to update payment details and restore full plan access.</span>
+                </div>
+            }
+            <dl class="ts-usage-stats">
+                <div><dt>Status</dt><dd><span class="ts-badge ts-badge-@(Model.BillingStatusTone)">@Model.BillingStatus</span></dd></div>
+                <div><dt>Plan</dt><dd><span class="ts-badge ts-badge-info">@Model.PlanName</span></dd></div>
+                <div><dt>Price</dt><dd>@Model.Price <small>/ @Model.Frequency.ToLowerInvariant()</small></dd></div>
+                <div><dt>Renewal</dt><dd>@(Model.Renewal is "Unknown" ? "Not scheduled" : Model.Renewal)</dd></div>
+                <div><dt>Invoices</dt><dd>@Model.InvoiceCount</dd></div>
+            </dl>
+            @if (Model.HasManagedSubscription && Model.PlanImpact.Count > 0)
+            {
+                <div class="ts-alert ts-alert-info" role="status">
+                    <span class="ts-alert-title">@Icons.Info(16) Review plan-change impact before confirming</span>
+                    <span class="ts-alert-body">Upgrades take effect immediately and may be prorated. Downgrades begin with the next billing cycle. Plans marked over current usage would start with billable excess unless usage is reduced before the change takes effect.</span>
+                </div>
+                <div class="ts-table-wrap">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>Target plan</th>
+                                <th>Current usage</th>
+                                <th>Impact</th>
+                                <th>Effective</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in Model.PlanImpact)
+                            {
                                 <tr>
-                                    <th>Invoice</th>
-                                    <th>Amount</th>
-                                    <th>Status</th>
-                                    <th>Actions</th>
-                                    <th>Period</th>
+                                    <td class="ts-table-strong">@row.PlanName</td>
+                                    <td><span class="ts-badge ts-badge-@row.BadgeTone">@row.Badge</span></td>
+                                    <td>@row.Impact</td>
+                                    <td class="ts-muted">@row.Effective</td>
                                 </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var row in Model.Invoices)
-                                {
-                                    <tr>
-                                        <td><span class="ts-row ts-row-tight">@Icons.ReceiptText(14) <span class="ts-mono">@row.InvoiceId[..14]…</span></span></td>
-                                        <td class="ts-table-num">@DashboardStore.FormatMoney(row.AmountCents, row.Currency)</td>
-                                        <td><span class="ts-badge @InvoiceTone(row.Status)">@row.Status</span></td>
-                                        <td>
-                                            <div class="ts-row ts-row-tight">
-                                                @if (row.HostedInvoiceUrl is { } hosted)
-                                                {
-                                                    <a class="ts-link" href="@hosted" target="_blank" rel="noreferrer">@Icons.ExternalLink(14) Open</a>
-                                                }
-                                                @if (row.InvoicePdf is { } pdf)
-                                                {
-                                                    <a class="ts-link" href="@pdf" target="_blank" rel="noreferrer">@Icons.FileText(14) PDF</a>
-                                                }
-                                            </div>
-                                        </td>
-                                        <td class="ts-muted" title="Issued @DashboardStore.FormatUtcDateTime(row.IssuedAt)">@DashboardStore.FormatDate(row.PeriodStart) – @DashboardStore.FormatDate(row.PeriodEnd)</td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
-                }
-            </div>
-        </div>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
 
-        <div class="ts-panel">
-            <div class="ts-panel-header">
-                <h2 class="ts-panel-title">Spending controls</h2>
-                <p class="ts-panel-subtitle">Paid excess consent and monthly caps</p>
+        <section class="ts-usage-section" aria-labelledby="usage-invoices-title">
+            <div>
+                <h2 class="ts-panel-title" id="usage-invoices-title">Payment history</h2>
+                <p class="ts-meta">Invoices issued to this organization</p>
             </div>
-            <form method="post" action="/api/v1/dashboard/usage/spending-controls" class="ts-stack-md">
-                <p class="ts-meta ts-usage-disclosure">Databases and branches share organization allowances and the billing anniversary. Selected Regions multiply writes and storage before allowances. Paid excess costs $1 per million write units and $0.20 per GB-month. A spending cap stops chargeable writes; subscription and retained storage costs continue and can exceed the cap. Reads and exports remain available. Document deletes require paid write access when writes are restricted. Revoking consent stops new paid writes and does not erase outstanding charges or existing storage obligations.</p>
-                <label class="ts-checkbox-row">
-                    <input class="ts-checkbox" type="checkbox" name="paidExcess" value="true" checked="@(Model.PaidExcessEnabled ? "checked" : null)" />
-                    I authorize paid excess at these rates and accept continuing storage costs.
-                </label>
-                <div class="ts-field">
-                    <label class="ts-label" for="spendCap">Monthly organization spending cap in USD (blank means no cap)</label>
-                    <input class="ts-input" id="spendCap" name="spendCap" inputmode="decimal" value="@Model.SpendCap" placeholder="" />
+            @if (Model.Invoices.Count is 0)
+            {
+                @EmptyState("No invoices returned", "Invoice projections will appear after webhook processing.")
+            }
+            else
+            {
+                <div class="ts-table-wrap">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>Invoice</th>
+                                <th>Period</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in Model.Invoices)
+                            {
+                                <tr>
+                                    <td><span class="ts-row ts-row-tight">@Icons.ReceiptText(14) <span class="ts-mono">@row.InvoiceId[..14]…</span></span></td>
+                                    <td class="ts-muted" title="Issued @DashboardStore.FormatUtcDateTime(row.IssuedAt)">@DashboardStore.FormatDate(row.PeriodStart) – @DashboardStore.FormatDate(row.PeriodEnd)</td>
+                                    <td class="ts-table-num">@DashboardStore.FormatMoney(row.AmountCents, row.Currency)</td>
+                                    <td><span class="ts-badge @InvoiceTone(row.Status)">@row.Status</span></td>
+                                    <td>
+                                        <div class="ts-row ts-row-tight">
+                                            @if (row.HostedInvoiceUrl is { } hosted)
+                                            {
+                                                <a class="ts-link" href="@hosted" target="_blank" rel="noreferrer">@Icons.ExternalLink(14) Open</a>
+                                            }
+                                            @if (row.InvoicePdf is { } pdf)
+                                            {
+                                                <a class="ts-link" href="@pdf" target="_blank" rel="noreferrer">@Icons.FileText(14) PDF</a>
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
                 </div>
-                @if (Model.DatabaseCaps.Count > 0)
-                {
-                    <details class="ts-stack-md">
-                        <summary>Optional lower database spending caps</summary>
-                        <p class="ts-meta">Database caps cannot raise the organization limit. Blank removes the lower database cap.</p>
-                        @foreach (var database in Model.DatabaseCaps)
-                        {
-                            <div class="ts-field">
-                                <label class="ts-label" for="dbCap_@database.Id">@database.Name — monthly cap in USD</label>
-                                <input class="ts-input" id="dbCap_@database.Id" name="dbCap_@database.Id" inputmode="decimal" value="@database.Cap" />
-                            </div>
-                        }
-                    </details>
-                }
-                <div class="ts-form-actions">
-                    <button class="ts-btn ts-btn-primary" type="submit">Save spending controls</button>
+            }
+        </section>
+    }
+    else
+    {
+        var capped = Model.DatabaseCaps.Where(d => d.Cap is not null).ToList();
+        <section class="ts-usage-section" aria-labelledby="usage-spending-title">
+            <div class="ts-usage-head">
+                <div>
+                    <h2 class="ts-panel-title" id="usage-spending-title">Spending controls</h2>
+                    <p class="ts-meta">Paid excess consent and monthly caps</p>
                 </div>
-            </form>
+                <button type="button" class="ts-btn ts-btn-primary" data-open-dialog="spending-controls-dialog">@Icons.Settings(16) Edit spending controls</button>
+            </div>
+            @if (savedOk)
+            {
+                <div class="ts-alert ts-alert-success" role="status">
+                    <span class="ts-alert-title">@Icons.CircleCheckBig(16) @Model.SavedControlsMessage</span>
+                </div>
+            }
             @if (Model.StorageCoverageDeadline is { } deadline)
             {
                 <div class="ts-alert ts-alert-warning" role="alert">
@@ -329,18 +327,116 @@
                     <span class="ts-alert-body">Restore coverage before the deletion grace deadline: @deadline. Reads and exports remain available. Deletion also requires the disclosed advance notices.</span>
                 </div>
             }
-            @if (Model.SavedControlsMessage is { } message)
-            {
-                <p class="ts-meta" role="status">@message</p>
-            }
-        </div>
-    </section>
+            <dl class="ts-usage-settings">
+                <div>
+                    <dt>Paid excess<small>Writes and storage beyond the plan allowance, billed at published rates</small></dt>
+                    <dd>
+                        @if (Model.PaidExcessEnabled)
+                        {
+                            <span class="ts-badge ts-badge-success">@Icons.CircleCheckBig(12) Authorized</span>
+                        }
+                        else
+                        {
+                            <span class="ts-badge ts-badge-neutral">Not authorized</span>
+                        }
+                    </dd>
+                </div>
+                <div>
+                    <dt>Organization spending cap<small>Stops chargeable writes once reached</small></dt>
+                    <dd>@(Model.SpendCap.Length > 0 ? $"${Model.SpendCap} / month" : "No cap")</dd>
+                </div>
+                <div>
+                    <dt>Database caps<small>Optional lower caps per database in the active project</small></dt>
+                    <dd>@(capped.Count is 0 ? "None" : string.Join(" · ", capped.Select(d => $"{d.Name} ${d.Cap}")))</dd>
+                </div>
+                <div>
+                    <dt>History retention<small>How far back workload history can be viewed</small></dt>
+                    <dd>@Model.RetentionDays days</dd>
+                </div>
+            </dl>
+        </section>
+
+        <dialog class="ts-dialog" id="spending-controls-dialog" @(saveError is not null ? "data-autoopen" : null)>
+            <div class="ts-dialog-content">
+                <div class="ts-dialog-header">
+                    <h3 class="ts-dialog-title">Edit spending controls</h3>
+                    <p class="ts-dialog-description">Paid excess consent and monthly caps</p>
+                </div>
+                @if (saveError is not null)
+                {
+                    <div class="ts-alert ts-alert-danger" role="alert"><span class="ts-alert-title">@Icons.CircleAlert(16) @saveError</span></div>
+                }
+                <form method="post" action="/api/v1/dashboard/usage/spending-controls" class="ts-stack-md">
+                    <p class="ts-meta ts-usage-disclosure">Databases and branches share organization allowances and the billing anniversary. Selected Regions multiply writes and storage before allowances. Paid excess costs $1 per million write units and $0.20 per GB-month. A spending cap stops chargeable writes; subscription and retained storage costs continue and can exceed the cap. Reads and exports remain available. Document deletes require paid write access when writes are restricted. Revoking consent stops new paid writes and does not erase outstanding charges or existing storage obligations.</p>
+                    <label class="ts-checkbox-row">
+                        <input class="ts-checkbox" type="checkbox" name="paidExcess" value="true" checked="@(Model.PaidExcessEnabled ? "checked" : null)" />
+                        I authorize paid excess at these rates and accept continuing storage costs.
+                    </label>
+                    <div class="ts-field">
+                        <label class="ts-label" for="spendCap">Monthly organization spending cap in USD (blank means no cap)</label>
+                        <input class="ts-input" id="spendCap" name="spendCap" inputmode="decimal" value="@Model.SpendCap" placeholder="" />
+                    </div>
+                    @if (Model.DatabaseCaps.Count > 0)
+                    {
+                        <details class="ts-stack-md">
+                            <summary>Optional lower database spending caps</summary>
+                            <p class="ts-meta">Database caps cannot raise the organization limit. Blank removes the lower database cap.</p>
+                            @foreach (var database in Model.DatabaseCaps)
+                            {
+                                <div class="ts-field">
+                                    <label class="ts-label" for="dbCap_@database.Id">@database.Name — monthly cap in USD</label>
+                                    <input class="ts-input" id="dbCap_@database.Id" name="dbCap_@database.Id" inputmode="decimal" value="@database.Cap" />
+                                </div>
+                            }
+                        </details>
+                    }
+                    <div class="ts-dialog-footer">
+                        <button type="button" class="ts-btn ts-btn-ghost" data-close-dialog>Cancel</button>
+                        <button class="ts-btn ts-btn-primary" type="submit">Save spending controls</button>
+                    </div>
+                </form>
+            </div>
+        </dialog>
+    }
 </div>
 @ShellHtml.Bottom(shell)
 
 @functions {
+    private static Microsoft.AspNetCore.Html.HtmlString IconByName(string name, int size) =>
+        (typeof(Icons).GetMethod(name)?.Invoke(null, [size]) as Microsoft.AspNetCore.Html.HtmlString) ?? Icons.Circle(size);
+
     private static string Share(long total, long part) =>
         (total <= 0 ? 0 : Math.Round((double)part / total * 100)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    // Flat stat row: icon + label, value, muted detail; hairline dividers, no box.
+    private static Microsoft.AspNetCore.Html.HtmlString StatList(IReadOnlyList<UsageStatCard> stats) => new(
+        "<dl class=\"ts-usage-stats\">" + string.Concat(stats.Select(s =>
+            $"<div><dt>{IconByName(s.Icon, 14).Value} {E(s.Label)}</dt><dd>{E(s.Value)}</dd><small class=\"ts-meta\">{E(s.Detail)}</small></div>")) + "</dl>");
+
+    // House filter menu (api-keys ts-filter-field): picking an option sets the
+    // hidden input and submits the GET form (terrascale.js [data-filter-value]).
+    private static Microsoft.AspNetCore.Html.HtmlString FilterMenu(string name, string label, string value, string? allLabel, IReadOnlyList<(string Id, string Name)> options)
+    {
+        var current = options.FirstOrDefault(o => o.Id == value).Name ?? allLabel ?? "";
+        var items = new System.Text.StringBuilder();
+        if (allLabel is not null)
+        {
+            items.Append($"<button class=\"ts-menu-item\" type=\"button\" data-filter-value=\"\"{(value.Length is 0 ? " aria-current=\"true\"" : "")}>{E(allLabel)}</button>");
+        }
+
+        foreach (var (id, text) in options)
+        {
+            items.Append($"<button class=\"ts-menu-item\" type=\"button\" data-filter-value=\"{E(id)}\"{(id == value ? " aria-current=\"true\"" : "")}>{E(text)}</button>");
+        }
+
+        return new(
+            $"<div class=\"ts-filter-field\"><span class=\"ts-filter-label\" id=\"usage-{name}-label\">{label}</span>"
+            + $"<input type=\"hidden\" name=\"{name}\" value=\"{E(value)}\" />"
+            + $"<details class=\"ts-menu ts-filter-menu\"><summary class=\"ts-select ts-filter-select ts-filter-trigger\" aria-labelledby=\"usage-{name}-label usage-{name}-value\"><span id=\"usage-{name}-value\">{E(current)}</span></summary>"
+            + $"<div class=\"ts-menu-panel\">{items}</div></details></div>");
+    }
+
+    private static string E(string value) => System.Net.WebUtility.HtmlEncode(value);
 
     // v1 EmptyState: SearchX 16px in a 32x32 muted box, title, muted description.
     private static Microsoft.AspNetCore.Html.HtmlString EmptyState(string title, string description) => new(
