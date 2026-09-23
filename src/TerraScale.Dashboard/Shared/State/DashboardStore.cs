@@ -29,10 +29,43 @@ public sealed partial class DashboardStore
     /// but the account survives, so signing back in works (v1 parity).</summary>
     private readonly ConcurrentDictionary<string, AccountWorld> _accounts = new(StringComparer.OrdinalIgnoreCase);
 
-    public DashboardStore()
+    public DashboardStore() : this(new ConfigurationBuilder().Build(), new DashboardSecurityOptions(true)) { }
+
+    public DashboardStore(IConfiguration configuration, DashboardSecurityOptions security)
     {
         _sessions[DemoToken] = _demoWorld;
         _accounts[_demoWorld.RegisteredEmail] = _demoWorld;
+
+        // The demo process has no durable account database. Restore this test
+        // fixture at startup without committing its password, full card number, or CVV.
+        if (security.DemoMode && configuration["TS_DASHBOARD_SEED_TEST_PASSWORD"] is { Length: >= 12 } password)
+        {
+            var world = AccountWorld.Fresh("Filippo Teste", "filippo@teste.com");
+            world.AccountPassword = password;
+            world.OnboardingCompleted = true;
+            world.OnboardingStepsValue = [.. world.OnboardingStepsValue.Select(step => step with { State = "completed" })];
+            var organizationId = AccountWorld.NewId("org");
+            var projectId = AccountWorld.NewId("prj");
+            world.Organizations[organizationId] = new OrganizationWorld
+            {
+                Id = organizationId,
+                ActiveOrganizationName = "Filippo Teste",
+                PlanId = "plan_starter",
+                PlanKey = "starter",
+                BillingStatus = "active",
+                PaymentMethodValidated = true,
+                BillingRenewal = DateTimeOffset.UtcNow.AddMonths(1).ToString("O"),
+                DemoCardLast4 = "4242",
+                DemoCardExpiry = "06/2030",
+                DemoCardholderName = "Filippo Teste",
+                Projects = [new(projectId, organizationId, "Personal", "GRU", DateTimeOffset.UtcNow.ToString("O"), IsDefault: true)],
+                ActiveProjectId = projectId,
+                TeamMembers = [new(world.CurrentUser.Id, world.CurrentUser.Name, world.CurrentUser.Email,
+                    "owner", "Active", false, DateTimeOffset.UtcNow.ToString("O"), 0)],
+            };
+            world.ActiveOrganizationId = organizationId;
+            _accounts[world.RegisteredEmail] = world;
+        }
     }
 
     internal AccountWorld World => ActiveWorld.Value ?? _demoWorld;
@@ -212,6 +245,7 @@ public sealed partial class DashboardStore
     public ImmutableArray<PricingPlan> Plans { get; private set; } =
     [
         new("plan_free", "Free", 0m, 512, 1_000_000, "Active", 14_203),
+        new("plan_starter", "Starter", 5m, 5120, 1_000_000, "Active", 0),
         new("plan_scale", "Scale", 29m, 8192, 5_000_000, "Active", 3_412),
         new("plan_dedicated", "Dedicated", 199m, 131_072, 50_000_000, "Active", 187),
         new("plan_legacy_v1", "Legacy v1", 19m, 2048, 2_000_000, "Deprecated", 42),

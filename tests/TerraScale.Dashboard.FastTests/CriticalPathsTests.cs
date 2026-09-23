@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Dashboard.Testing;
 
 namespace TerraScale.Dashboard.FastTests;
@@ -88,6 +89,30 @@ public sealed class CriticalPathsTests
 
         var page = await app.GetPageAsync(fresh, "/");
         await Assert.That(page.Heading).IsEqualTo("Overview");
+    }
+
+    [Test]
+    public async Task SeededTestAccountSurvivesDemoRestart()
+    {
+        var settings = new Dictionary<string, string> { ["TS_DASHBOARD_SEED_TEST_PASSWORD"] = "seed-password-123" };
+        for (var restart = 0; restart < 2; restart++)
+        {
+            using var app = new DashboardTestApp(settings);
+            using var client = app.CreateClient();
+            using var login = await DashboardTestApp.PostFormAsync(client, "/api/v1/auth/password/login", new Dictionary<string, string>
+            {
+                ["email"] = "filippo@teste.com",
+                ["password"] = "seed-password-123",
+            });
+            await Assert.That(login.Headers.Location?.ToString()).IsEqualTo("/");
+            var page = await app.GetPageAsync(client, "/usage");
+            await Assert.That(page.StatusCode).IsEqualTo(200);
+            await Assert.That(page.Html).Contains("Starter");
+            var account = app.Services.GetRequiredService<DashboardStore>().FindAccount("filippo@teste.com")!;
+            await Assert.That(account.ActiveOrganization.PlanKey).IsEqualTo("starter");
+            await Assert.That(account.ActiveOrganization.DemoCardLast4).IsEqualTo("4242");
+            await Assert.That(account.ActiveOrganization.DemoCardExpiry).IsEqualTo("06/2030");
+        }
     }
 
     private static async Task AssertPage(HttpClient client, DashboardTestApp app, string path, string heading)
