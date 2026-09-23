@@ -11,4 +11,9 @@ public sealed record OnboardingRegionView(
     int LatencyMs,
     bool Live,
     double X,
-    double Y);
+    double Y)
+{
+    /// <summary>Projects this catalog entry onto the shared region map.</summary>
+    public RegionMap.Pin ToMapPin(bool selected = false) =>
+        new(Code, Name, Country, LatencyMs, X, Y, selected, !Live);
+}
