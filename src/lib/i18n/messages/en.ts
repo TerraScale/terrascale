@@ -329,12 +329,6 @@ export const en = {
     text: 'The page you’re looking for has moved, or never existed. Let’s get you back on track.',
     backHome: 'Back to Home',
     contactSupport: 'Contact Support',
-    linksLabel: 'Popular pages:',
-    links: {
-      home: 'Home',
-      pricing: 'Pricing',
-      contact: 'Contact',
-    },
   },
 }
 
