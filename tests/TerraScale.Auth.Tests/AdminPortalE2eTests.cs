@@ -155,6 +155,50 @@ public sealed class AdminPortalE2eTests
         => (await service.Store.ListConnectionsAsync(instanceId)).Count;
 
     [Test]
+    public async Task DatastarProviderSetupCreatesGithubConnectionAndServesDashboardAssets()
+    {
+        var service = await ServiceAsync();
+        var (instanceId, slug, apiKey) = await InstanceAsync();
+        var orgId = await CreateOrganizationAsync(service, slug, apiKey, "Provider admins");
+        var secondOrgId = await CreateOrganizationAsync(service, slug, apiKey, "Second\norganization");
+        await using var page = await BrowserFixture.NewPageAsync();
+        var adminId = await SignUpInBrowserAsync(service, page, slug, instanceId);
+        await AddMembershipAsync(service, slug, apiKey, orgId, adminId, "admin");
+        await AddMembershipAsync(service, slug, apiKey, secondOrgId, adminId, "admin");
+
+        using (var anonymous = await service.Http.GetAsync($"/ui/{slug}/admin/providers/github"))
+            await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+        using (var css = await service.Http.GetAsync("/admin/admin.css"))
+            await Assert.That(css.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using (var script = await service.Http.GetAsync("/admin/datastar.js"))
+            await Assert.That(script.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        await page.GotoAsync(Url(service, $"/ui/{slug}/admin"));
+        await page.ClickAsync("button.provider:has-text('GitHub')");
+        await page.Locator("#provider-client-id").WaitForAsync();
+        await page.SelectOptionAsync("#connection-org", secondOrgId);
+        await page.FillAsync("#provider-client-id", "github-client");
+        await page.FillAsync("#provider-client-secret", "github-secret");
+        await Task.WhenAll(
+            page.WaitForURLAsync($"**/ui/{slug}/admin#connections"),
+            page.ClickAsync("button:has-text('Add GitHub')"));
+
+        var connection = (await service.Store.ListConnectionsAsync(instanceId)).Single(c => c.Name == "GitHub");
+        await Assert.That(connection.Type).IsEqualTo("github");
+        await Assert.That(connection.OrgId).IsEqualTo(secondOrgId);
+        await Assert.That(connection.Enabled).IsTrue();
+        await Assert.That(await page.Locator("#connections").TextContentAsync())
+            .Contains($"/ui/{slug}/connections/{connection.Id}/github/callback");
+        using var authorize = await service.Http.GetAsync($"/ui/{slug}/connections/{connection.Id}/github/authorize");
+        await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+        await Assert.That(authorize.Headers.Location!.Host).IsEqualTo("github.com");
+        await Assert.That(authorize.Headers.Location!.ToString()).Contains("scope=user%3Aemail");
+        await Assert.That(authorize.Headers.GetValues("Set-Cookie").Single()).Contains("tsauth_github_state=");
+        using var forgedCallback = await service.Http.GetAsync($"/ui/{slug}/connections/{connection.Id}/github/callback?code=forged&state=forged");
+        await Assert.That(forgedCallback.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
     public async Task EveryRouteRejectsAnonymousNonMemberMemberAndBannedUsers()
     {
         var service = await ServiceAsync();
@@ -347,13 +391,13 @@ public sealed class AdminPortalE2eTests
         // and never as markup: no script or attacker img elements, no script dialog.
         var rows = string.Join("\n", await page.Locator(".row").AllTextContentsAsync());
         await Assert.That(rows).Contains(hostileName);
-        await Assert.That(await page.Locator("script").CountAsync()).IsEqualTo(0);
+        await Assert.That(await page.Locator("script:not([src])").CountAsync()).IsEqualTo(0);
         await Assert.That(await page.Locator("img[src=x]").CountAsync()).IsEqualTo(0);
 
         // The public sign-in connection list escapes the same name.
         await page.GotoAsync(Url(service, $"/ui/{slug}/connections/list"));
         await Assert.That(await page.Locator("body").TextContentAsync()).Contains(hostileName);
-        await Assert.That(await page.Locator("script").CountAsync()).IsEqualTo(0);
+        await Assert.That(await page.Locator("script:not([src])").CountAsync()).IsEqualTo(0);
         await Assert.That(await page.Locator("img[src=x]").CountAsync()).IsEqualTo(0);
 
         // Validation errors render a page without echoing raw input.
@@ -361,7 +405,7 @@ public sealed class AdminPortalE2eTests
         var bad = await AddConnectionAsync(service, page, slug, "<script>alert(9)</script>", "not a pem");
         await Assert.That(bad.Status).IsEqualTo(400);
         await page.Locator(".error").WaitForAsync();
-        await Assert.That(await page.Locator("script").CountAsync()).IsEqualTo(0);
+        await Assert.That(await page.Locator("script:not([src])").CountAsync()).IsEqualTo(0);
         await Assert.That(await page.Locator("img[src=x]").CountAsync()).IsEqualTo(0);
     }
 

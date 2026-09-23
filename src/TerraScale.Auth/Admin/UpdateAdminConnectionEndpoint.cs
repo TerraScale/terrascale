@@ -1,6 +1,7 @@
 namespace TerraScale.Auth.Admin;
 
 using TerraScale.Auth.Api;
+using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Connections;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
@@ -14,7 +15,7 @@ internal sealed class UpdateAdminConnectionEndpoint : IEndpoint
         routes.MapPost("/ui/{slug}/admin/connections/{connectionId}/{action}", HandleAsync);
 
     private static async Task<IResult> HandleAsync(
-            string slug, string connectionId, string action, HttpRequest request, AuthStore store, Users.SessionService sessions, CancellationToken ct)
+            string slug, string connectionId, string action, HttpRequest request, AuthStore store, Users.SessionService sessions, AuthOptions options, CancellationToken ct)
     {
         var gate = await RequireOrgAdminAsync(slug, request, store, sessions, ct);
         if (gate is null)

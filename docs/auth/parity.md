@@ -12,7 +12,7 @@ ts-auth. Statuses reflect the code on `main` — each ✅ is backed by tests.
 | Magic links | ✅ | ✅ | ✅ | ✅ | `/ui/{slug}/magic-link` |
 | Email passcodes (first factor) | ✅ | – | ✅ | ✅ | `/ui/{slug}/passcode/*` |
 | SMS passcodes | ✅ | – | ✅ | ➖ | `ISmsSender` interface; logging default (no SMS provider wired) |
-| Social login (OIDC) | ✅ | ✅ | ✅ | ✅ | Connections: `/ui/{slug}/connections/{id}/oidc/*` |
+| Social login (OIDC + GitHub OAuth) | ✅ | ✅ | ✅ | ✅ | Connections: `/ui/{slug}/connections/{id}/oidc/*`, `/github/*` |
 | Enterprise SSO (SAML) | ✅ | ✅ | ✅ | ✅ | Connections: `/ui/{slug}/connections/{id}/saml/*` (XML-DSig verified) |
 | MFA — TOTP | ✅ | ✅ | ✅ | ✅ | `/ui/{slug}/mfa/*` (RFC 6238 + recovery codes) |
 | MFA — passkey as factor | ✅ | – | ✅ | ✅ | passkeys satisfy the step-up during sign-in |
@@ -53,7 +53,7 @@ ts-auth. Statuses reflect the code on `main` — each ✅ is backed by tests.
 | Invitations | ✅ | ✅ | ✅ | `/v1/{slug}/organizations/{id}/invitations` + accept page |
 | Domain enrollment | ✅ | ➖ | ✅ | `/v1/{slug}/organizations/{id}/domains` + enroll |
 | Directory sync (SCIM 2.0) | ✅ | ✅ | ✅ | `/v1/{slug}/directories` + `/scim/{dirId}/*` |
-| Admin portal (self-serve connection setup) | ✅ | ✅ | ➖ | hosted pages: manage SSO connections, view SCIM directories |
+| Admin portal (self-serve connection setup) | ✅ | ✅ | ✅ | `/ui/{slug}/admin`: GitHub, Microsoft, Google, custom OIDC and SAML; view SCIM directories |
 
 ## Platform
 

@@ -124,13 +124,68 @@ public sealed class ConnectionsE2eTests
     // ---- OIDC sign-in ----------------------------------------------------------------------
 
     [Test]
+    public async Task GithubOAuthUsesSingleUseStateAndVerifiedEmail()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        await using var idp = await FakeIdP.StartAsync();
+        var (instanceId, slug, _) = await NewInstanceWithKeyAsync();
+        var connection = new Connection
+        {
+            Id = "con_" + Guid.NewGuid().ToString("N")[..20],
+            InstanceId = instanceId,
+            Type = "github",
+            Name = "GitHub",
+            ClientId = idp.ClientId,
+            ClientSecretBox = SecretBox.Encrypt(AuthServiceFixture.MasterKey, Encoding.UTF8.GetBytes(idp.ClientSecret)),
+            AuthorizationEndpoint = idp.AuthorizationUrl,
+            TokenEndpoint = idp.GithubTokenUrl,
+            UserinfoEndpoint = idp.GithubEmailsUrl,
+            Enabled = true,
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        };
+        await service.Store.CreateConnectionAsync(connection);
+
+        async Task<(HttpStatusCode Status, string Cookie, string State)> SignInAttemptAsync()
+        {
+            using var authorize = await service.Http.GetAsync($"/ui/{slug}/connections/{connection.Id}/github/authorize");
+            await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.Found);
+            var state = ParseQuery(authorize.Headers.Location!.ToString())["state"];
+            var cookie = authorize.Headers.GetValues("Set-Cookie").Single().Split(';')[0];
+            using var callback = new HttpRequestMessage(HttpMethod.Get,
+                $"/ui/{slug}/connections/{connection.Id}/github/callback?code=test-code&state={Uri.EscapeDataString(state)}");
+            callback.Headers.TryAddWithoutValidation("Cookie", cookie);
+            using var response = await service.Http.SendAsync(callback);
+            return (response.StatusCode, cookie, state);
+        }
+
+        var signedIn = await SignInAttemptAsync();
+        await Assert.That(signedIn.Status).IsEqualTo(HttpStatusCode.Found);
+        var user = await service.Store.FindUserByEmailAsync(instanceId, idp.Email);
+        await Assert.That(user).IsNotNull();
+        await Assert.That(user!.EmailVerified).IsTrue();
+        using (var replay = new HttpRequestMessage(HttpMethod.Get,
+            $"/ui/{slug}/connections/{connection.Id}/github/callback?code=test-code&state={Uri.EscapeDataString(signedIn.State)}"))
+        {
+            replay.Headers.TryAddWithoutValidation("Cookie", signedIn.Cookie);
+            using var replayResponse = await service.Http.SendAsync(replay);
+            await Assert.That(replayResponse.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        }
+
+        idp.GithubEmailVerified = false;
+        idp.Email = $"unverified{Guid.NewGuid().ToString("N")[..8]}@example.test";
+        var unverified = await SignInAttemptAsync();
+        await Assert.That(unverified.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, idp.Email)).IsNull();
+    }
+
+    [Test]
     public async Task OidcAuthorizationCodeFlowSignsUserIn()
     {
         var service = await AuthServiceFixture.GetAsync();
         await using var idp = await FakeIdP.StartAsync();
         var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
         var (connectionId, _) = await CreateOidcConnectionAsync(service, slug, apiKey, idp);
-        var callback = $"{service.Origin}{slug}/connections/{connectionId}/oidc/callback";
+        var callback = $"{service.Origin}ui/{slug}/connections/{connectionId}/oidc/callback";
 
         using var authorize = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/oidc/authorize");
         await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.Found);
@@ -1066,6 +1121,8 @@ public sealed class ConnectionsE2eTests
         public string AuthorizationUrl => baseUrl + "/authorize";
         public string TokenUrl => baseUrl + "/token";
         public string UserinfoUrl => baseUrl + "/userinfo";
+        public string GithubTokenUrl => baseUrl + "/github-token";
+        public string GithubEmailsUrl => baseUrl + "/github-emails";
 
         public string ClientId { get; } = "cid_" + Guid.NewGuid().ToString("N")[..10];
         public string ClientSecret { get; } = "csec_" + Guid.NewGuid().ToString("N")[..16];
@@ -1076,6 +1133,7 @@ public sealed class ConnectionsE2eTests
         public bool SignWithWrongKey { get; set; }
         public bool SignAlgNone { get; set; }
         public bool GarbageTokenResponse { get; set; }
+        public bool GithubEmailVerified { get; set; } = true;
         public List<Dictionary<string, string>> TokenRequests { get; } = [];
 
         public static async Task<FakeIdP> StartAsync()
@@ -1209,6 +1267,26 @@ public sealed class ConnectionsE2eTests
                         userinfo["email_verified"] = userinfoVerified;
                     await WriteJsonAsync(context, userinfo);
                     return;
+                case "/github-token":
+                    var githubForm = await ReadFormAsync(context.Request);
+                    if (githubForm.GetValueOrDefault("client_id") != ClientId
+                        || githubForm.GetValueOrDefault("client_secret") != ClientSecret)
+                    {
+                        context.Response.StatusCode = 401;
+                        context.Response.Close();
+                        return;
+                    }
+                    await WriteJsonAsync(context, new { access_token = "github-test-token" });
+                    return;
+                case "/github-emails":
+                    if (context.Request.Headers["Authorization"] != "Bearer github-test-token")
+                    {
+                        context.Response.StatusCode = 401;
+                        context.Response.Close();
+                        return;
+                    }
+                    await WriteJsonAsync(context, new[] { new { email = Email, primary = true, verified = GithubEmailVerified } });
+                    return;
                 default:
                     context.Response.StatusCode = 404;
                     context.Response.Close();
@@ -1233,7 +1311,7 @@ public sealed class ConnectionsE2eTests
             return header + "." + payload + ".";
         }
 
-        private static async Task WriteJsonAsync(HttpListenerContext context, Dictionary<string, object> body)
+        private static async Task WriteJsonAsync(HttpListenerContext context, object body)
         {
             var bytes = JsonSerializer.SerializeToUtf8Bytes(body);
             context.Response.ContentType = "application/json";

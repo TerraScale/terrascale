@@ -1,0 +1,115 @@
+@inherits RazorSlice<AdminPortalPageModel>
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Authentication · TerraScale</title>
+  <link rel="icon" href="/admin/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <script type="module" src="/admin/datastar.js"></script>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand-link" href="/ui/@Model.Slug/admin"><img src="/admin/logo.svg" alt="TerraScale"></a>
+    <nav aria-label="Admin navigation">
+      <div class="nav-caption">Authentication</div>
+      <a class="nav-link active" href="/ui/@Model.Slug/admin">Overview and providers</a>
+      <a class="nav-link" href="/ui/@Model.Slug/connections/list">Hosted sign-in</a>
+      <a class="nav-link" href="/ui/@Model.Slug/account">My account</a>
+    </nav>
+    <div class="sidebar-footer">@Model.Instance.Name<br>@(Model.User.Email ?? Model.User.Id)</div>
+  </aside>
+  <main class="main">
+    <div class="topline">
+      <div><div class="eyebrow">Identity settings</div><h1>Authentication</h1><p class="subtitle">Configure how people sign in to @Model.Instance.Name.</p></div>
+      <span class="pill"><span class="dot"></span>Organization admin</span>
+    </div>
+    @if (Model.Error is not null)
+    {
+      <div class="alert alert-error error" role="alert">@Model.Error</div>
+    }
+    <div class="stats">
+      <div class="stat"><span class="label">Connections</span><strong>@Model.Connections.Count</strong><small>Across your organizations</small></div>
+      <div class="stat"><span class="label">Active</span><strong>@Model.ActiveConnections</strong><small>Available to sign in</small></div>
+      <div class="stat"><span class="label">Directories</span><strong>@Model.Directories.Count</strong><small>SCIM provisioning</small></div>
+    </div>
+    <div class="grid">
+      <div class="stack">
+        <section class="panel" id="providers">
+          <div class="panel-header"><h2>Add a sign-in provider</h2><p>Choose a provider, enter its app credentials, then add the callback URL in its console.</p></div>
+          <div class="panel-body">
+            <div class="provider-grid">
+              <button class="provider" type="button" data-on:click="@(Model.ProviderAction("github"))"><span class="provider-mark">G</span><span><strong>GitHub</strong><small>OAuth app</small></span><span class="provider-arrow" aria-hidden="true">→</span></button>
+              <button class="provider" type="button" data-on:click="@(Model.ProviderAction("microsoft"))"><span class="provider-mark">M</span><span><strong>Microsoft</strong><small>Entra ID</small></span><span class="provider-arrow" aria-hidden="true">→</span></button>
+              <button class="provider" type="button" data-on:click="@(Model.ProviderAction("google"))"><span class="provider-mark">G</span><span><strong>Google</strong><small>OpenID Connect</small></span><span class="provider-arrow" aria-hidden="true">→</span></button>
+              <button class="provider" type="button" data-on:click="@(Model.ProviderAction("oidc"))"><span class="provider-mark">↗</span><span><strong>Other OIDC</strong><small>Custom issuer</small></span><span class="provider-arrow" aria-hidden="true">→</span></button>
+            </div>
+            <div id="provider-setup" class="setup" aria-live="polite"></div>
+          </div>
+        </section>
+        <section class="panel" id="saml">
+          <div class="panel-header"><h2>Enterprise SAML</h2><p>Connect an identity provider for your organization.</p></div>
+          <div class="panel-body">
+            <form method="post" action="/ui/@Model.Slug/admin/connections">
+              @if (Model.AdminOrgs.Count > 1)
+              {
+                <div class="field"><label for="connection-org">Organization</label><select class="input" id="connection-org" name="org_id">
+                  @foreach (var org in Model.AdminOrgs) { <option value="@org.Id">@org.Name</option> }
+                </select></div>
+              }
+              <div class="field"><label for="saml-name">Name</label><input class="input" id="saml-name" name="name" required></div>
+              <div class="field"><label for="saml-entity">IdP entity id</label><input class="input" id="saml-entity" name="idp_entity_id" required></div>
+              <div class="field"><label for="saml-sso">SSO redirect URL</label><input class="input" id="saml-sso" name="sso_redirect_url" placeholder="https://idp.example/sso" required></div>
+              <div class="field"><label for="saml-cert">X.509 certificate (PEM)</label><input class="input" id="saml-cert" name="x509_certificate_pem" placeholder="-----BEGIN CERTIFICATE-----" required></div>
+              <div class="form-actions"><button class="btn btn-primary" type="submit">Add SAML connection</button></div>
+            </form>
+          </div>
+        </section>
+      </div>
+      <div class="stack">
+        <section class="panel" id="connections">
+          <div class="panel-header"><h2>Connections</h2><p>Manage the providers available to your organizations.</p></div>
+          <div class="panel-body">
+            @if (Model.Connections.Count == 0)
+            {
+              <div class="empty">No connections yet.</div>
+            }
+            @foreach (var connection in Model.Connections)
+            {
+              var callback = Model.Callback(connection);
+              <div class="row"><div><strong>@connection.Name</strong><small>@(connection.Type == "github" ? "GitHub" : connection.Type.ToUpperInvariant()) · @(connection.Enabled ? "Enabled" : "Disabled")@(callback is null ? "" : " · Callback: ")@callback</small></div>
+                <form method="post" action="/ui/@Model.Slug/admin/connections/@connection.Id/@(connection.Enabled ? "disable" : "enable")"><button class="btn btn-secondary" type="submit">@(connection.Enabled ? "Disable" : "Enable")</button></form>
+              </div>
+            }
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-header"><h2>Directories</h2><p>Provisioned by SCIM.</p></div>
+          <div class="panel-body">
+            @if (Model.Directories.Count == 0)
+            {
+              <div class="empty">No directories yet.</div>
+            }
+            @foreach (var directory in Model.Directories)
+            {
+              <div class="row"><div><strong>SCIM directory</strong><small>/scim/@directory.Id/Users</small></div></div>
+            }
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-header"><h2>How this works</h2></div>
+          <div class="panel-body"><div class="hint-card">
+            <strong>1. Create an app</strong><span>Register an OAuth or OIDC app with your provider.</span>
+            <strong>2. Add credentials here</strong><span>The client secret is encrypted at rest.</span>
+            <strong>3. Set the callback URL</strong><span>Copy the exact URL shown on the new connection and add it in the provider console.</span>
+          </div></div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

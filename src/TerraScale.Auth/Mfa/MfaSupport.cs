@@ -45,7 +45,7 @@ internal static class MfaSupport
     /// <summary>Accepts a post-verification redirect target only when it is a local path (open-redirect protection).</summary>
     internal static string SafeDestination(string slug, string? next) =>
         // Control characters are rejected too: browsers strip them before parsing, "/\t/…" becomes "//…".
-        next is not null && next.StartsWith('/', StringComparison.Ordinal) && !next.StartsWith("//", StringComparison.Ordinal)
+        next is not null && next.StartsWith("/", StringComparison.Ordinal) && !next.StartsWith("//", StringComparison.Ordinal)
             && !next.Contains('\\') && !next.Any(char.IsControl)
             ? next
             : $"/ui/{slug}/account";

@@ -1,15 +1,12 @@
 namespace TerraScale.Auth.Admin;
 
-using TerraScale.Auth.Api;
-using TerraScale.Auth.Connections;
-using TerraScale.Auth.Crypto;
+using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Ui;
 
 internal static class AdminPortal
 {
-    /// <summary>Resolves the session and the organizations the user administers;
-    /// null (redirect) for unknown instance, anonymous, expired, or banned sessions.</summary>
+    /// <summary>Resolves the session and the organizations the user administers.</summary>
     internal static async Task<(Instance Instance, User User, List<Organization> AdminOrgs)?> RequireOrgAdminAsync(
         string slug, HttpRequest request, AuthStore store, Users.SessionService sessions, CancellationToken ct)
     {
@@ -31,48 +28,43 @@ internal static class AdminPortal
     }
 
     internal static async Task<IResult> PageAsync(
-        (Instance Instance, User User, List<Organization> AdminOrgs) gate, AuthStore store, CancellationToken ct,
+        (Instance Instance, User User, List<Organization> AdminOrgs) gate, AuthStore store, AuthOptions options, CancellationToken ct,
         string? error = null, int status = 200)
     {
         var (instance, user, adminOrgs) = gate;
-        var slug = instance.Slug;
-        var orgIds = adminOrgs.Select(o => o.Id).ToHashSet();
-
-        var connections = (await store.ListConnectionsAsync(instance.Id, ct)).Where(c => c.OrgId is not null && orgIds.Contains(c.OrgId)).ToList();
-        var directories = (await store.ListScimDirectoriesAsync(instance.Id, ct)).Where(d => d.OrgId is not null && orgIds.Contains(d.OrgId)).ToList();
-
-        var rows = new System.Text.StringBuilder();
-        foreach (var connection in connections)
-        {
-            rows.AppendLine($"""<div class="row"><div><strong>{Ui.Esc(connection.Name)}</strong> <span class="muted">{Ui.Esc(connection.Type.ToUpperInvariant())}{(connection.Enabled ? "" : " · disabled")}</span></div><form method="post" action="/ui/{slug}/admin/connections/{connection.Id}/{(connection.Enabled ? "disable" : "enable")}"><button class="secondary">{(connection.Enabled ? "Disable" : "Enable")}</button></form></div>""");
-        }
-        var directoryRows = new System.Text.StringBuilder();
-        foreach (var directory in directories)
-        {
-            directoryRows.AppendLine($"""<div class="row"><div><strong>SCIM directory</strong> <span class="muted">/scim/{Ui.Esc(directory.Id)}/Users</span></div></div>""");
-        }
-
-        return Ui.Page("Admin", $"""
-                <h1>Admin portal</h1>
-                {(error is null ? "" : $"""<div class="error">{Ui.Esc(error)}</div>""")}
-                <p class="muted">Signed in as {Ui.Esc(user.Email ?? user.Id)}. Organizations you administer: {adminOrgs.Count}.</p>
-                <h1 style="font-size:16px">SSO connections</h1>
-                <div class="list">{(rows.Length == 0 ? "<div class=\"muted\">No connections yet.</div>" : rows.ToString())}</div>
-                <form method="post" action="/ui/{slug}/admin/connections">
-                  <label>Name</label><input name="name" required>
-                  <label>IdP entity id</label><input name="idp_entity_id" required>
-                  <label>SSO redirect URL</label><input name="sso_redirect_url" placeholder="https://idp.example/sso" required>
-                  <label>X.509 certificate (PEM)</label><input name="x509_certificate_pem" placeholder="-----BEGIN CERTIFICATE-----" required>
-                  <button>Add SAML connection</button>
-                </form>
-                <h1 style="font-size:16px;margin-top:24px">Directories</h1>
-                <div class="list">{(directoryRows.Length == 0 ? "<div class=\"muted\">No directories yet.</div>" : directoryRows.ToString())}</div>
-                """, status: status);
+        var orgIds = adminOrgs.Select(org => org.Id).ToHashSet();
+        var connections = (await store.ListConnectionsAsync(instance.Id, ct))
+            .Where(connection => connection.OrgId is not null && orgIds.Contains(connection.OrgId))
+            .OrderBy(connection => connection.CreatedAt).ToList();
+        var directories = (await store.ListScimDirectoriesAsync(instance.Id, ct))
+            .Where(directory => directory.OrgId is not null && orgIds.Contains(directory.OrgId)).ToList();
+        var model = new AdminPortalPageModel(instance, user, adminOrgs, connections, directories,
+            options.PublicOrigin.ToString().TrimEnd('/'), error);
+        var page = AdminPortalPage.Create(model);
+        page.StatusCode = status;
+        return page;
     }
 
-    internal static IResult Forbidden() =>
-        Ui.Page("Not authorized", """
-            <h1>Not authorized</h1>
-            <p class="muted">Only organization admins can use the admin portal.</p>
-            """, status: 403);
+    internal static string? SetupHtml(string provider, string slug, IReadOnlyList<Organization> adminOrgs) => provider switch
+    {
+        "github" => Setup(slug, provider, adminOrgs, "GitHub", "Create an OAuth app in GitHub Developer Settings. Request access to the user's verified email address.", ""),
+        "microsoft" => Setup(slug, provider, adminOrgs, "Microsoft Entra ID", "Create an app registration and add its client secret. Use a single tenant application.", "<div class=\"field\"><label for=\"provider-tenant\">Directory (tenant) ID</label><input class=\"input\" id=\"provider-tenant\" name=\"tenant_id\" required placeholder=\"00000000-0000-0000-0000-000000000000\"><small>Use the GUID from your Entra overview.</small></div>"),
+        "google" => Setup(slug, provider, adminOrgs, "Google", "Create a Web application OAuth client in Google Cloud Console.", ""),
+        "oidc" => Setup(slug, provider, adminOrgs, "Other OpenID Connect", "Enter an issuer with a public discovery document.", "<div class=\"field\"><label for=\"provider-issuer\">Issuer URL</label><input class=\"input\" id=\"provider-issuer\" name=\"issuer_url\" type=\"url\" required placeholder=\"https://idp.example.com\"></div>"),
+        _ => null,
+    };
+
+    private static string Setup(string slug, string provider, IReadOnlyList<Organization> adminOrgs, string title, string description, string extra) =>
+        $"""<div id="provider-setup" class="setup"><div class="setup-head"><div><h3>{title}</h3><p>{description}</p></div><span class="pill">New connection</span></div><form method="post" action="/ui/{Ui.Esc(slug)}/admin/connections"><input type="hidden" name="provider" value="{provider}">{OrganizationSelect(adminOrgs)}<div class="field"><label for="provider-name">Display name</label><input class="input" id="provider-name" name="name" value="{title}" required></div>{extra}<div class="field"><label for="provider-client-id">Client ID</label><input class="input" id="provider-client-id" name="client_id" autocomplete="off" required></div><div class="field"><label for="provider-client-secret">Client secret</label><input class="input" id="provider-client-secret" name="client_secret" type="password" autocomplete="new-password" required></div><div class="form-actions"><button class="btn btn-primary" type="submit">Add {title}</button><small>The callback URL appears after you save.</small></div></form></div>""";
+
+    private static string OrganizationSelect(IReadOnlyList<Organization> adminOrgs) => adminOrgs.Count < 2
+        ? ""
+        : $"""<div class="field"><label for="connection-org">Organization</label><select class="input" id="connection-org" name="org_id">{string.Join("", adminOrgs.Select(org => $"<option value=\"{Ui.Esc(org.Id)}\">{Ui.Esc(org.Name)}</option>"))}</select></div>""";
+
+    internal static Organization? SelectOrg(IReadOnlyList<Organization> adminOrgs, string? orgId) =>
+        string.IsNullOrWhiteSpace(orgId) ? adminOrgs.FirstOrDefault() : adminOrgs.FirstOrDefault(org => org.Id == orgId);
+
+    internal static IResult Forbidden() => Ui.Page("Not authorized", """
+        <h1>Not authorized</h1><p class="muted">Only organization admins can use the admin portal.</p>
+        """, status: 403);
 }
