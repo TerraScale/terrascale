@@ -102,16 +102,19 @@ var client = new TerraScaleClient(
 var databases = await client.Databases.ListAsync(cancellationToken: cancellationToken);
 ```
 
-For ts-auth, use the same package with `TerraScaleAuthClient` — the origin is
-your deployment's public origin and the key is the instance `sk_...` management
-key:
+For ts-auth, use the same package with `TerraScaleAuthClient`. With the public
+`auth.terrascale.tech` origin, the SDK discovers the nearest healthy regional
+auth endpoint from Atlas and sends requests there directly. Set
+`UseReverseProxy = true` to send them through the public auth proxy instead.
+Custom auth origins are used directly. The key is the instance `sk_...`
+management key:
 
 ```csharp
 var auth = new TerraScaleAuthClient(
     httpClient,
     new TerraScaleAuthClientOptions
     {
-        BaseAddress = new Uri("https://auth.example.com"),
+        BaseAddress = new Uri("https://auth.terrascale.tech"),
         ApiKey = Environment.GetEnvironmentVariable("TS_AUTH_API_KEY"),
         InstanceSlug = "acme"
     });
