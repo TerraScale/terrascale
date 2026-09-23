@@ -18,6 +18,17 @@ public sealed record TerraScaleAuthClientOptions
     public Uri? BaseAddress { get; set; }
 
     /// <summary>
+    /// Use the public auth reverse proxy when <see cref="BaseAddress"/> is
+    /// <c>https://auth.terrascale.tech</c>. The default selects a regional
+    /// auth endpoint using Atlas discovery and calls that endpoint directly.
+    /// Custom auth origins continue to be used directly.
+    /// </summary>
+    public bool UseReverseProxy { get; set; }
+
+    /// <summary>Atlas origin used to discover healthy regional auth endpoints.</summary>
+    public Uri DiscoveryBaseAddress { get; set; } = new("https://atlas.terrascale.tech/");
+
+    /// <summary>
     /// The instance's management API key (<c>sk_...</c>, returned once when the key
     /// is created). Required for every <c>/v1/{slug}/...</c> management operation;
     /// the public OIDC endpoints authenticate with client credentials instead.
@@ -51,6 +62,7 @@ public sealed record TerraScaleAuthClientOptions
         }
 
         ValidateEndpoint(BaseAddress, nameof(BaseAddress));
+        ValidateEndpoint(DiscoveryBaseAddress, nameof(DiscoveryBaseAddress));
         InstanceSlug = ValidateSlug(InstanceSlug);
 
         if (ApiKey is not null && string.IsNullOrWhiteSpace(ApiKey))
