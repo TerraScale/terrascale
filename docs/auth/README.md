@@ -19,11 +19,11 @@ hashing, JWT, OAuth 2.1/OIDC, WebAuthn, TOTP, webhook signing.
 | OAuth 2.1 / OIDC | Authorization code + PKCE (S256), refresh rotation with reuse detection, client credentials, discovery, JWKS, userinfo, introspection, revocation, RP-initiated logout; ES256 id/access tokens |
 | MFA | TOTP (RFC 6238) enrollment + verification, recovery codes, step-up during sign-in |
 | Email flows | Verification, password reset, magic links, email passcodes (pluggable `IEmailSender`; logs by default) |
-| Social SSO | Upstream OIDC connections (Google/GitHub/any issuer) with JWKS-verified id_tokens |
+| Social SSO | Upstream OIDC connections (Microsoft, Google, any issuer) with JWKS-verified ID tokens; GitHub OAuth with verified email lookup |
 | Enterprise SSO | SAML 2.0 connections (HTTP-Redirect AuthnRequest, XML-DSig-verified assertions) |
 | Directory sync | SCIM 2.0 `/scim/{dir}` — users, groups, deprovisioning |
 | Organizations | Orgs, memberships, roles, invitations, enrollment domains |
-| Admin portal | Hosted page for org admins to manage SSO connections and directories |
+| Admin portal | Dashboard-styled hosted page for org admins to configure GitHub, Microsoft, Google, custom OIDC and SAML connections, and view directories |
 | Management API | Full developer REST API with `sk_...` keys, per-family key scopes, pagination, rate limiting |
 | JWT templates | Custom-claim tokens (`{{user.email}}` substitution) minted on demand |
 | Webhooks | HMAC-signed outbound events with retries, durable delivery status, dead-letter listing, and operator replay |
@@ -105,6 +105,18 @@ dotnet run --project src/TerraScale.Auth
 The four `TS_AUTH_SMTP_HOST` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` are
 all-or-nothing: setting any one without the others fails startup with the list
 of missing variables.
+
+### Self-service authentication setup
+
+An organization admin can open `/ui/{slug}/admin`, choose a provider, and enter
+its client ID and secret. The provider form loads through a Datastar endpoint.
+After saving, copy the connection's callback URL from the connections list into
+the provider's app registration. Microsoft requires a single-tenant directory
+ID; Google and custom OpenID Connect providers use their discovery documents.
+GitHub uses its OAuth app flow and accepts only verified email addresses. The
+client secret is encrypted at rest and never shown again. Connections are
+scoped to the selected organization; only its admins can enable or disable
+them. The hosted sign-in choices are at `/ui/{slug}/connections/list`.
 
 Uniqueness of user-chosen identifiers (emails, usernames, org slugs,
 credentials) is enforced with atomic claim documents: CreateOnly writes the

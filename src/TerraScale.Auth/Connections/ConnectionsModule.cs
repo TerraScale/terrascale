@@ -12,6 +12,8 @@ internal static class ConnectionsModule
         typeof(GetConnectionsPageEndpoint),
         typeof(AuthorizeOidcEndpoint),
         typeof(CompleteOidcEndpoint),
+        typeof(AuthorizeGithubEndpoint),
+        typeof(CompleteGithubEndpoint),
         typeof(SignInSamlEndpoint),
         typeof(CompleteSamlEndpoint),
     ];

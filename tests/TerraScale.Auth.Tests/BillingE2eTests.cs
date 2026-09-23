@@ -109,6 +109,7 @@ public sealed class StripeSignatureTests
 /// Unit tests for the outbound Stripe client: the wire format it produces (Stripe's
 /// bracket-nested form encoding) and the failure modes of the upstream response.
 /// A one-shot local HttpListener stands in for Stripe.
+[NotInParallel]
 public sealed class StripeClientTests
 {
     private static AuthOptions Options(int port) => new()

@@ -49,6 +49,7 @@ internal static class ConnectionFlow
     internal static string LoginPath(string slug, Connection connection) => connection.Type switch
     {
         "oidc" => $"/ui/{slug}/connections/{connection.Id}/oidc/authorize",
+        "github" => $"/ui/{slug}/connections/{connection.Id}/github/authorize",
         _ => $"/ui/{slug}/connections/{connection.Id}/saml/login",
     };
 

@@ -270,7 +270,8 @@ public sealed class AuditKeyRotationRehearsalTests
     private static string FindRepoRoot()
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
-            if (Directory.Exists(Path.Combine(directory.FullName, ".git")))
+            if (Directory.Exists(Path.Combine(directory.FullName, ".git"))
+                || File.Exists(Path.Combine(directory.FullName, ".git")))
                 return directory.FullName;
         throw new InvalidOperationException("git repository root not found");
     }

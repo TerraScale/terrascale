@@ -1,6 +1,7 @@
 namespace TerraScale.Auth.Admin;
 
 using TerraScale.Auth.Api;
+using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Connections;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
@@ -14,13 +15,13 @@ internal sealed class GetAdminPortalEndpoint : IEndpoint
         routes.MapGet("/ui/{slug}/admin", HandleAsync);
 
     private static async Task<IResult> HandleAsync(
-            string slug, HttpRequest request, AuthStore store, Users.SessionService sessions, CancellationToken ct)
+            string slug, HttpRequest request, AuthStore store, Users.SessionService sessions, AuthOptions options, CancellationToken ct)
     {
         var gate = await RequireOrgAdminAsync(slug, request, store, sessions, ct);
         if (gate is null)
             return Results.Redirect($"/ui/{slug}/sign-in?next={Uri.EscapeDataString($"/ui/{slug}/admin")}");
         if (gate.Value.AdminOrgs.Count == 0)
             return Forbidden();
-        return await PageAsync(gate.Value, store, ct);
+        return await PageAsync(gate.Value, store, options, ct);
     }
 }

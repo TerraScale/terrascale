@@ -38,7 +38,7 @@ internal static class OidcLogin
     }
 
     internal static string CallbackUrl(AuthOptions options, string slug, string connectionId) =>
-        $"{options.PublicOrigin.ToString().TrimEnd('/')}/{slug}/connections/{connectionId}/oidc/callback";
+        $"{options.PublicOrigin.ToString().TrimEnd('/')}/ui/{slug}/connections/{connectionId}/oidc/callback";
 
     internal static string Query(Dictionary<string, string> parameters) =>
         string.Join("&", parameters.Select(pair => $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}"));
