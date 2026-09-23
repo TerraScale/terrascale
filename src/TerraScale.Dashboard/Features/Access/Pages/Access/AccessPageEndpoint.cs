@@ -61,9 +61,6 @@ public sealed class AccessPageEndpoint(DashboardStore store) : SlicePageEndpoint
             || Store.TeamMembers.Any(m => m.UserId == Store.CurrentUser.Id && m.Role is "owner" or "admin");
 
         return new AccessPageModel(
-            MemberCount: members.Count,
-            GroupCount: team.Count,
-            ProjectCount: projects.Count,
             HasMembers: Store.TeamMembers.Length > 0,
             CanManageOrganization: canManageOrganization,
             CanManageProject: canManageProject,

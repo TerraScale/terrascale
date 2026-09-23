@@ -8,23 +8,6 @@
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
-    <section class="ts-panel ts-panel-20">
-        <dl class="ts-grid ts-grid-3">
-            <div class="ts-summary-term">
-                <dt>MEMBERS</dt>
-                <dd>@Model.MemberCount</dd>
-            </div>
-            <div class="ts-summary-term">
-                <dt>GROUPS</dt>
-                <dd>@Model.GroupCount</dd>
-            </div>
-            <div class="ts-summary-term">
-                <dt>PROJECTS</dt>
-                <dd>@Model.ProjectCount</dd>
-            </div>
-        </dl>
-    </section>
-
     @if (Model.Error is { } error)
     {
         <div class="ts-alert ts-alert-warning" role="alert">

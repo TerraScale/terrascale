@@ -124,6 +124,7 @@ public sealed class PagesSmokeTests
         var page = await app.GetPageAsync(client, "/access");
         await Assert.That(page.StatusCode).IsEqualTo(200);
         await Assert.That(page.Heading).IsEqualTo("Team");
+        await Assert.That(page.Contains("ts-summary-term")).IsFalse();
         await Assert.That(page.Contains("Organization members")).IsTrue();
         await Assert.That(page.Contains("Current session access")).IsTrue();
         await Assert.That(page.Contains("Invitations and role changes")).IsTrue();
