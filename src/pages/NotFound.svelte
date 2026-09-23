@@ -24,7 +24,7 @@
       </div>
     </div>
     <div class="notfound__art" aria-hidden="true">
-      <img src="/404-illustration.webp" alt="" width="680" height="700" decoding="async" />
+      <img src="/404-illustration.svg" alt="" width="900" height="760" decoding="async" />
     </div>
   </div>
 </section>
@@ -180,8 +180,6 @@
   .notfound__art img {
     width: 100%;
     height: auto;
-    -webkit-mask-image: radial-gradient(ellipse 73% 72% at 48% 48%, black 61%, transparent 100%);
-    mask-image: radial-gradient(ellipse 73% 72% at 48% 48%, black 61%, transparent 100%);
   }
 
   @media (max-width: 900px) {

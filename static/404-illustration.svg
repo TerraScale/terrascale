@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="760" viewBox="0 0 900 760" fill="none" role="img" aria-labelledby="title">
+  <title id="title">Gato surpreso brincando com os números 404</title>
+  <defs>
+    <linearGradient id="number-blue" x1="230" y1="80" x2="750" y2="390" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#258aff"/>
+      <stop offset=".55" stop-color="#0864f5"/>
+      <stop offset="1" stop-color="#0045c6"/>
+    </linearGradient>
+    <pattern id="number-lines" width="18" height="18" patternUnits="userSpaceOnUse" patternTransform="rotate(38)">
+      <path d="M0 0V18" stroke="#75b4ff" stroke-width="2" opacity=".55"/>
+      <path d="M8 0V18" stroke="#092c77" stroke-width="1.5" opacity=".45"/>
+    </pattern>
+    <pattern id="fur-lines" width="24" height="24" patternUnits="userSpaceOnUse" patternTransform="rotate(24)">
+      <path d="M0 0v7M8 11v6M16 2v5" stroke="#17213b" stroke-width="1.4" stroke-linecap="round" opacity=".72"/>
+    </pattern>
+    <filter id="blue-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <clipPath id="digit-clip">
+      <path d="M306 91 195 263h153M342 97v255M486 106c-52 0-81 48-81 121s29 123 81 123 81-50 81-123-29-121-81-121ZM708 91 597 263h153M744 97v255" fill="none" stroke="#fff" stroke-width="65" stroke-linejoin="round" stroke-linecap="round"/>
+    </clipPath>
+    <clipPath id="body-clip">
+      <path d="M296 438c58-64 162-80 243-42 58-13 105 7 140 53 31 41 30 107-8 150-51 58-176 79-301 47-90-23-151-71-154-127-2-34 28-67 80-81Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Loose blue marks keep the drawing lively without adding a background. -->
+  <g stroke="#0873ff" stroke-width="5" stroke-linecap="round" opacity=".95">
+    <path d="M110 317q-23 5-33 21M131 305q-14-12-33-8M777 254q21 4 31 23M789 238q20-1 34 9M738 615q22 10 28 25"/>
+    <path d="M382 67q12-20 29-24M392 85q17-11 31-10M77 560q-19 14-19 34"/>
+  </g>
+  <g fill="#64a4ff" font-family="monospace" font-weight="700" letter-spacing="2">
+    <text x="73" y="245" font-size="34" transform="rotate(-22 73 245)" opacity=".72">HUH?</text>
+    <text x="737" y="408" font-size="29" transform="rotate(-17 737 408)" opacity=".65">HUH?</text>
+  </g>
+
+  <!-- Hand-drawn blue 404, with its complete silhouette inside the viewBox. -->
+  <g transform="translate(12 15)" stroke="#0055df" stroke-width="78" stroke-linejoin="round" stroke-linecap="round" opacity=".42" filter="url(#blue-glow)">
+    <path d="M306 91 195 263h153M342 97v255M486 106c-52 0-81 48-81 121s29 123 81 123 81-50 81-123-29-121-81-121ZM708 91 597 263h153M744 97v255"/>
+  </g>
+  <path d="M306 91 195 263h153M342 97v255M486 106c-52 0-81 48-81 121s29 123 81 123 81-50 81-123-29-121-81-121ZM708 91 597 263h153M744 97v255"
+    stroke="#071936" stroke-width="78" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M306 91 195 263h153M342 97v255M486 106c-52 0-81 48-81 121s29 123 81 123 81-50 81-123-29-121-81-121ZM708 91 597 263h153M744 97v255"
+    stroke="url(#number-blue)" stroke-width="66" stroke-linejoin="round" stroke-linecap="round"/>
+  <g clip-path="url(#digit-clip)" opacity=".72">
+    <path d="M145 45h680v350H145z" fill="url(#number-lines)"/>
+  </g>
+  <path d="M306 91 195 263h153M342 97v255M486 106c-52 0-81 48-81 121s29 123 81 123 81-50 81-123-29-121-81-121ZM708 91 597 263h153M744 97v255"
+    stroke="#7fbaff" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" opacity=".68"/>
+
+  <!-- Tail behind the body. -->
+  <path d="M638 548c71 61 133 5 176-1 35-5 47 16 30 36-24 29-81 8-120 37-44 33-101 16-127-25"
+    fill="#f8fbff" stroke="#101a30" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M690 581c36 8 61-16 84-26l21 43c-28 4-49 11-69 25-13 9-30 11-44 7Z" fill="#0564f5"/>
+  <path d="M802 548c25-9 42-5 46 9 4 14-14 25-32 31Z" fill="#0752ce"/>
+  <path d="M638 548c71 61 133 5 176-1 35-5 47 16 30 36-24 29-81 8-120 37-44 33-101 16-127-25"
+    stroke="#101a30" stroke-width="7" stroke-linejoin="round"/>
+
+  <!-- Soft cast shadow on the transparent canvas. -->
+  <ellipse cx="464" cy="675" rx="301" ry="32" fill="#081633" opacity=".4" filter="url(#blue-glow)"/>
+
+  <!-- Reclining body, graphic blue patches and ink texture. -->
+  <path d="M296 438c58-64 162-80 243-42 58-13 105 7 140 53 31 41 30 107-8 150-51 58-176 79-301 47-90-23-151-71-154-127-2-34 28-67 80-81Z"
+    fill="#fcfdff" stroke="#101a30" stroke-width="9" stroke-linejoin="round"/>
+  <g clip-path="url(#body-clip)">
+    <path d="m300 586 59-31 23 46 42-7 10 89-106-20Z" fill="#0869fc"/>
+    <path d="m466 608 67-57 40 34 39-16 24 90-156 36Z" fill="#0869fc"/>
+    <path d="m622 421 41 7 36 84-38-7-37-37Z" fill="#0963e8"/>
+    <path d="M245 431h76l-30 51-79-9Z" fill="#0963e8"/>
+    <path d="M220 375h490v310H220z" fill="url(#fur-lines)" opacity=".45"/>
+    <path d="m347 561 44-32M360 576l44-31M383 589l42-27M477 565l27-35M494 579l27-34M545 628l30-34M562 637l29-31"
+      stroke="#13233e" stroke-width="2" stroke-linecap="round" opacity=".76"/>
+  </g>
+  <path d="M296 438c58-64 162-80 243-42 58-13 105 7 140 53 31 41 30 107-8 150-51 58-176 79-301 47-90-23-151-71-154-127-2-34 28-67 80-81Z"
+    stroke="#101a30" stroke-width="9" stroke-linejoin="round"/>
+
+  <!-- Two raised back paws. -->
+  <path d="M486 489c-7-54 0-112 30-134 22-16 50-6 59 22 10 31 4 81-2 118-23 21-59 21-87-6Z"
+    fill="#fcfdff" stroke="#101a30" stroke-width="8"/>
+  <path d="M516 355c9-12 39-12 50 7 12 20 9 44-3 59-17 18-40 16-56 0-15-15-9-47 9-66Z"
+    fill="#fcfdff" stroke="#101a30" stroke-width="8"/>
+  <ellipse cx="533" cy="388" rx="18" ry="15" fill="#15213a" transform="rotate(-12 533 388)"/>
+  <ellipse cx="511" cy="369" rx="5" ry="9" fill="#15213a" transform="rotate(-25 511 369)"/>
+  <ellipse cx="530" cy="359" rx="5" ry="9" fill="#15213a"/>
+  <ellipse cx="551" cy="363" rx="5" ry="9" fill="#15213a" transform="rotate(20 551 363)"/>
+  <path d="M584 504c11-69 32-130 68-137 30-6 51 18 48 47-3 42-21 79-33 112-27 13-56 7-83-22Z"
+    fill="#fcfdff" stroke="#101a30" stroke-width="8"/>
+  <path d="M650 368c21-12 45 0 51 23 6 24-2 42-18 51-20 11-46 2-55-16-9-19 2-47 22-58Z"
+    fill="#fcfdff" stroke="#101a30" stroke-width="8"/>
+  <ellipse cx="665" cy="404" rx="18" ry="15" fill="#15213a" transform="rotate(16 665 404)"/>
+  <ellipse cx="642" cy="389" rx="5" ry="9" fill="#15213a" transform="rotate(-24 642 389)"/>
+  <ellipse cx="661" cy="377" rx="5" ry="9" fill="#15213a"/>
+  <ellipse cx="682" cy="382" rx="5" ry="9" fill="#15213a" transform="rotate(22 682 382)"/>
+  <g stroke="#1e2d48" stroke-width="2" opacity=".7">
+    <path d="m492 450 25 24m-18-36 23 23m67 11 25 21m-16-38 24 18"/>
+  </g>
+
+  <!-- Head, pointed ears, blue cheek patch. -->
+  <path d="M198 431 155 350c-9-16-19-8-19 6l4 112M287 401l-7-89c-1-17-12-20-22-7l-62 79"
+    fill="#fcfdff" stroke="#101a30" stroke-width="8" stroke-linejoin="round"/>
+  <path d="m157 378 20 43-25 23Zm108-47-35 50 43-22Z" fill="#f4a6b7" opacity=".75"/>
+  <path d="M201 411c54-42 129-19 161 32 39 63 9 140-61 168-67 27-142 1-171-56-27-54 3-115 71-144Z"
+    fill="#fcfdff" stroke="#101a30" stroke-width="9"/>
+  <path d="M151 539c31 55 101 82 159 62-44 50-123 45-168-6Z" fill="#0965eb"/>
+  <path d="M197 412c-25 22-32 53-31 69l29-4c8-28 25-44 49-54Z" fill="#126bf2"/>
+  <path d="M201 411c54-42 129-19 161 32 39 63 9 140-61 168-67 27-142 1-171-56-27-54 3-115 71-144Z"
+    stroke="#101a30" stroke-width="9"/>
+  <g stroke="#18243d" stroke-width="2" stroke-linecap="round" opacity=".7">
+    <path d="m201 426-5 20m16-24-6 18m17-19-5 15m-74 76 14 8m-12 5 15 7m-8 5 17 5m53 58 17-11m-7 16 16-10m63-128 19 14m-8-21 18 13m-2 57 17 7"/>
+    <path d="m204 477-21-4m25-6-20-6m131 13 20-10m-12 20 19-7"/>
+  </g>
+
+  <!-- Face and whiskers. -->
+  <ellipse cx="226" cy="484" rx="13" ry="18" fill="#111b31" transform="rotate(16 226 484)"/>
+  <ellipse cx="229" cy="478" rx="4" ry="5" fill="#fff"/>
+  <ellipse cx="315" cy="463" rx="12" ry="16" fill="#111b31" transform="rotate(14 315 463)"/>
+  <ellipse cx="318" cy="457" rx="4" ry="5" fill="#fff"/>
+  <path d="m270 505 14-7 8 10-12 8Z" fill="#f2a5b6" stroke="#111b31" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M280 517c-2 15-12 20-24 15m24-15c7 13 19 15 31 6" stroke="#111b31" stroke-width="3" stroke-linecap="round"/>
+  <g stroke="#19243a" stroke-width="2" stroke-linecap="round">
+    <path d="m255 514-69-15m66 23-76 10m78-2-56 27m46-44-50-28m100 6 58-29m-55 38 69-11m-68 20 62 9"/>
+  </g>
+  <g fill="#1c2941">
+    <circle cx="244" cy="508" r="2"/><circle cx="253" cy="502" r="2"/><circle cx="241" cy="517" r="2"/>
+    <circle cx="309" cy="502" r="2"/><circle cx="319" cy="494" r="2"/><circle cx="319" cy="510" r="2"/>
+  </g>
+
+  <!-- Front paws reach toward the numbers. -->
+  <path d="M354 510c23-48 59-83 99-99 19-8 40 0 48 17 10 20-2 38-17 48-22 15-55 34-72 65"
+    fill="#fcfdff" stroke="#101a30" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M453 414c6-17 25-24 39-18 12 5 17 19 12 31 11-9 25-8 32 2 10 14 0 32-14 37-21 8-48 4-65-7"
+    fill="#fcfdff" stroke="#101a30" stroke-width="7" stroke-linejoin="round"/>
+  <path d="m469 428 7 20m19-23 2 22m19-17 4 20" stroke="#101a30" stroke-width="3" stroke-linecap="round"/>
+  <path d="M357 558c-8-40 3-82 27-105 15-15 35-11 45 2 14 19 3 36-9 55l-8 72"
+    fill="#fcfdff" stroke="#101a30" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M383 447c6-19 25-31 42-26 16 5 22 22 16 36 15-8 30-1 33 13 3 15-12 27-28 30-20 4-44-4-55-18"
+    fill="#fcfdff" stroke="#101a30" stroke-width="7" stroke-linejoin="round"/>
+  <path d="m399 458 8 21m19-28 3 22m18-16 2 18" stroke="#101a30" stroke-width="3" stroke-linecap="round"/>
+</svg>
