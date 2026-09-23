@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use serde::de::DeserializeOwned;
 
 use crate::auth_idp::AuthIdpClient;
+use crate::auth_routing::AuthRouter;
 use crate::config::ClientConfig;
 use crate::discovery::{self, RouteKind, Router};
 use crate::documents::{DatabaseScope, DocumentsClient};
@@ -60,6 +61,7 @@ pub(crate) struct Shared {
     /// Atlas discovery router; `None` keeps direct-origin routing (strict
     /// affinity, custom origins, local emulator).
     router: Option<Arc<Router>>,
+    auth_router: Option<AuthRouter>,
     placement: RwLock<Option<RegionCode>>,
     session_token: RwLock<Option<String>>,
     /// Optional key used by all mutation requests made through this client.
@@ -76,6 +78,11 @@ pub(crate) type SharedClient = Arc<Shared>;
 
 impl Shared {
     fn new(config: ClientConfig, transport: Arc<dyn HttpTransport>) -> Self {
+        let auth_router = AuthRouter::for_config(
+            config.auth_base_url(),
+            config.auth_reverse_proxy(),
+            config.atlas_base_url(),
+        );
         let router = config.atlas_base_url().map(|atlas_origin| {
             Arc::new(Router::new(
                 atlas_origin.to_owned(),
@@ -89,6 +96,7 @@ impl Shared {
             transport,
             config,
             router,
+            auth_router,
             placement: RwLock::new(None),
             session_token: RwLock::new(None),
             idempotency_key: RwLock::new(None),
@@ -508,15 +516,36 @@ impl Shared {
             .map(|(_, value)| value.clone());
         self.decorate(&mut request);
         let route = request.route_name.clone();
+        let auth_endpoints = if route.starts_with("auth_idp.") {
+            match &self.auth_router {
+                Some(router) => Some(router.endpoints(&self.transport).await?),
+                None => None,
+            }
+        } else {
+            None
+        };
+        let mut auth_index = 0;
         let mut retries = 0;
         loop {
             let mut attempt = request.clone();
+            if let Some(endpoints) = &auth_endpoints {
+                rebase(&mut attempt, &endpoints[auth_index])?;
+            }
             let routed = self
                 .route(&mut attempt, routing_database.as_deref())
                 .await?;
             let started = Instant::now();
             match self.transport.send(attempt).await {
                 Ok(response) => {
+                    if request.method == Method::Get
+                        && auth_endpoints
+                            .as_ref()
+                            .is_some_and(|endpoints| auth_index + 1 < endpoints.len())
+                        && matches!(response.status, 502..=504)
+                    {
+                        auth_index += 1;
+                        continue;
+                    }
                     routed.observe_rtt(&self.router, response.status, started.elapsed());
                     self.observe(&response);
                     match self.check(&route, &response, routed.database.as_deref()) {
@@ -533,6 +562,14 @@ impl Shared {
                     }
                 }
                 Err(error) => {
+                    if request.method == Method::Get
+                        && auth_endpoints
+                            .as_ref()
+                            .is_some_and(|endpoints| auth_index + 1 < endpoints.len())
+                    {
+                        auth_index += 1;
+                        continue;
+                    }
                     routed.demote_on(&self.router, &error);
                     if self.can_retry(&request, &error, retries) {
                         retries += 1;
