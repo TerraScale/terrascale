@@ -61,6 +61,16 @@ test("member can create and revoke an API key", async ({ page }) => {
   await page.fill("#key-scopes", "database:read");
   await page.getByRole("button", { name: "Create key" }).click();
   await expect(page.locator("table tbody tr").filter({ hasText: "service credential" })).toBeVisible();
+  await page.getByRole("dialog", { name: "Credential secret" }).getByRole("link", { name: "Done" }).click();
+
+  await page.locator("#credential-kind-value").click();
+  await page.locator('[name="kind"] + details [data-filter-value="key"]').click();
+  await expect(page).toHaveURL(/kind=key/);
+  await page.locator("#credential-status-value").click();
+  await page.locator('[name="status"] + details [data-filter-value="Active"]').click();
+  await expect(page).toHaveURL(/kind=key.*status=Active/);
+  await expect(page.locator("#credential-kind-value")).toHaveText("API keys");
+  await expect(page.locator("#credential-status-value")).toHaveText("Active");
 });
 
 test("member can invite a teammate from the team page", async ({ page }) => {
