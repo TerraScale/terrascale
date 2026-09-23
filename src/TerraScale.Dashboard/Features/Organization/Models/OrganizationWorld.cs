@@ -21,6 +21,9 @@ public sealed class OrganizationWorld
     /// plan the organization provisions against.</summary>
     public string PlanKey { get; set; } = "";
     public bool PaymentMethodValidated { get; set; }
+    public string? DemoCardLast4 { get; set; }
+    public string? DemoCardExpiry { get; set; }
+    public string? DemoCardholderName { get; set; }
     public string? BillingRenewal { get; set; }
     public string? StripeCustomerId { get; set; }
     public string? StripeSubscriptionId { get; set; }
