@@ -463,6 +463,16 @@ public sealed class MutationsTests
         var page = await app.GetPageAsync(client, "/usage?tab=settings&saved=ok");
         await Assert.That(page.Contains("Spending controls saved.")).IsTrue();
         await Assert.That(page.Contains("value=\"100.50\"")).IsTrue();
+
+        // Caps form posts no spendCap: project/database caps save, organization cap stays.
+        using var caps = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/usage/spending-controls",
+            new Dictionary<string, string> { ["projCap_prj_01JC9Q6W3M5N7P9R2T4V6X8ZA"] = "80", ["dbCap_db_01JC9Q8Y5N7P9R3T5V7X9Z2AC"] = "90" });
+        await Assert.That(caps.Headers.Location!.ToString()).IsEqualTo("/usage?tab=settings&saved=ok");
+        var capsPage = await app.GetPageAsync(client, "/usage?tab=settings&saved=ok");
+        await Assert.That(capsPage.Contains("value=\"100.50\"")).IsTrue();
+        await Assert.That(capsPage.Contains("name=\"projCap_prj_01JC9Q6W3M5N7P9R2T4V6X8ZA\" inputmode=\"decimal\" pattern=\"\\d+(\\.\\d{1,2})?\" value=\"80\"")).IsTrue();
+        // The looser database cap loses to its project cap.
+        await Assert.That(capsPage.Contains("id=\"dbCap_db_01JC9Q8Y5N7P9R3T5V7X9Z2AC_applied\" class=\"ts-muted\">$80 ")).IsTrue();
     }
 
     // --- Saved queries -------------------------------------------------------------

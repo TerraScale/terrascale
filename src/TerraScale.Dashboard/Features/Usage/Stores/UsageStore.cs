@@ -87,20 +87,28 @@ public sealed partial class DashboardStore
         SpendCapUsd = capUsd is { Length: > 0 } ? capUsd : null;
     }
 
-    // Optional lower caps per database, on top of the organization cap.
-    public string? DatabaseSpendCap(string databaseId) =>
-        World.DatabaseSpendCaps.TryGetValue(databaseId, out var cap) && cap.Length > 0 ? cap : null;
+    // Optional lower caps per project and per database, inside the organization cap.
+    public string? ProjectSpendCap(string projectId) => ScopedCap(World.ProjectSpendCaps, projectId);
 
-    public void UpdateDatabaseSpendCaps(IReadOnlyDictionary<string, string> capsById)
+    public string? DatabaseSpendCap(string databaseId) => ScopedCap(World.DatabaseSpendCaps, databaseId);
+
+    public void UpdateProjectSpendCaps(IReadOnlyDictionary<string, string> capsById) => UpdateScopedCaps(World.ProjectSpendCaps, capsById);
+
+    public void UpdateDatabaseSpendCaps(IReadOnlyDictionary<string, string> capsById) => UpdateScopedCaps(World.DatabaseSpendCaps, capsById);
+
+    private static string? ScopedCap(Dictionary<string, string> caps, string id) =>
+        caps.TryGetValue(id, out var cap) && cap.Length > 0 ? cap : null;
+
+    private static void UpdateScopedCaps(Dictionary<string, string> caps, IReadOnlyDictionary<string, string> capsById)
     {
-        foreach (var (databaseId, cap) in capsById)
+        foreach (var (id, cap) in capsById)
         {
             if (cap.Trim().Length == 0
                 || (decimal.TryParse(cap.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var value)
                     && value >= 0
                     && decimal.Round(value, 2) == value))
             {
-                World.DatabaseSpendCaps[databaseId] = cap.Trim();
+                caps[id] = cap.Trim();
             }
         }
     }

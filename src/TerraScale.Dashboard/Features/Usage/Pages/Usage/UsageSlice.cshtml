@@ -4,7 +4,7 @@
     Microsoft.AspNetCore.Html.HtmlString Icon(string name, int size = 15) => IconByName(name, size);
     string InvoiceTone(string status) => status switch { "paid" => "ts-badge-success", "open" => "ts-badge-warning", _ => "ts-badge-neutral" };
     var invoices = Model.InvoicePage;
-    (string Id, string Label)[] tabs = [("overview", "Overview"), ("billing", "Billing"), ("settings", "Settings")];
+    (string Id, string Label, string Icon)[] tabs = [("overview", "Overview", "BarChart3"), ("billing", "Billing", "CreditCard"), ("settings", "Settings", "Settings")];
     var filtered = Model.ProjectFilter.Length > 0 || Model.DatabaseFilter.Length > 0;
     var savedOk = Model.SavedControlsMessage is "Spending controls saved.";
     var saveError = savedOk ? null : Model.SavedControlsMessage;
@@ -29,9 +29,9 @@
 
     <div class="ts-usage-toolbar">
         <nav class="ts-tabs" aria-label="Usage sections">
-            @foreach (var (id, label) in tabs)
+            @foreach (var (id, label, icon) in tabs)
             {
-                <a class="ts-tab" href="/usage?tab=@id" aria-current="@(Model.Tab == id ? "page" : null)" aria-selected="@(Model.Tab == id ? "true" : "false")">@label</a>
+                <a class="ts-tab" href="/usage?tab=@id" aria-current="@(Model.Tab == id ? "page" : null)" aria-selected="@(Model.Tab == id ? "true" : "false")">@Icon(icon, 16) @label</a>
             }
         </nav>
         @if (Model.Tab is "overview")
@@ -340,7 +340,8 @@
     }
     else
     {
-        var capped = Model.DatabaseCaps.Where(d => d.Cap is not null).ToList();
+        var cappedProjects = Model.CapGroups.Count(g => g.Project.Cap.Length > 0);
+        var cappedDatabases = Model.CapGroups.Sum(g => g.Databases.Count(d => d.Cap.Length > 0));
         <section class="ts-usage-section" aria-labelledby="usage-spending-title">
             <div class="ts-usage-head">
                 <div>
@@ -392,44 +393,52 @@
                     }
                 </div>
                 <div>
-                    <dt>@Icons.Database(14) Database caps</dt>
-                    <dd><span class="ts-usage-kpi-value">@capped.Count</span> of @Model.DatabaseCaps.Count databases</dd>
-                    <small class="ts-meta">Optional lower limits inside the organization cap</small>
+                    <dt>@Icons.Layers(14) Project and database caps</dt>
+                    <dd><span class="ts-usage-kpi-value">@(cappedProjects + cappedDatabases)</span> caps set</dd>
+                    <small class="ts-meta">@cappedProjects of @Model.CapGroups.Count projects · @cappedDatabases of @Model.CapGroups.Sum(g => g.Databases.Count) databases</small>
                 </div>
             </dl>
         </section>
 
         <div class="ts-usage-columns">
-            <section class="ts-usage-section" aria-labelledby="usage-dbcaps-title">
-                <div>
-                    <h2 class="ts-panel-title" id="usage-dbcaps-title">Database caps</h2>
-                    <p class="ts-meta">Databases in the active project; a database without its own cap shares the organization cap</p>
+            <section class="ts-usage-section" aria-labelledby="usage-caps-title">
+                <div class="ts-usage-head">
+                    <div>
+                        <h2 class="ts-panel-title" id="usage-caps-title">Caps by project and database</h2>
+                        <p class="ts-meta">Monthly limits in USD. Blank shares the limit above it; the tightest cap applies.</p>
+                    </div>
+                    @if (Model.CapGroups.Count > 0)
+                    {
+                        <button class="ts-btn ts-btn-primary" type="submit" form="usage-caps-form">@Icons.Save(16) Save caps</button>
+                    }
                 </div>
-                @if (Model.DatabaseCaps.Count is 0)
+                @if (Model.CapGroups.Count is 0)
                 {
-                    @EmptyState("No databases in this project", "Create a database to set a lower monthly cap for it.")
+                    @EmptyState("No projects yet", "Create a project to set a monthly cap for it and its databases.")
                 }
                 else
                 {
-                    <div class="ts-table-wrap">
-                        <table class="ts-table">
+                    <form id="usage-caps-form" method="post" action="/api/v1/dashboard/usage/spending-controls" class="ts-table-wrap">
+                        <table class="ts-table ts-usage-caps">
                             <thead>
                                 <tr>
-                                    <th>Database</th>
+                                    <th>Project / database</th>
                                     <th>Monthly cap</th>
+                                    <th>Applied limit</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                @foreach (var database in Model.DatabaseCaps)
-                                {
-                                    <tr>
-                                        <td><span class="ts-row ts-row-tight">@Icons.Database(14) <span class="ts-table-strong">@database.Name</span></span></td>
-                                        <td>@if (database.Cap is { } dbCap) { <span class="ts-table-num">$@dbCap</span> } else { <span class="ts-muted">Organization cap</span> }</td>
-                                    </tr>
-                                }
-                            </tbody>
+                            @foreach (var group in Model.CapGroups)
+                            {
+                                <tbody>
+                                    @CapRow(group.Project, "projCap_", "FolderKanban")
+                                    @foreach (var database in group.Databases)
+                                    {
+                                        @CapRow(database, "dbCap_", "Database")
+                                    }
+                                </tbody>
+                            }
                         </table>
-                    </div>
+                    </form>
                 }
             </section>
 
@@ -454,7 +463,7 @@
             <div class="ts-dialog-content">
                 <div class="ts-dialog-header">
                     <h3 class="ts-dialog-title">Edit spending controls</h3>
-                    <p class="ts-dialog-description">Paid excess consent and monthly caps</p>
+                    <p class="ts-dialog-description">Paid excess consent and the organization cap</p>
                 </div>
                 @if (saveError is not null)
                 {
@@ -470,20 +479,7 @@
                         <label class="ts-label" for="spendCap">Monthly organization spending cap in USD (blank means no cap)</label>
                         <input class="ts-input" id="spendCap" name="spendCap" inputmode="decimal" value="@Model.SpendCap" placeholder="" />
                     </div>
-                    @if (Model.DatabaseCaps.Count > 0)
-                    {
-                        <details class="ts-stack-md">
-                            <summary>Optional lower database spending caps</summary>
-                            <p class="ts-meta">Database caps cannot raise the organization limit. Blank removes the lower database cap.</p>
-                            @foreach (var database in Model.DatabaseCaps)
-                            {
-                                <div class="ts-field">
-                                    <label class="ts-label" for="dbCap_@database.Id">@database.Name — monthly cap in USD</label>
-                                    <input class="ts-input" id="dbCap_@database.Id" name="dbCap_@database.Id" inputmode="decimal" value="@database.Cap" />
-                                </div>
-                            }
-                        </details>
-                    }
+                    <p class="ts-meta">Lower caps for single projects and databases are set in the caps table.</p>
                     <div class="ts-dialog-footer">
                         <button type="button" class="ts-btn ts-btn-ghost" data-close-dialog>Cancel</button>
                         <button class="ts-btn ts-btn-primary" type="submit">Save spending controls</button>
@@ -531,6 +527,17 @@
     }
 
     private static string E(string value) => System.Net.WebUtility.HtmlEncode(value);
+
+    // Caps table row: name + detail, a "$" cap input (blank = no own cap), applied limit.
+    private static Microsoft.AspNetCore.Html.HtmlString CapRow(UsageCapRow row, string prefix, string icon)
+    {
+        var id = E(prefix + row.Id);
+        var kind = prefix is "projCap_" ? "ts-usage-cap-project" : "ts-usage-cap-database";
+        return new(
+            $"<tr class=\"{kind}\"><td><span class=\"ts-usage-cap-name\">{IconByName(icon, 14).Value}<span><label class=\"ts-table-strong\" for=\"{id}\">{E(row.Name)}</label><small class=\"ts-meta\">{E(row.Detail)}</small></span></span></td>"
+            + $"<td><span class=\"ts-usage-cap\"><span aria-hidden=\"true\">$</span><input class=\"ts-input\" id=\"{id}\" name=\"{id}\" inputmode=\"decimal\" pattern=\"\\d+(\\.\\d{{1,2}})?\" value=\"{E(row.Cap)}\" placeholder=\"No cap\" aria-describedby=\"{id}_applied\" /></span></td>"
+            + $"<td id=\"{id}_applied\" class=\"ts-muted\">{E(row.Effective)}</td></tr>");
+    }
 
     // v1 EmptyState: SearchX 16px in a 32x32 muted box, title, muted description.
     private static Microsoft.AspNetCore.Html.HtmlString EmptyState(string title, string description) => new(

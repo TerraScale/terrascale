@@ -246,6 +246,9 @@ public sealed class AccountWorld
     public Dictionary<string, string> DatabaseSpendCaps { get => ActiveOrganization.DatabaseSpendCaps; set => ActiveOrganization.DatabaseSpendCaps = value; }
 
     [JsonIgnore]
+    public Dictionary<string, string> ProjectSpendCaps { get => ActiveOrganization.ProjectSpendCaps; set => ActiveOrganization.ProjectSpendCaps = value; }
+
+    [JsonIgnore]
     public HashSet<string> BackupsDisabled { get => ActiveOrganization.BackupsDisabled; set => ActiveOrganization.BackupsDisabled = value; }
 
     [JsonIgnore]

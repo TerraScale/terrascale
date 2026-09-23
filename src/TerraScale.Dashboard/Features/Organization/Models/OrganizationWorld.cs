@@ -106,6 +106,8 @@ public sealed class OrganizationWorld
 
     public Dictionary<string, string> DatabaseSpendCaps { get; set; } = [];
 
+    public Dictionary<string, string> ProjectSpendCaps { get; set; } = [];
+
     public HashSet<string> BackupsDisabled { get; set; } = [];
 
     public Dictionary<string, (string Schedule, string Retention)> BackupPolicies { get; set; } = [];

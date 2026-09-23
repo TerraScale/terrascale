@@ -19,7 +19,7 @@ public sealed record UsagePageModel(
     IReadOnlyList<ChartSeries> History,
     IReadOnlyList<UsageStatCard> HistorySummary,
     IReadOnlyList<DashboardDatabase> Databases,
-    IReadOnlyList<(string Id, string Name, string? Cap)> DatabaseCaps,
+    IReadOnlyList<UsageCapGroup> CapGroups,
     string BillingPortalHref,
     bool PaidExcessEnabled,
     string SpendCap,
@@ -161,6 +161,28 @@ public sealed record UsagePageModel(
         var invoicePage = UsageInvoicePage.From(store.Invoices, status, issued, page, now);
         var spendCap = decimal.TryParse(store.SpendCapUsd, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var cap) && cap > 0 ? cap : (decimal?)null;
 
+        // The tightest of organization, project and database caps applies.
+        static decimal? Dollars(string? value) =>
+            decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : null;
+        static (decimal? Cap, string Source) Tightest((decimal? Cap, string Source) outer, string? own, string source) =>
+            Dollars(own) is { } value && (outer.Cap is null || value < outer.Cap) ? (value, source) : outer;
+        static string Effective((decimal? Cap, string Source) limit) =>
+            limit.Cap is { } value ? $"${value:0.##} · {limit.Source}" : "No limit";
+        var orgLimit = (Dollars(store.SpendCapUsd), "organization");
+        var capGroups = store.Projects.Select(p =>
+        {
+            var projectCap = store.ProjectSpendCap(p.Id);
+            var projectLimit = Tightest(orgLimit, projectCap, "project");
+            var projectDatabases = store.ProjectDatabases(p.Id);
+            return new UsageCapGroup(
+                new(p.Id, p.Name, $"{projectDatabases.Length} {(projectDatabases.Length is 1 ? "database" : "databases")} · {p.Region}", projectCap ?? "", Effective(projectLimit)),
+                [.. projectDatabases.Select(d =>
+                {
+                    var dbCap = store.DatabaseSpendCap(d.Id);
+                    return new UsageCapRow(d.Id, d.Name, $"{d.PrimaryRegion} · {DashboardStore.FormatBytes(d.SizeMb * 1024d * 1024)}", dbCap ?? "", Effective(Tightest(projectLimit, dbCap, "database")));
+                })]);
+        }).ToList();
+
         return new(
             Tab: tab is "billing" or "settings" ? tab : "overview",
             ProjectFilter: projectFilter,
@@ -180,7 +202,7 @@ public sealed record UsagePageModel(
             History: history,
             HistorySummary: historySummary,
             Databases: databases,
-            DatabaseCaps: [.. store.ProjectDatabases(store.ActiveProjectId).Select(d => (d.Id, d.Name, Cap: store.DatabaseSpendCap(d.Id)))],
+            CapGroups: capGroups,
             BillingPortalHref: billingPortalHref,
             PaidExcessEnabled: store.PaidExcessEnabled,
             SpendCap: store.SpendCapUsd ?? "",
@@ -278,3 +300,8 @@ public sealed record UsageInvoicePage(
     public string Href(int page) =>
         $"/usage?tab=billing&status={Status}&issued={Issued}&page={page}";
 }
+
+/// <summary>One cap row: a project or a database, its own cap (blank = none) and the limit that applies.</summary>
+public sealed record UsageCapRow(string Id, string Name, string Detail, string Cap, string Effective);
+
+public sealed record UsageCapGroup(UsageCapRow Project, IReadOnlyList<UsageCapRow> Databases);
