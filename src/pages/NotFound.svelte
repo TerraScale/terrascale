@@ -9,7 +9,9 @@
   <div class="notfound__inner">
     <div class="notfound__copy">
       <p class="notfound__eyebrow">{$dict.notFound.eyebrow}<span aria-hidden="true"></span></p>
-      <div class="notfound__code" aria-hidden="true">404</div>
+      <div class="notfound__code" aria-hidden="true">
+        <img src="/404-number.webp" alt="" width="415" height="160" decoding="async" />
+      </div>
       <h1 id="notfound-title" class="notfound__title">{$dict.notFound.title}</h1>
       <p class="notfound__text">{$dict.notFound.text}</p>
       <div class="notfound__actions">
@@ -24,7 +26,7 @@
       </div>
     </div>
     <div class="notfound__art" aria-hidden="true">
-      <img src="/404-illustration.svg" alt="" width="900" height="760" decoding="async" />
+      <img src="/404-illustration.webp" alt="" width="900" height="700" decoding="async" />
     </div>
   </div>
 </section>
@@ -97,15 +99,13 @@
   }
 
   .notfound__code {
-    margin: 0 0 6px -8px;
-    color: var(--ts-notfound-blue);
-    font-family: var(--ts-font-body);
-    font-size: clamp(7rem, 13vw, 12rem);
-    font-weight: 700;
-    line-height: 0.94;
-    letter-spacing: -0.095em;
-    -webkit-text-stroke: 2px var(--ts-notfound-blue-bright);
-    text-shadow: 0 0 12px rgba(var(--ts-primary-rgb), 0.95), 0 0 46px rgba(var(--ts-primary-rgb), 0.72);
+    width: min(100%, 370px);
+    margin: 0 0 12px -8px;
+  }
+
+  .notfound__code img {
+    width: 100%;
+    height: auto;
   }
 
   .notfound__title {
@@ -171,9 +171,9 @@
   .notfound__art {
     position: relative;
     z-index: 1;
-    width: min(100%, 680px);
+    width: min(calc(100% + 60px), 760px);
     justify-self: end;
-    margin: -10px -18px -52px -48px;
+    margin: -10px -18px -52px -88px;
     filter: drop-shadow(0 26px 36px rgba(0, 4, 17, 0.35));
   }
 
@@ -189,12 +189,12 @@
   }
 
   @media (max-width: 560px) {
-    .notfound__inner { padding: 46px 24px 0; }
-    .notfound__code { font-size: clamp(6.5rem, 32vw, 10rem); }
+    .notfound__inner { padding: 32px 24px 0; }
+    .notfound__code { width: min(100%, 260px); }
     .notfound__title { font-size: clamp(2rem, 9vw, 3rem); }
-    .notfound__actions { gap: 12px; }
+    .notfound__actions { gap: 12px; margin-top: 24px; }
     :global(.notfound__button) { min-height: 52px; padding: 0 17px; font-size: 14px; }
-    .notfound__art { width: calc(100% + 48px); max-width: none; margin: 8px -24px -4px; }
+    .notfound__art { width: calc(100% + 24px); max-width: none; margin: 0 -12px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
