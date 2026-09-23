@@ -1774,6 +1774,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-sidebar-brand {
     display: flex;
     align-items: center;
+    justify-content: center;
     padding: var(--ts-xs);
     flex-shrink: 0;
   }
@@ -2049,12 +2050,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     min-width: 0;
   }
 
-  .ts-project-panel-header {
-    padding: var(--ts-sm) var(--ts-md);
-    border-bottom: 1px solid var(--ts-line);
-    font-weight: var(--ts-fw-semibold);
-  }
-
   .ts-project-panel-scroll {
     display: flex;
     flex-direction: column;
@@ -2107,19 +2102,23 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   .ts-project-search {
-    display: flex;
-    align-items: center;
-    gap: var(--ts-xs);
+    position: relative;
+    width: 100%;
   }
 
   .ts-project-search .ts-input {
     height: 32px;
     min-height: 32px;
+    padding-right: 36px;
   }
 
   .ts-project-search svg {
+    position: absolute;
+    right: var(--ts-sm);
+    top: 50%;
+    transform: translateY(-50%);
     color: var(--ts-ink-muted);
-    flex-shrink: 0;
+    pointer-events: none;
   }
 
   .ts-project-list {
@@ -3474,7 +3473,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-panel-pad { padding: var(--ts-lg); }
 
-  .ts-data-intro { max-width: 64rem; }
 
   .ts-title-24 {
     color: var(--ts-ink);
@@ -3544,20 +3542,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     max-width: 48rem;
   }
 
-  .ts-data-stats {
-    display: grid;
-    gap: var(--ts-md);
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  @media (min-width: 40rem) {
-    .ts-data-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  }
-
-  @media (min-width: 64rem) {
-    .ts-data-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  }
-
   .ts-stat-card {
     display: grid;
     gap: var(--ts-sm);
@@ -3572,8 +3556,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     font-size: 24px;
     font-weight: var(--ts-fw-semibold);
   }
-
-  .ts-stat-project { margin-top: var(--ts-sm); }
 
   .ts-text-upper {
     color: var(--ts-ink-muted);
@@ -7900,11 +7882,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-data .ts-explorer-pad {
     gap: var(--ts-sm);
-  }
-
-  /* v1 dataStats sit 24px under the intro (dataStats marginTop xl). */
-  .ts-data-stats {
-    margin-top: var(--ts-xl);
   }
 
   /* v1 inputs/selects read 16px body text (Input / NativeSelect). */
