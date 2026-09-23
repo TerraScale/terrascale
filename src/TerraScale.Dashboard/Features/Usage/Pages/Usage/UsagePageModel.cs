@@ -3,27 +3,23 @@ using TerraScale.Dashboard;
 namespace TerraScale.Dashboard.Features.Usage.Pages.Usage;
 
 public sealed record UsagePageModel(
+    string Tab,
+    string ProjectFilter,
+    string DatabaseFilter,
+    string RangeFilter,
+    IReadOnlyList<(string Id, string Name)> ProjectOptions,
+    IReadOnlyList<(string Id, string Name)> DatabaseOptions,
     IReadOnlyList<UsageStatCard> Stats,
-    string OrganizationStorage,
-    string OrganizationWrites,
+    IReadOnlyList<UsageStatCard> Traffic,
     IReadOnlyList<DashboardStore.PlanResourceRow> PlanResources,
     IReadOnlyList<DashboardStore.ProjectContributionRow> ProjectContributions,
-    long StorageUsedBytes,
-    long StorageLimitBytes,
-    double StoragePercentUsed,
-    string StorageTone,
-    string StorageRemainingLabel,
-    string StoragePercentLabel,
     IReadOnlyList<UsageHistoryRangeOption> HistoryRanges,
     bool RetentionWarning,
-    IReadOnlyList<WorkloadPoint> History,
-    IReadOnlyList<BarSlice> MeasuredUsage,
-    IReadOnlyList<BarSlice> RegionPlacement,
-    IReadOnlyList<BarSlice> DatabaseCoverage,
+    IReadOnlyList<DateTime> HistoryTimes,
+    IReadOnlyList<ChartSeries> History,
+    IReadOnlyList<UsageStatCard> HistorySummary,
     IReadOnlyList<DashboardDatabase> Databases,
-    IReadOnlyList<(string Id, string Name, string? Cap)> DatabaseCaps,
-    IReadOnlyList<DashboardStore.CheckoutPlanRow> CheckoutPlans,
-    bool StripeCheckoutEnabled,
+    IReadOnlyList<UsageCapGroup> CapGroups,
     string BillingPortalHref,
     bool PaidExcessEnabled,
     string SpendCap,
@@ -33,8 +29,8 @@ public sealed record UsagePageModel(
     string Price,
     string Frequency,
     string Renewal,
-    long InvoiceCount,
-    IReadOnlyList<DashboardStore.InvoiceRow> Invoices,
+    UsageBillingSummary Summary,
+    UsageInvoicePage InvoicePage,
     string? BillingReturn,
     bool HasManagedSubscription,
     IReadOnlyList<UsagePlanImpactRow> PlanImpact,
@@ -42,29 +38,28 @@ public sealed record UsagePageModel(
     bool BillingActionRequired,
     string? StorageCoverageDeadline,
     string RetentionAlertBody,
-    string? SavedControlsMessage) : IPageModel
+    string? SavedControlsMessage,
+    int RetentionDays,
+    string ExcessSpend,
+    double? CapUsedPercent) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
 
-    public static UsagePageModel From(DashboardStore store, StripePaymentOptions stripe, string href, string? range, string? billing, string? saved)
+    public static UsagePageModel From(DashboardStore store, StripePaymentOptions stripe, string href, string? range, string? billing, string? saved,
+        string? tab = null, string? project = null, string? database = null,
+        string? status = null, string? issued = null, int page = 1)
     {
-        var databases = store.ProjectDatabases(store.ActiveProjectId);
+        // Overview filters narrow the database scope; allowances, traffic and
+        // workload history are organization totals and stay unfiltered.
+        var projectFilter = store.Projects.Any(p => p.Id == project) ? project! : "";
+        var projectDatabases = projectFilter is "" ? store.Databases : store.ProjectDatabases(projectFilter);
+        var databaseFilter = projectDatabases.Any(d => d.Id == database) ? database! : "";
+        var databases = databaseFilter is "" ? projectDatabases : [.. projectDatabases.Where(d => d.Id == databaseFilter)];
 
-        // With the Stripe sandbox configured the usage page offers exactly the
-        // plans that have a sandbox price; otherwise it keeps the demo catalog.
-        IReadOnlyList<DashboardStore.CheckoutPlanRow> checkoutPlans = stripe.Enabled
-            ? [.. store.CheckoutPlans
-                .Where(plan => stripe.PriceId(plan.PlanKey, "monthly") is not null)
-                .Select(plan => plan with
-                {
-                    Href = $"/billing/checkout?plan={plan.PlanKey}&interval=monthly&return={Uri.EscapeDataString("/usage")}",
-                })]
-            : [.. store.CheckoutPlans];
         var billingPortalHref = stripe.Enabled
             ? $"/billing/portal?return={Uri.EscapeDataString("/usage")}"
             : "/billing/portal/usage_portal";
 
-        // Old page falls back to database/region counters when the summary has no KPIs.
         var regionCount = databases
             .SelectMany(d => new[] { d.PrimaryRegion }.Concat(d.BackupRegion is null ? [] : [d.BackupRegion]))
             .Distinct()
@@ -73,26 +68,14 @@ public sealed record UsagePageModel(
         [
             new("Databases", DashboardStore.FormatNumber(databases.Length), "Saved project databases", "Database"),
             new("Regions", DashboardStore.FormatNumber(regionCount), "Distinct placement regions", "Globe2"),
+            new("Storage", DashboardStore.FormatBytes(databases.Sum(d => d.SizeMb) * 1024L * 1024), "Logical size", "HardDrive"),
+            new("Documents", DashboardStore.FormatNumber(databases.Sum(d => d.DocumentCount)), "Stored documents", "FileText"),
         ];
-
-        List<BarSlice> measured =
+        List<UsageStatCard> traffic =
         [
-            new("Writes", store.Usage.WriteUnits, DashboardStore.FormatNumber(store.Usage.WriteUnits)),
-            new("Reads (unbilled)", store.Usage.ReadUnits, DashboardStore.FormatNumber(store.Usage.ReadUnits)),
-            new("Requests", store.Usage.Requests, DashboardStore.FormatNumber(store.Usage.Requests)),
+            new("Requests", DashboardStore.FormatNumber(store.Usage.Requests), "Current billing period", "Activity"),
+            new("Reads", DashboardStore.FormatNumber(store.Usage.ReadUnits), "Unbilled usage fact", "BookOpen"),
         ];
-
-        var regionPlacement = databases
-            .SelectMany(d => new[] { d.PrimaryRegion }.Concat(d.BackupRegion is null ? [] : [d.BackupRegion]))
-            .GroupBy(r => r.ToUpperInvariant())
-            .Select(g => new BarSlice(g.Key, g.Count()))
-            .OrderByDescending(s => s.Value).ThenBy(s => s.Label, StringComparer.Ordinal)
-            .ToList();
-
-        var coverage = databases
-            .Select(d => new BarSlice(d.Name, 1 + (d.BackupRegion is null ? 0 : 1)))
-            .OrderByDescending(s => s.Value).ThenBy(s => s.Label, StringComparer.Ordinal)
-            .ToList();
 
         // v1 UsageHistoryPanel: 24h is always offered; longer ranges only within retention.
         var retentionDays = store.UsageRetentionDays;
@@ -110,10 +93,16 @@ public sealed record UsagePageModel(
             .Where(r => r is "24h" || RangeDays(r) <= retentionDays)
             .ToList();
         var selectedRange = range is not null && offeredRanges.Contains(range) ? range : "7d";
-        var history = store.Workloads
-            .Where(w => w.Range == selectedRange)
-            .SelectMany(w => w.Points)
-            .ToList();
+        var operations = store.WorkloadOperations(selectedRange);
+        List<ChartSeries> history = [.. operations.Where(o => o.Values.Length > 0).Select(o => new ChartSeries(o.Operation, o.Values))];
+
+        // Seeded points are ordinal; place them on whole steps (hours or days) ending at the current hour.
+        var count = history.Count is 0 ? 0 : history[0].Values.Count;
+        var now = DateTime.UtcNow;
+        var end = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
+        var step = TimeSpan.FromDays(RangeDays(selectedRange)) / Math.Max(1, count);
+        List<DateTime> historyTimes = [.. Enumerable.Range(0, count).Select(i => end - step * (count - 1 - i))];
+        List<UsageStatCard> historySummary = [.. history.Select(s => new UsageStatCard(s.Name, DashboardStore.FormatNumber((long)s.Values.Sum()), "Total this period", ""))];
         var retentionLimited = range is not null && allRanges.Contains(range) && RangeDays(range) > retentionDays;
         var historyRanges = offeredRanges
             .Select(r => new UsageHistoryRangeOption(r, RangeLabel(r), r == selectedRange))
@@ -150,33 +139,70 @@ public sealed record UsagePageModel(
                     : "Confirmed by the billing provider");
         })];
 
-        var storageTone = store.StoragePercentUsed >= 100 ? "danger"
-            : store.StoragePercentUsed >= 80 ? "warning" : "success";
+        // Billing summary: current cycle, next invoice estimate and balances.
+        var periodStart = DateTime.Parse(store.UsagePeriodStart, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal);
+        var periodEnd = periodStart.AddMonths(1);
+        var planCents = (long)(activePlan.MonthlyUsd * 100);
+        var excessCents = (long)(store.Usage.OverrunEstimateUsd * 100);
+        var open = store.Invoices.Where(i => i.Status is "open").ToList();
+        var paid = store.Invoices.Where(i => i.Status is "paid").ToList();
+        var summary = new UsageBillingSummary(
+            PeriodLabel: $"{periodStart:MMM d} – {periodEnd:MMM d, yyyy}",
+            PeriodDays: (int)(periodEnd - periodStart).TotalDays,
+            PeriodElapsedDays: (int)Math.Clamp((now - periodStart).TotalDays, 0, (periodEnd - periodStart).TotalDays),
+            NextInvoice: DashboardStore.FormatMoney(planCents + excessCents, "USD"),
+            NextInvoiceDetail: $"{DashboardStore.FormatMoney(planCents, "USD")} plan + {DashboardStore.FormatMoney(excessCents, "USD")} usage",
+            NextInvoiceDate: $"{periodEnd:MMM d, yyyy}",
+            Outstanding: DashboardStore.FormatMoney(open.Sum(i => i.AmountCents), "USD"),
+            OpenCount: open.Count,
+            PaidTotal: DashboardStore.FormatMoney(paid.Sum(i => i.AmountCents), "USD"),
+            PaidCount: paid.Count);
+
+        var invoicePage = UsageInvoicePage.From(store.Invoices, status, issued, page, now);
+        var spendCap = decimal.TryParse(store.SpendCapUsd, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var cap) && cap > 0 ? cap : (decimal?)null;
+
+        // The tightest of organization, project and database caps applies.
+        static decimal? Dollars(string? value) =>
+            decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : null;
+        static (decimal? Cap, string Source) Tightest((decimal? Cap, string Source) outer, string? own, string source) =>
+            Dollars(own) is { } value && (outer.Cap is null || value < outer.Cap) ? (value, source) : outer;
+        static string Effective((decimal? Cap, string Source) limit) =>
+            limit.Cap is { } value ? $"${value:0.##} · {limit.Source}" : "No limit";
+        var orgLimit = (Dollars(store.SpendCapUsd), "organization");
+        var capGroups = store.Projects.Select(p =>
+        {
+            var projectCap = store.ProjectSpendCap(p.Id);
+            var projectLimit = Tightest(orgLimit, projectCap, "project");
+            var projectDatabases = store.ProjectDatabases(p.Id);
+            return new UsageCapGroup(
+                new(p.Id, p.Name, $"{projectDatabases.Length} {(projectDatabases.Length is 1 ? "database" : "databases")} · {p.Region}", projectCap ?? "", Effective(projectLimit)),
+                [.. projectDatabases.Select(d =>
+                {
+                    var dbCap = store.DatabaseSpendCap(d.Id);
+                    return new UsageCapRow(d.Id, d.Name, $"{d.PrimaryRegion} · {DashboardStore.FormatBytes(d.SizeMb * 1024d * 1024)}", dbCap ?? "", Effective(Tightest(projectLimit, dbCap, "database")));
+                })]);
+        }).ToList();
 
         return new(
+            Tab: tab is "billing" or "settings" ? tab : "overview",
+            ProjectFilter: projectFilter,
+            DatabaseFilter: databaseFilter,
+            RangeFilter: selectedRange,
+            ProjectOptions: [.. store.Projects.Select(p => (p.Id, p.Name))],
+            DatabaseOptions: [.. projectDatabases.Select(d => (d.Id, d.Name))],
             Stats: stats,
-            OrganizationStorage: DashboardStore.FormatBytes(store.StorageBytesTotal),
-            OrganizationWrites: DashboardStore.FormatNumber(store.Usage.WriteUnits),
+            Traffic: traffic,
             PlanResources: [.. store.OrganizationPlanResources()],
             ProjectContributions: [.. store.ProjectContributionRows()],
-            StorageUsedBytes: store.StorageBytesTotal,
-            StorageLimitBytes: store.StorageLimitBytes,
-            StoragePercentUsed: store.StoragePercentUsed,
-            StorageTone: storageTone,
-            StorageRemainingLabel: DashboardStore.FormatBytes(Math.Max(0, store.StorageLimitBytes - store.StorageBytesTotal)),
-            StoragePercentLabel: $"{DashboardStore.FormatPercent(store.StoragePercentUsed)} used",
             HistoryRanges: historyRanges,
             RetentionWarning: retentionLimited,
             RetentionAlertBody:
                 $"The requested period exceeds the {retentionDays}-day retention window. The accessible range starts {DashboardStore.FormatUtcDateTime(store.UsagePeriodStart)}.",
-            History: [.. history],
-            MeasuredUsage: measured,
-            RegionPlacement: regionPlacement,
-            DatabaseCoverage: coverage,
+            HistoryTimes: historyTimes,
+            History: history,
+            HistorySummary: historySummary,
             Databases: databases,
-            DatabaseCaps: [.. databases.Select(d => (d.Id, d.Name, Cap: store.DatabaseSpendCap(d.Id)))],
-            CheckoutPlans: checkoutPlans,
-            StripeCheckoutEnabled: stripe.Enabled,
+            CapGroups: capGroups,
             BillingPortalHref: billingPortalHref,
             PaidExcessEnabled: store.PaidExcessEnabled,
             SpendCap: store.SpendCapUsd ?? "",
@@ -193,8 +219,8 @@ public sealed record UsagePageModel(
             Price: DashboardStore.FormatMoney((long)(activePlan.MonthlyUsd * 100), "USD"),
             Frequency: "Monthly",
             Renewal: DashboardStore.FormatDate(store.BillingRenewal),
-            InvoiceCount: store.TotalInvoices,
-            Invoices: [.. store.Invoices],
+            Summary: summary,
+            InvoicePage: invoicePage,
             BillingReturn: billing,
             HasManagedSubscription: store.HasManagedSubscription,
             PlanImpact: planImpact,
@@ -206,9 +232,76 @@ public sealed record UsagePageModel(
                 "ok" => "Spending controls saved.",
                 "invalid" => "Enter a non-negative dollar amount with at most two decimal places.",
                 _ => null,
-            })
+            },
+            RetentionDays: retentionDays,
+            ExcessSpend: DashboardStore.FormatMoney(excessCents, "USD"),
+            CapUsedPercent: spendCap is { } c ? (double)(store.Usage.OverrunEstimateUsd / c * 100) : null)
         {
             Shell = ShellFactory.Create(store, href),
         };
     }
 }
+
+public sealed record UsageBillingSummary(
+    string PeriodLabel,
+    int PeriodDays,
+    int PeriodElapsedDays,
+    string NextInvoice,
+    string NextInvoiceDetail,
+    string NextInvoiceDate,
+    string Outstanding,
+    int OpenCount,
+    string PaidTotal,
+    int PaidCount);
+
+/// <summary>One page of payment history after the status and issued-date filters.</summary>
+public sealed record UsageInvoicePage(
+    IReadOnlyList<DashboardStore.InvoiceRow> Rows,
+    string Status,
+    string Issued,
+    int Page,
+    int PageCount,
+    int Total,
+    int First)
+{
+    public const int PageSize = 10;
+
+    public static readonly (string Id, string Name)[] StatusOptions = [("paid", "Paid"), ("open", "Open"), ("void", "Void")];
+
+    public static (string Id, string Name)[] IssuedOptions(DateTime now) =>
+        [("3m", "Last 3 months"), ("6m", "Last 6 months"), ("12m", "Last 12 months"), ($"{now.Year}", $"{now.Year}"), ($"{now.Year - 1}", $"{now.Year - 1}")];
+
+    public static UsageInvoicePage From(IEnumerable<DashboardStore.InvoiceRow> invoices, string? status, string? issued, int page, DateTime now)
+    {
+        status = StatusOptions.Any(o => o.Id == status) ? status! : "";
+        issued = IssuedOptions(now).Any(o => o.Id == issued) ? issued! : "";
+        DateTime Issued(DashboardStore.InvoiceRow row) =>
+            DateTime.Parse(row.IssuedAt, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal);
+        bool InRange(DateTime at) => issued switch
+        {
+            "3m" => at >= now.AddMonths(-3),
+            "6m" => at >= now.AddMonths(-6),
+            "12m" => at >= now.AddMonths(-12),
+            "" => true,
+            var year => at.Year.ToString(System.Globalization.CultureInfo.InvariantCulture) == year,
+        };
+
+        var rows = invoices
+            .Where(i => status is "" || i.Status == status)
+            .Where(i => InRange(Issued(i)))
+            .OrderByDescending(Issued)
+            .ToList();
+        var pageCount = Math.Max(1, (rows.Count + PageSize - 1) / PageSize);
+        page = Math.Clamp(page, 1, pageCount);
+        var first = (page - 1) * PageSize;
+        return new([.. rows.Skip(first).Take(PageSize)], status, issued, page, pageCount, rows.Count, first + 1);
+    }
+
+    public string Href(int page) =>
+        $"/usage?tab=billing&status={Status}&issued={Issued}&page={page}";
+}
+
+/// <summary>One cap row: a project or a database, its own cap (blank = none) and the limit that applies.</summary>
+public sealed record UsageCapRow(string Id, string Name, string Detail, string Cap, string Effective);
+
+public sealed record UsageCapGroup(UsageCapRow Project, IReadOnlyList<UsageCapRow> Databases);

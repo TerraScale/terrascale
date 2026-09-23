@@ -3,7 +3,7 @@ terrascale.css — the TerraScale Dashboard CSS framework (single file)
 
 1:1 port of the ts-dashboard design system v1 (dark-only):
 tokens from src/design/tokens.stylex.ts, anatomy from
-docs/design-system.md. Framework = tokens + base + components + shell.
+DESIGN_SYSTEM.md (page patterns). Framework = tokens + base + components + shell.
 Everything a TerraScale dashboard page needs lives here; pages compose
 these classes and never ship their own stylesheets.
 
@@ -89,6 +89,10 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   /* Charts — CVD-validated blue-family pair. */
   --ts-chart-1: #2563EB;
   --ts-chart-2: #0891B2;
+  /* Categorical series, fixed order (validated on the dark canvas, all pairs). */
+  --ts-cat-1: #3987E5;
+  --ts-cat-2: #D95926;
+  --ts-cat-3: #199E70;
 
   /* Glass surfaces + blur. */
   --ts-glass-bg: rgba(22, 24, 31, 0.52);
@@ -2584,12 +2588,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     }
   }
 
-  /* Opt-in only: lower-page read-only charts, never forms, menus or dialogs. */
-  .ts-render-deferred {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 16rem;
-  }
-
   .ts-hidden {
     display: none !important;
   }
@@ -3944,17 +3942,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   /* ===== Feature: Usage/Audit/Notifications ===== */
 
-  /* Stat card grids: 2-up on tablet, 4-up on desktop (usage summary + billing). */
-  .ts-usage-stats { gap: var(--ts-md); }
-
-  /* v1 statLabel (shared-page-styles): icon and label share one row. */
-  .ts-usage-summary .ts-metric-label,
-  .ts-usage-stats .ts-metric-label {
-    display: flex;
-    align-items: center;
-    gap: var(--ts-sm);
-  }
-
   /* v1 PanelHeader headerWithAction (Panel.tsx): the action sits beside the
      title (grid, never wraps below it). */
   .ts-usage-head-actions {
@@ -3968,61 +3955,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-usage-head-actions .ts-row { gap: var(--ts-sm); }
 
   .ts-usage-head-actions .ts-select { min-width: 13rem; }
-
-  /* v1 UsageHistoryPanel controlsEnd + NativeSelect wrapper: fit-content. */
-  .ts-usage-controls-end .ts-select { width: fit-content; }
-
-  /* v1 usageStats: 1 col → 2 @40rem → 4 @80rem. */
-  .ts-usage-summary {
-    gap: var(--ts-md);
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  @media (min-width: 40rem) {
-    .ts-usage-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  }
-
-  @media (min-width: 80rem) {
-    .ts-usage-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  }
-
-  /* v1 billingGrid: 6 metric cards in one row @48rem. */
-  .ts-billing-grid {
-    gap: var(--ts-md);
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  @media (min-width: 48rem) {
-    .ts-billing-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-  }
-
-  /* v1 UsageHistoryPanel controlsEnd: select right-aligned under the header. */
-  .ts-usage-controls-end {
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  /* v1 usage-page metricIconBrand / metricIconWarning. */
-  .ts-metric-icon-accent { color: var(--ts-accent); }
-  .ts-metric-icon-warning { color: var(--ts-warning); }
-
-  /* v1 quotaMetric: tighter card, 18px semibold sans value. */
-  .ts-quota-metric {
-    padding: var(--ts-md);
-    gap: var(--ts-xs);
-    display: grid;
-  }
-
-  .ts-quota-metric .ts-metric-label {
-    font-size: var(--ts-fs-meta);
-  }
-
-  .ts-quota-metric .ts-metric-value-sm {
-    font-family: var(--ts-font-sans);
-    font-weight: var(--ts-fw-semibold);
-    font-size: var(--ts-fs-panel-title);
-    line-height: 1.375;
-  }
 
   /* v1 EmptyState restyle (global per spec exact values): dashed panel, icon box. */
   .ts-empty {
@@ -4074,33 +4006,463 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-text-danger { color: var(--ts-danger); }
   .ts-text-warning { color: var(--ts-warning); }
 
-  .ts-usage-charts {
+  /* Usage page: flat sections (no boxed panels) split by hairlines; tabs +
+     filters toolbar, allowance rings, area history, share bars, settings list. */
+  /* Filter labels are sr-only so every tab's toolbar is one control tall. */
+  /* Underline tabs sit on the toolbar hairline; the page starts closer to the top. */
+  .ts-usage-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0 var(--ts-md);
+    min-height: 60px;
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  @media (min-width: 48rem) {
+    .ts-main:has(> .ts-usage) { padding-top: var(--ts-lg); }
+  }
+
+  .ts-usage-toolbar .ts-tabs {
+    align-self: stretch;
+    gap: var(--ts-xl);
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+  }
+
+  .ts-usage-toolbar .ts-tab {
+    height: 60px;
+    padding: 0 2px;
+    border-radius: 0;
+    font-size: var(--ts-fs-body);
+    box-shadow: inset 0 -2px 0 transparent;
+  }
+
+  .ts-usage-toolbar .ts-tab:hover { box-shadow: inset 0 -2px 0 var(--ts-line); }
+
+  .ts-usage-toolbar .ts-tab[aria-selected="true"] {
+    background: none;
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-semibold);
+    box-shadow: inset 0 -2px 0 var(--ts-accent);
+  }
+
+  .ts-usage-toolbar .ts-tab svg { opacity: 0.8; }
+
+  /* Caps editor: project rows lead, database rows indent under them. */
+  .ts-usage-caps tbody + tbody { border-top: 1px solid var(--ts-line); }
+
+  .ts-usage-cap-name {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--ts-sm);
+  }
+
+  .ts-usage-cap-name > svg { flex: none; margin-top: 3px; color: var(--ts-ink-muted); }
+
+  .ts-usage-cap-name > span { display: grid; gap: 2px; }
+
+  .ts-usage-cap-database .ts-usage-cap-name { padding-left: var(--ts-xl); }
+
+  .ts-usage-cap-database .ts-table-strong { font-weight: var(--ts-fw-medium); }
+
+  .ts-usage-cap {
+    position: relative;
+    display: block;
+    width: 11rem;
+  }
+
+  .ts-usage-cap > span {
+    position: absolute;
+    left: var(--ts-md);
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--ts-ink-muted);
+    pointer-events: none;
+  }
+
+  .ts-usage-cap > .ts-input { width: 100%; padding-left: 26px; font-variant-numeric: tabular-nums; }
+
+  .ts-usage-cap > .ts-input:invalid { border-color: var(--ts-danger); }
+
+  .ts-usage-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--ts-sm);
+  }
+
+  .ts-usage-filters .ts-filter-field {
+    flex: 1 1 10rem;
+    min-width: 10rem;
+  }
+
+  .ts-usage-section {
+    display: grid;
     gap: var(--ts-lg);
+    min-width: 0;
+    align-content: start;
+  }
+
+  .ts-usage-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--ts-md);
+  }
+
+  .ts-usage-allowance {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--ts-xl) 48px;
+  }
+
+  .ts-usage-allowance > .ts-usage-stats { flex: 1 1 16rem; }
+
+  .ts-usage-columns,
+  .ts-usage-divided {
+    display: grid;
+    gap: var(--ts-xl);
+    padding-top: 20px;
+    border-top: 1px solid var(--ts-line);
   }
 
   @media (min-width: 64rem) {
-    .ts-usage-charts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .ts-usage-columns { grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr); }
+
+    .ts-usage-aside {
+      padding-left: var(--ts-xl);
+      border-left: 1px solid var(--ts-line);
+    }
   }
 
-  /* Horizontal bar list (measured usage / region placement / coverage). */
-  .ts-bar-list {
-    display: grid;
-    gap: var(--ts-md);
-  }
-
-  .ts-bar-row {
-    display: grid;
-    grid-template-columns: minmax(90px, auto) 1fr auto;
+  .ts-usage-gauge {
+    display: flex;
     align-items: center;
+    gap: var(--ts-lg);
+    min-width: 0;
+  }
+
+  .ts-usage-gauge .ts-metric-label {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-xs);
+  }
+
+  .ts-usage-gauge-value {
+    font-size: 24px;
+    line-height: 32px;
+    font-weight: var(--ts-fw-semibold);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ts-usage-gauge-value small {
+    white-space: nowrap;
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-medium);
+    color: var(--ts-ink-muted);
+  }
+
+  .ts-usage-ring {
+    position: relative;
+    flex: 0 0 auto;
+    width: 96px;
+    height: 96px;
+  }
+
+  .ts-ring {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+  }
+
+  .ts-ring circle {
+    fill: none;
+    stroke-width: 10;
+  }
+
+  .ts-ring-track { stroke: var(--ts-surface-muted); }
+
+  .ts-ring-fill {
+    stroke-linecap: round;
+    transition: stroke-dasharray var(--ts-t-base) var(--ts-ease);
+  }
+
+  .ts-ring-success .ts-ring-fill { stroke: var(--ts-accent); }
+  .ts-ring-warning .ts-ring-fill { stroke: var(--ts-warning); }
+  .ts-ring-danger .ts-ring-fill { stroke: var(--ts-danger); }
+
+  .ts-usage-ring-value {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    text-align: center;
+  }
+
+  .ts-usage-ring-value strong {
+    font-size: 20px;
+    line-height: 1.1;
+    font-weight: var(--ts-fw-semibold);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ts-usage-ring-value small {
+    font-size: var(--ts-fs-meta);
+    color: var(--ts-ink-muted);
+  }
+
+  /* Stats read as a row of figures, each marked by a left rule; wraps cleanly. */
+  .ts-usage-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+    gap: var(--ts-md);
+    margin: 0;
+  }
+
+  .ts-usage-stats > div {
+    display: grid;
+    gap: 2px;
+    align-content: start;
+    min-width: 0;
+    padding-left: var(--ts-md);
+    border-left: 2px solid var(--ts-line);
+  }
+
+  .ts-usage-stats dt {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-xs);
+    font-size: var(--ts-fs-meta);
+    color: var(--ts-ink-muted);
+  }
+
+  .ts-usage-stats dd {
+    margin: 0;
+    font-size: var(--ts-fs-panel-title);
+    font-weight: var(--ts-fw-semibold);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  .ts-usage-stats dd small {
+    white-space: nowrap;
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-medium);
+    color: var(--ts-ink-muted);
+  }
+
+  /* Headline figures for billing and settings: bigger values, same left rule. */
+  .ts-usage-kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: var(--ts-lg);
+    margin: 0;
+  }
+
+  .ts-usage-kpis > div {
+    display: grid;
+    gap: var(--ts-xs);
+    align-content: start;
+    min-width: 0;
+    padding-left: var(--ts-md);
+    border-left: 2px solid var(--ts-line);
+  }
+
+  .ts-usage-kpis dt {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-xs);
+    font-size: var(--ts-fs-meta);
+    color: var(--ts-ink-muted);
+  }
+
+  .ts-usage-kpis dd {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--ts-sm);
+    margin: 0;
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+  }
+
+  .ts-usage-kpi-value {
+    color: var(--ts-ink);
+    font-size: 1.5rem;
+    font-weight: var(--ts-fw-semibold);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+  }
+
+  .ts-usage-kpis .ts-bar-track { height: 6px; }
+
+  .ts-usage-pager {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
     gap: var(--ts-md);
   }
 
-  .ts-bar-label {
-    font-size: var(--ts-fs-ui);
-    color: var(--ts-ink);
+  .ts-usage-page { min-width: 2.25rem; justify-content: center; }
+  .ts-usage-page[aria-current="page"] { background-color: var(--ts-fill-hover); color: var(--ts-ink); }
+  .ts-usage-flip { display: inline-flex; transform: scaleX(-1); }
+
+  .ts-usage-figures {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(4.5rem, auto);
+  }
+
+  .ts-cat-1 { --ts-series: var(--ts-cat-1); }
+  .ts-cat-2 { --ts-series: var(--ts-cat-2); }
+  .ts-cat-3 { --ts-series: var(--ts-cat-3); }
+  .ts-chart .ts-chart-line[class*="ts-cat-"] { stroke: var(--ts-series); }
+  .ts-chart-swatch[class*="ts-cat-"] { background-color: var(--ts-series); }
+  .ts-usage-figures dt { display: flex; align-items: center; gap: var(--ts-xs); }
+
+  /* Keep axis text legible on phones: scroll the plot instead of shrinking it. */
+  .ts-chart-shell:has(> .ts-tschart) { overflow-x: auto; }
+
+  .ts-tschart {
+    position: relative;
+    min-width: 36rem;
+  }
+
+  .ts-tschart .ts-chart { display: block; }
+
+  .ts-tschart-col { position: absolute; }
+
+  .ts-tschart-col::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 50%;
+    border-left: 1px dashed var(--ts-ink-muted);
+  }
+
+  .ts-tschart-dot {
+    position: absolute;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--ts-series);
+    box-shadow: 0 0 0 2px var(--ts-surface);
+    transform: translate(-50%, -50%);
+  }
+
+  .ts-tschart-tip {
+    position: absolute;
+    top: 0;
+    left: calc(50% + 12px);
+    z-index: 1;
+    display: grid;
+    gap: var(--ts-xs);
+    min-width: 12rem;
+    padding: var(--ts-sm) var(--ts-md);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+    box-shadow: var(--ts-overlay-edge);
+    font-size: var(--ts-fs-meta);
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    pointer-events: none;
+  }
+
+  .ts-tschart-tip-left { left: auto; right: calc(50% + 12px); }
+  .ts-tschart-tip time { color: var(--ts-ink-muted); }
+  .ts-tschart-tip dl { display: grid; gap: 2px; margin: 0; }
+  .ts-tschart-tip dl > div { display: flex; justify-content: space-between; gap: var(--ts-lg); }
+  .ts-tschart-tip dt { display: flex; align-items: center; gap: var(--ts-xs); color: var(--ts-ink-muted); }
+  .ts-tschart-tip dd { margin: 0; color: var(--ts-ink); font-family: var(--ts-font-mono); }
+
+  .ts-tschart-col::before,
+  .ts-tschart-dot,
+  .ts-tschart-tip { opacity: 0; }
+
+  .ts-tschart-col:hover::before,
+  .ts-tschart-col:hover .ts-tschart-dot,
+  .ts-tschart-col:hover .ts-tschart-tip { opacity: 1; }
+
+  .ts-usage-share {
+    display: grid;
+    gap: var(--ts-lg);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .ts-usage-share li {
+    display: grid;
+    gap: 6px;
+  }
+
+  .ts-usage-share-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ts-md);
+    min-width: 0;
+  }
+
+  .ts-usage-share-head > :last-child { white-space: nowrap; }
+
+  .ts-usage-share .ts-bar-fill { background-color: var(--ts-accent); }
+
+  .ts-usage-drill { color: var(--ts-ink); }
+  .ts-usage-drill:hover { color: var(--ts-accent); }
+
+  .ts-usage-disclosure { line-height: 1.6; }
+
+  .ts-usage .ts-link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ts-xs);
+    white-space: nowrap;
+  }
+
+  /* Tables sit on the page like the rest of the sections: rows, no box. */
+  .ts-usage .ts-table-wrap {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background-color: transparent;
+  }
+
+  .ts-usage-settings { margin: 0; }
+
+  .ts-usage-settings > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ts-sm) var(--ts-xl);
+    padding-block: var(--ts-md);
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-usage-settings > div:last-child { border-bottom: 1px solid var(--ts-line); }
+
+  .ts-usage-settings dt {
+    display: grid;
+    gap: 2px;
+    font-weight: var(--ts-fw-medium);
+  }
+
+  .ts-usage-settings dt small {
+    font-size: var(--ts-fs-meta);
+    font-weight: 400;
+    color: var(--ts-ink-muted);
+  }
+
+  .ts-usage-settings dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
   }
 
   .ts-bar-track {
@@ -4116,19 +4478,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     border-radius: var(--ts-radius-pill);
     background-color: var(--ts-chart-1);
     min-width: 2px;
-  }
-
-  /* v1 UsageBreakdown: all breakdown bars use tokens.accent. Scoped to the
-     usage charts grid so other features' bars keep their palette. */
-  .ts-usage-charts .ts-bar-fill {
-    background-color: var(--ts-accent);
-  }
-
-  .ts-bar-value {
-    font-size: var(--ts-fs-meta);
-    color: var(--ts-ink-muted);
-    min-width: 3.5em;
-    text-align: right;
   }
 
   .ts-audit-title {

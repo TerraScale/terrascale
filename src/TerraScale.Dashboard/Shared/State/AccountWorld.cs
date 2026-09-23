@@ -256,6 +256,9 @@ public sealed class AccountWorld
     public Dictionary<string, string> DatabaseSpendCaps { get => ActiveOrganization.DatabaseSpendCaps; set => ActiveOrganization.DatabaseSpendCaps = value; }
 
     [JsonIgnore]
+    public Dictionary<string, string> ProjectSpendCaps { get => ActiveOrganization.ProjectSpendCaps; set => ActiveOrganization.ProjectSpendCaps = value; }
+
+    [JsonIgnore]
     public HashSet<string> BackupsDisabled { get => ActiveOrganization.BackupsDisabled; set => ActiveOrganization.BackupsDisabled = value; }
 
     [JsonIgnore]
@@ -694,6 +697,16 @@ public sealed class AccountWorld
             new("in_01JCA3RH5N7Q9T2W4Y6A8C2EG", 4140, "USD", "open", "2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z", "2026-10-01T08:00:00Z",
             "https://pay.terrascale.tech/i/acct_1TERRAscale/in_01JCA3RH5N7Q9T2W4Y6A8C2EG",
             "https://pay.terrascale.tech/i/acct_1TERRAscale/in_01JCA3RH5N7Q9T2W4Y6A8C2EG/pdf"),
+            // A year of earlier monthly invoices so payment history has pages to browse.
+            .. Enumerable.Range(1, 12).Select(i =>
+            {
+                var start = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(-i);
+                var id = $"in_01JC{start:yyyyMM}HIST{i:00}Q7T9V2X5";
+                return new DashboardStore.InvoiceRow(id, 2900 + i % 3 * 380, "USD", i == 7 ? "void" : "paid",
+                    $"{start.AddMonths(-1):yyyy-MM-dd}T00:00:00Z", $"{start:yyyy-MM-dd}T00:00:00Z", $"{start:yyyy-MM-dd}T08:00:00Z",
+                    $"https://pay.terrascale.tech/i/acct_1TERRAscale/{id}",
+                    $"https://pay.terrascale.tech/i/acct_1TERRAscale/{id}/pdf");
+            }),
         ];
 
         AccountLocale = "en";
