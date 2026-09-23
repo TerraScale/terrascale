@@ -64,7 +64,7 @@ public sealed partial class DashboardStore
         var term = (search ?? "").Trim().ToLowerInvariant();
         return [.. events.Where(auditEvent =>
         {
-            if (action is { Length: > 0 } && auditEvent.Action != action)
+            if (action is { Length: > 0 } and not "all" && auditEvent.Action != action)
             {
                 return false;
             }
