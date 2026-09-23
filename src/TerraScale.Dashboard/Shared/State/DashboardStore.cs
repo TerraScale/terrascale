@@ -38,10 +38,14 @@ public sealed partial class DashboardStore
 
         // The demo process has no durable account database. Restore this test
         // fixture at startup without committing its password, full card number, or CVV.
-        if (security.DemoMode && configuration["TS_DASHBOARD_SEED_TEST_PASSWORD"] is { Length: >= 12 } password)
+        var seedPassword = configuration["TS_DASHBOARD_SEED_TEST_PASSWORD"];
+        var productionDemo = configuration["TS_DASHBOARD_PRODUCTION_DEMO"] == "1";
+        if (security.DemoMode && (productionDemo || seedPassword is { Length: >= 12 }))
         {
             var world = AccountWorld.Fresh("Filippo Teste", "filippo@teste.com");
-            world.AccountPassword = password;
+            world.AccountPassword = productionDemo ? "" : seedPassword!;
+            if (productionDemo)
+                world.SeedPasswordHash = "54ec5c837815fa36c5e732dcd44b60fe:0993f1213841e38e0525b91bd328e08411c3c9cfc569a0c06c789d845909c22a";
             world.OnboardingCompleted = true;
             world.OnboardingStepsValue = [.. world.OnboardingStepsValue.Select(step => step with { State = "completed" })];
             var organizationId = AccountWorld.NewId("org");

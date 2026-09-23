@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Security.Cryptography;
 using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Authentication.Models;
@@ -51,6 +52,8 @@ public sealed class AccountWorld
 
     public string AccountPassword { get; set; } = Features.Auth.Endpoints.PasswordLoginEndpoint.DemoPassword;
 
+    public string? SeedPasswordHash { get; set; }
+
     public string AccountLocale { get; set; } = "en";
 
     [JsonIgnore]
@@ -86,13 +89,20 @@ public sealed class AccountWorld
         DatabaseListError = null;
     }
 
-    public bool VerifyPassword(string password) => password == AccountPassword;
+    public bool VerifyPassword(string password)
+    {
+        if (SeedPasswordHash is null) return password == AccountPassword;
+        var parts = SeedPasswordHash.Split(':', 2);
+        var actual = Rfc2898DeriveBytes.Pbkdf2(password, Convert.FromHexString(parts[0]), 200_000, HashAlgorithmName.SHA256, 32);
+        return CryptographicOperations.FixedTimeEquals(actual, Convert.FromHexString(parts[1]));
+    }
 
     public void ChangePassword(string currentPassword, string newPassword)
     {
         if (VerifyPassword(currentPassword))
         {
             AccountPassword = newPassword;
+            SeedPasswordHash = null;
         }
     }
 

@@ -14,14 +14,7 @@ jobs:
       - name: Deploy production (single machine)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          SEED_TEST_PASSWORD: ${{ secrets.TS_DASHBOARD_SEED_TEST_PASSWORD }}
         run: |
-          if [ -n "$SEED_TEST_PASSWORD" ]; then
-            [ "${#SEED_TEST_PASSWORD}" -ge 12 ] || { echo 'TS_DASHBOARD_SEED_TEST_PASSWORD must have at least 12 characters.' >&2; exit 1; }
-            fly secrets set --stage TS_DASHBOARD_SEED_TEST_PASSWORD="$SEED_TEST_PASSWORD"
-          else
-            echo 'TS_DASHBOARD_SEED_TEST_PASSWORD is absent; existing Fly secrets are unchanged.'
-          fi
           # The in-memory demo backend must live in exactly one process:
           # two machines each hold their own accounts and sessions, so a
           # registration on one is invisible on the other (sign-in then fails
