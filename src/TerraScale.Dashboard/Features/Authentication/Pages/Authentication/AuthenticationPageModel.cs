@@ -13,6 +13,8 @@ public sealed record AuthenticationPageModel : IPageModel
     public string InstanceName => Instance.Name;
     public ImmutableArray<AuthSection> Sections => [.. AuthSection.All];
     public string Issuer => $"https://auth.terrascale.tech/{InstanceSlug}";
+    public IReadOnlyList<string> Roles { get; } = ["organization:owner", "project:admin"];
+    public IReadOnlyList<string> Permissions { get; } = ["members:read", "invitations:write", "projects:read", "usage:read"];
     public string Search { get; init; } = "";
     public string? Toast { get; init; }
     public string? Error { get; init; }

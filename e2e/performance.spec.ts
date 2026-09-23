@@ -90,55 +90,41 @@ test("Chrome consumes an intent prefetch and mutations invalidate it", async ({ 
   expect(requests.some(request => request.id === oldRequestId && request.status === "PrefetchResponseUsed")).toBeFalsy();
 });
 
-test("navigation feedback respects anchors, prevented events and confirmation cancellation", async ({ page }) => {
+test("navigation shows the loading bar without a cross-document transition", async ({ page }) => {
   await page.goto("/");
-  await page.evaluate(() => {
-    const anchor = document.createElement("a");
-    anchor.href = "#test-anchor";
-    anchor.id = "test-anchor";
-    anchor.textContent = "Anchor";
-    document.body.append(anchor);
-    anchor.click();
-  });
-  await expect(page.locator("html")).not.toHaveAttribute("data-nav-pending");
-  await page.evaluate(() => {
-    const link = document.querySelector<HTMLAnchorElement>('a[href="/databases"]')!;
-    link.addEventListener("click", event => event.preventDefault(), { once: true });
-    link.click();
-  });
-  await expect(page.locator("html")).not.toHaveAttribute("data-nav-pending");
-  page.once("dialog", dialog => dialog.dismiss());
-  await page.evaluate(() => {
-    const form = document.createElement("form");
-    form.dataset.confirm = "Cancel this test";
-    form.method = "post";
-    form.action = "/not-a-real-action";
-    document.body.append(form);
-    form.requestSubmit();
-  });
-  await expect(page.locator("html")).not.toHaveAttribute("data-nav-pending");
-});
 
-test("native navigation displays feedback and restores cleanly", async ({ page }) => {
-  await page.goto("/");
-  let pendingObserved = false;
-  await page.exposeFunction("recordPending", () => { pendingObserved = true; });
-  await page.evaluate(() => {
-    new MutationObserver(() => {
-      if (document.documentElement.hasAttribute("data-nav-pending")) {
-        (window as unknown as { recordPending(): void }).recordPending();
-      }
-    }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-nav-pending"] });
+  const observed = { pending: false, viewTransition: false };
+  await page.exposeFunction("recordNavigationProbe", (payload: Partial<typeof observed>) => {
+    Object.assign(observed, payload);
   });
+  await page.addInitScript(() => {
+    const record = (window as unknown as {
+      recordNavigationProbe(payload: { pending?: boolean; viewTransition?: boolean }): void;
+    }).recordNavigationProbe;
+    // The in-flight loading bar must survive; the 160 ms cross-document view
+    // transition that made the dashboard flicker must not come back.
+    new MutationObserver(() => {
+      if (document.documentElement.hasAttribute("data-nav-pending")) record({ pending: true });
+    }).observe(document, { attributes: true, attributeFilter: ["data-nav-pending"], subtree: true });
+    addEventListener("pagereveal", event => {
+      if ((event as unknown as { viewTransition?: unknown }).viewTransition) record({ viewTransition: true });
+    });
+  });
+  await page.reload();
+
+  // No cross-document opt-in survives in the served stylesheet either.
+  const css = await page.locator('link[rel="stylesheet"]').getAttribute("href");
+  expect(await (await page.request.get(css!)).text()).not.toContain("@view-transition");
+
+  // Hold the destination so the loading state is guaranteed to be observable.
   await page.route("**/databases", async route => {
     await new Promise(resolve => setTimeout(resolve, 500));
     await route.continue();
   });
   await page.locator('.ts-nav a[href="/databases"]').click({ noWaitAfter: true });
   await page.waitForURL("**/databases");
-  expect(pendingObserved).toBeTruthy();
-  await expect(page.locator("html")).not.toHaveAttribute("data-nav-pending");
-  await page.goBack();
+  await expect(page.locator("h1")).toHaveText("Databases");
+  expect(observed).toEqual({ pending: true, viewTransition: false });
   await expect(page.locator("html")).not.toHaveAttribute("data-nav-pending");
 });
 

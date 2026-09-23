@@ -15,7 +15,7 @@ Cold mobile LCP decreased 11–19% across the six routes. Cold transfer bytes de
 
 Warm navigation is mixed: mobile Usage LCP rose from 372 to 456 ms and desktop Data from 408 to 544 ms. Other warm routes improved or changed slightly. All rows pass the predeclared timing threshold (20% plus 100 ms); this small local sample does not establish a universal warm-load gain. Warm document transfers are slightly larger because of resource hints and navigation metadata. Static resources remain cached.
 
-Candidate CLS rounded to 0.00 for every row. These short synthetic loads do not measure field CLS or INP. The LCP observer runs through font readiness plus a 500 ms settling window; collect field data before making population-level claims. Browser tests separately verify real intent-prefetch consumption, invalidation after mutations, navigation feedback, accessibility fallbacks and scrolling deferred charts.
+Candidate CLS rounded to 0.00 for every row. These short synthetic loads do not measure field CLS or INP. The LCP observer runs through font readiness plus a 500 ms settling window; collect field data before making population-level claims. Browser tests separately verify real intent-prefetch consumption, invalidation after mutations, loading feedback without cross-document transitions, accessibility fallbacks and scrolling deferred charts.
 
 ## Full p75 results
 
@@ -60,6 +60,6 @@ LCP and DOMContentLoaded are milliseconds; transfer is decimal KB including resp
 
 ![Overview](overview.png)
 
-![Progress indicator during a held native navigation](navigation-pending.png)
+![Loading bar during a held native navigation](navigation-pending.png)
 
 ![Mobile navigation drawer](mobile-navigation.png)
