@@ -5,20 +5,12 @@ namespace TerraScale.Dashboard.Features.Databases.Pages.Databases;
 
 public sealed record DatabasesPageModel(
     ImmutableArray<DatabaseRow> Databases,
-    ImmutableArray<string> ProjectRegions,
+    IReadOnlyList<RegionMap.Pin> RegionMapPins,
     string Query,
     bool CreateOpen,
     string? Error) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
-
-    /// <summary>The v1 region catalog: exactly the three airport hubs.</summary>
-    public static readonly ImmutableArray<RegionHub> RegionHubs =
-    [
-        new("sfo", "San Francisco", 21, 28.58),
-        new("fra", "Frankfurt", 71.5, 20.78),
-        new("gru", "Sao Paulo", 50, 59.76),
-    ];
 
     public static DatabasesPageModel From(DashboardStore store, string? query, bool createOpen, string? error)
     {
@@ -30,9 +22,13 @@ public sealed record DatabasesPageModel(
             rows = rows.Where(row => $"{row.Name} {row.Id} {row.Regions}".ToLowerInvariant().Contains(term));
         }
 
+        // The create dialog reads placement, not input: it shows which of the
+        // project's hubs the new database inherits.
+        var hub = DashboardStore.HubCode(project.Region);
         return new(
             Databases: [.. rows],
-            ProjectRegions: [DashboardStore.HubCode(project.Region)],
+            RegionMapPins: [.. store.OrganizationRegions.Select(region =>
+                region.ToMapPin(string.Equals(region.Code, hub, StringComparison.OrdinalIgnoreCase)))],
             Query: query ?? "",
             CreateOpen: createOpen,
             Error: error)

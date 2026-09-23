@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { logout, registerAndOnboard, registerAndOpenPaymentStep } from "./support/journey";
+import { login, logout, registerAndOnboard, registerAndOpenPaymentStep } from "./support/journey";
 
 type Route = { path: string; expectText: string };
 
@@ -210,8 +210,17 @@ test("promoted owner sees admin pages", async ({ page }) => {
     password: "E2e-admin-123!",
     displayName: "E2E Admin",
   });
-  await page.request.post("/api/v1/testing/dev-shim/reset", { data: { promoteOwner: true } });
-  await page.reload();
+  const shim = await page.request.post("/api/v1/testing/dev-shim/reset", { data: { promoteOwner: true } });
+  if (shim.ok()) {
+    await page.reload();
+  } else {
+    // Deployed previews run without the DASHBOARD_E2E dev shim, so the fresh
+    // account cannot be promoted; the seeded demo account is already a
+    // platform owner and exercises the same admin surfaces.
+    await logout(page);
+    await login(page, "mario@terrascale.tech", "terrascale");
+  }
+
   await page.getByLabel("Account menu").click();
   const adminTabPromise = page.waitForEvent("popup");
   await page.getByRole("link", { name: "Admin", exact: true }).click();
