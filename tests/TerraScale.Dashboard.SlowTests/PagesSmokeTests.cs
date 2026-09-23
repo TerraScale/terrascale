@@ -16,8 +16,11 @@ public sealed class PagesSmokeTests
         await Assert.That(page.StatusCode).IsEqualTo(200);
         await Assert.That(page.Heading).IsEqualTo("Overview");
         await Assert.That(page.Contains("Workspace metrics")).IsTrue();
+        await Assert.That(page.Text.Contains("Project users 3 users with project access", StringComparison.Ordinal)).IsTrue();
         await Assert.That(page.Contains("Getting started")).IsTrue();
         await Assert.That(page.Contains("Connect your AI or platform")).IsTrue();
+        await Assert.That(page.Html.IndexOf("<section class=\"ts-panel\" aria-label=\"Activity\">", StringComparison.Ordinal))
+            .IsGreaterThan(page.Html.IndexOf("<h2 class=\"ts-panel-title\">Getting started</h2>", StringComparison.Ordinal));
     }
 
     [Test]
@@ -114,15 +117,16 @@ public sealed class PagesSmokeTests
     }
 
     [Test]
-    public async Task AccessPageRendersMembersSessionsAndInvitations()
+    public async Task AccessPageRendersMembersAndInvitations()
     {
         using var app = new DashboardTestApp();
         using var client = app.CreateDemoClient();
         var page = await app.GetPageAsync(client, "/access");
         await Assert.That(page.StatusCode).IsEqualTo(200);
         await Assert.That(page.Heading).IsEqualTo("Team");
+        await Assert.That(page.Contains("ts-summary-term")).IsFalse();
         await Assert.That(page.Contains("Organization members")).IsTrue();
-        await Assert.That(page.Contains("Current session access")).IsTrue();
+        await Assert.That(page.Contains("Current session access")).IsFalse();
         await Assert.That(page.Contains("Invitations and role changes")).IsTrue();
         await Assert.That(page.Contains("Ana Souza")).IsTrue();
     }
@@ -257,6 +261,11 @@ public sealed class PagesSmokeTests
             await Assert.That(page.Contains("ts-auth-header")).IsFalse();
             await Assert.That(page.Contains("IDENTITY PLATFORM")).IsFalse();
         }
+
+        var overview = await app.GetPageAsync(client, "/auth");
+        await Assert.That(overview.Contains("Current session access")).IsTrue();
+        await Assert.That(overview.Contains("View session access")).IsTrue();
+        await Assert.That(overview.Contains("organization:owner")).IsTrue();
     }
 
     [Test]
