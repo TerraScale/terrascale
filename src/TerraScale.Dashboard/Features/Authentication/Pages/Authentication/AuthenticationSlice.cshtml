@@ -1,11 +1,8 @@
 @inherits RazorSlice<AuthenticationPageModel>
-@{ var shell = Model.Shell; var empty = Model.Resources.Length == 0; }
+@{ var shell = Model.Shell; }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-auth-console">
-  <section class="ts-auth-header ts-panel">
-    <div><div class="ts-eyebrow">@Icons.ShieldCheck(14) IDENTITY PLATFORM</div><h2 class="ts-auth-hero-title">@Model.Current.Title</h2><p class="ts-page-desc">@((IHtmlContent)new HtmlString(Model.Current.Description))</p><div class="ts-auth-instance-line"><span class="ts-meta">Project instance</span><code>@Model.InstanceSlug</code><span class="ts-badge ts-badge-success">Connected</span></div></div>
-    <div class="ts-auth-header-actions"><a class="ts-btn ts-btn-secondary" href="/auth/quickstart">@Icons.Terminal(15) Quickstart</a><a class="ts-btn ts-btn-primary" href="/auth/settings">@Icons.Settings(15) Instance settings</a></div>
-  </section>
+  <h1 class="ts-page-title-24">@Model.Current.Title</h1>
   @if (Model.Toast is { Length: > 0 } toast) { <div class="ts-alert ts-alert-success" role="status">@Icons.CircleCheck(16)<span>@toast</span></div> }
   @if (Model.Error is { Length: > 0 } error) { <div class="ts-alert ts-alert-danger" role="alert">@Icons.CircleAlert(16)<span>@error</span></div> }
   @if (Model.Section == "overview")

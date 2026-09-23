@@ -244,34 +244,22 @@ public sealed class PagesSmokeTests
         using var app = new DashboardTestApp();
         using var client = app.CreateDemoClient();
 
-        var pages = new (string Path, string Copy)[]
+        var paths = new[]
         {
-            ("/auth", "Your application's identity workspace."),
-            ("/auth/users", "Manage your application's users, profiles and access."),
-            ("/auth/sessions", "Inspect and revoke application sessions."),
-            ("/auth/organizations", "Group application users into customer organizations."),
-            ("/auth/memberships", "Assign users to organizations with an explicit role."),
-            ("/auth/invitations", "Prepare invitations to your application organizations."),
-            ("/auth/domains", "Configure organization enrollment by email domain."),
-            ("/auth/connections", "Configure social and enterprise sign-in with OpenID Connect or SAML."),
-            ("/auth/directories", "Prepare SCIM 2.0 endpoints for workforce provisioning."),
-            ("/auth/clients", "Register web apps, public clients and service integrations."),
-            ("/auth/templates", "Define custom claims for tokens minted by ts-auth."),
-            ("/auth/keys", "Issue scoped credentials for the ts-auth management API."),
-            ("/auth/webhooks", "Configure signed identity event delivery to your application."),
-            ("/auth/deliveries", "Inspect delivery outcomes and queue failed events for replay."),
-            ("/auth/audit", "Review changes made to application identities and configuration."),
-            ("/auth/billing", "Review identity usage and your instance plan."),
-            ("/auth/quickstart", "Connect your application using the ts-auth management API."),
-            ("/auth/settings", "Instance branding and hosted sign-in defaults."),
+            "/auth", "/auth/users", "/auth/sessions", "/auth/organizations", "/auth/memberships",
+            "/auth/invitations", "/auth/domains", "/auth/connections", "/auth/directories",
+            "/auth/clients", "/auth/templates", "/auth/keys", "/auth/webhooks",
+            "/auth/deliveries", "/auth/audit", "/auth/billing", "/auth/quickstart", "/auth/settings",
         };
 
-        foreach (var (path, copy) in pages)
+        foreach (var path in paths)
         {
             var page = await app.GetPageAsync(client, path);
             await Assert.That(page.StatusCode).IsEqualTo(200);
             await Assert.That(page.Heading).IsEqualTo("Authentication");
-            await Assert.That(page.Contains(copy)).IsTrue();
+            await Assert.That(page.Contains("<h1 class=\"ts-page-title-24\">")).IsTrue();
+            await Assert.That(page.Contains("ts-auth-header")).IsFalse();
+            await Assert.That(page.Contains("IDENTITY PLATFORM")).IsFalse();
         }
 
         var overview = await app.GetPageAsync(client, "/auth");
