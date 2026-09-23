@@ -8141,12 +8141,20 @@ single-selector rules may stay on one line.
   }
 
   .ts-apikeys-table-wrap .ts-table {
-    table-layout: auto;
-    min-width: 760px;
+    table-layout: fixed;
+    min-width: 900px;
   }
 
   .ts-apikeys-table-wrap th:first-child {
-    min-width: 12rem;
+    width: 25%;
+  }
+
+  .ts-apikeys-table-wrap th:nth-child(2) {
+    width: 9rem;
+  }
+
+  .ts-apikeys-table-wrap th:last-child {
+    width: 8rem;
   }
 
   /* v1 searchField: label above, icon inset 12px, text starts at 36px. */
