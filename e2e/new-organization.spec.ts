@@ -2,6 +2,8 @@ import { test, expect } from "@playwright/test";
 import { registerAndOnboard } from "./support/journey";
 
 test("member creates another organization through the modal's three onboarding steps", async ({ page }) => {
+  // A cold preview plus the Stripe API round-trip needs more than the default.
+  test.setTimeout(120_000);
   await registerAndOnboard(page, {
     email: `e2e-neworg-${Date.now()}@example.test`,
     password: "E2e-neworg-123!",
@@ -28,7 +30,20 @@ test("member creates another organization through the modal's three onboarding s
   await dialog.locator(".ts-onboarding-plan-business").click();
   await expect(dialog.locator('input[name="plan"]')).toHaveValue("business");
   await dialog.getByRole("button", { name: "Continue to secure payment setup" }).click();
-  await page.waitForURL("**/checkout/**");
+
+  // The provider differs per target: the CI webServer runs the local payment
+  // provider page this suite can complete, while PR previews run the Stripe
+  // sandbox and hand off to Stripe's hosted card form, which an automated test
+  // cannot drive. Assert the sandbox hand-off there and stop: the
+  // local-provider run covers the rest of the wizard.
+  await page.waitForURL(
+    url => url.pathname.startsWith("/checkout/") || url.hostname.endsWith("stripe.com") || url.pathname === "/organization",
+    { timeout: 60_000 },
+  );
+  if (new URL(page.url()).hostname.endsWith("stripe.com")) {
+    test.skip(true, "Stripe sandbox hands off to Stripe's hosted card form; the local-provider run covers the wizard.");
+  }
+  expect(new URL(page.url()).pathname, "Stripe sandbox checkout did not start").not.toBe("/organization");
 
   // Secure payment setup lands on the local provider's checkout page.
   await page.getByRole("button", { name: /Use local test payment method/ }).click();
