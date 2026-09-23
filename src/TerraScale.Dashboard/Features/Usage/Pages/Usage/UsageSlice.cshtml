@@ -5,7 +5,7 @@
     string InvoiceTone(string status) => status == "paid" ? "ts-badge-success" : "ts-badge-warning";
 }
 @ShellHtml.Top(shell)
-<div class="ts-page">
+<div class="ts-page ts-usage">
     @if (Model.BillingReturn is "success")
     {
         <div class="ts-alert ts-alert-success" role="status">
@@ -91,25 +91,6 @@
                         <div><dt>@figure.Label</dt><dd>@figure.Value</dd></div>
                     }
                 </dl>
-                <div class="ts-row ts-usage-billing-actions">
-                    @if (Model.HasManagedSubscription)
-                    {
-                        <a class="ts-btn ts-btn-outline" href="@Model.BillingPortalHref">@Icons.ExternalLink(16) Manage subscription</a>
-                    }
-                    else
-                    {
-                        <select class="ts-select" id="billing-plan" aria-label="Billing plan">
-                            @foreach (var plan in Model.CheckoutPlans)
-                            {
-                                <option value="@plan.Href">@plan.Label</option>
-                            }
-                        </select>
-                        <button type="button" class="ts-btn ts-btn-primary" data-on:click="window.location.assign(document.getElementById('billing-plan').value)">
-                            @Icons.CreditCard(16) Subscribe
-                        </button>
-                        <a class="ts-btn ts-btn-outline" href="@Model.BillingPortalHref">@Icons.ExternalLink(16) Payment methods</a>
-                    }
-                </div>
                 <div class="ts-chart-shell">
                     @Charts.AreaChart(Model.History, $"Resource usage history, {Model.HistoryRanges.First(r => r.Selected).Label} window")
                 </div>
@@ -208,6 +189,26 @@
                     <div><dt>Renewal</dt><dd>@Model.Renewal</dd></div>
                     <div><dt>Invoices</dt><dd>@Model.InvoiceCount</dd></div>
                 </dl>
+
+                <div class="ts-row ts-usage-billing-actions">
+                    @if (Model.HasManagedSubscription)
+                    {
+                        <a class="ts-btn ts-btn-outline" href="@Model.BillingPortalHref">@Icons.ExternalLink(16) Manage subscription</a>
+                    }
+                    else
+                    {
+                        <select class="ts-select" id="billing-plan" aria-label="Billing plan">
+                            @foreach (var plan in Model.CheckoutPlans)
+                            {
+                                <option value="@plan.Href">@plan.Label</option>
+                            }
+                        </select>
+                        <button type="button" class="ts-btn ts-btn-primary" data-on:click="window.location.assign(document.getElementById('billing-plan').value)">
+                            @Icons.CreditCard(16) Subscribe
+                        </button>
+                        <a class="ts-btn ts-btn-outline" href="@Model.BillingPortalHref">@Icons.ExternalLink(16) Payment methods</a>
+                    }
+                </div>
 
                 @if (Model.HasManagedSubscription && Model.PlanImpact.Count > 0)
                 {

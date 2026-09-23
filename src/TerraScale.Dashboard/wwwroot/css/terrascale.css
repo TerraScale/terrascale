@@ -4009,6 +4009,13 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-text-warning { color: var(--ts-warning); }
 
   /* Usage page: allowance rings + stat rail, area history, share bars, billing split. */
+  /* The base panel only pads the block axis; usage panels pad all sides. */
+  .ts-usage .ts-panel { padding: 20px; }
+
+  @media (max-width: 39.99rem) {
+    .ts-usage .ts-panel { padding: var(--ts-lg); }
+  }
+
   .ts-usage-hero-body {
     display: grid;
     gap: var(--ts-xl);
@@ -4045,6 +4052,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   .ts-usage-gauge-value small {
+    white-space: nowrap;
     font-size: var(--ts-fs-ui);
     font-weight: var(--ts-fw-medium);
     color: var(--ts-ink-muted);
@@ -4150,6 +4158,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   .ts-usage-facts dd small {
+    white-space: nowrap;
     font-size: var(--ts-fs-meta);
     font-weight: var(--ts-fw-medium);
     color: var(--ts-ink-muted);
