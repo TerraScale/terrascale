@@ -68,6 +68,11 @@
 
   --ts-gradient-primary: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
 
+  --ts-notfound-bg: #0d1729;
+  --ts-notfound-blue: #0861ed;
+  --ts-notfound-blue-bright: #3794ff;
+  --ts-notfound-grid: rgba(43, 106, 211, 0.22);
+
   --ts-atmo-mult: 1.9;
   --ts-atmo-grid-opacity: 1;
   --ts-atmo-float-opacity: 1.25;

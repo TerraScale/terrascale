@@ -4,38 +4,29 @@
   import { dict } from '@/lib/i18n'
 </script>
 
-<section class="notfound">
-  <div class="notfound__glow" aria-hidden="true"></div>
-  <div class="notfound__grid" aria-hidden="true"></div>
-
+<section class="notfound" aria-labelledby="notfound-title">
+  <div class="notfound__floor" aria-hidden="true"></div>
   <div class="notfound__inner">
-    <div class="notfound__eyebrow">
-      <Icon name="alertCircle" className="notfound__eyebrow-icon" />
-      {$dict.notFound.eyebrow}
+    <div class="notfound__copy">
+      <p class="notfound__eyebrow">{$dict.notFound.eyebrow}<span aria-hidden="true"></span></p>
+      <div class="notfound__code" aria-hidden="true">
+        <img src="/404-number.webp" alt="" width="415" height="160" decoding="async" />
+      </div>
+      <h1 id="notfound-title" class="notfound__title">{$dict.notFound.title}</h1>
+      <p class="notfound__text">{$dict.notFound.text}</p>
+      <div class="notfound__actions">
+        <RouteLink href="/" class="ts-btn notfound__button notfound__button--primary">
+          <Icon name="home" className="notfound__icon" />
+          {$dict.notFound.backHome}
+        </RouteLink>
+        <RouteLink href="/contact" class="ts-btn notfound__button notfound__button--secondary">
+          <Icon name="messageSquare" className="notfound__icon" />
+          {$dict.notFound.contactSupport}
+        </RouteLink>
+      </div>
     </div>
-
-    <div class="notfound__code ts-text-gradient">404</div>
-    <h1 class="notfound__title">{$dict.notFound.title}</h1>
-    <p class="notfound__text">
-      {$dict.notFound.text}
-    </p>
-
-    <div class="notfound__actions">
-      <RouteLink href="/" class="ts-btn ts-btn-primary cta-shine">
-        <Icon name="home" className="notfound__icon" />
-        {$dict.notFound.backHome}
-      </RouteLink>
-      <RouteLink href="/contact" class="ts-btn ts-btn-glass">
-        <Icon name="messageSquare" className="notfound__icon" />
-        {$dict.notFound.contactSupport}
-      </RouteLink>
-    </div>
-
-    <div class="notfound__links">
-      <span class="notfound__links-label">{$dict.notFound.linksLabel}</span>
-      <RouteLink href="/" class="notfound__link">{$dict.notFound.links.home}</RouteLink>
-      <RouteLink href="/pricing" class="notfound__link">{$dict.notFound.links.pricing}</RouteLink>
-      <RouteLink href="/contact" class="notfound__link">{$dict.notFound.links.contact}</RouteLink>
+    <div class="notfound__art" aria-hidden="true">
+      <img src="/404-illustration.webp" alt="" width="900" height="700" decoding="async" />
     </div>
   </div>
 </section>
@@ -43,138 +34,170 @@
 <style>
   .notfound {
     position: relative;
+    isolation: isolate;
     overflow: hidden;
-    min-height: calc(100vh - 72px);
+    min-height: max(680px, calc(100vh - 72px));
+    min-height: max(680px, calc(100svh - 72px));
     display: flex;
     align-items: center;
-  }
-
-  .notfound__glow {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
     background:
-      radial-gradient(ellipse 70% 50% at 50% 20%, var(--ts-hero-glow-top) 0%, transparent 60%),
-      radial-gradient(ellipse 40% 40% at 80% 60%, var(--ts-hero-glow-accent) 0%, transparent 60%);
+      radial-gradient(ellipse 55% 55% at 72% 46%, rgba(var(--ts-primary-rgb), 0.22), transparent 72%),
+      radial-gradient(ellipse 46% 42% at 16% 72%, rgba(var(--ts-primary-rgb), 0.16), transparent 74%),
+      var(--ts-notfound-bg);
   }
 
-  .notfound__grid {
+  .notfound__floor {
     position: absolute;
-    inset: 0;
-    opacity: 0.4;
-    pointer-events: none;
+    z-index: -1;
+    inset: 58% -18% -42%;
+    opacity: 0.48;
+    transform: perspective(650px) rotateX(64deg);
+    transform-origin: top;
     background-image:
-      linear-gradient(var(--ts-grid-color) 1px, transparent 1px),
-      linear-gradient(90deg, var(--ts-grid-color) 1px, transparent 1px);
-    background-size: 32px 32px;
+      linear-gradient(var(--ts-notfound-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--ts-notfound-grid) 1px, transparent 1px);
+    background-size: 64px 64px;
+    -webkit-mask-image: linear-gradient(to bottom, transparent, black 38%, transparent 92%);
+    mask-image: linear-gradient(to bottom, transparent, black 38%, transparent 92%);
+    pointer-events: none;
   }
 
   .notfound__inner {
-    position: relative;
-    z-index: 1;
-    max-width: 720px;
+    width: min(100%, 1514px);
     margin: 0 auto;
-    padding: 80px 40px;
-    text-align: center;
+    padding: 50px clamp(24px, 5vw, 76px);
+    display: grid;
+    grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
+    align-items: center;
+  }
+
+  .notfound__copy {
+    position: relative;
+    z-index: 2;
+    max-width: 590px;
   }
 
   .notfound__eyebrow {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 5px 12px;
-    border-radius: 4px;
-    margin-bottom: 24px;
-    background: rgba(var(--ts-primary-rgb), 0.1);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.25);
+    gap: 14px;
+    margin: 0 0 12px;
     color: var(--ts-primary-light);
-    font-family: var(--ts-font-accent);
-    font-size: 11px;
+    font-family: var(--ts-font-mono);
+    font-size: 13px;
     font-weight: 700;
+    letter-spacing: 0.13em;
     text-transform: uppercase;
-    letter-spacing: 0.14em;
   }
 
-  :global(.notfound__eyebrow-icon) {
-    width: 11px;
-    height: 11px;
+  .notfound__eyebrow span {
+    width: 19px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--ts-notfound-blue-bright);
+    box-shadow: 0 0 12px var(--ts-notfound-blue-bright);
   }
 
   .notfound__code {
-    font-family: var(--ts-font-mono);
-    font-size: clamp(6rem, 18vw, 11rem);
-    font-weight: 700;
-    line-height: 1;
-    letter-spacing: -0.04em;
-    margin-bottom: 16px;
+    width: min(100%, 370px);
+    margin: 0 0 12px -8px;
+  }
+
+  .notfound__code img {
+    width: 100%;
+    height: auto;
   }
 
   .notfound__title {
-    font-size: clamp(1.8rem, 3vw + 0.5rem, 2.6rem);
-    font-weight: 700;
-    color: var(--ts-text);
-    letter-spacing: -0.02em;
-    line-height: 1.1;
     margin: 0 0 16px;
+    color: var(--ts-text);
+    font-size: clamp(2.3rem, 3.6vw, 3.7rem);
+    font-weight: 700;
+    letter-spacing: -0.045em;
+    line-height: 1.1;
   }
 
   .notfound__text {
-    font-family: var(--ts-font-accent);
-    font-size: 17px;
+    max-width: 470px;
+    margin: 0;
     color: var(--ts-text-muted);
+    font-family: var(--ts-font-accent);
+    font-size: clamp(1rem, 1.35vw, 1.2rem);
     line-height: 1.6;
-    margin: 0 0 36px;
   }
 
   .notfound__actions {
     display: flex;
-    gap: 12px;
-    justify-content: center;
     flex-wrap: wrap;
-    margin-bottom: 48px;
+    gap: 16px;
+    margin-top: 32px;
   }
 
-  :global(.notfound__icon) {
-    width: 14px;
-    height: 14px;
-  }
-
-  .notfound__links {
+  :global(.notfound__button) {
     display: inline-flex;
     align-items: center;
-    gap: 20px;
-    padding-top: 28px;
-    border-top: 1px solid var(--ts-glass-border);
-    flex-wrap: wrap;
     justify-content: center;
-  }
-
-  .notfound__links-label {
-    font-family: var(--ts-font-accent);
-    font-size: 11px;
-    color: var(--ts-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    font-weight: 600;
-  }
-
-  :global(.notfound__link) {
-    font-family: var(--ts-font-accent);
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--ts-primary-light);
-    text-decoration: none;
-    transition: color 150ms ease;
-    position: relative;
-  }
-
-  :global(.notfound__link:hover) {
+    gap: 12px;
+    min-height: 58px;
+    padding: 0 25px;
+    border: 1px solid var(--ts-notfound-blue-bright);
+    border-radius: 12px;
     color: var(--ts-text);
+    font-family: var(--ts-font-accent);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: normal;
+    text-transform: none;
+    text-decoration: none;
+    transition: background 180ms ease, box-shadow 180ms ease, transform 180ms ease;
   }
 
-  @media (max-width: 640px) {
-    .notfound__inner {
-      padding: 48px 20px;
-    }
+  :global(.notfound__button:hover) { transform: translateY(-2px); }
+  :global(.notfound__button--primary) {
+    background: var(--ts-notfound-blue);
+    box-shadow: 0 0 22px rgba(var(--ts-primary-rgb), 0.58), inset 0 1px rgba(255, 255, 255, 0.22);
+  }
+  :global(.notfound__button--primary:hover) {
+    background: var(--ts-notfound-blue-bright);
+    box-shadow: 0 0 30px rgba(var(--ts-primary-rgb), 0.75);
+  }
+  :global(.notfound__button--secondary) {
+    color: var(--ts-primary-light);
+    background: rgba(8, 20, 39, 0.58);
+  }
+  :global(.notfound__button--secondary:hover) { background: rgba(var(--ts-primary-rgb), 0.25); }
+  :global(.notfound__icon) { width: 21px; height: 21px; }
+
+  .notfound__art {
+    position: relative;
+    z-index: 1;
+    width: min(calc(100% + 60px), 760px);
+    justify-self: end;
+    margin: -10px -18px -52px -88px;
+    filter: drop-shadow(0 26px 36px rgba(0, 4, 17, 0.35));
+  }
+
+  .notfound__art img {
+    width: 100%;
+    height: auto;
+  }
+
+  @media (max-width: 900px) {
+    .notfound__inner { grid-template-columns: 1fr; padding-top: 66px; padding-bottom: 20px; }
+    .notfound__copy { max-width: 680px; }
+    .notfound__art { width: min(100%, 620px); margin: -10px auto -30px; justify-self: center; }
+  }
+
+  @media (max-width: 560px) {
+    .notfound__inner { padding: 32px 24px 0; }
+    .notfound__code { width: min(100%, 260px); }
+    .notfound__title { font-size: clamp(2rem, 9vw, 3rem); }
+    .notfound__actions { gap: 12px; margin-top: 24px; }
+    :global(.notfound__button) { min-height: 52px; padding: 0 17px; font-size: 14px; }
+    .notfound__art { width: calc(100% + 24px); max-width: none; margin: 0 -12px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :global(.notfound__button) { transition: none; }
   }
 </style>
