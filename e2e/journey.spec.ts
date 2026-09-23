@@ -60,8 +60,20 @@ test("member can create and revoke an API key", async ({ page }) => {
   await page.fill("#key-name", "service credential");
   await page.fill("#key-scopes", "database:read");
   await page.getByRole("button", { name: "Create key" }).click();
-  await expect(page.locator("table tbody tr").filter({ hasText: "service credential" })).toBeVisible();
   await page.getByRole("dialog", { name: "Credential secret" }).getByRole("link", { name: "Done" }).click();
+  const table = page.locator(".ts-apikeys-table-wrap table");
+  await expect(table.locator("thead th")).toHaveText(["Name", "Type", "Last used", "Expires", "Status", ""]);
+  const row = table.locator("tbody tr").filter({ hasText: "service credential" });
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "Details for service credential" }).click();
+  const details = page.getByRole("dialog", { name: "service credential" });
+  await expect(details.getByText("database:read")).toBeVisible();
+  await expect(details.getByText("Owner / creator")).toBeVisible();
+  await expect(details.getByRole("button", { name: "Rotate" })).toBeEnabled();
+  await details.getByRole("button", { name: "Delete" }).click();
+  const confirmation = page.getByRole("dialog", { name: "Delete credential" });
+  await confirmation.getByRole("button", { name: "Delete credential" }).click();
+  await expect(row.getByText("Revoked")).toBeVisible();
 
   await page.locator("#credential-kind-value").click();
   await page.locator('[name="kind"] + details [data-filter-value="key"]').click();

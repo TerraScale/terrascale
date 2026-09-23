@@ -5125,23 +5125,20 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     white-space: nowrap;
   }
 
-  .ts-credential-mono {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    white-space: nowrap;
-  }
-
   .ts-credential-meta {
     color: var(--ts-ink-muted);
     font-size: var(--ts-fs-ui);
     white-space: nowrap;
   }
 
-  .ts-credential-actions {
-    gap: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
+  .ts-credential-detail-list .ts-secret-row {
+    align-items: start;
+  }
+
+  .ts-credential-detail-list .ts-secret-row dd {
+    overflow-wrap: anywhere;
+    text-align: right;
+    white-space: normal;
   }
 
   .ts-credential-empty {
@@ -8303,8 +8300,20 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   .ts-notes-page .ts-apikeys-table-wrap .ts-table {
-    min-width: 1440px;
-    table-layout: auto;
+    table-layout: fixed;
+    min-width: 900px;
+  }
+
+  .ts-apikeys-table-wrap th:first-child {
+    width: 25%;
+  }
+
+  .ts-apikeys-table-wrap th:nth-child(2) {
+    width: 9rem;
+  }
+
+  .ts-apikeys-table-wrap th:last-child {
+    width: 8rem;
   }
 
   .ts-notes-page .ts-apikeys-table-wrap .ts-table th,
