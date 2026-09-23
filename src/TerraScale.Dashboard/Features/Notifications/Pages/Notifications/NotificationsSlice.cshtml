@@ -5,94 +5,97 @@
     {
         "danger" => "danger",
         "warning" => "warning",
+        "success" => "success",
         _ => "info",
+    };
+    string SeverityLabel(string severity) => severity switch
+    {
+        "danger" => "Critical",
+        "warning" => "Warning",
+        "success" => "Resolved",
+        _ => "Update",
     };
 }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-notes-page">
-    <section class="ts-panel ts-panel-20">
+    <section class="ts-panel ts-notifications-overview" aria-label="Notification summary">
         <div class="ts-notifications-header">
-            <p class="ts-muted ts-ui">Product notifications returned by the TerraScale API for the signed-in account.</p>
-            <div class="ts-row">
+            <div>
+                <span class="ts-notifications-eyebrow">YOUR ACTIVITY</span>
+                <h2>Stay on top of what matters.</h2>
+                <p>Updates about your account, databases, and team in one place.</p>
+            </div>
+            <div class="ts-notifications-actions">
                 <form method="post" action="/api/v1/notifications/read-all">
-                    <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit" disabled="@(Model.Unread == 0 ? "disabled" : null)">@Icons.CheckCheck(16) Mark all read</button>
+                    <button class="ts-btn ts-btn-primary" type="submit" disabled="@(Model.Unread == 0 ? "disabled" : null)">@Icons.CheckCheck(16) Mark all read</button>
                 </form>
                 <a class="ts-btn ts-btn-secondary" href="/notifications">@Icons.RefreshCw(16) Refresh</a>
             </div>
         </div>
         <div class="ts-notifications-stats">
-            <div class="ts-stat-card">
-                <span class="ts-text-upper">Unread</span>
-                <div class="ts-stat-row">
-                    <span class="ts-stat-value">@Model.Unread</span>
-                    <span class="ts-badge @(Model.Unread > 0 ? "ts-badge-warning" : "ts-badge-success")">Unread</span>
-                </div>
+            <div class="ts-notifications-stat ts-notifications-stat-unread">
+                <span>Unread</span>
+                <strong>@Model.Unread</strong>
             </div>
-            <div class="ts-stat-card">
-                <span class="ts-text-upper">Critical</span>
-                <div class="ts-stat-row">
-                    <span class="ts-stat-value">@Model.Critical</span>
-                    <span class="ts-badge @(Model.Critical > 0 ? "ts-badge-danger" : "ts-badge-success")">Critical</span>
-                </div>
+            <div class="ts-notifications-stat ts-notifications-stat-critical">
+                <span>Critical</span>
+                <strong>@Model.Critical</strong>
             </div>
-            <div class="ts-stat-card">
-                <span class="ts-text-upper">Total</span>
-                <div class="ts-stat-row">
-                    <span class="ts-stat-value">@Model.Total</span>
-                    <span class="ts-badge ts-badge-info">Total</span>
-                </div>
+            <div class="ts-notifications-stat">
+                <span>All notifications</span>
+                <strong>@Model.Total</strong>
             </div>
         </div>
     </section>
 
-    <section class="ts-panel">
-        <div class="ts-panel-header ts-row-between">
+    <section class="ts-panel ts-notifications-inbox" aria-labelledby="notifications-inbox-title">
+        <div class="ts-notifications-inbox-header">
             <div>
-                <h2 class="ts-panel-title">Inbox</h2>
-                <p class="ts-panel-subtitle">Loaded @DashboardStore.FormatUtcDateTime(Model.LoadedAt)</p>
+                <h2 id="notifications-inbox-title">Inbox</h2>
+                <p>@Model.Total @(Model.Total == 1 ? "notification" : "notifications")</p>
             </div>
-            <span class="ts-muted">@Icons.Bell(18)</span>
+            <span class="ts-notifications-count" aria-label="@Model.Unread unread notifications">@Model.Unread unread</span>
         </div>
         @if (Model.Notifications.Count is 0)
         {
-            <div class="ts-padded">
-                <div class="ts-empty">
-                    <span class="ts-empty-icon">@Icons.SearchX(16)</span>
-                    <span class="ts-empty-title">No notifications returned</span>
-                    <span class="ts-empty-meta">The API did not return persistent notifications for this account.</span>
-                </div>
+            <div class="ts-notifications-empty">
+                <span class="ts-notifications-empty-icon">@Icons.Bell(24)</span>
+                <h3>You're all caught up</h3>
+                <p>New notifications will appear here when there's something to review.</p>
             </div>
         }
         else
         {
-            <div class="ts-stack-sm ts-padded">
+            <div class="ts-notifications-list">
                 @foreach (var notification in Model.Notifications)
                 {
                     var unread = notification.Status == "Unread";
-                    <div class="ts-notification @(unread ? "ts-notification-unread" : null)">
-                        <span class="ts-notification-icon">@(notification.Severity == "danger" ? Icons.TriangleAlert(17) : Icons.Bell(17))</span>
+                    <article class="ts-notification @(unread ? "ts-notification-unread" : null)">
+                        <span class="ts-notification-icon ts-notification-icon-@SeverityTone(notification.Severity)" aria-hidden="true">@(notification.Severity == "danger" || notification.Severity == "warning" ? Icons.TriangleAlert(18) : Icons.Bell(18))</span>
                         <div class="ts-notification-body">
-                            <div class="ts-row ts-row-tight ts-flex-wrap">
+                            <div class="ts-notification-heading">
                                 <strong class="ts-notification-title">@notification.Title</strong>
-                                <span class="ts-badge ts-badge-@SeverityTone(notification.Severity)">@notification.Severity</span>
                                 @if (unread)
                                 {
-                                    <span class="ts-badge ts-badge-info">Unread</span>
+                                    <span class="ts-notification-unread-label">New</span>
                                 }
                             </div>
                             @if (notification.Body.Length > 0)
                             {
                                 <p class="ts-notification-text">@notification.Body</p>
                             }
-                            <small class="ts-notification-meta">@Icons.Clock(13) @DashboardStore.FormatUtcDateTime(notification.CreatedAt)</small>
+                            <div class="ts-notification-details">
+                                <span class="ts-badge ts-badge-@SeverityTone(notification.Severity)">@SeverityLabel(notification.Severity)</span>
+                                <time class="ts-notification-meta" datetime="@notification.CreatedAt">@Icons.Clock(13) @DashboardStore.FormatUtcDateTime(notification.CreatedAt)</time>
+                            </div>
                         </div>
                         @if (unread)
                         {
                             <form method="post" action="/api/v1/notifications/@notification.Id/read">
-                                <button class="ts-btn ts-notification-mark" type="submit">@Icons.CheckCheck(14) Mark read</button>
+                                <button class="ts-btn ts-notification-mark" type="submit">@Icons.Check(15) Mark read</button>
                             </form>
                         }
-                    </div>
+                    </article>
                 }
             </div>
         }
