@@ -7934,6 +7934,8 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-apikeys-table-wrap th:last-child {
     width: 8rem;
+  }
+
   .ts-notes-page .ts-apikeys-table-wrap .ts-table th,
   .ts-notes-page .ts-apikeys-table-wrap .ts-table td {
     padding-inline: var(--ts-md);
