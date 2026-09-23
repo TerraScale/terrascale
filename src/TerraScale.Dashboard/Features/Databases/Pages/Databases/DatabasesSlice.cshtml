@@ -6,12 +6,9 @@
 }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-db-page">
-    <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Logical databases</h2>
-            <p class="ts-panel-subtitle">Rows are loaded from the TerraScale Dashboard API and backed by the TerraScale metadata database.</p>
-        </div>
-        <div class="ts-panel-pad ts-stack-lg">
+    <section class="ts-stack-lg">
+        <h2 class="ts-panel-title">Logical databases</h2>
+        <div class="ts-stack-lg">
             @if (Model.Query.Length > 0 || Model.Error is not null || Model.Databases.Length > 0)
             {
                 <form class="ts-db-search" method="get" action="/databases">
