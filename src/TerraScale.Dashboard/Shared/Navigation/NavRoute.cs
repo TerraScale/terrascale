@@ -13,7 +13,8 @@ public sealed record NavRoute(
     string PrimaryAction,
     string? SecondaryAction = null,
     string? CreateAction = null,
-    bool AdminOnly = false)
+    bool AdminOnly = false,
+    bool ShowInNav = true)   // false keeps the route addressable (page title, actions) without a sidebar entry
 {
     public string Accent => NavAccents[Id];
     public bool HasCreate => CreateAction is not null;
@@ -46,10 +47,10 @@ public sealed record NavRoute(
             "ScrollText", "Export audit", "Filter events"),
         new(RouteId.Notifications, "/notifications", "Notifications", "Notifications", "Actionable inbox",
             "Bounded notification center for API key expiry, pending invitations, backup issues, and quota thresholds.",
-            "Bell", "Dismiss read", "Notification settings"),
+            "Bell", "Dismiss read", "Notification settings", ShowInNav: false),
         new(RouteId.Profile, "/profile", "Profile", "Profile", "Account",
             "Account profile, preferences, sessions, trusted devices, and notification delivery choices.",
-            "UserRound", "Save profile", "Manage sessions"),
+            "UserRound", "Save profile", "Manage sessions", ShowInNav: false),
         new(RouteId.Organization, "/organization", "Organization", "Organization", "Tenant context",
             "Organization details, project switching, invitations, ownership, and tenant bookkeeping.",
             "Building", "Create project", "Switch project", "project"),

@@ -22,41 +22,16 @@
     }
 
     <section class="ts-panel">
-        <div class="ts-row-between">
-            <p class="ts-muted">Usage period @DashboardStore.FormatUtcDateTime(Model.PeriodStart) to @DashboardStore.FormatUtcDateTime(Model.PeriodEnd)</p>
-            <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/usage">@Icons.RefreshCw(14) Refresh</a>
-        </div>
-        @if (Model.UsagePartial)
-        {
-            <div class="ts-alert ts-alert-warning" role="alert">
-                <span class="ts-alert-title">@Icons.TriangleAlert(16) Usage data is partially loaded</span>
-                <span class="ts-alert-body">Some usage sources are temporarily unavailable. Available values remain visible.</span>
-            </div>
-        }
-        <div class="ts-grid ts-usage-summary">
-            @foreach (var stat in Model.Stats)
-            {
-                <div class="ts-card ts-metric">
-                    <span class="ts-metric-label">@(Icon(stat.Icon, 16)) @stat.Label</span>
-                    <strong class="ts-metric-value ts-metric-value-sm">@stat.Value</strong>
-                    <small class="ts-metric-detail">@stat.Detail</small>
-                </div>
-            }
-        </div>
-    </section>
-
-    <section class="ts-panel">
-        <div class="ts-panel-header ts-usage-head-actions">
-            <div>
-                <h2 class="ts-panel-title">Organization usage</h2>
-                <p class="ts-panel-subtitle">@Model.OrganizationSubtitle</p>
-            </div>
-            <span class="ts-badge ts-badge-success">Updated @Model.OrganizationUpdatedAt</span>
-        </div>
         <div class="ts-stack-md">
-            <div class="ts-alert ts-alert-info" role="status">
-                <span class="ts-alert-title">@Icons.Info(16) Billing dimensions</span>
-                <span class="ts-alert-body">Only logical storage and writes are billed. Reads and egress are unbilled metered facts used for guards and cost attribution.</span>
+            <div class="ts-grid ts-usage-summary">
+                @foreach (var stat in Model.Stats)
+                {
+                    <div class="ts-card ts-metric">
+                        <span class="ts-metric-label">@(Icon(stat.Icon, 16)) @stat.Label</span>
+                        <strong class="ts-metric-value ts-metric-value-sm">@stat.Value</strong>
+                        <small class="ts-metric-detail">@stat.Detail</small>
+                    </div>
+                }
             </div>
             <div class="ts-grid ts-grid-cards ts-grid-cards-4 ts-usage-stats">
                 <div class="ts-card ts-metric">

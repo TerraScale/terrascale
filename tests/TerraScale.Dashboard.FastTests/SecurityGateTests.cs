@@ -12,11 +12,11 @@ public sealed class SecurityGateTests
     private static readonly string[] V1NavItems =
     [
         "Overview", "Databases", "Tables", "API keys", "Team", "Authentication", "Usage", "Logs",
-        "Notifications", "Profile", "Organization",
+        "Organization",
     ];
 
     [Test]
-    public async Task MemberNavHasExactlyTheElevenV1Items()
+    public async Task MemberNavHasExactlyTheV1Items()
     {
         using var app = new DashboardTestApp();
         using var client = await app.CreateMemberClientAsync($"fast-nav-{Guid.NewGuid():N}@example.test");

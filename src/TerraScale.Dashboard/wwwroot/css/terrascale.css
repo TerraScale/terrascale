@@ -1876,6 +1876,9 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     color: color-mix(in oklab, var(--ts-nav-accent) 90%, var(--ts-ink));
   }
 
+  /* Nav counter: one step up from the generic badge (--ts-badge-h) so the
+   * digit reads at a glance. It rides the system accent — never a status
+   * color — so the same count reads the same way on every destination. */
   .ts-nav-count {
     position: absolute;
     right: var(--ts-sm);
@@ -1884,26 +1887,31 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: var(--ts-badge-h);
-    min-width: var(--ts-badge-h);
-    padding: 0 var(--ts-xs);
+    height: calc(var(--ts-badge-h) + 4px);
+    min-width: calc(var(--ts-badge-h) + 4px);
+    padding: 0 var(--ts-gap-tight);
     border-radius: var(--ts-radius-pill);
-    font-size: 10px;
+    border: 1px solid color-mix(in oklab, var(--ts-accent) 32%, transparent);
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-meta);
     font-weight: var(--ts-fw-semibold);
     line-height: 1;
   }
 
   .ts-nav-count-neutral {
-    background-color: var(--ts-surface-muted);
-    color: var(--ts-ink-muted);
+    background-color: color-mix(in oklab, var(--ts-accent) 12%, var(--ts-surface));
   }
 
+  /* The active destination steps the counter up a notch: deeper fill and a
+   * stronger ring, while the digit keeps full ink contrast. */
   .ts-nav-count-active {
-    background-color: color-mix(in oklab, var(--ts-accent) 15%, transparent);
-    color: var(--ts-info);
+    border-color: color-mix(in oklab, var(--ts-accent) 52%, transparent);
+    background-color: color-mix(in oklab, var(--ts-accent) 26%, var(--ts-surface));
   }
 
+  /* Warning counts stay on warning semantics, ring included. */
   .ts-nav-count-alert {
+    border-color: color-mix(in oklab, var(--ts-warning) 55%, transparent);
     background-color: var(--ts-warning);
     color: var(--ts-on-warning);
   }
@@ -3621,13 +3629,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-break-words { overflow-wrap: anywhere; }
 
-  .ts-page-title-24 {
-    color: var(--ts-ink);
-    font-size: 24px;
-    font-weight: var(--ts-fw-semibold);
-    line-height: 32px;
-  }
-
   .ts-title-22 {
     color: var(--ts-ink);
     font-size: var(--ts-fs-page-title);
@@ -3971,10 +3972,9 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   /* v1 UsageHistoryPanel controlsEnd + NativeSelect wrapper: fit-content. */
   .ts-usage-controls-end .ts-select { width: fit-content; }
 
-  /* v1 usageStats: 1 col → 2 @40rem → 4 @80rem, margin-top 24px above the grid. */
+  /* v1 usageStats: 1 col → 2 @40rem → 4 @80rem. */
   .ts-usage-summary {
     gap: var(--ts-md);
-    margin-top: var(--ts-xl);
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -4722,6 +4722,37 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-filter-select {
     min-width: 10rem;
+  }
+
+  .ts-filter-menu > .ts-filter-trigger {
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+  }
+
+  .ts-filter-trigger > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ts-filter-menu > .ts-menu-panel {
+    top: calc(100% + var(--ts-xs));
+    left: 0;
+    width: 100%;
+    min-width: 0;
+    max-height: 16rem;
+    overflow-y: auto;
+  }
+
+  .ts-filter-menu .ts-menu-item[aria-current="true"] {
+    background-color: var(--ts-surface-muted);
+    color: var(--ts-accent);
+  }
+
+  .ts-filter-menu .ts-menu-item:focus-visible {
+    outline: none;
+    box-shadow: var(--ts-focus-ring);
   }
 
   /* Credentials table cells. */
@@ -8189,5 +8220,249 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     .ts-auth-orbit { left: 0; }
     .ts-auth-stat-grid, .ts-auth-connection-grid { grid-template-columns: 1fr; }
     .ts-auth-stat-card strong { font-size: 26px; }
+  }
+}
+
+@layer features {
+  .ts-notes-page .ts-notifications-overview {
+    gap: 24px;
+    padding: 24px;
+    background:
+      radial-gradient(circle at top right, color-mix(in oklab, var(--ts-accent) 13%, transparent), transparent 42%),
+      var(--ts-surface);
+    border: 1px solid var(--ts-line);
+  }
+
+  .ts-notes-page .ts-notifications-header {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .ts-notifications-eyebrow {
+    color: var(--ts-info);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-semibold);
+    letter-spacing: .1em;
+  }
+
+  .ts-notifications-header h2 {
+    margin: 8px 0;
+    color: var(--ts-ink);
+    font-size: clamp(22px, 2vw, 28px);
+    line-height: 1.2;
+  }
+
+  .ts-notifications-header p {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+    line-height: 1.5;
+  }
+
+  .ts-notifications-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .ts-notes-page .ts-notifications-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    margin: 0;
+    padding-top: 20px;
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-notifications-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 0 20px;
+    border-left: 1px solid var(--ts-line);
+  }
+
+  .ts-notifications-stat:first-child {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .ts-notifications-stat span {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+  }
+
+  .ts-notifications-stat strong {
+    color: var(--ts-ink);
+    font-size: 28px;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ts-notifications-stat-unread strong { color: var(--ts-info); }
+  .ts-notifications-stat-critical strong { color: var(--ts-danger); }
+
+  .ts-notes-page .ts-notifications-inbox {
+    gap: 0;
+    padding: 0;
+    border: 1px solid var(--ts-line);
+    background: var(--ts-surface);
+  }
+
+  .ts-notifications-inbox-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-notifications-inbox-header h2 {
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-panel-title);
+  }
+
+  .ts-notifications-inbox-header p {
+    margin-top: 3px;
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+  }
+
+  .ts-notifications-count {
+    padding: 6px 10px;
+    border: 1px solid color-mix(in oklab, var(--ts-info) 28%, var(--ts-line));
+    border-radius: 999px;
+    color: var(--ts-info);
+    background: color-mix(in oklab, var(--ts-info) 8%, transparent);
+    font-size: var(--ts-fs-meta);
+    white-space: nowrap;
+  }
+
+  .ts-notes-page .ts-notification {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 16px;
+    min-height: 0;
+    padding: 20px 24px;
+    border: 0;
+    border-bottom: 1px solid var(--ts-line);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .ts-notes-page .ts-notification:last-child { border-bottom: 0; }
+  .ts-notes-page .ts-notification-unread {
+    background: color-mix(in oklab, var(--ts-accent) 5%, var(--ts-surface));
+    box-shadow: inset 3px 0 var(--ts-accent);
+  }
+
+  .ts-notes-page .ts-notification-icon {
+    width: 40px;
+    height: 40px;
+    margin: 0;
+    border: 0;
+    border-radius: 12px;
+    background: color-mix(in oklab, var(--ts-info) 12%, transparent);
+    color: var(--ts-info);
+  }
+
+  .ts-notes-page .ts-notification-icon-danger {
+    background: color-mix(in oklab, var(--ts-danger) 12%, transparent);
+    color: var(--ts-danger);
+  }
+
+  .ts-notes-page .ts-notification-icon-warning {
+    background: color-mix(in oklab, var(--ts-warning) 12%, transparent);
+    color: var(--ts-warning);
+  }
+
+  .ts-notes-page .ts-notification-icon-success {
+    background: color-mix(in oklab, var(--ts-success) 12%, transparent);
+    color: var(--ts-success);
+  }
+
+  .ts-notification-heading,
+  .ts-notification-details {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .ts-notification-unread-label {
+    color: var(--ts-info);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-notification-unread-label::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin: 0 6px 1px 0;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .ts-notes-page .ts-notification-body { gap: 8px; }
+  .ts-notes-page .ts-notification-text { line-height: 1.5; }
+  .ts-notes-page .ts-notification-meta { margin: 0; }
+  .ts-notes-page .ts-notification-mark {
+    min-height: 32px;
+    height: 32px;
+    margin: 4px 0 0;
+    border: 1px solid var(--ts-line);
+    background: var(--ts-surface);
+  }
+
+  .ts-notifications-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 72px 24px;
+    text-align: center;
+  }
+
+  .ts-notifications-empty-icon {
+    display: grid;
+    width: 56px;
+    height: 56px;
+    margin-bottom: 8px;
+    place-items: center;
+    border-radius: 16px;
+    background: color-mix(in oklab, var(--ts-info) 11%, transparent);
+    color: var(--ts-info);
+  }
+
+  .ts-notifications-empty h3 { color: var(--ts-ink); font-size: var(--ts-fs-panel-title); }
+  .ts-notifications-empty p { max-width: 24rem; color: var(--ts-ink-muted); line-height: 1.5; }
+
+  @media (min-width: 64rem) {
+    .ts-notes-page .ts-notifications-header {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+    }
+  }
+
+  @media (max-width: 40rem) {
+    .ts-notes-page .ts-notifications-overview { padding: 20px; }
+    .ts-notes-page .ts-notifications-stats { gap: 12px; }
+    .ts-notifications-stat { padding: 0 0 0 12px; }
+    .ts-notifications-stat strong { font-size: 23px; }
+    .ts-notifications-inbox-header { padding: 18px 20px; }
+    .ts-notes-page .ts-notification {
+      grid-template-columns: 40px minmax(0, 1fr);
+      padding: 18px 20px;
+    }
+    .ts-notification form { grid-column: 2; }
+    .ts-notes-page .ts-notification-mark { margin: 0; }
   }
 }
