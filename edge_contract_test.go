@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 )
 
@@ -51,7 +52,13 @@ func TestEdgeContractPinAndRouteManifest(t *testing.T) {
 	if got := hex.EncodeToString(digest[:]); got != openapiDigest || got != EdgeContractOpenAPISHA256 {
 		t.Fatalf("edge OpenAPI SHA-256 = %s, manifest=%s generated=%s", got, openapiDigest, EdgeContractOpenAPISHA256)
 	}
-	if len(EdgeContractRoutes) != 1 || EdgeContractRoutes[0] != (EdgeContractRoute{OperationID: "regions.list", Method: "GET", Path: "/api/v1/regions", ResponseModel: "RegionCatalogResponse"}) {
+	wantRoutes := []EdgeContractRoute{
+		{OperationID: "discovery.get", Method: "GET", Path: "/api/v1/discovery", ResponseModel: "DiscoveryResponse"},
+		{OperationID: "ingest.publish", Method: "POST", Path: "/api/v1/ingest", ResponseModel: "IngestResponse"},
+		{OperationID: "regions.list", Method: "GET", Path: "/api/v1/regions", ResponseModel: "RegionCatalogResponse"},
+		{OperationID: "auth.discovery", Method: "GET", Path: "/api/v1/auth/discovery", ResponseModel: "AuthDiscoveryResponse"},
+	}
+	if !slices.Equal(EdgeContractRoutes, wantRoutes) {
 		t.Fatalf("edge routes = %+v", EdgeContractRoutes)
 	}
 }
@@ -66,7 +73,13 @@ func TestMemberAndEdgeRegionsUseDistinctContracts(t *testing.T) {
 	if memberResponse != "HealthResponse" {
 		t.Fatalf("member regions response model = %q, want HealthResponse", memberResponse)
 	}
-	if EdgeContractRoutes[0].ResponseModel != "RegionCatalogResponse" {
-		t.Fatalf("edge regions response model = %q, want RegionCatalogResponse", EdgeContractRoutes[0].ResponseModel)
+	for _, route := range EdgeContractRoutes {
+		if route.OperationID == "regions.list" {
+			if route.ResponseModel != "RegionCatalogResponse" {
+				t.Fatalf("edge regions response model = %q, want RegionCatalogResponse", route.ResponseModel)
+			}
+			return
+		}
 	}
+	t.Fatal("edge regions route missing")
 }

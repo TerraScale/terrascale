@@ -179,7 +179,7 @@ required.
 
 `TSAuth` exposes the hosted ts-auth identity provider's management and OIDC
 routes. Point a client at the deployment origin with the instance `sk_` key —
-`NewClient(sdk.Config{TSAuthBaseURL: "https://auth.example.com", AccessToken:
+`NewClient(sdk.Config{TSAuthBaseURL: "https://auth.terrascale.tech", AccessToken:
 "sk_..."})` — then call `client.TSAuth.Instance("slug")` for the scoped
 families (`Users`, `Sessions`, `APIKeys`, `Organizations`, `OAuthClients`,
 `Connections`, `Directories`, `JWTTemplates`, `Webhooks`, `AuditEvents`,
@@ -193,8 +193,11 @@ ts-auth routes. One-time secrets
 family uses client credentials instead of the `sk_` key, and webhook
 deliveries are verified with `VerifyTSAuthWebhook` (HMAC-SHA256 over
 `timestamp + "." + rawBody`, with an optional replay tolerance). These routes
-are not part of the TerraBase producer contract; a ts-auth origin is a custom
-origin, so no discovery routing applies.
+are not part of the TerraBase producer contract. The public auth origin uses
+Atlas auth discovery to select a healthy regional ts-auth endpoint directly;
+safe reads can fail over and mutations are sent once. Set
+`TSAuthUseReverseProxy: true` to use `auth.terrascale.tech` as a reverse proxy.
+Other ts-auth origins are used directly without discovery.
 
 Document reads expose the exact response `ETag` and session token. Pass that
 ETag to `WithIfMatch` for conditional PUT, PATCH, or DELETE; `"*"` requires

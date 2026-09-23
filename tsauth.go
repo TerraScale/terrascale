@@ -274,9 +274,18 @@ func (c *Client) tsAuthSend(ctx context.Context, base, method, path string, quer
 		requestCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
 	defer cancel()
+	bases := []string{base}
+	if base == "https://auth.terrascale.tech" && !c.cfg.TSAuthUseReverseProxy {
+		var err error
+		bases, err = c.authDiscovery.resolve(requestCtx, c.http, c.cfg.DiscoveryBaseURL)
+		if err != nil {
+			return fmt.Errorf("sdk: auth endpoint discovery: %w", err)
+		}
+	}
+	regionIndex := 0
 	attempt := 0
 	for {
-		status, headers, respBody, err := c.tsAuthRoundTrip(requestCtx, base, method, path, query, payload, contentType, bearer, route)
+		status, headers, respBody, err := c.tsAuthRoundTrip(requestCtx, bases[regionIndex], method, path, query, payload, contentType, bearer, route)
 		var oversized *APIError
 		if errors.As(err, &oversized) {
 			// A capped response is the server's answer, not a transport
@@ -284,6 +293,10 @@ func (c *Client) tsAuthSend(ctx context.Context, base, method, path string, quer
 			return oversized
 		}
 		if err != nil {
+			if tsAuthRetryable(method) && regionIndex < len(bases)-1 && requestCtx.Err() == nil {
+				regionIndex++
+				continue
+			}
 			if tsAuthRetryable(method) && attempt < c.cfg.MaxRetryAttempts && requestCtx.Err() == nil {
 				if sleepErr := sleepContext(requestCtx, c.retryDelayFor(nil, attempt)); sleepErr != nil {
 					return sleepErr
@@ -314,6 +327,11 @@ func (c *Client) tsAuthSend(ctx context.Context, base, method, path string, quer
 			return nil
 		}
 		apiErr := tsAuthErrorFromResponse(route, method, path, status, headers, respBody)
+		if tsAuthRetryable(method) && regionIndex < len(bases)-1 &&
+			(status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) {
+			regionIndex++
+			continue
+		}
 		if tsAuthRetryable(method) && attempt < c.cfg.MaxRetryAttempts && retryableStatuses[status] {
 			if sleepErr := sleepContext(requestCtx, c.retryDelayFor(headers, attempt)); sleepErr != nil {
 				return sleepErr
@@ -363,7 +381,7 @@ func (c *Client) tsAuthRoundTrip(ctx context.Context, base, method, path string,
 			return 0, nil, nil, err
 		}
 	}
-	resp, err := c.http.Do(req)
+	resp, err := tsAuthNoRedirectClient(c.http).Do(req)
 	if err != nil {
 		return 0, nil, nil, err
 	}

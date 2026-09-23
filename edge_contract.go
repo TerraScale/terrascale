@@ -11,9 +11,12 @@ type EdgeContractRoute struct {
 
 const (
 	EdgeContractVersion       = "v1"
-	EdgeContractOpenAPISHA256 = "44705aeb48706308014712a3c04fa365fbc48bceef5ad7565cc3b2a03ec038d4"
+	EdgeContractOpenAPISHA256 = "99c204f52c53945cf43a9e0984b10656c48e8065ceb1d02ae1881503732f6c10"
 )
 
 var EdgeContractRoutes = []EdgeContractRoute{
+	{OperationID: "discovery.get", Method: "GET", Path: "/api/v1/discovery", ResponseModel: "DiscoveryResponse"},
+	{OperationID: "ingest.publish", Method: "POST", Path: "/api/v1/ingest", ResponseModel: "IngestResponse"},
 	{OperationID: "regions.list", Method: "GET", Path: "/api/v1/regions", ResponseModel: "RegionCatalogResponse"},
+	{OperationID: "auth.discovery", Method: "GET", Path: "/api/v1/auth/discovery", ResponseModel: "AuthDiscoveryResponse"},
 }

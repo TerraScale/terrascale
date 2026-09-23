@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -39,6 +40,83 @@ func tsAuthFullUser() map[string]any {
 		"created_at":       1700000000,
 		"public_metadata":  map[string]any{},
 		"private_metadata": map[string]any{"risk": "low"},
+	}
+}
+
+func TestTSAuthPublicOriginDiscoversRegionsAndProxyOptIn(t *testing.T) {
+	var hosts []string
+	transport := tsAuthEdgeTransport(func(r *http.Request) (*http.Response, error) {
+		hosts = append(hosts, r.URL.Hostname())
+		body := `{"data":[]}`
+		status := http.StatusOK
+		switch r.URL.Hostname() {
+		case "atlas.terrascale.tech":
+			if r.Header.Get("Authorization") != "" || r.URL.Path != "/api/v1/auth/discovery" {
+				t.Errorf("metadata request leaked credentials or used wrong path: %s", r.URL)
+			}
+			body = `{"v":1,"refreshSeconds":60,"endpoints":[{"region":"SFO","url":"https://sfo.auth.terrascale.tech"},{"region":"GRU","url":"https://gru.auth.terrascale.tech"}]}`
+		case "sfo.auth.terrascale.tech":
+			if r.Header.Get("Authorization") != "Bearer sk_test_key" {
+				t.Errorf("regional request authorization = %q", r.Header.Get("Authorization"))
+			}
+			status = http.StatusServiceUnavailable
+		case "gru.auth.terrascale.tech":
+			if r.Header.Get("Authorization") != "Bearer sk_test_key" {
+				t.Errorf("regional request authorization = %q", r.Header.Get("Authorization"))
+			}
+		case "auth.terrascale.tech":
+		default:
+			t.Errorf("unexpected host: %s", r.URL.Hostname())
+		}
+		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})
+	config := Config{TSAuthBaseURL: publicAuthBaseURL, AccessToken: "sk_test_key", HTTPClient: &http.Client{Transport: transport}}
+	instance := newTSAuthTestInstance(t, config)
+	if _, err := instance.Users.List(t.Context(), 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(hosts, []string{"atlas.terrascale.tech", "sfo.auth.terrascale.tech", "gru.auth.terrascale.tech"}) {
+		t.Fatalf("direct hosts = %v", hosts)
+	}
+	hosts = nil
+	if _, err := instance.Users.Create(t.Context(), CreateTSAuthUserRequest{Email: "ada@example.com"}); err == nil {
+		t.Fatal("mutation unexpectedly succeeded")
+	}
+	if !reflect.DeepEqual(hosts, []string{"sfo.auth.terrascale.tech"}) {
+		t.Fatalf("mutation hosts = %v", hosts)
+	}
+	hosts = nil
+	config.TSAuthUseReverseProxy = true
+	proxy := newTSAuthTestInstance(t, config)
+	if _, err := proxy.Users.List(t.Context(), 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(hosts, []string{"auth.terrascale.tech"}) {
+		t.Fatalf("proxy hosts = %v", hosts)
+	}
+}
+
+func TestTSAuthNeverForwardsManagementCredentialsOnRedirect(t *testing.T) {
+	forwarded := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer sk_test_key" {
+			t.Errorf("authorization = %q", got)
+		}
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+
+	instance := newTSAuthTestInstance(t, Config{TSAuthBaseURL: origin.URL, AccessToken: "sk_test_key"})
+	if _, err := instance.Users.List(t.Context(), 0, ""); err == nil {
+		t.Fatal("redirect unexpectedly succeeded")
+	}
+	if forwarded {
+		t.Fatal("auth request followed a redirect")
 	}
 }
 
