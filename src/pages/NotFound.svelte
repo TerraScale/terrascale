@@ -1,9 +1,7 @@
 <script lang="ts">
-  import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { dict } from '@/lib/i18n'
-  import { docsLink } from '@/lib/site'
 </script>
 
 <section class="notfound" aria-labelledby="notfound-title">
@@ -15,14 +13,14 @@
       <h1 id="notfound-title" class="notfound__title">{$dict.notFound.title}</h1>
       <p class="notfound__text">{$dict.notFound.text}</p>
       <div class="notfound__actions">
-        <RouteLink href="/" class="notfound__button notfound__button--primary">
+        <RouteLink href="/" class="ts-btn notfound__button notfound__button--primary">
           <Icon name="home" className="notfound__icon" />
           {$dict.notFound.backHome}
         </RouteLink>
-        <ExternalLink href={docsLink.href} target="_blank" class="notfound__button notfound__button--secondary">
-          <Icon name="bookOpen" className="notfound__icon" />
-          {$dict.chrome.docs}
-        </ExternalLink>
+        <RouteLink href="/contact" class="ts-btn notfound__button notfound__button--secondary">
+          <Icon name="messageSquare" className="notfound__icon" />
+          {$dict.notFound.contactSupport}
+        </RouteLink>
       </div>
     </div>
     <div class="notfound__art" aria-hidden="true">
@@ -36,13 +34,14 @@
     position: relative;
     isolation: isolate;
     overflow: hidden;
+    min-height: max(680px, calc(100vh - 72px));
     min-height: max(680px, calc(100svh - 72px));
     display: flex;
     align-items: center;
     background:
-      radial-gradient(ellipse 55% 55% at 72% 46%, rgba(17, 76, 172, 0.22), transparent 72%),
-      radial-gradient(ellipse 46% 42% at 16% 72%, rgba(20, 63, 137, 0.16), transparent 74%),
-      #0d1729;
+      radial-gradient(ellipse 55% 55% at 72% 46%, rgba(var(--ts-primary-rgb), 0.22), transparent 72%),
+      radial-gradient(ellipse 46% 42% at 16% 72%, rgba(var(--ts-primary-rgb), 0.16), transparent 74%),
+      var(--ts-notfound-bg);
   }
 
   .notfound__floor {
@@ -53,9 +52,10 @@
     transform: perspective(650px) rotateX(64deg);
     transform-origin: top;
     background-image:
-      linear-gradient(rgba(43, 106, 211, 0.22) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(43, 106, 211, 0.22) 1px, transparent 1px);
+      linear-gradient(var(--ts-notfound-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--ts-notfound-grid) 1px, transparent 1px);
     background-size: 64px 64px;
+    -webkit-mask-image: linear-gradient(to bottom, transparent, black 38%, transparent 92%);
     mask-image: linear-gradient(to bottom, transparent, black 38%, transparent 92%);
     pointer-events: none;
   }
@@ -80,7 +80,7 @@
     align-items: center;
     gap: 14px;
     margin: 0 0 12px;
-    color: #69a7ff;
+    color: var(--ts-primary-light);
     font-family: var(--ts-font-mono);
     font-size: 13px;
     font-weight: 700;
@@ -92,25 +92,25 @@
     width: 19px;
     height: 3px;
     border-radius: 2px;
-    background: #1682ff;
-    box-shadow: 0 0 12px #1682ff;
+    background: var(--ts-notfound-blue-bright);
+    box-shadow: 0 0 12px var(--ts-notfound-blue-bright);
   }
 
   .notfound__code {
     margin: 0 0 6px -8px;
-    color: #0861ed;
+    color: var(--ts-notfound-blue);
     font-family: var(--ts-font-body);
     font-size: clamp(7rem, 13vw, 12rem);
     font-weight: 700;
     line-height: 0.94;
     letter-spacing: -0.095em;
-    -webkit-text-stroke: 2px #3794ff;
-    text-shadow: 0 0 12px rgba(17, 112, 255, 0.95), 0 0 46px rgba(13, 89, 240, 0.72);
+    -webkit-text-stroke: 2px var(--ts-notfound-blue-bright);
+    text-shadow: 0 0 12px rgba(var(--ts-primary-rgb), 0.95), 0 0 46px rgba(var(--ts-primary-rgb), 0.72);
   }
 
   .notfound__title {
     margin: 0 0 16px;
-    color: #fff;
+    color: var(--ts-text);
     font-size: clamp(2.3rem, 3.6vw, 3.7rem);
     font-weight: 700;
     letter-spacing: -0.045em;
@@ -120,7 +120,7 @@
   .notfound__text {
     max-width: 470px;
     margin: 0;
-    color: #aebfdf;
+    color: var(--ts-text-muted);
     font-family: var(--ts-font-accent);
     font-size: clamp(1rem, 1.35vw, 1.2rem);
     line-height: 1.6;
@@ -140,30 +140,32 @@
     gap: 12px;
     min-height: 58px;
     padding: 0 25px;
-    border: 1px solid #2a8fff;
+    border: 1px solid var(--ts-notfound-blue-bright);
     border-radius: 12px;
-    color: #f6f9ff;
+    color: var(--ts-text);
     font-family: var(--ts-font-accent);
     font-size: 16px;
     font-weight: 600;
+    letter-spacing: normal;
+    text-transform: none;
     text-decoration: none;
     transition: background 180ms ease, box-shadow 180ms ease, transform 180ms ease;
   }
 
   :global(.notfound__button:hover) { transform: translateY(-2px); }
   :global(.notfound__button--primary) {
-    background: #075cef;
-    box-shadow: 0 0 22px rgba(10, 101, 255, 0.58), inset 0 1px rgba(255, 255, 255, 0.22);
+    background: var(--ts-notfound-blue);
+    box-shadow: 0 0 22px rgba(var(--ts-primary-rgb), 0.58), inset 0 1px rgba(255, 255, 255, 0.22);
   }
   :global(.notfound__button--primary:hover) {
-    background: #1675ff;
-    box-shadow: 0 0 30px rgba(10, 101, 255, 0.75);
+    background: var(--ts-notfound-blue-bright);
+    box-shadow: 0 0 30px rgba(var(--ts-primary-rgb), 0.75);
   }
   :global(.notfound__button--secondary) {
-    color: #80bbff;
+    color: var(--ts-primary-light);
     background: rgba(8, 20, 39, 0.58);
   }
-  :global(.notfound__button--secondary:hover) { background: rgba(24, 82, 158, 0.25); }
+  :global(.notfound__button--secondary:hover) { background: rgba(var(--ts-primary-rgb), 0.25); }
   :global(.notfound__icon) { width: 21px; height: 21px; }
 
   .notfound__art {
@@ -178,6 +180,7 @@
   .notfound__art img {
     width: 100%;
     height: auto;
+    -webkit-mask-image: radial-gradient(ellipse 73% 72% at 48% 48%, black 61%, transparent 100%);
     mask-image: radial-gradient(ellipse 73% 72% at 48% 48%, black 61%, transparent 100%);
   }
 

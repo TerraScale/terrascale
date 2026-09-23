@@ -331,11 +331,5 @@ export const ptBr: Messages = {
     text: 'A página que você procura foi movida ou nunca existiu. Vamos colocá-lo de volta no caminho.',
     backHome: 'Voltar ao início',
     contactSupport: 'Contatar suporte',
-    linksLabel: 'Páginas populares:',
-    links: {
-      home: 'Início',
-      pricing: 'Preços',
-      contact: 'Contato',
-    },
   },
 }

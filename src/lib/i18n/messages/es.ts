@@ -331,11 +331,5 @@ export const es: Messages = {
     text: 'La página que buscas se ha movido o nunca existió. Vamos a ponerte de vuelta en camino.',
     backHome: 'Volver al inicio',
     contactSupport: 'Contactar con soporte',
-    linksLabel: 'Páginas populares:',
-    links: {
-      home: 'Inicio',
-      pricing: 'Precios',
-      contact: 'Contacto',
-    },
   },
 }
