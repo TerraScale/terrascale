@@ -6,6 +6,8 @@ FOR NOW WE MUST USE:
 TS_DASHBOARD_PRODUCTION_DEMO=1
 Everything must work in memory account creation and etc
 
+- Never add "Generated", "Co-Author" and similar to the PR or descript or commits
+
 ## Stack
 - We need to use C#, RazorSlice and datastar
 - The Dashboard must not depend on terrabase(project) it should depend on ts-dotnet instead
