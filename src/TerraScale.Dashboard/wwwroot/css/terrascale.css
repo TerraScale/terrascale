@@ -192,12 +192,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 @layer features {
   /* ts-auth control plane ------------------------------------------------ */
   .ts-auth-console { gap: var(--ts-xl); }
-  .ts-auth-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ts-xl); padding: var(--ts-xl); background: radial-gradient(600px 220px at 0 0, rgba(var(--ts-accent-rgb), .16), transparent 70%), var(--ts-glass-bg); }
-  .ts-auth-header > div:first-child { min-width: 0; }
-  .ts-auth-header-actions { display: flex; flex-wrap: wrap; gap: var(--ts-sm); justify-content: flex-end; }
-  .ts-auth-hero-title { margin: 8px 0 4px; font-size: clamp(1.6rem, 3vw, 2.35rem); letter-spacing: -.025em; }
-  .ts-auth-instance-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: var(--ts-md); }
-  .ts-auth-instance-line code { padding: 4px 8px; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-control); color: var(--ts-ink); background: var(--ts-input-fill); font-family: var(--ts-font-mono); font-size: var(--ts-fs-meta); }
   .ts-auth-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--ts-lg); }
   .ts-auth-stat-card { display: grid; gap: 4px; min-width: 0; padding: var(--ts-lg); border: 1px solid var(--ts-line); border-radius: var(--ts-radius-panel); color: var(--ts-ink); background: var(--ts-glass-bg); text-decoration: none; transition: transform var(--ts-t-control) var(--ts-ease), border-color var(--ts-t-control) var(--ts-ease), background-color var(--ts-t-control) var(--ts-ease); }
   .ts-auth-stat-card:hover { border-color: color-mix(in oklab, var(--ts-info) 55%, var(--ts-line)); background: var(--ts-fill-hover); transform: translateY(-2px); }
@@ -254,9 +248,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-auth-console .ts-table th:last-child, .ts-auth-console .ts-table td:last-child { width: 1%; white-space: nowrap; }
   @media (max-width: 64rem) { .ts-auth-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 48rem) {
-    .ts-auth-header { flex-direction: column; }
-    .ts-auth-header-actions { width: 100%; justify-content: flex-start; }
-    .ts-auth-header-actions .ts-btn { flex: 1 1 auto; }
     .ts-auth-stat-grid { grid-template-columns: 1fr 1fr; gap: var(--ts-sm); }
     .ts-auth-stat-card { padding: var(--ts-md); }
     .ts-auth-stat-card strong { font-size: 1.6rem; }
@@ -2673,21 +2664,168 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     mask-image: radial-gradient(ellipse 98% 94% at 50% 50%, #000 0%, #000 76%, rgba(0, 0, 0, 0.5) 92%, transparent 100%);
   }
 
-  .ts-region-map {
+  /* Shared region map component (Shared/Components/RegionMap.cs): one frame,
+     one dotted surface, and one pin family for every region map in the
+     dashboard — the onboarding project step, the organization project forms,
+     the database create dialog, and the decorative auth backdrop. */
+  .ts-region-surface {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
     opacity: 0.78;
     filter: saturate(0.9);
+    pointer-events: none;
   }
 
-  .ts-region-pins {
+  .ts-region-frame {
+    position: relative;
+    width: 100%;
+    max-width: 504px;
+    aspect-ratio: 136 / 80;
+    margin-inline: auto;
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-panel);
+    background-color: var(--ts-surface-muted);
+    overflow: hidden;
+  }
+
+  .ts-region-marker {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    display: grid;
+    place-items: center;
+    height: 32px;
+    width: 32px;
+    border-radius: var(--ts-radius-pill);
+    cursor: pointer;
+  }
+
+  .ts-region-marker-readonly {
+    cursor: default;
+  }
+
+  .ts-region-marker-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .ts-region-marker-dot {
+    height: 14px;
+    width: 14px;
+    border: 2px solid var(--ts-surface);
+    border-radius: var(--ts-radius-pill);
+    background-color: var(--ts-ink-muted);
+    transition:
+      box-shadow var(--ts-t-fast) var(--ts-ease),
+      height var(--ts-t-fast) var(--ts-ease),
+      width var(--ts-t-fast) var(--ts-ease);
+  }
+
+  /* Hover, selection, and keyboard focus read the same: the marker grows into
+     the accent glow and the name label appears, so pointing at a region
+     identifies it instead of requiring a pixel-perfect hit on the small dot. */
+  .ts-region-marker:not(.ts-region-marker-disabled):hover .ts-region-marker-dot,
+  .ts-region-marker:has(.ts-region-marker-input:checked) .ts-region-marker-dot,
+  .ts-region-marker:has(.ts-region-marker-input:focus-visible) .ts-region-marker-dot,
+  .ts-region-marker-selected .ts-region-marker-dot {
+    height: 17px;
+    width: 17px;
+    background-color: var(--ts-accent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ts-accent) 35%, transparent);
+  }
+
+  .ts-region-marker:has(.ts-region-marker-input:focus-visible) {
+    box-shadow: var(--ts-focus-ring);
+  }
+
+  /* Hover label: country flag, region name, and round-trip latency;
+     pointer-events stay off so it can never shadow a neighbouring pin's hit
+     target. */
+  .ts-region-marker-label {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 2px);
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 7px;
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface);
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-medium);
+    line-height: 1.2;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity var(--ts-t-fast) var(--ts-ease);
+  }
+
+  .ts-region-marker-flag {
+    flex-shrink: 0;
+    height: 11px;
+    width: 16px;
+    border: 1px solid var(--ts-line);
+    border-radius: 2px;
+    object-fit: cover;
+  }
+
+  .ts-region-marker-label-ping {
+    color: var(--ts-ink-muted);
+    font-family: var(--ts-font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ts-region-marker:hover .ts-region-marker-label,
+  .ts-region-marker:has(.ts-region-marker-input:focus-visible) .ts-region-marker-label {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* Northern markers put the label under the dot so the frame's overflow clip
+     never cuts it off at the top edge. */
+  .ts-region-marker-label-below .ts-region-marker-label {
+    top: calc(100% + 2px);
+    bottom: auto;
+  }
+
+  /* Side markers anchor the label to that edge of the dot, so a wide label
+     (flag + name + latency) stays inside the clipped frame instead of being
+     centred past it. */
+  .ts-region-marker-label-start .ts-region-marker-label {
+    left: 0;
+    transform: none;
+  }
+
+  .ts-region-marker-label-end .ts-region-marker-label {
+    left: auto;
+    right: 0;
+    transform: none;
+  }
+
+  .ts-region-marker-disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  /* Decorative auth variant: animated connection arcs between hubs plus
+     fixed-size pulsing nodes (HTML, percent-positioned so they never scale
+     with the map, and never swallow clicks on controls beneath). */
+  .ts-region-overlay {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    /* decorative overlay: never swallow clicks on controls beneath */
     pointer-events: none;
   }
 
@@ -2702,14 +2840,14 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     animation: ts-line-flow 6s linear infinite;
   }
 
-  /* Pins are HTML so they stay 8px regardless of map scale. */
-  .ts-region-pin {
+  /* Nodes are HTML so they stay 8px regardless of map scale. */
+  .ts-region-node {
     position: absolute;
     height: 0;
     width: 0;
   }
 
-  .ts-region-pin-core {
+  .ts-region-node-core {
     position: absolute;
     left: 0;
     top: 0;
@@ -2724,7 +2862,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     0 0 28px rgba(var(--ts-accent-rgb), 0.58);
   }
 
-  .ts-region-pin-ring {
+  .ts-region-node-ring {
     position: absolute;
     left: 0;
     top: 0;
@@ -3395,44 +3533,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     white-space: nowrap;
   }
 
-  /* Create-dialog region map: v1 RegionMap compact readOnly (map over, static
-     dots; selected hubs grow and take the accent glow). The panel keeps the
-     136x80 map aspect so percent-positioned dots stay glued to the map. */
-  .ts-region-map-panel {
-    position: relative;
-    overflow: hidden;
-    aspect-ratio: 136 / 80;
-    min-height: 180px;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-  }
-
-  .ts-region-map-panel .ts-region-map {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0.9;
-  }
-
-  .ts-region-map-dot {
-    position: absolute;
-    transform: translate(-50%, -50%);
-    width: 14px;
-    height: 14px;
-    border-radius: 999px;
-    border: 2px solid var(--ts-surface);
-    background-color: var(--ts-ink-muted);
-  }
-
-  .ts-region-map-dot-selected {
-    width: 17px;
-    height: 17px;
-    background-color: var(--ts-accent);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ts-accent) 35%, transparent);
-  }
-
   /* v1 createDialog gap is 20px (Old gap-5); the delete dialog keeps 16px. */
   .ts-dialog-form-20 { gap: 20px; }
 
@@ -3687,63 +3787,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   @media (min-width: 40rem) {
     .ts-org-switch-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
-  }
-
-  /* Region picker map (v1 RegionMap): checkbox pins over the dotted map. The
-     frame reserves the dotted map's own 136:80 aspect ratio and is centred
-     under a width cap, so the percent-positioned pins stay glued to the map
-     instead of drifting across a letterboxed frame. */
-  .ts-region-picker {
-    position: relative;
-    width: 100%;
-    max-width: 504px;
-    aspect-ratio: 136 / 80;
-    margin-inline: auto;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-    overflow: hidden;
-  }
-
-  .ts-region-picker-compact { max-width: 405px; }
-
-  .ts-region-picker .ts-region-map { pointer-events: none; }
-
-  .ts-region-pin-btn {
-    position: absolute;
-    width: 32px;
-    height: 32px;
-    transform: translate(-50%, -50%);
-    display: grid;
-    place-items: center;
-    padding: 0;
-    border: 0;
-    background-color: transparent;
-    cursor: pointer;
-  }
-
-  .ts-region-pin-btn:has(.ts-sr-only:focus-visible) {
-    outline: 2px solid var(--ts-accent);
-    outline-offset: 2px;
-  }
-
-  .ts-region-pin-dot {
-    width: 14px;
-    height: 14px;
-    border-radius: var(--ts-radius-pill);
-    border: 2px solid var(--ts-surface);
-    background-color: var(--ts-ink-muted);
-    transition:
-    box-shadow 150ms ease-out,
-    width 150ms ease-out,
-    height 150ms ease-out;
-  }
-
-  .ts-region-pin-btn:has(input:checked) .ts-region-pin-dot {
-    width: 17px;
-    height: 17px;
-    background-color: var(--ts-accent);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ts-accent) 35%, transparent);
   }
 
   /* Create-project form (v1 projectForm: bordered, md gap, sm region stack). */
@@ -4088,25 +4131,40 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     text-align: right;
   }
 
-  /* Audit intro: title + metric well on the right. */
   .ts-audit-title {
     font-size: 24px;
     font-weight: var(--ts-fw-semibold);
     line-height: 32px;
   }
 
-  .ts-audit-intro > div {
-    min-width: 0;
+  .ts-audit-kpis {
+    display: grid;
+    gap: var(--ts-sm);
+    margin-top: var(--ts-lg);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .ts-audit-metrics {
+  .ts-audit-kpis > div {
     display: grid;
-    gap: var(--ts-md);
-    padding: var(--ts-lg);
+    gap: var(--ts-xs);
+    padding: var(--ts-md);
     border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-    justify-items: start;
+    border-radius: var(--ts-radius-control);
+    background: var(--ts-surface-muted);
+  }
+
+  .ts-audit-kpis dt { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+  .ts-audit-kpis dd { margin: 0; font-size: 24px; font-weight: var(--ts-fw-semibold); font-variant-numeric: tabular-nums; }
+
+  .ts-notes-page .ts-audit-activity-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 40rem) {
+    .ts-audit-kpis { grid-template-columns: minmax(0, 1fr); }
   }
 
   .ts-audit-form {
@@ -4226,37 +4284,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     max-width: 24rem;
   }
 
-  /* Metric toolbar (page-top stat row, shared-page-styles parity). */
-  .ts-metric-toolbar {
-    gap: var(--ts-md);
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-  }
-
-  .ts-metric-toolbar-actions {
-    gap: var(--ts-sm);
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-    margin-left: auto;
-  }
-
-  .ts-panel20 {
-    padding: 20px;
-  }
-
-  .ts-metric-tile {
-    padding: var(--ts-lg);
-    flex-basis: 12rem;
-    flex-grow: 0;
-    flex-shrink: 1;
-    min-width: 9rem;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-  }
-
   /* ===== Feature: Admin ===== */
 
   /* Shared admin page shell (1:1 with admin-page-styles.ts + admin-styles.ts). */
@@ -4336,14 +4363,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     flex-wrap: wrap;
     border-bottom: 1px solid var(--ts-line);
   }
-  .ts-metric-row {
-    gap: var(--ts-md);
-    align-items: center;
-    display: flex;
-    justify-content: space-between;
-    margin-top: var(--ts-lg);
-  }
-
   .ts-stat-value {
     color: var(--ts-ink);
     font-size: 24px;
@@ -4558,12 +4577,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     display: flex;
   }
 
-  .ts-audit-two-pane { gap: var(--ts-lg); }
-
-  @media (min-width: 80rem) {
-    .ts-audit-two-pane { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  }
-
   .ts-severity-box {
     display: grid;
     gap: var(--ts-sm);
@@ -4709,15 +4722,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-filter-select {
     min-width: 10rem;
-  }
-
-  .ts-apikeys-panel {
-    overflow: visible;
-  }
-
-  .ts-apikeys-panel .ts-filter-field:not(.ts-apikeys-search) {
-    flex: 1 1 11rem;
-    min-width: 11rem;
   }
 
   .ts-filter-menu > .ts-filter-trigger {
@@ -6974,156 +6978,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     .ts-onboarding-provider-notice { padding: var(--ts-sm); }
   }
 
-  /* Project step region picker (v1 compact RegionMap over the dotted map).
-     The frame reserves the dotted map's own 136:80 aspect ratio and is centred
-     under a width cap: a full-width, fixed-height frame letterboxes the world
-     map into a narrow band and leaves the percent-positioned pins floating in
-     empty space beside the landmass. */
-  .ts-onboarding-region-map {
-    position: relative;
-    width: 100%;
-    max-width: 405px;
-    aspect-ratio: 136 / 80;
-    margin-inline: auto;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-    overflow: hidden;
-  }
-
-  .ts-onboarding-region-dots {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0.78;
-    filter: saturate(0.9);
-    pointer-events: none;
-  }
-
-  .ts-onboarding-region-pin {
-    position: absolute;
-    transform: translate(-50%, -50%);
-    display: grid;
-    place-items: center;
-    height: 32px;
-    width: 32px;
-    border-radius: var(--ts-radius-pill);
-    cursor: pointer;
-  }
-
-  .ts-onboarding-region-input {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
-
-  .ts-onboarding-region-dot {
-    height: 14px;
-    width: 14px;
-    border: 2px solid var(--ts-surface);
-    border-radius: var(--ts-radius-pill);
-    background-color: var(--ts-ink-muted);
-    transition:
-      box-shadow var(--ts-t-fast) var(--ts-ease),
-      height var(--ts-t-fast) var(--ts-ease),
-      width var(--ts-t-fast) var(--ts-ease);
-  }
-
-  /* Hover and keyboard focus read the same: the marker grows into the accent
-     glow and the name label appears, so pointing at a region identifies it
-     instead of requiring a pixel-perfect hit on the small dot. */
-  .ts-onboarding-region-pin:not(.ts-onboarding-region-pin-disabled):hover .ts-onboarding-region-dot,
-  .ts-onboarding-region-pin:has(.ts-onboarding-region-input:checked) .ts-onboarding-region-dot,
-  .ts-onboarding-region-pin:has(.ts-onboarding-region-input:focus-visible) .ts-onboarding-region-dot {
-    height: 17px;
-    width: 17px;
-    background-color: var(--ts-accent);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ts-accent) 35%, transparent);
-  }
-
-  .ts-onboarding-region-pin:has(.ts-onboarding-region-input:focus-visible) {
-    box-shadow: var(--ts-focus-ring);
-  }
-
-  /* Hover label: country flag, region name, and round-trip latency;
-     pointer-events stay off so it can never shadow a neighbouring pin's hit
-     target. */
-  .ts-onboarding-region-label {
-    position: absolute;
-    left: 50%;
-    bottom: calc(100% + 2px);
-    transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 7px;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-control);
-    background-color: var(--ts-surface);
-    color: var(--ts-ink);
-    font-size: var(--ts-fs-meta);
-    font-weight: var(--ts-fw-medium);
-    line-height: 1.2;
-    white-space: nowrap;
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    transition: opacity var(--ts-t-fast) var(--ts-ease);
-  }
-
-  .ts-onboarding-region-flag {
-    flex-shrink: 0;
-    height: 11px;
-    width: 16px;
-    border: 1px solid var(--ts-line);
-    border-radius: 2px;
-    object-fit: cover;
-  }
-
-  .ts-onboarding-region-label-ping {
-    color: var(--ts-ink-muted);
-    font-family: var(--ts-font-mono);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .ts-onboarding-region-pin:hover .ts-onboarding-region-label,
-  .ts-onboarding-region-pin:has(.ts-onboarding-region-input:focus-visible) .ts-onboarding-region-label {
-    opacity: 1;
-    visibility: visible;
-  }
-
-  /* Northern pins put the label under the marker so the frame's overflow clip
-     never cuts it off at the top edge. */
-  .ts-onboarding-region-pin-label-below .ts-onboarding-region-label {
-    top: calc(100% + 2px);
-    bottom: auto;
-  }
-
-  /* Side pins anchor the label to that edge of the marker, so a wide label
-     (flag + name + latency) stays inside the clipped frame instead of being
-     centred past it. */
-  .ts-onboarding-region-pin-label-start .ts-onboarding-region-label {
-    left: 0;
-    transform: none;
-  }
-
-  .ts-onboarding-region-pin-label-end .ts-onboarding-region-label {
-    left: auto;
-    right: 0;
-    transform: none;
-  }
-
-  .ts-onboarding-region-pin-disabled {
-    cursor: default;
-    opacity: 0.55;
-  }
-
   /* Agent approval header icon: v1 iconBox (44px, panel radius, accent tint),
      flush left in the flex row (ts-flow-icon-lg is the invitation page icon). */
   .ts-flow-icon-badge {
@@ -7627,52 +7481,11 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     background-color: var(--ts-surface-muted);
   }
 
-  /* Audit intro metrics (v1 Metric: row, space-between, sans 14px value). */
-  .ts-audit-metrics .ts-metric {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--ts-md);
-    font-size: var(--ts-fs-ui);
-  }
-
-  .ts-audit-metric-inline {
-    font-size: var(--ts-fs-ui);
-    font-weight: var(--ts-fw-medium);
-    font-family: var(--ts-font-sans);
-    font-variant-numeric: tabular-nums;
-    color: var(--ts-ink);
-  }
-
-  .ts-audit-export-wrap {
-    margin-top: var(--ts-sm);
-  }
-
-  .ts-audit-export-wrap .ts-btn {
-    width: 100%;
-  }
-
-  .ts-audit-intro .ts-muted {
-    font-size: var(--ts-fs-ui);
-    line-height: 24px;
-    max-width: 48rem;
-  }
-
   /* Audit strips (v1 wrapBetween range row). */
   .ts-audit-range-row {
     padding-block: var(--ts-sm);
     padding-inline: var(--ts-lg);
     border-bottom: 1px solid var(--ts-line);
-  }
-
-  /* Retention metrics well (v1 stack8 + panelSurface). */
-  .ts-audit-retention-well {
-    display: grid;
-    gap: var(--ts-sm);
-    padding: var(--ts-lg);
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
   }
 
   /* Audit table (v1 DataTable: no outer chrome, 16px body, 16/20 cells). */
@@ -8140,6 +7953,16 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     background-color: transparent;
   }
 
+  .ts-notes-page .ts-apikeys-table-wrap .ts-table {
+    min-width: 1440px;
+    table-layout: auto;
+  }
+
+  .ts-notes-page .ts-apikeys-table-wrap .ts-table th,
+  .ts-notes-page .ts-apikeys-table-wrap .ts-table td {
+    padding-inline: var(--ts-md);
+  }
+
   /* v1 searchField: label above, icon inset 12px, text starts at 36px. */
   .ts-apikeys-search {
     flex-basis: 18rem;
@@ -8161,6 +7984,76 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     transform: translateY(-50%);
   }
 
+  .ts-apikeys-section {
+    display: grid;
+    gap: var(--ts-lg);
+    min-width: 0;
+  }
+
+  .ts-apikeys-heading,
+  .ts-apikeys-actions,
+  .ts-apikeys-counts {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--ts-md);
+  }
+
+  .ts-apikeys-heading {
+    justify-content: space-between;
+  }
+
+  .ts-apikeys-counts {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+  }
+
+  .ts-apikeys-counts strong {
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-apikeys-counts span + span::before {
+    content: "·";
+    margin-right: var(--ts-md);
+  }
+
+  .ts-apikeys-filters {
+    padding: 0 0 var(--ts-lg);
+    gap: var(--ts-sm);
+  }
+
+  .ts-apikeys-filters .ts-filter-field {
+    flex: 1 1 10rem;
+    min-width: 10rem;
+  }
+
+  .ts-apikeys-filters .ts-apikeys-search {
+    flex: 2 1 16rem;
+    max-width: none;
+  }
+
+  .ts-apikeys-filters .ts-select,
+  .ts-apikeys-filters .ts-input {
+    width: 100%;
+  }
+
+  .ts-apikeys-filters > .ts-btn {
+    align-self: end;
+  }
+
+  .ts-apikeys-section .ts-credential-empty {
+    padding: 0;
+  }
+
+  @media (max-width: 40rem) {
+    .ts-apikeys-actions,
+    .ts-apikeys-actions .ts-btn,
+    .ts-apikeys-filters .ts-filter-field {
+      width: 100%;
+    }
+  }
+
   /* v1 auditLink (Reset filters): muted ghost with 12px inline padding. */
   .ts-audit-reset {
     padding-inline: var(--ts-md);
@@ -8169,25 +8062,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-audit-reset:hover {
     color: var(--ts-ink);
-  }
-
-  /* v1 rowHeader: column below lg, 20px gap, flex-start alignment. */
-  .ts-audit-intro {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 20px;
-  }
-
-  @media (min-width: 64rem) {
-    .ts-audit-intro {
-      flex-direction: row;
-      justify-content: space-between;
-    }
-  }
-
-  /* v1 gridMin: the metrics well keeps a 16rem floor. */
-  .ts-audit-metrics {
-    min-width: 16rem;
   }
 
   /* v1 wrapCenter rows carry no gap (icons hug their text). */
@@ -8272,7 +8146,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-auth-console { gap: var(--ts-xl); }
   .ts-auth-hero { display: flex; justify-content: space-between; gap: var(--ts-xxl); padding: 28px 32px; overflow: hidden; position: relative; background: radial-gradient(600px 220px at 10% 0%, rgba(var(--ts-accent-rgb), .16), transparent 65%), var(--ts-glass-bg); }
   .ts-auth-hero-copy { min-width: 0; max-width: 56rem; }
-  .ts-auth-hero-title { margin: 8px 0 6px; font-size: clamp(28px, 3vw, 40px); line-height: 1.08; letter-spacing: -.025em; }
   .ts-auth-hero-copy .ts-page-desc { max-width: 52rem; margin: 0; }
   .ts-eyebrow { display: flex; align-items: center; gap: 8px; color: var(--ts-info); font-size: var(--ts-fs-meta); font-weight: var(--ts-fw-semibold); letter-spacing: .08em; text-transform: uppercase; }
   .ts-auth-issuer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }

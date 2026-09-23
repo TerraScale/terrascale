@@ -10,6 +10,33 @@ public sealed class MutationsTests
 {
     private const string CoreSessionsId = "db_01JC9R3Z6P8T0V4X6Z8B2D4GE";
 
+    [Test]
+    public async Task AuditRetentionSettingLimitsPageAndExport()
+    {
+        using var app = new DashboardTestApp();
+        using var client = app.CreateDemoClient();
+
+        using var saved = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/settings/audit-retention",
+            new Dictionary<string, string> { ["retentionDays"] = "1" });
+        await Assert.That(saved.Headers.Location!.ToString()).IsEqualTo("/settings?tab=audit");
+
+        var settings = await app.GetPageAsync(client, "/settings?tab=audit");
+        await Assert.That(settings.Contains("value=\"1\"")).IsTrue();
+
+        var audit = await app.GetPageAsync(client, "/audit?range=90d");
+        await Assert.That(audit.Contains("No audit events")).IsTrue();
+        await Assert.That(audit.Contains("Showing 0 of 0 events")).IsTrue();
+
+        using var export = await client.GetAsync("/audit/export?range=90d&format=json");
+        var json = await export.Content.ReadAsStringAsync();
+        await Assert.That(json.Contains("\"count\": 0")).IsTrue();
+
+        using var invalid = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/settings/audit-retention",
+            new Dictionary<string, string> { ["retentionDays"] = "91" });
+        var unchanged = await app.GetPageAsync(client, "/settings?tab=audit");
+        await Assert.That(unchanged.Contains("value=\"1\"")).IsTrue();
+    }
+
     // --- Databases ----------------------------------------------------------
 
     [Test]

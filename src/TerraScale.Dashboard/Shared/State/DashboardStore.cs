@@ -184,6 +184,8 @@ public sealed partial class DashboardStore
 
     public ImmutableArray<AuditEvent> AuditEvents { get => World.AuditEvents; private set => World.AuditEvents = value; }
 
+    public int AuditRetentionDays { get => World.ActiveOrganization.AuditRetentionDays; set => World.ActiveOrganization.AuditRetentionDays = value; }
+
     public UsageCycle Usage => World.Usage;
 
     public ImmutableArray<(string Range, ImmutableArray<WorkloadPoint> Points)> Workloads => World.Workloads;
