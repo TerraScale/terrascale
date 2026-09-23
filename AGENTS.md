@@ -9,6 +9,8 @@ Everything must work in memory account creation and etc
 ## Stack
 - We need to use C#, RazorSlice and datastar
 - The Dashboard must not depend on terrabase(project) it should depend on ts-dotnet instead
+- We deploy to fly.io
+- We use Stripe and its nuget package for payment
 
 
 ## Preview
@@ -16,10 +18,6 @@ Everything must work in memory account creation and etc
 - If the user requests a preview url to check the work that is current made you need to start the dev env and send the user a tailscale dns to access it and test if it works before sending to the user if it doesnt work fix it
 - When running a dev server it must always be accesible via the tailscale net and it must have hmr turned for really fast development
 - Make sure that the urls are different as we are using worktrees so the ports needs to be diff
-
-# Deploy
-
-- Fly.io
 
 # Ownership
 
@@ -83,5 +81,6 @@ Everything must work in memory account creation and etc
 - When the work is done create a PR into main when the work is ready to be merged.
 - When pushing and creating the pull request make sure that the linter has no errors and that the `slow` and `fast` tests passes and run green.
 - When creating PR send the link of that PR to the user.
-- When creating a PR and the change has visual changes add multiple screenshots (the screenshots must not be commited into the repo) showing the changes that you made.
+- When creating a PR and the change has visual changes add multiple screenshots showing the changes that you made.
+  - the screenshots must not be commited into the commit check
 - When creating the PR make it auto merge when all checks passes automatically
