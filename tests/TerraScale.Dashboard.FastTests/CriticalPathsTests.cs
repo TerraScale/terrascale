@@ -115,6 +115,36 @@ public sealed class CriticalPathsTests
         }
     }
 
+    [Test]
+    public async Task ProductionDemoSeedsTestAccountWithoutActionSecret()
+    {
+        var settings = new Dictionary<string, string>
+        {
+            ["TS_DASHBOARD_PRODUCTION_DEMO"] = "1",
+            ["TS_DASHBOARD_SEED_TEST_PASSWORD"] = "other-password-123",
+        };
+        for (var restart = 0; restart < 2; restart++)
+        {
+            using var app = new DashboardTestApp(settings);
+            using var client = app.CreateClient();
+            using var denied = await DashboardTestApp.PostFormAsync(client, "/api/v1/auth/password/login", new Dictionary<string, string>
+            {
+                ["email"] = "filippo@teste.com",
+                ["password"] = "wrong-password",
+            });
+            await Assert.That(denied.Headers.Location?.ToString()).StartsWith("/login?error=");
+            using var login = await DashboardTestApp.PostFormAsync(client, "/api/v1/auth/password/login", new Dictionary<string, string>
+            {
+                ["email"] = "filippo@teste.com",
+                ["password"] = new string('a', 12),
+            });
+            await Assert.That(login.Headers.Location?.ToString()).IsEqualTo("/");
+            var page = await app.GetPageAsync(client, "/usage");
+            await Assert.That(page.StatusCode).IsEqualTo(200);
+            await Assert.That(page.Html).Contains("Starter");
+        }
+    }
+
     private static async Task AssertPage(HttpClient client, DashboardTestApp app, string path, string heading)
     {
         var page = await app.GetPageAsync(client, path);
