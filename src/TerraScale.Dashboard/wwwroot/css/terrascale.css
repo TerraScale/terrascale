@@ -46,10 +46,9 @@ single-selector rules may stay on one line.
 (the tokens below) always beat layered ones. */
 @layer reset, base, layout, components, features, utilities;
 
-/* Same-origin MPA transitions are progressive enhancement. */
-@view-transition {
-  navigation: auto;
-}
+/* Navigation keeps its in-flight progress indicator (html[data-nav-pending])
+but deliberately does not opt into cross-document view transitions: the 160 ms
+cross-fade replayed on every page change and made the dashboard flicker. */
 
 /* 1. Tokens =============================================================== */
 
@@ -307,6 +306,9 @@ single-selector rules may stay on one line.
     scrollbar-gutter: stable;
   }
 
+  /* In-flight loading indicator: a thin accent bar shown while the next
+     document is on the wire. This is the only navigation feedback; it is not a
+     transition, so it does not cross-fade the page. */
   html[data-nav-pending]::before {
     background: var(--ts-accent);
     content: "";
@@ -317,19 +319,6 @@ single-selector rules may stay on one line.
     width: 35%;
     z-index: var(--ts-z-toast);
     animation: ts-route-progress 1.2s var(--ts-ease) infinite;
-  }
-
-  @supports (view-transition-name: none) {
-    .ts-sidebar {
-      view-transition-name: ts-sidebar;
-    }
-
-    ::view-transition-old(root),
-    ::view-transition-new(root),
-    ::view-transition-group(ts-sidebar) {
-      animation-duration: 160ms;
-      animation-timing-function: ease-out;
-    }
   }
 
   body {
@@ -1785,6 +1774,7 @@ single-selector rules may stay on one line.
   .ts-sidebar-brand {
     display: flex;
     align-items: center;
+    justify-content: center;
     padding: var(--ts-xs);
     flex-shrink: 0;
   }
@@ -2060,12 +2050,6 @@ single-selector rules may stay on one line.
     min-width: 0;
   }
 
-  .ts-project-panel-header {
-    padding: var(--ts-sm) var(--ts-md);
-    border-bottom: 1px solid var(--ts-line);
-    font-weight: var(--ts-fw-semibold);
-  }
-
   .ts-project-panel-scroll {
     display: flex;
     flex-direction: column;
@@ -2118,19 +2102,23 @@ single-selector rules may stay on one line.
   }
 
   .ts-project-search {
-    display: flex;
-    align-items: center;
-    gap: var(--ts-xs);
+    position: relative;
+    width: 100%;
   }
 
   .ts-project-search .ts-input {
     height: 32px;
     min-height: 32px;
+    padding-right: 36px;
   }
 
   .ts-project-search svg {
+    position: absolute;
+    right: var(--ts-sm);
+    top: 50%;
+    transform: translateY(-50%);
     color: var(--ts-ink-muted);
-    flex-shrink: 0;
+    pointer-events: none;
   }
 
   .ts-project-list {
@@ -2576,6 +2564,7 @@ single-selector rules may stay on one line.
     to { background-position: -200% 0; }
   }
 
+  /* Bounded sweep for the in-flight loading bar (never a full-width crawl). */
   @keyframes ts-route-progress {
     0% { transform: scaleX(0.25); }
     70% { transform: scaleX(1); }
@@ -2583,16 +2572,6 @@ single-selector rules may stay on one line.
   }
 
   @media (prefers-reduced-motion: reduce) {
-    @view-transition {
-      navigation: none;
-    }
-
-    ::view-transition-group(*),
-    ::view-transition-old(*),
-    ::view-transition-new(*) {
-      animation: none !important;
-    }
-
     *,
     *::before,
     *::after {
@@ -3494,7 +3473,6 @@ single-selector rules may stay on one line.
 
   .ts-panel-pad { padding: var(--ts-lg); }
 
-  .ts-data-intro { max-width: 64rem; }
 
   .ts-title-24 {
     color: var(--ts-ink);
@@ -3557,20 +3535,6 @@ single-selector rules may stay on one line.
     max-width: 48rem;
   }
 
-  .ts-data-stats {
-    display: grid;
-    gap: var(--ts-md);
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  @media (min-width: 40rem) {
-    .ts-data-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  }
-
-  @media (min-width: 64rem) {
-    .ts-data-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  }
-
   .ts-stat-card {
     display: grid;
     gap: var(--ts-sm);
@@ -3585,8 +3549,6 @@ single-selector rules may stay on one line.
     font-size: 24px;
     font-weight: var(--ts-fw-semibold);
   }
-
-  .ts-stat-project { margin-top: var(--ts-sm); }
 
   .ts-text-upper {
     color: var(--ts-ink-muted);
@@ -7914,11 +7876,6 @@ single-selector rules may stay on one line.
 
   .ts-data .ts-explorer-pad {
     gap: var(--ts-sm);
-  }
-
-  /* v1 dataStats sit 24px under the intro (dataStats marginTop xl). */
-  .ts-data-stats {
-    margin-top: var(--ts-xl);
   }
 
   /* v1 inputs/selects read 16px body text (Input / NativeSelect). */

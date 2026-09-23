@@ -5,6 +5,7 @@ namespace TerraScale.Dashboard.Features.Home.Pages.Home;
 
 public sealed record HomePageModel(
     int Databases,
+    int ProjectUsers,
     int UnreadNotifications,
     int TotalNotifications,
     int ActiveCredentials,
@@ -37,6 +38,7 @@ public sealed record HomePageModel(
         }
         return new(
             Databases: store.ProjectDatabases(store.ActiveProjectId).Length,
+            ProjectUsers: store.TeamMembers.Length,
             UnreadNotifications: store.UnreadNotifications,
             TotalNotifications: store.Notifications.Length,
             ActiveCredentials: store.ApiKeys.Count(k => k.IsActive),

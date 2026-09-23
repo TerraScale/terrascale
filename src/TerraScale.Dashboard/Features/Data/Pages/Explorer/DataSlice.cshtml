@@ -9,19 +9,7 @@
 @ShellHtml.Top(shell)
 <div class="ts-page ts-data">
     <section class="ts-panel ts-panel-pad20">
-        <div class="ts-data-intro">
-            <h2 class="ts-title-24">Data</h2>
-        </div>
-        <div class="ts-data-stats">
-            <div class="ts-stat-card">
-                <span class="ts-text-upper">PROJECT</span>
-                <div class="ts-stat-project"><span class="ts-badge ts-badge-neutral">@Model.ShortProject</span></div>
-            </div>
-            <div class="ts-stat-card">
-                <span class="ts-text-upper">SAVED QUERIES</span>
-                <strong class="ts-stat-value">@Model.SavedQueryCount</strong>
-            </div>
-        </div>
+        <h2 class="ts-title-24">Data</h2>
     </section>
 
     @if (Model.Error is { } pageError)
