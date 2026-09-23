@@ -81,8 +81,9 @@ and state settings selects the live backend:
   `TS_DASHBOARD_PUBLIC_ORIGIN`, and `TS_DASHBOARD_STATE_URL/API_KEY/DATABASE`.
   Loopback HTTP origins are accepted outside production for local stacks.
 
-For the dedicated test fixture, set `TS_DASHBOARD_SEED_TEST_PASSWORD` to a
-password of at least 12 characters in the deployment's secret settings. In
+For the dedicated test fixture, set the Forgejo Actions secret
+`TS_DASHBOARD_SEED_TEST_PASSWORD` to a password of at least 12 characters. The
+deploy workflow stages it as a Fly secret before deploying. In
 demo mode, startup recreates `filippo@teste.com` with a simulated Starter plan
 and a local test payment method ending in 4242. The card is not submitted to
 Stripe. Other accounts created in demo mode remain in memory and disappear on
