@@ -56,6 +56,61 @@ function tsAuthClient(respond: (request: Request, index: number) => Response, re
 }
 
 describe("ts-auth client", () => {
+  test("public auth origin selects a regional endpoint and fails over safe reads", async () => {
+    const requests: Request[] = [];
+    const tsAuth = tsAuthClient((request) => {
+      const host = new URL(request.url).hostname;
+      if (host === "atlas.terrascale.tech") return json({
+        v: 1, refreshSeconds: 60, endpoints: [
+          { region: "SFO", url: "https://sfo.auth.terrascale.tech" },
+          { region: "GRU", url: "https://gru.auth.terrascale.tech" },
+        ],
+      });
+      return host === "sfo.auth.terrascale.tech" ? json({ error: { code: "unavailable" } }, 503) : json({ data: [user] });
+    }, requests, { apiBaseUrl: "https://auth.terrascale.tech" });
+
+    const result = await tsAuth.users.list();
+    assert.equal(result.ok, true);
+    assert.deepEqual(requests.map(request => new URL(request.url).hostname), [
+      "atlas.terrascale.tech", "sfo.auth.terrascale.tech", "gru.auth.terrascale.tech",
+    ]);
+    assert.equal(requests[0]!.headers.get("authorization"), null);
+    assert.equal(requests[1]!.headers.get("authorization"), "Bearer sk_test_management_key");
+    await tsAuth.users.list();
+    assert.equal(requests.filter(request => new URL(request.url).hostname === "atlas.terrascale.tech").length, 1);
+  });
+
+  test("public auth mutations are sent once and proxy mode skips discovery", async () => {
+    const directRequests: Request[] = [];
+    const direct = tsAuthClient((request) => new URL(request.url).hostname === "atlas.terrascale.tech"
+      ? json({ v: 1, refreshSeconds: 60, endpoints: [
+        { region: "SFO", url: "https://sfo.auth.terrascale.tech" },
+        { region: "GRU", url: "https://gru.auth.terrascale.tech" },
+      ] })
+      : json({ error: { code: "unavailable" } }, 503), directRequests, { apiBaseUrl: "https://auth.terrascale.tech" });
+    const result = await direct.users.create({ email: "a@b.test" });
+    assert.equal(result.ok, false);
+    assert.deepEqual(directRequests.map(request => new URL(request.url).hostname), ["atlas.terrascale.tech", "sfo.auth.terrascale.tech"]);
+
+    const proxyRequests: Request[] = [];
+    const proxy = tsAuthClient(() => json({ data: [user] }), proxyRequests, {
+      apiBaseUrl: "https://auth.terrascale.tech", useReverseProxy: true,
+    });
+    await proxy.users.list();
+    assert.deepEqual(proxyRequests.map(request => new URL(request.url).hostname), ["auth.terrascale.tech"]);
+  });
+
+  test("auth discovery rejects a mismatched regional host before sending credentials", async () => {
+    const requests: Request[] = [];
+    const tsAuth = tsAuthClient(() => json({ v: 1, refreshSeconds: 60, endpoints: [
+      { region: "SFO", url: "https://gru.auth.terrascale.tech" },
+    ] }), requests, { apiBaseUrl: "https://auth.terrascale.tech" });
+    const result = await tsAuth.users.list();
+    assert.equal(result.ok, false);
+    assert.deepEqual(requests.map(request => new URL(request.url).hostname), ["atlas.terrascale.tech"]);
+    assert.equal(requests[0]!.headers.get("authorization"), null);
+  });
+
   test("sends exact management routes, bearer, and JSON bodies", async () => {
     const requests: Request[] = [];
     const tsAuth = tsAuthClient(() => json({ data: [user] }), requests);

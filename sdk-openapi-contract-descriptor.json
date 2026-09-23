@@ -10631,9 +10631,9 @@
                       "properties": {
                         "hosts": {
                           "additionalProperties": {
-                            "format": "uri",
                             "type": "string"
                           },
+                          "description": "Production entries are regional hostnames; dev entries can be full origins.",
                           "type": "object"
                         },
                         "regions": {
@@ -10738,9 +10738,9 @@
                     "properties": {
                       "hosts": {
                         "additionalProperties": {
-                          "format": "uri",
                           "type": "string"
                         },
+                        "description": "Production entries are regional hostnames; dev entries can be full origins.",
                         "type": "object"
                       },
                       "regions": {
@@ -34734,7 +34734,7 @@
   ],
   "sources": {
     "openApiSha256": "a0577d2d9575d3205e53f9d8c7c844debcc2c36dfa1d9a9ccf0b4c564d137c07",
-    "edgeOpenApiSha256": "44705aeb48706308014712a3c04fa365fbc48bceef5ad7565cc3b2a03ec038d4",
+    "edgeOpenApiSha256": "99c204f52c53945cf43a9e0984b10656c48e8065ceb1d02ae1881503732f6c10",
     "routeManifestSha256": "d0cce665a000f81439fbda8792bdd97b07823cec83eaa680d25f72f4cbb7e2d0"
   }
 }

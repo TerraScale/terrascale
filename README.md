@@ -60,13 +60,16 @@ clients, and the public OIDC endpoints. These routes mirror the ts-auth
 service contract on its own origin, not the TerraScale product /api/v1
 producer contract: the deployment origin is `apiBaseUrl`, the instance `sk_`
 management key is `accessToken`, and every route is scoped to the configured
-instance slug.
+instance slug. With `https://auth.terrascale.tech`, this client discovers
+ranked healthy regional auth endpoints from Atlas and calls them directly.
+Safe reads fail over across those endpoints. Set `useReverseProxy: true` to
+send calls through the public auth proxy instead. Custom origins stay fixed.
 
 ~~~ts
 import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
 
 const tsAuth = createTsAuthClient({
-  apiBaseUrl: "https://idp.example.com",
+  apiBaseUrl: "https://auth.terrascale.tech",
   accessToken: process.env.TS_AUTH_MANAGEMENT_KEY,
   instanceSlug: "acme",
 });
