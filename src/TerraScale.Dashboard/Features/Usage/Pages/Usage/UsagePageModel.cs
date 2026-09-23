@@ -4,22 +4,12 @@ namespace TerraScale.Dashboard.Features.Usage.Pages.Usage;
 
 public sealed record UsagePageModel(
     IReadOnlyList<UsageStatCard> Stats,
-    string OrganizationStorage,
-    string OrganizationWrites,
     IReadOnlyList<DashboardStore.PlanResourceRow> PlanResources,
     IReadOnlyList<DashboardStore.ProjectContributionRow> ProjectContributions,
-    long StorageUsedBytes,
-    long StorageLimitBytes,
-    double StoragePercentUsed,
-    string StorageTone,
-    string StorageRemainingLabel,
-    string StoragePercentLabel,
     IReadOnlyList<UsageHistoryRangeOption> HistoryRanges,
     bool RetentionWarning,
     IReadOnlyList<WorkloadPoint> History,
-    IReadOnlyList<BarSlice> MeasuredUsage,
-    IReadOnlyList<BarSlice> RegionPlacement,
-    IReadOnlyList<BarSlice> DatabaseCoverage,
+    IReadOnlyList<UsageStatCard> HistorySummary,
     IReadOnlyList<DashboardDatabase> Databases,
     IReadOnlyList<(string Id, string Name, string? Cap)> DatabaseCaps,
     IReadOnlyList<DashboardStore.CheckoutPlanRow> CheckoutPlans,
@@ -73,26 +63,9 @@ public sealed record UsagePageModel(
         [
             new("Databases", DashboardStore.FormatNumber(databases.Length), "Saved project databases", "Database"),
             new("Regions", DashboardStore.FormatNumber(regionCount), "Distinct placement regions", "Globe2"),
+            new("Requests", DashboardStore.FormatNumber(store.Usage.Requests), "Current billing period", "Activity"),
+            new("Reads", DashboardStore.FormatNumber(store.Usage.ReadUnits), "Unbilled usage fact", "BookOpen"),
         ];
-
-        List<BarSlice> measured =
-        [
-            new("Writes", store.Usage.WriteUnits, DashboardStore.FormatNumber(store.Usage.WriteUnits)),
-            new("Reads (unbilled)", store.Usage.ReadUnits, DashboardStore.FormatNumber(store.Usage.ReadUnits)),
-            new("Requests", store.Usage.Requests, DashboardStore.FormatNumber(store.Usage.Requests)),
-        ];
-
-        var regionPlacement = databases
-            .SelectMany(d => new[] { d.PrimaryRegion }.Concat(d.BackupRegion is null ? [] : [d.BackupRegion]))
-            .GroupBy(r => r.ToUpperInvariant())
-            .Select(g => new BarSlice(g.Key, g.Count()))
-            .OrderByDescending(s => s.Value).ThenBy(s => s.Label, StringComparer.Ordinal)
-            .ToList();
-
-        var coverage = databases
-            .Select(d => new BarSlice(d.Name, 1 + (d.BackupRegion is null ? 0 : 1)))
-            .OrderByDescending(s => s.Value).ThenBy(s => s.Label, StringComparer.Ordinal)
-            .ToList();
 
         // v1 UsageHistoryPanel: 24h is always offered; longer ranges only within retention.
         var retentionDays = store.UsageRetentionDays;
@@ -110,10 +83,26 @@ public sealed record UsagePageModel(
             .Where(r => r is "24h" || RangeDays(r) <= retentionDays)
             .ToList();
         var selectedRange = range is not null && offeredRanges.Contains(range) ? range : "7d";
-        var history = store.Workloads
+        var rawHistory = store.Workloads
             .Where(w => w.Range == selectedRange)
             .SelectMany(w => w.Points)
             .ToList();
+
+        // Seeded points are ordinal; spread them evenly over the window ending now.
+        var now = DateTime.UtcNow;
+        var window = TimeSpan.FromDays(RangeDays(selectedRange));
+        var timeFormat = selectedRange is "24h" ? "HH:mm" : "MMM d";
+        List<WorkloadPoint> history = [.. rawHistory.Select((p, i) => p with
+        {
+            Label = (now - window * (rawHistory.Count - 1 - i) / Math.Max(1, rawHistory.Count - 1))
+                .ToString(timeFormat, System.Globalization.CultureInfo.InvariantCulture),
+        })];
+        List<UsageStatCard> historySummary = history.Count is 0 ? [] :
+        [
+            new("Peak", DashboardStore.FormatNumber((long)history.Max(p => p.Value)), "", ""),
+            new("Average", DashboardStore.FormatNumber((long)history.Average(p => p.Value)), "", ""),
+            new("Latest", DashboardStore.FormatNumber((long)history[^1].Value), "", ""),
+        ];
         var retentionLimited = range is not null && allRanges.Contains(range) && RangeDays(range) > retentionDays;
         var historyRanges = offeredRanges
             .Select(r => new UsageHistoryRangeOption(r, RangeLabel(r), r == selectedRange))
@@ -150,29 +139,16 @@ public sealed record UsagePageModel(
                     : "Confirmed by the billing provider");
         })];
 
-        var storageTone = store.StoragePercentUsed >= 100 ? "danger"
-            : store.StoragePercentUsed >= 80 ? "warning" : "success";
-
         return new(
             Stats: stats,
-            OrganizationStorage: DashboardStore.FormatBytes(store.StorageBytesTotal),
-            OrganizationWrites: DashboardStore.FormatNumber(store.Usage.WriteUnits),
             PlanResources: [.. store.OrganizationPlanResources()],
             ProjectContributions: [.. store.ProjectContributionRows()],
-            StorageUsedBytes: store.StorageBytesTotal,
-            StorageLimitBytes: store.StorageLimitBytes,
-            StoragePercentUsed: store.StoragePercentUsed,
-            StorageTone: storageTone,
-            StorageRemainingLabel: DashboardStore.FormatBytes(Math.Max(0, store.StorageLimitBytes - store.StorageBytesTotal)),
-            StoragePercentLabel: $"{DashboardStore.FormatPercent(store.StoragePercentUsed)} used",
             HistoryRanges: historyRanges,
             RetentionWarning: retentionLimited,
             RetentionAlertBody:
                 $"The requested period exceeds the {retentionDays}-day retention window. The accessible range starts {DashboardStore.FormatUtcDateTime(store.UsagePeriodStart)}.",
-            History: [.. history],
-            MeasuredUsage: measured,
-            RegionPlacement: regionPlacement,
-            DatabaseCoverage: coverage,
+            History: history,
+            HistorySummary: historySummary,
             Databases: databases,
             DatabaseCaps: [.. databases.Select(d => (d.Id, d.Name, Cap: store.DatabaseSpendCap(d.Id)))],
             CheckoutPlans: checkoutPlans,

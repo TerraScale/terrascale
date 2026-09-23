@@ -24,7 +24,8 @@ public sealed partial class DashboardStore
         string Included,
         string Balance,
         string Status,          // Normal | Approaching | Exceeded
-        string Tone);
+        string Tone,
+        double Percent);
 
     public sealed record ProjectContributionRow(
         string ProjectId,
@@ -32,7 +33,9 @@ public sealed partial class DashboardStore
         string Storage,
         string Writes,
         string Reads,
-        string Egress);
+        string Egress,
+        long StorageBytes,
+        long WriteUnits);
 
     /// <summary>A checkout option on the usage page. <paramref name="Href"/> is
     /// the demo local-checkout link; the page swaps it for the Stripe sandbox
@@ -138,7 +141,8 @@ public sealed partial class DashboardStore
                     ? $"{FormatBytes(storageRemaining)} remaining"
                     : $"{FormatBytes(-storageRemaining)} excess",
                 storageStatus,
-                storageTone),
+                storageTone,
+                StoragePercentUsed),
             new("Writes",
                 FormatNumber(Usage.WriteUnits),
                 FormatNumber(writeLimit),
@@ -146,7 +150,8 @@ public sealed partial class DashboardStore
                     ? $"{FormatNumber(writeExcess)} excess"
                     : $"{FormatNumber(-writeExcess)} remaining",
                 writeStatus,
-                writeTone),
+                writeTone,
+                writePercent),
         ];
     }
 
@@ -171,7 +176,9 @@ public sealed partial class DashboardStore
                 FormatBytes(storageBytes),
                 FormatNumber(writes),
                 "Not reported",
-                "Not reported");
+                "Not reported",
+                storageBytes,
+                writes);
         })];
 
     public static string FormatBytes(double bytes)
