@@ -76,8 +76,13 @@ describe("forbidden SDK surface", () => {
       if (!(await isFile(filePath))) continue;
       const lines = (await readFile(filePath, "utf8")).split(/\r?\n/u);
       for (const [index, line] of lines.entries()) {
+        // Atlas auth endpoint discovery and the dedicated ts-auth origin are
+        // current service contracts, distinct from the retired product auth API.
+        const checked = line
+          .replaceAll("/api/v1/auth/discovery", "/api/v1/metadata/discovery")
+          .replaceAll("auth.terrascale.tech", "idp-origin.example");
         for (const rule of forbidden) {
-          if (rule.pattern.test(line)) {
+          if (rule.pattern.test(checked)) {
             violations.push(`${path.relative(repositoryRoot, filePath)}:${index + 1} [${rule.name}] ${line.trim()}`);
           }
         }

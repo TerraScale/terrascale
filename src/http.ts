@@ -27,6 +27,7 @@ import {
   terraScaleDiscoveryBaseUrl,
   type TerraScaleRegionCode,
 } from "./regions.js";
+import { TsAuthEndpointDiscovery } from "./ts-auth-discovery.js";
 export type TerraScaleRouteName =
   | `access.${string}`
   | `admin.${string}`
@@ -94,8 +95,9 @@ export class TerraScaleHttp {
   #sessionToken: string | undefined;
   /** SDK-driven discovery router (ADR 0050); undefined keeps the ADR 0043 path. */
   readonly #router: TerraScaleDiscoveryRouter | undefined;
+  readonly #authDiscovery: TsAuthEndpointDiscovery | undefined;
 
-  constructor(config: TerraScaleRuntimeConfig) {
+  constructor(config: TerraScaleRuntimeConfig, options?: { readonly authReverseProxy?: boolean }) {
     this.config = resolveRuntimeConfig(config);
     validateCredentialEndpoint(this.config.apiBaseUrl, config.fetch !== undefined);
     const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);
@@ -103,6 +105,10 @@ export class TerraScaleHttp {
       throw new TypeError("TerraScaleClient requires a fetch implementation.");
     }
     this.#fetch = fetchHandler;
+    this.#authDiscovery = options?.authReverseProxy !== true &&
+      this.config.apiBaseUrl === "https://auth.terrascale.tech"
+      ? new TsAuthEndpointDiscovery(fetchHandler)
+      : undefined;
     this.#accessToken = config.accessToken;
     this.#idempotencyKeyFactory = config.idempotencyKeyFactory;
     this.#requestMetricRecorder = config.requestMetricRecorder;
@@ -197,6 +203,8 @@ export class TerraScaleHttp {
       // classification: discovery, catalog selection, and regional rewriting
       // never apply to its requests.
       const serviceRoute = options.routeName.startsWith("tsauth.");
+      const authEndpoints = serviceRoute ? await this.#authDiscovery?.endpoints(options.signal) : undefined;
+      let authRegionIndex = 0;
       const routingDatabase = !serviceRoute && this.#router !== undefined ? parseRoutingDatabase(options.path) : null;
       const catalogRoute = !serviceRoute && this.#router !== undefined && routingDatabase === null && isRegionCatalogRoute(options.path);
       const productRoute = !serviceRoute && this.#router !== undefined && routingDatabase === null && isProductRoute(options.path);
@@ -223,7 +231,7 @@ export class TerraScaleHttp {
             : await this.#router.resolveBase(routingDatabase, needsWrite);
           let requestBase: string;
           if (serviceRoute) {
-            requestBase = this.config.apiBaseUrl;
+            requestBase = authEndpoints?.[authRegionIndex] ?? this.config.apiBaseUrl;
           } else if (this.#router === undefined) {
             requestBase = this.baseUrl(requestRegionHint);
           } else if (catalogRoute) {
@@ -275,6 +283,12 @@ export class TerraScaleHttp {
           try {
             response = await this.#fetch(request);
             responseReceived = true;
+            if (serviceRoute && options.method === "GET" && authEndpoints !== undefined &&
+                authRegionIndex < authEndpoints.length - 1 && [502, 503, 504].includes(response.status)) {
+              void response.body?.cancel().catch(() => undefined);
+              authRegionIndex++;
+              continue;
+            }
             if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400 && response.status !== 304)) {
               // The redirected body is never consumed; drain it before failing.
               void response.body?.cancel().catch(() => undefined);
@@ -402,6 +416,12 @@ export class TerraScaleHttp {
             errorBody,
           );
         } catch (error) {
+          if (serviceRoute && options.method === "GET" && authEndpoints !== undefined &&
+              authRegionIndex < authEndpoints.length - 1 && fetchStarted && !responseReceived &&
+              !options.signal?.aborted && deadline?.aborted !== true) {
+            authRegionIndex++;
+            continue;
+          }
           if (
             fetchStarted && !responseReceived && !options.signal?.aborted && deadline?.aborted !== true &&
             routingDatabase !== null && routedRegion !== undefined

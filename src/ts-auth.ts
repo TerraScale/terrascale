@@ -16,6 +16,8 @@ export type TsAuthClientConfig = Omit<TerraScaleRuntimeConfig, "apiBaseUrl"> & {
   readonly apiBaseUrl: string;
   /** The instance the `sk_` key belongs to; it prefixes every route. */
   readonly instanceSlug: string;
+  /** Route public auth calls through the reverse proxy instead of regional discovery. */
+  readonly useReverseProxy?: boolean;
 };
 
 export type TsAuthRequestOptions = {
@@ -1488,7 +1490,7 @@ export class TsAuthClient {
       throw new TypeError("TsAuthClient requires the ts-auth deployment's public apiBaseUrl origin; there is no default.");
     }
     const slug = validateInstanceSlug(config?.instanceSlug);
-    this.#http = new TerraScaleHttp(config);
+    this.#http = new TerraScaleHttp(config, { authReverseProxy: config.useReverseProxy === true });
     requireBareOrigin(this.#http.config.apiBaseUrl);
     this.users = new TsAuthUsersClient(this.#http, slug);
     this.sessions = new TsAuthSessionsClient(this.#http, slug);

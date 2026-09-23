@@ -10631,9 +10631,9 @@
                       "properties": {
                         "hosts": {
                           "additionalProperties": {
-                            "format": "uri",
                             "type": "string"
                           },
+                          "description": "Production entries are regional hostnames; dev entries can be full origins.",
                           "type": "object"
                         },
                         "regions": {
@@ -10738,9 +10738,9 @@
                     "properties": {
                       "hosts": {
                         "additionalProperties": {
-                          "format": "uri",
                           "type": "string"
                         },
+                        "description": "Production entries are regional hostnames; dev entries can be full origins.",
                         "type": "object"
                       },
                       "regions": {
