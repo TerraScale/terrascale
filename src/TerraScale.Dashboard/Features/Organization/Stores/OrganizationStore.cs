@@ -3,7 +3,15 @@ namespace TerraScale.Dashboard.Shared.State;
 
 public sealed partial class DashboardStore
 {
-    public sealed record OrganizationRegion(string Code, string Name, string Country, int LatencyMs);
+    public sealed record OrganizationRegion(string Code, string Name, string Country, int LatencyMs)
+    {
+        /// <summary>Projects this catalog entry onto the shared region map.</summary>
+        public RegionMap.Pin ToMapPin(bool selected = false, bool disabled = false)
+        {
+            var (x, y) = RegionMap.Coordinates(Code) ?? (0, 0);
+            return new RegionMap.Pin(Code, Name, Country, LatencyMs, x, y, selected, disabled);
+        }
+    }
 
     /// <summary>Pending ownership transfer; the demo store issues no secret
     /// code — the confirmation step only needs the expiry (v1 email flow).</summary>
