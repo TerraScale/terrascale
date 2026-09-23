@@ -3,7 +3,7 @@ terrascale.css — the TerraScale Dashboard CSS framework (single file)
 
 1:1 port of the ts-dashboard design system v1 (dark-only):
 tokens from src/design/tokens.stylex.ts, anatomy from
-docs/design-system.md. Framework = tokens + base + components + shell.
+DESIGN_SYSTEM.md (page patterns). Framework = tokens + base + components + shell.
 Everything a TerraScale dashboard page needs lives here; pages compose
 these classes and never ship their own stylesheets.
 
