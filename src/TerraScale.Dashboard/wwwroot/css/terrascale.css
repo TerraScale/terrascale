@@ -1876,6 +1876,9 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     color: color-mix(in oklab, var(--ts-nav-accent) 90%, var(--ts-ink));
   }
 
+  /* Nav counter: one step up from the generic badge (--ts-badge-h) so the
+   * digit reads at a glance. It rides the system accent — never a status
+   * color — so the same count reads the same way on every destination. */
   .ts-nav-count {
     position: absolute;
     right: var(--ts-sm);
@@ -1884,26 +1887,31 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: var(--ts-badge-h);
-    min-width: var(--ts-badge-h);
-    padding: 0 var(--ts-xs);
+    height: calc(var(--ts-badge-h) + 4px);
+    min-width: calc(var(--ts-badge-h) + 4px);
+    padding: 0 var(--ts-gap-tight);
     border-radius: var(--ts-radius-pill);
-    font-size: 10px;
+    border: 1px solid color-mix(in oklab, var(--ts-accent) 32%, transparent);
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-meta);
     font-weight: var(--ts-fw-semibold);
     line-height: 1;
   }
 
   .ts-nav-count-neutral {
-    background-color: var(--ts-surface-muted);
-    color: var(--ts-ink-muted);
+    background-color: color-mix(in oklab, var(--ts-accent) 12%, var(--ts-surface));
   }
 
+  /* The active destination steps the counter up a notch: deeper fill and a
+   * stronger ring, while the digit keeps full ink contrast. */
   .ts-nav-count-active {
-    background-color: color-mix(in oklab, var(--ts-accent) 15%, transparent);
-    color: var(--ts-info);
+    border-color: color-mix(in oklab, var(--ts-accent) 52%, transparent);
+    background-color: color-mix(in oklab, var(--ts-accent) 26%, var(--ts-surface));
   }
 
+  /* Warning counts stay on warning semantics, ring included. */
   .ts-nav-count-alert {
+    border-color: color-mix(in oklab, var(--ts-warning) 55%, transparent);
     background-color: var(--ts-warning);
     color: var(--ts-on-warning);
   }
