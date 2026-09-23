@@ -50,6 +50,10 @@ binaries/
 *.key
 *.log
 *.jsonl
+*.nettrace
+*.spool
+*.dmp
+*.core
 *.tar.gz
 *.tgz
 *.zip
