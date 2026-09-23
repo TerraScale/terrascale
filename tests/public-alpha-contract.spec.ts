@@ -219,13 +219,13 @@ test('pricing matches the Public Alpha plan catalog', async ({ page }) => {
     starter: {
       name: 'Starter',
       price: '$5',
-      limits: ['5 projects', '10 databases', '5 members', '5 GB across regions', '1,000,000 operation units/month'],
+      limits: ['5 projects', '5 databases', '5 members', '5 GB across regions', '1,000,000 operation units/month'],
       href: `${registrationUrl}?plan=starter`,
     },
     pro: {
       name: 'Pro',
-      price: '$25',
-      limits: ['25 projects', '50 databases', '25 members', '50 GB across regions', '10,000,000 operation units/month'],
+      price: '$50',
+      limits: ['25 projects', '25 databases', '25 members', '25 GB across regions', '100,000,000 operation units/month'],
       href: `${registrationUrl}?plan=pro`,
     },
     enterprise: {
