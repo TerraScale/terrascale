@@ -3621,13 +3621,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-break-words { overflow-wrap: anywhere; }
 
-  .ts-page-title-24 {
-    color: var(--ts-ink);
-    font-size: 24px;
-    font-weight: var(--ts-fw-semibold);
-    line-height: 32px;
-  }
-
   .ts-title-22 {
     color: var(--ts-ink);
     font-size: var(--ts-fs-page-title);
