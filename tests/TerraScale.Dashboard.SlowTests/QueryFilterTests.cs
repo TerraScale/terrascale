@@ -33,6 +33,9 @@ public sealed class QueryFilterTests
         await Assert.That(range90.Contains("Showing 5 of 5 events")).IsTrue();
         await Assert.That(range90.Contains("database.deleted")).IsTrue();
 
+        var allActions = await app.GetPageAsync(client, "/audit?range=90d&action=all");
+        await Assert.That(allActions.Contains("Showing 5 of 5 events")).IsTrue();
+
         var range24 = await app.GetPageAsync(client, "/audit?range=24h");
         await Assert.That(range24.Contains("Showing 0 of 5 events")).IsTrue();
         await Assert.That(range24.Contains("No audit events")).IsTrue();

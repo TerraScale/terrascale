@@ -4140,25 +4140,40 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     text-align: right;
   }
 
-  /* Audit intro: title + metric well on the right. */
   .ts-audit-title {
     font-size: 24px;
     font-weight: var(--ts-fw-semibold);
     line-height: 32px;
   }
 
-  .ts-audit-intro > div {
-    min-width: 0;
+  .ts-audit-kpis {
+    display: grid;
+    gap: var(--ts-sm);
+    margin-top: var(--ts-lg);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .ts-audit-metrics {
+  .ts-audit-kpis > div {
     display: grid;
-    gap: var(--ts-md);
-    padding: var(--ts-lg);
+    gap: var(--ts-xs);
+    padding: var(--ts-md);
     border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-    justify-items: start;
+    border-radius: var(--ts-radius-control);
+    background: var(--ts-surface-muted);
+  }
+
+  .ts-audit-kpis dt { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+  .ts-audit-kpis dd { margin: 0; font-size: 24px; font-weight: var(--ts-fw-semibold); font-variant-numeric: tabular-nums; }
+
+  .ts-notes-page .ts-audit-activity-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 40rem) {
+    .ts-audit-kpis { grid-template-columns: minmax(0, 1fr); }
   }
 
   .ts-audit-form {
@@ -4608,12 +4623,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-audit-form-actions {
     justify-content: flex-end;
     display: flex;
-  }
-
-  .ts-audit-two-pane { gap: var(--ts-lg); }
-
-  @media (min-width: 80rem) {
-    .ts-audit-two-pane { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 
   .ts-severity-box {
@@ -7489,52 +7498,11 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     background-color: var(--ts-surface-muted);
   }
 
-  /* Audit intro metrics (v1 Metric: row, space-between, sans 14px value). */
-  .ts-audit-metrics .ts-metric {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--ts-md);
-    font-size: var(--ts-fs-ui);
-  }
-
-  .ts-audit-metric-inline {
-    font-size: var(--ts-fs-ui);
-    font-weight: var(--ts-fw-medium);
-    font-family: var(--ts-font-sans);
-    font-variant-numeric: tabular-nums;
-    color: var(--ts-ink);
-  }
-
-  .ts-audit-export-wrap {
-    margin-top: var(--ts-sm);
-  }
-
-  .ts-audit-export-wrap .ts-btn {
-    width: 100%;
-  }
-
-  .ts-audit-intro .ts-muted {
-    font-size: var(--ts-fs-ui);
-    line-height: 24px;
-    max-width: 48rem;
-  }
-
   /* Audit strips (v1 wrapBetween range row). */
   .ts-audit-range-row {
     padding-block: var(--ts-sm);
     padding-inline: var(--ts-lg);
     border-bottom: 1px solid var(--ts-line);
-  }
-
-  /* Retention metrics well (v1 stack8 + panelSurface). */
-  .ts-audit-retention-well {
-    display: grid;
-    gap: var(--ts-sm);
-    padding: var(--ts-lg);
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
   }
 
   /* Audit table (v1 DataTable: no outer chrome, 16px body, 16/20 cells). */
@@ -8031,25 +7999,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-audit-reset:hover {
     color: var(--ts-ink);
-  }
-
-  /* v1 rowHeader: column below lg, 20px gap, flex-start alignment. */
-  .ts-audit-intro {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 20px;
-  }
-
-  @media (min-width: 64rem) {
-    .ts-audit-intro {
-      flex-direction: row;
-      justify-content: space-between;
-    }
-  }
-
-  /* v1 gridMin: the metrics well keeps a 16rem floor. */
-  .ts-audit-metrics {
-    min-width: 16rem;
   }
 
   /* v1 wrapCenter rows carry no gap (icons hug their text). */

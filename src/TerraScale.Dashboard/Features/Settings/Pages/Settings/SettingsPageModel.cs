@@ -18,6 +18,7 @@ public sealed record SettingsPageModel(
     string FullBackupCron,
     string IncrementalBackupCron,
     int RetentionDays,
+    int AuditRetentionDays,
     bool PolicyDisabled,
     bool PolicySaved,
     ImmutableArray<SettingsBackupJobRow> BackupJobs,
@@ -53,6 +54,7 @@ public sealed record SettingsPageModel(
             FullBackupCron: policy?.FullBackupCron ?? "0 2 * * *",
             IncrementalBackupCron: policy?.IncrementalBackupCron ?? "0 */6 * * *",
             RetentionDays: policy?.RetentionDays ?? 7,
+            AuditRetentionDays: store.AuditRetentionDays,
             PolicyDisabled: policy?.Disabled ?? false,
             PolicySaved: policy is not null,
             BackupJobs: [.. store.BackupJobs

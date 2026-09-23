@@ -3,7 +3,6 @@ using TerraScale.Dashboard;
 namespace TerraScale.Dashboard.Features.Audit.Pages.Audit;
 
 public sealed record AuditPageModel(
-    string ProjectId,
     IReadOnlyList<AuditRow> Rows,
     IReadOnlyList<AuditEvent> AllEvents,
     IReadOnlyList<string> ActionOptions,
@@ -12,34 +11,28 @@ public sealed record AuditPageModel(
     string Severity,
     string Range,
     int Critical,
-    int Warn,
-    string LoadedAtText,
-    string? OldestTime,
-    int RetentionDays) : IPageModel
+    int Warn) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
 
     public static AuditPageModel From(DashboardStore store, string href, string? search, string? action, string? severity, string? range)
     {
         var all = store.AuditEvents;
-        var filtered = DashboardStore.FilterAuditEvents([.. all], action, severity, range, search);
+        var retained = DashboardStore.FilterAuditEvents([.. all], range: "90d", retentionDays: store.AuditRetentionDays);
+        var filtered = DashboardStore.FilterAuditEvents(retained, action, severity, range, search, retentionDays: store.AuditRetentionDays);
         var actionOptions = new List<string> { "all" };
-        actionOptions.AddRange(all.Select(a => a.Action).Distinct().Order(StringComparer.Ordinal));
+        actionOptions.AddRange(retained.Select(a => a.Action).Distinct().Order(StringComparer.Ordinal));
 
         return new(
-            ProjectId: store.ActiveProjectId,
             Rows: [.. filtered.Select(ToRow)],
-            AllEvents: [.. all],
+            AllEvents: retained,
             ActionOptions: actionOptions,
             Search: search ?? "",
             Action: action is { Length: > 0 } && actionOptions.Contains(action) ? action : "all",
             Severity: DashboardStore.ParseAuditSeverity(severity),
             Range: DashboardStore.ParseAuditRange(range),
             Critical: CountSeverity(filtered, "critical"),
-            Warn: CountSeverity(filtered, "warn"),
-            LoadedAtText: DashboardStore.FormatUtcDateTime(DateTimeOffset.UtcNow.ToString("O")),
-            OldestTime: all.Length is 0 ? null : all[^1].OccurredAt,
-            RetentionDays: DashboardStore.AuditRetentionDays)
+            Warn: CountSeverity(filtered, "warn"))
         {
             Shell = ShellFactory.Create(store, href),
         };
