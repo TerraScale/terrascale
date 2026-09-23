@@ -9,6 +9,9 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const manifestPath = path.join(repositoryRoot, "sdk-route-manifest.json");
 const checkOnly = process.argv.includes("--check");
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "trace"]);
+// Only routes exposed by this SDK belong in its public route manifest.
+// Atlas auth/database discovery is internal metadata; ingest is a publisher route.
+const SDK_EDGE_OPERATION_IDS = new Set(["regions.list"]);
 const bundle = await resolveContractBundle();
 const edgeBundle = await resolveEdgeContractBundle();
 try {
@@ -53,7 +56,7 @@ try {
         responseType: responseType(operationValue.responses),
       };
     }),
-  );
+  ).filter((route) => SDK_EDGE_OPERATION_IDS.has(route.operationId));
   // Edge owns public routes that overlap a TerraBase member route. Keep one
   // canonical SDK entry for each method/path so consumers cannot resolve the
   // same request to two different response contracts.
