@@ -73,6 +73,125 @@ fn client(mock: Arc<Mock>) -> TerraScaleClient {
     )
 }
 
+#[tokio::test]
+async fn public_auth_origin_discovers_regions_and_fails_over_safe_reads() {
+    let mock = Mock::new();
+    mock.push(Response::json(
+        200,
+        &json!({
+            "v": 1, "refreshSeconds": 60, "endpoints": [
+                {"region": "SFO", "url": "https://sfo.auth.terrascale.tech"},
+                {"region": "GRU", "url": "https://gru.auth.terrascale.tech"}
+            ]
+        }),
+    ));
+    mock.push(Response::json(
+        503,
+        &json!({"error": {"code": "busy", "message": "busy"}}),
+    ));
+    mock.push(Response::json(200, &json!({"data": []})));
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .api_base_url("https://api.test")
+            .auth_base_url("https://auth.terrascale.tech")
+            .auth_api_key("sk_test_key")
+            .build()
+            .expect("config"),
+        mock.clone(),
+    );
+    let auth = sdk.auth_idp(SLUG).expect("auth client");
+    auth.users()
+        .list(Some(20), None)
+        .await
+        .expect("regional read");
+    assert_eq!(mock.count(), 3);
+    assert_eq!(
+        mock.request(0).url,
+        "https://atlas.terrascale.tech/api/v1/auth/discovery"
+    );
+    assert!(header(&mock.request(0), "authorization").is_empty());
+    assert!(mock
+        .request(1)
+        .url
+        .starts_with("https://sfo.auth.terrascale.tech/"));
+    assert!(mock
+        .request(2)
+        .url
+        .starts_with("https://gru.auth.terrascale.tech/"));
+    assert_eq!(
+        header(&mock.request(1), "authorization"),
+        ["Bearer sk_test_key"]
+    );
+
+    mock.push(Response::json(
+        503,
+        &json!({"error": {"code": "busy", "message": "busy"}}),
+    ));
+    assert!(auth.users().delete("usr_1").await.is_err());
+    assert_eq!(mock.count(), 4);
+    assert!(mock
+        .request(3)
+        .url
+        .starts_with("https://sfo.auth.terrascale.tech/"));
+}
+
+#[tokio::test]
+async fn public_auth_proxy_opt_in_skips_discovery() {
+    let mock = Mock::new();
+    mock.push(Response::json(200, &json!({"data": []})));
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .api_base_url("https://api.test")
+            .auth_base_url("https://auth.terrascale.tech")
+            .auth_reverse_proxy(true)
+            .auth_api_key("sk_test_key")
+            .build()
+            .expect("config"),
+        mock.clone(),
+    );
+    sdk.auth_idp(SLUG)
+        .expect("auth client")
+        .users()
+        .list(None, None)
+        .await
+        .expect("proxy read");
+    assert_eq!(mock.count(), 1);
+    assert!(mock
+        .request(0)
+        .url
+        .starts_with("https://auth.terrascale.tech/"));
+}
+
+#[tokio::test]
+async fn auth_discovery_rejects_a_mismatched_origin_before_credentials() {
+    let mock = Mock::new();
+    mock.push(Response::json(
+        200,
+        &json!({
+            "v": 1, "refreshSeconds": 60,
+            "endpoints": [{"region": "SFO", "url": "https://gru.auth.terrascale.tech"}]
+        }),
+    ));
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .api_base_url("https://api.test")
+            .auth_base_url("https://auth.terrascale.tech")
+            .auth_api_key("sk_test_key")
+            .build()
+            .expect("config"),
+        mock.clone(),
+    );
+    assert!(sdk
+        .auth_idp(SLUG)
+        .expect("auth client")
+        .users()
+        .list(None, None)
+        .await
+        .is_err());
+    assert_eq!(mock.count(), 1);
+    assert!(header(&mock.request(0), "authorization").is_empty());
+}
+
 fn retry_client(mock: Arc<Mock>) -> TerraScaleClient {
     let transport: Arc<dyn HttpTransport> = mock;
     TerraScaleClient::with_transport(

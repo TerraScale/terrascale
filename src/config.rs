@@ -16,6 +16,7 @@ pub struct ClientConfig {
     api_key: Option<String>,
     /// ts-auth (hosted IdP) deployment origin; `None` disables the ts-auth client.
     auth_base_url: Option<String>,
+    auth_reverse_proxy: bool,
     /// ts-auth instance management key (`sk_...`), separate from the TerraBase key.
     auth_api_key: Option<String>,
     project_id: Option<String>,
@@ -35,6 +36,7 @@ impl std::fmt::Debug for ClientConfig {
             .field("atlas_base_url", &self.atlas_base_url)
             .field("api_key", &"[REDACTED]")
             .field("auth_base_url", &self.auth_base_url)
+            .field("auth_reverse_proxy", &self.auth_reverse_proxy)
             .field("auth_api_key", &"[REDACTED]")
             .field("project_id", &self.project_id)
             .field("tenant_id", &self.tenant_id)
@@ -84,6 +86,12 @@ impl ClientConfig {
         self.auth_base_url.as_deref()
     }
 
+    /// Whether public ts-auth calls use the reverse proxy instead of direct regional routing.
+    #[must_use]
+    pub fn auth_reverse_proxy(&self) -> bool {
+        self.auth_reverse_proxy
+    }
+
     /// Tenant selector checked against the authenticated server authority.
     #[must_use]
     pub fn tenant_id(&self) -> Option<&str> {
@@ -131,6 +139,7 @@ pub struct ClientConfigBuilder {
     atlas_base_url: Option<String>,
     api_key: Option<String>,
     auth_base_url: Option<String>,
+    auth_reverse_proxy: bool,
     auth_api_key: Option<String>,
     project_id: Option<String>,
     tenant_id: Option<String>,
@@ -151,6 +160,7 @@ impl std::fmt::Debug for ClientConfigBuilder {
             .field("atlas_base_url", &self.atlas_base_url)
             .field("api_key", &"[REDACTED]")
             .field("auth_base_url", &self.auth_base_url)
+            .field("auth_reverse_proxy", &self.auth_reverse_proxy)
             .field("auth_api_key", &"[REDACTED]")
             .field("project_id", &self.project_id)
             .field("tenant_id", &self.tenant_id)
@@ -201,6 +211,13 @@ impl ClientConfigBuilder {
     #[must_use]
     pub fn auth_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.auth_base_url = Some(base_url.into());
+        self
+    }
+
+    /// Keep calls on `auth.terrascale.tech` instead of using regional auth discovery.
+    #[must_use]
+    pub fn auth_reverse_proxy(mut self, enabled: bool) -> Self {
+        self.auth_reverse_proxy = enabled;
         self
     }
 
@@ -338,6 +355,7 @@ impl ClientConfigBuilder {
             atlas_base_url,
             api_key,
             auth_base_url,
+            auth_reverse_proxy: self.auth_reverse_proxy,
             auth_api_key,
             project_id: self.project_id,
             tenant_id: self.tenant_id,

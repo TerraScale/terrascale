@@ -104,7 +104,11 @@ in-progress schema migration with its required `Idempotency-Key` and
 instance. ts-auth is a separate service from TerraBase: it has its own origin
 (`auth_base_url`) and its own instance key (`auth_api_key`, the `sk_...`
 management key), both optional on the config and independent of the TerraBase
-credentials. Calls fail with a `Validation` error when `auth_base_url` is not
+credentials. With `https://auth.terrascale.tech`, it discovers the nearest
+healthy regional auth origin from Atlas and calls that origin directly; safe
+reads fail over and mutations are sent once. Set `.auth_reverse_proxy(true)`
+to keep calls on the public proxy. Custom auth origins stay fixed. Calls fail
+with a `Validation` error when `auth_base_url` is not
 configured; management routes additionally require `auth_api_key`.
 
 ```rust,no_run
@@ -114,7 +118,7 @@ use terrascale::{ClientConfig, TerraScaleClient};
 let client = TerraScaleClient::new(
     ClientConfig::builder()
         .api_key("ts_test_key")
-        .auth_base_url("https://auth.example.com")
+        .auth_base_url("https://auth.terrascale.tech")
         .auth_api_key("sk_live_key")
         .build()?,
 );

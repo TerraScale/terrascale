@@ -10,6 +10,7 @@
 //! returns [`Result`] with a typed [`Error`].
 
 pub mod auth_idp;
+mod auth_routing;
 pub mod client;
 pub mod config;
 pub mod discovery;
