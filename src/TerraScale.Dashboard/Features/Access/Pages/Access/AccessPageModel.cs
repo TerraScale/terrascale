@@ -10,8 +10,6 @@ public sealed record AccessPageModel(
     bool CanManageOrganization,
     bool CanManageProject,
     IReadOnlyList<AccessMemberView> Members,
-    IReadOnlyList<string> Roles,
-    IReadOnlyList<string> Permissions,
     IReadOnlyList<AccessProjectView> Projects,
     IReadOnlyList<AccessInvitationView> Invitations,
     IReadOnlyList<AccessTeamMemberView> TeamMembers,
