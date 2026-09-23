@@ -4010,7 +4010,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
      filters toolbar, allowance rings, area history, share bars, settings list. */
   /* Filter labels are sr-only so every tab's toolbar is one control tall. */
   /* Underline tabs sit on the toolbar hairline; the page starts closer to the top. */
-  .ts-usage-toolbar {
+  .ts-toolbar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -4024,7 +4024,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     .ts-main:has(> .ts-usage) { padding-top: var(--ts-lg); }
   }
 
-  .ts-usage-toolbar .ts-tabs {
+  .ts-toolbar .ts-tabs {
     align-self: stretch;
     gap: var(--ts-xl);
     padding: 0;
@@ -4033,7 +4033,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     background: none;
   }
 
-  .ts-usage-toolbar .ts-tab {
+  .ts-toolbar .ts-tab {
     height: 60px;
     padding: 0 2px;
     border-radius: 0;
@@ -4041,16 +4041,16 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     box-shadow: inset 0 -2px 0 transparent;
   }
 
-  .ts-usage-toolbar .ts-tab:hover { box-shadow: inset 0 -2px 0 var(--ts-line); }
+  .ts-toolbar .ts-tab:hover { box-shadow: inset 0 -2px 0 var(--ts-line); }
 
-  .ts-usage-toolbar .ts-tab[aria-selected="true"] {
+  .ts-toolbar .ts-tab[aria-selected="true"] {
     background: none;
     color: var(--ts-ink);
     font-weight: var(--ts-fw-semibold);
     box-shadow: inset 0 -2px 0 var(--ts-accent);
   }
 
-  .ts-usage-toolbar .ts-tab svg { opacity: 0.8; }
+  .ts-toolbar .ts-tab svg { opacity: 0.8; }
 
   /* Caps editor: project rows lead, database rows indent under them. */
   .ts-usage-caps tbody + tbody { border-top: 1px solid var(--ts-line); }
@@ -4088,14 +4088,14 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-usage-cap > .ts-input:invalid { border-color: var(--ts-danger); }
 
-  .ts-usage-filters {
+  .ts-filters {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
     gap: var(--ts-sm);
   }
 
-  .ts-usage-filters .ts-filter-field {
+  .ts-filters .ts-filter-field {
     flex: 1 1 10rem;
     min-width: 10rem;
   }
@@ -4107,7 +4107,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     align-content: start;
   }
 
-  .ts-usage-head {
+  .ts-section-head {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-start;
@@ -4122,9 +4122,9 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     gap: var(--ts-xl) 48px;
   }
 
-  .ts-usage-allowance > .ts-usage-stats { flex: 1 1 16rem; }
+  .ts-usage-allowance > .ts-stats { flex: 1 1 16rem; }
 
-  .ts-usage-columns,
+  .ts-columns,
   .ts-usage-divided {
     display: grid;
     gap: var(--ts-xl);
@@ -4133,9 +4133,9 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   @media (min-width: 64rem) {
-    .ts-usage-columns { grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr); }
+    .ts-columns { grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr); }
 
-    .ts-usage-aside {
+    .ts-aside {
       padding-left: var(--ts-xl);
       border-left: 1px solid var(--ts-line);
     }
@@ -4218,14 +4218,14 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   /* Stats read as a row of figures, each marked by a left rule; wraps cleanly. */
-  .ts-usage-stats {
+  .ts-stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
     gap: var(--ts-md);
     margin: 0;
   }
 
-  .ts-usage-stats > div {
+  .ts-stats > div {
     display: grid;
     gap: 2px;
     align-content: start;
@@ -4234,7 +4234,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     border-left: 2px solid var(--ts-line);
   }
 
-  .ts-usage-stats dt {
+  .ts-stats dt {
     display: flex;
     align-items: center;
     gap: var(--ts-xs);
@@ -4242,7 +4242,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     color: var(--ts-ink-muted);
   }
 
-  .ts-usage-stats dd {
+  .ts-stats dd {
     margin: 0;
     font-size: var(--ts-fs-panel-title);
     font-weight: var(--ts-fw-semibold);
@@ -4250,7 +4250,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     overflow-wrap: anywhere;
   }
 
-  .ts-usage-stats dd small {
+  .ts-stats dd small {
     white-space: nowrap;
     font-size: var(--ts-fs-meta);
     font-weight: var(--ts-fw-medium);
@@ -4258,14 +4258,14 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   /* Headline figures for billing and settings: bigger values, same left rule. */
-  .ts-usage-kpis {
+  .ts-kpis {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
     gap: var(--ts-lg);
     margin: 0;
   }
 
-  .ts-usage-kpis > div {
+  .ts-kpis > div {
     display: grid;
     gap: var(--ts-xs);
     align-content: start;
@@ -4274,7 +4274,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     border-left: 2px solid var(--ts-line);
   }
 
-  .ts-usage-kpis dt {
+  .ts-kpis dt {
     display: flex;
     align-items: center;
     gap: var(--ts-xs);
@@ -4282,7 +4282,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     color: var(--ts-ink-muted);
   }
 
-  .ts-usage-kpis dd {
+  .ts-kpis dd {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
@@ -4292,7 +4292,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     font-size: var(--ts-fs-meta);
   }
 
-  .ts-usage-kpi-value {
+  .ts-kpi-value {
     color: var(--ts-ink);
     font-size: 1.5rem;
     font-weight: var(--ts-fw-semibold);
@@ -4300,9 +4300,9 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     line-height: 1.2;
   }
 
-  .ts-usage-kpis .ts-bar-track { height: 6px; }
+  .ts-kpis .ts-bar-track { height: 6px; }
 
-  .ts-usage-pager {
+  .ts-pager {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -4310,8 +4310,8 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     gap: var(--ts-md);
   }
 
-  .ts-usage-page { min-width: 2.25rem; justify-content: center; }
-  .ts-usage-page[aria-current="page"] { background-color: var(--ts-fill-hover); color: var(--ts-ink); }
+  .ts-pager-page { min-width: 2.25rem; justify-content: center; }
+  .ts-pager-page[aria-current="page"] { background-color: var(--ts-fill-hover); color: var(--ts-ink); }
   .ts-usage-flip { display: inline-flex; transform: scaleX(-1); }
 
   .ts-usage-figures {
@@ -4434,9 +4434,9 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     background-color: transparent;
   }
 
-  .ts-usage-settings { margin: 0; }
+  .ts-settings-list { margin: 0; }
 
-  .ts-usage-settings > div {
+  .ts-settings-list > div {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -4446,21 +4446,21 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     border-top: 1px solid var(--ts-line);
   }
 
-  .ts-usage-settings > div:last-child { border-bottom: 1px solid var(--ts-line); }
+  .ts-settings-list > div:last-child { border-bottom: 1px solid var(--ts-line); }
 
-  .ts-usage-settings dt {
+  .ts-settings-list dt {
     display: grid;
     gap: 2px;
     font-weight: var(--ts-fw-medium);
   }
 
-  .ts-usage-settings dt small {
+  .ts-settings-list dt small {
     font-size: var(--ts-fs-meta);
     font-weight: 400;
     color: var(--ts-ink-muted);
   }
 
-  .ts-usage-settings dd {
+  .ts-settings-list dd {
     margin: 0;
     font-variant-numeric: tabular-nums;
   }

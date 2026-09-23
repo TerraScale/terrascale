@@ -27,7 +27,7 @@
         </div>
     }
 
-    <div class="ts-usage-toolbar">
+    <div class="ts-toolbar">
         <nav class="ts-tabs" aria-label="Usage sections">
             @foreach (var (id, label, icon) in tabs)
             {
@@ -36,7 +36,7 @@
         </nav>
         @if (Model.Tab is "overview")
         {
-            <form class="ts-usage-filters" method="get" action="/usage" role="search" aria-label="Filter usage">
+            <form class="ts-filters" method="get" action="/usage" role="search" aria-label="Filter usage">
                 @FilterMenu("project", "Project", Model.ProjectFilter, "All projects", Model.ProjectOptions)
                 @FilterMenu("database", "Database", Model.DatabaseFilter, "All databases", Model.DatabaseOptions)
                 @FilterMenu("range", "Period", Model.RangeFilter, null, [.. Model.HistoryRanges.Select(r => (r.Value, r.Label))])
@@ -48,7 +48,7 @@
         }
         else if (Model.Tab is "billing")
         {
-            <form class="ts-usage-filters" method="get" action="/usage" role="search" aria-label="Filter payment history">
+            <form class="ts-filters" method="get" action="/usage" role="search" aria-label="Filter payment history">
                 <input type="hidden" name="tab" value="billing" />
                 @FilterMenu("status", "Invoice status", invoices.Status, "All statuses", UsageInvoicePage.StatusOptions)
                 @FilterMenu("issued", "Issued", invoices.Issued, "Any time", UsageInvoicePage.IssuedOptions(DateTime.UtcNow))
@@ -63,7 +63,7 @@
     @if (Model.Tab is "overview")
     {
         <section class="ts-usage-section" aria-labelledby="usage-allowance-title">
-            <div class="ts-usage-head">
+            <div class="ts-section-head">
                 <div>
                     <h2 class="ts-panel-title" id="usage-allowance-title">Plan allowance</h2>
                     <p class="ts-meta">Organization totals for the current billing period · @Model.PlanName@(Model.Renewal is "Unknown" ? "" : $" · renews {Model.Renewal}")</p>
@@ -89,16 +89,16 @@
             </div>
         </section>
 
-        <div class="ts-usage-columns">
+        <div class="ts-columns">
             <section class="ts-usage-section" aria-labelledby="usage-history-title">
-                <div class="ts-usage-head">
+                <div class="ts-section-head">
                     <div>
                         <h2 class="ts-panel-title" id="usage-history-title">Workload history</h2>
                         <p class="ts-meta">Organization operations, @rangeLabel.ToLowerInvariant() · hover for exact values</p>
                     </div>
                     @if (Model.HistorySummary.Count > 0)
                     {
-                        <dl class="ts-usage-stats ts-usage-figures" aria-label="Totals this period">
+                        <dl class="ts-stats ts-usage-figures" aria-label="Totals this period">
                             @for (var i = 0; i < Model.HistorySummary.Count; i++)
                             {
                                 <div><dt><span class="ts-chart-swatch ts-cat-@(i + 1)"></span>@Model.HistorySummary[i].Label</dt><dd>@Model.HistorySummary[i].Value</dd></div>
@@ -125,7 +125,7 @@
                 }
             </section>
 
-            <section class="ts-usage-section ts-usage-aside" aria-labelledby="usage-breakdown-title">
+            <section class="ts-usage-section ts-aside" aria-labelledby="usage-breakdown-title">
                 <div>
                     <h2 class="ts-panel-title" id="usage-breakdown-title">@(Model.ProjectFilter.Length > 0 ? "By database" : "By project")</h2>
                     <p class="ts-meta">@(filtered ? "Filtered scope" : "All projects in the organization")</p>
@@ -188,7 +188,7 @@
     {
         var summary = Model.Summary;
         <section class="ts-usage-section" aria-labelledby="usage-billing-title">
-            <div class="ts-usage-head">
+            <div class="ts-section-head">
                 <div>
                     <h2 class="ts-panel-title" id="usage-billing-title">Subscription</h2>
                     <p class="ts-meta">Plan changes, payment methods and cancellation are handled in the billing portal</p>
@@ -209,26 +209,26 @@
                     <span class="ts-alert-body">Open the billing portal to update payment details and restore full plan access.</span>
                 </div>
             }
-            <dl class="ts-usage-kpis">
+            <dl class="ts-kpis">
                 <div>
                     <dt>@Icons.CreditCard(14) Plan</dt>
-                    <dd><span class="ts-usage-kpi-value">@Model.PlanName</span> <span class="ts-badge ts-badge-@(Model.BillingStatusTone)">@Model.BillingStatus</span></dd>
+                    <dd><span class="ts-kpi-value">@Model.PlanName</span> <span class="ts-badge ts-badge-@(Model.BillingStatusTone)">@Model.BillingStatus</span></dd>
                     <small class="ts-meta">@Model.Price / @Model.Frequency.ToLowerInvariant()@(Model.Renewal is "Unknown" ? "" : $" · renews {Model.Renewal}")</small>
                 </div>
                 <div>
                     <dt>@Icons.ReceiptText(14) Next invoice (estimate)</dt>
-                    <dd><span class="ts-usage-kpi-value">@summary.NextInvoice</span></dd>
+                    <dd><span class="ts-kpi-value">@summary.NextInvoice</span></dd>
                     <small class="ts-meta">@summary.NextInvoiceDetail · @summary.NextInvoiceDate</small>
                 </div>
                 <div>
                     <dt>@Icons.Calendar(14) Billing period</dt>
-                    <dd><span class="ts-usage-kpi-value">@summary.PeriodLabel</span></dd>
+                    <dd><span class="ts-kpi-value">@summary.PeriodLabel</span></dd>
                     <span class="ts-bar-track" role="img" aria-label="@summary.PeriodElapsedDays of @summary.PeriodDays days elapsed"><span class="ts-bar-fill" style="width:@Share(summary.PeriodDays, summary.PeriodElapsedDays)%"></span></span>
                     <small class="ts-meta">Day @summary.PeriodElapsedDays of @summary.PeriodDays · @(summary.PeriodDays - summary.PeriodElapsedDays) days left</small>
                 </div>
                 <div>
                     <dt>@Icons.CircleAlert(14) Outstanding balance</dt>
-                    <dd><span class="ts-usage-kpi-value">@summary.Outstanding</span></dd>
+                    <dd><span class="ts-kpi-value">@summary.Outstanding</span></dd>
                     <small class="ts-meta">@(summary.OpenCount is 0 ? "All invoices paid" : $"{summary.OpenCount} open invoice{(summary.OpenCount is 1 ? "" : "s")}") · @summary.PaidTotal paid across @summary.PaidCount</small>
                 </div>
             </dl>
@@ -265,7 +265,7 @@
         </section>
 
         <section class="ts-usage-section ts-usage-divided" aria-labelledby="usage-invoices-title">
-            <div class="ts-usage-head">
+            <div class="ts-section-head">
                 <div>
                     <h2 class="ts-panel-title" id="usage-invoices-title">Payment history</h2>
                     <p class="ts-meta">Invoices issued to this organization, newest first</p>
@@ -315,7 +315,7 @@
                         </tbody>
                     </table>
                 </div>
-                <nav class="ts-usage-pager" aria-label="Payment history pages">
+                <nav class="ts-pager" aria-label="Payment history pages">
                     <span class="ts-meta">Showing @invoices.First–@(invoices.First + invoices.Rows.Count - 1) of @invoices.Total</span>
                     @if (invoices.PageCount > 1)
                     {
@@ -326,7 +326,7 @@
                             }
                             @for (var n = 1; n <= invoices.PageCount; n++)
                             {
-                                <a class="ts-btn ts-btn-ghost ts-usage-page" href="@invoices.Href(n)" aria-current="@(n == invoices.Page ? "page" : null)">@n</a>
+                                <a class="ts-btn ts-btn-ghost ts-pager-page" href="@invoices.Href(n)" aria-current="@(n == invoices.Page ? "page" : null)">@n</a>
                             }
                             @if (invoices.Page < invoices.PageCount)
                             {
@@ -343,7 +343,7 @@
         var cappedProjects = Model.CapGroups.Count(g => g.Project.Cap.Length > 0);
         var cappedDatabases = Model.CapGroups.Sum(g => g.Databases.Count(d => d.Cap.Length > 0));
         <section class="ts-usage-section" aria-labelledby="usage-spending-title">
-            <div class="ts-usage-head">
+            <div class="ts-section-head">
                 <div>
                     <h2 class="ts-panel-title" id="usage-spending-title">Spending controls</h2>
                     <p class="ts-meta">Limits that keep usage beyond the plan allowance from turning into surprise charges</p>
@@ -363,11 +363,11 @@
                     <span class="ts-alert-body">Restore coverage before the deletion grace deadline: @deadline. Reads and exports remain available. Deletion also requires the disclosed advance notices.</span>
                 </div>
             }
-            <dl class="ts-usage-kpis">
+            <dl class="ts-kpis">
                 <div>
                     <dt>@Icons.ShieldCheck(14) Paid excess</dt>
                     <dd>
-                        <span class="ts-usage-kpi-value">@(Model.PaidExcessEnabled ? "Authorized" : "Not authorized")</span>
+                        <span class="ts-kpi-value">@(Model.PaidExcessEnabled ? "Authorized" : "Not authorized")</span>
                         @if (Model.PaidExcessEnabled)
                         {
                             <span class="ts-badge ts-badge-success">@Icons.CircleCheckBig(12) On</span>
@@ -381,7 +381,7 @@
                 </div>
                 <div>
                     <dt>@Icons.Gauge(14) Organization spending cap</dt>
-                    <dd><span class="ts-usage-kpi-value">@(Model.SpendCap.Length > 0 ? $"${Model.SpendCap}" : "No cap")</span>@(Model.SpendCap.Length > 0 ? " / month" : "")</dd>
+                    <dd><span class="ts-kpi-value">@(Model.SpendCap.Length > 0 ? $"${Model.SpendCap}" : "No cap")</span>@(Model.SpendCap.Length > 0 ? " / month" : "")</dd>
                     @if (Model.CapUsedPercent is { } used)
                     {
                         <span class="ts-bar-track" role="img" aria-label="@DashboardStore.FormatPercent(used) of the cap used"><span class="ts-bar-fill" style="width:@(Math.Min(100, Math.Round(used)).ToString(System.Globalization.CultureInfo.InvariantCulture))%"></span></span>
@@ -394,15 +394,15 @@
                 </div>
                 <div>
                     <dt>@Icons.Layers(14) Project and database caps</dt>
-                    <dd><span class="ts-usage-kpi-value">@(cappedProjects + cappedDatabases)</span> caps set</dd>
+                    <dd><span class="ts-kpi-value">@(cappedProjects + cappedDatabases)</span> caps set</dd>
                     <small class="ts-meta">@cappedProjects of @Model.CapGroups.Count projects · @cappedDatabases of @Model.CapGroups.Sum(g => g.Databases.Count) databases</small>
                 </div>
             </dl>
         </section>
 
-        <div class="ts-usage-columns">
+        <div class="ts-columns">
             <section class="ts-usage-section" aria-labelledby="usage-caps-title">
-                <div class="ts-usage-head">
+                <div class="ts-section-head">
                     <div>
                         <h2 class="ts-panel-title" id="usage-caps-title">Caps by project and database</h2>
                         <p class="ts-meta">Monthly limits in USD. Blank shares the limit above it; the tightest cap applies.</p>
@@ -442,12 +442,12 @@
                 }
             </section>
 
-            <section class="ts-usage-section ts-usage-aside" aria-labelledby="usage-limits-title">
+            <section class="ts-usage-section ts-aside" aria-labelledby="usage-limits-title">
                 <div>
                     <h2 class="ts-panel-title" id="usage-limits-title">Plan limits and rates</h2>
                     <p class="ts-meta">@Model.PlanName plan, organization-wide</p>
                 </div>
-                <dl class="ts-usage-settings">
+                <dl class="ts-settings-list">
                     @foreach (var row in Model.PlanResources)
                     {
                         <div><dt>Included @row.Resource.ToLowerInvariant()</dt><dd>@row.Included</dd></div>
@@ -500,7 +500,7 @@
 
     // Flat stat row: icon + label, value, muted detail; hairline dividers, no box.
     private static Microsoft.AspNetCore.Html.HtmlString StatList(IReadOnlyList<UsageStatCard> stats) => new(
-        "<dl class=\"ts-usage-stats\">" + string.Concat(stats.Select(s =>
+        "<dl class=\"ts-stats\">" + string.Concat(stats.Select(s =>
             $"<div><dt>{IconByName(s.Icon, 14).Value} {E(s.Label)}</dt><dd>{E(s.Value)}</dd><small class=\"ts-meta\">{E(s.Detail)}</small></div>")) + "</dl>");
 
     // House filter menu (api-keys ts-filter-field): picking an option sets the
