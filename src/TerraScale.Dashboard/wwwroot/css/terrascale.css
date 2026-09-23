@@ -192,12 +192,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 @layer features {
   /* ts-auth control plane ------------------------------------------------ */
   .ts-auth-console { gap: var(--ts-xl); }
-  .ts-auth-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ts-xl); padding: var(--ts-xl); background: radial-gradient(600px 220px at 0 0, rgba(var(--ts-accent-rgb), .16), transparent 70%), var(--ts-glass-bg); }
-  .ts-auth-header > div:first-child { min-width: 0; }
-  .ts-auth-header-actions { display: flex; flex-wrap: wrap; gap: var(--ts-sm); justify-content: flex-end; }
-  .ts-auth-hero-title { margin: 8px 0 4px; font-size: clamp(1.6rem, 3vw, 2.35rem); letter-spacing: -.025em; }
-  .ts-auth-instance-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: var(--ts-md); }
-  .ts-auth-instance-line code { padding: 4px 8px; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-control); color: var(--ts-ink); background: var(--ts-input-fill); font-family: var(--ts-font-mono); font-size: var(--ts-fs-meta); }
   .ts-auth-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--ts-lg); }
   .ts-auth-stat-card { display: grid; gap: 4px; min-width: 0; padding: var(--ts-lg); border: 1px solid var(--ts-line); border-radius: var(--ts-radius-panel); color: var(--ts-ink); background: var(--ts-glass-bg); text-decoration: none; transition: transform var(--ts-t-control) var(--ts-ease), border-color var(--ts-t-control) var(--ts-ease), background-color var(--ts-t-control) var(--ts-ease); }
   .ts-auth-stat-card:hover { border-color: color-mix(in oklab, var(--ts-info) 55%, var(--ts-line)); background: var(--ts-fill-hover); transform: translateY(-2px); }
@@ -254,9 +248,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-auth-console .ts-table th:last-child, .ts-auth-console .ts-table td:last-child { width: 1%; white-space: nowrap; }
   @media (max-width: 64rem) { .ts-auth-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 48rem) {
-    .ts-auth-header { flex-direction: column; }
-    .ts-auth-header-actions { width: 100%; justify-content: flex-start; }
-    .ts-auth-header-actions .ts-btn { flex: 1 1 auto; }
     .ts-auth-stat-grid { grid-template-columns: 1fr 1fr; gap: var(--ts-sm); }
     .ts-auth-stat-card { padding: var(--ts-md); }
     .ts-auth-stat-card strong { font-size: 1.6rem; }
@@ -8232,7 +8223,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   .ts-auth-console { gap: var(--ts-xl); }
   .ts-auth-hero { display: flex; justify-content: space-between; gap: var(--ts-xxl); padding: 28px 32px; overflow: hidden; position: relative; background: radial-gradient(600px 220px at 10% 0%, rgba(var(--ts-accent-rgb), .16), transparent 65%), var(--ts-glass-bg); }
   .ts-auth-hero-copy { min-width: 0; max-width: 56rem; }
-  .ts-auth-hero-title { margin: 8px 0 6px; font-size: clamp(28px, 3vw, 40px); line-height: 1.08; letter-spacing: -.025em; }
   .ts-auth-hero-copy .ts-page-desc { max-width: 52rem; margin: 0; }
   .ts-eyebrow { display: flex; align-items: center; gap: 8px; color: var(--ts-info); font-size: var(--ts-fs-meta); font-weight: var(--ts-fw-semibold); letter-spacing: .08em; text-transform: uppercase; }
   .ts-auth-issuer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
