@@ -7,7 +7,7 @@ const memberRoutes: Route[] = [
   { path: "/", expectText: "Overview" },
   { path: "/access", expectText: "Team" },
   { path: "/api-keys", expectText: "API keys" },
-  { path: "/audit", expectText: "Logs" },
+  { path: "/audit", expectText: "Audit" },
   { path: "/data", expectText: "Tables" },
   { path: "/databases", expectText: "Databases" },
   { path: "/notifications", expectText: "Notifications" },

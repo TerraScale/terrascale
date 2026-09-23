@@ -14,7 +14,7 @@ public sealed class PageSmokeTests
         ("/api-keys", "API keys"),
         ("/access", "Team"),
         ("/usage", "Usage"),
-        ("/audit", "Logs"),
+        ("/audit", "Audit"),
         ("/notifications", "Notifications"),
         ("/settings", "Settings"),
         ("/profile", "Profile"),

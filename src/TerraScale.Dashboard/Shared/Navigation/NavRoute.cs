@@ -42,7 +42,7 @@ public sealed record NavRoute(
         new(RouteId.Usage, "/usage", "Usage", "Usage and Billing", "Plan and limits",
             "Current-cycle usage, plan limits, pricing summary, invoice status, and projected overage signals.",
             "Gauge", "Review plan", "Export usage"),
-        new(RouteId.Audit, "/audit", "Logs", "Audit", "Security evidence",
+        new(RouteId.Audit, "/audit", "Audit", "Audit", "Security evidence",
             "Customer-visible security audit entries without operation feeds or generic activity timelines.",
             "ScrollText", "Export audit", "Filter events"),
         new(RouteId.Notifications, "/notifications", "Notifications", "Notifications", "Actionable inbox",

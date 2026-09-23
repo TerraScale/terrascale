@@ -20,6 +20,20 @@ public sealed class NavMenuTests
     }
 
     [Test]
+    public async Task AuditHasItsOwnActiveNavLink()
+    {
+        using var app = new DashboardTestApp();
+        using var client = await app.CreateMemberClientAsync($"fast-audit-nav-{Guid.NewGuid():N}@example.test");
+
+        var page = await app.GetPageAsync(client, "/audit");
+
+        await Assert.That(page.StatusCode).IsEqualTo(200);
+        await Assert.That(page.NavItems.Contains("Audit")).IsTrue();
+        await Assert.That(page.Contains("href=\"/audit\" style=\"--ts-nav-accent:#F97316\" aria-current=\"page\"")).IsTrue();
+        await Assert.That(page.Contains("Recent activity")).IsTrue();
+    }
+
+    [Test]
     public async Task AccountMenuStillOffersProfileAndNotifications()
     {
         using var app = new DashboardTestApp();
