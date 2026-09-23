@@ -6,6 +6,59 @@
   },
   "servers": [{ "url": "https://atlas.terrascale.tech" }],
   "paths": {
+    "/api/v1/discovery": {
+      "get": {
+        "operationId": "discovery.get",
+        "description": "Rank direct regional Database API endpoints for an SDK. This route does not receive credentials.",
+        "parameters": [
+          { "name": "database", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$" } },
+          { "name": "branch", "in": "query", "required": false, "schema": { "type": "string", "default": "main" } },
+          { "name": "rev", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 0 } },
+          { "name": "stale", "in": "query", "required": false, "schema": { "type": "string", "enum": ["1"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ranked regional Database API endpoints; SDKs cache this no-store response themselves.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiscoveryResponse" } } }
+          },
+          "400": { "description": "Invalid database, branch, or revision", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "503": { "description": "No eligible region or catalog is available", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/v1/ingest": {
+      "post": {
+        "operationId": "ingest.publish",
+        "description": "Publish region health and database placement. Intended for the authorized orchestrator or member publisher.",
+        "security": [{ "ingestBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IngestRequest" } } }
+        },
+        "responses": {
+          "200": { "description": "Per-document updated, stale, or skipped outcomes", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IngestResponse" } } } },
+          "400": { "description": "The publish body is invalid; nothing from this request was written", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "Missing or invalid ingest secret", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "503": { "description": "Ingest secret is not configured", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/v1/auth/discovery": {
+      "get": {
+        "operationId": "auth.discovery",
+        "description": "Ranks healthy regional auth origins for direct SDK requests; no credentials are required or accepted.",
+        "responses": {
+          "200": {
+            "description": "Healthy auth origins ranked nearest first. The SDK owns caching and must respect refreshSeconds.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthDiscoveryResponse" } } }
+          },
+          "503": {
+            "description": "No fresh healthy auth origin or catalog is available",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+          }
+        }
+      }
+    },
     "/api/v1/regions": {
       "get": {
         "operationId": "regions.list",
@@ -23,7 +76,63 @@
     }
   },
   "components": {
+    "securitySchemes": {
+      "ingestBearer": { "type": "http", "scheme": "bearer", "description": "The INGEST_SECRET shared with authorized publishers" }
+    },
     "schemas": {
+      "DiscoveryResponse": {
+        "type": "object",
+        "required": ["v", "database", "branch", "revision", "updated", "residency", "placement", "refreshSeconds", "endpoints"],
+        "properties": {
+          "v": { "const": 1 },
+          "database": { "type": "string" },
+          "branch": { "type": "string" },
+          "revision": { "type": "integer", "minimum": 0 },
+          "updated": { "type": "integer", "minimum": 0 },
+          "residency": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }, { "type": "null" }] },
+          "placement": { "type": "string", "enum": ["known", "unknown"] },
+          "refreshSeconds": { "type": "integer", "minimum": 1 },
+          "endpoints": { "type": "array", "items": { "type": "object", "required": ["region", "url", "priority", "capabilities"], "properties": { "region": { "type": "string" }, "url": { "type": "string", "format": "uri" }, "priority": { "type": "integer", "minimum": 1 }, "capabilities": { "type": "array", "items": { "type": "string", "enum": ["read", "write", "sql", "reactive"] } } }, "additionalProperties": false } }
+        },
+        "additionalProperties": false
+      },
+      "IngestRequest": {
+        "type": "object",
+        "properties": {
+          "health": { "type": "object", "description": "Complete versioned health and catalog document; see ts-atlas design section 3." },
+          "placements": { "type": "array", "maxItems": 64, "items": { "type": "object", "required": ["database", "record"], "properties": { "database": { "type": "string" }, "record": { "type": "object", "description": "Versioned placement document; see ts-atlas design section 3." } }, "additionalProperties": false } }
+        },
+        "additionalProperties": false
+      },
+      "IngestResponse": {
+        "type": "object",
+        "required": ["health", "placements"],
+        "properties": {
+          "health": { "type": "string", "enum": ["updated", "stale", "skipped"] },
+          "placements": { "type": "array", "items": { "type": "object", "required": ["database", "result"], "properties": { "database": { "type": "string" }, "result": { "type": "string", "enum": ["updated", "stale"] } }, "additionalProperties": false } }
+        },
+        "additionalProperties": false
+      },
+      "AuthDiscoveryResponse": {
+        "type": "object",
+        "required": ["v", "refreshSeconds", "endpoints"],
+        "properties": {
+          "v": { "const": 1 },
+          "refreshSeconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+          "endpoints": {
+            "type": "array", "minItems": 1, "maxItems": 20,
+            "items": {
+              "type": "object", "required": ["region", "url"],
+              "properties": {
+                "region": { "type": "string", "pattern": "^[A-Z0-9][A-Z0-9-]{0,15}$" },
+                "url": { "type": "string", "format": "uri" }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "Region": {
         "type": "object",
         "required": ["code", "name", "country", "latitude", "longitude", "available"],
@@ -42,7 +151,7 @@
         "required": ["regions", "hosts"],
         "properties": {
           "regions": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/Region" } },
-          "hosts": { "type": "object", "additionalProperties": { "type": "string", "format": "uri" } }
+          "hosts": { "type": "object", "description": "Production entries are regional hostnames; dev entries can be full origins.", "additionalProperties": { "type": "string" } }
         },
         "additionalProperties": false
       },

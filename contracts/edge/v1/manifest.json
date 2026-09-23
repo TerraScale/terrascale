@@ -6,14 +6,14 @@
     {
       "path": "openapi.json",
       "mediaType": "application/vnd.oai.openapi+json;version=3.1",
-      "sha256": "44705aeb48706308014712a3c04fa365fbc48bceef5ad7565cc3b2a03ec038d4",
-      "blake3": "422081d8fa5e32bfe68323c76667d78d25fb0dd7e302967db47daac0f3fa144e"
+      "sha256": "99c204f52c53945cf43a9e0984b10656c48e8065ceb1d02ae1881503732f6c10",
+      "blake3": "cac66ad6adc9d1c62fdb65d9dfc7a8433b3c9da55798696aeaf4b7c40d692159"
     },
     {
       "path": "route-source.json",
       "mediaType": "application/vnd.terrascale.route-source.v1+json",
-      "sha256": "05680d4dcd072bb35d1fc915cdceeb583ca330082b644705fb3fc0c80e5cc1e7",
-      "blake3": "35ab67addcc55857b62dfe0df1baa8ca5ad9b6e2b3cdbd1887b7b5c0ff3520f9"
+      "sha256": "e72ae053f39a187e0804087892ff2862fee244854148cac399ec718727c23590",
+      "blake3": "55835c07fa14336a45b796a69945e701a4edc01d0ca35359904092c1ff99d09c"
     }
   ]
 }

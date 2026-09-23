@@ -103,6 +103,9 @@ type Config struct {
 	// the default product origin (DefaultAPIBaseURL), which never serves
 	// ts-auth routes.
 	TSAuthBaseURL string
+	// TSAuthUseReverseProxy sends public auth calls through auth.terrascale.tech.
+	// By default, that public origin discovers and calls a regional ts-auth directly.
+	TSAuthUseReverseProxy bool
 	// DiscoveryBaseURL overrides the metadata origin — discovery and the
 	// region catalog (ADR 0050) — for tests and development. It defaults to
 	// https://atlas.terrascale.tech and is independent of APIBaseURL.
@@ -144,6 +147,8 @@ type Client struct {
 	// catalog (ADR 0050). It is nil when discovery is inactive: custom
 	// origins and strict affinity keep direct configured routing.
 	router *discoveryRouter
+	// authDiscovery caches ranked regional ts-auth origins for public auth calls.
+	authDiscovery tsAuthEndpointDiscovery
 
 	mu     sync.RWMutex
 	pinned RegionCode
@@ -285,19 +290,20 @@ func NewClient(cfg Config) (*Client, error) {
 	httpClient = &ownedHTTPClient
 
 	c := &Client{cfg: Config{
-		APIBaseURL:       base,
-		TSAuthBaseURL:    strings.TrimSpace(cfg.TSAuthBaseURL),
-		DiscoveryBaseURL: discoveryBase,
-		AccessToken:      cfg.AccessToken,
-		TokenProvider:    cfg.TokenProvider,
-		ProjectID:        cfg.ProjectID,
-		TenantID:         cfg.TenantID,
-		PreferredRegion:  preferred,
-		Affinity:         affinity,
-		HTTPClient:       httpClient,
-		MaxRetryAttempts: cfg.MaxRetryAttempts,
-		RetryDelay:       retryDelay,
-		RequestTimeout:   requestTimeout,
+		APIBaseURL:            base,
+		TSAuthBaseURL:         strings.TrimSpace(cfg.TSAuthBaseURL),
+		TSAuthUseReverseProxy: cfg.TSAuthUseReverseProxy,
+		DiscoveryBaseURL:      discoveryBase,
+		AccessToken:           cfg.AccessToken,
+		TokenProvider:         cfg.TokenProvider,
+		ProjectID:             cfg.ProjectID,
+		TenantID:              cfg.TenantID,
+		PreferredRegion:       preferred,
+		Affinity:              affinity,
+		HTTPClient:            httpClient,
+		MaxRetryAttempts:      cfg.MaxRetryAttempts,
+		RetryDelay:            retryDelay,
+		RequestTimeout:        requestTimeout,
 	}, http: httpClient, sessionToken: strings.TrimSpace(cfg.SessionToken)}
 	// Discovery routing (ADR 0050 §5.1) applies only to the public origins:
 	// custom origins and strict affinity keep direct configured routing.

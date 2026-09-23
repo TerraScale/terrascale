@@ -4,9 +4,27 @@
   "owner": "ts-atlas",
   "routes": [
     {
+      "operationId": "discovery.get",
+      "method": "GET",
+      "path": "/api/v1/discovery",
+      "contract": "openapi.json"
+    },
+    {
+      "operationId": "ingest.publish",
+      "method": "POST",
+      "path": "/api/v1/ingest",
+      "contract": "openapi.json"
+    },
+    {
       "operationId": "regions.list",
       "method": "GET",
       "path": "/api/v1/regions",
+      "contract": "openapi.json"
+    },
+    {
+      "operationId": "auth.discovery",
+      "method": "GET",
+      "path": "/api/v1/auth/discovery",
       "contract": "openapi.json"
     }
   ]
