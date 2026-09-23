@@ -10,6 +10,8 @@ public static class HomeCopy
         public string CreateFirstDatabase => "Create first database";
         public string CreateCredential => "Create an Application credential";
         public string Databases => "Databases";
+        public string ProjectUsers => "Project users";
+        public string ProjectUsersDetail(int count) => count == 1 ? "user with project access" : "users with project access";
         public string DatabaseDetail(int count) => count == 0 ? "none saved" : "saved project databases";
         public string UnreadAlerts => "Unread alerts";
         public string NotificationsLoaded(int count) => $"{count} notifications loaded";

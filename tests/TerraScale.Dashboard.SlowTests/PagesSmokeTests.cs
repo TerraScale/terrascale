@@ -16,8 +16,11 @@ public sealed class PagesSmokeTests
         await Assert.That(page.StatusCode).IsEqualTo(200);
         await Assert.That(page.Heading).IsEqualTo("Overview");
         await Assert.That(page.Contains("Workspace metrics")).IsTrue();
+        await Assert.That(page.Text.Contains("Project users 3 users with project access", StringComparison.Ordinal)).IsTrue();
         await Assert.That(page.Contains("Getting started")).IsTrue();
         await Assert.That(page.Contains("Connect your AI or platform")).IsTrue();
+        await Assert.That(page.Html.IndexOf("<section class=\"ts-panel\" aria-label=\"Activity\">", StringComparison.Ordinal))
+            .IsGreaterThan(page.Html.IndexOf("<h2 class=\"ts-panel-title\">Getting started</h2>", StringComparison.Ordinal));
     }
 
     [Test]
