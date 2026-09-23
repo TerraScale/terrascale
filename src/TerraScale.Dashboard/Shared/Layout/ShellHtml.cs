@@ -259,7 +259,6 @@ public static class ShellHtml
         var viewKey = shell.ActiveHref.Contains("view=", StringComparison.Ordinal)
             ? shell.ActiveHref.Split("view=", StringSplitOptions.RemoveEmptyEntries)[^1]
             : "";
-        builder.AppendLine("""            <div class="ts-datasubnav-header">TABLES</div>""");
         builder.AppendLine("""            <div class="ts-datasubnav-menu">""");
         builder.AppendLine(SubNavLink("/data", "Saved queries", "BookOpen", viewKey.Length == 0));
         builder.AppendLine(SubNavLink("/data?view=table", "Collection documents", "Table", viewKey == "table"));
