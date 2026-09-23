@@ -17,9 +17,9 @@ consolidated from their source repos with full git history preserved.
 `receipts/` (receipt JSON, summaries, raw samples), and the dated benchmark
 reports (`*.md`) at the top level.
 
-Runtime databases under `receipts/*/data/` are tracked where they were part of
-the receipt evidence in the source repo; large untracked runtime data from
-in-progress runs is not.
+Markdown benchmark tables and compact receipt JSON remain trackable. Generated
+database snapshots, executables, raw samples, and run logs are ignored and
+removed from repository history.
 
 ## Subject resolution and receipts
 

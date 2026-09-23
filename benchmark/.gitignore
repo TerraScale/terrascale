@@ -3,21 +3,58 @@ bin/
 obj/
 target/
 TestResults/
+artifacts/
+binaries/
 /ts-auth/go/ts-auth-bench
 
-# Raw benchmark run artifacts (DB snapshots, restore targets, object-store payloads).
-# Summary/receipt evidence files stay trackable.
+# Runtime data from benchmark runs. Keep Markdown reports and receipt JSON.
 **/receipts/**/data/
 **/receipts/**/source/
 **/receipts/**/targets/
 **/receipts/**/object-store/
+**/receipts/**/objects/
 **/receipts/**/engine/
-bench/*/engine/
-bench/*/source/
-bench/*/targets/
-bench/*/object-store/
-bench/*/objects/
-bench/*/larger-than-memory/
+**/receipts/**/larger-than-memory/
+**/receipts/**/topology/
+**/bench/*/data/
+**/bench/*/source/
+**/bench/*/targets/
+**/bench/*/object-store/
+**/bench/*/objects/
+**/bench/*/engine/
+**/bench/*/larger-than-memory/
+**/bench/*/topology/
+.terrascale/
+
+# Generated binaries, database files, raw samples, and run logs.
+*.dll
+*.exe
+*.so
+*.dylib
+*.pdb
+*.bin
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.wal
+*.wal.*
+*.seg
+*.sst
+*.ldb
+*.ltx
+*.pfx
+*.p12
+*.key
+*.log
+*.jsonl
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.zst
 
 # Trash / editor leftovers
 *~

@@ -21,6 +21,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Reject committed benchmark artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          tracked_artifacts="$(git ls-files -ci --exclude-standard)"
+          if test -n "${tracked_artifacts}"; then
+            printf 'Generated files are tracked despite .gitignore:\n%s\n' "${tracked_artifacts}" >&2
+            exit 1
+          fi
+
       - name: Clone sibling sources (TerraBase subject + TerraScale SDK)
         env:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
