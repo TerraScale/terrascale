@@ -62,22 +62,11 @@
                     </div>
                     <fieldset class="ts-field ts-project-regions">
                         <legend class="ts-label">@Icons.Globe(16) @t("Project regions")</legend>
-                        <div class="ts-region-picker">
-                            <img class="ts-region-map" src="@AssetUrls.Url("/brand/region-map.svg")" alt="" decoding="async" />
-                            @foreach (var region in Model.RegionCatalog)
-                            {
-                                <label class="ts-region-pin-btn" style="left:@RegionPins.Left(region.Code);top:@RegionPins.Top(region.Code)">
-                                    <input class="ts-sr-only" type="checkbox" name="regions" value="@region.Code" @(region.Code == Model.SuggestedRegion ? "checked" : null) />
-                                    <span class="ts-region-pin-dot" aria-hidden="true"></span>
-                                </label>
-                            }
-                        </div>
-                        <ul class="ts-sr-only" aria-label='@t("Regions")'>
-                            @foreach (var region in Model.RegionCatalog)
-                            {
-                                <li>@region.Name (@region.Code) — @(region.Code == Model.SuggestedRegion ? t("Selected") : t("Available"))</li>
-                            }
-                        </ul>
+                        @RegionMap.Picker(
+                            [.. Model.RegionCatalog.Select(region => region.ToMapPin(region.Code == Model.SuggestedRegion))],
+                            RegionMap.Selection.Multiple,
+                            name: "regions",
+                            ariaLabel: t("Regions"))
                         <div class="ts-field">
                             <label class="ts-label" for="projectBackupRegion">@t("Backup region")</label>
                             <select class="ts-select" id="projectBackupRegion" name="backupRegion">
@@ -149,22 +138,11 @@
                                                 </div>
                                                 <fieldset class="ts-field ts-project-regions">
                                                     <legend class="ts-label">@Icons.Globe(16) @t("Project regions")</legend>
-                                                    <div class="ts-region-picker">
-                                                        <img class="ts-region-map" src="@AssetUrls.Url("/brand/region-map.svg")" alt="" decoding="async" />
-                                                        @foreach (var region in Model.RegionCatalog)
-                                                        {
-                                                            <label class="ts-region-pin-btn" style="left:@RegionPins.Left(region.Code);top:@RegionPins.Top(region.Code)">
-                                                                <input class="ts-sr-only" type="checkbox" name="regions" value="@region.Code" @(HasRegion(project, region.Code) ? "checked" : null) />
-                                                                <span class="ts-region-pin-dot" aria-hidden="true"></span>
-                                                            </label>
-                                                        }
-                                                    </div>
-                                                    <ul class="ts-sr-only" aria-label='@t("Regions")'>
-                                                        @foreach (var region in Model.RegionCatalog)
-                                                        {
-                                                            <li>@region.Name (@region.Code) — @(HasRegion(project, region.Code) ? t("Selected") : t("Available"))</li>
-                                                        }
-                                                    </ul>
+                                                    @RegionMap.Picker(
+                                                        [.. Model.RegionCatalog.Select(region => region.ToMapPin(HasRegion(project, region.Code)))],
+                                                        RegionMap.Selection.Multiple,
+                                                        name: "regions",
+                                                        ariaLabel: t("Regions"))
                                                     <div class="ts-field">
                                                         <label class="ts-label" for="rename-backup-@project.Id">@t("Backup region")</label>
                                                         <select class="ts-select" id="rename-backup-@project.Id" name="backupRegion">
@@ -250,13 +228,13 @@
     <section class="ts-panel">
         <div class="ts-panel-header">
             <h3 class="ts-panel-title">@t("Create organization")</h3>
-            <p class="ts-panel-subtitle">@(Model.OrganizationKind == OrganizationKind.Personal ? t("Personal workspace and free allowance") : t("Business workspace and paid billing"))</p>
+            <p class="ts-panel-subtitle">@t("Repeat only the onboarding steps a new tenant needs: organization, payment, and project.")</p>
         </div>
         <div class="ts-padded ts-muted ts-ui ts-org-desc">
             @t("Business organizations have their own paid billing and never use the Personal allowance.")
         </div>
         <div class="ts-padded">
-            <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-full" href="/organizations/new">@Icons.Plus(20) @t("Create organization")</a>
+            <button type="button" class="ts-btn ts-btn-primary ts-btn-lg ts-btn-full" data-open-dialog="create-organization">@Icons.Plus(20) @t("Create organization")</button>
         </div>
     </section>
 
@@ -449,4 +427,5 @@
         </section>
     }
 </div>
+@(await RenderPartialAsync<NewOrganizationDialog, NewOrganizationWizardModel>(Model.NewOrganization))
 @ShellHtml.Bottom(shell)

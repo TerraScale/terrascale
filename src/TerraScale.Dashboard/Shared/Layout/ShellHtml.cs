@@ -172,23 +172,20 @@ public static class ShellHtml
         builder.AppendLine("""                    <details class="ts-menu ts-project-menu">""");
         builder.AppendLine($"""                        <summary class="ts-btn ts-btn-secondary ts-btn-lg ts-project-trigger">{Icons.FolderKanban(16).Value}<span class="ts-project-trigger-label">{Escape(project.Name)}</span>{Icons.ChevronDown(15).Value}</summary>""");
         builder.AppendLine("                        <div class=\"ts-menu-panel ts-project-panel\">");
-        builder.AppendLine("""                            <div class="ts-project-panel-header">TerraScale</div>""");
         builder.AppendLine("                            <div class=\"ts-project-panel-scroll\">");
-        builder.AppendLine("""                                <div class="ts-project-section-label">Current project</div>""");
         builder.AppendLine("""                                <div class="ts-current-project">""");
         builder.AppendLine("""                                    <div class="ts-current-project-top">""");
         builder.AppendLine("""                                        <div class="ts-current-project-name"><span class="ts-status-dot" aria-hidden="true"></span><span class="ts-project-name">""" + Escape(project.Name) + "</span></div>");
         builder.AppendLine($"""                                        <div class="ts-project-actions"><span class="ts-active-label">Active</span><a class="ts-project-rename" href="/organization" aria-label="Rename project">{Icons.Pencil(13).Value}</a></div>""");
         builder.AppendLine("                                    </div>");
         builder.AppendLine("""                                    <div class="ts-project-meta">""");
-        builder.AppendLine($"""                                        <span class="ts-project-meta-item">{Icons.MapPin(12).Value} {Escape(project.Region)}</span>""");
         builder.AppendLine($"""                                        <span class="ts-project-meta-item">{Icons.Database(12).Value} {databaseCount} {(databaseCount == 1 ? "database" : "databases")}</span>""");
         builder.AppendLine("                                    </div>");
         builder.AppendLine("                                </div>");
         if (others.Length > 0)
         {
             builder.AppendLine("""                                <div class="ts-project-search-section">""");
-            builder.AppendLine($"""                                    <div class="ts-project-search">{Icons.Search(14).Value}<input class="ts-input" type="search" placeholder="Search projects" aria-label="Search projects" data-bind="projectSearch" /></div>""");
+            builder.AppendLine($"""                                    <div class="ts-project-search"><input class="ts-input" type="search" placeholder="Search projects" aria-label="Search projects" data-bind="projectSearch" />{Icons.Search(14).Value}</div>""");
             builder.AppendLine("""                                    <div class="ts-project-section-label">Switch to</div>""");
             builder.AppendLine("""                                    <div class="ts-project-list">""");
             foreach (var option in others)
@@ -198,10 +195,9 @@ public static class ShellHtml
                 builder.AppendLine($"                                            <input type=\"hidden\" name=\"projectId\" value=\"{option.Id}\" />");
                 builder.AppendLine($"                                            <input type=\"hidden\" name=\"returnUrl\" value=\"{shell.ActiveHref}\" />");
                 builder.AppendLine("                                            <button type=\"submit\" class=\"ts-project-option\">");
-                builder.AppendLine($"""                                                <span class="ts-project-option-icon">{Icons.FolderKanban(15).Value}</span>""");
                 builder.AppendLine("""                                                <span class="ts-project-option-content">""");
                 builder.AppendLine($"""                                                    <span class="ts-project-option-heading"><span class="ts-project-option-name">{Escape(option.Name)}</span></span>""");
-                builder.AppendLine($"""                                                    <span class="ts-project-meta ts-project-meta-compact"><span class="ts-project-meta-item">{Icons.MapPin(12).Value} {Escape(option.Region)}</span><span class="ts-project-meta-item">{Icons.Database(12).Value} {optionDatabases}</span></span>""");
+                builder.AppendLine($"""                                                    <span class="ts-project-meta ts-project-meta-compact"><span class="ts-project-meta-item">{Icons.Database(12).Value} {optionDatabases}</span></span>""");
                 builder.AppendLine("                                                </span>");
                 builder.AppendLine("                                            </button>");
                 builder.AppendLine("                                        </form>");
@@ -268,7 +264,6 @@ public static class ShellHtml
         var viewKey = shell.ActiveHref.Contains("view=", StringComparison.Ordinal)
             ? shell.ActiveHref.Split("view=", StringSplitOptions.RemoveEmptyEntries)[^1]
             : "";
-        builder.AppendLine("""            <div class="ts-datasubnav-header">TABLES</div>""");
         builder.AppendLine("""            <div class="ts-datasubnav-menu">""");
         builder.AppendLine(SubNavLink("/data", "Saved queries", "BookOpen", viewKey.Length == 0));
         builder.AppendLine(SubNavLink("/data?view=table", "Collection documents", "Table", viewKey == "table"));

@@ -1,20 +1,46 @@
+using System.Globalization;
+using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Html;
 
 namespace TerraScale.Dashboard.Shared.Components;
 
-/// <summary>Dotted world map overlay: renders highlight pins for TerraScale
-/// regions on top of /brand/region-map.svg. Coordinates are projections from
-/// dotted-map (vanDerGrinten, 136x80) — regenerate with
-/// tools/generate-region-map.mjs, never edit by hand.</summary>
+/// <summary>Shared dotted-map component. Every region map in the dashboard —
+/// the onboarding project step, the organization project forms, the database
+/// create dialog, and the decorative auth backdrop — renders through here, so
+/// the frame, dotted canvas, pins, hover labels, and coordinate table can
+/// never drift apart. Coordinates are dotted-map (vanDerGrinten, 136x80)
+/// projections — regenerate with tools/generate-region-map.mjs, never edit by
+/// hand.</summary>
 public static class RegionMap
 {
     public const double Width = 136;
     public const double Height = 80;
 
-    private sealed record Pin(string Oci, double X, double Y);
+    /// <summary>How the pins accept input: one radio (onboarding), many
+    /// checkboxes (project placement), or none (read-only display).</summary>
+    public enum Selection
+    {
+        None,
+        Single,
+        Multiple,
+    }
 
-    private static readonly Dictionary<string, Pin> Regions = new()
+    /// <summary>One pin on the map canvas. X/Y are the dotted-map units;
+    /// Country/LatencyMs feed the hover label.</summary>
+    public sealed record Pin(
+        string Code,
+        string Name,
+        string Country,
+        int LatencyMs,
+        double X,
+        double Y,
+        bool Selected = false,
+        bool Disabled = false);
+
+    private sealed record Projection(string Oci, double X, double Y);
+
+    private static readonly Dictionary<string, Projection> Regions = new()
     {
         ["SFO"] = new("legacy", 21, 28.58),
         ["GRU"] = new("sa-saopaulo-1", 50, 59.76),
@@ -53,51 +79,167 @@ public static class RegionMap
         ["MEL"] = new("ap-melbourne-1", 123.5, 67.55),
     };
 
-    /// <summary>Region overlay for the auth map: animated connection arcs
-    /// (inline SVG) plus fixed-size pulsing pins (HTML, percent-positioned so
-    /// they never scale with the map). Unknown codes are skipped.</summary>
+    /// <summary>Projected 136x80 coordinates for a region code (matched
+    /// case-insensitively), or null when the map has no pin. Shared so the
+    /// onboarding region catalog keeps no second copy of the pin table.</summary>
+    public static (double X, double Y)? Coordinates(string code) =>
+        Regions.GetValueOrDefault(code.ToUpperInvariant()) is { } pin ? (pin.X, pin.Y) : null;
+
+    /// <summary>Renders the shared region map: the dotted canvas plus a pin per
+    /// region with its hover label (country flag, name, round-trip latency).
+    /// <see cref="Selection.Single"/> renders a radiogroup, <see cref="Selection.Multiple"/>
+    /// a checkbox group, and <see cref="Selection.None"/> a read-only map. Every
+    /// mode also emits an sr-only region list, keeping a non-map control as the
+    /// canonical, accessible description of the selection.</summary>
+    public static HtmlString Picker(
+        IReadOnlyList<Pin> pins,
+        Selection selection = Selection.Multiple,
+        string name = "regions",
+        string? ariaLabel = null,
+        string? ariaLabelledBy = null)
+    {
+        var html = new StringBuilder();
+        var role = selection switch
+        {
+            Selection.Single => " role=\"radiogroup\"",
+            Selection.Multiple => " role=\"group\"",
+            _ => "",
+        };
+        html.Append("<div class=\"ts-region-frame\"").Append(role);
+        if (ariaLabel is { Length: > 0 })
+        {
+            html.Append(" aria-label=\"").Append(Escape(ariaLabel)).Append('"');
+        }
+
+        if (ariaLabelledBy is { Length: > 0 })
+        {
+            html.Append(" aria-labelledby=\"").Append(Escape(ariaLabelledBy)).Append('"');
+        }
+
+        html.Append('>');
+        html.Append("<img class=\"ts-region-surface\" src=\"")
+            .Append(AssetUrls.Url("/brand/region-map.svg"))
+            .Append("\" alt=\"\" decoding=\"async\" />");
+
+        foreach (var pin in pins)
+        {
+            // Pins in the northern third flip the hover label below the marker
+            // so the frame's overflow clip cannot cut it off at the top edge;
+            // pins near the side edges anchor the label to that edge instead of
+            // centring it past the clip.
+            var edge = pin.X / Width;
+            var classes = "ts-region-marker"
+                + (pin.Disabled ? " ts-region-marker-disabled" : "")
+                + (selection == Selection.None && pin.Selected ? " ts-region-marker-selected" : "")
+                + (selection == Selection.None ? " ts-region-marker-readonly" : "")
+                + (pin.Y < Height / 3 ? " ts-region-marker-label-below" : "")
+                + (edge < 0.25 ? " ts-region-marker-label-start" : "")
+                + (edge > 0.75 ? " ts-region-marker-label-end" : "");
+            var tag = selection == Selection.None ? "span" : "label";
+
+            html.Append('<').Append(tag).Append(" class=\"").Append(classes)
+                .Append("\" style=\"left:").Append(Percent(pin.X, Width))
+                .Append("%;top:").Append(Percent(pin.Y, Height)).Append("%\">");
+
+            if (selection != Selection.None)
+            {
+                html.Append("<input class=\"ts-region-marker-input\" type=\"")
+                    .Append(selection == Selection.Single ? "radio" : "checkbox")
+                    .Append("\" name=\"").Append(Escape(name))
+                    .Append("\" value=\"").Append(Escape(pin.Code))
+                    .Append("\" aria-label=\"").Append(Escape(Describe(pin))).Append('"');
+                if (pin.Selected) html.Append(" checked");
+                if (pin.Disabled) html.Append(" disabled");
+                html.Append(" />");
+            }
+
+            html.Append("<span class=\"ts-region-marker-dot\" aria-hidden=\"true\"></span>");
+            html.Append("<span class=\"ts-region-marker-label\" aria-hidden=\"true\">");
+            if (pin.Country is { Length: > 0 })
+            {
+                html.Append("<img class=\"ts-region-marker-flag\" src=\"")
+                    .Append(AssetUrls.Url($"/brand/flags/{pin.Country.ToLowerInvariant()}.svg"))
+                    .Append("\" alt=\"\" decoding=\"async\" />");
+            }
+
+            html.Append("<span class=\"ts-region-marker-label-name\">").Append(Escape(pin.Name)).Append("</span>")
+                .Append("<span class=\"ts-region-marker-label-ping\">").Append(pin.LatencyMs).Append(" ms</span>")
+                .Append("</span>")
+                .Append("</").Append(tag).Append('>');
+        }
+
+        html.Append("</div>");
+        html.Append("<ul class=\"ts-sr-only ts-region-list\" aria-label=\"Regions\">");
+        foreach (var pin in pins)
+        {
+            html.Append("<li>").Append(Escape(pin.Name))
+                .Append(" (").Append(pin.Code.ToUpperInvariant()).Append(") — ")
+                .Append(Status(pin)).Append("</li>");
+        }
+
+        html.Append("</ul>");
+        return new HtmlString(html.ToString());
+    }
+
+    /// <summary>Decorative overlay for the auth backdrop: animated connection
+    /// arcs plus fixed-size pulsing nodes (HTML, percent-positioned so they
+    /// never scale with the map). Not a form control. Unknown codes are
+    /// skipped.</summary>
     public static HtmlString Highlight(IReadOnlyCollection<string> codes)
     {
-        var pins = codes.Select(code => (code, pin: Regions.GetValueOrDefault(code)))
+        var nodes = codes.Select(code => (code, pin: Regions.GetValueOrDefault(code)))
             .Where(t => t.pin is not null)
             .Select(t => (t.code, pin: t.pin!))
             .ToList();
-        if (pins.Count == 0) return HtmlString.Empty;
+        if (nodes.Count == 0) return HtmlString.Empty;
 
         var html = new StringBuilder()
-            .Append("<svg class=\"ts-region-pins\" viewBox=\"0 0 ")
+            .Append("<svg class=\"ts-region-overlay\" viewBox=\"0 0 ")
             .Append(Width).Append(' ').Append(Height)
             .Append("\" preserveAspectRatio=\"xMidYMid meet\" aria-hidden=\"true\">");
-        for (var i = 0; i < pins.Count; i++)
+        for (var i = 0; i < nodes.Count; i++)
         {
-            var from = pins[i].pin;
-            var to = pins[(i + 1) % pins.Count].pin;
+            var from = nodes[i].pin;
+            var to = nodes[(i + 1) % nodes.Count].pin;
             html.Append("<path class=\"ts-region-arc\" style=\"animation-delay:").Append(i * 0.45).Append("s\" d=\"")
                 .Append(ArcPath(from, to))
                 .Append("\" />");
         }
+
         html.Append("</svg>");
-        for (var i = 0; i < pins.Count; i++)
+        for (var i = 0; i < nodes.Count; i++)
         {
-            var (code, pin) = pins[i];
-            var left = (pin.X / Width * 100).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
-            var top = (pin.Y / Height * 100).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
-            html.Append("<span class=\"ts-region-pin\" id=\"ts-region-").Append(code)
+            var (code, pin) = nodes[i];
+            html.Append("<span class=\"ts-region-node\" id=\"ts-region-").Append(code)
                 .Append("\" data-oci=\"").Append(pin.Oci)
-                .Append("\" style=\"left:").Append(left).Append("%;top:").Append(top).Append("%\">")
-                .Append("<span class=\"ts-region-pin-ring\" style=\"animation-delay:").Append((i * 0.3).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append("s\"></span>")
-                .Append("<span class=\"ts-region-pin-core\"></span>")
+                .Append("\" style=\"left:").Append(Percent(pin.X, Width))
+                .Append("%;top:").Append(Percent(pin.Y, Height)).Append("%\">")
+                .Append("<span class=\"ts-region-node-ring\" style=\"animation-delay:")
+                .Append((i * 0.3).ToString("0.##", CultureInfo.InvariantCulture)).Append("s\"></span>")
+                .Append("<span class=\"ts-region-node-core\"></span>")
                 .Append("</span>");
         }
+
         return new HtmlString(html.ToString());
     }
 
-    private static string ArcPath(Pin from, Pin to)
+    private static string Describe(Pin pin) =>
+        $"{pin.Name} ({pin.Code.ToUpperInvariant()}) — {Status(pin)}, {pin.LatencyMs} ms";
+
+    private static string Status(Pin pin) =>
+        pin.Disabled ? "Unavailable" : pin.Selected ? "Selected" : "Available";
+
+    private static string ArcPath(Projection from, Projection to)
     {
         var midX = (from.X + to.X) / 2;
         var length = Math.Sqrt(Math.Pow(to.X - from.X, 2) + Math.Pow(to.Y - from.Y, 2));
         var lift = Math.Max(3, length * 0.18);
         var controlY = Math.Min(from.Y, to.Y) - lift - Math.Abs(to.X - from.X) * 0.04;
-        return $"M {from.X.ToString("0.####")} {from.Y.ToString("0.####")} Q {midX.ToString("0.####")} {controlY.ToString("0.####")} {to.X.ToString("0.####")} {to.Y.ToString("0.####")}";
+        return $"M {from.X.ToString("0.####", CultureInfo.InvariantCulture)} {from.Y.ToString("0.####", CultureInfo.InvariantCulture)} Q {midX.ToString("0.####", CultureInfo.InvariantCulture)} {controlY.ToString("0.####", CultureInfo.InvariantCulture)} {to.X.ToString("0.####", CultureInfo.InvariantCulture)} {to.Y.ToString("0.####", CultureInfo.InvariantCulture)}";
     }
+
+    private static string Percent(double value, double total) =>
+        (value / total * 100).ToString("0.####", CultureInfo.InvariantCulture);
+
+    private static string Escape(string value) => WebUtility.HtmlEncode(value);
 }

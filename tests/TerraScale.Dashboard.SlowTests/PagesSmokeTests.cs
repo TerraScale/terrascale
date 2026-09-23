@@ -16,8 +16,11 @@ public sealed class PagesSmokeTests
         await Assert.That(page.StatusCode).IsEqualTo(200);
         await Assert.That(page.Heading).IsEqualTo("Overview");
         await Assert.That(page.Contains("Workspace metrics")).IsTrue();
+        await Assert.That(page.Text.Contains("Project users 3 users with project access", StringComparison.Ordinal)).IsTrue();
         await Assert.That(page.Contains("Getting started")).IsTrue();
         await Assert.That(page.Contains("Connect your AI or platform")).IsTrue();
+        await Assert.That(page.Html.IndexOf("<section class=\"ts-panel\" aria-label=\"Activity\">", StringComparison.Ordinal))
+            .IsGreaterThan(page.Html.IndexOf("<h2 class=\"ts-panel-title\">Getting started</h2>", StringComparison.Ordinal));
     }
 
     [Test]
@@ -114,15 +117,16 @@ public sealed class PagesSmokeTests
     }
 
     [Test]
-    public async Task AccessPageRendersMembersSessionsAndInvitations()
+    public async Task AccessPageRendersMembersAndInvitations()
     {
         using var app = new DashboardTestApp();
         using var client = app.CreateDemoClient();
         var page = await app.GetPageAsync(client, "/access");
         await Assert.That(page.StatusCode).IsEqualTo(200);
         await Assert.That(page.Heading).IsEqualTo("Team");
+        await Assert.That(page.Contains("ts-summary-term")).IsFalse();
         await Assert.That(page.Contains("Organization members")).IsTrue();
-        await Assert.That(page.Contains("Current session access")).IsTrue();
+        await Assert.That(page.Contains("Current session access")).IsFalse();
         await Assert.That(page.Contains("Invitations and role changes")).IsTrue();
         await Assert.That(page.Contains("Ana Souza")).IsTrue();
     }
@@ -151,6 +155,8 @@ public sealed class PagesSmokeTests
         await Assert.That(page.Contains("Inbox")).IsTrue();
         await Assert.That(page.Contains("API key expiring soon")).IsTrue();
         await Assert.That(page.Contains("Mark all read")).IsTrue();
+        await Assert.That(page.Contains("2 unread")).IsTrue();
+        await Assert.That(page.Contains("Resolved")).IsTrue();
     }
 
     [Test]
@@ -168,15 +174,16 @@ public sealed class PagesSmokeTests
     }
 
     [Test]
-    public async Task OrganizationsNewPageRendersWizard()
+    public async Task OrganizationPageRendersTheCreateOrganizationModal()
     {
         using var app = new DashboardTestApp();
         using var client = app.CreateDemoClient();
-        var page = await app.GetPageAsync(client, "/organizations/new");
+        var page = await app.GetPageAsync(client, "/organization");
         await Assert.That(page.StatusCode).IsEqualTo(200);
-        await Assert.That(page.Heading).IsEqualTo("Create organization");
-        await Assert.That(page.Contains("Business organizations have their own billing and never use the Personal allowance.")).IsTrue();
-        await Assert.That(page.Contains("Organization name")).IsTrue();
+        // The wizard's markup and step screens are covered in depth by
+        // NewOrganizationWizardTests; this smoke entry pins the page's copy.
+        await Assert.That(page.Contains("Create organization")).IsTrue();
+        await Assert.That(page.Contains("Business organizations have their own paid billing and never use the Personal allowance.")).IsTrue();
     }
 
     [Test]
@@ -239,35 +246,28 @@ public sealed class PagesSmokeTests
         using var app = new DashboardTestApp();
         using var client = app.CreateDemoClient();
 
-        var pages = new (string Path, string Copy)[]
+        var paths = new[]
         {
-            ("/auth", "Your application's identity workspace."),
-            ("/auth/users", "Manage your application's users, profiles and access."),
-            ("/auth/sessions", "Inspect and revoke application sessions."),
-            ("/auth/organizations", "Group application users into customer organizations."),
-            ("/auth/memberships", "Assign users to organizations with an explicit role."),
-            ("/auth/invitations", "Prepare invitations to your application organizations."),
-            ("/auth/domains", "Configure organization enrollment by email domain."),
-            ("/auth/connections", "Configure social and enterprise sign-in with OpenID Connect or SAML."),
-            ("/auth/directories", "Prepare SCIM 2.0 endpoints for workforce provisioning."),
-            ("/auth/clients", "Register web apps, public clients and service integrations."),
-            ("/auth/templates", "Define custom claims for tokens minted by ts-auth."),
-            ("/auth/keys", "Issue scoped credentials for the ts-auth management API."),
-            ("/auth/webhooks", "Configure signed identity event delivery to your application."),
-            ("/auth/deliveries", "Inspect delivery outcomes and queue failed events for replay."),
-            ("/auth/audit", "Review changes made to application identities and configuration."),
-            ("/auth/billing", "Review identity usage and your instance plan."),
-            ("/auth/quickstart", "Connect your application using the ts-auth management API."),
-            ("/auth/settings", "Instance branding and hosted sign-in defaults."),
+            "/auth", "/auth/users", "/auth/sessions", "/auth/organizations", "/auth/memberships",
+            "/auth/invitations", "/auth/domains", "/auth/connections", "/auth/directories",
+            "/auth/clients", "/auth/templates", "/auth/keys", "/auth/webhooks",
+            "/auth/deliveries", "/auth/audit", "/auth/billing", "/auth/quickstart", "/auth/settings",
         };
 
-        foreach (var (path, copy) in pages)
+        foreach (var path in paths)
         {
             var page = await app.GetPageAsync(client, path);
             await Assert.That(page.StatusCode).IsEqualTo(200);
             await Assert.That(page.Heading).IsEqualTo("Authentication");
-            await Assert.That(page.Contains(copy)).IsTrue();
+            await Assert.That(page.Contains("<h1 class=\"ts-page-title-24\">")).IsTrue();
+            await Assert.That(page.Contains("ts-auth-header")).IsFalse();
+            await Assert.That(page.Contains("IDENTITY PLATFORM")).IsFalse();
         }
+
+        var overview = await app.GetPageAsync(client, "/auth");
+        await Assert.That(overview.Contains("Current session access")).IsTrue();
+        await Assert.That(overview.Contains("View session access")).IsTrue();
+        await Assert.That(overview.Contains("organization:owner")).IsTrue();
     }
 
     [Test]
@@ -289,6 +289,11 @@ public sealed class PagesSmokeTests
         var page = await app.GetPageAsync(client, "/usage");
         await Assert.That(page.StatusCode).IsEqualTo(200);
         await Assert.That(page.Heading).IsEqualTo("Usage");
+        await Assert.That(page.Contains("Saved project databases")).IsTrue();
+        await Assert.That(page.Contains("Logical storage")).IsTrue();
+        await Assert.That(page.Contains("Usage data is partially loaded")).IsFalse();
+        await Assert.That(page.Contains("Billing dimensions")).IsFalse();
+        await Assert.That(page.Contains("Organization usage")).IsFalse();
         await Assert.That(page.Contains("Save spending controls")).IsTrue();
         await Assert.That(page.Contains("Monthly organization spending cap in USD")).IsTrue();
     }

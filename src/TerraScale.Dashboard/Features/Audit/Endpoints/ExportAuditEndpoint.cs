@@ -28,7 +28,8 @@ public sealed class ExportAuditEndpoint(DashboardStore store) : EndpointWithoutR
             action: action,
             severity: severity,
             range: range,
-            search: search);
+            search: search,
+            retentionDays: store.AuditRetentionDays);
 
         var timestamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd'T'HH-mm-ss-fff'Z'", System.Globalization.CultureInfo.InvariantCulture);
         var projectSegment = store.ActiveProjectId.Length is 0 ? "current-project" : store.ActiveProjectId;

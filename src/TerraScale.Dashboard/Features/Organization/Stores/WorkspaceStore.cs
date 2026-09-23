@@ -14,18 +14,62 @@ public sealed partial class DashboardStore
     public bool CanProvisionResources => !ActiveOrganization.Archived
         && (FreeAllowanceEligible || ActiveOrganization.BillingStatus == "active");
 
+    /// <summary>The pending Business organization the create-organization
+    /// wizard is mid-way through: step 1 created it with billing still required,
+    /// so its payment step may only run against this tenant.</summary>
+    public bool HasPendingBusinessOrganization => ActiveOrganization
+        is { Kind: OrganizationKind.Business, Archived: false, BillingStatus: "billing_required" };
+
+    /// <summary>The active workspace is a Business organization whose billing is
+    /// already active: the state its project step requires.</summary>
+    public bool HasBillingActiveBusinessOrganization => ActiveOrganization
+        is { Kind: OrganizationKind.Business, Archived: false, BillingStatus: "active" };
+
+    private bool IsAvailablePaidPlan(string planId) =>
+        Plans.Any(p => p.Id == planId && p.MonthlyUsd > 0 && p.Status == "Active");
+
+    /// <summary>Bills the pending organization on the plan its payment screen
+    /// selected. Returns false when there is no pending organization or the plan
+    /// is not an available paid plan. The guard and the write share one captured
+    /// reference under the world lock, so a concurrent switch or payment
+    /// completion cannot retarget the write. The billing-catalog key is stored
+    /// alongside the platform plan so a later Stripe checkout resumes the plan
+    /// the user picked instead of the seeded default.</summary>
+    public bool SetPendingOrganizationPlan(string planId, string planKey = "")
+    {
+        lock (World)
+        {
+            var organization = ActiveOrganization;
+            if (organization is not { Kind: OrganizationKind.Business, Archived: false, BillingStatus: "billing_required" }
+                || !IsAvailablePaidPlan(planId))
+            {
+                return false;
+            }
+
+            organization.PlanId = planId;
+            if (StripePaymentOptions.NormalizePlan(planKey) is { Length: > 0 } normalizedPlanKey)
+            {
+                organization.PlanKey = normalizedPlanKey;
+            }
+
+            return true;
+        }
+    }
+
     public string? CreateBusinessOrganization(string name, string planId, string planKey = "")
     {
         name = name.Trim();
-        if (name.Length is 0 or > 128 || !Plans.Any(p => p.Id == planId && p.MonthlyUsd > 0 && p.Status == "Active"))
+        if (name.Length is 0 or > 128 || !IsAvailablePaidPlan(planId))
             return "Choose a name and an available paid plan.";
         lock (World)
         {
-            // Repeated form submissions resume the unfinished setup.
+            // Repeated form submissions resume the unfinished setup, regardless
+            // of the plan selected later on the payment screen.
             var pending = World.Organizations.Values.FirstOrDefault(o => o.Kind == OrganizationKind.Business
-                && o.BillingStatus == "billing_required" && o.ActiveOrganizationName == name && o.PlanId == planId);
+                && o.BillingStatus == "billing_required" && o.ActiveOrganizationName == name);
             if (pending is not null)
             {
+                pending.PlanId = planId;
                 World.ActiveOrganizationId = pending.Id;
                 return null;
             }

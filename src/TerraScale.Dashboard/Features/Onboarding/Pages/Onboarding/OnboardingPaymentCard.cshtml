@@ -1,0 +1,81 @@
+@inherits RazorSlice<OnboardingPaymentCardView>
+<div class="ts-onboarding-card" data-signals="{ plan: 'starter', interval: 'monthly' }">
+    <header class="ts-onboarding-step-header">
+        <h2 class="ts-onboarding-step-title">Register a payment method</h2>
+        <p class="ts-onboarding-step-subtitle">@Model.Subtitle</p>
+        <div class="ts-onboarding-step-actions">
+            <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.CreditCard(20)</span>
+            <span class="ts-onboarding-interval ts-onboarding-interval-header" role="group" aria-label="Billing interval">
+                <button type="button" class="ts-onboarding-interval-option" aria-pressed="true" data-attr:aria-pressed="$interval === 'monthly' ? 'true' : 'false'" data-on:click="$interval = 'monthly'">Monthly</button>
+                <button type="button" class="ts-onboarding-interval-option" aria-pressed="false" data-attr:aria-pressed="$interval === 'annual' ? 'true' : 'false'" data-on:click="$interval = 'annual'">Annual <span class="ts-onboarding-interval-badge">2 months free</span></button>
+            </span>
+        </div>
+    </header>
+    <form class="ts-onboarding-content" method="post" action="@Model.Action">
+        <input type="hidden" name="step" value="@Model.StepValue" />
+        @* The selected plan and billing interval are client-side signals; mirror
+           them into the posted form so billing never diverges from the card the
+           user chose and Stripe Checkout receives the matching interval. *@
+        <input type="hidden" name="plan" data-bind="plan" />
+        <input type="hidden" name="interval" data-bind="interval" />
+        @if (Model.StepDone)
+        {
+            <div class="ts-alert ts-alert-success" role="status">
+                <span class="ts-onboarding-alert-icon" aria-hidden="true">@Icons.CircleCheck(19)</span>
+                <div class="ts-onboarding-alert-stack">
+                    <span class="ts-alert-title">Payment method registered</span>
+                    <span class="ts-alert-body">@Model.SuccessBody</span>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="ts-onboarding-plans" role="radiogroup" aria-label="Billing plan">
+                @foreach (var plan in Model.Plans)
+                {
+                    <button type="button" role="radio" class="ts-onboarding-plan ts-onboarding-plan-@plan.Key" aria-checked="@(plan.Key == "starter" ? "true" : "false")" data-attr:aria-checked="$plan === '@plan.Key' ? 'true' : 'false'" data-on:click="$plan = '@plan.Key'">
+                        <span class="ts-onboarding-plan-header">
+                            <span class="ts-onboarding-plan-name">@plan.Name</span>
+                            <span class="ts-onboarding-plan-check" aria-hidden="true">@Icons.Check(13)</span>
+                        </span>
+                        <span class="ts-onboarding-plan-description">@plan.Description</span>
+                        <span class="ts-onboarding-plan-price-row" data-show="$interval === 'monthly'">
+                            <span class="ts-onboarding-plan-strike" aria-hidden="true">$@(plan.MonthlyUsd.ToString("0"))</span>
+                            <span class="ts-onboarding-plan-per"> / month</span>
+                        </span>
+                        <span class="ts-onboarding-plan-price-row" data-show="$interval === 'annual'">
+                            <span class="ts-onboarding-plan-strike" aria-hidden="true">$@(plan.AnnualUsd.ToString("0"))</span>
+                            <span class="ts-onboarding-plan-per"> / year</span>
+                        </span>
+                        <span class="ts-onboarding-plan-trial">$0.00</span>
+                        <span class="ts-onboarding-plan-divider" aria-hidden="true"></span>
+                        <span class="ts-onboarding-plan-features">
+                            @foreach (var feature in plan.Features)
+                            {
+                                <span class="ts-onboarding-plan-feature">
+                                    <span class="ts-onboarding-plan-feature-check" aria-hidden="true">@Icons.Check(11)</span>
+                                    <span>@feature</span>
+                                </span>
+                            }
+                        </span>
+                    </button>
+                }
+            </div>
+            <div class="ts-onboarding-interval-switch">
+                <span class="ts-onboarding-interval-switch-label">Billing interval</span>
+                <span class="ts-onboarding-interval" role="group" aria-label="Billing interval">
+                    <button type="button" class="ts-onboarding-interval-option" aria-pressed="true" data-attr:aria-pressed="$interval === 'monthly' ? 'true' : 'false'" data-on:click="$interval = 'monthly'">Monthly</button>
+                    <button type="button" class="ts-onboarding-interval-option" aria-pressed="false" data-attr:aria-pressed="$interval === 'annual' ? 'true' : 'false'" data-on:click="$interval = 'annual'">Annual <span class="ts-onboarding-interval-badge">2 months free</span></button>
+                </span>
+            </div>
+            <p class="ts-onboarding-provider-notice">@Model.Notice</p>
+        }
+        <div class="ts-onboarding-form-footer">
+            @if (Model.AllowBypass)
+            {
+                <button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit" name="bypass" value="1">@Icons.ArrowRight(20) Continue without payment</button>
+            }
+            <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.CreditCard(20) Continue to secure payment setup</button>
+        </div>
+    </form>
+</div>

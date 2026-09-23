@@ -48,9 +48,6 @@ public sealed record NavRoute(
         new(RouteId.Notifications, "/notifications", "Notifications", "Notifications", "Actionable inbox",
             "Bounded notification center for API key expiry, pending invitations, backup issues, and quota thresholds.",
             "Bell", "Dismiss read", "Notification settings", ShowInNav: false),
-        new(RouteId.Settings, "/settings", "Settings", "Settings", "Project controls",
-            "Security controls, webhook endpoints, SSO, SCIM, backups, and project configuration.",
-            "Settings", "Save settings", "Create webhook"),
         new(RouteId.Profile, "/profile", "Profile", "Profile", "Account",
             "Account profile, preferences, sessions, trusted devices, and notification delivery choices.",
             "UserRound", "Save profile", "Manage sessions", ShowInNav: false),
@@ -81,7 +78,11 @@ public sealed record NavRoute(
             "LockKeyhole", "Review pricing", AdminOnly: true),
     ];
 
-    public static readonly ImmutableArray<NavRoute> All = [.. Main, .. Admin];
+    private static readonly NavRoute Settings = new(RouteId.Settings, "/settings", "Settings", "Settings", "Project controls",
+        "Security controls, webhook endpoints, SSO, SCIM, backups, and project configuration.",
+        "Settings", "Save settings", "Create webhook");
+
+    public static readonly ImmutableArray<NavRoute> All = [.. Main, .. Admin, Settings];
 
     public static NavRoute? Find(string href) => All.FirstOrDefault(r => r.Href == href);
 

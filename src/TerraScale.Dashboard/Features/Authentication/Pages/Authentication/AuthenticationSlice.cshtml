@@ -1,14 +1,87 @@
 @inherits RazorSlice<AuthenticationPageModel>
-@{ var shell = Model.Shell; var empty = Model.Resources.Length == 0; }
+@{ var shell = Model.Shell; }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-auth-console">
-  <section class="ts-auth-header ts-panel">
-    <div><div class="ts-eyebrow">@Icons.ShieldCheck(14) IDENTITY PLATFORM</div><h2 class="ts-auth-hero-title">@Model.Current.Title</h2><p class="ts-page-desc">@((IHtmlContent)new HtmlString(Model.Current.Description))</p><div class="ts-auth-instance-line"><span class="ts-meta">Project instance</span><code>@Model.InstanceSlug</code><span class="ts-badge ts-badge-success">Connected</span></div></div>
-    <div class="ts-auth-header-actions"><a class="ts-btn ts-btn-secondary" href="/auth/quickstart">@Icons.Terminal(15) Quickstart</a><a class="ts-btn ts-btn-primary" href="/auth/settings">@Icons.Settings(15) Instance settings</a></div>
-  </section>
+  <h1 class="ts-page-title-24">@Model.Current.Title</h1>
   @if (Model.Toast is { Length: > 0 } toast) { <div class="ts-alert ts-alert-success" role="status">@Icons.CircleCheck(16)<span>@toast</span></div> }
   @if (Model.Error is { Length: > 0 } error) { <div class="ts-alert ts-alert-danger" role="alert">@Icons.CircleAlert(16)<span>@error</span></div> }
-  @if (Model.Section == "overview") { @Overview(Model) }
+  @if (Model.Section == "overview")
+  {
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h2 class="ts-panel-title">Current session access</h2>
+                <p class="ts-panel-subtitle">Claims returned by auth</p>
+            </div>
+            <div class="ts-padded">
+                <button type="button" class="ts-btn ts-btn-outline" aria-haspopup="dialog" data-on:click="document.getElementById('auth-session-dialog').showModal()">
+                    @Icons.ShieldCheck(16)
+                    View session access
+                </button>
+                <dialog class="ts-dialog" id="auth-session-dialog">
+                    <div class="ts-dialog-content">
+                        <div class="ts-dialog-header">
+                            <h3 class="ts-dialog-title">Current session access</h3>
+                            <p class="ts-dialog-description">Claims returned by auth</p>
+                        </div>
+                        <div class="ts-stack-lg">
+                            <div class="ts-stack-sm">
+                                <h4 class="ts-access-claim-title">@Icons.ShieldCheck(15) Roles</h4>
+                                @if (Model.Roles.Count == 0)
+                                {
+                                    <div class="ts-empty-state">
+                                        <div class="ts-empty-state-content">
+                                            <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
+                                            <span class="ts-empty-state-title">No roles returned</span>
+                                            <p class="ts-empty-state-desc">No claim values were returned.</p>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="ts-access-claim-values">
+                                        @foreach (var role in Model.Roles)
+                                        {
+                                            <span class="ts-badge ts-badge-neutral">@role</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                            <div class="ts-stack-sm">
+                                <h4 class="ts-access-claim-title">@Icons.ShieldCheck(15) Permissions</h4>
+                                @if (Model.Permissions.Count == 0)
+                                {
+                                    <div class="ts-empty-state">
+                                        <div class="ts-empty-state-content">
+                                            <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
+                                            <span class="ts-empty-state-title">No permissions returned</span>
+                                            <p class="ts-empty-state-desc">No claim values were returned.</p>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="ts-access-claim-values">
+                                        @foreach (var permission in Model.Permissions)
+                                        {
+                                            <span class="ts-badge ts-badge-neutral">@permission</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                            <div class="ts-access-status-success">
+                                @Icons.ShieldCheck(16)
+                                <span>Access is enforced by API authorization, not Dashboard UI state.</span>
+                            </div>
+                        </div>
+                        <form class="ts-dialog-footer" method="dialog">
+                            <button class="ts-btn ts-btn-secondary" type="submit">Close</button>
+                        </form>
+                    </div>
+                </dialog>
+            </div>
+        </section>
+    @Overview(Model)
+  }
   else if (Model.Section == "settings") { @Settings(Model) }
   else if (Model.Section == "quickstart") { @Quickstart(Model) }
   else if (Model.Section == "billing") { @Billing(Model) }

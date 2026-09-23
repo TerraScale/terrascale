@@ -46,10 +46,9 @@ single-selector rules may stay on one line.
 (the tokens below) always beat layered ones. */
 @layer reset, base, layout, components, features, utilities;
 
-/* Same-origin MPA transitions are progressive enhancement. */
-@view-transition {
-  navigation: auto;
-}
+/* Navigation keeps its in-flight progress indicator (html[data-nav-pending])
+but deliberately does not opt into cross-document view transitions: the 160 ms
+cross-fade replayed on every page change and made the dashboard flicker. */
 
 /* 1. Tokens =============================================================== */
 
@@ -193,12 +192,6 @@ single-selector rules may stay on one line.
 @layer features {
   /* ts-auth control plane ------------------------------------------------ */
   .ts-auth-console { gap: var(--ts-xl); }
-  .ts-auth-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ts-xl); padding: var(--ts-xl); background: radial-gradient(600px 220px at 0 0, rgba(var(--ts-accent-rgb), .16), transparent 70%), var(--ts-glass-bg); }
-  .ts-auth-header > div:first-child { min-width: 0; }
-  .ts-auth-header-actions { display: flex; flex-wrap: wrap; gap: var(--ts-sm); justify-content: flex-end; }
-  .ts-auth-hero-title { margin: 8px 0 4px; font-size: clamp(1.6rem, 3vw, 2.35rem); letter-spacing: -.025em; }
-  .ts-auth-instance-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: var(--ts-md); }
-  .ts-auth-instance-line code { padding: 4px 8px; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-control); color: var(--ts-ink); background: var(--ts-input-fill); font-family: var(--ts-font-mono); font-size: var(--ts-fs-meta); }
   .ts-auth-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--ts-lg); }
   .ts-auth-stat-card { display: grid; gap: 4px; min-width: 0; padding: var(--ts-lg); border: 1px solid var(--ts-line); border-radius: var(--ts-radius-panel); color: var(--ts-ink); background: var(--ts-glass-bg); text-decoration: none; transition: transform var(--ts-t-control) var(--ts-ease), border-color var(--ts-t-control) var(--ts-ease), background-color var(--ts-t-control) var(--ts-ease); }
   .ts-auth-stat-card:hover { border-color: color-mix(in oklab, var(--ts-info) 55%, var(--ts-line)); background: var(--ts-fill-hover); transform: translateY(-2px); }
@@ -255,9 +248,6 @@ single-selector rules may stay on one line.
   .ts-auth-console .ts-table th:last-child, .ts-auth-console .ts-table td:last-child { width: 1%; white-space: nowrap; }
   @media (max-width: 64rem) { .ts-auth-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 48rem) {
-    .ts-auth-header { flex-direction: column; }
-    .ts-auth-header-actions { width: 100%; justify-content: flex-start; }
-    .ts-auth-header-actions .ts-btn { flex: 1 1 auto; }
     .ts-auth-stat-grid { grid-template-columns: 1fr 1fr; gap: var(--ts-sm); }
     .ts-auth-stat-card { padding: var(--ts-md); }
     .ts-auth-stat-card strong { font-size: 1.6rem; }
@@ -307,6 +297,9 @@ single-selector rules may stay on one line.
     scrollbar-gutter: stable;
   }
 
+  /* In-flight loading indicator: a thin accent bar shown while the next
+     document is on the wire. This is the only navigation feedback; it is not a
+     transition, so it does not cross-fade the page. */
   html[data-nav-pending]::before {
     background: var(--ts-accent);
     content: "";
@@ -317,19 +310,6 @@ single-selector rules may stay on one line.
     width: 35%;
     z-index: var(--ts-z-toast);
     animation: ts-route-progress 1.2s var(--ts-ease) infinite;
-  }
-
-  @supports (view-transition-name: none) {
-    .ts-sidebar {
-      view-transition-name: ts-sidebar;
-    }
-
-    ::view-transition-old(root),
-    ::view-transition-new(root),
-    ::view-transition-group(ts-sidebar) {
-      animation-duration: 160ms;
-      animation-timing-function: ease-out;
-    }
   }
 
   body {
@@ -1785,6 +1765,7 @@ single-selector rules may stay on one line.
   .ts-sidebar-brand {
     display: flex;
     align-items: center;
+    justify-content: center;
     padding: var(--ts-xs);
     flex-shrink: 0;
   }
@@ -2060,12 +2041,6 @@ single-selector rules may stay on one line.
     min-width: 0;
   }
 
-  .ts-project-panel-header {
-    padding: var(--ts-sm) var(--ts-md);
-    border-bottom: 1px solid var(--ts-line);
-    font-weight: var(--ts-fw-semibold);
-  }
-
   .ts-project-panel-scroll {
     display: flex;
     flex-direction: column;
@@ -2118,19 +2093,23 @@ single-selector rules may stay on one line.
   }
 
   .ts-project-search {
-    display: flex;
-    align-items: center;
-    gap: var(--ts-xs);
+    position: relative;
+    width: 100%;
   }
 
   .ts-project-search .ts-input {
     height: 32px;
     min-height: 32px;
+    padding-right: 36px;
   }
 
   .ts-project-search svg {
+    position: absolute;
+    right: var(--ts-sm);
+    top: 50%;
+    transform: translateY(-50%);
     color: var(--ts-ink-muted);
-    flex-shrink: 0;
+    pointer-events: none;
   }
 
   .ts-project-list {
@@ -2576,6 +2555,7 @@ single-selector rules may stay on one line.
     to { background-position: -200% 0; }
   }
 
+  /* Bounded sweep for the in-flight loading bar (never a full-width crawl). */
   @keyframes ts-route-progress {
     0% { transform: scaleX(0.25); }
     70% { transform: scaleX(1); }
@@ -2583,16 +2563,6 @@ single-selector rules may stay on one line.
   }
 
   @media (prefers-reduced-motion: reduce) {
-    @view-transition {
-      navigation: none;
-    }
-
-    ::view-transition-group(*),
-    ::view-transition-old(*),
-    ::view-transition-new(*) {
-      animation: none !important;
-    }
-
     *,
     *::before,
     *::after {
@@ -2694,21 +2664,168 @@ single-selector rules may stay on one line.
     mask-image: radial-gradient(ellipse 98% 94% at 50% 50%, #000 0%, #000 76%, rgba(0, 0, 0, 0.5) 92%, transparent 100%);
   }
 
-  .ts-region-map {
+  /* Shared region map component (Shared/Components/RegionMap.cs): one frame,
+     one dotted surface, and one pin family for every region map in the
+     dashboard — the onboarding project step, the organization project forms,
+     the database create dialog, and the decorative auth backdrop. */
+  .ts-region-surface {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
     opacity: 0.78;
     filter: saturate(0.9);
+    pointer-events: none;
   }
 
-  .ts-region-pins {
+  .ts-region-frame {
+    position: relative;
+    width: 100%;
+    max-width: 504px;
+    aspect-ratio: 136 / 80;
+    margin-inline: auto;
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-panel);
+    background-color: var(--ts-surface-muted);
+    overflow: hidden;
+  }
+
+  .ts-region-marker {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    display: grid;
+    place-items: center;
+    height: 32px;
+    width: 32px;
+    border-radius: var(--ts-radius-pill);
+    cursor: pointer;
+  }
+
+  .ts-region-marker-readonly {
+    cursor: default;
+  }
+
+  .ts-region-marker-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .ts-region-marker-dot {
+    height: 14px;
+    width: 14px;
+    border: 2px solid var(--ts-surface);
+    border-radius: var(--ts-radius-pill);
+    background-color: var(--ts-ink-muted);
+    transition:
+      box-shadow var(--ts-t-fast) var(--ts-ease),
+      height var(--ts-t-fast) var(--ts-ease),
+      width var(--ts-t-fast) var(--ts-ease);
+  }
+
+  /* Hover, selection, and keyboard focus read the same: the marker grows into
+     the accent glow and the name label appears, so pointing at a region
+     identifies it instead of requiring a pixel-perfect hit on the small dot. */
+  .ts-region-marker:not(.ts-region-marker-disabled):hover .ts-region-marker-dot,
+  .ts-region-marker:has(.ts-region-marker-input:checked) .ts-region-marker-dot,
+  .ts-region-marker:has(.ts-region-marker-input:focus-visible) .ts-region-marker-dot,
+  .ts-region-marker-selected .ts-region-marker-dot {
+    height: 17px;
+    width: 17px;
+    background-color: var(--ts-accent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ts-accent) 35%, transparent);
+  }
+
+  .ts-region-marker:has(.ts-region-marker-input:focus-visible) {
+    box-shadow: var(--ts-focus-ring);
+  }
+
+  /* Hover label: country flag, region name, and round-trip latency;
+     pointer-events stay off so it can never shadow a neighbouring pin's hit
+     target. */
+  .ts-region-marker-label {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 2px);
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 7px;
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface);
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-medium);
+    line-height: 1.2;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity var(--ts-t-fast) var(--ts-ease);
+  }
+
+  .ts-region-marker-flag {
+    flex-shrink: 0;
+    height: 11px;
+    width: 16px;
+    border: 1px solid var(--ts-line);
+    border-radius: 2px;
+    object-fit: cover;
+  }
+
+  .ts-region-marker-label-ping {
+    color: var(--ts-ink-muted);
+    font-family: var(--ts-font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ts-region-marker:hover .ts-region-marker-label,
+  .ts-region-marker:has(.ts-region-marker-input:focus-visible) .ts-region-marker-label {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* Northern markers put the label under the dot so the frame's overflow clip
+     never cuts it off at the top edge. */
+  .ts-region-marker-label-below .ts-region-marker-label {
+    top: calc(100% + 2px);
+    bottom: auto;
+  }
+
+  /* Side markers anchor the label to that edge of the dot, so a wide label
+     (flag + name + latency) stays inside the clipped frame instead of being
+     centred past it. */
+  .ts-region-marker-label-start .ts-region-marker-label {
+    left: 0;
+    transform: none;
+  }
+
+  .ts-region-marker-label-end .ts-region-marker-label {
+    left: auto;
+    right: 0;
+    transform: none;
+  }
+
+  .ts-region-marker-disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  /* Decorative auth variant: animated connection arcs between hubs plus
+     fixed-size pulsing nodes (HTML, percent-positioned so they never scale
+     with the map, and never swallow clicks on controls beneath). */
+  .ts-region-overlay {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    /* decorative overlay: never swallow clicks on controls beneath */
     pointer-events: none;
   }
 
@@ -2723,14 +2840,14 @@ single-selector rules may stay on one line.
     animation: ts-line-flow 6s linear infinite;
   }
 
-  /* Pins are HTML so they stay 8px regardless of map scale. */
-  .ts-region-pin {
+  /* Nodes are HTML so they stay 8px regardless of map scale. */
+  .ts-region-node {
     position: absolute;
     height: 0;
     width: 0;
   }
 
-  .ts-region-pin-core {
+  .ts-region-node-core {
     position: absolute;
     left: 0;
     top: 0;
@@ -2745,7 +2862,7 @@ single-selector rules may stay on one line.
     0 0 28px rgba(var(--ts-accent-rgb), 0.58);
   }
 
-  .ts-region-pin-ring {
+  .ts-region-node-ring {
     position: absolute;
     left: 0;
     top: 0;
@@ -2860,19 +2977,8 @@ single-selector rules may stay on one line.
     color: var(--ts-ink);
   }
 
-  .ts-auth-submit-row {
-    display: flex;
-    flex-direction: row;
-    align-items: stretch;
-    gap: var(--ts-md);
-  }
-
   .ts-auth-submit {
-    flex: 1 1 0%;
-  }
-
-  .ts-auth-create {
-    flex-shrink: 0;
+    width: 100%;
   }
 
   .ts-auth-divider {
@@ -2960,6 +3066,9 @@ single-selector rules may stay on one line.
     border: 0;
     border-radius: 0;
     background: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .ts-login-column .ts-auth-locale-footer {
@@ -3424,44 +3533,6 @@ single-selector rules may stay on one line.
     white-space: nowrap;
   }
 
-  /* Create-dialog region map: v1 RegionMap compact readOnly (map over, static
-     dots; selected hubs grow and take the accent glow). The panel keeps the
-     136x80 map aspect so percent-positioned dots stay glued to the map. */
-  .ts-region-map-panel {
-    position: relative;
-    overflow: hidden;
-    aspect-ratio: 136 / 80;
-    min-height: 180px;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-  }
-
-  .ts-region-map-panel .ts-region-map {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0.9;
-  }
-
-  .ts-region-map-dot {
-    position: absolute;
-    transform: translate(-50%, -50%);
-    width: 14px;
-    height: 14px;
-    border-radius: 999px;
-    border: 2px solid var(--ts-surface);
-    background-color: var(--ts-ink-muted);
-  }
-
-  .ts-region-map-dot-selected {
-    width: 17px;
-    height: 17px;
-    background-color: var(--ts-accent);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ts-accent) 35%, transparent);
-  }
-
   /* v1 createDialog gap is 20px (Old gap-5); the delete dialog keeps 16px. */
   .ts-dialog-form-20 { gap: 20px; }
 
@@ -3502,7 +3573,6 @@ single-selector rules may stay on one line.
 
   .ts-panel-pad { padding: var(--ts-lg); }
 
-  .ts-data-intro { max-width: 64rem; }
 
   .ts-title-24 {
     color: var(--ts-ink);
@@ -3551,13 +3621,6 @@ single-selector rules may stay on one line.
 
   .ts-break-words { overflow-wrap: anywhere; }
 
-  .ts-page-title-24 {
-    color: var(--ts-ink);
-    font-size: 24px;
-    font-weight: var(--ts-fw-semibold);
-    line-height: 32px;
-  }
-
   .ts-title-22 {
     color: var(--ts-ink);
     font-size: var(--ts-fs-page-title);
@@ -3570,20 +3633,6 @@ single-selector rules may stay on one line.
     line-height: 1.5;
     margin-top: var(--ts-md);
     max-width: 48rem;
-  }
-
-  .ts-data-stats {
-    display: grid;
-    gap: var(--ts-md);
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  @media (min-width: 40rem) {
-    .ts-data-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  }
-
-  @media (min-width: 64rem) {
-    .ts-data-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   }
 
   .ts-stat-card {
@@ -3600,8 +3649,6 @@ single-selector rules may stay on one line.
     font-size: 24px;
     font-weight: var(--ts-fw-semibold);
   }
-
-  .ts-stat-project { margin-top: var(--ts-sm); }
 
   .ts-text-upper {
     color: var(--ts-ink-muted);
@@ -3735,63 +3782,6 @@ single-selector rules may stay on one line.
     .ts-org-switch-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
   }
 
-  /* Region picker map (v1 RegionMap): checkbox pins over the dotted map. The
-     frame reserves the dotted map's own 136:80 aspect ratio and is centred
-     under a width cap, so the percent-positioned pins stay glued to the map
-     instead of drifting across a letterboxed frame. */
-  .ts-region-picker {
-    position: relative;
-    width: 100%;
-    max-width: 504px;
-    aspect-ratio: 136 / 80;
-    margin-inline: auto;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-    overflow: hidden;
-  }
-
-  .ts-region-picker-compact { max-width: 405px; }
-
-  .ts-region-picker .ts-region-map { pointer-events: none; }
-
-  .ts-region-pin-btn {
-    position: absolute;
-    width: 32px;
-    height: 32px;
-    transform: translate(-50%, -50%);
-    display: grid;
-    place-items: center;
-    padding: 0;
-    border: 0;
-    background-color: transparent;
-    cursor: pointer;
-  }
-
-  .ts-region-pin-btn:has(.ts-sr-only:focus-visible) {
-    outline: 2px solid var(--ts-accent);
-    outline-offset: 2px;
-  }
-
-  .ts-region-pin-dot {
-    width: 14px;
-    height: 14px;
-    border-radius: var(--ts-radius-pill);
-    border: 2px solid var(--ts-surface);
-    background-color: var(--ts-ink-muted);
-    transition:
-    box-shadow 150ms ease-out,
-    width 150ms ease-out,
-    height 150ms ease-out;
-  }
-
-  .ts-region-pin-btn:has(input:checked) .ts-region-pin-dot {
-    width: 17px;
-    height: 17px;
-    background-color: var(--ts-accent);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ts-accent) 35%, transparent);
-  }
-
   /* Create-project form (v1 projectForm: bordered, md gap, sm region stack). */
   .ts-project-form {
     gap: var(--ts-md);
@@ -3914,9 +3904,7 @@ single-selector rules may stay on one line.
   /* v1 Input/NativeSelect render body-size (16px) control text; the shared
      control base is ui-size. */
   .ts-org .ts-input,
-  .ts-org .ts-select,
-  .ts-neworg .ts-input,
-  .ts-neworg .ts-select {
+  .ts-org .ts-select {
     font-size: var(--ts-fs-body);
   }
 
@@ -3944,73 +3932,6 @@ single-selector rules may stay on one line.
 
   @media (min-width: 64rem) {
     .ts-org .ts-org-deletion-form .ts-btn { width: auto; }
-  }
-
-  /* ===== organizations/new wizard ===== */
-
-  /* v1 header Panel: panel20 (20px) around the PanelHeader's own 20px → 16px
-     (64rem) inline inset — 40px / 36px from the panel edge. */
-  .ts-neworg-header { padding-inline: 40px; }
-
-  @media (min-width: 64rem) {
-    .ts-neworg-header { padding-inline: 36px; }
-  }
-
-  /* v1 Progress primitive is 4px tall. */
-  .ts-neworg .ts-progress { height: 4px; }
-
-  /* Wizard Panel padding: 20px block + the root's 16px; panelFlush squares
-     the corners below the rounded header panel. */
-  .ts-neworg-wizard {
-    padding: 36px var(--ts-lg);
-    border-radius: 0;
-  }
-
-  .ts-neworg-header {
-    border-bottom: 1px solid var(--ts-line);
-    padding-bottom: var(--ts-lg);
-  }
-
-  /* v1 PanelHeader descriptions are body-size. */
-  .ts-panel-subtitle-lg {
-    font-size: var(--ts-fs-body);
-    line-height: 1.6;
-  }
-
-  /* v1 form density: md form gap, sm label gap, 44px controls. */
-  .ts-neworg .ts-form { gap: var(--ts-md); }
-  .ts-neworg .ts-field { gap: var(--ts-sm); }
-  .ts-neworg .ts-input,
-  .ts-neworg .ts-select { min-height: var(--ts-control-h-lg); }
-
-  /* Payment summary (v1 wizardStyles.summary). */
-  .ts-wizard-summary {
-    display: grid;
-    gap: var(--ts-sm);
-    margin: 0;
-  }
-
-  .ts-wizard-summary-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--ts-md);
-  }
-
-  .ts-wizard-summary-row dt {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-  }
-
-  .ts-wizard-summary-row dd {
-    margin: 0;
-    color: var(--ts-ink);
-    font-size: var(--ts-fs-ui);
-  }
-
-  .ts-wizard-link {
-    font-size: var(--ts-fs-meta);
-    text-decoration: underline;
   }
 
   /* ===== Feature: Usage/Audit/Notifications ===== */
@@ -4043,10 +3964,9 @@ single-selector rules may stay on one line.
   /* v1 UsageHistoryPanel controlsEnd + NativeSelect wrapper: fit-content. */
   .ts-usage-controls-end .ts-select { width: fit-content; }
 
-  /* v1 usageStats: 1 col → 2 @40rem → 4 @80rem, margin-top 24px above the grid. */
+  /* v1 usageStats: 1 col → 2 @40rem → 4 @80rem. */
   .ts-usage-summary {
     gap: var(--ts-md);
-    margin-top: var(--ts-xl);
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -4203,25 +4123,40 @@ single-selector rules may stay on one line.
     text-align: right;
   }
 
-  /* Audit intro: title + metric well on the right. */
   .ts-audit-title {
     font-size: 24px;
     font-weight: var(--ts-fw-semibold);
     line-height: 32px;
   }
 
-  .ts-audit-intro > div {
-    min-width: 0;
+  .ts-audit-kpis {
+    display: grid;
+    gap: var(--ts-sm);
+    margin-top: var(--ts-lg);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .ts-audit-metrics {
+  .ts-audit-kpis > div {
     display: grid;
-    gap: var(--ts-md);
-    padding: var(--ts-lg);
+    gap: var(--ts-xs);
+    padding: var(--ts-md);
     border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-    justify-items: start;
+    border-radius: var(--ts-radius-control);
+    background: var(--ts-surface-muted);
+  }
+
+  .ts-audit-kpis dt { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+  .ts-audit-kpis dd { margin: 0; font-size: 24px; font-weight: var(--ts-fw-semibold); font-variant-numeric: tabular-nums; }
+
+  .ts-notes-page .ts-audit-activity-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 40rem) {
+    .ts-audit-kpis { grid-template-columns: minmax(0, 1fr); }
   }
 
   .ts-audit-form {
@@ -4341,37 +4276,6 @@ single-selector rules may stay on one line.
     max-width: 24rem;
   }
 
-  /* Metric toolbar (page-top stat row, shared-page-styles parity). */
-  .ts-metric-toolbar {
-    gap: var(--ts-md);
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-  }
-
-  .ts-metric-toolbar-actions {
-    gap: var(--ts-sm);
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-    margin-left: auto;
-  }
-
-  .ts-panel20 {
-    padding: 20px;
-  }
-
-  .ts-metric-tile {
-    padding: var(--ts-lg);
-    flex-basis: 12rem;
-    flex-grow: 0;
-    flex-shrink: 1;
-    min-width: 9rem;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-  }
-
   /* ===== Feature: Admin ===== */
 
   /* Shared admin page shell (1:1 with admin-page-styles.ts + admin-styles.ts). */
@@ -4451,14 +4355,6 @@ single-selector rules may stay on one line.
     flex-wrap: wrap;
     border-bottom: 1px solid var(--ts-line);
   }
-  .ts-metric-row {
-    gap: var(--ts-md);
-    align-items: center;
-    display: flex;
-    justify-content: space-between;
-    margin-top: var(--ts-lg);
-  }
-
   .ts-stat-value {
     color: var(--ts-ink);
     font-size: 24px;
@@ -4671,12 +4567,6 @@ single-selector rules may stay on one line.
   .ts-audit-form-actions {
     justify-content: flex-end;
     display: flex;
-  }
-
-  .ts-audit-two-pane { gap: var(--ts-lg); }
-
-  @media (min-width: 80rem) {
-    .ts-audit-two-pane { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 
   .ts-severity-box {
@@ -5853,39 +5743,6 @@ single-selector rules may stay on one line.
     background-color: color-mix(in oklab, var(--ts-success) 8%, transparent);
   }
 
-  /* Wizard (organizations/new) — chips 1:1 with new-organization-styles.ts:
-     sm gaps, no fill on the active chip (full-accent border), done = ink. */
-  .ts-wizard-steps {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--ts-sm);
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-
-  .ts-wizard-step {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--ts-sm);
-    padding: var(--ts-xs) var(--ts-sm);
-    border-radius: var(--ts-radius-pill);
-    border: 1px solid var(--ts-line);
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-  }
-
-  .ts-wizard-step-active {
-    border-color: var(--ts-accent);
-    background: none;
-    color: var(--ts-ink);
-    font-weight: var(--ts-fw-medium);
-  }
-
-  .ts-wizard-step-done {
-    color: var(--ts-ink);
-  }
-
   /* ===== Feature: Subscriptions ============================================ */
   .ts-sub-stats {
     display: grid;
@@ -6761,10 +6618,16 @@ single-selector rules may stay on one line.
     min-width: 0;
   }
 
-  .ts-onboarding-root .ts-alert-warning .ts-onboarding-alert-icon { color: var(--ts-warning); }
-  .ts-onboarding-root .ts-alert-danger .ts-onboarding-alert-icon { color: var(--ts-danger); }
-  .ts-onboarding-root .ts-alert-success .ts-onboarding-alert-icon { color: var(--ts-success); }
-  .ts-onboarding-root .ts-alert-info .ts-onboarding-alert-icon { color: var(--ts-info); }
+  /* The create-organization modal reuses the onboarding alert anatomy without
+     .ts-onboarding-root, so the tone colors must cover both scopes. */
+  .ts-onboarding-root .ts-alert-warning .ts-onboarding-alert-icon,
+  .ts-dialog-content-wizard .ts-alert-warning .ts-onboarding-alert-icon { color: var(--ts-warning); }
+  .ts-onboarding-root .ts-alert-danger .ts-onboarding-alert-icon,
+  .ts-dialog-content-wizard .ts-alert-danger .ts-onboarding-alert-icon { color: var(--ts-danger); }
+  .ts-onboarding-root .ts-alert-success .ts-onboarding-alert-icon,
+  .ts-dialog-content-wizard .ts-alert-success .ts-onboarding-alert-icon { color: var(--ts-success); }
+  .ts-onboarding-root .ts-alert-info .ts-onboarding-alert-icon,
+  .ts-dialog-content-wizard .ts-alert-info .ts-onboarding-alert-icon { color: var(--ts-info); }
 
   .ts-onboarding-terms {
     display: grid;
@@ -7074,156 +6937,6 @@ single-selector rules may stay on one line.
 
   @media (min-width: 64rem) {
     .ts-onboarding-provider-notice { padding: var(--ts-sm); }
-  }
-
-  /* Project step region picker (v1 compact RegionMap over the dotted map).
-     The frame reserves the dotted map's own 136:80 aspect ratio and is centred
-     under a width cap: a full-width, fixed-height frame letterboxes the world
-     map into a narrow band and leaves the percent-positioned pins floating in
-     empty space beside the landmass. */
-  .ts-onboarding-region-map {
-    position: relative;
-    width: 100%;
-    max-width: 405px;
-    aspect-ratio: 136 / 80;
-    margin-inline: auto;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-    overflow: hidden;
-  }
-
-  .ts-onboarding-region-dots {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0.78;
-    filter: saturate(0.9);
-    pointer-events: none;
-  }
-
-  .ts-onboarding-region-pin {
-    position: absolute;
-    transform: translate(-50%, -50%);
-    display: grid;
-    place-items: center;
-    height: 32px;
-    width: 32px;
-    border-radius: var(--ts-radius-pill);
-    cursor: pointer;
-  }
-
-  .ts-onboarding-region-input {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
-
-  .ts-onboarding-region-dot {
-    height: 14px;
-    width: 14px;
-    border: 2px solid var(--ts-surface);
-    border-radius: var(--ts-radius-pill);
-    background-color: var(--ts-ink-muted);
-    transition:
-      box-shadow var(--ts-t-fast) var(--ts-ease),
-      height var(--ts-t-fast) var(--ts-ease),
-      width var(--ts-t-fast) var(--ts-ease);
-  }
-
-  /* Hover and keyboard focus read the same: the marker grows into the accent
-     glow and the name label appears, so pointing at a region identifies it
-     instead of requiring a pixel-perfect hit on the small dot. */
-  .ts-onboarding-region-pin:not(.ts-onboarding-region-pin-disabled):hover .ts-onboarding-region-dot,
-  .ts-onboarding-region-pin:has(.ts-onboarding-region-input:checked) .ts-onboarding-region-dot,
-  .ts-onboarding-region-pin:has(.ts-onboarding-region-input:focus-visible) .ts-onboarding-region-dot {
-    height: 17px;
-    width: 17px;
-    background-color: var(--ts-accent);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ts-accent) 35%, transparent);
-  }
-
-  .ts-onboarding-region-pin:has(.ts-onboarding-region-input:focus-visible) {
-    box-shadow: var(--ts-focus-ring);
-  }
-
-  /* Hover label: country flag, region name, and round-trip latency;
-     pointer-events stay off so it can never shadow a neighbouring pin's hit
-     target. */
-  .ts-onboarding-region-label {
-    position: absolute;
-    left: 50%;
-    bottom: calc(100% + 2px);
-    transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 7px;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-control);
-    background-color: var(--ts-surface);
-    color: var(--ts-ink);
-    font-size: var(--ts-fs-meta);
-    font-weight: var(--ts-fw-medium);
-    line-height: 1.2;
-    white-space: nowrap;
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    transition: opacity var(--ts-t-fast) var(--ts-ease);
-  }
-
-  .ts-onboarding-region-flag {
-    flex-shrink: 0;
-    height: 11px;
-    width: 16px;
-    border: 1px solid var(--ts-line);
-    border-radius: 2px;
-    object-fit: cover;
-  }
-
-  .ts-onboarding-region-label-ping {
-    color: var(--ts-ink-muted);
-    font-family: var(--ts-font-mono);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .ts-onboarding-region-pin:hover .ts-onboarding-region-label,
-  .ts-onboarding-region-pin:has(.ts-onboarding-region-input:focus-visible) .ts-onboarding-region-label {
-    opacity: 1;
-    visibility: visible;
-  }
-
-  /* Northern pins put the label under the marker so the frame's overflow clip
-     never cuts it off at the top edge. */
-  .ts-onboarding-region-pin-label-below .ts-onboarding-region-label {
-    top: calc(100% + 2px);
-    bottom: auto;
-  }
-
-  /* Side pins anchor the label to that edge of the marker, so a wide label
-     (flag + name + latency) stays inside the clipped frame instead of being
-     centred past it. */
-  .ts-onboarding-region-pin-label-start .ts-onboarding-region-label {
-    left: 0;
-    transform: none;
-  }
-
-  .ts-onboarding-region-pin-label-end .ts-onboarding-region-label {
-    left: auto;
-    right: 0;
-    transform: none;
-  }
-
-  .ts-onboarding-region-pin-disabled {
-    cursor: default;
-    opacity: 0.55;
   }
 
   /* Agent approval header icon: v1 iconBox (44px, panel radius, accent tint),
@@ -7729,52 +7442,11 @@ single-selector rules may stay on one line.
     background-color: var(--ts-surface-muted);
   }
 
-  /* Audit intro metrics (v1 Metric: row, space-between, sans 14px value). */
-  .ts-audit-metrics .ts-metric {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--ts-md);
-    font-size: var(--ts-fs-ui);
-  }
-
-  .ts-audit-metric-inline {
-    font-size: var(--ts-fs-ui);
-    font-weight: var(--ts-fw-medium);
-    font-family: var(--ts-font-sans);
-    font-variant-numeric: tabular-nums;
-    color: var(--ts-ink);
-  }
-
-  .ts-audit-export-wrap {
-    margin-top: var(--ts-sm);
-  }
-
-  .ts-audit-export-wrap .ts-btn {
-    width: 100%;
-  }
-
-  .ts-audit-intro .ts-muted {
-    font-size: var(--ts-fs-ui);
-    line-height: 24px;
-    max-width: 48rem;
-  }
-
   /* Audit strips (v1 wrapBetween range row). */
   .ts-audit-range-row {
     padding-block: var(--ts-sm);
     padding-inline: var(--ts-lg);
     border-bottom: 1px solid var(--ts-line);
-  }
-
-  /* Retention metrics well (v1 stack8 + panelSurface). */
-  .ts-audit-retention-well {
-    display: grid;
-    gap: var(--ts-sm);
-    padding: var(--ts-lg);
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
   }
 
   /* Audit table (v1 DataTable: no outer chrome, 16px body, 16/20 cells). */
@@ -8027,11 +7699,6 @@ single-selector rules may stay on one line.
     gap: var(--ts-sm);
   }
 
-  /* v1 dataStats sit 24px under the intro (dataStats marginTop xl). */
-  .ts-data-stats {
-    margin-top: var(--ts-xl);
-  }
-
   /* v1 inputs/selects read 16px body text (Input / NativeSelect). */
   .ts-data .ts-input,
   .ts-data .ts-select,
@@ -8247,6 +7914,16 @@ single-selector rules may stay on one line.
     background-color: transparent;
   }
 
+  .ts-notes-page .ts-apikeys-table-wrap .ts-table {
+    min-width: 1440px;
+    table-layout: auto;
+  }
+
+  .ts-notes-page .ts-apikeys-table-wrap .ts-table th,
+  .ts-notes-page .ts-apikeys-table-wrap .ts-table td {
+    padding-inline: var(--ts-md);
+  }
+
   /* v1 searchField: label above, icon inset 12px, text starts at 36px. */
   .ts-apikeys-search {
     flex-basis: 18rem;
@@ -8268,6 +7945,76 @@ single-selector rules may stay on one line.
     transform: translateY(-50%);
   }
 
+  .ts-apikeys-section {
+    display: grid;
+    gap: var(--ts-lg);
+    min-width: 0;
+  }
+
+  .ts-apikeys-heading,
+  .ts-apikeys-actions,
+  .ts-apikeys-counts {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--ts-md);
+  }
+
+  .ts-apikeys-heading {
+    justify-content: space-between;
+  }
+
+  .ts-apikeys-counts {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+  }
+
+  .ts-apikeys-counts strong {
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-apikeys-counts span + span::before {
+    content: "·";
+    margin-right: var(--ts-md);
+  }
+
+  .ts-apikeys-filters {
+    padding: 0 0 var(--ts-lg);
+    gap: var(--ts-sm);
+  }
+
+  .ts-apikeys-filters .ts-filter-field {
+    flex: 1 1 10rem;
+    min-width: 10rem;
+  }
+
+  .ts-apikeys-filters .ts-apikeys-search {
+    flex: 2 1 16rem;
+    max-width: none;
+  }
+
+  .ts-apikeys-filters .ts-select,
+  .ts-apikeys-filters .ts-input {
+    width: 100%;
+  }
+
+  .ts-apikeys-filters > .ts-btn {
+    align-self: end;
+  }
+
+  .ts-apikeys-section .ts-credential-empty {
+    padding: 0;
+  }
+
+  @media (max-width: 40rem) {
+    .ts-apikeys-actions,
+    .ts-apikeys-actions .ts-btn,
+    .ts-apikeys-filters .ts-filter-field {
+      width: 100%;
+    }
+  }
+
   /* v1 auditLink (Reset filters): muted ghost with 12px inline padding. */
   .ts-audit-reset {
     padding-inline: var(--ts-md);
@@ -8276,25 +8023,6 @@ single-selector rules may stay on one line.
 
   .ts-audit-reset:hover {
     color: var(--ts-ink);
-  }
-
-  /* v1 rowHeader: column below lg, 20px gap, flex-start alignment. */
-  .ts-audit-intro {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 20px;
-  }
-
-  @media (min-width: 64rem) {
-    .ts-audit-intro {
-      flex-direction: row;
-      justify-content: space-between;
-    }
-  }
-
-  /* v1 gridMin: the metrics well keeps a 16rem floor. */
-  .ts-audit-metrics {
-    min-width: 16rem;
   }
 
   /* v1 wrapCenter rows carry no gap (icons hug their text). */
@@ -8327,6 +8055,50 @@ single-selector rules may stay on one line.
   .ts-audit-form .ts-field {
     gap: 6px;
   }
+
+  /* ===== Feature: Create-organization modal ===== */
+
+  /* The wizard reuses the wide onboarding step screens. Its three steps share
+     one box (width + height) so the modal never resizes between steps. */
+  dialog.ts-dialog-wizard {
+    width: min(64rem, calc(100vw - 2 * var(--ts-lg)));
+  }
+
+  dialog.ts-dialog-wizard[open] {
+    display: flex;
+    flex-direction: column;
+    /* One box for all three steps: tall enough for the tallest step (payment,
+       three plan cards) so nothing is clipped, and every step keeps that exact
+       size. Shorter steps center their card in the leftover space; a shorter
+       viewport scrolls the content instead. svh keeps the fixed box inside the
+       visible viewport when mobile toolbars collapse it. */
+    height: min(60rem, 92svh);
+    max-height: min(94svh, 100%);
+  }
+
+  .ts-dialog-content-wizard {
+    /* Fill the fixed-height dialog so shorter steps center their card in the
+       leftover space; the taller-than-box path scrolls here. */
+    flex: 1;
+    gap: var(--ts-md);
+    padding: 0 0 var(--ts-lg);
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .ts-dialog-wizard-head {
+    flex-shrink: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--ts-md);
+    padding: var(--ts-xl) var(--ts-xl) var(--ts-md);
+  }
+
+  .ts-dialog-content-wizard .ts-onboarding-container {
+    padding-inline: var(--ts-xl);
+    margin-block: auto;
+  }
 }
 /* end @layer features */
 
@@ -8335,7 +8107,6 @@ single-selector rules may stay on one line.
   .ts-auth-console { gap: var(--ts-xl); }
   .ts-auth-hero { display: flex; justify-content: space-between; gap: var(--ts-xxl); padding: 28px 32px; overflow: hidden; position: relative; background: radial-gradient(600px 220px at 10% 0%, rgba(var(--ts-accent-rgb), .16), transparent 65%), var(--ts-glass-bg); }
   .ts-auth-hero-copy { min-width: 0; max-width: 56rem; }
-  .ts-auth-hero-title { margin: 8px 0 6px; font-size: clamp(28px, 3vw, 40px); line-height: 1.08; letter-spacing: -.025em; }
   .ts-auth-hero-copy .ts-page-desc { max-width: 52rem; margin: 0; }
   .ts-eyebrow { display: flex; align-items: center; gap: 8px; color: var(--ts-info); font-size: var(--ts-fs-meta); font-weight: var(--ts-fw-semibold); letter-spacing: .08em; text-transform: uppercase; }
   .ts-auth-issuer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
@@ -8401,5 +8172,249 @@ single-selector rules may stay on one line.
     .ts-auth-orbit { left: 0; }
     .ts-auth-stat-grid, .ts-auth-connection-grid { grid-template-columns: 1fr; }
     .ts-auth-stat-card strong { font-size: 26px; }
+  }
+}
+
+@layer features {
+  .ts-notes-page .ts-notifications-overview {
+    gap: 24px;
+    padding: 24px;
+    background:
+      radial-gradient(circle at top right, color-mix(in oklab, var(--ts-accent) 13%, transparent), transparent 42%),
+      var(--ts-surface);
+    border: 1px solid var(--ts-line);
+  }
+
+  .ts-notes-page .ts-notifications-header {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .ts-notifications-eyebrow {
+    color: var(--ts-info);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-semibold);
+    letter-spacing: .1em;
+  }
+
+  .ts-notifications-header h2 {
+    margin: 8px 0;
+    color: var(--ts-ink);
+    font-size: clamp(22px, 2vw, 28px);
+    line-height: 1.2;
+  }
+
+  .ts-notifications-header p {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+    line-height: 1.5;
+  }
+
+  .ts-notifications-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .ts-notes-page .ts-notifications-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    margin: 0;
+    padding-top: 20px;
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-notifications-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 0 20px;
+    border-left: 1px solid var(--ts-line);
+  }
+
+  .ts-notifications-stat:first-child {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .ts-notifications-stat span {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+  }
+
+  .ts-notifications-stat strong {
+    color: var(--ts-ink);
+    font-size: 28px;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ts-notifications-stat-unread strong { color: var(--ts-info); }
+  .ts-notifications-stat-critical strong { color: var(--ts-danger); }
+
+  .ts-notes-page .ts-notifications-inbox {
+    gap: 0;
+    padding: 0;
+    border: 1px solid var(--ts-line);
+    background: var(--ts-surface);
+  }
+
+  .ts-notifications-inbox-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-notifications-inbox-header h2 {
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-panel-title);
+  }
+
+  .ts-notifications-inbox-header p {
+    margin-top: 3px;
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+  }
+
+  .ts-notifications-count {
+    padding: 6px 10px;
+    border: 1px solid color-mix(in oklab, var(--ts-info) 28%, var(--ts-line));
+    border-radius: 999px;
+    color: var(--ts-info);
+    background: color-mix(in oklab, var(--ts-info) 8%, transparent);
+    font-size: var(--ts-fs-meta);
+    white-space: nowrap;
+  }
+
+  .ts-notes-page .ts-notification {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 16px;
+    min-height: 0;
+    padding: 20px 24px;
+    border: 0;
+    border-bottom: 1px solid var(--ts-line);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .ts-notes-page .ts-notification:last-child { border-bottom: 0; }
+  .ts-notes-page .ts-notification-unread {
+    background: color-mix(in oklab, var(--ts-accent) 5%, var(--ts-surface));
+    box-shadow: inset 3px 0 var(--ts-accent);
+  }
+
+  .ts-notes-page .ts-notification-icon {
+    width: 40px;
+    height: 40px;
+    margin: 0;
+    border: 0;
+    border-radius: 12px;
+    background: color-mix(in oklab, var(--ts-info) 12%, transparent);
+    color: var(--ts-info);
+  }
+
+  .ts-notes-page .ts-notification-icon-danger {
+    background: color-mix(in oklab, var(--ts-danger) 12%, transparent);
+    color: var(--ts-danger);
+  }
+
+  .ts-notes-page .ts-notification-icon-warning {
+    background: color-mix(in oklab, var(--ts-warning) 12%, transparent);
+    color: var(--ts-warning);
+  }
+
+  .ts-notes-page .ts-notification-icon-success {
+    background: color-mix(in oklab, var(--ts-success) 12%, transparent);
+    color: var(--ts-success);
+  }
+
+  .ts-notification-heading,
+  .ts-notification-details {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .ts-notification-unread-label {
+    color: var(--ts-info);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-notification-unread-label::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin: 0 6px 1px 0;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .ts-notes-page .ts-notification-body { gap: 8px; }
+  .ts-notes-page .ts-notification-text { line-height: 1.5; }
+  .ts-notes-page .ts-notification-meta { margin: 0; }
+  .ts-notes-page .ts-notification-mark {
+    min-height: 32px;
+    height: 32px;
+    margin: 4px 0 0;
+    border: 1px solid var(--ts-line);
+    background: var(--ts-surface);
+  }
+
+  .ts-notifications-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 72px 24px;
+    text-align: center;
+  }
+
+  .ts-notifications-empty-icon {
+    display: grid;
+    width: 56px;
+    height: 56px;
+    margin-bottom: 8px;
+    place-items: center;
+    border-radius: 16px;
+    background: color-mix(in oklab, var(--ts-info) 11%, transparent);
+    color: var(--ts-info);
+  }
+
+  .ts-notifications-empty h3 { color: var(--ts-ink); font-size: var(--ts-fs-panel-title); }
+  .ts-notifications-empty p { max-width: 24rem; color: var(--ts-ink-muted); line-height: 1.5; }
+
+  @media (min-width: 64rem) {
+    .ts-notes-page .ts-notifications-header {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+    }
+  }
+
+  @media (max-width: 40rem) {
+    .ts-notes-page .ts-notifications-overview { padding: 20px; }
+    .ts-notes-page .ts-notifications-stats { gap: 12px; }
+    .ts-notifications-stat { padding: 0 0 0 12px; }
+    .ts-notifications-stat strong { font-size: 23px; }
+    .ts-notifications-inbox-header { padding: 18px 20px; }
+    .ts-notes-page .ts-notification {
+      grid-template-columns: 40px minmax(0, 1fr);
+      padding: 18px 20px;
+    }
+    .ts-notification form { grid-column: 2; }
+    .ts-notes-page .ts-notification-mark { margin: 0; }
   }
 }
