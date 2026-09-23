@@ -289,6 +289,11 @@ public sealed class PagesSmokeTests
         var page = await app.GetPageAsync(client, "/usage");
         await Assert.That(page.StatusCode).IsEqualTo(200);
         await Assert.That(page.Heading).IsEqualTo("Usage");
+        await Assert.That(page.Contains("Saved project databases")).IsTrue();
+        await Assert.That(page.Contains("Logical storage")).IsTrue();
+        await Assert.That(page.Contains("Usage data is partially loaded")).IsFalse();
+        await Assert.That(page.Contains("Billing dimensions")).IsFalse();
+        await Assert.That(page.Contains("Organization usage")).IsFalse();
         await Assert.That(page.Contains("Save spending controls")).IsTrue();
         await Assert.That(page.Contains("Monthly organization spending cap in USD")).IsTrue();
     }

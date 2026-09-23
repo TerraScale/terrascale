@@ -219,9 +219,10 @@ public sealed class NewOrganizationWizardTests
         using var project = await DashboardTestApp.PostFormAsync(client, StepAction,
             new Dictionary<string, string> { ["step"] = "project", ["name"] = "nova-prod", ["region"] = "GRU" });
 
+        var organization = await app.GetPageAsync(client, "/organization");
+        await Assert.That(organization.Contains("Nova Labs")).IsTrue();
         var usage = await app.GetPageAsync(client, "/usage");
-        await Assert.That(usage.Contains("Nova Labs")).IsTrue();
-        await Assert.That(usage.Contains("Dedicated plan")).IsTrue();
+        await Assert.That(usage.Contains("<span class=\"ts-badge ts-badge-info\">Dedicated</span>")).IsTrue();
     }
 
     [Test]
@@ -287,10 +288,9 @@ public sealed class NewOrganizationWizardTests
 
         var usage = await app.GetPageAsync(client, "/usage");
         await Assert.That(usage.StatusCode).IsEqualTo(200);
-        // The subtitle names the active tenant, so this also proves the plan
-        // landed on the organization the wizard created.
-        await Assert.That(usage.Contains("Nova Labs")).IsTrue();
-        await Assert.That(usage.Contains("Dedicated plan")).IsTrue();
+        var organization = await app.GetPageAsync(client, "/organization");
+        await Assert.That(organization.Contains("Nova Labs")).IsTrue();
+        await Assert.That(usage.Contains("<span class=\"ts-badge ts-badge-info\">Dedicated</span>")).IsTrue();
     }
 
     [Test]

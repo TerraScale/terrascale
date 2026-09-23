@@ -3971,10 +3971,9 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   /* v1 UsageHistoryPanel controlsEnd + NativeSelect wrapper: fit-content. */
   .ts-usage-controls-end .ts-select { width: fit-content; }
 
-  /* v1 usageStats: 1 col → 2 @40rem → 4 @80rem, margin-top 24px above the grid. */
+  /* v1 usageStats: 1 col → 2 @40rem → 4 @80rem. */
   .ts-usage-summary {
     gap: var(--ts-md);
-    margin-top: var(--ts-xl);
     grid-template-columns: minmax(0, 1fr);
   }
 
