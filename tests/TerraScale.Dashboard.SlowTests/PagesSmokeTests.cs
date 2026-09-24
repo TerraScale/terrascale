@@ -172,7 +172,7 @@ public sealed class PagesSmokeTests
     }
 
     [Test]
-    public async Task OrganizationPageRendersProjectsDetailsMembersAndInvitations()
+    public async Task OrganizationPageRendersProjectsDetailsAndTeamSummary()
     {
         using var app = new DashboardTestApp();
         using var client = app.CreateDemoClient();
@@ -181,8 +181,9 @@ public sealed class PagesSmokeTests
         await Assert.That(page.Heading).IsEqualTo("Organization");
         await Assert.That(page.Contains("TerraScale Labs")).IsTrue();
         await Assert.That(page.Contains("core-platform")).IsTrue();
-        await Assert.That(page.Contains("Members")).IsTrue();
-        await Assert.That(page.Contains("Invitations")).IsTrue();
+        await Assert.That(page.Contains("Team")).IsTrue();
+        await Assert.That(page.Contains("Manage team")).IsTrue();
+        await Assert.That(page.Contains("href=\"/access\"")).IsTrue();
     }
 
     [Test]

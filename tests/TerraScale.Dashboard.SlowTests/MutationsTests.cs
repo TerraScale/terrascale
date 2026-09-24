@@ -258,9 +258,9 @@ public sealed class MutationsTests
 
         using var revoked = await DashboardTestApp.PostFormAsync(client, $"/api/v1/access/invitations/{invitationId}/revoke", new Dictionary<string, string>());
         await Assert.That(revoked.Headers.Location!.ToString()).IsEqualTo("/access");
-        var organization = await app.GetPageAsync(client, "/organization");
-        await Assert.That(organization.Contains(email)).IsTrue();
-        await Assert.That(organization.Contains("Revoked")).IsTrue();
+        var accessAfterRevoke = await app.GetPageAsync(client, "/access?tab=invitations");
+        await Assert.That(accessAfterRevoke.Contains(email)).IsTrue();
+        await Assert.That(accessAfterRevoke.Contains("Canceled")).IsTrue();
     }
 
     [Test]
@@ -301,26 +301,26 @@ public sealed class MutationsTests
         using var invited = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/organization/invitations",
             new Dictionary<string, string> { ["email"] = email });
         await Assert.That(invited.Headers.Location!.ToString()).IsEqualTo("/organization");
-        var pending = await app.GetPageAsync(client, "/organization");
+        var pending = await app.GetPageAsync(client, "/access?tab=invitations");
         await Assert.That(pending.Contains(email)).IsTrue();
         await Assert.That(pending.Contains("Pending")).IsTrue();
 
         var invitationId = Regex.Match(pending.Html[(pending.Html.IndexOf(email, StringComparison.Ordinal))..],
-            @"name=""invitationId"" value=""([^""]+)""").Groups[1].Value;
+            @"/api/v1/access/invitations/([^/""]+)/revoke").Groups[1].Value;
         await Assert.That(invitationId.Length > 0).IsTrue();
 
         using var resent = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/organization/invitations/resend",
             new Dictionary<string, string> { ["invitationId"] = invitationId });
         await Assert.That(resent.Headers.Location!.ToString()).IsEqualTo("/organization");
-        var stillPending = await app.GetPageAsync(client, "/organization");
+        var stillPending = await app.GetPageAsync(client, "/access?tab=invitations");
         await Assert.That(stillPending.Contains(email)).IsTrue();
 
         using var canceled = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/organization/invitations/cancel",
             new Dictionary<string, string> { ["invitationId"] = invitationId });
         await Assert.That(canceled.Headers.Location!.ToString()).IsEqualTo("/organization");
-        var canceledPage = await app.GetPageAsync(client, "/organization");
+        var canceledPage = await app.GetPageAsync(client, "/access?tab=invitations");
         await Assert.That(canceledPage.Contains(email)).IsTrue();
-        await Assert.That(canceledPage.Contains("Revoked")).IsTrue();
+        await Assert.That(canceledPage.Contains("Canceled")).IsTrue();
     }
 
     [Test]
@@ -331,8 +331,8 @@ public sealed class MutationsTests
         using var response = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/organization/members/role",
             new Dictionary<string, string> { ["userId"] = "usr_01JC9S9V6Q1X4Z6B8D0F3H6JN", ["role"] = "owner" });
         await Assert.That(response.Headers.Location!.ToString()).IsEqualTo("/organization");
-        var page = await app.GetPageAsync(client, "/organization");
-        await Assert.That(page.Contains("value=\"owner\" selected")).IsTrue();
+        var page = await app.GetPageAsync(client, "/access?tab=members");
+        await Assert.That(page.Contains("Organization Owner")).IsTrue();
     }
 
     // --- Organization and projects -------------------------------------------

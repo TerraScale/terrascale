@@ -1,11 +1,8 @@
-/* Settings, profile, and organization page styles.
-   Used by the settings, profile, and organization page styles. feature. Keep page-specific rules in Features/. */
+/* Organization overview hierarchy, project management and access controls.
+   Uses flat sections, shared KPI rows and tables; the onboarding wizard keeps
+   its own modal styles in modal.css. */
 
-/* ===== Feature: Settings/Profile/Org ===== */
-
-/* Shared page vocabulary. */
-.ts-page > .ts-panel + .ts-panel { margin-top: 0; }
-
+/* Shared layout helpers retained for profile, settings and subscription pages. */
 .ts-row-header {
   display: flex;
   flex-direction: column;
@@ -23,17 +20,14 @@
 .ts-row.ts-gap-16 { gap: var(--ts-lg); }
 .ts-row.ts-gap-12 { gap: var(--ts-md); }
 .ts-row.ts-gap-8 { gap: var(--ts-sm); }
-
 .ts-min-width { min-width: 0; }
 
-/* minmax(0,1fr) keeps the implicit track clamped — auto tracks size to
-max-content and let wide tables/code blow out narrow viewports. */
 .ts-stack-12 { display: grid; gap: var(--ts-md); grid-template-columns: minmax(0, 1fr); }
 .ts-stack-16 { display: grid; gap: var(--ts-lg); grid-template-columns: minmax(0, 1fr); }
 .ts-stack-20 { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
 .ts-stack-8 { display: grid; gap: var(--ts-sm); grid-template-columns: minmax(0, 1fr); }
-
-.ts-break-words { overflow-wrap: anywhere; }
+.ts-break-words,
+.ts-break-all { overflow-wrap: anywhere; }
 
 .ts-title-22 {
   color: var(--ts-ink);
@@ -47,28 +41,6 @@ max-content and let wide tables/code blow out narrow viewports. */
   line-height: 1.5;
   margin-top: var(--ts-md);
   max-width: 48rem;
-}
-
-.ts-stat-card {
-  display: grid;
-  gap: var(--ts-sm);
-  padding: var(--ts-lg);
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-panel);
-  background-color: var(--ts-surface-muted);
-}
-
-.ts-stat-value {
-  color: var(--ts-ink);
-  font-size: 24px;
-  font-weight: var(--ts-fw-semibold);
-}
-
-.ts-text-upper {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-meta);
-  font-weight: var(--ts-fw-medium);
-  text-transform: uppercase;
 }
 
 .ts-actions-row {
@@ -99,10 +71,7 @@ max-content and let wide tables/code blow out narrow viewports. */
   padding: var(--ts-sm) var(--ts-md);
 }
 
-.ts-dialog-form {
-  display: grid;
-  gap: 16px;
-}
+.ts-dialog-form { display: grid; gap: 16px; }
 
 .ts-dialog-actions-between {
   display: flex;
@@ -111,247 +80,244 @@ max-content and let wide tables/code blow out narrow viewports. */
   gap: var(--ts-md);
 }
 
-.ts-summary-field {
-  display: grid;
-  gap: var(--ts-xs);
-}
-
-.ts-summary-label {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-meta);
-}
-
+.ts-summary-field { display: grid; gap: var(--ts-xs); }
+.ts-summary-label { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
 .ts-text-strong { color: var(--ts-ink); font-weight: var(--ts-fw-medium); }
-
 .ts-grid-tight { display: grid; gap: 2px; }
-
-.ts-break-all { overflow-wrap: anywhere; }
-
-/* Security summary strip: 1px line grid running edge to edge inside the
-   borderless panel (v1 summaryGrid — no inset, bottom corners only). */
-.ts-summary-grid {
-  display: grid;
-  gap: 1px;
-  overflow: hidden;
-  background-color: var(--ts-line);
-  border-radius: 0 0 var(--ts-radius-panel) var(--ts-radius-panel);
-  grid-template-columns: minmax(0, 1fr);
-}
-
-@media (min-width: 40rem) {
-  .ts-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-@media (min-width: 64rem) {
-  .ts-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-
-.ts-summary-cell {
-  padding: var(--ts-lg);
-  gap: var(--ts-xs);
-  background-color: var(--ts-surface);
-  display: grid;
-}
-
-.ts-summary-value {
-  color: var(--ts-ink);
-  font-size: var(--ts-fs-ui);
-  font-weight: var(--ts-fw-medium);
-}
-
-.ts-icon-label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ts-sm);
-}
-
-/* Organization deletion block (organization-management.tsx panelFlush). */
-.ts-org-deletion {
-  border-top: 1px solid color-mix(in oklab, var(--ts-danger) 20%, transparent);
-}
-
-.ts-org-deletion-form {
-  padding: var(--ts-lg);
-  gap: var(--ts-md);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-@media (min-width: 64rem) {
-  .ts-org-deletion-form { grid-template-columns: minmax(0, 1fr) auto; }
-  .ts-org-deletion-form .ts-form-actions { align-self: end; }
-}
-
-/* Organization switcher (v1 switchForm: bordered grid below the terms). */
-.ts-org-switch-form {
-  display: grid;
-  gap: var(--ts-md);
-  grid-template-columns: minmax(0, 1fr);
-  border-top: 1px solid var(--ts-line);
-  margin-top: 20px;
-  padding-top: 20px;
-}
-
-@media (min-width: 40rem) {
-  .ts-org-switch-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
-}
-
-/* Create-project form (v1 projectForm: bordered, md gap, sm region stack). */
-.ts-project-form {
-  gap: var(--ts-md);
-  border-bottom: 1px solid var(--ts-line);
-}
-
-.ts-project-regions { gap: var(--ts-sm); }
-
-/* Buttons that fill narrow viewports like v1 buttonFull. */
+.ts-icon-label { display: inline-flex; align-items: center; gap: var(--ts-sm); }
+.ts-summary-grid { display: grid; gap: 1px; overflow: hidden; background-color: var(--ts-line); }
+.ts-summary-cell { padding: var(--ts-lg); gap: var(--ts-xs); background-color: var(--ts-surface); display: grid; }
+.ts-summary-value { color: var(--ts-ink); font-size: var(--ts-fs-ui); font-weight: var(--ts-fw-medium); }
+.ts-form-actions-start { justify-content: flex-start; }
 .ts-btn-full { width: 100%; }
 
 @media (min-width: 48rem) {
   .ts-btn-full { width: auto; }
 }
 
-/* v1 actionEnd: actions anchored to the leading edge. */
-.ts-form-actions-start { justify-content: flex-start; }
-
-/* Inline rename disclosure (v1 renameRoot + renameForm). */
-.ts-rename {
-  display: grid;
-  gap: var(--ts-sm);
-  min-width: 14rem;
-  justify-items: start;
+/* Organization page: sections share one rhythm and use hairlines as the only
+   grouping treatment. Inset the page slightly less than legacy panel pages. */
+.ts-org {
+  gap: 0;
 }
 
-.ts-rename-form {
-  display: grid;
-  gap: var(--ts-md);
-  width: 100%;
+.ts-org > .ts-alert {
+  margin-bottom: var(--ts-lg);
+}
+
+.ts-org > .ts-section,
+.ts-org > .ts-org-layout {
+  min-width: 0;
+  padding-block: var(--ts-xl);
   border-top: 1px solid var(--ts-line);
-  padding-top: var(--ts-md);
 }
 
-/* Invitation create form (v1 formBorderBottom). */
-.ts-form-stacked {
+.ts-org > .ts-section:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.ts-org .ts-section {
   display: grid;
+  gap: var(--ts-lg);
+  align-content: start;
+}
+
+.ts-org .ts-section-head {
+  align-items: center;
+}
+
+.ts-org-identity {
+  display: flex;
+  align-items: center;
   gap: var(--ts-md);
-  padding: var(--ts-lg);
-  border-bottom: 1px solid var(--ts-line);
-}
-
-/* Member row controls (v1 memberControls grid + ownership transfer). */
-.ts-member-controls {
-  display: grid;
-  gap: var(--ts-sm);
-  justify-items: start;
-}
-
-/* v1 OwnershipTransferControls: fieldGroup with plain body-size text. */
-.ts-org-transfer {
-  display: grid;
-  gap: var(--ts-sm);
-  justify-items: start;
-}
-
-/* ===== organization page (v1 app/(dashboard)/organization) ============== */
-
-/* v1 PanelHeader insets: 20px inline, 16px from 64rem (ui/Panel.tsx);
-   the shared .ts-panel-header has none because .ts-panel pads block only. */
-.ts-org .ts-panel-header { padding-inline: 20px; }
-
-@media (min-width: 64rem) {
-  .ts-org .ts-panel-header { padding-inline: 16px; }
-}
-
-/* v1 summary Panel carries panel20 (20px all round) — .ts-panel only
-   provides the 20px block rhythm, so the inline inset is scoped here. */
-.ts-org-summary { padding-inline: 20px; }
-
-/* v1 pageStyles.summaryTerms: the dl holds a 32rem floor from 64rem. */
-@media (min-width: 64rem) {
-  .ts-org .ts-summary-terms { min-width: 32rem; }
-}
-
-.ts-summary-terms-3 { grid-template-columns: minmax(0, 1fr); }
-
-@media (min-width: 40rem) {
-  .ts-summary-terms-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  min-width: 0;
 }
 
 .ts-avatar-org {
+  width: 48px;
+  height: 48px;
   border-radius: var(--ts-radius-control);
   font-size: var(--ts-fs-ui);
-  height: 48px;
-  width: 48px;
 }
 
-/* v1 DataTable (ui/DataTable.tsx): 16px body, 14px semibold wide-tracked
-   head, 16/20 cell padding, top-aligned cells, chrome-less scroller and a
-   50% muted row hover — the shared .ts-table base is denser and boxed. */
-.ts-org .ts-table { font-size: var(--ts-fs-body); }
+.ts-org .ts-avatar-org svg { width: 22px; height: 22px; }
 
-.ts-org .ts-table thead th {
-  padding: 16px 20px;
-  font-size: var(--ts-fs-ui);
-  letter-spacing: 0.025em;
+.ts-org-kpis {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.ts-org .ts-table tbody td {
-  padding: 16px 20px;
-  vertical-align: top;
+.ts-org-kpi-text {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: var(--ts-fs-body);
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+.ts-org-kpis dd { min-width: 0; }
+
+.ts-org-switch-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--ts-md);
+  padding-top: var(--ts-lg);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-org-switch-form .ts-select { max-width: 34rem; }
 
 .ts-org .ts-table-wrap {
   border: 0;
+  border-top: 1px solid var(--ts-line);
   border-radius: 0;
-  background: none;
+  background: transparent;
   box-shadow: none;
+}
+
+.ts-org .ts-table {
+  min-width: 760px;
+}
+
+.ts-org .ts-table thead th {
+  padding-block: var(--ts-md);
+}
+
+.ts-org .ts-table tbody td {
+  padding-block: var(--ts-md);
+  vertical-align: top;
 }
 
 .ts-org .ts-table tbody tr:hover {
   background-color: color-mix(in oklab, var(--ts-surface-muted) 50%, transparent);
 }
 
-/* v1 statusSuccess: 10px block / 12px inline padding, 10% success fill. */
+/* Form-heavy actions open in a local popover so the first screen stays about
+   the organization and project inventory. The complete form remains in the
+   document for keyboard and no-JS users. */
+.ts-disclosure {
+  position: relative;
+  min-width: 0;
+}
+
+.ts-disclosure > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.ts-disclosure > summary::-webkit-details-marker { display: none; }
+
+.ts-org-create-project > .ts-org-project-form,
+.ts-rename > .ts-rename-form {
+  position: absolute;
+  z-index: var(--ts-z-dropdown);
+  right: 0;
+  top: calc(100% + var(--ts-sm));
+  width: min(38rem, calc(100vw - 2 * var(--ts-lg)));
+  padding: var(--ts-lg);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface);
+  box-shadow: var(--ts-shadow-overlay);
+}
+
+.ts-org-project-form { gap: var(--ts-lg); }
+.ts-org-project-form .ts-form-actions { justify-content: flex-start; }
+.ts-project-regions { gap: var(--ts-sm); }
+
+.ts-rename { display: inline-block; }
+.ts-rename > .ts-rename-form { width: min(30rem, calc(100vw - 2 * var(--ts-lg))); }
+.ts-rename-form { display: grid; gap: var(--ts-md); }
+
+.ts-org-layout {
+  display: block;
+}
+
+.ts-org-layout > .ts-section {
+  padding-block: 0;
+  border-top: 0;
+}
+
+.ts-org-layout > .ts-section + .ts-section {
+  padding-top: var(--ts-xl);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-org-details {
+  margin: 0;
+}
+
+.ts-org-details dd {
+  max-width: 60%;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
 .ts-org .ts-status-success {
-  padding: 10px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ts-sm);
+  padding: var(--ts-md);
+  color: var(--ts-success);
   background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
 }
 
-/* v1 textDescription: 24px line-height capped at 42rem. */
-.ts-org-desc {
-  line-height: 24px;
-  max-width: 42rem;
+.ts-org-management {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-sm);
 }
 
-/* v1 Input/NativeSelect render body-size (16px) control text; the shared
-   control base is ui-size. */
-.ts-org .ts-input,
-.ts-org .ts-select {
-  font-size: var(--ts-fs-body);
+.ts-org-name-form {
+  display: grid;
+  gap: var(--ts-md);
+  margin-top: var(--ts-md);
 }
 
-/* v1 grids stretch their button children (formTight, memberControls,
-   OwnershipTransferControls fieldGroup; switchForm and deletionForm only
-   below their two-column breakpoints). The v2 button wrappers sit inside
-   no-JS <form>s, so the forms stretch too. */
-.ts-org .ts-inline-form { grid-template-columns: minmax(0, 1fr); }
-
-.ts-org .ts-inline-form .ts-btn,
-.ts-org .ts-stack-12 > form .ts-btn,
-.ts-org .ts-member-controls .ts-btn,
-.ts-org .ts-org-transfer .ts-btn,
-.ts-org .ts-org-switch-form .ts-btn,
-.ts-org .ts-org-deletion-form .ts-btn {
-  width: 100%;
+.ts-danger-disclosure[open] {
+  display: grid;
+  gap: var(--ts-sm);
+  padding: var(--ts-md);
+  border: 1px solid color-mix(in oklab, var(--ts-danger) 35%, var(--ts-line));
 }
 
-.ts-org .ts-member-controls form,
-.ts-org .ts-org-transfer form { width: 100%; }
-
-@media (min-width: 40rem) {
-  .ts-org .ts-org-switch-form .ts-btn { width: auto; }
+.ts-org-deletion-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--ts-md);
 }
 
 @media (min-width: 64rem) {
-  .ts-org .ts-org-deletion-form .ts-btn { width: auto; }
+  .ts-org-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@media (width < 64rem) {
+  .ts-org-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (width < 40rem) {
+  .ts-org .ts-section-head { align-items: flex-start; }
+  .ts-org .ts-section-head > .ts-btn,
+  .ts-org .ts-section-head > .ts-disclosure { width: 100%; }
+  .ts-org .ts-section-head > .ts-disclosure > summary { width: 100%; }
+  .ts-org-kpis { grid-template-columns: minmax(0, 1fr); }
+  .ts-org-switch-form,
+  .ts-org-deletion-form { grid-template-columns: minmax(0, 1fr); }
+  .ts-org-switch-form .ts-btn,
+  .ts-org-deletion-form .ts-btn { width: 100%; }
+  .ts-org-create-project > .ts-org-project-form,
+  .ts-rename > .ts-rename-form {
+    position: static;
+    width: 100%;
+    margin-top: var(--ts-sm);
+  }
+  .ts-org-details dd { max-width: 100%; text-align: left; }
+  .ts-org-management { align-items: stretch; flex-direction: column; }
+  .ts-org-management > * { width: 100%; }
 }

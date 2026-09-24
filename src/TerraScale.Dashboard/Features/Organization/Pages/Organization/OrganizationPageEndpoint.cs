@@ -22,7 +22,10 @@ public sealed class OrganizationPageEndpoint(DashboardStore store) : EndpointWit
             query["newOrganization"].FirstOrDefault(),
             paymentStatus,
             query["error"].FirstOrDefault());
-        return Task.FromResult<IResult>(OrganizationSlice.Create(
-            OrganizationPageModel.From(store, "/organization", wizard)));
+        var model = OrganizationPageModel.From(store, "/organization", wizard) with
+        {
+            Error = query["error"].FirstOrDefault(),
+        };
+        return Task.FromResult<IResult>(OrganizationSlice.Create(model));
     }
 }
