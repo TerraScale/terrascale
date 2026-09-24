@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 # End-to-end smoke of the REAL stack: this script boots the real ts-auth
 # service (its own process, production startup validation) against a REAL
-# TerraBase member (tools/TerraBaseDevMember) and drives every API family
-# once over HTTP, including a signature-verified webhook delivery.
+# compatible TerraBase member and drives every API family
+# once over HTTP. Webhook delivery and signature are checked when a controlled
+# public HTTPS sink is configured.
 #
 # Usage:
 #   scripts/smoke-real-stack.sh            # member at http://127.0.0.1:8420, service on a free port
 #   MEMBER_URL=... SERVICE_LISTEN=http://127.0.0.1:9090 scripts/smoke-real-stack.sh
+#   WEBHOOK_SINK_URL=https://your-public-sink.example/hook \
+#   WEBHOOK_SINK_CAPTURE_FILE=/path/to/sink-receipts.jsonl scripts/smoke-real-stack.sh
+# The optional operator-owned sink writes JSON lines with path, headers, and
+# body fields. Without both sink settings, webhook delivery is skipped.
 set -uo pipefail
 
 MEMBER_URL=${MEMBER_URL:-http://127.0.0.1:8420}
 SERVICE_LISTEN=${SERVICE_LISTEN:-http://127.0.0.1:8480}
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
-# Override SERVICE_PROJECT to smoke a worktree/pinned checkout instead of this repo.
-SERVICE_PROJECT=${SERVICE_PROJECT:-$REPO_ROOT/src/TerraScale.Auth}
+# Override SERVICE_BINARY to smoke a built worktree/pinned checkout.
+SERVICE_BINARY=${SERVICE_BINARY:-$REPO_ROOT/target/release/auth-app}
+WEBHOOK_SINK_URL=${WEBHOOK_SINK_URL:-}
+WEBHOOK_SINK_CAPTURE_FILE=${WEBHOOK_SINK_CAPTURE_FILE:-}
 FAILURES=0
 
 pass() { echo "PASS  $1"; }
@@ -25,7 +32,6 @@ check() { # check <label> <expected> <actual>
 
 cleanup() {
     [[ -n "${SERVICE_PID:-}" ]] && kill "$SERVICE_PID" 2>/dev/null
-    [[ -n "${SINK_PID:-}" ]] && kill "$SINK_PID" 2>/dev/null
     wait 2>/dev/null
 }
 trap cleanup EXIT
@@ -35,42 +41,37 @@ trap cleanup EXIT
 MEMBER_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$MEMBER_URL/" 2>/dev/null)
 if [[ "$MEMBER_CODE" == "000" ]]; then
     echo "No TerraBase member at $MEMBER_URL."
-    echo "Start one:  dotnet run --project tools/TerraBaseDevMember"
+    echo "Provide a running TerraBase document API member at MEMBER_URL."
     exit 2
+fi
+
+if [[ -n "$WEBHOOK_SINK_URL" || -n "$WEBHOOK_SINK_CAPTURE_FILE" ]]; then
+    if [[ -z "$WEBHOOK_SINK_URL" || -z "$WEBHOOK_SINK_CAPTURE_FILE" ]]; then
+        echo "Set both WEBHOOK_SINK_URL and WEBHOOK_SINK_CAPTURE_FILE for webhook delivery smoke."
+        exit 2
+    fi
+    if [[ "$WEBHOOK_SINK_URL" != https://* || ! -f "$WEBHOOK_SINK_CAPTURE_FILE" ]]; then
+        echo "Webhook smoke requires a controlled public HTTPS sink and an existing capture file."
+        exit 2
+    fi
+    WEBHOOK_SMOKE=1
+else
+    WEBHOOK_SMOKE=0
+    echo "SKIP webhook delivery/signature: set WEBHOOK_SINK_URL and WEBHOOK_SINK_CAPTURE_FILE for a controlled public HTTPS sink."
 fi
 
 # ---- 1. Boot the real service process ------------------------------------------------
 
-SINK_PORT=$(( (RANDOM % 20000) + 20000 ))
-SINK_FILE=$(mktemp)
-python3 - "$SINK_PORT" "$SINK_FILE" <<'PY' &
-import json, sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-port, sink_file = int(sys.argv[1]), sys.argv[2]
-
-class Sink(BaseHTTPRequestHandler):
-    def do_POST(self):
-        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        with open(sink_file, "a") as f:
-            f.write(json.dumps({"path": self.path,
-                                "headers": {k: v for k, v in self.headers.items()},
-                                "body": body.decode()}) + "\n")
-        self.send_response(200)
-        self.end_headers()
-    def log_message(self, *_):
-        pass
-
-HTTPServer(("127.0.0.1", port), Sink).serve_forever()
-PY
-SINK_PID=$!
-
 OP_KEY="smoke-operator-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
 METRICS_KEY="smoke-metrics-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
-SERVICE_ARGS=(--project "$SERVICE_PROJECT" -c Release)
-[[ -n "${TERRASCALE_SDK_PROJECT:-}" ]] && SERVICE_ARGS+=(-p:TerraScaleSdkProject="$TERRASCALE_SDK_PROJECT")
+if [[ ! -x "$SERVICE_BINARY" ]]; then
+    echo "Rust service binary missing: $SERVICE_BINARY"
+    echo "Set up sibling ../ts-rust at commit c590cd41eabf05bbd5982a1580c1bb01880c346a as documented under Running in README.md, then build from the repository root:"
+    echo "  cargo build --release --locked -p auth-app"
+    exit 2
+fi
 
-ASPNETCORE_ENVIRONMENT=Development \
+TS_AUTH_ENVIRONMENT=Development \
 TS_AUTH_LISTEN="$SERVICE_LISTEN" \
 TS_AUTH_PUBLIC_ORIGIN="$SERVICE_LISTEN" \
 TS_AUTH_TERRASCALE_API_URL="$MEMBER_URL" \
@@ -80,7 +81,7 @@ TS_AUTH_MASTER_KEY="$(head -c 32 /dev/urandom | base64 -w0)" \
 TS_AUTH_AUDIT_SIGNING_KEY="$(head -c 32 /dev/urandom | base64 -w0)" \
 TS_AUTH_OPERATOR_KEY="$OP_KEY" \
 TS_AUTH_METRICS_KEY="$METRICS_KEY" \
-dotnet run "${SERVICE_ARGS[@]}" >/tmp/ts-auth-smoke-service.log 2>&1 &
+"$SERVICE_BINARY" >/tmp/ts-auth-smoke-service.log 2>&1 &
 SERVICE_PID=$!
 
 SERVICE_UP=0
@@ -101,8 +102,10 @@ PASSWORD="correct-horse-battery"
 
 # ---- 2. Operator onboarding ----------------------------------------------------------
 
+BOOTSTRAP_KEY="smoke-bootstrap-$(head -c 16 /dev/urandom | base64 -w0 | tr -d '=+/')"
 INSTANCE=$(curl -sf -X POST "$SERVICE_LISTEN/v1/instances" \
     -H "Authorization: Bearer $OP_KEY" \
+    -H "Idempotency-Key: $BOOTSTRAP_KEY" \
     -H 'Content-Type: application/json' \
     -d "{\"slug\":\"$SLUG\",\"name\":\"Smoke Test\"}")
 if [[ -z "$INSTANCE" ]]; then fail "operator instance create"; exit 1; fi
@@ -112,6 +115,7 @@ pass "operator creates instance + first sk_ key"
 # ---- 3. Hosted UI: sign-up, session, account ------------------------------------------
 
 SIGNUP=$(curl -s -D /tmp/smoke-signup-headers -o /dev/null -X POST "$SERVICE_LISTEN/ui/$SLUG/sign-up" \
+    -H "Origin: $SERVICE_LISTEN" \
     --data-urlencode "email=$EMAIL" --data-urlencode "password=$PASSWORD" --data-urlencode "name=Smoke Tester")
 COOKIE=$(grep -i '^set-cookie: ' /tmp/smoke-signup-headers | head -1 | sed 's/^[Ss]et-[Cc]ookie: //' | cut -d';' -f1 | tr -d '\r')
 check "hosted sign-up sets a session cookie" "yes" "$([[ -n "$COOKIE" ]] && echo yes || echo no)"
@@ -121,14 +125,17 @@ check "account page renders the signed-in user" "yes" "$(grep -q "$EMAIL" <<<"$A
 
 # ---- 4. Sign-out / sign-in ------------------------------------------------------------
 
-curl -s -o /dev/null -b "$COOKIE" -c /tmp/smoke-cookies -X POST "$SERVICE_LISTEN/ui/$SLUG/sign-out"
+curl -s -o /dev/null -b "$COOKIE" -c /tmp/smoke-cookies -X POST \
+    -H "Origin: $SERVICE_LISTEN" "$SERVICE_LISTEN/ui/$SLUG/sign-out"
 SIGNIN=$(curl -s -D /tmp/smoke-signin-headers -o /dev/null -c /tmp/smoke-cookies -X POST "$SERVICE_LISTEN/ui/$SLUG/sign-in" \
+    -H "Origin: $SERVICE_LISTEN" \
     --data-urlencode "email=$EMAIL" --data-urlencode "password=$PASSWORD")
 SIGNIN_COOKIE=$(grep -i '^set-cookie: ' /tmp/smoke-signin-headers | head -1 | sed 's/^[Ss]et-[Cc]ookie: //' | cut -d';' -f1 | tr -d '\r')
 check "password sign-in re-establishes the session" "yes" "$([[ -n "$SIGNIN_COOKIE" ]] && echo yes || echo no)"
 COOKIE="$SIGNIN_COOKIE"
 
 WRONG=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$SERVICE_LISTEN/ui/$SLUG/sign-in" \
+    -H "Origin: $SERVICE_LISTEN" \
     --data-urlencode "email=$EMAIL" --data-urlencode "password=wrong-password")
 check "wrong password does not redirect as success" "yes" "$([[ "$WRONG" != 302 ]] && echo yes || echo no)"
 
@@ -193,33 +200,79 @@ grep -qi '^location:' /tmp/smoke-scim-headers && pass "SCIM 201 carries Location
 
 # ---- 8. Webhook delivery with signature verification -----------------------------------
 
-WH=$(curl -sf -X POST -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
-    -d "{\"url\":\"http://127.0.0.1:$SINK_PORT/hook\",\"events\":[\"user.*\"]}" \
-    "$SERVICE_LISTEN/v1/$SLUG/webhooks")
-WH_SECRET=$(jq -r .signing_secret <<<"$WH")
-
-API_USER_ID=$(curl -sf -H "Authorization: Bearer $API_KEY" "$SERVICE_LISTEN/v1/$SLUG/users?limit=10" | jq -re '.data[] | select(.email | startswith("api-user-")) | .id' | head -1)
-[[ -n "$API_USER_ID" ]] && curl -sf -o /dev/null -X PATCH -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
-    -d '{"name":"Renamed User"}' "$SERVICE_LISTEN/v1/$SLUG/users/$API_USER_ID"
-
-DELIVERY=""
-for _ in $(seq 1 30); do
-    DELIVERY=$(grep '"path": "/hook"' "$SINK_FILE" 2>/dev/null | tail -1)
-    [[ -n "$DELIVERY" ]] && break
-    sleep 1
-done
-if [[ -z "$DELIVERY" ]]; then
-    fail "webhook delivery reaches the sink"
+if [[ $WEBHOOK_SMOKE -eq 0 ]]; then
+    echo "SKIP webhook delivery/signature (no controlled public HTTPS sink configured)"
 else
-    pass "webhook delivery reaches the sink"
-    SIGNATURE_OK=$(python3 -c "
+    SINK_MARK=$(wc -l < "$WEBHOOK_SINK_CAPTURE_FILE")
+    WH=$(curl -sf -X POST -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
+        -d "$(jq -nc --arg url "$WEBHOOK_SINK_URL" '{url:$url,events:["user.*"]}')" \
+        "$SERVICE_LISTEN/v1/$SLUG/webhooks")
+    WH_SECRET=$(jq -r '.signing_secret // empty' <<<"$WH")
+    check "webhook endpoint accepts controlled HTTPS sink" "yes" \
+        "$([[ -n "$WH_SECRET" ]] && echo yes || echo no)"
+
+    API_USERS_RESULT=$(curl -sS -w $'\n%{http_code}' \
+        -H "Authorization: Bearer $API_KEY" \
+        "$SERVICE_LISTEN/v1/$SLUG/users?limit=10")
+    API_USERS_CURL_STATUS=$?
+    API_USERS_HTTP_STATUS=${API_USERS_RESULT##*$'\n'}
+    API_USERS_BODY=${API_USERS_RESULT%$'\n'*}
+
+    API_USER_ID=""
+    if [[ $API_USERS_CURL_STATUS -ne 0 ]]; then
+        fail "webhook trigger user-list request failed (curl exit $API_USERS_CURL_STATUS, HTTP $API_USERS_HTTP_STATUS)"
+    elif [[ "$API_USERS_HTTP_STATUS" != "200" ]]; then
+        fail "webhook trigger user-list request returned HTTP $API_USERS_HTTP_STATUS"
+    elif ! jq -e '(.data | type) == "array"' <<<"$API_USERS_BODY" >/dev/null 2>&1; then
+        fail "webhook trigger user-list response did not contain a valid data array"
+    else
+        API_USER_ID=$(jq -r '[.data[] | select((.email? | type) == "string") | select(.email | startswith("api-user-")) | .id | select((type == "string") and (length > 0))] | first // empty' <<<"$API_USERS_BODY")
+        if [[ -z "$API_USER_ID" ]]; then
+            fail "webhook trigger user was not found in the API user-list response"
+        fi
+    fi
+    WEBHOOK_TRIGGER_READY=0
+    if [[ -n "$WH_SECRET" && -n "$API_USER_ID" ]]; then
+        TRIGGER_HTTP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer $API_KEY" \
+            -H 'Content-Type: application/json' -d '{"name":"Renamed User"}' \
+            "$SERVICE_LISTEN/v1/$SLUG/users/$API_USER_ID")
+        TRIGGER_CURL_STATUS=$?
+        if [[ $TRIGGER_CURL_STATUS -ne 0 ]]; then
+            fail "webhook trigger update request failed (curl exit $TRIGGER_CURL_STATUS, HTTP $TRIGGER_HTTP_STATUS)"
+        elif [[ "$TRIGGER_HTTP_STATUS" != "200" ]]; then
+            fail "webhook trigger update request returned HTTP $TRIGGER_HTTP_STATUS"
+        else
+            WEBHOOK_TRIGGER_READY=1
+        fi
+    fi
+
+    DELIVERY=""
+    if [[ $WEBHOOK_TRIGGER_READY -eq 1 ]]; then
+        for _ in $(seq 1 30); do
+            DELIVERY=$(tail -n "+$((SINK_MARK + 1))" "$WEBHOOK_SINK_CAPTURE_FILE" | \
+                jq -rc --arg user_id "$API_USER_ID" \
+                'select((.body | fromjson? | .type) == "user.updated" and (.body | fromjson? | .data.user_id) == $user_id)' | tail -1)
+            [[ -n "$DELIVERY" ]] && break
+            sleep 1
+        done
+    fi
+    if [[ $WEBHOOK_TRIGGER_READY -eq 1 ]]; then
+        if [[ -z "$DELIVERY" ]]; then
+            fail "webhook delivery reaches the controlled sink"
+        else
+            pass "webhook delivery reaches the controlled sink"
+            SIGNATURE_OK=$(python3 -c "
 import hashlib, hmac, json, sys
 d = json.loads(sys.argv[1]); secret = sys.argv[2].encode()
-ts = d['headers'].get('X-TsAuth-Timestamp', '')
-sig = d['headers'].get('X-TsAuth-Signature', '')
+headers = {k.lower(): v for k, v in d['headers'].items()}
+ts = headers.get('x-tsauth-timestamp', '')
+sig = headers.get('x-tsauth-signature', '')
 expected = 'sha256=' + hmac.new(secret, (ts + '.' + d['body']).encode(), hashlib.sha256).hexdigest()
 print('yes' if hmac.compare_digest(expected, sig) else 'no')" "$DELIVERY" "$WH_SECRET")
-    check "webhook HMAC signature verifies" "yes" "$SIGNATURE_OK"
+            check "webhook HMAC signature verifies" "yes" "$SIGNATURE_OK"
+        fi
+    fi
 fi
 
 # ---- 9. Billing guard, passcodes, audit ------------------------------------------------
@@ -229,7 +282,8 @@ BILLING=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bear
 check "billing answers 503 without Stripe configured" "503" "$BILLING"
 
 PASSCODE=$(curl -sf -X POST "$SERVICE_LISTEN/ui/$SLUG/passcode/request" \
-    -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\"}")
+    -H "Origin: $SERVICE_LISTEN" -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$EMAIL\"}")
 check "email passcode request answers ok (no enumeration)" "true" "$(jq -r .ok <<<"$PASSCODE")"
 
 AUDIT=$(curl -sf -H "Authorization: Bearer $API_KEY" "$SERVICE_LISTEN/v1/$SLUG/audit-events?limit=50")
@@ -237,7 +291,11 @@ check "audit log records the smoke run's actions" "yes" "$(grep -q 'user.signed_
 
 echo
 if [[ $FAILURES -eq 0 ]]; then
-    echo "SMOKE RESULT: all checks passed (service on $SERVICE_LISTEN, member $MEMBER_URL)"
+    if [[ $WEBHOOK_SMOKE -eq 0 ]]; then
+        echo "SMOKE RESULT: all executed checks passed; webhook delivery/signature skipped (service on $SERVICE_LISTEN, member $MEMBER_URL)"
+    else
+        echo "SMOKE RESULT: all checks passed (service on $SERVICE_LISTEN, member $MEMBER_URL)"
+    fi
 else
     echo "SMOKE RESULT: $FAILURES check(s) failed"
     exit 1

@@ -1,6 +1,4 @@
-bin/
-obj/
+target/
 artifacts/
 .env
-*.user
 .claude/worktrees/

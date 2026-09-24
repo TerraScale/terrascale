@@ -54,4 +54,4 @@ place; add a regression test when practical; leave the full suite green.
 47. README accuracy: every documented route exists in code; every env var in AuthOptions is documented and vice versa; commands work as written.
 48. Options: validation coverage (empty strings, whitespace, bad base64, bad URLs), defaults, arg-overrides-env precedence.
 49. Concurrency: in-memory singletons (webhook dispatcher cursor/dedupe, JWKS cache, passcode lockout counter, rate limiter, Stripe event dedupe) — thread safety, unbounded growth, restart semantics; fix real races.
-50. Final sweep: run the full suite three times hunting flakes; `dotnet format style --verify-no-changes`; cross-check parity.md and README against any behavior changed by reviewers 1–49; final commit.
+50. Final sweep: run the full suite three times hunting flakes; `cargo fmt --all -- --check` and strict `cargo clippy --workspace --all-targets --locked -- -D warnings`; cross-check parity.md and README against any behavior changed by reviewers 1–49; final commit.

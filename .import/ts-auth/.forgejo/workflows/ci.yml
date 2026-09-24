@@ -9,13 +9,15 @@ on:
 
 jobs:
   ci:
-    name: Check and build ts-auth
+    name: Check and build Rust ts-auth
     runs-on: terrascale-builder
-    # The browser-driven hosted-UI suite needs the headroom (serialized E2E classes).
     timeout-minutes: 60
     env:
       FORGEJO_SHA: ${{ forgejo.sha }}
       FORGEJO_TOKEN: ${{ forgejo.token }}
+      TS_RUST_REV: c590cd41eabf05bbd5982a1580c1bb01880c346a
+      RUSTUP_TOOLCHAIN: 1.98.1
+      PLAYWRIGHT_VERSION: 1.62.0
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -25,128 +27,90 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Clone sibling sources (TerraScale SDK + TerraBase engine)
+      - name: Check out the pinned Rust SDK
         env:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         run: |
           set -euo pipefail
-          # ts-auth builds against the sibling checkouts of ts-dotnet and terrabase
-          # (the same layout developers use locally). The job token cannot read
-          # sibling org repos, so the clones use the org read token.
-          parent="$(pwd)/.."
-          git clone --depth 1 "https://oauth2:${ORG_READ_TOKEN:?org read token is required}@git.terrascale.tech/TerraScale/ts-dotnet.git" "${parent}/ts-dotnet"
-          git clone --depth 1 "https://oauth2:${ORG_READ_TOKEN}@git.terrascale.tech/TerraScale/terrabase.git" "${parent}/terrabase"
-          # TerraBase builds TerraScale.Endpoints from the ts-libs sibling when present.
-          git clone --depth 1 "https://oauth2:${ORG_READ_TOKEN}@git.terrascale.tech/TerraScale/ts-libs.git" "${parent}/ts-libs"
-          # TerraBase main is .NET 11 only; pin to the first net11 commit until
-          # ts-auth tracks its tip deliberately.
-          git clone --no-checkout "https://oauth2:${ORG_READ_TOKEN}@git.terrascale.tech/TerraScale/terrabase.git" "${parent}/terrabase-pin"
-          git -C "${parent}/terrabase-pin" checkout --detach fadef600
-          rm -rf "${parent}/terrabase" && mv "${parent}/terrabase-pin" "${parent}/terrabase"
+          git clone "https://oauth2:${ORG_READ_TOKEN:?org read token is required}@git.terrascale.tech/TerraScale/ts-rust.git" ../ts-rust
+          git -C ../ts-rust checkout --detach "${TS_RUST_REV}"
+          test "$(git -C ../ts-rust rev-parse HEAD)" = "${TS_RUST_REV}"
+          rustup_bin="${CARGO_HOME:-${HOME}/.cargo}/bin/rustup"
+          if ! test -x "${rustup_bin}"; then rustup_bin="$(command -v rustup)"; fi
+          test -x "${rustup_bin}"
+          toolchain_file_version="$(sed -nE 's/^channel = "([^"]+)"$/\1/p' rust-toolchain.toml)"
+          test "${toolchain_file_version}" = "${RUSTUP_TOOLCHAIN}"
+          "${rustup_bin}" toolchain install "${RUSTUP_TOOLCHAIN}" --profile minimal --component rustfmt --component clippy
+          active_toolchain_output="$("${rustup_bin}" show active-toolchain)"
+          printf '%s\n' "${active_toolchain_output}"
+          active_toolchain="$(printf '%s\n' "${active_toolchain_output}" | awk 'NR == 1 {print $1}')"
+          toolchain_host="$("${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" rustc -vV | sed -n 's/^host: //p')"
+          test -n "${toolchain_host}"
+          expected_host_qualified_toolchain="${RUSTUP_TOOLCHAIN}-${toolchain_host}"
+          if test "${active_toolchain}" != "${RUSTUP_TOOLCHAIN}" && \
+            test "${active_toolchain}" != "${expected_host_qualified_toolchain}"; then
+            echo "active rustup toolchain mismatch: expected ${RUSTUP_TOOLCHAIN} or ${expected_host_qualified_toolchain}, got ${active_toolchain}" >&2
+            exit 1
+          fi
+          "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo --version
 
-      - name: Restore ts-auth tests
+      - name: Check formatting and run Rust tests
         run: |
           set -euo pipefail
-          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
-          mkdir -p -- "${NUGET_PACKAGES}"
-          dotnet restore \
-            tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj \
-            --runtime linux-x64 --nologo
-          dotnet restore \
-            src/TerraScale.Auth/TerraScale.Auth.csproj \
-            --runtime linux-x64 --nologo
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-msft-1.62.0-chromium
-
-      # Browser-driven hosted-UI tests need Chromium; the Microsoft.Playwright
-      # NuGet package pins 1.62 (the baked image engines are 1.63), so install
-      # the matching engine from the package's bundled node.
-      - name: Install Playwright Chromium
-        run: |
-          set -euo pipefail
-          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
-          playwright_root="${NUGET_PACKAGES}/microsoft.playwright/1.62.0/.playwright"
-          node_bin="${playwright_root}/node/linux-x64/node"
-          test -x "${node_bin}"
-          "${node_bin}" "${playwright_root}/package/cli.js" install chromium
-
-      - name: Build ts-auth tests and service
-        run: |
-          set -euo pipefail
-          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
-          exec dotnet build \
-            tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj \
-            --configuration Release --no-restore --nologo
-
-      - name: Verify dependency audit failure handling
-        run: dotnet run scripts/check-nuget-vulnerabilities.tests.cs -- --minimum-expected-tests 13
-
-      - name: Fail closed on vulnerable NuGet packages
-        run: |
-          set -euo pipefail
-          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
-          dotnet run scripts/check-nuget-vulnerabilities.cs \
-            src/TerraScale.Auth/TerraScale.Auth.csproj \
-            tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj
-
-      - name: Run ts-auth tests
-        run: |
-          set -euo pipefail
-          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
-          mkdir -p -- artifacts/ci/tests
-          test_log="artifacts/ci/tests/auth-tests.log"
-          dotnet run \
-            --project tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj \
-            --configuration Release --no-build -- \
-            --minimum-expected-tests 50 \
-            --maximum-parallel-tests 1 \
-            --log-level None 2>&1 | tee "${test_log}"
-          grep -Fq 'Test run summary: Passed!' "${test_log}"
-          grep -Eq 'failed: 0' "${test_log}"
-          report="$(find tests/TerraScale.Auth.Tests -type f -path '*/TestResults/*-report.html' -print -quit)"
-          test -n "${report}"
-          cp -- "${report}" artifacts/ci/tests/ts-auth-tunit-report.html
-          (cd artifacts/ci/tests && sha256sum auth-tests.log ts-auth-tunit-report.html) \
-            > artifacts/ci/tests/SHA256SUMS
+          rustup_bin="${CARGO_HOME:-${HOME}/.cargo}/bin/rustup"
+          if ! test -x "${rustup_bin}"; then rustup_bin="$(command -v rustup)"; fi
+          test -x "${rustup_bin}"
+          export RUSTC="$("${rustup_bin}" which rustc --toolchain "${RUSTUP_TOOLCHAIN}")"
+          "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo fmt --all -- --check
+          "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo clippy --workspace --all-targets --locked -- -D warnings
+          mkdir -p artifacts/ci/tests
+          "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo test --workspace --all-targets --locked 2>&1 | tee artifacts/ci/tests/auth-tests.log
+          bash scripts/check-rust-test-results.sh artifacts/ci/tests/auth-tests.log
+          (cd artifacts/ci/tests && sha256sum auth-tests.log > SHA256SUMS)
           (cd artifacts/ci/tests && sha256sum --check --strict SHA256SUMS)
           jq -n \
             --arg sourceCommit "${FORGEJO_SHA:?event SHA is required}" \
+            --arg sdkCommit "${TS_RUST_REV}" \
             --arg testLog "auth-tests.log" \
-            --arg report "ts-auth-tunit-report.html" \
             --arg digests "SHA256SUMS" \
-            '{schemaVersion: 1, sourceCommit: $sourceCommit, testLog: $testLog, report: $report, digests: $digests}' \
+            '{schemaVersion: 1, sourceCommit: $sourceCommit, sdkCommit: $sdkCommit, testLog: $testLog, digests: $digests}' \
             > artifacts/ci/tests/test-receipt.json
-          echo 'Generated test evidence receipt:'
-          cat artifacts/ci/tests/test-receipt.json
-          echo 'Generated test evidence checksums:'
-          cat artifacts/ci/tests/SHA256SUMS
+
+      - name: Audit locked Rust dependencies
+        run: |
+          set -euo pipefail
+          rustup_bin="${CARGO_HOME:-${HOME}/.cargo}/bin/rustup"
+          if ! test -x "${rustup_bin}"; then rustup_bin="$(command -v rustup)"; fi
+          test -x "${rustup_bin}"
+          export RUSTC="$("${rustup_bin}" which rustc --toolchain "${RUSTUP_TOOLCHAIN}")"
+          # This advisory affects RSA private-key operations. Production auth-
+          # security code uses RSA public keys for verification; the private
+          # keys in security_vectors.rs only create test signatures. Guard that
+          # production boundary before keeping this single-advisory exception.
+          bash scripts/check-rsa-private-usage.sh
+          audit_root="${RUNNER_TEMP:-/tmp}/ts-auth-cargo-audit"
+          CARGO_TARGET_DIR="${RUNNER_TEMP:-/tmp}/ts-auth-cargo-audit-target" \
+            "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo install cargo-audit --version 0.22.2 --locked --root "${audit_root}"
+          "${audit_root}/bin/cargo-audit" audit --file Cargo.lock --ignore RUSTSEC-2023-0071
 
       - name: Build and inspect the release image
         run: |
           set -euo pipefail
-          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
-
           source_commit="$(git rev-parse HEAD)"
           test "${source_commit}" = "${FORGEJO_SHA:?event SHA is required}"
-          mkdir -p -- artifacts/ci/container-publish
-          dotnet restore \
-            src/TerraScale.Auth/TerraScale.Auth.csproj \
-            --runtime linux-x64 --nologo
-          dotnet publish \
-            src/TerraScale.Auth/TerraScale.Auth.csproj \
-            --configuration Release \
-            --runtime linux-x64 \
-            --self-contained true \
-            --output artifacts/ci/container-publish \
-            --nologo \
-            -p:PublishSingleFile=true \
-            -p:IncludeNativeLibrariesForSelfExtract=true \
-            -p:DebugType=None
-          test -s artifacts/ci/container-publish/TerraScale.Auth
+          # Build against Debian's older glibc so the binary runs in the
+          # distroless Debian 13 runtime even when the host runner is newer.
+          podman run --rm --userns=keep-id --security-opt label=disable \
+            --volume "$PWD:/work/ts-auth" \
+            --volume "$(realpath ../ts-rust):/work/ts-rust:ro" \
+            --workdir /work/ts-auth \
+            --env CARGO_HOME=/tmp/ts-auth-cargo \
+            --env CARGO_TARGET_DIR=/work/ts-auth/target/ci-debian \
+            "docker.io/library/rust:${RUSTUP_TOOLCHAIN}-bookworm" \
+            cargo build --release --locked -p auth-app
+          mkdir -p artifacts/ci/container-publish
+          cp -- target/ci-debian/release/auth-app artifacts/ci/container-publish/ts-auth
+          test -s artifacts/ci/container-publish/ts-auth
           podman build \
             --pull=missing \
             --platform linux/amd64 \
@@ -157,6 +121,70 @@ jobs:
           test "$(podman image inspect "${image}" --format '{{.Architecture}}')" = amd64
           test "$(podman image inspect "${image}" --format '{{.Os}}')" = linux
 
+          # Exercise the packaged binary and composed router without a live
+          # TerraBase implementation; readiness must fail closed.
+          port="$(python3 - <<'PY'
+          import socket
+          with socket.socket() as listener:
+              listener.bind(('127.0.0.1', 0))
+              print(listener.getsockname()[1])
+          PY
+          )"
+          container="ts-auth-ci-${source_commit:0:12}"
+          podman run --detach --rm --name "${container}" --network host \
+            --env TS_AUTH_ENVIRONMENT=Development \
+            --env "TS_AUTH_LISTEN=http://127.0.0.1:${port}" \
+            --env "TS_AUTH_PUBLIC_ORIGIN=http://127.0.0.1:${port}" \
+            --env TS_AUTH_TERRASCALE_API_URL=http://127.0.0.1:1 \
+            --env TS_AUTH_TERRASCALE_API_KEY=ci-contract-key \
+            --env TS_AUTH_DATABASE=ci-contract-db \
+            --env TS_AUTH_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
+            --env TS_AUTH_OPERATOR_KEY=ci-operator \
+            --env TS_AUTH_METRICS_KEY=ci-metrics \
+            "${image}"
+          trap 'podman stop "${container}" >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for _ in $(seq 1 30); do
+            if curl --silent --fail --max-time 2 "http://127.0.0.1:${port}/healthz" >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          if test "${ready}" != 1; then podman logs "${container}"; exit 1; fi
+          curl --silent --fail "http://127.0.0.1:${port}/openapi/v1.json" | jq -e '.info.title == "TerraScale Auth API" and .paths["/healthz"] != null'
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/readyz")" = 503
+
+      - name: Set up Node.js for admin browser acceptance
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.14.0
+
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ env.PLAYWRIGHT_VERSION }}-linux-amd64-chromium
+
+      - name: Install pinned Playwright and Chromium
+        run: |
+          set -euo pipefail
+          browser_root="${RUNNER_TEMP:-/tmp}/ts-auth-playwright"
+          npm install --prefix "${browser_root}" --no-save --no-audit --no-fund "playwright@${PLAYWRIGHT_VERSION}"
+          "${browser_root}/node_modules/.bin/playwright" install --with-deps chromium
+
+      - name: Run admin browser acceptance
+        run: |
+          set -euo pipefail
+          rustup_bin="${CARGO_HOME:-${HOME}/.cargo}/bin/rustup"
+          if ! test -x "${rustup_bin}"; then rustup_bin="$(command -v rustup)"; fi
+          test -x "${rustup_bin}"
+          browser_root="${RUNNER_TEMP:-/tmp}/ts-auth-playwright"
+          playwright_module="${browser_root}/node_modules/playwright/index.mjs"
+          chromium_path="$(node -e 'process.stdout.write(require(process.argv[1]).chromium.executablePath())' "${browser_root}/node_modules/playwright")"
+          test -f "${playwright_module}"
+          test -x "${chromium_path}"
+          TS_AUTH_PLAYWRIGHT_MODULE="${playwright_module}" \
+          TS_AUTH_CHROMIUM_PATH="${chromium_path}" \
+            "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo test --locked -p auth-app --test admin_browser -- --ignored --nocapture
+
       - name: Publish immutable container on protected main
         if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
         env:
@@ -166,15 +194,8 @@ jobs:
           set -euo pipefail
           source_commit="${FORGEJO_SHA:?event SHA is required}"
           local_image="localhost/terrascale/ts-auth:${source_commit}"
-          # Container repository names must be lowercase; the org ("TerraScale") maps to "terrascale".
           remote_image="git.terrascale.tech/$(printf '%s' "${REPOSITORY_OWNER:?owner is required}" | tr '[:upper:]' '[:lower:]')/ts-auth:${source_commit}"
-          # The runner exports REGISTRY_AUTH_FILE as a bind-mounted file under
-          # /etc/containers; podman login rewrites its auth file via rename,
-          # which fails with EBUSY on a bind mount. Use a job-local auth file.
           export REGISTRY_AUTH_FILE="${RUNNER_TEMP:-/tmp}/ts-auth-podman-auth.json"
-          # The job token authenticates but cannot write packages: the layer
-          # upload fails with 'authentication required'. A user/org token with
-          # the package write grant is required.
           printf '%s\n' "${REGISTRY_PUSH_TOKEN:?registry push token is required}" | \
             podman login git.terrascale.tech --username "${REPOSITORY_OWNER}" --password-stdin >/dev/null
           podman tag "${local_image}" "${remote_image}"

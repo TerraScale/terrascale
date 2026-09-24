@@ -1,0 +1,39 @@
+[workspace]
+resolver = "3"
+members = ["crates/auth-contracts", "crates/auth-store", "crates/auth-app", "crates/auth-security"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+thiserror = "2"
+sha2 = "0.10"
+hmac = "0.12"
+subtle = "2"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+url = "2"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net", "sync", "time"] }
+axum = { version = "0.8", features = ["macros"] }
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-scalar = { version = "0.3", features = ["axum"] }
+tower-http = { version = "0.6", features = ["catch-panic"] }
+saml-rs = { version = "=0.5.0", default-features = false, features = ["crypto-rustcrypto"] }
+quick-xml = "=0.41.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+terrascale = { path = "../ts-rust" }
+auth-contracts = { path = "crates/auth-contracts" }
+auth-store = { path = "crates/auth-store" }
+auth-security = { path = "crates/auth-security" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"

@@ -1,0 +1,8 @@
+[tools]
+rust = "1.98.1"
+
+[env]
+# Cargo otherwise finds the Nix rustc first on this host's PATH, bypassing the
+# pinned rustup toolchain. Prefer the configured Cargo home, then PATH, so
+# custom CARGO_HOME installs and system-managed rustup both work.
+RUSTC = '''{{exec(command='rustup_bin="${CARGO_HOME:-$HOME/.cargo}/bin/rustup"; if [ ! -x "$rustup_bin" ]; then rustup_bin="$(command -v rustup)"; fi; "$rustup_bin" which rustc --toolchain 1.98.1')}}'''

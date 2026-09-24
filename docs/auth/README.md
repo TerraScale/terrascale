@@ -1,24 +1,22 @@
 # ts-auth
 
-A hosted identity provider — the Clerk / Auth0 / WorkOS category — built as a
-first-class TerraScale application: ts-auth is itself **an end user of the
-platform**, persisting every user, session, passkey, and OAuth grant as JSON
-documents in TerraBase through the official `TerraScale.DotNet` SDK.
+A hosted identity provider in the Clerk / Auth0 / WorkOS category. It is a
+first-class TerraScale application: ts-auth uses `ts-rust` as its database
+contract for user, session, passkey, and OAuth grant documents.
 
-Everything auth-shaped is written from scratch (OpenIddict and ASP.NET
-Identity were studied as references, not referenced as packages): password
-hashing, JWT, OAuth 2.1/OIDC, WebAuthn, TOTP, webhook signing.
+The service is written in Rust. `docs/parity.md` tracks its capabilities and
+the evidence still needed for live integrations.
 
-## Feature set
+## Target feature inventory
 
-| Area | What ships |
+| Area | Capability to verify in Rust |
 | --- | --- |
 | Users | Email/password, usernames, profile + public/private metadata, blocking, soft delete, impersonation |
 | Sessions | Server-side sessions, httpOnly cookie, device list, revoke one/all, 14-day TTL |
 | Passkeys | Full WebAuthn: registration (none + packed attestation), discoverable-credential sign-in, sign-count clone detection |
 | OAuth 2.1 / OIDC | Authorization code + PKCE (S256), refresh rotation with reuse detection, client credentials, discovery, JWKS, userinfo, introspection, revocation, RP-initiated logout; ES256 id/access tokens |
 | MFA | TOTP (RFC 6238) enrollment + verification, recovery codes, step-up during sign-in |
-| Email flows | Verification, password reset, magic links, email passcodes (pluggable `IEmailSender`; logs by default) |
+| Email flows | Verification, password reset, magic links, email passcodes (pluggable email sender; logs by default) |
 | Social SSO | Upstream OIDC connections (Microsoft, Google, any issuer) with JWKS-verified ID tokens; GitHub OAuth with verified email lookup |
 | Enterprise SSO | SAML 2.0 connections (HTTP-Redirect AuthnRequest, XML-DSig-verified assertions) |
 | Directory sync | SCIM 2.0 `/scim/{dir}` — users, groups, deprovisioning |
@@ -27,7 +25,7 @@ hashing, JWT, OAuth 2.1/OIDC, WebAuthn, TOTP, webhook signing.
 | Management API | Full developer REST API with `sk_...` keys, per-family key scopes, pagination, rate limiting |
 | JWT templates | Custom-claim tokens (`{{user.email}}` substitution) minted on demand |
 | Webhooks | HMAC-signed outbound events with retries, durable delivery status, dead-letter listing, and operator replay |
-| Audit logs | Every significant action, queryable API |
+| Audit logs | Signed audit events in production, with query and verification APIs |
 | Billing | Stripe subscriptions: Checkout, customer portal, signature-verified webhooks, plan quotas |
 
 Multi-instance: one ts-auth deployment hosts many customer instances; every
@@ -37,40 +35,36 @@ customers do not choose an authentication region. Regional ts-auth processes
 share one database, and that database is replicated to the admitted launch
 regions. Project and customer database placement remain separate choices.
 
-The API surface is split into feature slices. Each route is an `IEndpoint` in its own file; the feature module exposes its endpoint catalog and `EndpointModules` composes those catalogs for `TerraScale.Endpoints`.
+The HTTP app composes feature routers and OpenAPI documents from each Rust
+feature. Scalar is served at `/scalar`; the JSON contract is at
+`/openapi/v1.json`.
 
 ## Layout
 
-```
-src/TerraScale.Auth/
-  App.cs                  # composition + middleware
-  EndpointModule.cs       # shared TerraScale.Endpoints catalog
-  Configuration/          # TS_AUTH_* env options
-  Crypto/                 # BLAKE2b, Argon2id, JWT, TOTP, encodings, PHC hashing
-  WebAuthn/               # WebAuthn verifier + COSE keys
-  Keys/                   # per-instance ES256 key ring, AES-GCM secret box
-  Store/                  # AuthStore over the SDK documents API + atomic uniqueness claims
-  Users/ OAuth/ Passkeys/ Mfa/ Organizations/ Management/ Webhooks/     # core feature slices
-  Connections/ Scim/ Billing/ Templates/ Admin/ Instances/ Passcodes/   # one IEndpoint class per route
-  Observability/                                                      # health and metrics endpoints
-tests/TerraScale.Auth.Tests/
-  AuthServiceFixture.cs   # boots the real service (real loopback listener) over the real embedded TerraBase engine
-  BrowserFixture.cs       # shared headless Chromium for the hosted-UI tests
-  ...E2E tests            # every flow: hosted UI in a real browser (Playwright), APIs over real HTTP
+```text
+crates/auth-app/          # Axum startup, configuration, middleware, feature routers, Datastar UI
+crates/auth-contracts/    # shared request, response, and persisted document shapes
+crates/auth-security/     # password, tokens, JWT, WebAuthn, TOTP, and secret handling
+crates/auth-store/        # TerraBase SDK-backed storage and query adapter
+scripts/                  # provisioning and real-stack smoke checks
 ```
 
-Browser tests need the Playwright Chromium build that matches the
-`Microsoft.Playwright` package (CI installs and caches it):
+The previous .NET service, tests, and development helper are retained in Git
+history; the current source tree builds only the Rust service.
 
-```sh
-~/.nuget/packages/microsoft.playwright/<version>/.playwright/node/linux-x64/node \
-  ~/.nuget/packages/microsoft.playwright/<version>/.playwright/package/cli.js install chromium
-```
+The service uses `ts-rust` as its TerraBase document and query contract. The
+live database implementation is still being completed, so current Rust
+verification uses local contract fixtures and explicit backend-unavailable
+responses. Persistent uploaded files, if a feature needs them, belong in
+RustFS through its S3 API; packaged fonts and static assets are embedded in
+the service binary.
 
 ## Running
 
-The build references the sibling `ts-dotnet` SDK checkout (see AGENTS.md);
-the service itself needs a TerraScale API endpoint + project API key + database:
+The build requires the sibling `../ts-rust` SDK checkout at commit
+`c590cd41eabf05bbd5982a1580c1bb01880c346a`, as pinned in CI. Install the
+Rust 1.98.1 toolchain from `.mise.toml` with `mise install`. The service itself
+needs a TerraScale API endpoint, project API key, and database:
 
 ```sh
 TS_AUTH_PUBLIC_ORIGIN=https://auth.terrascale.tech \
@@ -81,7 +75,7 @@ TS_AUTH_MASTER_KEY=$(head -c 32 /dev/urandom | base64) \
 TS_AUTH_AUDIT_SIGNING_KEY=$(head -c 32 /dev/urandom | base64) \
 TS_AUTH_OPERATOR_KEY=$(head -c 32 /dev/urandom | base64) \
 TS_AUTH_METRICS_KEY=$(head -c 32 /dev/urandom | base64) \
-dotnet run --project src/TerraScale.Auth
+mise exec -- cargo run --locked -p auth-app
 ```
 
 | Variable | Meaning |
@@ -97,7 +91,7 @@ dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_OPERATOR_KEY` | Bearer key that can create instances (`POST /v1/instances`) |
 | `TS_AUTH_METRICS_KEY` | Dedicated private `/metrics` scrape key sent as `X-TerraScale-Metrics-Key` (required outside Development) |
 | `TS_AUTH_LISTEN` | Listen URL (default `http://+:8080`) |
-| `TS_AUTH_RATE_LIMIT` | Management API requests per key per 5 min (default 1000) |
+| `TS_AUTH_RATE_LIMIT` | Management API requests per key per 5-minute process-local window (default 1000) |
 | `TS_AUTH_STRIPE_SECRET_KEY` | Stripe secret key (billing routes 503 when unset) |
 | `TS_AUTH_STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (`whsec_...`) |
 | `TS_AUTH_PRICE_PRO` / `TS_AUTH_PRICE_ENTERPRISE` | Stripe price ids for the plans |
@@ -112,6 +106,10 @@ The four `TS_AUTH_SMTP_HOST` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` are
 all-or-nothing: setting any one without the others fails startup with the list
 of missing variables.
 
+The management rate limit is a fixed window maintained separately by each
+service process. Replicas do not share counters, and restarting a process resets
+its counters; this is protective throttling rather than a distributed quota.
+
 ### Self-service authentication setup
 
 An organization admin can open `/ui/{slug}/admin`, choose a provider, and enter
@@ -123,11 +121,127 @@ GitHub uses its OAuth app flow and accepts only verified email addresses. The
 client secret is encrypted at rest and never shown again. Connections are
 scoped to the selected organization; only its admins can enable or disable
 them. The hosted sign-in choices are at `/ui/{slug}/connections/list`.
+SAML sign-in accepts one verified signature on the response or its sole
+assertion under the configured profile. Starting another sign-in tab for the
+same connection replaces the first flow's correlation cookie; complete the
+latest flow. Validated SAML assertions also create durable replay claims, so a
+duplicate assertion fails closed. Current storage has no expiry cleanup for
+these claims, so they are retained permanently. Do not remove them until a
+verified assertion-expiry and storage-lifecycle contract exists.
+
+The OAuth provider advertises and accepts `openid`, `profile`, and `email`.
+OAuth clients register `none`, `client_secret_basic`, or
+`client_secret_post`; endpoints enforce the registered method. Method `none`
+makes a client public, and public clients cannot register either secret-based
+method. Redirect URIs must use HTTPS except `localhost` or a loopback IP over
+HTTP, and authorization requests must exactly match a registered URI without a
+fragment or credentials.
+`prompt=none` uses only an active session and returns `login_required` when none
+exists. Forced reauthentication, consent, and account selection are unsupported:
+`prompt=login`, `prompt=consent`, and `prompt=select_account` return
+`login_required`, `consent_required`, and `account_selection_required`. The
+combined `prompt=login consent` returns `interaction_required`. Empty, duplicate,
+unknown, or `none` combined with another prompt value returns `invalid_request`.
+
+Upstream OIDC connections request `openid email profile` by default. A custom
+OIDC scope list must contain `openid` and `email`; valid configured scopes are
+stored on the connection and sent to the provider.
 
 Uniqueness of user-chosen identifiers (emails, usernames, org slugs,
 credentials) is enforced with atomic claim documents: CreateOnly writes the
 engine rejects on collision — race-safe without transactions. See
 `docs/parity.md` for the full Clerk/WorkOS/Auth0 feature matrix.
+An ambiguous TerraBase write can leave a uniqueness or quota claim reserved,
+or commit an API key before its plaintext is returned. A timeout, a failed
+immediate read, or a compensation attempt does not prove that a delayed write
+did not commit. Keep an ambiguous claim reserved; never release it immediately
+from the failed request. Any manual repair must first quiesce the relevant
+writers, verify the claim and its expected owner, and use an owner-checked,
+conditional release. If the state is uncertain, retain the claim. List or
+revoke an uncertain API key before retrying its creation.
+
+Management mutations and audit writes are separate operations. User
+create/update/delete, instance update, and API-key revocation return success
+after the mutation commits even if audit persistence then fails; that failure
+is logged, and the mutation and audit event are not atomic. API-key creation
+and impersonation fail closed on audit errors: the new key or token is withheld
+and cleanup is attempted, though a second storage failure can prevent cleanup
+from being confirmed.
+
+New SCIM-created identities stay hidden as provisional, deleted users until
+their directory link and required organization membership are durable. The
+service then activates the user with a versioned write. A crash or ambiguous
+activation response can leave a provisional user and reserved claims; repair
+requires checking the owning directory, link, membership, and User version
+before a conditional cleanup or activation. Do not clear the provisional marker
+or release its claims based only on a failed request.
+
+Instance-wide SCIM directories also control authentication: every associated
+active directory must have an active link to the user. A missing or `Deleting`
+directory denies authentication; a durably `Deleted` directory releases its
+authority. Directory DELETE can return `503` while child cleanup is changing;
+retry it to rerun group and link sweeps, even after the directory is `Deleted`,
+so late in-flight writes can be cleaned up. SCIM User DELETE denies
+authentication until a fresh SCIM User POST restores the link.
+Organization-scoped directories affect membership only, and an admin ban
+remains an independent denial. Reactivation can make an existing, unexpired
+session usable again; deactivation does not itself revoke sessions.
+
+### Repairing a stranded SCIM userName claim
+
+A directory-scoped SCIM rename or delete that fails after reserving a new
+`userName` can leave the old or new name unavailable. Repair the claim through
+the GRU storage authority only after placing that directory behind an
+exclusive write fence on every auth replica and draining in-flight SCIM
+requests. Pausing one upstream sync client is insufficient if another caller
+can still write. A directory already in `Deleting` or `Deleted` status cannot
+accept new SCIM writes, but do not start directory deletion solely to repair a
+name. If an exclusive fence is unavailable, retain the claim.
+
+For the affected directory and name, compute the claim key as
+`{directory.id}:{trimmed-lowercase-userName}` (the service's
+`users::normalize_email` rule). Its document ID in `uniques` is
+`scim-user-name:` followed by the lowercase SHA-256 hex digest of that key.
+Read the claim with its ETag and check `ownerType == "scim-user-name"`. Its
+`ownerId` must be the expected `scim_user_links` ID,
+`{directory.id}:{user.id}`. Inspect the current link and all links in that
+directory: retain the claim if any link still uses that normalized name,
+including an inactive link. For a link whose profile has not been initialized,
+check the linked user's email as the effective `userName` before deciding.
+Retain it as well if ownership, link state, or an in-flight operation cannot
+be established unambiguously. Only for a proven unused claim with the expected
+owner, delete that exact `uniques` document using the ETag as an `If-Match`
+condition (the store's `compare_and_delete` operation). A failed conditional
+delete means the state changed; reread and reassess rather than retrying an
+unconditional delete. Verify the final claim and links before lifting the
+write fence.
+
+### Repairing a stranded SCIM cleanup owner
+
+If SCIM User DELETE or directory deletion fails after taking a cleanup owner,
+the `scim_user_links` row can remain with `deleting: true`,
+`cleanupComplete: false`, and a non-null `cleanupOwner`. A retry returns a
+conflict while that owner is present. These are the serialized
+`ScimUserLink.cleanup_owner` and `cleanup_complete` fields; `incarnationId`
+below is `incarnation_id` in Rust. Fence the affected directory against
+writes on every auth replica, drain in-flight SCIM requests, and confirm the
+logged `cleanupOwner` request has stopped. Read the link and its ETag from the
+GRU authority. Verify its `instanceId`, `directoryId`, `userId`, and
+`incarnationId` against the failed operation; a new incarnation or a completed
+link must never be taken over. Reconcile the owning directory's membership
+claim and membership, group members, and local `userName` claim against the
+current link and any other active directory authority. Retain each child whose
+ownership or write outcome is uncertain.
+
+Only after the fence and child checks, clear `cleanupOwner` with a conditional
+write against that exact link ETag, preserving `deleting: true`,
+`cleanupComplete: false`, and `incarnationId`. If the conditional write loses,
+reread and reassess; do not force the owner to null. Retry the original SCIM
+User DELETE or directory deletion so the service finishes cleanup and marks
+the retained link `cleanupComplete: true`. Verify that terminal link and its
+children before lifting the fence. If the original owner may still write or
+the incarnation cannot be proven, leave the owner in place and escalate
+instead of starting another finisher.
 
 ### Email delivery (OCI)
 
@@ -152,31 +266,22 @@ this repo):
 
 ### Local development against a real TerraBase member
 
-ts-auth talks to the public database API. The local development member runs
-the real TerraBase engine and Kestrel transport with a development API-key
-gateway stand-in. From this checkout:
+The Rust service uses TerraBase's authenticated document API. Point
+`TS_AUTH_TERRASCALE_API_URL` at an already running compatible local development
+member with the document API and project-key gateway enabled, then set
+`TS_AUTH_ENVIRONMENT=Development`. This repository does not start or embed a
+TerraBase member.
 
-```sh
-TERRABASE_HOST_URL=http://127.0.0.1:8420 \
-TERRABASE_DEV_API_KEY=dev \
-TERRABASE_DATABASE_PATH=/tmp/ts-auth-dev \
-nice -n 19 dotnet run --project tools/TerraBaseDevMember -c Release
-# then point ts-auth at it:
-ASPNETCORE_ENVIRONMENT=Development \
-TS_AUTH_TERRASCALE_API_URL=http://127.0.0.1:8420 TS_AUTH_TERRASCALE_API_KEY=dev ...
-```
-
-The raw `TerraBase.Host` executable stays fail-closed for public document
-requests. A deployment must compose the platform's project-key authentication
-and tenant-authorization gateway; `TerraBaseDevMember` is only the local stand-in.
-
-Tests never need this: `AuthServiceFixture` boots the **embedded TerraBase
-engine** in-process, hands its transport to the real SDK, and serves the real
-service on a loopback listener — so every E2E test exercises the exact
-production path (browser or HttpClient → service → SDK → document API →
-engine).
+Rust unit and router tests run with `mise exec -- cargo test --workspace
+--all-targets --locked`.
+`scripts/smoke-real-stack.sh` is a future real-backend check for a built Rust
+service and separately running compatible member. It exits with a precondition
+error while no member is reachable.
 
 ## Provisioning the global auth dataset
+
+The Rust service starts with a newly provisioned dataset; it does not migrate
+legacy identity or SCIM link documents.
 
 The platform operator provisions ts-auth through the same database contract
 used by customer projects — see `scripts/provision.sh`:
@@ -215,22 +320,52 @@ the global placement and creates the database through the regional data API.
   `/v1/S/api-keys*`, `/v1/S/oauth-clients*`, `/v1/S/connections*`,
   `/v1/S/directories*`, `/v1/S/organizations*` (incl. org `domains*`),
   `/v1/S/domains/{domain}/enroll`, `/v1/S/jwt-templates*`, `/v1/S/webhooks*`,
-  `/v1/S/audit-events`,
+  `/v1/S/audit-events`, `/v1/S/audit-events/verify`,
   `/v1/S/billing*`, `/v1/S/instance`
 - Billing webhook: `POST /v1/billing/webhook` (Stripe signature)
-- Quota repair: `POST /v1/{slug}/billing/quota/reconcile` removes only orphaned durable seat claims and returns the examined/removed/retained counts. It requires the instance's authenticated management key.
+- Quota repair: `POST /v1/{slug}/billing/quota/reconcile` removes expired pending seat claims whose user is absent, then recounts durable owners and unresolved admissions. Active claims remain reserved. It returns examined/removed/retained claim counts and requires the instance's authenticated management key.
+
+Seat assignment currently probes create-only claims up to the plan cap to
+preserve race-safe ownership. Dense allocation can require work proportional to
+that cap; an indexed or atomic allocator contract remains future work.
 
 Outbound webhook signing secrets are envelope-encrypted with `TS_AUTH_MASTER_KEY` at rest and are returned only once when an endpoint is created.
 Webhook delivery checkpoints are stored durably per instance, so a process restart resumes from the last successful tick and does not silently skip queued audit events.
-Each endpoint/event delivery also has a durable outcome (`succeeded`, `pending`, or `dead`); dead deliveries are visible at `/v1/{slug}/webhooks/dead-letter` and can be replayed with the corresponding operator endpoint after remediation. Audit exports include their integrity digest and authenticity seal so downstream retention systems can verify them.
-The `TerraScale.Auth.Store.AuditExportVerifier` helper verifies an exported JSON array offline. Supply the active and retained rotation keys to distinguish digest mutation from an invalid authenticity seal; verification returns only counts and event IDs, never event payloads.
-- Operator: `POST /v1/instances` (Bearer `TS_AUTH_OPERATOR_KEY`)
-- Liveness/readiness: `GET /healthz` and `GET /readyz` (`/readyz` checks TerraBase member health).
-- Private metrics: `GET /metrics` (`X-TerraScale-Metrics-Key`), with bounded request, uptime, build, and readiness metrics.
+Each endpoint/event delivery also has a durable outcome (`succeeded`, `pending`, or
+`dead`); dead deliveries are visible at `/v1/{slug}/webhooks/dead-letter` and can
+be replayed with the corresponding operator endpoint after remediation. Dispatch
+scans each tenant's pending audit events and pending deliveries, so work grows
+with that tenant's pending backlog. Due-time filtering happens after the scoped
+query because the current query contract cannot select only due deliveries.
+Audit events and dead letters use tenant-scoped cursor pages: list and
+dead-letter pages return at most 100 rows, while an audit-verification page
+checks at most 1,000 events. Cursors are opaque; audit list order follows the
+storage provider and is not guaranteed chronological. Verification covers only
+the events in the returned page and does not establish global completeness or
+detect deleted or omitted events. Audit exports include integrity digests and
+authenticity seals so downstream retention systems can verify them; keep active
+and retained rotation keys available to verify historical exports after key
+rotation.
+- Operator: `POST /v1/instances` (Bearer `TS_AUTH_OPERATOR_KEY`) requires an
+  `Idempotency-Key` unique to each intentional instance bootstrap. Reuse the
+  same key when retrying that request so its first key can be recovered.
+- Liveness/readiness: `GET /healthz` is process liveness; `GET /readyz`
+  checks TerraBase management health. Readiness responses and gauges reflect
+  the latest completed check, coalesced and cached per process for one second
+  after completion. Each check is capped at two seconds, and readiness starts
+  at zero until a check completes.
+- Private metrics: `GET /metrics` (`X-TerraScale-Metrics-Key`), with bounded request, uptime, build, and latest-observation readiness gauges.
 
 ## CI
 
-`.forgejo/workflows/ci.yml` restores, builds, runs the full test suite
-(minimum-expected-tests guard), publishes a single-file self-contained binary
-into the distroless `Containerfile`, and pushes a SHA-tagged immutable image to
-`git.terrascale.tech/terrascale/ts-auth` from protected `main`.
+`.forgejo/workflows/ci.yml` checks out a pinned `ts-rust` revision, checks
+formatting, runs Cargo tests and a locked dependency advisory audit, and builds the Rust release binary into the
+distroless `Containerfile`. Registry publishing is held until the Rust
+feature inventory and real caller acceptance checks are complete.
+
+The locked dependency audit ignores only `RUSTSEC-2023-0071` for `rsa`:
+ts-auth currently uses RSA public-key signature verification for JWT,
+WebAuthn, and SAML, while the advisory concerns private-key operations. The
+advisory has no fixed release. Reevaluate and remove this exception before
+adding any RSA private-key signing or decryption path; every other vulnerability
+advisory remains a CI failure.
