@@ -1,0 +1,319 @@
+/* Onboarding wizard: activation steps and the create-organization modal.
+   Flat like the rest of the dashboard: no cards, hairlines between parts. */
+
+.ts-onboarding-root {
+  min-height: 100vh;
+  padding: var(--ts-xl) var(--ts-lg);
+}
+
+@media (min-width: 48rem) {
+  .ts-onboarding-root { padding: var(--ts-xxl) var(--ts-xl); }
+}
+
+.ts-onboarding-container {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ts-xl);
+  margin-inline: auto;
+  width: 100%;
+  max-width: 44rem;
+}
+
+.ts-onboarding-container-wide { max-width: 64rem; }
+
+.ts-onboarding-header { display: flex; }
+
+.ts-onboarding-header .ts-brand-logo { width: auto; height: 28px; }
+
+/* Progress: meta line, then one top rule per step that fills as steps pass. */
+.ts-onboarding-progress {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ts-sm);
+  margin-bottom: calc(var(--ts-md) - var(--ts-xl));
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  letter-spacing: 0.08em;
+}
+
+.ts-onboarding-steps {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: var(--ts-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts-onboarding-step {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  min-width: 0;
+  padding-top: var(--ts-sm);
+  border-top: 2px solid var(--ts-line);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+}
+
+.ts-onboarding-step > span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-onboarding-step-current {
+  border-color: var(--ts-accent);
+  color: var(--ts-ink);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-onboarding-step-complete { border-color: var(--ts-success); }
+.ts-onboarding-step-complete svg { color: var(--ts-success); }
+
+.ts-onboarding-step-blocked { border-color: var(--ts-danger); color: var(--ts-danger); }
+
+/* Step screen: section head, content, footer; no surrounding box. */
+.ts-onboarding-section {
+  display: grid;
+  gap: var(--ts-xl);
+}
+
+.ts-onboarding-section > .ts-section-head .ts-meta { margin: var(--ts-xs) 0 0; }
+
+.ts-onboarding-form {
+  display: grid;
+  gap: var(--ts-lg);
+  align-items: start;
+}
+
+@media (min-width: 48rem) {
+  .ts-onboarding-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.ts-onboarding-form-full { grid-column: 1 / -1; }
+.ts-onboarding-form > p.ts-meta { margin: 0; }
+
+/* Alert anatomy: tone icon beside a stacked title/body column. */
+.ts-onboarding-alert-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.ts-onboarding-alert-stack {
+  display: grid;
+  gap: var(--ts-xs);
+  min-width: 0;
+}
+
+/* The create-organization modal reuses this anatomy outside the root. */
+.ts-alert-warning .ts-onboarding-alert-icon { color: var(--ts-warning); }
+.ts-alert-danger .ts-onboarding-alert-icon { color: var(--ts-danger); }
+.ts-alert-success .ts-onboarding-alert-icon { color: var(--ts-success); }
+.ts-alert-info .ts-onboarding-alert-icon { color: var(--ts-info); }
+
+.ts-onboarding-terms {
+  grid-column: 1 / -1;
+  display: flex;
+}
+
+.ts-onboarding-terms-label {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+}
+
+/* Footer: hairline, secondary text left, actions right; stacked on mobile. */
+.ts-onboarding-form-footer {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--ts-md);
+  padding-top: var(--ts-lg);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-onboarding-form-footer .ts-btn { width: 100%; }
+
+@media (min-width: 40rem) {
+  .ts-onboarding-form-footer {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .ts-onboarding-form-footer .ts-btn { width: auto; }
+  .ts-onboarding-form-footer .ts-onboarding-secondary { margin-inline-end: auto; }
+}
+
+.ts-onboarding-secondary {
+  margin: 0;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  text-align: center;
+}
+
+.ts-onboarding-secondary .ts-link { font-weight: var(--ts-fw-semibold); }
+
+/* Billing interval segmented control, in the payment section head. */
+.ts-onboarding-interval {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+}
+
+.ts-onboarding-interval-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  height: 32px;
+  padding: 0 var(--ts-md);
+  border: 0;
+  border-radius: var(--ts-radius-badge);
+  background: transparent;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  cursor: pointer;
+}
+
+.ts-onboarding-interval-option:hover,
+.ts-onboarding-interval-option[aria-pressed="true"] {
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink);
+}
+
+.ts-onboarding-interval-option:focus-visible {
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
+}
+
+.ts-onboarding-interval-badge {
+  color: var(--ts-accent-soft);
+  font-size: var(--ts-fs-meta);
+}
+
+/* Plans: selectable cards, accent border + ring when chosen. */
+.ts-onboarding-plans {
+  display: grid;
+  gap: var(--ts-md);
+}
+
+@media (min-width: 48rem) {
+  .ts-onboarding-plans { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.ts-onboarding-plan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-sm);
+  padding: var(--ts-lg);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface);
+  color: var(--ts-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--ts-t-base) var(--ts-ease), border-color var(--ts-t-base) var(--ts-ease), box-shadow var(--ts-t-base) var(--ts-ease);
+}
+
+.ts-onboarding-plan:hover { border-color: var(--ts-ink-muted); }
+
+.ts-onboarding-plan[aria-checked="true"] {
+  border-color: var(--ts-accent);
+  background-color: rgba(var(--ts-accent-rgb), 0.06);
+  box-shadow: 0 0 0 1px var(--ts-accent);
+}
+
+.ts-onboarding-plan:focus-visible {
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
+}
+
+.ts-onboarding-plan-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-md);
+}
+
+.ts-onboarding-plan-name {
+  font-size: var(--ts-fs-body);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-onboarding-plan-check {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-pill);
+  color: var(--ts-on-accent);
+}
+
+.ts-onboarding-plan-check svg { visibility: hidden; }
+
+.ts-onboarding-plan[aria-checked="true"] .ts-onboarding-plan-check {
+  border-color: var(--ts-accent);
+  background-color: var(--ts-accent);
+}
+
+.ts-onboarding-plan[aria-checked="true"] .ts-onboarding-plan-check svg { visibility: visible; }
+
+.ts-onboarding-plan-trial {
+  margin-top: var(--ts-sm);
+  font-family: var(--ts-font-mono);
+  font-size: 1.5rem;
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-onboarding-plan-trial small {
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-sans);
+  font-size: var(--ts-fs-meta);
+  font-weight: normal;
+}
+
+.ts-onboarding-plan-price-row {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+}
+
+.ts-onboarding-plan-price-row span:first-child { font-family: var(--ts-font-mono); }
+
+.ts-onboarding-plan-features {
+  display: grid;
+  gap: var(--ts-sm);
+  margin-top: var(--ts-sm);
+  padding-top: var(--ts-md);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-onboarding-plan-feature {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  font-size: var(--ts-fs-ui);
+}
+
+.ts-onboarding-plan-feature svg { flex-shrink: 0; color: var(--ts-ink-muted); }
+
+/* Region map: frameless, full width and brighter than the shared picker. */
+.ts-onboarding-section .ts-region-frame {
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.ts-onboarding-section .ts-region-surface {
+  opacity: 1;
+  filter: brightness(1.7) saturate(1.2);
+}

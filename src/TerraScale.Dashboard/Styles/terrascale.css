@@ -60,9 +60,7 @@
 @import "../Features/Profile/settings.css" layer(features);
 @import "../Features/Subscriptions/subscriptions.css" layer(features);
 @import "../Features/Auth/flows.css" layer(features);
-@import "../Features/Auth/onboarding-base.css" layer(features);
-@import "../Features/Auth/onboarding-card.css" layer(features);
-@import "../Features/Auth/onboarding-payment.css" layer(features);
+@import "../Features/Onboarding/onboarding.css" layer(features);
 @import "../Features/Auth/approvals.css" layer(features);
 @import "../Features/Auth/flow-wave2.css" layer(features);
 @import "../Features/Engine/engine.css" layer(features);

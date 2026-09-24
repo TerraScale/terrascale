@@ -13,7 +13,7 @@ dialog.ts-dialog-wizard[open] {
   flex-direction: column;
   /* One box for all three steps: tall enough for the tallest step (payment,
      three plan cards) so nothing is clipped, and every step keeps that exact
-     size. Shorter steps center their card in the leftover space; a shorter
+     size. Shorter steps start at the top and leave space below; a shorter
      viewport scrolls the content instead. svh keeps the fixed box inside the
      visible viewport when mobile toolbars collapse it. */
   height: min(60rem, 92svh);
@@ -21,11 +21,10 @@ dialog.ts-dialog-wizard[open] {
 }
 
 .ts-dialog-content-wizard {
-  /* Fill the fixed-height dialog so shorter steps center their card in the
-     leftover space; the taller-than-box path scrolls here. */
+  /* Fill the fixed-height dialog; the taller-than-box path scrolls here. */
   flex: 1;
   gap: var(--ts-md);
-  padding: 0 0 var(--ts-lg);
+  padding: var(--ts-md) 0 var(--ts-lg);
   min-height: 0;
   overflow-y: auto;
 }
@@ -40,6 +39,6 @@ dialog.ts-dialog-wizard[open] {
 }
 
 .ts-dialog-content-wizard .ts-onboarding-container {
+  max-width: none;
   padding-inline: var(--ts-xl);
-  margin-block: auto;
 }

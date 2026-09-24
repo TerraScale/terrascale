@@ -12,7 +12,6 @@ public sealed record NewOrganizationWizardModel(
     int CurrentStep,
     int TotalSteps,
     int ProgressPercent,
-    bool Compact,
     bool PaymentCanceled,
     string? Error,
     IReadOnlyList<OnboardingPlanView> Plans,
@@ -60,8 +59,6 @@ public sealed record NewOrganizationWizardModel(
             CurrentStep: index + 1,
             TotalSteps: StepDefinitions.Length,
             ProgressPercent: Math.Min(100, (int)Math.Round((index + 1) / (double)StepDefinitions.Length * 100)),
-            // The project step is the wide one, mirroring the activation wizard.
-            Compact: activeStep != ProjectStep,
             PaymentCanceled: paymentStatus == "canceled",
             Error: error,
             Plans: OnboardingCatalog.Plans,

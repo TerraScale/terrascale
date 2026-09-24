@@ -10,6 +10,5 @@ public sealed record OnboardingProgressView(
     int TotalSteps,
     int ProgressPercent,
     string Label,
-    bool Compact,
     string AriaLabel,
     string BarAriaLabel);
