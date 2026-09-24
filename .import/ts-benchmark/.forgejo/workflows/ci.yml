@@ -1,4 +1,4 @@
-name: ts-benchmark CI
+name: Rust benchmark build and guest environment
 
 on:
   push:
@@ -8,146 +8,37 @@ on:
   workflow_dispatch:
 
 jobs:
-  ci:
-    name: Build and smoke the benchmarks
+  rust-driver:
+    name: Format, check, and build Rust SQLite driver
     runs-on: terrascale-builder
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           github-server-url: "https://git.terrascale.tech"
           ref: ${{ forgejo.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: Reject committed benchmark artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          tracked_artifacts="$(git ls-files -ci --exclude-standard)"
-          if test -n "${tracked_artifacts}"; then
-            printf 'Generated files are tracked despite .gitignore:\n%s\n' "${tracked_artifacts}" >&2
-            exit 1
-          fi
+      - name: Build at lowest CPU and I/O priority
+        run: nice -n 19 ionice -c 3 make fmt check build
 
-      - name: Clone sibling sources (TerraBase subject + TerraScale SDK)
-        env:
-          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
-          TERRASCALE_BOT_TOKEN: ${{ secrets.TERRASCALE_BOT_TOKEN }}
-          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+      - name: Build the guest executable
         run: |
-          set -euo pipefail
-          # The benchmarks measure the sibling terrabase checkout through
-          # terrabase/Directory.Build.props (TerraBaseRepo); ts-dotnet supplies
-          # the terrabase-sdk engine lane when present. The job token cannot
-          # read sibling org repos, so the clones use the org read token.
-          parent="$(pwd)/.."
-          token="${ORG_READ_TOKEN:-${TERRASCALE_BOT_TOKEN:-}}"
-          test -n "${token}" || { echo 'an organization read token is required' >&2; exit 1; }
-          git clone --depth 1 "https://oauth2:${token}@git.terrascale.tech/TerraScale/terrabase.git" "${parent}/terrabase"
-          git clone --depth 1 "https://oauth2:${token}@git.terrascale.tech/TerraScale/ts-dotnet.git" "${parent}/ts-dotnet"
-          cp ../terrabase/nuget.config terrabase/nuget.config
+          rustup target add x86_64-unknown-linux-musl --toolchain 1.98.1
+          nice -n 19 ionice -c 3 make build-guest
 
-      - name: Configure the private NuGet package source
-        env:
-          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
-          TERRASCALE_BOT_TOKEN: ${{ secrets.TERRASCALE_BOT_TOKEN }}
-          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          registry_user="${REGISTRY_USER:-oauth2}"
-          registry_token="${ORG_READ_TOKEN:-${REGISTRY_TOKEN:-${TERRASCALE_BOT_TOKEN:-}}}"
-          test -n "${registry_token}" || {
-            echo 'a package registry token is required' >&2
-            exit 1
-          }
-          REGISTRY_USER="${registry_user}" REGISTRY_TOKEN="${registry_token}" \
-            node - <<'NODE'
-          const fs = require("node:fs");
-          const config = "terrabase/nuget.config";
-          let contents = fs.readFileSync(config, "utf8");
-          contents = contents.replaceAll("%REGISTRY_USER%", process.env.REGISTRY_USER);
-          contents = contents.replaceAll("%REGISTRY_TOKEN%", process.env.REGISTRY_TOKEN);
-          fs.writeFileSync(config, contents);
-          NODE
+  firecracker-environment:
+    name: Verify pinned guest and boot smoke
+    runs-on: terrascale-builder
+    timeout-minutes: 30
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          persist-credentials: false
 
-      - name: Build the benchmark projects
-        shell: bash
-        run: |
-          set -euo pipefail
-          dotnet restore terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
-            --configfile terrabase/nuget.config \
-            --nologo
-          dotnet build terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
-            --configuration Release \
-            --no-restore \
-            --nologo
-          dotnet restore terrabase/TerraBase.FullTextBenchmarks/TerraBase.FullTextBenchmarks.csproj \
-            --configfile terrabase/nuget.config \
-            --nologo
-          dotnet build terrabase/TerraBase.FullTextBenchmarks/TerraBase.FullTextBenchmarks.csproj \
-            --configuration Release \
-            --no-restore \
-            --nologo
-
-      - name: Verify benchmark formatting
-        shell: bash
-        run: |
-          set -euo pipefail
-          dotnet format style terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
-            --verify-no-changes \
-            --no-restore
-          dotnet format style terrabase/TerraBase.FullTextBenchmarks/TerraBase.FullTextBenchmarks.csproj \
-            --verify-no-changes \
-            --no-restore
-
-      - name: Run the bounded point-read receipt
-        shell: bash
-        run: |
-          set -euo pipefail
-          receipt='artifacts/ci/benchmark/receipt.json'
-          rm -rf -- artifacts/ci/benchmark
-          dotnet run \
-            --project terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
-            --configuration Release \
-            --framework net11.0 \
-            --no-build \
-            -- \
-            --storage memory \
-            --workload point-read \
-            --temperature warm \
-            --dataset-size 5 \
-            --payload-size 64 \
-            --samples 5 \
-            --warmup 1 \
-            --operations 5 \
-            --output artifacts/ci/benchmark
-          test -s "${receipt}"
-          jq -e '
-            .status == "complete" and
-            .configuration.storage == 0 and
-            .configuration.workloads == [0] and
-            .configuration.temperatures == [0] and
-            .configuration.datasetSize == 5 and
-            .configuration.payloadSize == 64 and
-            .configuration.samples == 5 and
-            .configuration.warmupOperations == 1 and
-            .configuration.operationsPerSample == 5 and
-            .configuration.concurrency == 1 and
-            .environment.buildConfiguration == "Release" and
-            (.environment.gitCommit | type == "string" and test("^[0-9a-f]{40}$")) and
-            (.environment.artifactSha256 | type == "string" and test("^[0-9a-f]{64}$")) and
-            (.workloads | length) == 1 and
-            .workloads[0].storage == "Memory" and
-            .workloads[0].workload == "PointRead" and
-            .workloads[0].temperature == "Warm" and
-            .workloads[0].status == "complete" and
-            (.workloads[0].samples | length) == 5
-          ' "${receipt}" >/dev/null
-
-      - name: Print the bounded benchmark receipt
-        run: cat artifacts/ci/benchmark/receipt.json
+      - name: Verify Firecracker, KVM, images, and effective guest limits
+        run: nice -n 19 ionice -c 3 make vm-preflight vm-smoke

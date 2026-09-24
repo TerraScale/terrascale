@@ -6,6 +6,7 @@ TestResults/
 artifacts/
 binaries/
 /ts-auth/go/ts-auth-bench
+/history/legacy-pre-rust-2026-09-24/ts-auth/go/ts-auth-bench
 
 # Runtime data from benchmark runs. Keep Markdown reports and receipt JSON.
 **/receipts/**/data/
@@ -65,6 +66,8 @@ binaries/
 *.key
 *.log
 *.jsonl
+# Guest raw samples are acceptance evidence in the active benchmark tree.
+!/bench/**/*.jsonl
 *.nettrace
 *.spool
 *.dmp
