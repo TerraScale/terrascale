@@ -32,7 +32,10 @@ hashing, JWT, OAuth 2.1/OIDC, WebAuthn, TOTP, webhook signing.
 
 Multi-instance: one ts-auth deployment hosts many customer instances; every
 instance gets its own users, keys, orgs, and OAuth clients, isolated by
-instance-scoped keys.
+instance-scoped keys. The public issuer and hosted UI use one global origin;
+customers do not choose an authentication region. Regional ts-auth processes
+share one database, and that database is replicated to the admitted launch
+regions. Project and customer database placement remain separate choices.
 
 The API surface is split into feature slices. Each route is an `IEndpoint` in its own file; the feature module exposes its endpoint catalog and `EndpointModules` composes those catalogs for `TerraScale.Endpoints`.
 
@@ -70,18 +73,21 @@ The build references the sibling `ts-dotnet` SDK checkout (see AGENTS.md);
 the service itself needs a TerraScale API endpoint + project API key + database:
 
 ```sh
-TS_AUTH_PUBLIC_ORIGIN=https://auth.example.com \
+TS_AUTH_PUBLIC_ORIGIN=https://auth.terrascale.tech \
+TS_AUTH_TERRASCALE_API_URL=https://api.terrascale.tech \
 TS_AUTH_TERRASCALE_API_KEY=sk_... \
 TS_AUTH_DATABASE=ts-auth \
 TS_AUTH_MASTER_KEY=$(head -c 32 /dev/urandom | base64) \
+TS_AUTH_AUDIT_SIGNING_KEY=$(head -c 32 /dev/urandom | base64) \
 TS_AUTH_OPERATOR_KEY=$(head -c 32 /dev/urandom | base64) \
+TS_AUTH_METRICS_KEY=$(head -c 32 /dev/urandom | base64) \
 dotnet run --project src/TerraScale.Auth
 ```
 
 | Variable | Meaning |
 | --- | --- |
-| `TS_AUTH_PUBLIC_ORIGIN` | Public origin (issuer URLs, email links, WebAuthn RP) |
-| `TS_AUTH_TERRASCALE_API_URL` | TerraScale API origin (default `https://api.terrascale.tech`) |
+| `TS_AUTH_PUBLIC_ORIGIN` | One global public origin shared by every replica (issuer URLs, email links, WebAuthn RP) |
+| `TS_AUTH_TERRASCALE_API_URL` | TerraScale API origin (default `https://api.terrascale.tech`); production auth routes all storage operations strictly to the GRU authority |
 | `TS_AUTH_TERRASCALE_API_KEY` | Project API key for TerraBase |
 | `TS_AUTH_TERRASCALE_PROJECT_ID` / `TS_AUTH_TERRASCALE_TENANT_ID` | Optional project/tenant selectors |
 | `TS_AUTH_DATABASE` | TerraBase database backing ts-auth |
@@ -156,6 +162,7 @@ TERRABASE_DEV_API_KEY=dev \
 TERRABASE_DATABASE_PATH=/tmp/ts-auth-dev \
 nice -n 19 dotnet run --project tools/TerraBaseDevMember -c Release
 # then point ts-auth at it:
+ASPNETCORE_ENVIRONMENT=Development \
 TS_AUTH_TERRASCALE_API_URL=http://127.0.0.1:8420 TS_AUTH_TERRASCALE_API_KEY=dev ...
 ```
 
@@ -169,16 +176,30 @@ service on a loopback listener — so every E2E test exercises the exact
 production path (browser or HttpClient → service → SDK → document API →
 engine).
 
-## Provisioning ts-auth on TerraScale (the end-user flow)
+## Provisioning the global auth dataset
 
-When the platform is live, ts-auth is provisioned exactly like any customer
-project — see `scripts/provision.sh`:
+The platform operator provisions ts-auth through the same database contract
+used by customer projects — see `scripts/provision.sh`:
 
-1. `POST /api/v1/organizations/{orgId}/projects` — project `ts-auth` in the
-   TerraScale organization.
-2. `POST /api/v1/projects/{id}/auth/api-keys` — a project API key.
-3. Create the `ts-auth` database in a region, then deploy the container with
-   the environment above.
+1. Create a platform `ts-auth` project with `GRU,SFO,FRA` placement and issue
+   its project API key. Set `TS_AUTH_TERRASCALE_PROJECT_ID` and
+   `TS_AUTH_TERRASCALE_API_KEY` for the provisioning process.
+2. Create the `ts-auth` database with placement and residency lock
+   `GRU,SFO,FRA`, using the GRU regional data endpoint. Provisioning is an internal
+   operator action; the customer never selects a region for authentication.
+3. Deploy the same image in each admitted region behind
+   `auth.terrascale.tech`, using the same database, public origin, master key,
+   audit signing and verification keys, and operator key on every replica.
+
+All auth storage reads and writes use the GRU data-plane authority. This is
+required for unique email and seat claims, session revocation, and token
+rotation: TerraBase's cross-region replication is causal and does not make
+conditional writes globally atomic. An unavailable GRU authority makes auth
+storage unavailable until an explicitly fenced recovery promotes a new
+authority; routing a replica to a stale regional copy is unsafe. The global
+edge endpoint may route requests to any healthy auth process, but every such
+process still uses that one storage authority. `scripts/provision.sh` records
+the global placement and creates the database through the regional data API.
 
 ## API surface (per instance slug `S`)
 

@@ -70,6 +70,7 @@ METRICS_KEY="smoke-metrics-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')
 SERVICE_ARGS=(--project "$SERVICE_PROJECT" -c Release)
 [[ -n "${TERRASCALE_SDK_PROJECT:-}" ]] && SERVICE_ARGS+=(-p:TerraScaleSdkProject="$TERRASCALE_SDK_PROJECT")
 
+ASPNETCORE_ENVIRONMENT=Development \
 TS_AUTH_LISTEN="$SERVICE_LISTEN" \
 TS_AUTH_PUBLIC_ORIGIN="$SERVICE_LISTEN" \
 TS_AUTH_TERRASCALE_API_URL="$MEMBER_URL" \

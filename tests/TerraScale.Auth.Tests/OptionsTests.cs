@@ -3,6 +3,53 @@ namespace TerraScale.Auth.Tests;
 [NotInParallel]
 public sealed class OptionsTests
 {
+    [Test]
+    public async Task GlobalReplicasUseTheSameStrictStorageAuthority()
+    {
+        var options = TerraScale.Auth.Configuration.AuthOptions.Load(
+        [
+            "--public-origin=https://auth.terrascale.tech",
+            "--terrascale-api-url=https://api.terrascale.tech",
+            "--terrascale-api-key=k",
+            "--database=ts-auth",
+            "--master-key=" + Convert.ToBase64String(new byte[32]),
+            "--operator-key=op",
+        ]);
+
+        var routing = TerraScale.Auth.App.StorageClientOptions(options, development: false);
+        await Assert.That(routing.PreferredRegion).IsEqualTo("GRU");
+        await Assert.That(routing.RegionAffinity).IsEqualTo(TerraScale.DotNet.TerraScaleRegionAffinity.Strict);
+        using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false });
+        _ = new TerraScale.DotNet.TerraScaleClient(http, routing);
+        await Assert.That(http.BaseAddress!.Host).IsEqualTo("gru.api.terrascale.tech");
+    }
+
+    [Test]
+    public async Task ProductionRejectsLoopbackStorageWhileDevelopmentCanUseIt()
+    {
+        var options = TerraScale.Auth.Configuration.AuthOptions.Load(
+        [
+            "--public-origin=http://localhost:8080",
+            "--terrascale-api-url=http://127.0.0.1:8420",
+            "--terrascale-api-key=k",
+            "--database=ts-auth",
+            "--master-key=" + Convert.ToBase64String(new byte[32]),
+            "--operator-key=op",
+        ]);
+
+        await Assert.That(Assert.Throws<InvalidOperationException>(() =>
+            TerraScale.Auth.App.StorageClientOptions(options, development: false)).Message)
+            .Contains("loopback");
+        var routing = TerraScale.Auth.App.StorageClientOptions(options, development: true);
+        await Assert.That(routing.PreferredRegion).IsNull();
+
+        foreach (var origin in new[] { "https://sfo.api.terrascale.tech", "https://other.example", "http://api.terrascale.tech" })
+        {
+            var external = options with { TerrascaleApiUrl = new Uri(origin) };
+            Assert.Throws<InvalidOperationException>(() => TerraScale.Auth.App.StorageClientOptions(external, development: false));
+        }
+    }
+
     /// <summary>Snapshots every TS_AUTH_* variable: these tests clear or overwrite the
     /// block AuthOptions boots from, and must hand back what the fixtures set.</summary>
     private static IReadOnlyDictionary<string, string?> SnapshotAuthEnvironment() =>

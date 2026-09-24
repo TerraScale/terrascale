@@ -1,8 +1,10 @@
 namespace TerraScale.Auth.Keys;
 
 using System.Collections.Concurrent;
+using System.Net;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
+using TerraScale.DotNet;
 
 /// <summary>
 /// Per-instance JWT signing keys, persisted in TerraBase. Generates an ES256
@@ -10,10 +12,7 @@ using TerraScale.Auth.Store;
 /// </summary>
 public sealed class KeyRing(AuthStore store)
 {
-    // ponytail: Lazy dedup only guards this process; two cold-starting replicas can
-    // still each generate a key (both stay active, all tokens verify). Claim-based
-    // generation if multi-replica key identity ever matters.
-    private readonly ConcurrentDictionary<string, Lazy<Task<List<EcdsaSigningKey>>>> cache = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> creationGates = new(StringComparer.Ordinal);
 
     /// <summary>Returns the current signing key for the instance, generating one if needed.</summary>
     public async Task<EcdsaSigningKey> GetCurrentAsync(string instanceId, CancellationToken ct = default)
@@ -28,51 +27,64 @@ public sealed class KeyRing(AuthStore store)
 
     private async Task<List<EcdsaSigningKey>> LoadAsync(string instanceId, CancellationToken ct)
     {
-        // The shared load ignores the first caller's token: one cancelled request
-        // must not cancel (or cache the cancellation of) the fill for everyone.
-        var lazy = cache.GetOrAdd(instanceId,
-            _ => new Lazy<Task<List<EcdsaSigningKey>>>(() => LoadUncachedAsync(instanceId, CancellationToken.None)));
+        // Signing and verification must observe key creation, rotation, and
+        // retirement performed by any other auth process.
+        var active = await ListActiveAsync(instanceId, ct);
+        if (active.Count > 0)
+            return Restore(active);
+
+        var gate = creationGates.GetOrAdd(instanceId, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
         try
         {
-            return await lazy.Value;
-        }
-        catch
-        {
-            // Don't cache a failed load (e.g. store unreachable) for the process lifetime.
-            cache.TryRemove(new KeyValuePair<string, Lazy<Task<List<EcdsaSigningKey>>>>(instanceId, lazy));
-            throw;
-        }
-    }
+            active = await ListActiveAsync(instanceId, ct);
+            if (active.Count > 0)
+                return Restore(active);
 
-    private async Task<List<EcdsaSigningKey>> LoadUncachedAsync(string instanceId, CancellationToken ct)
-    {
-        var records = await store.ListSigningKeysAsync(instanceId, ct);
-        var active = records.Where(r => r.Active).OrderByDescending(r => r.CreatedAt).ToList();
-
-        List<EcdsaSigningKey> keys;
-        if (active.Count == 0)
-        {
-            var generated = EcdsaSigningKey.Generate("skey_" + SecureTokens.RandomToken(20));
-            await store.CreateSigningKeyAsync(new SigningKeyRecord
+            // CreateOnly on a stable id arbitrates first use across processes.
+            // A loser loads the winner's secret by id, even if a query page is
+            // momentarily stale after the winning write.
+            var id = "skey_" + SecureTokens.Sha256Hex("initial:" + instanceId);
+            var generated = EcdsaSigningKey.Generate(id);
+            try
             {
-                Id = generated.Id,
-                InstanceId = instanceId,
-                Algorithm = "ES256",
-                SecretBase64 = Convert.ToBase64String(generated.ExportSecret()),
-                Active = true,
-                CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            }, ct);
-            keys = [generated];
+                await store.CreateSigningKeyAsync(new SigningKeyRecord
+                {
+                    Id = id,
+                    InstanceId = instanceId,
+                    Algorithm = "ES256",
+                    SecretBase64 = Convert.ToBase64String(generated.ExportSecret()),
+                    Active = true,
+                    CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                }, ct);
+                return [generated];
+            }
+            catch (TerraScaleApiException exception) when (exception.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed)
+            {
+                var winner = await store.GetSigningKeyAsync(id, ct);
+                if (winner is not { Active: true } || winner.InstanceId != instanceId)
+                    throw new InvalidOperationException("No active signing key remains for the instance.", exception);
+                return [Restore(winner)];
+            }
         }
-        else
+        finally
         {
-            keys = [];
-            foreach (var record in active)
-                keys.Add(EcdsaSigningKey.FromSecret(Convert.FromBase64String(record.SecretBase64), record.Id));
+            gate.Release();
         }
-
-        return keys;
     }
+
+    private async Task<List<SigningKeyRecord>> ListActiveAsync(string instanceId, CancellationToken ct) =>
+        (await store.ListSigningKeysAsync(instanceId, ct))
+            .Where(static record => record.Active)
+            .OrderByDescending(static record => record.CreatedAt)
+            .ThenBy(static record => record.Id, StringComparer.Ordinal)
+            .ToList();
+
+    private static List<EcdsaSigningKey> Restore(IEnumerable<SigningKeyRecord> records) =>
+        records.Select(Restore).ToList();
+
+    private static EcdsaSigningKey Restore(SigningKeyRecord record) =>
+        EcdsaSigningKey.FromSecret(Convert.FromBase64String(record.SecretBase64), record.Id);
 }
 
 /// <summary>AES-GCM secret box for recoverable secrets (TOTP seeds) using the master key.</summary>

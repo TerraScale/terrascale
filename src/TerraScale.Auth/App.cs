@@ -20,19 +20,13 @@ public static class App
             throw new InvalidOperationException("TS_AUTH_AUDIT_SIGNING_KEY is required outside Development; audit authenticity cannot be disabled in production.");
         if (!builder.Environment.IsDevelopment() && options.MetricsKey is null)
             throw new InvalidOperationException("TS_AUTH_METRICS_KEY is required outside Development; the private metrics surface must remain scrapeable and separately authenticated.");
+        var storageRouting = StorageClientOptions(options, builder.Environment.IsDevelopment());
         builder.WebHost.UseUrls(options.Listen);
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton<AuthMetrics>();
         builder.Services.AddSingleton(_ => new TerraScaleClient(
-            new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { BaseAddress = options.TerrascaleApiUrl },
-            new TerraScaleClientOptions
-            {
-                BaseAddress = options.TerrascaleApiUrl,
-                ApiKey = options.TerrascaleApiKey,
-                ProjectId = options.TerrascaleProjectId,
-                TenantId = options.TerrascaleTenantId,
-                MaxRetryAttempts = 2,
-            }));
+            new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }),
+            storageRouting));
         builder.Services.AddSingleton<AuthStore>(provider => new AuthStore(
             provider.GetRequiredService<TerraScaleClient>(), options.Database, options.AuditSigningKey, options.AuditVerificationKeys));
         builder.Services.AddSingleton<KeyRing>();
@@ -54,6 +48,34 @@ public static class App
             endpointOptions.Version = "v1";
         });
         return (builder, options);
+    }
+
+    /// <summary>Every global auth replica uses the same regional authority for
+    /// reads, writes, uniqueness claims, and revocation. TerraBase replication
+    /// distributes the database, but its conditional writes are only atomic
+    /// within one region.</summary>
+    internal static TerraScaleClientOptions StorageClientOptions(AuthOptions options, bool development)
+    {
+        if (!development && options.TerrascaleApiUrl.IsLoopback)
+            throw new InvalidOperationException("Production auth storage cannot use a loopback TerraScale API URL.");
+        if (!options.TerrascaleApiUrl.IsLoopback && options.TerrascaleApiUrl.Scheme != Uri.UriSchemeHttps)
+            throw new InvalidOperationException("Global auth storage requires an HTTPS TerraScale API URL.");
+        if (!options.TerrascaleApiUrl.IsLoopback
+            && options.TerrascaleApiUrl.Host is not ("api.terrascale.tech" or "gru.api.terrascale.tech"))
+            throw new InvalidOperationException("Global auth storage requires the TerraScale API origin or its GRU authority origin.");
+
+        return new TerraScaleClientOptions
+        {
+            BaseAddress = options.TerrascaleApiUrl,
+            ApiKey = options.TerrascaleApiKey,
+            ProjectId = options.TerrascaleProjectId,
+            TenantId = options.TerrascaleTenantId,
+            MaxRetryAttempts = 2,
+            PreferredRegion = development && options.TerrascaleApiUrl.IsLoopback ? null : TerraScaleRegions.Gru,
+            RegionAffinity = development && options.TerrascaleApiUrl.IsLoopback
+                ? TerraScaleRegionAffinity.Failover
+                : TerraScaleRegionAffinity.Strict,
+        };
     }
 
     /// <summary>Maps middleware, OpenAPI, and all feature endpoints.</summary>

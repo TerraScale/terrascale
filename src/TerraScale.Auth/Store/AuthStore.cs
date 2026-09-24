@@ -10,7 +10,8 @@ using TerraScale.DotNet;
 /// surface an end user builds on). Documents are JSON records in one database.
 /// The engine has no unique secondary indexes yet, so uniqueness rides on
 /// atomic claim documents: a claim is a CreateOnly document write, which the
-/// engine rejects on collision — race-safe without transactions.
+/// engine rejects on collision within the one auth authority region. Global
+/// replicas must route all store operations to that same region.
 /// </summary>
 public sealed class AuthStore(
     TerraScaleClient client,
@@ -1119,9 +1120,12 @@ public sealed class AuthStore(
     public Task<SigningKeyRecord> CreateSigningKeyAsync(SigningKeyRecord key, CancellationToken ct = default) =>
         CreateAsync("signing_keys", key.Id, key, ct);
 
+    public Task<SigningKeyRecord?> GetSigningKeyAsync(string id, CancellationToken ct = default) =>
+        GetOrNullAsync<SigningKeyRecord>("signing_keys", id, ct);
+
     public Task UpsertSigningKeyAsync(SigningKeyRecord key, CancellationToken ct = default) =>
         UpsertAsync("signing_keys", key.Id, key, ct);
 
     public Task<IReadOnlyList<SigningKeyRecord>> ListSigningKeysAsync(string instanceId, CancellationToken ct = default) =>
-        QueryAsync<SigningKeyRecord>("signing_keys", "instanceId", instanceId, 50, ct);
+        QueryAllAsync<SigningKeyRecord>("signing_keys", [Eq("instanceId", instanceId)], 100, ct);
 }

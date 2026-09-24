@@ -1,7 +1,9 @@
 namespace TerraScale.Auth.Tests;
 
 using System.Security.Cryptography;
+using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Keys;
+using TerraScale.Auth.Store;
 
 /// <summary>SecretBox AES-GCM boxing and KeyRing first-use key generation.</summary>
 public sealed class KeyRingTests
@@ -77,5 +79,41 @@ public sealed class KeyRingTests
         await Assert.That(keys.Select(k => k.Id).Distinct().Count()).IsEqualTo(1);
         var stored = await store.ListSigningKeysAsync(instanceId);
         await Assert.That(stored.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task SeparateRingsConvergeAndObserveRotationAndRetirement()
+    {
+        var store = (await AuthServiceFixture.GetAsync()).Store;
+        var first = new KeyRing(store);
+        var second = new KeyRing(store);
+        var instanceId = "keyring-replicas-" + Guid.NewGuid().ToString("N");
+
+        var initial = await Task.WhenAll(first.GetCurrentAsync(instanceId), second.GetCurrentAsync(instanceId));
+        await Assert.That(initial[0].Id).IsEqualTo(initial[1].Id);
+        await Assert.That((await store.ListSigningKeysAsync(instanceId)).Count).IsEqualTo(1);
+
+        // Both processes have used the key before another process rotates it.
+        var rotated = EcdsaSigningKey.Generate("skey_" + SecureTokens.RandomToken(20));
+        await store.CreateSigningKeyAsync(new SigningKeyRecord
+        {
+            Id = rotated.Id,
+            InstanceId = instanceId,
+            Algorithm = "ES256",
+            SecretBase64 = Convert.ToBase64String(rotated.ExportSecret()),
+            Active = true,
+            CreatedAt = DateTimeOffset.UtcNow.AddSeconds(1).ToUnixTimeSeconds(),
+        });
+
+        var current = await second.GetCurrentAsync(instanceId);
+        await Assert.That(current.Id).IsEqualTo(rotated.Id);
+        var token = JsonWebToken.Sign(new { sub = "user" }, DateTimeOffset.UtcNow.AddMinutes(1), current);
+        var visible = await first.GetActiveAsync(instanceId);
+        await Assert.That(JsonWebToken.Verify(token, id => visible.FirstOrDefault(key => key.Id == id))).IsNotNull();
+
+        var original = await store.GetSigningKeyAsync(initial[0].Id);
+        await store.UpsertSigningKeyAsync(original! with { Active = false });
+        await Assert.That((await second.GetActiveAsync(instanceId)).Select(key => key.Id))
+            .DoesNotContain(initial[0].Id);
     }
 }
