@@ -25,12 +25,26 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
         run: |
+          set -euo pipefail
           # One ephemeral single-machine app per PR; provision idempotently so a
           # partially-created app (cancelled run, transient API error) self-heals.
           # NB: match table rows, not fly's "shared and dedicated" footer line.
           fly apps create "$PR_APP" -o personal 2>/dev/null || true
           fly ips list -a "$PR_APP" | grep -q " v6 " || fly ips allocate-v6 -a "$PR_APP"
           fly ips list -a "$PR_APP" | grep -q "(shared)" || fly ips allocate-v4 -a "$PR_APP" --shared
+          # Seed the disposable in-memory preview with a fresh admin for this
+          # run. Keep the password in stdin and the runner env file, never argv.
+          ADMIN_EMAIL="e2e-admin-${GITHUB_RUN_ID}@example.test"
+          ADMIN_PASSWORD="$(node -p 'require("node:crypto").randomBytes(32).toString("hex")')"
+          printf '::add-mask::%s\n' "$ADMIN_PASSWORD"
+          {
+            printf 'DASHBOARD_E2E_ADMIN_EMAIL=%s\n' "$ADMIN_EMAIL"
+            printf 'DASHBOARD_E2E_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"
+          } >> "$GITHUB_ENV"
+          {
+            printf 'DASHBOARD_DEMO_ADMIN_EMAIL=%s\n' "$ADMIN_EMAIL"
+            printf 'DASHBOARD_DEMO_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"
+          } | fly secrets import --stage -a "$PR_APP"
           # The in-memory demo backend is process-local: two machines would
           # split accounts and sessions, so account creation would appear to
           # vanish between steps. --ha=false skips the spare machine and the
