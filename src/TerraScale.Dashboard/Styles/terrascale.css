@@ -29,6 +29,7 @@
 @import "components/filters.css" layer(components);
 @import "components/stat-tiles.css" layer(components);
 @import "components/terms.css" layer(components);
+@import "components/avatars.css" layer(components);
 
 /* Signed-in shell and standalone authentication. */
 @import "shell/shell.css" layer(components);

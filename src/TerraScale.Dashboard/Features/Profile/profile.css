@@ -122,6 +122,13 @@
 
 .ts-icon-brand { color: var(--ts-accent); }
 
+.ts-avatar-large {
+  border-radius: var(--ts-radius-panel);
+  font-size: var(--ts-fs-panel-title);
+  height: 56px;
+  width: 56px;
+}
+
 /* v1 headerColumn: the Edit + summary-terms column holds 24rem at >=64rem. */
 .ts-header-column { min-width: 0; }
 

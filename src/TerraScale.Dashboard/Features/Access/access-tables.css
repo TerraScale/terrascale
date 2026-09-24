@@ -35,14 +35,6 @@
   min-width: 0;
 }
 
-.ts-search-field {
-  flex-basis: 18rem;
-  flex-grow: 1;
-  position: relative;
-  max-width: 28rem;
-  min-width: 0;
-}
-
 .ts-access-search-icon {
   color: var(--ts-ink-muted);
   pointer-events: none;
@@ -55,15 +47,6 @@
 .ts-access-search-input {
   padding-left: 36px;
   width: 100%;
-}
-
-.ts-search-field svg {
-  position: absolute;
-  left: var(--ts-md);
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--ts-ink-muted);
-  pointer-events: none;
 }
 
 .ts-search-input {
@@ -273,11 +256,7 @@
   color: var(--ts-ink);
 }
 
-.ts-nowrap { white-space: nowrap; }
-
 .ts-row-tight { gap: var(--ts-gap-tight); }
-
-.ts-flex-wrap { flex-wrap: wrap; }
 
 .ts-table-strong {
   color: var(--ts-ink);

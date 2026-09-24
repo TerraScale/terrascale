@@ -3,8 +3,8 @@
 
 /* ===== Feature: ApiKeys ===== */
 
-/* v1 shared EmptyState (EmptyState.tsx): dashed-border box, 32px muted
-   iconbox with a 16px SearchX, title + description, optional action. */
+/* Shared empty state: dashed box, muted icon tile, title, description, and
+   optional action. */
 .ts-empty-state {
   display: flex;
   flex-direction: column;

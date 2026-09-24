@@ -1,8 +1,7 @@
 /* Onboarding wizard frame and progress track styles.
    Used by onboarding pages. Keep page-specific rules in Features/. */
 
-/* Onboarding activation wizard (anonymous registration + signed-in steps),
-   ported from v1 shared-page-styles.ts + onboarding-styles.ts + Panel. */
+/* Onboarding activation wizard (anonymous registration + signed-in steps). */
 
 .ts-onboarding-root {
   min-height: 100vh;

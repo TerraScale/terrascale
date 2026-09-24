@@ -1,5 +1,5 @@
-/* Shared setting rows and key/value terms.
-   Used by billing, Usage settings and resource detail sections. */
+/* Shared setting rows, summary terms and key/value context terms.
+   Used by Usage, authentication, profile and organization sections. */
 
 .ts-settings-list { margin: 0; }
 
@@ -30,4 +30,66 @@
 .ts-settings-list dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
+}
+
+/* Summary and context term surfaces used by profile and organization pages.
+   Keep layout variants and page-specific overrides in Features/. */
+
+.ts-summary-terms {
+  display: grid;
+  gap: var(--ts-sm);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 40rem) {
+  .ts-summary-terms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.ts-summary-term {
+  padding: var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.ts-summary-term dt {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  text-transform: uppercase;
+}
+
+.ts-summary-term dd {
+  margin: var(--ts-xs) 0 0;
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-context-term {
+  padding: var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  min-width: 0;
+}
+
+.ts-context-label {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  text-transform: uppercase;
+}
+
+.ts-context-value {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  overflow-wrap: anywhere;
+  margin: var(--ts-xs) 0 0;
 }

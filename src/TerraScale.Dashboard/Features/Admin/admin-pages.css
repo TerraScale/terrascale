@@ -21,7 +21,7 @@
 }
 
 .ts-admin-filter-input {
-  padding-left: 36px; /* old pl-9 search icon gutter */
+  padding-left: 36px;
   min-height: var(--ts-control-h-sm); /* v1 filterInput controlHeightSmall */
 }
 
@@ -165,7 +165,7 @@
 }
 
 .ts-admin-plan-form .ts-label {
-  line-height: 1; /* v1 styles.label lineHeight 1 (old Label leading-none) */
+  line-height: 1;
 }
 
 .ts-admin-plan-form .ts-input {

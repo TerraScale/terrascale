@@ -32,7 +32,6 @@
   border: 1px solid color-mix(in oklab, var(--ts-ink-muted) 70%, transparent);
   background-color: var(--ts-glass-bg);
   backdrop-filter: blur(var(--ts-blur));
-  -webkit-backdrop-filter: blur(var(--ts-blur));
   box-shadow: var(--ts-card-edge);
   margin-block: auto;
 }
