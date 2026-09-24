@@ -8,11 +8,13 @@ public sealed class AdminPricingPageEndpoint(DashboardStore store)
 {
     protected override AdminPricingPageModel Load()
     {
+        var tab = HttpContext.Request.Query["tab"].FirstOrDefault() is "create" ? "create" : "plans";
         var query = HttpContext.Request.Query["q"].FirstOrDefault() ?? "";
         var notice = HttpContext.Request.Query["notice"].FirstOrDefault();
         var plans = AdminPresentation.FilterRows(
             [.. Store.AdminPlans], query, plan => $"{plan.PlanId} {plan.Name}");
-        return new AdminPricingPageModel(query, plans, notice)
+        var page = AdminPresentation.Paginate(plans, HttpContext.Request.Query["page"].FirstOrDefault());
+        return new AdminPricingPageModel(tab, query, plans, page.Rows, page.Number, page.TotalPages, page.TotalRows, notice)
         {
             Shell = ShellFactory.Create(Store, PageRoute),
         };

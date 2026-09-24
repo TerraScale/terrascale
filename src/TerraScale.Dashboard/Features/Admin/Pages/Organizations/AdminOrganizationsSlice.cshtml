@@ -2,15 +2,15 @@
 @{ var shell = Model.Shell; }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-admin-root">
-    <div>
+    <div class="ts-admin-page-head">
         <h2 class="ts-admin-title">Organizations</h2>
         <p class="ts-admin-subtitle">Owner-only organization inventory.</p>
     </div>
-    <section class="ts-admin-summary" aria-label="Organization summary">
-        @(AdminPresentation.Stat("ORGANIZATIONS", Model.Rows.Count.ToString()))
-        @(AdminPresentation.Stat("WITH OWNERS", Model.WithOwners.ToString()))
-    </section>
     @(AdminPresentation.Filter("/admin/organizations", "Organizations", Model.Query))
+    <dl class="ts-kpis ts-admin-kpis" aria-label="Organization summary">
+        @(AdminPresentation.Stat("Organizations", Model.TotalRows.ToString(), "Building2"))
+        @(AdminPresentation.Stat("With owners", Model.WithOwners.ToString(), "UserRound"))
+    </dl>
     @(AdminPresentation.TableStart("Organizations"))
     @if (Model.Rows.Count == 0)
     {
@@ -18,7 +18,7 @@
     }
     else
     {
-        <div class="ts-table-wrap ts-table-flush">
+        <div class="ts-table-wrap">
             <table class="ts-table">
                 <thead>
                     <tr>
@@ -32,8 +32,8 @@
                     {
                         <tr>
                             <td>
-                                <div class="ts-admin-cell-name">@row.Name</div>
-                                <div class="ts-admin-cell-id">@row.OrganizationId</div>
+                                <div class="ts-table-strong">@row.Name</div>
+                                <div class="ts-table-mono ts-admin-cell-id">@row.OrganizationId</div>
                             </td>
                             <td><span class="ts-badge ts-badge-neutral">@row.Status</span></td>
                             <td>@AdminPresentation.Timestamp(row.CreatedAt)</td>
@@ -44,5 +44,6 @@
         </div>
     }
     @(AdminPresentation.TableEnd)
+    @(AdminPresentation.Pager("/admin/organizations", Model.Page, Model.TotalPages, Model.TotalRows, Model.Query))
 </div>
 @ShellHtml.Bottom(shell)

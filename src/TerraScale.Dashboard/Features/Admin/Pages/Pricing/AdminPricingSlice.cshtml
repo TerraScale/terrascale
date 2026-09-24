@@ -5,54 +5,51 @@
 }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-admin-root">
-    <div>
+    <div class="ts-admin-page-head">
         <h2 class="ts-admin-title">Pricing</h2>
         <p class="ts-admin-subtitle">Owner-only pricing plan administration.</p>
     </div>
-    <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Pricing</h2>
-            <p class="ts-panel-subtitle">Pricing plan administration</p>
-        </div>
-        <div class="ts-admin-pricing-controls">
-            @PlanForm(null)
-            @if (Model.Plans.Count > 0)
-            {
-                <section aria-labelledby="pricing-plan-edit-heading">
-                    <h3 id="pricing-plan-edit-heading" class="ts-admin-edit-heading">Edit pricing plans</h3>
-                    <div class="ts-admin-edit-list">
-                        @foreach (var plan in Model.Plans)
-                        {
-                            @PlanForm(plan)
-                        }
-                    </div>
-                </section>
-            }
-            @if (Model.Notice is { } notice)
-            {
-                <div class="ts-alert ts-alert-success" role="status">
-                    <span class="ts-alert-title">@Icons.CircleCheckBig(16) @notice</span>
+    <dl class="ts-kpis ts-admin-kpis" aria-label="Pricing summary">
+        @(AdminPresentation.Stat("Plans", Model.TotalRows.ToString(), "CreditCard"))
+        @(AdminPresentation.Stat("Visible", Model.Plans.Count(plan => plan.Visible).ToString(), "Eye"))
+    </dl>
+    <div class="ts-toolbar ts-admin-tabs-toolbar">
+        <nav class="ts-tabs" aria-label="Pricing sections">
+            <a class="ts-tab" href="/admin/pricing?tab=plans" aria-current="@(Model.Tab == "plans" ? "page" : null)" aria-selected="@(Model.Tab == "plans" ? "true" : "false")">@Icons.CreditCard(16) Plans</a>
+            <a class="ts-tab" href="/admin/pricing?tab=create" aria-current="@(Model.Tab == "create" ? "page" : null)" aria-selected="@(Model.Tab == "create" ? "true" : "false")">@Icons.Plus(16) Create</a>
+        </nav>
+    </div>
+    @if (Model.Tab == "create")
+    {
+        <section class="ts-admin-section" aria-labelledby="pricing-create-title">
+            <div class="ts-section-head">
+                <div>
+                    <h2 id="pricing-create-title" class="ts-panel-title">Create pricing plan</h2>
+                    <p class="ts-meta">Add a plan to the billing catalog with owner-tunable limits.</p>
                 </div>
-            }
-        </div>
-    </section>
-    <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Pricing plans</h2>
-            <p class="ts-panel-subtitle">Owner-visible data returned by the admin API</p>
-        </div>
-        <div class="ts-admin-table-body">
-            @if (Model.Plans.Count == 0)
-            {
-                <div class="ts-empty-card">
-                    <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
-                    <span class="ts-empty-card-title">No pricing plans</span>
-                    <span class="ts-empty-card-desc">No owner-visible pricing plans matched this request.</span>
+            </div>
+            <div class="ts-admin-pricing-controls">
+                @PlanForm(null)
+            </div>
+        </section>
+    }
+    else
+    {
+        @(AdminPresentation.Filter("/admin/pricing", "Pricing", Model.Query, "plans"))
+        <section class="ts-admin-section" aria-labelledby="pricing-plans-title">
+            <div class="ts-section-head">
+                <div>
+                    <h2 class="ts-panel-title" id="pricing-plans-title">Pricing plans</h2>
+                    <p class="ts-meta">Owner-visible data returned by the admin API</p>
                 </div>
+            </div>
+            @if (Model.TotalRows == 0)
+            {
+                @(AdminPresentation.TableEmpty("pricing plans"))
             }
             else
             {
-                <div class="ts-table-wrap ts-table-flush">
+                <div class="ts-table-wrap">
                     <table class="ts-table">
                         <thead>
                             <tr>
@@ -64,12 +61,12 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var row in Model.Plans)
+                            @foreach (var row in Model.PlanRows)
                             {
                                 <tr>
-                                    <td>@row.Name</td>
-                                    <td>@row.Key</td>
-                                    <td>@((row.MonthlyBaseCents / 100m).ToString("C", CultureInfo.GetCultureInfo("en-US")))</td>
+                                    <td class="ts-table-strong">@row.Name</td>
+                                    <td class="ts-table-mono">@row.Key</td>
+                                    <td class="ts-table-num">@((row.MonthlyBaseCents / 100m).ToString("C", CultureInfo.GetCultureInfo("en-US")))</td>
                                     <td><span class="ts-badge @(row.Visible ? "ts-badge-success" : "ts-badge-neutral")">@(row.Visible ? "Visible" : "Hidden")</span></td>
                                     <td>
                                         <div class="ts-row">
@@ -96,8 +93,30 @@
                     </table>
                 </div>
             }
+            @(AdminPresentation.Pager("/admin/pricing", Model.Page, Model.TotalPages, Model.TotalRows, Model.Query, "plans"))
+            <details class="ts-admin-plan-edit">
+                <summary class="ts-section-head">
+                    <div>
+                        <h3 class="ts-admin-edit-heading">Edit pricing plans</h3>
+                        <p class="ts-meta">Open a plan when its limits or abuse guards need to change.</p>
+                    </div>
+                    <span class="ts-admin-facts-chevron" aria-hidden="true">@Icons.ChevronDown(16)</span>
+                </summary>
+                <div class="ts-admin-edit-list">
+                    @foreach (var plan in Model.Plans)
+                    {
+                        @PlanForm(plan)
+                    }
+                </div>
+            </details>
+        </section>
+    }
+    @if (Model.Notice is { } notice)
+    {
+        <div class="ts-alert ts-alert-success" role="status">
+            <span class="ts-alert-title">@Icons.CircleCheckBig(16) @notice</span>
         </div>
-    </section>
+    }
 </div>
 @ShellHtml.Bottom(shell)
 
@@ -112,9 +131,9 @@
         var guards = plan?.Guards;
         return new($"""
             <form class="ts-admin-plan-form" method="post" action="/api/v1/admin/plans/save">
-                <input type="hidden" name="planId" value="{plan?.PlanId}" />
+                <input type="hidden" name="planId" value="{E(plan?.PlanId ?? "")}" />
                 <fieldset class="ts-admin-fieldset">
-                    <legend class="ts-admin-legend">{(editing ? $"Edit: {plan!.Name}" : "Create pricing plan")}</legend>
+                    <legend class="ts-admin-legend">{(editing ? $"Edit: {E(plan!.Name)}" : "Create pricing plan")}</legend>
                     <div class="ts-admin-plan-fields">
                         {Field($"{prefix}-plan-key", "planKey", "Plan key", "text", "startup", plan?.Key ?? "")}
                         {Field($"{prefix}-plan-name", "planName", "Plan name", "text", "Startup", plan?.Name ?? "")}
@@ -149,10 +168,12 @@
         var min = type == "number" ? " min=\"0\"" : "";
         return $"""
             <div class="ts-field">
-                <label class="ts-label" for="{id}">{label}</label>
-                <input class="ts-input" id="{id}" name="{name}" type="{type}"{min} value="{value}" placeholder="{placeholder}" />
-                {(help is null ? "" : $"<span class=\"ts-admin-help\" id=\"{id}-help\">{help}</span>")}
+                <label class="ts-label" for="{E(id)}">{E(label)}</label>
+                <input class="ts-input" id="{E(id)}" name="{E(name)}" type="{E(type)}"{min} value="{E(value)}" placeholder="{E(placeholder)}" />
+                {(help is null ? "" : $"<span class=\"ts-admin-help\" id=\"{E(id)}-help\">{E(help)}</span>")}
             </div>
             """;
     }
+
+    private static string E(string value) => System.Net.WebUtility.HtmlEncode(value);
 }
