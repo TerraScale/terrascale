@@ -13,16 +13,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
+        env:
+          INPUT_GO-VERSION: '1.27.1'
         with:
-          go-version: 1.27.1
           cache: false
       - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: |
+        env:
+          INPUT_NODE-VERSION: '24'
+          INPUT_CACHE-DEPENDENCY-PATH: |
             package-lock.json
             tests/integration/sdk/package-lock.json
+        with:
+          cache: npm
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
       - name: Install Chromium
