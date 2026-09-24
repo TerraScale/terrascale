@@ -1,0 +1,14 @@
+.git/
+.forgejo/
+.claude/
+.review/
+target/
+tests/
+crates/
+scripts/
+docs/
+Cargo.toml
+Cargo.lock
+rust-toolchain.toml
+README.md
+artifacts/ci/tests/

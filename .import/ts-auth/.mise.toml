@@ -1,0 +1,7 @@
+[tools]
+rust = "1.98.1"
+
+[env]
+# Cargo otherwise finds the Nix rustc first on this host's PATH, bypassing the
+# rustup toolchain selected by mise and rust-toolchain.toml.
+RUSTC = "{{exec(command='~/.cargo/bin/rustup which rustc --toolchain 1.98.1')}}"
