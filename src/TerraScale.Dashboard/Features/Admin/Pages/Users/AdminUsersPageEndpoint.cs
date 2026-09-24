@@ -13,6 +13,10 @@ public sealed class AdminUsersPageEndpoint(DashboardStore store)
             : HttpContext.Request.Query["q"].FirstOrDefault() ?? "";
         var rows = AdminPresentation.FilterRows(
             [.. Store.AdminUsers], query, row => $"{row.UserId} {row.DisplayName} {row.Email}");
-        return new AdminUsersPageModel(query, rows) { Shell = ShellFactory.Create(Store, PageRoute) };
+        var page = AdminPresentation.Paginate(rows, HttpContext.Request.Query["page"].FirstOrDefault());
+        return new AdminUsersPageModel(query, page.Rows, rows.Count(row => row.Enabled), rows.Count(row => row.Owner), page.Number, page.TotalPages, page.TotalRows)
+        {
+            Shell = ShellFactory.Create(Store, PageRoute),
+        };
     }
 }

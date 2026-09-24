@@ -3,23 +3,23 @@
 @{ var shell = Model.Shell; }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-admin-root">
-    <div>
+    <div class="ts-admin-page-head">
         <h2 class="ts-admin-title">Usage</h2>
         <p class="ts-admin-subtitle">Owner-only platform usage summary.</p>
     </div>
-    <section class="ts-admin-summary-three" aria-label="Platform summary">
-        @(AdminPresentation.Stat("ORGANIZATIONS", Model.Overview.Organizations.ToString()))
-        @(AdminPresentation.Stat("PROJECTS", Model.Overview.Projects.ToString()))
-        @(AdminPresentation.Stat("DATABASES", Model.Overview.Databases.ToString()))
-    </section>
+    <dl class="ts-kpis ts-admin-kpis" aria-label="Platform summary">
+        @(AdminPresentation.Stat("Organizations", Model.Overview.Organizations.ToString(), Icons.Building2))
+        @(AdminPresentation.Stat("Projects", Model.Overview.Projects.ToString(), Icons.FolderKanban))
+        @(AdminPresentation.Stat("Databases", Model.Overview.Databases.ToString(), Icons.Database))
+    </dl>
     @(AdminPresentation.TableStart("Usage"))
-    @if (Model.Overview.Usage.Length == 0)
+    @if (Model.TotalRows == 0)
     {
         @(AdminPresentation.TableEmpty("Usage"))
     }
     else
     {
-        <div class="ts-table-wrap ts-table-flush">
+        <div class="ts-table-wrap">
             <table class="ts-table">
                 <thead>
                     <tr>
@@ -29,11 +29,11 @@
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var row in Model.Overview.Usage)
+                    @foreach (var row in Model.UsageRows)
                     {
                         <tr>
-                            <td>@row.Name</td>
-                            <td>@row.Quantity.ToString(CultureInfo.InvariantCulture)</td>
+                            <td class="ts-table-strong">@row.Name</td>
+                            <td class="ts-table-num">@row.Quantity.ToString(CultureInfo.InvariantCulture)</td>
                             <td>@(row.Unit ?? "-")</td>
                         </tr>
                     }
@@ -42,5 +42,6 @@
         </div>
     }
     @(AdminPresentation.TableEnd)
+    @(AdminPresentation.Pager("/admin/usage", Model.Page, Model.TotalPages, Model.TotalRows))
 </div>
 @ShellHtml.Bottom(shell)
