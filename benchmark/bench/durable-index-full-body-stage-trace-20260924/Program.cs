@@ -1,14 +1,13 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
-using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using TerraBase.Identity;
+using TerraBase;
 using TerraBase.Indexing;
 using TerraBase.Indexing.Runtime;
-using TerraBase.Storage.Contracts;
 
 internal static class Program
 {
@@ -102,6 +101,7 @@ internal static class Program
             requiredCommitSequence: sequence,
             resultLimit: 100);
         var expectedIds = ExpectedIds(config);
+        var expectedBodies = ExpectedBodies(expectedIds, config);
         var pairs = new List<SamplePair>(config.Samples);
         var warmups = Math.Min(5, config.Samples);
 
@@ -112,8 +112,8 @@ internal static class Program
 
             for (var index = 0; index < warmups; index++)
             {
-                var warmup = await SampleAsync(store, query, expectedIds, config, traced: false).ConfigureAwait(false);
-                Verify(warmup, expectedIds, config, "untraced warmup");
+                var warmup = await SampleAsync(store, query, expectedBodies, traced: false).ConfigureAwait(false);
+                Verify(warmup, expectedIds, expectedBodies, "untraced warmup");
             }
 
             for (var index = 0; index < config.Samples; index++)
@@ -122,17 +122,19 @@ internal static class Program
                 QuerySample traced;
                 if ((index & 1) == 0)
                 {
-                    plain = await SampleAsync(store, query, expectedIds, config, traced: false).ConfigureAwait(false);
-                    traced = await SampleAsync(store, query, expectedIds, config, traced: true).ConfigureAwait(false);
+                    plain = await SampleAsync(store, query, expectedBodies, traced: false).ConfigureAwait(false);
+                    traced = await SampleAsync(store, query, expectedBodies, traced: true).ConfigureAwait(false);
                 }
                 else
                 {
-                    traced = await SampleAsync(store, query, expectedIds, config, traced: true).ConfigureAwait(false);
-                    plain = await SampleAsync(store, query, expectedIds, config, traced: false).ConfigureAwait(false);
+                    traced = await SampleAsync(store, query, expectedBodies, traced: true).ConfigureAwait(false);
+                    plain = await SampleAsync(store, query, expectedBodies, traced: false).ConfigureAwait(false);
                 }
 
-                Verify(plain, expectedIds, config, "plain sample");
-                Verify(traced, expectedIds, config, "traced sample");
+                Verify(plain, expectedIds, expectedBodies, "plain sample");
+                Verify(traced, expectedIds, expectedBodies, "traced sample");
+                if (!plain.Rows.SequenceEqual(traced.Rows))
+                    throw new InvalidOperationException("Plain and traced query rows differ within a pair.");
                 pairs.Add(new SamplePair(index + 1, plain, traced, traced.WallMilliseconds - plain.WallMilliseconds));
             }
         }
@@ -212,8 +214,7 @@ internal static class Program
     private static async Task<QuerySample> SampleAsync(
         DurableIndexStore store,
         IndexRuntimeQuery query,
-        string[] expectedIds,
-        WorkloadConfig config,
+        IReadOnlyDictionary<string, ExpectedBody> expectedBodies,
         bool traced)
     {
         QueryStageActivityListener? listener = traced ? new QueryStageActivityListener() : null;
@@ -224,22 +225,41 @@ internal static class Program
             var stopped = Stopwatch.GetTimestamp();
             var wallMs = Stopwatch.GetElapsedTime(started, stopped).TotalMilliseconds;
             var stages = listener?.Capture();
+            var rows = result.Documents.Select(document =>
+            {
+                var id = document.Key.DocumentId;
+                if (!expectedBodies.TryGetValue(id, out var expected))
+                    throw new InvalidOperationException($"Query materialization returned unexpected document {id}.");
+                if (!document.Body.GetProperty("payload").ValueEquals(expected.PayloadUtf8))
+                    throw new InvalidOperationException($"Query materialization returned a mismatched payload for {id}.");
+                if (document.Version != expected.Version
+                    || document.Body.GetProperty("status").GetString() != expected.Status
+                    || document.Body.GetProperty("profile").GetProperty("segment").GetString() != expected.Segment
+                    || document.Body.GetProperty("value").GetInt32() != expected.Value)
+                    throw new InvalidOperationException($"Query materialization returned a mismatched body or version for {id}.");
+                return new RowSample(
+                    id,
+                    document.Version,
+                    expected.Status,
+                    expected.Segment,
+                    expected.Value,
+                    expected.PayloadCharacters);
+            }).ToArray();
             var sample = new QuerySample(
                 WallMilliseconds: wallMs,
                 Traced: traced,
                 Access: result.Plan.Access.ToString(),
                 EstimatedCandidates: result.Plan.EstimatedMatches,
                 ActualMatches: result.Plan.ActualMatches,
-                Rows: result.Documents.Select(document => new RowSample(
-                    document.Key.DocumentId,
-                    document.Version,
-                    document.Body.GetProperty("status").GetString() ?? string.Empty,
-                    document.Body.GetProperty("profile").GetProperty("segment").GetString() ?? string.Empty,
-                    document.Body.GetProperty("value").GetInt32(),
-                    document.Body.GetProperty("payload").GetString() ?? string.Empty)).ToArray(),
+                DiagnosticCandidates: stages?.CandidateRows,
+                DiagnosticResults: stages?.ResultRows,
+                Rows: rows,
+                OrderedIdsSha256: Sha256(Encoding.UTF8.GetBytes(string.Join('\n', rows.Select(static row => row.Id)) + "\n")),
                 StageTotals: stages?.Totals,
+                ObserverStartMilliseconds: stages?.ObserverStartMilliseconds,
                 Activities: stages?.Activities ?? []);
-            Verify(sample, expectedIds, config, traced ? "traced query" : "plain query");
+            Verify(sample, expectedBodies.Keys.Order(StringComparer.Ordinal).ToArray(), expectedBodies,
+                traced ? "traced query" : "plain query");
             return sample;
         }
         finally
@@ -248,7 +268,11 @@ internal static class Program
         }
     }
 
-    private static void Verify(QuerySample sample, string[] expectedIds, WorkloadConfig config, string phase)
+    private static void Verify(
+        QuerySample sample,
+        string[] expectedIds,
+        IReadOnlyDictionary<string, ExpectedBody> expectedBodies,
+        string phase)
     {
         var rows = sample.Rows;
         var actualIds = rows.Select(static row => row.Id).ToArray();
@@ -258,14 +282,14 @@ internal static class Program
             throw new InvalidOperationException($"{phase}: expected EqualitySeek, got {sample.Access}.");
         if (sample.EstimatedCandidates != expectedIds.Length || sample.ActualMatches != expectedIds.Length)
             throw new InvalidOperationException($"{phase}: candidate/result counts differ from {expectedIds.Length}.");
+        if (sample.Traced && (sample.DiagnosticCandidates != expectedIds.Length || sample.DiagnosticResults != expectedIds.Length))
+            throw new InvalidOperationException($"{phase}: diagnostic row counts differ from the verified result count.");
 
         foreach (var row in rows)
         {
+            var expected = expectedBodies[row.Id];
             if (row.Status != QueryValue
-                || row.Segment != $"g{ParseIndex(row.Id) % 100:D2}"
-                || row.Value != (ParseIndex(row.Id) + (row.Id.StartsWith("doc-maint-", StringComparison.Ordinal) ? 1 : 0)) % 5
-                || row.Payload != Convert.ToBase64String(PayloadBytes(ParseIndex(row.Id), config.PayloadBytes))
-                || row.Version != (row.Id.StartsWith("doc-maint-", StringComparison.Ordinal) ? 2UL : 1UL))
+                || row != expected.ToRow())
             {
                 throw new InvalidOperationException($"{phase}: body or version mismatch for {row.Id}.");
             }
@@ -284,6 +308,28 @@ internal static class Program
                 .Select(static index => $"doc-maint-{index:D6}"))
             .Order(StringComparer.Ordinal)
             .ToArray();
+
+    private static IReadOnlyDictionary<string, ExpectedBody> ExpectedBodies(
+        IReadOnlyList<string> ids,
+        WorkloadConfig config)
+    {
+        var expected = new Dictionary<string, ExpectedBody>(ids.Count, StringComparer.Ordinal);
+        foreach (var id in ids)
+        {
+            var index = ParseIndex(id);
+            var maintenance = id.StartsWith("doc-maint-", StringComparison.Ordinal);
+            var payloadBase64 = Convert.ToBase64String(PayloadBytes(index, config.PayloadBytes));
+            expected.Add(id, new ExpectedBody(
+                id,
+                maintenance ? 2UL : 1UL,
+                QueryValue,
+                $"g{index % 100:D2}",
+                (index + (maintenance ? 1 : 0)) % 5,
+                payloadBase64.Length,
+                Encoding.UTF8.GetBytes(payloadBase64)));
+        }
+        return expected;
+    }
 
     private static string DocumentJson(int index, int valueOffset, int payloadBytes) =>
         $"{{\"status\":\"s{index % 100:D2}\",\"profile\":{{\"segment\":\"g{index % 100:D2}\"}},\"value\":{(index + valueOffset) % 5},\"payload\":\"{Convert.ToBase64String(PayloadBytes(index, payloadBytes))}\"}}";
@@ -378,6 +424,7 @@ internal static class Program
         var plain = pairs.Select(static pair => pair.Plain.WallMilliseconds).ToArray();
         var traced = pairs.Select(static pair => pair.Traced.WallMilliseconds).ToArray();
         var overhead = pairs.Select(static pair => pair.ObservedTraceOverheadMilliseconds).ToArray();
+        var observerStart = pairs.Select(static pair => pair.Traced.ObserverStartMilliseconds ?? 0d).ToArray();
         var stages = new Dictionary<string, double>(StringComparer.Ordinal);
         foreach (var stage in StageTotals.RequiredStageNames)
         {
@@ -389,11 +436,13 @@ internal static class Program
             PlainWallP50Milliseconds: Median(plain),
             TracedWallP50Milliseconds: Median(traced),
             PairedListenerOverheadP50Milliseconds: Median(overhead),
+            ObserverStartP50Milliseconds: Median(observerStart),
             PlainWallSamplesMilliseconds: plain,
             TracedWallSamplesMilliseconds: traced,
             PairedListenerOverheadSamplesMilliseconds: overhead,
             TracedStageP50Milliseconds: stages,
-            StageSumP50Milliseconds: stages.Values.Sum());
+            DetailedStageSumP50Milliseconds: stages.Where(static pair => pair.Key is not "total" and not "gate_wait")
+                .Sum(static pair => pair.Value));
     }
 
     private static double Median(double[] values)
@@ -418,11 +467,12 @@ internal static class Program
         builder.AppendLine($"| Plain query wall time | {receipt.Medians.PlainWallP50Milliseconds:F3} |");
         builder.AppendLine($"| Traced query wall time | {receipt.Medians.TracedWallP50Milliseconds:F3} |");
         builder.AppendLine($"| Paired listener/instrumentation overhead estimate | {receipt.Medians.PairedListenerOverheadP50Milliseconds:F3} |");
+        builder.AppendLine($"| Activity listener start overhead | {receipt.Medians.ObserverStartP50Milliseconds:F6} |");
         foreach (var (stage, elapsed) in receipt.Medians.TracedStageP50Milliseconds)
             builder.AppendLine($"| {stage} | {elapsed:F3} |");
-        builder.AppendLine($"| Sum of traced stage p50 values | {receipt.Medians.StageSumP50Milliseconds:F3} |");
+        builder.AppendLine($"| Sum of detailed work-stage p50 values | {receipt.Medians.DetailedStageSumP50Milliseconds:F3} |");
         builder.AppendLine();
-        builder.AppendLine("Listener overhead is the median of paired traced-minus-plain wall-time samples and is reported separately; it is not subtracted from stage timings. Stage spans are aggregated per query. The raw JSON contains every pair and activity tags.");
+        builder.AppendLine("Listener and instrumentation overhead is the median of paired traced-minus-plain wall-time samples and is reported separately; it is not subtracted from stage timings. Activity listener start cost is also reported from `query.observer.start_ns`. The raw JSON contains each pair and aggregate query span tags.");
         builder.AppendLine();
         builder.AppendLine("## Identity");
         builder.AppendLine();
@@ -540,11 +590,27 @@ internal static class Program
         string Access,
         int EstimatedCandidates,
         int ActualMatches,
+        int? DiagnosticCandidates,
+        int? DiagnosticResults,
         IReadOnlyList<RowSample> Rows,
+        string OrderedIdsSha256,
         IReadOnlyDictionary<string, double>? StageTotals,
+        double? ObserverStartMilliseconds,
         IReadOnlyList<ActivitySample> Activities);
 
-    private sealed record RowSample(string Id, ulong Version, string Status, string Segment, int Value, string Payload);
+    private sealed record RowSample(string Id, ulong Version, string Status, string Segment, int Value, int PayloadCharacters);
+
+    private sealed record ExpectedBody(
+        string Id,
+        ulong Version,
+        string Status,
+        string Segment,
+        int Value,
+        int PayloadCharacters,
+        byte[] PayloadUtf8)
+    {
+        internal RowSample ToRow() => new(Id, Version, Status, Segment, Value, PayloadCharacters);
+    }
 
     private sealed record ActivitySample(
         string Name,
@@ -556,11 +622,12 @@ internal static class Program
         double PlainWallP50Milliseconds,
         double TracedWallP50Milliseconds,
         double PairedListenerOverheadP50Milliseconds,
+        double ObserverStartP50Milliseconds,
         IReadOnlyList<double> PlainWallSamplesMilliseconds,
         IReadOnlyList<double> TracedWallSamplesMilliseconds,
         IReadOnlyList<double> PairedListenerOverheadSamplesMilliseconds,
         IReadOnlyDictionary<string, double> TracedStageP50Milliseconds,
-        double StageSumP50Milliseconds);
+        double DetailedStageSumP50Milliseconds);
 
     private sealed record SubjectIdentity(
         string SourceRoot,
@@ -586,7 +653,12 @@ internal static class Program
         bool StopwatchHighResolution,
         long StopwatchFrequency);
 
-    private sealed record QueryStageSummary(IReadOnlyDictionary<string, double> Totals);
+    private sealed record QueryStageSummary(
+        IReadOnlyDictionary<string, double> Totals,
+        double ObserverStartMilliseconds,
+        int CandidateRows,
+        int ResultRows,
+        IReadOnlyList<ActivitySample> Activities);
 
     private static class StageTotals
     {
@@ -597,6 +669,8 @@ internal static class Program
             "decode_clone",
             "predicate_recheck",
             "sort",
+            "gate_wait",
+            "total",
         ];
     }
 
@@ -633,65 +707,57 @@ internal static class Program
         {
             captured = true;
             var observed = activities.ToArray();
+            var query = observed.SingleOrDefault(static activity => activity.Name == "index.query")
+                ?? throw new InvalidOperationException("ActivitySource did not emit the aggregate `index.query` span.");
             var totals = new Dictionary<string, double>(StringComparer.Ordinal);
             foreach (var stage in StageTotals.RequiredStageNames)
-            {
-                if (TryReadAggregateTag(observed, stage, out var value))
-                {
-                    totals[stage] = value;
-                    continue;
-                }
+                totals[stage] = ReadNanoseconds(query.Tags, TagFor(stage)) / 1_000_000d;
 
-                var duration = observed
-                    .Where(activity => ActivityMatchesStage(activity.Name, stage))
-                    .Sum(static activity => activity.DurationMilliseconds);
-                if (duration <= 0)
-                    throw new InvalidOperationException($"No ActivitySource duration or aggregate tag found for stage `{stage}`.");
-                totals[stage] = duration;
-            }
+            if (!query.Tags.TryGetValue("query.instrumentation.enabled", out var enabled)
+                || !bool.TryParse(enabled, out var isEnabled)
+                || !isEnabled)
+                throw new InvalidOperationException("The aggregate query span did not identify enabled diagnostics.");
+            if (!query.Tags.TryGetValue("query.completed", out var completed)
+                || !bool.TryParse(completed, out var didComplete)
+                || !didComplete)
+                throw new InvalidOperationException("The aggregate query span did not record successful completion.");
+            if (!query.Tags.TryGetValue("query.rows.candidates", out var candidates)
+                || !int.TryParse(candidates, NumberStyles.Integer, CultureInfo.InvariantCulture, out var candidateCount)
+                || candidateCount < 1)
+                throw new InvalidOperationException("The aggregate query span did not record candidate rows.");
+            if (!query.Tags.TryGetValue("query.rows.results", out var results)
+                || !int.TryParse(results, NumberStyles.Integer, CultureInfo.InvariantCulture, out var resultCount)
+                || resultCount < 1)
+                throw new InvalidOperationException("The aggregate query span did not record result rows.");
 
-            return new QueryStageSummary(totals);
+            return new QueryStageSummary(
+                totals,
+                ReadNanoseconds(query.Tags, "query.observer.start_ns") / 1_000_000d,
+                candidateCount,
+                resultCount,
+                observed);
         }
 
-        private static bool TryReadAggregateTag(IReadOnlyList<ActivitySample> observed, string stage, out double milliseconds)
+        private static string TagFor(string stage) => stage switch
         {
-            var aliases = stage switch
-            {
-                "entry_seek" => new[] { "entry_seek_ms", "entry_seek_milliseconds", "entry_seek_ticks" },
-                "committed_document_read" => new[] { "committed_document_read_ms", "committed_document_read_milliseconds", "committed_document_read_ticks" },
-                "decode_clone" => new[] { "decode_clone_ms", "decode_clone_milliseconds", "decode_clone_ticks" },
-                "predicate_recheck" => new[] { "predicate_recheck_ms", "predicate_recheck_milliseconds", "predicate_recheck_ticks" },
-                "sort" => new[] { "sort_ms", "sort_milliseconds", "sort_ticks" },
-                _ => [],
-            };
-            foreach (var activity in observed)
-            {
-                foreach (var tag in activity.Tags)
-                {
-                    if (!aliases.Any(alias => tag.Key.EndsWith(alias, StringComparison.Ordinal)))
-                        continue;
-                    if (!double.TryParse(tag.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
-                        continue;
-                    milliseconds = tag.Key.EndsWith("_ticks", StringComparison.Ordinal)
-                        ? parsed * 1_000d / Stopwatch.Frequency
-                        : parsed;
-                    return true;
-                }
-            }
-
-            milliseconds = 0;
-            return false;
-        }
-
-        private static bool ActivityMatchesStage(string name, string stage) => stage switch
-        {
-            "entry_seek" => name.Contains("entry_seek", StringComparison.Ordinal),
-            "committed_document_read" => name.Contains("committed_document_read", StringComparison.Ordinal),
-            "decode_clone" => name.Contains("decode_clone", StringComparison.Ordinal),
-            "predicate_recheck" => name.Contains("predicate_recheck", StringComparison.Ordinal),
-            "sort" => name.EndsWith(".sort", StringComparison.Ordinal) || name.Contains("query.sort", StringComparison.Ordinal),
-            _ => false,
+            "entry_seek" => "query.stage.candidate_seek_ns",
+            "committed_document_read" => "query.stage.committed_read_ns",
+            "decode_clone" => "query.stage.decode_ns",
+            "predicate_recheck" => "query.stage.predicate_ns",
+            "sort" => "query.stage.sort_ns",
+            "gate_wait" => "query.stage.gate_wait_ns",
+            "total" => "query.stage.total_ns",
+            _ => throw new ArgumentOutOfRangeException(nameof(stage)),
         };
+
+        private static double ReadNanoseconds(IReadOnlyDictionary<string, string> tags, string tagName)
+        {
+            if (!tags.TryGetValue(tagName, out var raw)
+                || !long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var nanoseconds)
+                || nanoseconds < 0)
+                throw new InvalidOperationException($"Aggregate query span omitted a valid `{tagName}` nanosecond tag.");
+            return nanoseconds;
+        }
 
         public void Dispose()
         {
