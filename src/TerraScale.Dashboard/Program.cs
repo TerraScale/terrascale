@@ -58,6 +58,7 @@ if (!watchMode)
 {
     app.UseResponseCompression();
 }
+app.UseMiddleware<NotFoundMiddleware>();
 app.UseMiddleware<PagePerformanceMiddleware>();
 app.UseMiddleware<DashboardAuthMiddleware>();
 

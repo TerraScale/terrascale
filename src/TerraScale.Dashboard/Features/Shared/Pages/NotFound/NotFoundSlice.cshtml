@@ -1,0 +1,33 @@
+@inherits RazorSlice<NotFoundPageModel>
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Page not found · TerraScale</title>
+    @DocumentHtml.Assets(datastar: false)
+</head>
+<body>
+<main class="ts-notfound" aria-labelledby="notfound-title">
+    <header class="ts-notfound-header">
+        <a href="/" aria-label="TerraScale dashboard">
+            <img src="@AssetUrls.Url("/brand/logo-terrascale-principal.svg")" alt="TerraScale" width="183" height="44" decoding="async" />
+        </a>
+    </header>
+    <div class="ts-notfound-floor" aria-hidden="true"></div>
+    <div class="ts-notfound-inner">
+        <div class="ts-notfound-copy">
+            <p class="ts-notfound-eyebrow">Page not found</p>
+            <img class="ts-notfound-number" src="@AssetUrls.Url("/img/404-number.webp")" alt="" width="415" height="160" aria-hidden="true" decoding="async" />
+            <h1 id="notfound-title">We can’t find that page.</h1>
+            <p class="ts-notfound-text">The page you’re looking for has moved, or never existed. Let’s get you back on track.</p>
+            <div class="ts-notfound-actions">
+                <a class="ts-notfound-button ts-notfound-button-primary" href="/">@Icons.Home(20) Back to dashboard</a>
+                <a class="ts-notfound-button ts-notfound-button-secondary" href="https://terrascale.tech/contact">@Icons.Mail(20) Contact support</a>
+            </div>
+        </div>
+        <img class="ts-notfound-art" src="@AssetUrls.Url("/img/404-illustration.webp")" alt="A surprised cat playing with blue 404 numbers" width="900" height="700" decoding="async" />
+    </div>
+</main>
+</body>
+</html>
