@@ -61,17 +61,4 @@
   margin-top: 6px;
   font-size: var(--ts-fs-meta);
   color: var(--ts-ink-muted);
-  .ts-access-invite-form {
-    grid-template-columns: minmax(220px, 1fr) auto;
-  }
-}
-
-.ts-access-invite-submit {
-  align-self: end;
-}
-
-.ts-access-section-heading {
-  color: var(--ts-ink);
-  font-size: var(--ts-fs-ui);
-  font-weight: var(--ts-fw-semibold);
 }

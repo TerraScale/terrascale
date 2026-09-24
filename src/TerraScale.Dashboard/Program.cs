@@ -33,7 +33,8 @@ builder.Services.AddResponseCompression(options =>
     // Keep the default Brotli/Gzip providers and MIME types, which exclude SSE.
 });
 builder.Services.AddSingleton<DashboardStore>();
-if (CssWatcher.Enabled(builder.Environment))
+var watchMode = CssWatcher.Enabled() && builder.Environment.IsDevelopment();
+if (watchMode)
 {
     builder.Services.AddHostedService<CssWatcher>();
 }
@@ -53,7 +54,7 @@ app.MapStaticAssets().ShortCircuit();
 AssetUrls.Initialize(app, app.Environment.IsDevelopment());
 // Browser refresh injects its development script into HTML responses. Keep
 // that response uncompressed while dotnet watch is active so injection works.
-if (!CssWatcher.Enabled(app.Environment))
+if (!watchMode)
 {
     app.UseResponseCompression();
 }

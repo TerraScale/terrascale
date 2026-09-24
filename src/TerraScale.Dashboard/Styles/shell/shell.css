@@ -15,7 +15,7 @@
   bottom: 0;
   left: 0;
   z-index: var(--ts-z-overlay);
-  width: var(--sidebar-width);
+  width: var(--ts-sidebar-width);
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--ts-line);
@@ -253,7 +253,7 @@
    gap keeps page content clear of the sidebar at desktop widths. */
 @media (min-width: 48rem) {
   .ts-inset {
-    margin-left: var(--sidebar-width);
+    margin-left: var(--ts-sidebar-width);
   }
 }
 

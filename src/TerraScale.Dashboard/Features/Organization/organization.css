@@ -26,12 +26,6 @@
 
 .ts-min-width { min-width: 0; }
 
-.ts-padded { padding: var(--ts-lg) 20px; }
-
-@media (min-width: 64rem) {
-  .ts-padded { padding-inline: 16px; }
-}
-
 /* minmax(0,1fr) keeps the implicit track clamped — auto tracks size to
 max-content and let wide tables/code blow out narrow viewports. */
 .ts-stack-12 { display: grid; gap: var(--ts-md); grid-template-columns: minmax(0, 1fr); }
