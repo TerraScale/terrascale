@@ -13,7 +13,7 @@ This document is the contract for porting one faithfully.
 | Feature store data | `src/TerraScale.Dashboard/Features/<Feature>/Stores/<Feature>Store.cs` — `DashboardStore` is `partial`; extend it there |
 | Core entities + seed | `Shared/State/DashboardStore.cs` — read-mostly; prefer feature partials for additions |
 | Shell chrome (sidebar, head, FABs) | `Shared/Layout/ShellHtml.cs` — pages never re-render it |
-| CSS framework | `wwwroot/css/terrascale.css` — the ONLY stylesheet; append a `/* ===== Feature: <X> ===== */` section at the end if a pattern is missing |
+| CSS framework | `Styles/terrascale.css` is the entry point; add shared rules under `Styles/` and feature rules under the owning `Features/<Area>/` partial. The build still serves exactly one `/css/terrascale.css` bundle. |
 | Icons (lucide, exact SVG) | `Shared/Components/Icons.cs` — `@Icons.KeyRound(18)` renders raw SVG |
 | SVG charts | `Shared/Components/Charts.cs` — `Charts.Sparkline(values)`, `Charts.LineChart(points, label)` |
 
@@ -57,7 +57,7 @@ Routes are discovered automatically — **never touch `src/TerraScale.Dashboard/
    Auth is handled by `DashboardAuthMiddleware` (cookie `ts_session`).
 3. **Copy is copied verbatim** from the original page/feature (`*-copy.ts`,
    inline JSX text) — including tone, casing, and empty states. English only.
-4. **Design tokens only** — use `terrascale.css` classes; never inline styles
+4. **Design tokens only** — use classes from the CSS partials; never inline styles
    except `--ts-nav-accent` style overrides the shell already handles.
    Badges/alerts always pair color with text (design system rule).
 5. **Mono for data**: IDs, ULIDs, connection strings, queries, numbers in

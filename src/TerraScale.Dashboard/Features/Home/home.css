@@ -1,0 +1,42 @@
+/* Home page styles.
+   Used by the home page styles. feature. Keep page-specific rules in Features/. */
+
+/* ===== Feature: Home (stale snapshot + metric footer) ===== */
+
+.ts-stale-banner {
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--ts-lg);
+}
+
+.ts-stale-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-xs);
+  min-width: 0;
+}
+
+.ts-stale-banner-title {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  font-weight: var(--ts-fw-semibold);
+  color: var(--ts-warning);
+}
+
+.ts-stale-banner-text {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  margin: 0;
+}
+
+.ts-metric-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ts-md);
+  margin-top: var(--ts-sm);
+  padding-top: var(--ts-sm);
+  border-top: 1px solid var(--ts-line);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+}

@@ -1,0 +1,10 @@
+/* Engine page styles.
+   Used by the engine page styles. feature. Keep page-specific rules in Features/. */
+
+/* ===== Feature: Engine ===== */
+
+/* Long metric-family tables scroll inside the panel instead of stretching the page. */
+.ts-engine-metric-list {
+  max-height: 26rem;
+  overflow-y: auto;
+}

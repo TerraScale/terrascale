@@ -1,0 +1,120 @@
+/* Document defaults, focus treatment, navigation progress, and scrollbars.
+   Used by every dashboard page. Keep page-specific rules in Features/. */
+
+html {
+  background-color: var(--ts-canvas);
+  color: var(--ts-ink);
+  font-family: var(--ts-font-sans);
+  text-rendering: optimizeLegibility;
+  min-width: 320px;
+  -webkit-text-size-adjust: 100%;
+  scrollbar-gutter: stable;
+}
+
+/* In-flight loading indicator: a thin accent bar shown while the next
+   document is on the wire. This is the only navigation feedback; it is not a
+   transition, so it does not cross-fade the page. */
+html[data-nav-pending]::before {
+  background: var(--ts-accent);
+  content: "";
+  height: 2px;
+  inset: 0 auto auto 0;
+  position: fixed;
+  transform-origin: left center;
+  width: 35%;
+  z-index: var(--ts-z-toast);
+  animation: ts-route-progress 1.2s var(--ts-ease) infinite;
+}
+
+body {
+  margin: 0;
+  background-color: transparent;
+  font-size: var(--ts-fs-body);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* Ambient glow the glass surfaces diffuse; dark and subtle. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--ts-ambient-glow);
+}
+
+img,
+svg,
+video {
+  display: block;
+  max-width: 100%;
+}
+
+a {
+  color: var(--ts-link);
+  text-decoration: none;
+  transition: color var(--ts-t-base) var(--ts-ease);
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0;
+  font-weight: var(--ts-fw-semibold);
+  line-height: 1.25;
+  color: var(--ts-ink);
+}
+
+p {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--ts-font-mono);
+}
+
+::selection {
+  background: color-mix(in oklab, var(--ts-accent) 40%, transparent);
+  color: var(--ts-gray0);
+}
+
+/* Thin, line-tinted scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--ts-line) 80%, var(--ts-ink)) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--ts-line) 80%, var(--ts-ink));
+  border-radius: var(--ts-radius-pill);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Focus is always visible. */
+:focus-visible {
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
+}

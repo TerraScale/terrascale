@@ -1,0 +1,173 @@
+/* Onboarding wizard frame and progress track styles.
+   Used by onboarding pages. Keep page-specific rules in Features/. */
+
+/* Onboarding activation wizard (anonymous registration + signed-in steps),
+   ported from v1 shared-page-styles.ts + onboarding-styles.ts + Panel. */
+
+.ts-onboarding-root {
+  min-height: 100vh;
+  padding: var(--ts-sm) var(--ts-lg);
+  background-color: var(--ts-surface-muted);
+}
+
+@media (min-width: 48rem) {
+  .ts-onboarding-root { padding-inline: var(--ts-xxl); }
+}
+
+@media (min-width: 64rem) {
+  .ts-onboarding-root:not(.ts-onboarding-root-wide) { padding-block: var(--ts-xs); }
+}
+
+.ts-onboarding-root-wide { padding-block: var(--ts-lg); }
+
+@media (min-width: 48rem) {
+  .ts-onboarding-root-wide { padding-block: var(--ts-xl); }
+}
+
+.ts-onboarding-container {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ts-sm);
+  margin-inline: auto;
+  width: 100%;
+  max-width: 72rem;
+}
+
+@media (min-width: 64rem) {
+  .ts-onboarding-container:not(.ts-onboarding-container-wide) { gap: var(--ts-xs); }
+}
+
+.ts-onboarding-container-wide { gap: var(--ts-xs); }
+
+/* Every onboarding step renders the TerraScale wordmark (`.ts-brand-logo`)
+   only; the localized title is an sr-only h1. The wordmark is the first thing
+   on the page, so keep it off the top edge. */
+.ts-onboarding-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-block-start: var(--ts-xl);
+}
+
+.ts-onboarding-progress {
+  display: grid;
+  gap: var(--ts-sm);
+}
+
+.ts-onboarding-progress-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-sm);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+}
+
+@media (min-width: 40rem) {
+  .ts-onboarding-progress-meta { font-size: var(--ts-fs-ui); }
+}
+
+.ts-onboarding-progress-meta span:first-child {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.ts-onboarding-progress-meta span:last-child {
+  color: var(--ts-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The wizard progress track sits inside a bordered frame. */
+.ts-onboarding-progress-frame {
+  padding: var(--ts-sm);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface);
+}
+
+.ts-onboarding-progress-frame > .ts-progress { height: 4px; }
+
+.ts-onboarding-steps {
+  margin: 0;
+  padding-inline-start: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-sm);
+  list-style: none;
+}
+
+.ts-onboarding-step {
+  display: grid;
+  flex-basis: 0;
+  flex-grow: 1;
+  flex-shrink: 1;
+  align-items: center;
+  justify-items: center;
+  gap: var(--ts-xs);
+  padding: var(--ts-md) var(--ts-sm);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  text-align: center;
+}
+
+@media (min-width: 40rem) {
+  .ts-onboarding-step { font-size: var(--ts-fs-ui); }
+}
+
+/* Compact rail: chips go horizontal (icon beside label, state label kept
+   for screen readers only) at lg; wide steps stay centered at all widths. */
+.ts-onboarding-steps-compact { gap: var(--ts-sm); }
+
+@media (min-width: 64rem) {
+  .ts-onboarding-steps-compact { gap: var(--ts-md); }
+
+  .ts-onboarding-steps-compact .ts-onboarding-step {
+    grid-template-columns: auto 1fr;
+    justify-items: start;
+    gap: var(--ts-sm);
+    padding-block: var(--ts-sm);
+    text-align: left;
+  }
+
+  .ts-onboarding-steps-compact .ts-onboarding-step-state {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+}
+
+.ts-onboarding-step-current {
+  border-color: var(--ts-accent);
+  background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);
+  color: var(--ts-accent-strong);
+}
+
+.ts-onboarding-step-blocked {
+  border-color: color-mix(in oklab, var(--ts-danger) 40%, transparent);
+  background-color: color-mix(in oklab, var(--ts-danger) 10%, transparent);
+  color: var(--ts-danger);
+}
+
+.ts-onboarding-step-complete {
+  border-color: color-mix(in oklab, var(--ts-success) 30%, transparent);
+  background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
+  color: var(--ts-success);
+}
+
+.ts-onboarding-step-state {
+  font-size: 10px;
+  letter-spacing: 0.025em;
+  opacity: 0.75;
+  text-transform: uppercase;
+}

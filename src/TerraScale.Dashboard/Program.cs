@@ -33,6 +33,10 @@ builder.Services.AddResponseCompression(options =>
     // Keep the default Brotli/Gzip providers and MIME types, which exclude SSE.
 });
 builder.Services.AddSingleton<DashboardStore>();
+if (CssWatcher.Enabled(builder.Environment))
+{
+    builder.Services.AddHostedService<CssWatcher>();
+}
 builder.Services.AddSingleton<TerraBaseBackend>();
 builder.Services.AddDatastar();
 builder.Services.AddTerraScaleEndpoints(typeof(Program).Assembly, options =>
@@ -47,7 +51,12 @@ var app = builder.Build();
 // variants. Public static assets bypass account activation and persistence.
 app.MapStaticAssets().ShortCircuit();
 AssetUrls.Initialize(app, app.Environment.IsDevelopment());
-app.UseResponseCompression();
+// Browser refresh injects its development script into HTML responses. Keep
+// that response uncompressed while dotnet watch is active so injection works.
+if (!CssWatcher.Enabled(app.Environment))
+{
+    app.UseResponseCompression();
+}
 app.UseMiddleware<PagePerformanceMiddleware>();
 app.UseMiddleware<DashboardAuthMiddleware>();
 

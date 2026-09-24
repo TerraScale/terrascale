@@ -1,0 +1,201 @@
+/* Button, icon button, and floating action button variants.
+   Used by forms, toolbars, and page actions. Keep page-specific rules in Features/. */
+
+/* 6. Buttons =============================================================== */
+
+.ts-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ts-sm);
+  height: var(--ts-control-h);
+  padding: 0 var(--ts-lg);
+  border-radius: var(--ts-radius-control);
+  border: 1px solid transparent;
+  font-family: var(--ts-font-sans);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+  transition:
+  background-color var(--ts-t-control) var(--ts-ease),
+  border-color var(--ts-t-control) var(--ts-ease),
+  color var(--ts-t-control) var(--ts-ease),
+  opacity var(--ts-t-control) var(--ts-ease);
+}
+
+.ts-btn:disabled,
+.ts-btn[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Button icons never shrink or overflow (v1 buttonStyles.icon). */
+.ts-btn svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+
+.ts-btn-primary {
+  background-color: var(--ts-accent);
+  color: var(--ts-on-accent);
+}
+
+.ts-btn-primary:hover {
+  background-color: var(--ts-accent-strong);
+}
+
+.ts-btn-secondary {
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink);
+  border-color: var(--ts-line);
+}
+
+.ts-btn-secondary:hover {
+  background-color: var(--ts-fill-hover);
+}
+
+.ts-btn-outline {
+  background-color: transparent;
+  color: var(--ts-ink);
+  border-color: var(--ts-line);
+}
+
+.ts-btn-outline:hover {
+  background-color: var(--ts-surface-muted);
+}
+
+.ts-btn-ghost {
+  background-color: transparent;
+  color: var(--ts-ink);
+}
+
+.ts-btn-ghost:hover {
+  background-color: var(--ts-surface-muted);
+}
+
+/* Destructive is quiet (tinted outline) until the final confirm step. */
+.ts-btn-destructive {
+  background-color: color-mix(in oklab, var(--ts-danger) 12%, transparent);
+  color: var(--ts-danger);
+  border-color: color-mix(in oklab, var(--ts-danger) 30%, transparent);
+}
+
+.ts-btn-destructive:hover {
+  background-color: color-mix(in oklab, var(--ts-danger) 20%, transparent);
+}
+
+/* Danger only: solid confirm button. */
+.ts-btn-danger-solid {
+  background-color: var(--ts-danger);
+  color: var(--ts-gray0);
+}
+
+.ts-btn-danger-solid:hover {
+  background-color: color-mix(in oklab, var(--ts-danger) 85%, var(--ts-gray0));
+}
+
+.ts-btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  height: auto;
+  color: var(--ts-link);
+  font-weight: var(--ts-fw-medium);
+}
+
+.ts-btn-sm {
+  height: var(--ts-control-h-sm);
+  padding: 0 var(--ts-md);
+  font-size: var(--ts-fs-meta);
+}
+
+.ts-btn-lg {
+  height: var(--ts-control-h-lg);
+  padding: 0 20px;
+  font-size: var(--ts-fs-body);
+}
+
+.ts-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ts-control-h);
+  height: var(--ts-control-h);
+  border-radius: var(--ts-radius-control);
+  border: 1px solid transparent;
+  background-color: transparent;
+  color: var(--ts-ink-muted);
+  cursor: pointer;
+  transition:
+  background-color var(--ts-t-control) var(--ts-ease),
+  color var(--ts-t-control) var(--ts-ease);
+}
+
+.ts-icon-btn:hover {
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink);
+}
+
+.ts-icon-btn-danger:hover {
+  background-color: color-mix(in oklab, var(--ts-danger) 12%, transparent);
+  color: var(--ts-danger);
+}
+
+/* Floating action buttons (mobile nav trigger + contextual create). */
+.ts-fab {
+  position: fixed;
+  z-index: var(--ts-z-sticky);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ts-sm);
+  cursor: pointer;
+  border-radius: var(--ts-radius-pill);
+  font-family: var(--ts-font-sans);
+  font-weight: var(--ts-fw-semibold);
+  transition:
+  background-color var(--ts-t-control) var(--ts-ease),
+  border-color var(--ts-t-control) var(--ts-ease),
+  color var(--ts-t-control) var(--ts-ease);
+}
+
+.ts-fab-nav {
+  left: var(--ts-lg);
+  top: var(--ts-lg);
+  width: var(--ts-control-h);
+  height: var(--ts-control-h);
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-surface);
+  color: var(--ts-ink);
+  box-shadow: var(--ts-shadow-panel);
+}
+
+@media (min-width: 64rem) {
+  .ts-fab-nav { display: none; }
+}
+
+.ts-fab-create {
+  right: var(--ts-xl);
+  bottom: var(--ts-xl);
+  height: var(--ts-control-h-lg);
+  padding: 0 var(--ts-lg);
+  border: 1px solid var(--ts-accent);
+  background-color: var(--ts-accent);
+  color: var(--ts-on-accent);
+  box-shadow: var(--ts-shadow-overlay);
+}
+
+.ts-fab-create:hover {
+  background-color: color-mix(in oklab, var(--ts-accent) 80%, transparent);
+}
+
+.ts-fab-create .ts-fab-label {
+  display: none;
+}
+
+@media (min-width: 40rem) {
+  .ts-fab-create .ts-fab-label { display: inline; }
+}

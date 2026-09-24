@@ -1,0 +1,51 @@
+/* Subscription checkout styles.
+   Used by the subscription checkout styles. feature. Keep page-specific rules in Features/. */
+
+/* ===== Feature: Subscriptions (local checkout) =========================== */
+.ts-checkout-root {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: var(--ts-xl);
+  background-color: var(--ts-surface-muted);
+}
+
+.ts-checkout-panel {
+  max-width: 36rem;
+  width: fit-content;
+  padding: 20px 0;
+  gap: 20px;
+  border: 0;
+  background-color: var(--ts-glass-bg);
+  backdrop-filter: blur(var(--ts-blur));
+  -webkit-backdrop-filter: blur(var(--ts-blur));
+  box-shadow: var(--ts-card-edge);
+}
+
+.ts-checkout-panel .ts-flow-panel-header {
+  align-items: flex-start;
+  gap: var(--ts-xs);
+  padding: 0 20px 20px;
+}
+
+@media (min-width: 64rem) {
+  .ts-checkout-panel .ts-flow-panel-header { padding: 0 16px 16px; }
+}
+
+.ts-checkout-panel .ts-flow-panel-title { line-height: 1.375; }
+
+.ts-checkout-panel .ts-flow-panel-subtitle {
+  font-size: var(--ts-fs-body);
+  line-height: 1.6;
+}
+
+.ts-checkout-panel .ts-flow-section { padding: 20px; }
+
+/* v1 keeps the browser-default h1/p margins inside the stack16 body. */
+.ts-checkout-panel .ts-flow-title { margin-block: 0.67em; }
+
+.ts-checkout-panel .ts-flow-subtitle { margin: 1em 0; }
+
+.ts-checkout-panel .ts-btn-secondary { border-color: transparent; }
+
+.ts-checkout-panel .ts-flow-actions { margin-top: 0; }

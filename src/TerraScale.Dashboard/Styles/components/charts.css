@@ -1,0 +1,127 @@
+/* Chart shells, legends, metric tiles, sparklines, and progress bars.
+   Used by home and usage pages. Keep page-specific rules in Features/. */
+
+/* 11. Charts & data viz ==================================================== */
+
+.ts-chart-shell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-sm);
+  min-width: 0;
+}
+
+.ts-chart {
+  width: 100%;
+  height: auto;
+}
+
+.ts-chart .ts-chart-grid {
+  stroke: var(--ts-line);
+  stroke-opacity: 0.5;
+}
+
+.ts-chart .ts-chart-axis {
+  fill: var(--ts-ink-muted);
+  font-family: var(--ts-font-mono);
+  font-size: 10px;
+}
+
+.ts-chart .ts-chart-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.ts-chart .ts-chart-series-1 { stroke: var(--ts-chart-1); }
+.ts-chart .ts-chart-series-2 { stroke: var(--ts-chart-2); }
+
+.ts-chart-legend {
+  display: flex;
+  gap: var(--ts-lg);
+  flex-wrap: wrap;
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+}
+
+.ts-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-xs);
+}
+
+.ts-chart-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background-color: var(--ts-chart-1);
+}
+
+.ts-chart-swatch-2 { background-color: var(--ts-chart-2); }
+
+/* Metric card (stat tile). */
+.ts-metric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-xs);
+}
+
+.ts-metric-label {
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  color: var(--ts-ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.ts-metric-value {
+  font-size: var(--ts-fs-section-hero);
+  font-weight: var(--ts-fw-bold);
+  font-family: var(--ts-font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ts-ink);
+  line-height: 1.1;
+}
+
+.ts-metric-detail {
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+}
+
+.ts-sparkline {
+  width: 100%;
+  height: 32px;
+  margin-top: var(--ts-xs);
+}
+
+.ts-sparkline path {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* Soft gradient-like area fill under the sparkline stroke. */
+.ts-sparkline-area {
+  opacity: 0.1;
+  stroke: none;
+}
+
+/* Progress bar. */
+.ts-progress {
+  height: 8px;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-surface-muted);
+  overflow: hidden;
+}
+
+.ts-progress-bar {
+  height: 100%;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-accent);
+  transition: width var(--ts-t-slow) var(--ts-ease);
+}
+
+.ts-progress-bar-warning { background-color: var(--ts-warning); }
+.ts-progress-bar-danger { background-color: var(--ts-danger); }
+.ts-progress-bar-success { background-color: var(--ts-success); }
+
+/* 12. Text & code ========================================================== */

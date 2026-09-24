@@ -1,0 +1,27 @@
+/* Data explorer and schema page styles.
+   Used by the data explorer and schema page styles. feature. Keep page-specific rules in Features/. */
+
+/* ===== Feature: Data ===== */
+
+/* Bare table shell inside a panel: scroll wide tables on narrow viewports. */
+.ts-table-frame {
+  width: auto;
+  overflow-x: auto;
+  margin-inline: 20px;
+}
+
+@media (min-width: 64rem) {
+  .ts-table-frame { margin-inline: 16px; }
+}
+
+.ts-panel-pad20 { padding: 20px; gap: 20px; }
+
+.ts-panel-pad { padding: var(--ts-lg); }
+
+
+.ts-title-24 {
+  color: var(--ts-ink);
+  font-size: 24px;
+  font-weight: var(--ts-fw-semibold);
+  line-height: 32px;
+}

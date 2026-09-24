@@ -1,0 +1,335 @@
+/* Signed-in sidebar, navigation, data sub-navigation, and inset layout.
+   Used by authenticated dashboard pages. Keep page-specific rules in Features/. */
+
+.ts-shell {
+  display: flex;
+  min-height: 100svh;
+  width: 100%;
+}
+
+/* --- Sidebar ------------------------------------------------------- */
+
+.ts-sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--ts-z-overlay);
+  width: var(--sidebar-width);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--ts-line);
+  background-color: var(--ts-glass-bg);
+  backdrop-filter: blur(var(--ts-blur));
+  -webkit-backdrop-filter: blur(var(--ts-blur));
+  transition: transform var(--ts-t-base) var(--ts-ease);
+  overflow: hidden;
+}
+
+/* Mobile: off-canvas drawer until toggled via the shell state. The fixed
+   desktop sidebar (and its in-flow gap on .ts-inset) starts at 48rem,
+   matching v1's SidebarProvider breakpoint. */
+@media (max-width: 47.99rem) {
+  .ts-sidebar {
+    transform: translateX(-100%);
+    background-color: var(--ts-glass-strong);
+  }
+
+  .ts-shell.nav-open .ts-sidebar {
+    transform: translateX(0);
+    box-shadow: var(--ts-shadow-overlay);
+  }
+}
+
+.ts-sidebar-header {
+  padding: var(--ts-md);
+  padding-bottom: var(--ts-sm);
+  flex-shrink: 0;
+}
+
+.ts-admin-sidebar-header {
+  display: grid;
+  gap: var(--ts-md);
+  padding-bottom: var(--ts-lg);
+}
+
+.ts-admin-sidebar-title {
+  padding: 0 var(--ts-xs);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-lg);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-sidebar-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 var(--ts-md) var(--ts-md);
+}
+
+.ts-sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-md);
+  padding: var(--ts-md);
+  border-top: 1px solid var(--ts-line);
+  flex-shrink: 0;
+}
+
+.ts-sidebar-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ts-xs);
+  flex-shrink: 0;
+}
+
+.ts-sidebar-brand img {
+  height: 26px;
+  width: auto;
+}
+
+.ts-sidebar-group-label {
+  padding: var(--ts-md) var(--ts-sm) var(--ts-xs);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-semibold);
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  color: var(--ts-ink-muted);
+}
+
+.ts-nav {
+  display: grid;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ts-nav-item {
+  position: relative;
+}
+
+.ts-nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-md);
+  position: relative;
+  isolation: isolate;
+  padding: var(--ts-sm) var(--ts-md);
+  border-radius: var(--ts-radius-control);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-body);
+  text-decoration: none;
+  transition:
+  background-color var(--ts-t-nav) var(--ts-ease),
+  color var(--ts-t-nav) var(--ts-ease);
+}
+
+.ts-nav-link:hover {
+  background-color: color-mix(in oklab, var(--ts-nav-accent) 9%, transparent);
+  color: var(--ts-ink);
+}
+
+.ts-nav-link[aria-current="page"] {
+  background-color: color-mix(in oklab, var(--ts-nav-accent) 14%, transparent);
+  color: var(--ts-ink);
+  font-weight: var(--ts-fw-semibold);
+}
+
+/* v1 indicator bar. */
+.ts-nav-indicator {
+  position: absolute;
+  inset-block: 10px;
+  inset-inline-start: 0;
+  width: 3px;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-nav-accent);
+  opacity: 0;
+  transform: scaleY(0.4);
+  transition:
+  opacity var(--ts-t-nav) var(--ts-ease),
+  transform var(--ts-t-nav) var(--ts-ease);
+}
+
+.ts-nav-link[aria-current="page"] .ts-nav-indicator {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+.ts-nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ts-radius-control);
+  border: 1px solid color-mix(in oklab, var(--ts-nav-accent) 24%, transparent);
+  background-color: transparent;
+  color: color-mix(in oklab, var(--ts-nav-accent) 82%, var(--ts-ink));
+  transition:
+  border-color var(--ts-t-nav) var(--ts-ease),
+  color var(--ts-t-nav) var(--ts-ease),
+  transform var(--ts-t-nav) var(--ts-ease);
+}
+
+.ts-nav-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ts-nav-link:hover .ts-nav-icon {
+  border-color: color-mix(in oklab, var(--ts-nav-accent) 42%, transparent);
+  color: color-mix(in oklab, var(--ts-nav-accent) 90%, var(--ts-ink));
+  transform: translateX(2px);
+}
+
+.ts-nav-link[aria-current="page"] .ts-nav-icon {
+  border-color: color-mix(in oklab, var(--ts-nav-accent) 42%, transparent);
+  color: color-mix(in oklab, var(--ts-nav-accent) 90%, var(--ts-ink));
+}
+
+/* Nav counter: one step up from the generic badge (--ts-badge-h) so the
+ * digit reads at a glance. It rides the system accent — never a status
+ * color — so the same count reads the same way on every destination. */
+.ts-nav-count {
+  position: absolute;
+  right: var(--ts-sm);
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(var(--ts-badge-h) + 4px);
+  min-width: calc(var(--ts-badge-h) + 4px);
+  padding: 0 var(--ts-gap-tight);
+  border-radius: var(--ts-radius-pill);
+  border: 1px solid color-mix(in oklab, var(--ts-accent) 32%, transparent);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-semibold);
+  line-height: 1;
+}
+
+.ts-nav-count-neutral {
+  background-color: color-mix(in oklab, var(--ts-accent) 12%, var(--ts-surface));
+}
+
+/* The active destination steps the counter up a notch: deeper fill and a
+ * stronger ring, while the digit keeps full ink contrast. */
+.ts-nav-count-active {
+  border-color: color-mix(in oklab, var(--ts-accent) 52%, transparent);
+  background-color: color-mix(in oklab, var(--ts-accent) 26%, var(--ts-surface));
+}
+
+/* Warning counts stay on warning semantics, ring included. */
+.ts-nav-count-alert {
+  border-color: color-mix(in oklab, var(--ts-warning) 55%, transparent);
+  background-color: var(--ts-warning);
+  color: var(--ts-on-warning);
+}
+
+/* --- Data sub-navigation (Tables section) --------------------------- */
+
+.ts-datasubnav {
+  display: none;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: var(--sidebar-width);
+  width: var(--datasubnav-width);
+  height: 100svh;
+  z-index: var(--ts-z-sticky);
+  flex-direction: column;
+  overflow-y: auto;
+  border-left: 1px solid var(--ts-line);
+  border-right: 1px solid var(--ts-line);
+  background-color: var(--ts-glass-bg);
+  backdrop-filter: blur(var(--ts-blur));
+  -webkit-backdrop-filter: blur(var(--ts-blur));
+}
+
+@media (min-width: 64rem) {
+  .ts-shell[data-datasubnav] .ts-datasubnav {
+    display: flex;
+  }
+
+  /* v1 pairs the fixed subnav with an in-flow spacer of the same width. */
+  .ts-shell[data-datasubnav] .ts-inset {
+    margin-left: calc(var(--sidebar-width) + var(--datasubnav-width));
+  }
+}
+
+.ts-datasubnav-header {
+  padding: var(--ts-md);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-semibold);
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  color: var(--ts-ink-muted);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-datasubnav-menu {
+  display: grid;
+  gap: var(--ts-xs);
+  padding: var(--ts-sm);
+}
+
+/* Mobile chips for the same sub-nav. */
+.ts-datasubnav-mobile {
+  display: grid;
+  gap: var(--ts-xs);
+  margin-bottom: var(--ts-sm);
+  margin-left: var(--ts-lg);
+}
+
+@media (min-width: 64rem) {
+  .ts-datasubnav-mobile {
+    display: none;
+  }
+}
+
+/* --- Inset / main --------------------------------------------------- */
+
+.ts-inset {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  z-index: 0;
+  /* Dark, blurred glass backdrop behind page content. */
+  background:
+  radial-gradient(1200px 800px at 70% -10%, rgba(var(--ts-accent-rgb), 0.06), transparent 60%),
+  linear-gradient(180deg, color-mix(in oklab, var(--ts-canvas) 82%, transparent), color-mix(in oklab, var(--ts-canvas) 68%, transparent));
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+/* v1 keeps an in-flow spacer (desktopGap) beside its fixed sidebar; the
+   gap keeps page content clear of the sidebar at desktop widths. */
+@media (min-width: 48rem) {
+  .ts-inset {
+    margin-left: var(--sidebar-width);
+  }
+}
+
+.ts-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-lg);
+  width: 100%;
+  min-width: 0;
+  padding: 72px 20px 32px;
+}
+
+@media (min-width: 48rem) {
+  .ts-main {
+    padding: 40px var(--ts-xl) 40px;
+  }
+}

@@ -1,0 +1,310 @@
+/* Usage statistics, billing figures, charts, and audit sections.
+   Used by usage and audit pages. Keep page-specific rules in Features/. */
+
+/* Stats read as a row of figures, each marked by a left rule; wraps cleanly. */
+.ts-usage-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: var(--ts-md);
+  margin: 0;
+}
+
+.ts-usage-stats > div {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  min-width: 0;
+  padding-left: var(--ts-md);
+  border-left: 2px solid var(--ts-line);
+}
+
+.ts-usage-stats dt {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-xs);
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+}
+
+.ts-usage-stats dd {
+  margin: 0;
+  font-size: var(--ts-fs-panel-title);
+  font-weight: var(--ts-fw-semibold);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.ts-usage-stats dd small {
+  white-space: nowrap;
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  color: var(--ts-ink-muted);
+}
+
+/* Headline figures for billing and settings: bigger values, same left rule. */
+.ts-usage-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--ts-lg);
+  margin: 0;
+}
+
+.ts-usage-kpis > div {
+  display: grid;
+  gap: var(--ts-xs);
+  align-content: start;
+  min-width: 0;
+  padding-left: var(--ts-md);
+  border-left: 2px solid var(--ts-line);
+}
+
+.ts-usage-kpis dt {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-xs);
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+}
+
+.ts-usage-kpis dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--ts-sm);
+  margin: 0;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+}
+
+.ts-usage-kpi-value {
+  color: var(--ts-ink);
+  font-size: 1.5rem;
+  font-weight: var(--ts-fw-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.ts-usage-kpis .ts-bar-track { height: 6px; }
+
+.ts-usage-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-md);
+}
+
+.ts-usage-page { min-width: 2.25rem; justify-content: center; }
+.ts-usage-page[aria-current="page"] { background-color: var(--ts-fill-hover); color: var(--ts-ink); }
+.ts-usage-flip { display: inline-flex; transform: scaleX(-1); }
+
+.ts-usage-figures {
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(4.5rem, auto);
+}
+
+.ts-cat-1 { --ts-series: var(--ts-cat-1); }
+.ts-cat-2 { --ts-series: var(--ts-cat-2); }
+.ts-cat-3 { --ts-series: var(--ts-cat-3); }
+.ts-chart .ts-chart-line[class*="ts-cat-"] { stroke: var(--ts-series); }
+.ts-chart-swatch[class*="ts-cat-"] { background-color: var(--ts-series); }
+.ts-usage-figures dt { display: flex; align-items: center; gap: var(--ts-xs); }
+
+/* Keep axis text legible on phones: scroll the plot instead of shrinking it. */
+.ts-chart-shell:has(> .ts-tschart) { overflow-x: auto; }
+
+.ts-tschart {
+  position: relative;
+  min-width: 36rem;
+}
+
+.ts-tschart .ts-chart { display: block; }
+
+.ts-tschart-col { position: absolute; }
+
+.ts-tschart-col::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 50%;
+  border-left: 1px dashed var(--ts-ink-muted);
+}
+
+.ts-tschart-dot {
+  position: absolute;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--ts-series);
+  box-shadow: 0 0 0 2px var(--ts-surface);
+  transform: translate(-50%, -50%);
+}
+
+.ts-tschart-tip {
+  position: absolute;
+  top: 0;
+  left: calc(50% + 12px);
+  z-index: 1;
+  display: grid;
+  gap: var(--ts-xs);
+  min-width: 12rem;
+  padding: var(--ts-sm) var(--ts-md);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  box-shadow: var(--ts-overlay-edge);
+  font-size: var(--ts-fs-meta);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.ts-tschart-tip-left { left: auto; right: calc(50% + 12px); }
+.ts-tschart-tip time { color: var(--ts-ink-muted); }
+.ts-tschart-tip dl { display: grid; gap: 2px; margin: 0; }
+.ts-tschart-tip dl > div { display: flex; justify-content: space-between; gap: var(--ts-lg); }
+.ts-tschart-tip dt { display: flex; align-items: center; gap: var(--ts-xs); color: var(--ts-ink-muted); }
+.ts-tschart-tip dd { margin: 0; color: var(--ts-ink); font-family: var(--ts-font-mono); }
+
+.ts-tschart-col::before,
+.ts-tschart-dot,
+.ts-tschart-tip { opacity: 0; }
+
+.ts-tschart-col:hover::before,
+.ts-tschart-col:hover .ts-tschart-dot,
+.ts-tschart-col:hover .ts-tschart-tip { opacity: 1; }
+
+.ts-usage-share {
+  display: grid;
+  gap: var(--ts-lg);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts-usage-share li {
+  display: grid;
+  gap: 6px;
+}
+
+.ts-usage-share-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-md);
+  min-width: 0;
+}
+
+.ts-usage-share-head > :last-child { white-space: nowrap; }
+
+.ts-usage-share .ts-bar-fill { background-color: var(--ts-accent); }
+
+.ts-usage-drill { color: var(--ts-ink); }
+.ts-usage-drill:hover { color: var(--ts-accent); }
+
+.ts-usage-disclosure { line-height: 1.6; }
+
+.ts-usage .ts-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-xs);
+  white-space: nowrap;
+}
+
+/* Tables sit on the page like the rest of the sections: rows, no box. */
+.ts-usage .ts-table-wrap {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background-color: transparent;
+}
+
+.ts-usage-settings { margin: 0; }
+
+.ts-usage-settings > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-sm) var(--ts-xl);
+  padding-block: var(--ts-md);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-usage-settings > div:last-child { border-bottom: 1px solid var(--ts-line); }
+
+.ts-usage-settings dt {
+  display: grid;
+  gap: 2px;
+  font-weight: var(--ts-fw-medium);
+}
+
+.ts-usage-settings dt small {
+  font-size: var(--ts-fs-meta);
+  font-weight: 400;
+  color: var(--ts-ink-muted);
+}
+
+.ts-usage-settings dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-bar-track {
+  height: 8px;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-surface-muted);
+  overflow: hidden;
+}
+
+.ts-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-chart-1);
+  min-width: 2px;
+}
+
+.ts-audit-title {
+  font-size: 24px;
+  font-weight: var(--ts-fw-semibold);
+  line-height: 32px;
+}
+
+.ts-audit-kpis {
+  display: grid;
+  gap: var(--ts-sm);
+  margin-top: var(--ts-lg);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ts-audit-kpis > div {
+  display: grid;
+  gap: var(--ts-xs);
+  padding: var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background: var(--ts-surface-muted);
+}
+
+.ts-audit-kpis dt { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+.ts-audit-kpis dd { margin: 0; font-size: 24px; font-weight: var(--ts-fw-semibold); font-variant-numeric: tabular-nums; }
+
+.ts-notes-page .ts-audit-activity-header {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 40rem) {
+  .ts-audit-kpis { grid-template-columns: minmax(0, 1fr); }
+}
+
+.ts-audit-form {
+  display: grid;
+  gap: var(--ts-md);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
+  padding: var(--ts-lg);
+  border-bottom: 1px solid var(--ts-line);
+}
