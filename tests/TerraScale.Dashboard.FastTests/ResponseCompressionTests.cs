@@ -25,6 +25,7 @@ public sealed class ResponseCompressionTests
         await Assert.That(original.IsSuccessStatusCode).IsTrue();
         await Assert.That(original.Content.Headers.ContentEncoding.Count).IsEqualTo(0);
         var expected = await original.Content.ReadAsStringAsync();
+        await Assert.That(expected.Length).IsGreaterThan(0);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, path);
         request.Headers.AcceptEncoding.ParseAdd(accepted);
@@ -47,6 +48,8 @@ public sealed class ResponseCompressionTests
             ? new GZipStream(body, CompressionMode.Decompress)
             : new BrotliStream(body, CompressionMode.Decompress);
         using var reader = new StreamReader(decoded);
-        await Assert.That(await reader.ReadToEndAsync()).IsEqualTo(expected);
+        var decompressed = await reader.ReadToEndAsync();
+        await Assert.That(decompressed.Length).IsGreaterThan(0);
+        await Assert.That(decompressed).IsEqualTo(expected);
     }
 }
