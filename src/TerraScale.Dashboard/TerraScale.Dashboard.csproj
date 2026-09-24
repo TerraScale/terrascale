@@ -59,10 +59,10 @@
   </ItemGroup>
 
   <Target Name="BuildCss" BeforeTargets="ResolveProjectStaticWebAssets" Condition="'$(SkipCssBuild)' != 'true'"
-          Inputs="@(CssPartial);$(MSBuildProjectDirectory)/../../scripts/build-css.mjs;$(MSBuildProjectDirectory)/../../package-lock.json"
+          Inputs="@(CssPartial);$(MSBuildProjectDirectory)/../../scripts/build-css.mjs;$(MSBuildProjectDirectory)/../../package-lock.json;$(MSBuildProjectDirectory)/../../.browserslistrc"
           Outputs="$(MSBuildProjectDirectory)/wwwroot/css/terrascale.css">
     <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(MSBuildProjectDirectory)/../.."
-          Condition="!Exists('$(MSBuildProjectDirectory)/../../node_modules/lightningcss')" />
+          Condition="!Exists('$(MSBuildProjectDirectory)/../../node_modules/lightningcss') Or !Exists('$(MSBuildProjectDirectory)/../../node_modules/browserslist')" />
     <Exec Command="node scripts/build-css.mjs --dev" WorkingDirectory="$(MSBuildProjectDirectory)/../.." />
   </Target>
 
