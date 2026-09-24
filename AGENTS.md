@@ -46,8 +46,7 @@ Everything must work in memory account creation and etc
 - Each product area owns its components and abstraction on different folders
 
 ## Design System
-
-- We must use a Single CSS file
+- We must use lightningcss to bundle to ship a single CSS file
 
 ## Brand Assets
 
