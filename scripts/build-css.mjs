@@ -6,7 +6,7 @@
 //                                         whole page when a non-CSS asset such as a .map changes)
 //   node scripts/build-css.mjs --watch    --dev, rebuilt on every Styles/ or Features/ .css change
 import { watch } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import browserslist from 'browserslist';
@@ -44,7 +44,12 @@ async function build() {
   const current = await readFile(output).catch(() => null);
   if (!current?.equals(bundled)) {
     await mkdir(dirname(output), { recursive: true });
-    await writeFile(output, bundled);
+    // Keep the served asset valid while dotnet watch rebuilds its static
+    // asset manifest. A direct write briefly truncates the file; the watch
+    // host can observe that window and cache an empty compressed variant.
+    const temporary = `${output}.${process.pid}.tmp`;
+    await writeFile(temporary, bundled);
+    await rename(temporary, output);
   }
   return bundled.length;
 }
