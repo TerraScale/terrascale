@@ -43,6 +43,7 @@
 
 /* Native <dialog> styled as the Radix dialog. */
 dialog.ts-dialog {
+  box-sizing: border-box;
   border: none;
   border-radius: var(--ts-radius-panel);
   padding: 0;
@@ -87,6 +88,7 @@ dialog.ts-dialog::backdrop {
   display: flex;
   flex-direction: column;
   gap: var(--ts-lg);
+  min-width: 0;
   padding: var(--ts-xl);
 }
 
@@ -108,6 +110,18 @@ dialog.ts-dialog::backdrop {
 
 .ts-dialog-footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--ts-sm);
+}
+
+@media (max-width: 40rem) {
+  dialog.ts-dialog {
+    width: calc(100vw - 2 * var(--ts-md));
+    max-height: calc(100dvh - 2 * var(--ts-md));
+  }
+
+  .ts-dialog-content {
+    padding: var(--ts-lg);
+  }
 }

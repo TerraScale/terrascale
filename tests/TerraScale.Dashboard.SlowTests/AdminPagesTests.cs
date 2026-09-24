@@ -1,4 +1,5 @@
 using System.Text;
+using TerraScale.Dashboard.Features.Admin.Presentation;
 using TerraScale.Dashboard.Testing;
 
 namespace TerraScale.Dashboard.SlowTests;
@@ -120,6 +121,37 @@ public sealed class AdminPagesTests
         await Assert.That(page.Contains("Owner-only pricing plan administration.")).IsTrue();
         await Assert.That(page.Contains("Starter")).IsTrue();
         await Assert.That(page.Contains("Edit pricing plans")).IsTrue();
+    }
+
+    [Test]
+    public async Task AdminTabsKeepSecondaryViewsLinkable()
+    {
+        using var app = new DashboardTestApp();
+        using var client = await CreateOwnerClientAsync(app);
+
+        var estate = await app.GetPageAsync(client, "/admin/estate?tab=hosts&q=eu");
+        await Assert.That(estate.StatusCode).IsEqualTo(200);
+        await Assert.That(estate.Contains("href=\"/admin/estate?tab=operations\"")).IsTrue();
+        await Assert.That(estate.Contains("aria-current=\"page\"")).IsTrue();
+
+        var pricing = await app.GetPageAsync(client, "/admin/pricing?tab=create");
+        await Assert.That(pricing.StatusCode).IsEqualTo(200);
+        await Assert.That(pricing.Contains("Create pricing plan")).IsTrue();
+    }
+
+    [Test]
+    public async Task AdminPaginationClampsPageAndPreservesFilters()
+    {
+        var rows = Enumerable.Range(1, 25).ToArray();
+        var page = AdminPresentation.Paginate(rows, "2");
+        await Assert.That(page.Number).IsEqualTo(2);
+        await Assert.That(page.Rows).IsEquivalentTo(Enumerable.Range(11, 10));
+
+        var pager = AdminPresentation.Pager("/admin/estate", page.Number, page.TotalPages, page.TotalRows, "eu west", "hosts").Value!;
+        await Assert.That(pager.Contains("tab=hosts")).IsTrue();
+        await Assert.That(pager.Contains("q=eu%20west")).IsTrue();
+        await Assert.That(pager.Contains("page=1")).IsTrue();
+        await Assert.That(pager.Contains("page=3")).IsTrue();
     }
 
     [Test]

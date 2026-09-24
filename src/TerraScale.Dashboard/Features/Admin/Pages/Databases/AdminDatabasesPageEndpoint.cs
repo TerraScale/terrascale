@@ -12,10 +12,14 @@ public sealed class AdminDatabasesPageEndpoint(DashboardStore store)
         List<AdminDatabaseRow> rows = [.. Store.Databases.Select(d => new AdminDatabaseRow(d.Id, d.Name, RegionsOf(d), d.Version, d.CreatedAt))];
         var filtered = AdminPresentation.FilterRows(
             rows, query, row => $"{row.DatabaseId} {row.Name} {row.Version} {string.Join(' ', row.Regions)}");
+        var page = AdminPresentation.Paginate(filtered, HttpContext.Request.Query["page"].FirstOrDefault());
         return new AdminDatabasesPageModel(
             query,
-            filtered,
-            rows.SelectMany(r => r.Regions).Distinct().Count())
+            page.Rows,
+            rows.SelectMany(r => r.Regions).Distinct().Count(),
+            page.Number,
+            page.TotalPages,
+            page.TotalRows)
         {
             Shell = ShellFactory.Create(Store, PageRoute),
         };

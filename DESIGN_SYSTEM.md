@@ -31,14 +31,17 @@ Breakpoints are only 40 / 48 / 64 / 80 / 96rem. Place the rule next to the one i
 ```
 ts-page
 ├─ alerts (return/status messages, optional)
-├─ toolbar         tabs left · filters right · hairline below · 60px tall on every tab
+├─ toolbar         distinct-view tabs or page title left · filters right · hairline below
 └─ sections        ts-section-head (title + meta | one primary action)
                    content: KPI row · table · chart · two-column split
                    hairline between sections
 ```
 
-- **Top spacing:** `.ts-main` gets reduced top padding on toolbar pages. Content must start at the same y on every tab, so check it with a bounding-box measurement.
+- **Top spacing:** signed-in pages start 16px below the desktop inset edge. Mobile pages keep enough clearance for the fixed navigation button. Content must start at the same y on every tab, so check it with a bounding-box measurement.
+- **Navigation:** use a 14rem (224px) sidebar with 40px rows and 24px icon frames. The same width applies to the mobile drawer and Admin menu. Keep project and account popovers within the drawer, with names and actions readable at 390px.
+- **Tabs:** use them to switch between a small number of distinct tasks or views. A page with one view uses a title in the toolbar; large feature areas group related routes and keep each route linkable.
 - **Two columns:** main content on the left and a narrow aside on the right (limits, breakdowns). The grid starts at 64rem, and the aside has a left hairline.
+- **Home overview exception:** the root overview has no page tabs. Use `.ts-home-overview` with workspace KPIs at the top of the left column, activity below them, and Getting started as a full-height right rail. Activity range is a compact menu inside the Activity section; `?range=` remains linkable.
 
 ## Components
 
@@ -76,7 +79,7 @@ Class names below are the Usage-page ones (`ts-usage-*`). **When a second page a
 ## Refactoring a page: checklist
 
 1. Remove cards and panels, and replace them with flat sections and hairlines.
-2. Put tabs and filters in one toolbar, and move secondary views to `?tab=`.
+2. Put filters in the toolbar with a page title or a few distinct-view tabs; keep secondary views linkable with `?tab=` or their existing route.
 3. Give each section a head (title, meta line, and at most one primary action).
 4. Turn headline numbers into a KPI row. Turn long lists into paginated, filterable tables with an empty state.
 5. Move rarely used or consent-heavy edits into a dialog, and keep frequent edits inline.

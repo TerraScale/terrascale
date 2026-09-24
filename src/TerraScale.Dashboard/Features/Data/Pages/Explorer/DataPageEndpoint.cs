@@ -27,6 +27,8 @@ public sealed class DataPageEndpoint(DashboardStore store) : SlicePageEndpoint<D
             notice: query["notice"].ToString() is { Length: > 0 } n ? n : null,
             sql: sql.Length > 0 ? sql : null,
             sqlCollection: query["collection"].ToString(),
-            sqlChecked: query["checked"].ToString() == "1");
+            sqlChecked: query["checked"].ToString() == "1",
+            filter: query["q"].ToString(),
+            page: int.TryParse(query["page"].ToString(), out var page) ? page : 1);
     }
 }

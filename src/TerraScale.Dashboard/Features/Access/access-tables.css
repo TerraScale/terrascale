@@ -274,3 +274,215 @@
   color: var(--ts-ink);
   font-weight: var(--ts-fw-semibold);
 }
+
+/* Team tabs, filters, and flat access sections. */
+.ts-access-page {
+  gap: var(--ts-lg);
+}
+
+.ts-access-page > .ts-section {
+  gap: var(--ts-lg);
+  padding-block: var(--ts-sm) var(--ts-xl);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-access-page .ts-toolbar {
+  min-width: 0;
+}
+
+.ts-access-filters {
+  flex: 1 1 24rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.ts-access-filters .ts-filter-field {
+  flex: 0 1 11rem;
+  min-width: 10rem;
+}
+
+.ts-access-filters .ts-access-search-field {
+  flex: 1 1 14rem;
+  max-width: 20rem;
+}
+
+.ts-access-search-box {
+  position: relative;
+}
+
+.ts-access-search-box > svg {
+  position: absolute;
+  top: 50%;
+  left: var(--ts-md);
+  color: var(--ts-ink-muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.ts-access-search-box .ts-input {
+  padding-left: 36px;
+}
+
+.ts-access-page .ts-filter-select {
+  width: 100%;
+}
+
+.ts-access-page .ts-filter-menu > .ts-menu-panel {
+  top: calc(100% + var(--ts-xs));
+  left: 0;
+  width: 100%;
+  min-width: 0;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.ts-access-page .ts-menu-end > .ts-menu-panel {
+  right: 0;
+  left: auto;
+}
+
+.ts-access-page .ts-filter-menu .ts-menu-item[aria-current="true"] {
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-accent);
+}
+
+.ts-access-page .ts-table-wrap {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ts-access-summary-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-access-summary-list > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-md);
+  min-width: 0;
+  padding-block: var(--ts-md);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-access-summary-list .ts-access-member-cell {
+  align-items: center;
+}
+
+.ts-access-invitation-summary > li {
+  justify-content: flex-start;
+}
+
+.ts-access-invitation-summary > li > .ts-table-strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-access-invitation-summary > li > form {
+  flex: 0 0 auto;
+}
+
+.ts-access-pager {
+  padding-top: var(--ts-lg);
+}
+
+.ts-access-pager-flip {
+  display: inline-flex;
+  transform: scaleX(-1);
+}
+
+.ts-access-page .ts-empty {
+  align-items: flex-start;
+  text-align: left;
+}
+
+.ts-access-empty-action {
+  align-self: flex-start;
+}
+
+.ts-access-invite-form {
+  display: grid;
+  gap: var(--ts-md);
+  padding: 0 0 var(--ts-xl);
+  border: 0;
+  border-bottom: 1px solid var(--ts-line);
+  border-radius: 0;
+  background: none;
+}
+
+.ts-access-invite-form .ts-btn {
+  align-self: end;
+}
+
+.ts-access-two-column {
+  display: grid;
+  gap: var(--ts-xl);
+}
+
+.ts-access-two-column > .ts-section {
+  min-width: 0;
+}
+
+.ts-access-two-column > .ts-section + .ts-section {
+  padding-top: var(--ts-xl);
+  border-top: 1px solid var(--ts-line);
+}
+
+@media (min-width: 40rem) {
+  .ts-access-invite-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
+}
+
+@media (min-width: 64rem) {
+  .ts-access-two-column {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .ts-access-two-column > .ts-section + .ts-section {
+    padding-top: 0;
+    padding-left: var(--ts-xl);
+    border-top: 0;
+    border-left: 1px solid var(--ts-line);
+  }
+}
+
+@media (max-width: 40rem) {
+  .ts-access-page .ts-toolbar {
+    align-items: stretch;
+  }
+
+  .ts-access-page .ts-toolbar .ts-tabs {
+    width: 100%;
+    gap: var(--ts-sm);
+  }
+
+  .ts-access-page .ts-toolbar .ts-tab svg {
+    display: none;
+  }
+
+  .ts-access-filters,
+  .ts-access-filters .ts-filter-field,
+  .ts-access-filters .ts-btn {
+    width: 100%;
+  }
+
+  .ts-access-filters .ts-access-search-field {
+    max-width: none;
+  }
+
+  .ts-access-invite-form .ts-btn {
+    width: 100%;
+  }
+}

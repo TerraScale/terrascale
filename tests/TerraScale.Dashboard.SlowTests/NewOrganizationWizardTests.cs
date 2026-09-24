@@ -222,7 +222,7 @@ public sealed class NewOrganizationWizardTests
         var organization = await app.GetPageAsync(client, "/organization");
         await Assert.That(organization.Contains("Nova Labs")).IsTrue();
         var usage = await app.GetPageAsync(client, "/usage?tab=billing");
-        await Assert.That(usage.Contains("<span class=\"ts-usage-kpi-value\">Dedicated</span>")).IsTrue();
+        await Assert.That(usage.Contains("<span class=\"ts-kpi-value\">Dedicated</span>")).IsTrue();
     }
 
     [Test]
@@ -290,7 +290,7 @@ public sealed class NewOrganizationWizardTests
         await Assert.That(usage.StatusCode).IsEqualTo(200);
         var organization = await app.GetPageAsync(client, "/organization");
         await Assert.That(organization.Contains("Nova Labs")).IsTrue();
-        await Assert.That(usage.Contains("<span class=\"ts-usage-kpi-value\">Dedicated</span>")).IsTrue();
+        await Assert.That(usage.Contains("<span class=\"ts-kpi-value\">Dedicated</span>")).IsTrue();
     }
 
     [Test]

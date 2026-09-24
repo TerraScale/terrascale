@@ -3,45 +3,11 @@
 
 /* ===== Feature: Databases ================================================ */
 
-.ts-panel-20 {
-  padding: 20px;
-}
-
-.ts-panel-pad {
-  padding: var(--ts-lg);
-  display: grid;
-  gap: var(--ts-md);
-}
-
-.ts-row-header-actions {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--ts-sm);
-  flex-wrap: wrap;
-}
-
-@media (min-width: 64rem) {
-  .ts-row-header-actions {
-    flex-direction: row;
-    justify-content: space-between;
-    gap: 20px;
-  }
-}
-
-.ts-row-actions-end {
-  justify-content: flex-end;
-}
-
 .ts-row-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: var(--ts-xs);
-}
-
-.ts-min-width-flex {
-  min-width: 0;
-  flex: 1;
 }
 
 .ts-db-search {
@@ -63,6 +29,129 @@
 
 .ts-db-search .ts-input {
   padding-left: 36px;
+}
+
+/* Databases uses one toolbar for its page tab and search filter. Keep the
+   table wide enough to preserve readable columns on narrow screens. */
+.ts-db-page > .ts-toolbar {
+  align-items: center;
+}
+
+.ts-db-page .ts-filters {
+  flex: 1 1 20rem;
+  justify-content: flex-end;
+}
+
+.ts-db-page .ts-db-search {
+  flex: 1 1 18rem;
+  max-width: 24rem;
+}
+
+.ts-db-page .ts-db-search .ts-input { width: 100%; }
+
+.ts-db-section {
+  gap: var(--ts-lg);
+  min-width: 0;
+}
+
+.ts-db-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ts-db-page .ts-db-table {
+  min-width: 720px;
+  table-layout: auto;
+}
+
+@media (max-width: 40rem) {
+  .ts-db-page > .ts-toolbar {
+    align-items: stretch;
+    gap: var(--ts-md);
+    padding-block: var(--ts-md);
+  }
+
+  .ts-db-page > .ts-toolbar .ts-tabs {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .ts-db-page .ts-filters {
+    width: 100%;
+    flex-basis: 100%;
+    justify-content: stretch;
+  }
+
+  .ts-db-page .ts-db-search {
+    flex: 1 1 auto;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .ts-db-page .ts-filters .ts-btn { flex: 0 0 auto; }
+}
+
+/* Database detail keeps identity visible while secondary lifecycle views
+   are linkable tabs. Each view is a flat section with scrollable tables. */
+.ts-db-detail-page > .ts-section {
+  gap: var(--ts-lg);
+  min-width: 0;
+}
+
+.ts-db-detail-page > .ts-section + .ts-section {
+  padding-top: var(--ts-xl);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-db-detail-identity .ts-section-head { align-items: center; }
+
+.ts-db-detail-body {
+  display: grid;
+  gap: var(--ts-lg);
+  min-width: 0;
+}
+
+.ts-db-detail-section-icon {
+  flex-shrink: 0;
+  color: var(--ts-ink-muted);
+}
+
+.ts-db-detail-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ts-db-detail-table-wrap .ts-table { min-width: 32rem; }
+
+.ts-db-detail-setting {
+  padding-block: var(--ts-lg);
+  border-top: 1px solid var(--ts-line);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+@media (max-width: 40rem) {
+  .ts-db-detail-page > .ts-toolbar {
+    overflow-x: auto;
+  }
+
+  .ts-db-detail-page > .ts-toolbar .ts-tabs {
+    flex-wrap: nowrap;
+    max-width: none;
+  }
+
+  .ts-db-detail-identity .ts-section-head {
+    align-items: flex-start;
+  }
+
+  .ts-db-detail-identity .ts-section-head > .ts-btn { width: 100%; }
 }
 
 .ts-db-name {

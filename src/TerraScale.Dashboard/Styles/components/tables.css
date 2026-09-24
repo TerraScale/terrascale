@@ -98,6 +98,19 @@
   margin-bottom: var(--ts-sm);
 }
 
+.ts-empty-icon-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: var(--ts-sm);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink);
+  flex-shrink: 0;
+}
+
 .ts-empty-meta {
   font-size: var(--ts-fs-ui);
   color: var(--ts-ink-muted);

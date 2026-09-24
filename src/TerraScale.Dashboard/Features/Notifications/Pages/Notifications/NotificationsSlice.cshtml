@@ -15,53 +15,89 @@
         "success" => "Resolved",
         _ => "Update",
     };
+
+    string QueryHref(int? page = null)
+    {
+        var query = new List<string>();
+        if (Model.Status != "all") { query.Add("status=" + Uri.EscapeDataString(Model.Status)); }
+        if (page is > 1) { query.Add("page=" + page.Value); }
+        return query.Count is 0 ? "/notifications" : "/notifications?" + string.Join("&", query);
+    }
+
+    var first = Model.FilteredCount is 0 ? 0 : ((Model.Page - 1) * NotificationsPageModel.PageSize) + 1;
+    var last = Model.FilteredCount is 0 ? 0 : Math.Min(Model.FilteredCount, Model.Page * NotificationsPageModel.PageSize);
 }
 @ShellHtml.Top(shell)
-<div class="ts-page ts-notes-page">
-    <section class="ts-panel ts-notifications-overview" aria-label="Notification summary">
-        <div class="ts-notifications-header">
+<div class="ts-page ts-notifications-page">
+    <div class="ts-toolbar">
+        <nav class="ts-tabs" aria-label="Notification sections">
+            <a class="ts-tab" href="/notifications" aria-current="page" aria-selected="true">@Icons.Bell(16) Notifications</a>
+        </nav>
+        <form class="ts-filters ts-notifications-filters" method="get" action="/notifications" role="search" aria-label="Filter notifications">
+            <div class="ts-filter-field">
+                <span class="ts-filter-label ts-sr-only" id="notification-status-label">Notification status</span>
+                <input type="hidden" name="status" value="@(Model.Status == "all" ? "" : Model.Status)" />
+                <details class="ts-menu ts-filter-menu">
+                    <summary class="ts-select ts-filter-select" aria-labelledby="notification-status-label notification-status-value"><span id="notification-status-value">@(Model.Status == "unread" ? "Unread" : "All notifications")</span></summary>
+                    <div class="ts-menu-panel">
+                        <button class="ts-menu-item" type="button" data-filter-value="" aria-current="@(Model.Status == "all" ? "true" : null)">All notifications</button>
+                        <button class="ts-menu-item" type="button" data-filter-value="unread" aria-current="@(Model.Status == "unread" ? "true" : null)">Unread</button>
+                    </div>
+                </details>
+            </div>
+            @if (Model.Status != "all")
+            {
+                <a class="ts-btn ts-btn-ghost" href="/notifications">Clear</a>
+            }
+        </form>
+        <div class="ts-notifications-toolbar-actions">
+            <form method="post" action="/api/v1/notifications/read-all">
+                <button class="ts-btn ts-btn-primary" type="submit" disabled="@(Model.Unread == 0 ? "disabled" : null)">@Icons.CheckCheck(16) Mark all read</button>
+            </form>
+            <a class="ts-btn ts-btn-ghost" href="/notifications">@Icons.RefreshCw(16) Refresh</a>
+        </div>
+    </div>
+
+    <section class="ts-section ts-notifications-section" aria-labelledby="notifications-overview-title">
+        <div class="ts-section-head">
             <div>
-                <span class="ts-notifications-eyebrow">YOUR ACTIVITY</span>
-                <h2>Stay on top of what matters.</h2>
-                <p>Updates about your account, databases, and team in one place.</p>
-            </div>
-            <div class="ts-notifications-actions">
-                <form method="post" action="/api/v1/notifications/read-all">
-                    <button class="ts-btn ts-btn-primary" type="submit" disabled="@(Model.Unread == 0 ? "disabled" : null)">@Icons.CheckCheck(16) Mark all read</button>
-                </form>
-                <a class="ts-btn ts-btn-secondary" href="/notifications">@Icons.RefreshCw(16) Refresh</a>
+                <h2 class="ts-panel-title" id="notifications-overview-title">Stay on top of what matters.</h2>
+                <p class="ts-meta">Updates about your account, databases, and team in one place.</p>
             </div>
         </div>
-        <div class="ts-notifications-stats">
-            <div class="ts-notifications-stat ts-notifications-stat-unread">
-                <span>Unread</span>
-                <strong>@Model.Unread</strong>
+        <dl class="ts-kpis" aria-label="Notification totals">
+            <div>
+                <dt>@Icons.Bell(14) Unread</dt>
+                <dd><span class="ts-kpi-value">@Model.Unread</span></dd>
+                <small class="ts-meta">Notifications waiting for review</small>
             </div>
-            <div class="ts-notifications-stat ts-notifications-stat-critical">
-                <span>Critical</span>
-                <strong>@Model.Critical</strong>
+            <div>
+                <dt>@Icons.TriangleAlert(14) Critical</dt>
+                <dd><span class="ts-kpi-value">@Model.Critical</span></dd>
+                <small class="ts-meta">Unread critical notifications</small>
             </div>
-            <div class="ts-notifications-stat">
-                <span>All notifications</span>
-                <strong>@Model.Total</strong>
+            <div>
+                <dt>@Icons.ListChecks(14) All notifications</dt>
+                <dd><span class="ts-kpi-value">@Model.Total</span></dd>
+                <small class="ts-meta">Retained in this project inbox</small>
             </div>
-        </div>
+        </dl>
     </section>
 
-    <section class="ts-panel ts-notifications-inbox" aria-labelledby="notifications-inbox-title">
-        <div class="ts-notifications-inbox-header">
+    <section class="ts-section ts-notifications-section" aria-labelledby="notifications-inbox-title">
+        <div class="ts-section-head">
             <div>
-                <h2 id="notifications-inbox-title">Inbox</h2>
-                <p>@Model.Total @(Model.Total == 1 ? "notification" : "notifications")</p>
+                <h2 class="ts-panel-title" id="notifications-inbox-title">Inbox</h2>
+                <p class="ts-meta">@Model.FilteredCount @(Model.FilteredCount == 1 ? "notification" : "notifications")</p>
             </div>
-            <span class="ts-notifications-count" aria-label="@Model.Unread unread notifications">@Model.Unread unread</span>
+            <span class="ts-badge ts-badge-info" aria-label="@Model.Unread unread notifications">@Model.Unread unread</span>
         </div>
-        @if (Model.Notifications.Count is 0)
+        @if (Model.FilteredCount is 0)
         {
-            <div class="ts-notifications-empty">
-                <span class="ts-notifications-empty-icon">@Icons.Bell(24)</span>
-                <h3>You're all caught up</h3>
-                <p>New notifications will appear here when there's something to review.</p>
+            <div class="ts-empty ts-notifications-empty">
+                <span class="ts-empty-icon">@Icons.Bell(16)</span>
+                <span class="ts-empty-title">You're all caught up</span>
+                <span class="ts-empty-meta">New notifications will appear here when there's something to review.</span>
             </div>
         }
         else
@@ -92,12 +128,32 @@
                         @if (unread)
                         {
                             <form method="post" action="/api/v1/notifications/@notification.Id/read">
-                                <button class="ts-btn ts-notification-mark" type="submit">@Icons.Check(15) Mark read</button>
+                                <button class="ts-btn ts-btn-ghost ts-notification-mark" type="submit">@Icons.Check(15) Mark read</button>
                             </form>
                         }
                     </article>
                 }
             </div>
+            <nav class="ts-pager" aria-label="Notification pages">
+                <span class="ts-meta">Showing @first–@last of @Model.FilteredCount notifications</span>
+                @if (Model.PageCount > 1)
+                {
+                    <div class="ts-row ts-row-tight">
+                        @if (Model.Page > 1)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@QueryHref(Model.Page - 1)" rel="prev"><span class="ts-notifications-flip">@Icons.ChevronRight(14)</span> Previous</a>
+                        }
+                        @for (var pageNumber = 1; pageNumber <= Model.PageCount; pageNumber++)
+                        {
+                            <a class="ts-btn ts-btn-ghost ts-pager-page" href="@QueryHref(pageNumber)" aria-current="@(pageNumber == Model.Page ? "page" : null)">@pageNumber</a>
+                        }
+                        @if (Model.Page < Model.PageCount)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@QueryHref(Model.Page + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                        }
+                    </div>
+                }
+            </nav>
         }
     </section>
 </div>

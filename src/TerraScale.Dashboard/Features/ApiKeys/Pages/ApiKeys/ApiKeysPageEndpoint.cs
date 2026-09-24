@@ -26,6 +26,13 @@ public sealed class ApiKeysPageEndpoint(DashboardStore store)
 
         var filters = (Query: query["q"].ToString().Trim(), Kind: query["kind"].ToString(), Status: query["status"].ToString(), DatabaseId: query["database"].ToString());
         var filtered = FilterCredentials(all, filters, databaseNames);
+        var pageCount = Math.Max(1, (filtered.Count + ApiKeysPageModel.PageSize - 1) / ApiKeysPageModel.PageSize);
+        var requestedPage = int.TryParse(query["page"], out var page) ? page : 1;
+        page = Math.Clamp(requestedPage, 1, pageCount);
+        var pageRows = filtered
+            .Skip((page - 1) * ApiKeysPageModel.PageSize)
+            .Take(ApiKeysPageModel.PageSize)
+            .ToList();
 
         var secret = Store.ConsumePendingSecret();
         var secretId = query["created"].ToString();
@@ -39,7 +46,7 @@ public sealed class ApiKeysPageEndpoint(DashboardStore store)
             Expiring: all.Count(c => c.Kind == "key" && c.Status == "Expiring"),
             M2mClients: all.Count(c => c.Kind == "m2m" && c.Status != "Revoked"),
             Databases: databases,
-            Credentials: filtered,
+            Credentials: pageRows,
             HasAnyCredentials: all.Count > 0,
             Query: filters.Query,
             Kind: filters.Kind,
@@ -54,6 +61,9 @@ public sealed class ApiKeysPageEndpoint(DashboardStore store)
             SecretValue: secretView?.Secret)
         {
             Shell = ShellFactory.Create(Store, PageRoute),
+            Page = page,
+            PageCount = pageCount,
+            Total = filtered.Count,
         };
     }
 

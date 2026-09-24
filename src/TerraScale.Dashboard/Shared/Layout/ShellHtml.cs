@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Shared.Layout;
 
 /// <summary>
 /// Shell chrome renderer: the document skeleton, sidebar, project switcher,
-/// account menu, and data sub-nav, straight from C# so pages never deal with
+/// and account menu, straight from C# so pages never deal with
 /// layout plumbing. A page slice opens with <c>@@Html.Raw(ShellHtml.Top(Model.Shell))</c>
 /// and closes with <c>@@Html.Raw(ShellHtml.Bottom(Model.Shell))</c>. Markup
 /// lives here only for chrome; page content stays in the .cshtml slices.
@@ -14,8 +14,6 @@ public static class ShellHtml
 {
     public static HtmlString Top(ShellModel shell)
     {
-        var hasSubNav = shell.Route?.Id is RouteId.Data or RouteId.Authentication;
-        var dataSubNav = hasSubNav ? " data-datasubnav" : "";
         var builder = new StringBuilder("""
             <!DOCTYPE html>
             <html lang="en" data-theme="dark">
@@ -28,18 +26,9 @@ public static class ShellHtml
             : "    <title>TerraScale</title>");
         builder.Append(DocumentHtml.Assets());
         builder.AppendLine("</head><body>");
-        builder.AppendLine("    <div class=\"ts-shell\"" + dataSubNav + " data-signals=\"{navOpen:false}\" data-class:nav-open=\"$navOpen\">");
+        builder.AppendLine("    <div class=\"ts-shell\" data-signals=\"{navOpen:false}\" data-class:nav-open=\"$navOpen\">");
         builder.AppendLine("""        <div class="ts-nav-backdrop" data-on:click="$navOpen=false"></div>""");
         builder.Append(shell.Route?.AdminOnly == true ? AdminSidebar(shell) : Sidebar(shell));
-        if (shell.Route?.Id == RouteId.Data)
-        {
-            builder.Append(DataSubNav(shell));
-        }
-        else if (shell.Route?.Id == RouteId.Authentication)
-        {
-            builder.Append(AuthenticationSubNav(shell));
-        }
-
         builder.AppendLine("        <div class=\"ts-inset\">");
         builder.AppendLine("""            <button type="button" class="ts-fab ts-fab-nav" aria-label="Open navigation" data-on:click="$navOpen=!$navOpen" data-attr:aria-expanded="$navOpen.toString()" aria-controls="ts-navigation" aria-expanded="false">""" + Icons.PanelLeft(18).Value + "</button>");
         builder.AppendLine("            <main class=\"ts-main\">");
@@ -85,9 +74,10 @@ public static class ShellHtml
     {
         var counts = shell.Store.Databases.GroupBy(database => database.ProjectId)
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
-        var builder = new StringBuilder("        <aside id=\"ts-navigation\" class=\"ts-sidebar\">\n");
+        var builder = new StringBuilder("        <aside id=\"ts-navigation\" class=\"ts-sidebar\" aria-label=\"Primary navigation\">\n");
         builder.AppendLine("            <div class=\"ts-sidebar-header\">");
         builder.Append(ProjectControls(shell, counts));
+        builder.AppendLine($"""                <button type="button" class="ts-sidebar-close ts-icon-btn" aria-label="Close navigation" data-on:click="$navOpen=false">{Icons.X(18).Value}</button>""");
         builder.AppendLine("            </div>");
         builder.AppendLine("""            <div class="ts-sidebar-content">""");
         builder.AppendLine("                <ul class=\"ts-nav\">");
@@ -117,6 +107,7 @@ public static class ShellHtml
         builder.AppendLine("            <div class=\"ts-sidebar-header ts-admin-sidebar-header\">");
         builder.AppendLine($"""                <a class="ts-sidebar-brand" href="/" aria-label="TerraScale Dashboard"><img src="{AssetUrls.Url("/brand/logo-terrascale-blue.svg")}" alt="" aria-hidden="true" decoding="async" /></a>""");
         builder.AppendLine("                <div class=\"ts-admin-sidebar-title\">Administration</div>");
+        builder.AppendLine($"""                <button type="button" class="ts-sidebar-close ts-icon-btn" aria-label="Close navigation" data-on:click="$navOpen=false">{Icons.X(18).Value}</button>""");
         builder.AppendLine("            </div>");
         builder.AppendLine("            <nav class=\"ts-sidebar-content\" aria-label=\"Admin sections\">");
         builder.AppendLine("                <ul class=\"ts-nav\">");
@@ -170,13 +161,13 @@ public static class ShellHtml
         var others = store.Projects.Where(p => p.Id != project.Id).ToArray();
         var builder = new StringBuilder("                <div class=\"ts-project-controls\" data-signals=\"{projectSearch:''}\">");
         builder.AppendLine("""                    <details class="ts-menu ts-project-menu">""");
-        builder.AppendLine($"""                        <summary class="ts-btn ts-btn-secondary ts-btn-lg ts-project-trigger">{Icons.FolderKanban(16).Value}<span class="ts-project-trigger-label">{Escape(project.Name)}</span>{Icons.ChevronDown(15).Value}</summary>""");
+        builder.AppendLine($"""                        <summary class="ts-btn ts-btn-secondary ts-project-trigger">{Icons.FolderKanban(16).Value}<span class="ts-project-trigger-label">{Escape(project.Name)}</span>{Icons.ChevronDown(15).Value}</summary>""");
         builder.AppendLine("                        <div class=\"ts-menu-panel ts-project-panel\">");
         builder.AppendLine("                            <div class=\"ts-project-panel-scroll\">");
         builder.AppendLine("""                                <div class="ts-current-project">""");
         builder.AppendLine("""                                    <div class="ts-current-project-top">""");
         builder.AppendLine("""                                        <div class="ts-current-project-name"><span class="ts-status-dot" aria-hidden="true"></span><span class="ts-project-name">""" + Escape(project.Name) + "</span></div>");
-        builder.AppendLine($"""                                        <div class="ts-project-actions"><span class="ts-active-label">Active</span><a class="ts-project-rename" href="/organization" aria-label="Rename project">{Icons.Pencil(13).Value}</a></div>""");
+        builder.AppendLine($"""                                        <a class="ts-project-rename" href="/organization" aria-label="Rename project">{Icons.Pencil(13).Value}</a>""");
         builder.AppendLine("                                    </div>");
         builder.AppendLine("""                                    <div class="ts-project-meta">""");
         builder.AppendLine($"""                                        <span class="ts-project-meta-item">{Icons.Database(12).Value} {databaseCount} {(databaseCount == 1 ? "database" : "databases")}</span>""");
@@ -211,7 +202,7 @@ public static class ShellHtml
         builder.AppendLine("""                            <div class="ts-project-footer">""");
         builder.AppendLine($"""                                <a class="ts-project-footer-link" href="/organization?create=1">{Icons.Plus(15).Value} Create new project</a>""");
         builder.AppendLine($"""                                <a class="ts-project-footer-link" href="/settings">{Icons.Settings(15).Value} Project settings</a>""");
-        builder.AppendLine($"""                                <a class="ts-project-footer-link" href="/organization">{Icons.Building2(15).Value} Browse all workspaces</a>""");
+        builder.AppendLine($"""                                <a class="ts-project-footer-link" href="/organization">{Icons.Building2(15).Value} All workspaces</a>""");
         builder.AppendLine("                            </div>");
         builder.AppendLine("                        </div>");
         builder.AppendLine("                    </details>");
@@ -250,62 +241,6 @@ public static class ShellHtml
                         </div>
                     </details>
             """;
-    }
-
-    private static string DataSubNav(ShellModel shell)
-    {
-        var view = shell.ActiveHref.StartsWith("/data", StringComparison.OrdinalIgnoreCase);
-        if (!view)
-        {
-            return string.Empty;
-        }
-
-        var builder = new StringBuilder("""        <aside class="ts-datasubnav" aria-label="Data views">""");
-        var viewKey = shell.ActiveHref.Contains("view=", StringComparison.Ordinal)
-            ? shell.ActiveHref.Split("view=", StringSplitOptions.RemoveEmptyEntries)[^1]
-            : "";
-        builder.AppendLine("""            <div class="ts-datasubnav-menu">""");
-        builder.AppendLine(SubNavLink("/data", "Saved queries", "BookOpen", viewKey.Length == 0));
-        builder.AppendLine(SubNavLink("/data?view=table", "Collection documents", "Table", viewKey == "table"));
-        builder.AppendLine(SubNavLink("/data?view=editor", "Document editor", "FileText", viewKey == "editor"));
-        builder.AppendLine(SubNavLink("/data?view=sql", "SQL console", "Terminal", viewKey == "sql"));
-        builder.AppendLine("            </div>");
-        builder.AppendLine("        </aside>");
-        return builder.ToString();
-    }
-
-    private static string AuthenticationSubNav(ShellModel shell)
-    {
-        var builder = new StringBuilder("        <aside class=\"ts-datasubnav\" aria-label=\"Authentication views\">");
-        builder.AppendLine("            <div class=\"ts-datasubnav-header\">AUTHENTICATION</div>");
-        builder.AppendLine("            <div class=\"ts-datasubnav-menu\">");
-        builder.AppendLine(SubNavLink("/auth", "Overview", "ShieldCheck", shell.ActiveHref == "/auth"));
-        builder.AppendLine(SubNavLink("/auth/users", "Users", "Users", shell.ActiveHref == "/auth/users"));
-        builder.AppendLine(SubNavLink("/auth/sessions", "Sessions", "Monitor", shell.ActiveHref == "/auth/sessions"));
-        builder.AppendLine(SubNavLink("/auth/organizations", "Organizations", "Building2", shell.ActiveHref == "/auth/organizations"));
-        builder.AppendLine(SubNavLink("/auth/memberships", "Memberships", "Users", shell.ActiveHref == "/auth/memberships"));
-        builder.AppendLine(SubNavLink("/auth/invitations", "Invitations", "MailPlus", shell.ActiveHref == "/auth/invitations"));
-        builder.AppendLine(SubNavLink("/auth/domains", "Domains", "Globe", shell.ActiveHref == "/auth/domains"));
-        builder.AppendLine(SubNavLink("/auth/connections", "Connections", "GlobeLock", shell.ActiveHref == "/auth/connections"));
-        builder.AppendLine(SubNavLink("/auth/directories", "Directories", "FolderOpen", shell.ActiveHref == "/auth/directories"));
-        builder.AppendLine(SubNavLink("/auth/clients", "OAuth clients", "KeySquare", shell.ActiveHref == "/auth/clients"));
-        builder.AppendLine(SubNavLink("/auth/templates", "JWT templates", "FileJson", shell.ActiveHref == "/auth/templates"));
-        builder.AppendLine(SubNavLink("/auth/keys", "Management keys", "KeyRound", shell.ActiveHref == "/auth/keys"));
-        builder.AppendLine(SubNavLink("/auth/webhooks", "Webhooks", "Webhook", shell.ActiveHref == "/auth/webhooks"));
-        builder.AppendLine(SubNavLink("/auth/deliveries", "Deliveries", "Send", shell.ActiveHref == "/auth/deliveries"));
-        builder.AppendLine(SubNavLink("/auth/audit", "Audit log", "ScrollText", shell.ActiveHref == "/auth/audit"));
-        builder.AppendLine(SubNavLink("/auth/billing", "Billing", "CreditCard", shell.ActiveHref == "/auth/billing"));
-        builder.AppendLine(SubNavLink("/auth/quickstart", "Quickstart", "Terminal", shell.ActiveHref == "/auth/quickstart"));
-        builder.AppendLine(SubNavLink("/auth/settings", "Settings", "Settings", shell.ActiveHref == "/auth/settings"));
-        builder.AppendLine("            </div>");
-        builder.AppendLine("        </aside>");
-        return builder.ToString();
-    }
-
-    private static string SubNavLink(string href, string label, string icon, bool active)
-    {
-        var current = active ? " aria-current=\"page\"" : "";
-        return $"""                <a class="ts-nav-link" href="{href}" style="--ts-nav-accent:#14B8A6"{current}><span class="ts-nav-indicator" aria-hidden="true"></span><span class="ts-nav-icon">{Icon(icon, 16)}</span><span>{label}</span></a>""";
     }
 
     private static string Icon(string name, int size = 18) => name switch

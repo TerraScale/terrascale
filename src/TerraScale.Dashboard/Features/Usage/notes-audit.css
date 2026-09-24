@@ -3,56 +3,6 @@
 
 /* ===== Feature: Usage/Audit/Notifications (notes-audit parity) ===== */
 
-/* Notifications page header (v1 rowHeader + rowHeaderActions). */
-.ts-notifications-header {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.ts-notifications-header .ts-muted {
-  font-size: var(--ts-fs-ui);
-  max-width: 48rem;
-  line-height: 24px;
-}
-
-.ts-notifications-header .ts-row {
-  gap: var(--ts-sm);
-}
-
-@media (min-width: 64rem) {
-  .ts-notifications-header {
-    flex-direction: row;
-    align-items: flex-start;
-    justify-content: space-between;
-  }
-
-  .ts-notifications-header .ts-row {
-    margin-left: auto;
-  }
-}
-
-/* SummaryCard trio (v1 grid3 + panelSurface + metric/statValue). */
-.ts-notifications-stats {
-  display: grid;
-  gap: var(--ts-md);
-  margin-top: var(--ts-xl);
-}
-
-@media (min-width: 48rem) {
-  .ts-notifications-stats {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-.ts-stat-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ts-md);
-  margin-top: var(--ts-sm);
-}
-
 /* Compact ghost "Mark read" (v1 actionCompact + actionCompactOffset). */
 .ts-notification-mark {
   height: var(--ts-control-h-lg);
@@ -66,13 +16,6 @@
 
 .ts-notification-mark:hover {
   background-color: var(--ts-surface-muted);
-}
-
-/* Audit strips (v1 wrapBetween range row). */
-.ts-audit-range-row {
-  padding-block: var(--ts-sm);
-  padding-inline: var(--ts-lg);
-  border-bottom: 1px solid var(--ts-line);
 }
 
 /* Audit table (v1 DataTable: no outer chrome, 16px body, 16/20 cells). */

@@ -148,11 +148,56 @@ test("mobile shell and flow bindings initialize without script errors", async ({
   page.on("pageerror", error => errors.push(error.message));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
-  await page.getByRole("button", { name: "Open navigation" }).click();
+  await page.evaluate(() => {
+    document.body.style.minHeight = "2000px";
+    window.scrollTo(0, 240);
+  });
+  const scrollYBeforeOpen = await page.evaluate(() => window.scrollY);
+  const navTrigger = page.locator(".ts-fab-nav");
+  const navDrawer = page.locator("#ts-navigation");
+  const navInset = page.locator(".ts-inset");
+  const clickNavTrigger = async () => {
+    // The trigger lives inside the blurred inset, whose fixed-position
+    // containing block follows the page scroll. Invoke the same DOM click
+    // handler here so the regression can verify scroll restoration too.
+    await navTrigger.evaluate((button) => button.click());
+  };
+  await clickNavTrigger();
   await expect(page.locator(".ts-shell")).toHaveClass(/nav-open/);
-  await expect(page.getByRole("button", { name: "Open navigation" })).toHaveAttribute("aria-expanded", "true");
+  await expect(navTrigger).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("button", { name: "Close navigation" })).toBeFocused();
+  await expect(navInset).toHaveAttribute("aria-hidden", "true");
+  await expect(navInset).toHaveAttribute("inert", "");
+  await expect(page.locator("body")).toHaveCSS("position", "fixed");
+  expect(await page.evaluate(() => document.body.style.top)).toBe(`-${scrollYBeforeOpen}px`);
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator(".ts-project-trigger")).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator(".ts-account-trigger")).toBeFocused();
+  for (let index = 0; index < 20; index += 1) {
+    await page.keyboard.press("Tab");
+    expect(await navDrawer.evaluate((drawer) => drawer.contains(document.activeElement))).toBe(true);
+  }
+  await page.setViewportSize({ width: 800, height: 844 });
+  await expect(page.locator(".ts-shell")).not.toHaveClass(/nav-open/);
+  await expect(page.locator("body")).toHaveCSS("position", "static");
+  await expect(navInset).not.toHaveAttribute("inert");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await clickNavTrigger();
+  await expect(page.locator(".ts-shell")).toHaveClass(/nav-open/);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".ts-shell")).not.toHaveClass(/nav-open/);
+  await expect(navTrigger).toBeFocused();
+  await expect(navInset).not.toHaveAttribute("aria-hidden");
+  await expect(navInset).not.toHaveAttribute("inert");
+  await expect(page.locator("body")).toHaveCSS("position", "static");
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrollYBeforeOpen);
+
+  await clickNavTrigger();
+  await expect(page.locator(".ts-shell")).toHaveClass(/nav-open/);
   await page.locator(".ts-nav-backdrop").click({ position: { x: 350, y: 200 } });
   await expect(page.locator(".ts-shell")).not.toHaveClass(/nav-open/);
+  await expect(navTrigger).toBeFocused();
   await page.request.post("/api/v1/auth/logout");
   await page.context().clearCookies();
   await page.goto("/onboarding");

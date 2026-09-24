@@ -1,6 +1,19 @@
 @inherits RazorSlice<IndexesPageModel>
 @{
     var shell = Model.Shell;
+    var building = Model.Indexes.Count(index => index.State == "building");
+    var active = Model.Indexes.Count(index => index.State is "active" or "pinned");
+    var indexTab = Model.Tab;
+    var migration = Model.Migration;
+    var migrationTotal = Math.Max(0, migration.Total);
+    var migrationPercent = migrationTotal > 0 ? Math.Min(100, (int)Math.Round((double)migration.Completed / migrationTotal * 100)) : migration.State == "complete" ? 100 : 0;
+    (string Id, string Label, string Icon, string Href)[] tabs =
+    [
+        ("data", "Explorer", "Table", "/data"),
+        ("schema", "Schema", "FileText", "/schema"),
+        ("indexes", "Indexes", "Table", "/indexes"),
+        ("history", "History", "History", "/history"),
+    ];
 }
 @functions
 {
@@ -11,177 +24,265 @@
         "forbidden" or "retired" or "abandoned" => "ts-badge-danger",
         _ => "ts-badge-warning",
     };
+
+    private static Microsoft.AspNetCore.Html.HtmlString IconByName(string name, int size) =>
+        (typeof(Icons).GetMethod(name)?.Invoke(null, [size]) as Microsoft.AspNetCore.Html.HtmlString) ?? Icons.Circle(size);
 }
 @ShellHtml.Top(shell)
-<div class="ts-page">
-    <section class="ts-panel">
-        <div class="ts-stack-xs">
-            <h2 class="ts-title-22">Indexes</h2>
-            <p class="ts-page-desc">Understand query templates by frequency and logical cost, then review evidence-backed index lifecycle state.</p>
-        </div>
-    </section>
-
-    <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h3 class="ts-panel-title">Query performance and indexes</h3>
-            <p class="ts-panel-subtitle">@Model.Collection</p>
-        </div>
-        <div class="ts-panel-pad ts-stack-lg">
-            @if (Model.ActionError is { } actionError)
+<div class="ts-page ts-data ts-indexes">
+    @if (shell.PageTitle is null)
+    {
+        <h1 class="ts-sr-only">Indexes</h1>
+    }
+    <div class="ts-toolbar">
+        <nav class="ts-tabs" aria-label="Data views">
+            @foreach (var (id, label, icon, href) in tabs)
             {
-                <div class="ts-alert ts-alert-danger" role="alert" data-code="index_action_failed">
-                    <span class="ts-alert-title">@Icons.CircleAlert(16) @actionError</span>
-                </div>
+                <a class="ts-tab" href="@href" aria-current="@(id == "indexes" ? "page" : null)" aria-selected="@(id == "indexes" ? "true" : "false")">@IconByName(icon, 16) @label</a>
             }
-            <section class="ts-stack-sm" aria-labelledby="index-states-title">
-                <h3 id="index-states-title" class="ts-section-h3">Index state</h3>
-                @if (Model.Indexes.Length == 0)
-                {
-                    <div class="ts-empty">
-                        <span class="ts-empty-title">No indexes</span>
-                        <span class="ts-ui">Visible, building, and retired indexes will appear here.</span>
-                    </div>
-                }
-                else
-                {
-                    <div class="ts-table-frame">
-                        <table class="ts-table">
-                            <thead>
-                                <tr>
-                                    <th>Index</th>
-                                    <th>State</th>
-                                    <th>Logical cost</th>
-                                    <th>Build watermark</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var index in Model.Indexes)
-                                {
-                                    <tr>
-                                        <td>
-                                            <div class="ts-stack-xs">
-                                                <strong>@index.Name</strong>
-                                                <span class="ts-code-meta">@string.Join(", ", index.Fields)</span>
-                                            </div>
-                                        </td>
-                                        <td><span class="ts-badge @IndexStateTone(index.State)">@index.State</span></td>
-                                        <td class="ts-table-num">@(index.LogicalCost?.ToString() ?? "-")</td>
-                                        <td class="ts-meta">@(index.State == "building"
-                                            ? $"{index.BackfillRemaining} remaining{(index.BuildWatermark is { } watermark ? $" · {watermark}" : "")}"
-                                            : index.MeasuredAt ?? "-")</td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
-                }
-            </section>
+        </nav>
+        <form class="ts-filters" method="get" action="/indexes" role="search" aria-label="Choose index collection">
+            <input type="hidden" name="tab" value="@indexTab" />
+            <label class="ts-filter-field">
+                <span class="ts-sr-only">Collection</span>
+                <input class="ts-input" name="collection" value="@Model.Collection" placeholder="Collection" />
+            </label>
+            <button class="ts-btn ts-btn-secondary" type="submit">Load</button>
+        </form>
+    </div>
 
-            <section class="ts-stack-sm" aria-labelledby="query-templates-title">
-                <h3 id="query-templates-title" class="ts-section-h3">Query templates</h3>
-                @if (Model.Templates.Length == 0)
-                {
-                    <div class="ts-empty">
-                        <span class="ts-empty-title">No query evidence</span>
-                        <span class="ts-ui">Template frequency and logical cost arrive from the TerraBase producer.</span>
-                    </div>
-                }
-                else
-                {
-                    <div class="ts-table-frame">
-                        <table class="ts-table">
-                            <thead>
-                                <tr>
-                                    <th>Template</th>
-                                    <th>Count</th>
-                                    <th>Logical cost</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var template in Model.Templates)
-                                {
-                                    <tr>
-                                        <td><span class="ts-code-meta">@template.Sql</span></td>
-                                        <td class="ts-table-num">@template.QueryCount</td>
-                                        <td class="ts-table-num">@template.TotalLogicalCost</td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
-                }
-            </section>
+    <nav class="ts-data-tabs" aria-label="Index sections">
+        <a class="ts-tab" href="/indexes?tab=overview&amp;collection=@Uri.EscapeDataString(Model.Collection)" aria-current="@(indexTab == "overview" ? "page" : null)" aria-selected="@(indexTab == "overview" ? "true" : "false")">@Icons.Table(14) Overview</a>
+        <a class="ts-tab" href="/indexes?tab=templates&amp;collection=@Uri.EscapeDataString(Model.Collection)" aria-current="@(indexTab == "templates" ? "page" : null)" aria-selected="@(indexTab == "templates" ? "true" : "false")">@Icons.Activity(14) Query templates</a>
+        <a class="ts-tab" href="/indexes?tab=recommendations&amp;collection=@Uri.EscapeDataString(Model.Collection)" aria-current="@(indexTab == "recommendations" ? "page" : null)" aria-selected="@(indexTab == "recommendations" ? "true" : "false")">@Icons.CircleAlert(14) Recommendations</a>
+        <a class="ts-tab" href="/indexes?tab=migration&amp;collection=@Uri.EscapeDataString(Model.Collection)" aria-current="@(indexTab == "migration" ? "page" : null)" aria-selected="@(indexTab == "migration" ? "true" : "false")">@Icons.RefreshCw(14) Migration</a>
+    </nav>
 
-            <section class="ts-stack-sm" aria-labelledby="index-recommendations-title">
-                <h3 id="index-recommendations-title" class="ts-section-h3">Recommendations</h3>
-                @if (Model.Recommendations.Length == 0)
-                {
-                    <div class="ts-empty">
-                        <span class="ts-empty-title">No index recommendations</span>
-                        <span class="ts-ui">Measured query templates do not have a useful candidate yet.</span>
-                    </div>
-                }
-                else
-                {
-                    <div class="ts-table-frame">
-                        <table class="ts-table">
-                            <thead>
-                                <tr>
-                                    <th>Candidate</th>
-                                    <th>Evidence</th>
-                                    <th>State</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var recommendation in Model.Recommendations)
-                                {
-                                    <tr>
-                                        <td><span class="ts-code-meta">@(recommendation.Fields.Length == 0 ? "-" : string.Join(", ", recommendation.Fields))</span></td>
-                                        <td>
-                                            <div class="ts-stack-xs">
-                                                <span>@recommendation.Reason</span>
-                                                <span class="ts-meta">@(recommendation.ExpectedCostReduction is { } reduction ? $"{reduction}% lower logical cost" : "-")</span>
-                                            </div>
-                                        </td>
-                                        <td><span class="ts-badge @(recommendation.State == "forbidden" ? "ts-badge-danger" : recommendation.State == "pinned" ? "ts-badge-success" : "ts-badge-neutral")">@recommendation.State</span></td>
-                                        <td>
-                                            <div class="ts-row-actions">
-                                                @if (recommendation.State == "recommended" && recommendation.Fields.Length > 0)
-                                                {
-                                                    <form method="post" action="/api/v1/dashboard/indexes/recommendations/apply">
-                                                        <input type="hidden" name="recommendationId" value="@recommendation.Id" />
-                                                        <button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Apply</button>
-                                                    </form>
-                                                }
-                                                else
-                                                {
-                                                    <button class="ts-btn ts-btn-primary ts-btn-sm" type="button" disabled="disabled">Apply</button>
-                                                }
-                                                <button class="ts-btn ts-btn-outline ts-btn-sm" type="button" disabled="disabled" title="Index lifecycle controls are unavailable until the producer contract lands.">Pin</button>
-                                                <button class="ts-btn ts-btn-destructive ts-btn-sm" type="button" disabled="disabled" title="Index lifecycle controls are unavailable until the producer contract lands.">Forbid</button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
-                }
-            </section>
-
-            @{
-                var migration = Model.Migration;
-                var total = Math.Max(0, migration.Total);
-                var percent = total > 0 ? Math.Min(100, (int)Math.Round((double)migration.Completed / total * 100)) : migration.State == "complete" ? 100 : 0;
-            }
-            <div class="ts-alert @(migration.State == "failed" ? "ts-alert-danger" : "ts-alert-info")" role="alert" data-code="index_migration_progress">
-                <span class="ts-alert-title">@Icons.Info(16) Migration · @migration.State</span>
-                <span class="ts-alert-body">@migration.Completed / @(total > 0 ? total.ToString() : "?") · @percent%@(migration.Watermark is { } mWatermark ? $" · watermark {mWatermark}" : "")@(migration.Error is { } mError ? $" · {mError}" : "")</span>
+    @if (indexTab == "overview")
+    {
+    <section class="ts-section" aria-labelledby="indexes-title">
+        <div class="ts-section-head">
+            <div>
+                <h2 class="ts-panel-title" id="indexes-title">Query performance and indexes</h2>
+                <p class="ts-meta">Evidence-backed index lifecycle state and query templates for @Model.Collection.</p>
             </div>
-
-            <p class="ts-meta">Every state transition is evidence-backed and journaled across regions. Pin and forbid controls remain unavailable until the producer publishes lifecycle mutations.</p>
         </div>
+        @if (Model.ActionError is { } actionError)
+        {
+            <div class="ts-alert ts-alert-danger" role="alert" data-code="index_action_failed">
+                <span class="ts-alert-title">@Icons.CircleAlert(16) @actionError</span>
+            </div>
+        }
+        <dl class="ts-kpis">
+            <div>
+                <dt>@Icons.Table(14) Indexes</dt>
+                <dd><span class="ts-kpi-value">@Model.Indexes.Length</span></dd>
+                <small class="ts-meta">@active active · @building building</small>
+            </div>
+            <div>
+                <dt>@Icons.Activity(14) Query templates</dt>
+                <dd><span class="ts-kpi-value">@Model.Templates.Length</span></dd>
+                <small class="ts-meta">Measured templates in the active project</small>
+            </div>
+            <div>
+                <dt>@Icons.CircleAlert(14) Recommendations</dt>
+                <dd><span class="ts-kpi-value">@Model.Recommendations.Length</span></dd>
+                <small class="ts-meta">Candidates awaiting review</small>
+            </div>
+        </dl>
     </section>
+
+    <section class="ts-section" aria-labelledby="index-states-title">
+        <div class="ts-section-head">
+            <div>
+                <h2 class="ts-panel-title" id="index-states-title">Index state</h2>
+                <p class="ts-meta">Visible, building and retired indexes for this collection.</p>
+            </div>
+        </div>
+        @if (Model.Indexes.Length == 0)
+        {
+            <div class="ts-empty">
+                <div class="ts-empty-content">
+                    <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                    <span class="ts-empty-title">No indexes</span>
+                    <span class="ts-ui">Visible, building, and retired indexes will appear here.</span>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="ts-table-wrap">
+                <table class="ts-table">
+                    <thead><tr><th>Index</th><th>State</th><th>Logical cost</th><th>Build watermark</th></tr></thead>
+                    <tbody>
+                        @foreach (var index in Model.VisibleIndexes)
+                        {
+                            <tr>
+                                <td><div class="ts-stack-xs"><span class="ts-table-strong">@index.Name</span><span class="ts-code-meta">@string.Join(", ", index.Fields)</span></div></td>
+                                <td><span class="ts-badge @IndexStateTone(index.State)">@index.State</span></td>
+                                <td class="ts-table-num">@(index.LogicalCost?.ToString() ?? "-")</td>
+                                <td class="ts-meta">@(index.State == "building" ? $"{index.BackfillRemaining} remaining{(index.BuildWatermark is { } watermark ? $" · {watermark}" : "")}" : index.MeasuredAt ?? "-")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <nav class="ts-pager" aria-label="Index state pages">
+                <span class="ts-meta">Showing @Model.First–@Model.Last of @Model.Total indexes</span>
+                @if (Model.PageCount > 1)
+                {
+                    <div class="ts-row ts-row-tight">
+                        @if (Model.Page > 1)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page - 1)" rel="prev">Previous</a>
+                        }
+                        @for (var pageNumber = 1; pageNumber <= Model.PageCount; pageNumber++)
+                        {
+                            <a class="ts-btn ts-btn-ghost ts-pager-page" href="@Model.Href(pageNumber)" aria-current="@(pageNumber == Model.Page ? "page" : null)">@pageNumber</a>
+                        }
+                        @if (Model.Page < Model.PageCount)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                        }
+                    </div>
+                }
+            </nav>
+        }
+    </section>
+    }
+
+    @if (indexTab == "templates")
+    {
+    <section class="ts-section" aria-labelledby="query-templates-title">
+        <div class="ts-section-head">
+            <div>
+                <h2 class="ts-panel-title" id="query-templates-title">Query templates</h2>
+                <p class="ts-meta">Frequency and logical cost from the TerraBase producer.</p>
+            </div>
+        </div>
+        @if (Model.Templates.Length == 0)
+        {
+            <div class="ts-empty"><div class="ts-empty-content"><span class="ts-empty-icon-box">@Icons.SearchX(16)</span><span class="ts-empty-title">No query evidence</span><span class="ts-ui">Template frequency and logical cost arrive from the TerraBase producer.</span></div></div>
+        }
+        else
+        {
+            <div class="ts-table-wrap">
+                <table class="ts-table">
+                    <thead><tr><th>Template</th><th>Count</th><th>Logical cost</th></tr></thead>
+                    <tbody>
+                        @foreach (var template in Model.VisibleTemplates)
+                        {
+                            <tr><td><span class="ts-code-meta">@template.Sql</span></td><td class="ts-table-num">@template.QueryCount</td><td class="ts-table-num">@template.TotalLogicalCost</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <nav class="ts-pager" aria-label="Query template pages">
+                <span class="ts-meta">Showing @Model.First–@Model.Last of @Model.Total query templates</span>
+                @if (Model.PageCount > 1)
+                {
+                    <div class="ts-row ts-row-tight">
+                        @if (Model.Page > 1)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page - 1)" rel="prev">Previous</a>
+                        }
+                        @for (var pageNumber = 1; pageNumber <= Model.PageCount; pageNumber++)
+                        {
+                            <a class="ts-btn ts-btn-ghost ts-pager-page" href="@Model.Href(pageNumber)" aria-current="@(pageNumber == Model.Page ? "page" : null)">@pageNumber</a>
+                        }
+                        @if (Model.Page < Model.PageCount)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                        }
+                    </div>
+                }
+            </nav>
+        }
+    </section>
+    }
+
+    @if (indexTab == "recommendations")
+    {
+    <section class="ts-section" aria-labelledby="index-recommendations-title">
+        <div class="ts-section-head">
+            <div>
+                <h2 class="ts-panel-title" id="index-recommendations-title">Recommendations</h2>
+                <p class="ts-meta">Review candidate indexes before applying a migration.</p>
+            </div>
+        </div>
+        @if (Model.Recommendations.Length == 0)
+        {
+            <div class="ts-empty"><div class="ts-empty-content"><span class="ts-empty-icon-box">@Icons.SearchX(16)</span><span class="ts-empty-title">No index recommendations</span><span class="ts-ui">Measured query templates do not have a useful candidate yet.</span></div></div>
+        }
+        else
+        {
+            <div class="ts-table-wrap">
+                <table class="ts-table">
+                    <thead><tr><th>Candidate</th><th>Evidence</th><th>State</th><th>Actions</th></tr></thead>
+                    <tbody>
+                        @foreach (var recommendation in Model.VisibleRecommendations)
+                        {
+                            <tr>
+                                <td><span class="ts-code-meta">@(recommendation.Fields.Length == 0 ? "-" : string.Join(", ", recommendation.Fields))</span></td>
+                                <td><div class="ts-stack-xs"><span>@recommendation.Reason</span><span class="ts-meta">@(recommendation.ExpectedCostReduction is { } reduction ? $"{reduction}% lower logical cost" : "-")</span></div></td>
+                                <td><span class="ts-badge @(recommendation.State == "forbidden" ? "ts-badge-danger" : recommendation.State == "pinned" ? "ts-badge-success" : "ts-badge-neutral")">@recommendation.State</span></td>
+                                <td>
+                                    <div class="ts-row-actions">
+                                        @if (recommendation.State == "recommended" && recommendation.Fields.Length > 0)
+                                        {
+                                            <form method="post" action="/api/v1/dashboard/indexes/recommendations/apply"><input type="hidden" name="recommendationId" value="@recommendation.Id" /><button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Apply</button></form>
+                                        }
+                                        else
+                                        {
+                                            <button class="ts-btn ts-btn-primary ts-btn-sm" type="button" disabled="disabled">Apply</button>
+                                        }
+                                        <button class="ts-btn ts-btn-outline ts-btn-sm" type="button" disabled="disabled" title="Index lifecycle controls are unavailable until the producer contract lands.">Pin</button>
+                                        <button class="ts-btn ts-btn-destructive ts-btn-sm" type="button" disabled="disabled" title="Index lifecycle controls are unavailable until the producer contract lands.">Forbid</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <nav class="ts-pager" aria-label="Index recommendation pages">
+                <span class="ts-meta">Showing @Model.First–@Model.Last of @Model.Total recommendations</span>
+                @if (Model.PageCount > 1)
+                {
+                    <div class="ts-row ts-row-tight">
+                        @if (Model.Page > 1)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page - 1)" rel="prev">Previous</a>
+                        }
+                        @for (var pageNumber = 1; pageNumber <= Model.PageCount; pageNumber++)
+                        {
+                            <a class="ts-btn ts-btn-ghost ts-pager-page" href="@Model.Href(pageNumber)" aria-current="@(pageNumber == Model.Page ? "page" : null)">@pageNumber</a>
+                        }
+                        @if (Model.Page < Model.PageCount)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                        }
+                    </div>
+                }
+            </nav>
+        }
+    </section>
+    }
+
+    @if (indexTab == "migration")
+    {
+    <section class="ts-section" aria-labelledby="index-migration-title">
+        <div class="ts-section-head">
+            <div>
+                <h2 class="ts-panel-title" id="index-migration-title">Migration progress</h2>
+                <p class="ts-meta">Every state transition is evidence-backed and journaled across regions.</p>
+            </div>
+            <span class="ts-badge @(migration.State == "failed" ? "ts-badge-danger" : "ts-badge-info")">@migration.State</span>
+        </div>
+        <div class="ts-bar-track" role="img" aria-label="@migrationPercent% of index migration complete"><span class="ts-bar-fill" style="width:@migrationPercent%"></span></div>
+        <p class="ts-meta">@migration.Completed / @(migrationTotal > 0 ? migrationTotal.ToString() : "?") · @migrationPercent%@(migration.Watermark is { } mWatermark ? $" · watermark {mWatermark}" : "")@(migration.Error is { } mError ? $" · {mError}" : "")</p>
+        <p class="ts-meta">Pin and forbid controls remain unavailable until the producer publishes lifecycle mutations.</p>
+    </section>
+    }
 </div>
 @ShellHtml.Bottom(shell)

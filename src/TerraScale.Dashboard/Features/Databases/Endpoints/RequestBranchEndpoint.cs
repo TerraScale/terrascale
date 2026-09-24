@@ -21,7 +21,7 @@ public sealed class RequestBranchEndpoint(DashboardStore store) : EndpointWithou
         if (store.FindDatabase(databaseId) is { } source)
         {
             store.CreateDatabase($"{source.Name}-preview-branch");
-            return Results.Redirect("/databases/" + databaseId + "?branched=1", false, false);
+            return Results.Redirect("/databases/" + databaseId + "?tab=branches&branched=1", false, false);
         }
 
         return Results.Redirect("/databases", false, false);

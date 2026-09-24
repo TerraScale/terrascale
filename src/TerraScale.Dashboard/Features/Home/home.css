@@ -1,42 +1,254 @@
-/* Home page styles.
-   Used by the home page styles. feature. Keep page-specific rules in Features/. */
+/* Home page layout, setup guidance and activity presentation.
+   Shared toolbar, KPI, section, chart and empty-state rules stay in core. */
 
-/* ===== Feature: Home (stale snapshot + metric footer) ===== */
-
-.ts-stale-banner {
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--ts-lg);
-}
-
-.ts-stale-banner-body {
+/* Flat workspace summary, setup guidance and activity chart. */
+.ts-chart-body {
   display: flex;
   flex-direction: column;
-  gap: var(--ts-xs);
+  gap: var(--ts-md);
   min-width: 0;
 }
 
-.ts-stale-banner-title {
-  display: flex;
+.ts-home .ts-chart { height: 224px; }
+
+.ts-activity-total-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-success);
+}
+
+.ts-home-intro {
+  margin: 0;
+  max-width: 72ch;
+  font-size: var(--ts-fs-body);
+  line-height: 1.6;
+}
+
+.ts-getting-started-cta {
+  display: inline-flex;
   align-items: center;
   gap: var(--ts-sm);
-  font-weight: var(--ts-fw-semibold);
-  color: var(--ts-warning);
-}
-
-.ts-stale-banner-text {
-  color: var(--ts-ink-muted);
+  margin-top: var(--ts-xs);
+  color: var(--ts-link);
   font-size: var(--ts-fs-ui);
-  margin: 0;
+  font-weight: var(--ts-fw-medium);
+  text-decoration: none;
 }
 
-.ts-metric-footer {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--ts-md);
-  margin-top: var(--ts-sm);
-  padding-top: var(--ts-sm);
+.ts-getting-started-cta:hover { text-decoration: underline; }
+
+.ts-home {
+  gap: var(--ts-lg);
+}
+
+/* The overview is a single dashboard: metrics and activity stack on the
+   left, while setup guidance spans the full height of the right rail. */
+.ts-home-overview {
+  display: grid;
+  gap: var(--ts-lg);
+  align-items: stretch;
+  min-width: 0;
+}
+
+.ts-home-primary {
+  display: grid;
+  gap: var(--ts-lg);
+  align-content: start;
+  min-width: 0;
+}
+
+.ts-home-primary > .ts-home-section + .ts-home-section {
+  padding-top: var(--ts-lg);
   border-top: 1px solid var(--ts-line);
+}
+
+.ts-home-getting-started {
+  min-width: 0;
+  align-content: start;
+}
+
+@media (min-width: 64rem) {
+  .ts-home-overview {
+    grid-template-columns: minmax(0, 2fr) minmax(20rem, 1fr);
+  }
+
+  .ts-home-getting-started {
+    padding-left: var(--ts-xl);
+    border-left: 1px solid var(--ts-line);
+  }
+}
+
+.ts-home .ts-alert {
+  padding: 14px 16px;
+  border-radius: 11.2px;
+}
+
+.ts-home .ts-alert-title { font-weight: var(--ts-fw-medium); }
+
+.ts-home .ts-alert-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.ts-home .ts-alert-body { gap: 0; }
+
+.ts-stale-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-md);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ts-home-section {
+  gap: var(--ts-lg);
+  min-width: 0;
+}
+
+.ts-home-metrics > div { gap: var(--ts-xs); }
+
+.ts-home-metrics dt {
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-home-metrics .ts-kpi-value {
+  font-family: var(--ts-font-sans);
+  font-size: 24px;
+  line-height: 32px;
+}
+
+.ts-home-section-body {
+  display: grid;
+  gap: var(--ts-xl);
+  min-width: 0;
+}
+
+.ts-home-steps { display: grid; }
+
+.ts-getting-started-item {
+  display: flex;
+  gap: var(--ts-md);
+  align-items: flex-start;
+  min-width: 0;
+  padding: var(--ts-lg) 0;
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-getting-started-item:last-child { border-bottom: 1px solid var(--ts-line); }
+
+.ts-getting-started-number {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
   color: var(--ts-ink-muted);
   font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-getting-started-content {
+  display: grid;
+  gap: var(--ts-xs);
+  min-width: 0;
+  flex: 1;
+}
+
+.ts-getting-started-title {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-body);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-getting-started-content p { margin: 0; }
+
+.ts-home-connect-grid {
+  display: grid;
+  gap: var(--ts-lg);
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 48rem) {
+  .ts-home-connect-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 80rem) {
+  .ts-home-connect-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.ts-home-connect-item {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-sm);
+  min-width: 0;
+  padding-bottom: var(--ts-lg);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-home-connect-item p { margin: 0; }
+
+.ts-connect-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  color: var(--ts-accent);
+}
+
+.ts-home-connect-item .ts-getting-started-title { font-size: var(--ts-fs-ui); }
+
+.ts-home-connect-page {
+  max-width: 80rem;
+}
+
+.ts-connect-snippet {
+  border-top: 1px solid var(--ts-line);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-connect-snippet .ts-snippet-header {
+  background-color: transparent;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-connect-snippet .ts-snippet-body { padding: var(--ts-lg) 0; }
+
+.ts-home-activity-total {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+}
+
+.ts-home-activity-total strong {
+  color: var(--ts-ink);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-home-range-picker {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ts-home-range-picker .ts-menu {
+  width: 9rem;
+}
+
+.ts-home-range-picker .ts-select {
+  display: flex;
+  align-items: center;
+  min-height: var(--ts-control-h-lg);
 }

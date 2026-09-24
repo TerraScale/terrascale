@@ -25,6 +25,7 @@ public sealed record OrganizationPageModel(
     NewOrganizationWizardModel NewOrganization) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
+    public string? Error { get; init; }
 
     public static OrganizationPageModel From(DashboardStore store, string href, NewOrganizationWizardModel newOrganization)
     {

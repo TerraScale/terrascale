@@ -25,7 +25,7 @@ public sealed class MutationsTests
 
         var audit = await app.GetPageAsync(client, "/audit?range=90d");
         await Assert.That(audit.Contains("No audit events")).IsTrue();
-        await Assert.That(audit.Contains("Showing 0 of 0 events")).IsTrue();
+        await Assert.That(audit.Contains("0 retained under the current policy")).IsTrue();
 
         using var export = await client.GetAsync("/audit/export?range=90d&format=json");
         var json = await export.Content.ReadAsStringAsync();
@@ -93,19 +93,40 @@ public sealed class MutationsTests
         using var app = new DashboardTestApp();
         using var client = app.CreateDemoClient();
 
-        var initial = await app.GetPageAsync(client, $"/databases/{corePrimaryId}");
+        var initial = await app.GetPageAsync(client, $"/databases/{corePrimaryId}?tab=backups");
         await Assert.That(initial.Contains("aria-checked=\"true\"")).IsTrue();
 
         using var off = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/databases/backup-policy",
             new Dictionary<string, string> { ["databaseId"] = corePrimaryId, ["enabled"] = "false" });
-        await Assert.That(off.Headers.Location!.ToString()).IsEqualTo($"/databases/{corePrimaryId}");
-        var disabled = await app.GetPageAsync(client, $"/databases/{corePrimaryId}");
+        await Assert.That(off.Headers.Location!.ToString()).IsEqualTo($"/databases/{corePrimaryId}?tab=backups");
+        var disabled = await app.GetPageAsync(client, off.Headers.Location!.ToString());
         await Assert.That(disabled.Contains("aria-checked=\"false\"")).IsTrue();
+        await Assert.That(disabled.Contains("href=\"/databases/" + corePrimaryId + "?tab=backups\"")).IsTrue();
+        await Assert.That(disabled.Contains("aria-current=\"page\" aria-selected=\"true\"")).IsTrue();
 
-        await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/databases/backup-policy",
+        using var on = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/databases/backup-policy",
             new Dictionary<string, string> { ["databaseId"] = corePrimaryId, ["enabled"] = "true" });
-        var enabled = await app.GetPageAsync(client, $"/databases/{corePrimaryId}");
+        await Assert.That(on.Headers.Location!.ToString()).IsEqualTo($"/databases/{corePrimaryId}?tab=backups");
+        var enabled = await app.GetPageAsync(client, on.Headers.Location!.ToString());
         await Assert.That(enabled.Contains("aria-checked=\"true\"")).IsTrue();
+    }
+
+    [Test]
+    public async Task DatabaseDetailBranchRequestKeepsBranchesTabAfterRedirect()
+    {
+        const string corePrimaryId = "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC";
+        using var app = new DashboardTestApp();
+        using var client = app.CreateDemoClient();
+
+        using var response = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/databases/branch",
+            new Dictionary<string, string> { ["databaseId"] = corePrimaryId });
+        await Assert.That(response.Headers.Location!.ToString())
+            .IsEqualTo($"/databases/{corePrimaryId}?tab=branches&branched=1");
+
+        var page = await app.GetPageAsync(client, response.Headers.Location!.ToString());
+        await Assert.That(page.Contains("Branch request accepted")).IsTrue();
+        await Assert.That(page.Contains("href=\"/databases/" + corePrimaryId + "?tab=branches\"")).IsTrue();
+        await Assert.That(page.Contains("aria-current=\"page\" aria-selected=\"true\"")).IsTrue();
     }
 
     [Test]
@@ -145,6 +166,7 @@ public sealed class MutationsTests
 
         var reveal = await app.GetPageAsync(client, location);
         await Assert.That(reveal.Contains("Secret is shown once")).IsTrue();
+        await Assert.That(reveal.Html.Contains("class=\"ts-toasts\"", StringComparison.Ordinal)).IsFalse();
         await Assert.That(reveal.Contains("mutation-probe-key")).IsTrue();
         var secret = Regex.Match(reveal.Html, @"data-copy=""(tsk_live_[0-9a-f]+)""").Groups[1].Value;
         await Assert.That(secret.Length > 0).IsTrue();
@@ -208,6 +230,7 @@ public sealed class MutationsTests
             .IsEqualTo("/api-keys?rotated=1&toast=Credential%20rotated.");
         var page = await app.GetPageAsync(client, "/api-keys?rotated=1&toast=Credential%20rotated.");
         await Assert.That(page.Contains("Credential rotated.")).IsTrue();
+        await Assert.That(page.Html.Contains("class=\"ts-toasts\"", StringComparison.Ordinal)).IsFalse();
         await Assert.That(page.Contains("local-dev")).IsTrue();
     }
 
@@ -235,9 +258,9 @@ public sealed class MutationsTests
 
         using var revoked = await DashboardTestApp.PostFormAsync(client, $"/api/v1/access/invitations/{invitationId}/revoke", new Dictionary<string, string>());
         await Assert.That(revoked.Headers.Location!.ToString()).IsEqualTo("/access");
-        var organization = await app.GetPageAsync(client, "/organization");
-        await Assert.That(organization.Contains(email)).IsTrue();
-        await Assert.That(organization.Contains("Revoked")).IsTrue();
+        var accessAfterRevoke = await app.GetPageAsync(client, "/access?tab=invitations");
+        await Assert.That(accessAfterRevoke.Contains(email)).IsTrue();
+        await Assert.That(accessAfterRevoke.Contains("Canceled")).IsTrue();
     }
 
     [Test]
@@ -278,26 +301,26 @@ public sealed class MutationsTests
         using var invited = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/organization/invitations",
             new Dictionary<string, string> { ["email"] = email });
         await Assert.That(invited.Headers.Location!.ToString()).IsEqualTo("/organization");
-        var pending = await app.GetPageAsync(client, "/organization");
+        var pending = await app.GetPageAsync(client, "/access?tab=invitations");
         await Assert.That(pending.Contains(email)).IsTrue();
         await Assert.That(pending.Contains("Pending")).IsTrue();
 
         var invitationId = Regex.Match(pending.Html[(pending.Html.IndexOf(email, StringComparison.Ordinal))..],
-            @"name=""invitationId"" value=""([^""]+)""").Groups[1].Value;
+            @"/api/v1/access/invitations/([^/""]+)/revoke").Groups[1].Value;
         await Assert.That(invitationId.Length > 0).IsTrue();
 
         using var resent = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/organization/invitations/resend",
             new Dictionary<string, string> { ["invitationId"] = invitationId });
         await Assert.That(resent.Headers.Location!.ToString()).IsEqualTo("/organization");
-        var stillPending = await app.GetPageAsync(client, "/organization");
+        var stillPending = await app.GetPageAsync(client, "/access?tab=invitations");
         await Assert.That(stillPending.Contains(email)).IsTrue();
 
         using var canceled = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/organization/invitations/cancel",
             new Dictionary<string, string> { ["invitationId"] = invitationId });
         await Assert.That(canceled.Headers.Location!.ToString()).IsEqualTo("/organization");
-        var canceledPage = await app.GetPageAsync(client, "/organization");
+        var canceledPage = await app.GetPageAsync(client, "/access?tab=invitations");
         await Assert.That(canceledPage.Contains(email)).IsTrue();
-        await Assert.That(canceledPage.Contains("Revoked")).IsTrue();
+        await Assert.That(canceledPage.Contains("Canceled")).IsTrue();
     }
 
     [Test]
@@ -308,8 +331,8 @@ public sealed class MutationsTests
         using var response = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/organization/members/role",
             new Dictionary<string, string> { ["userId"] = "usr_01JC9S9V6Q1X4Z6B8D0F3H6JN", ["role"] = "owner" });
         await Assert.That(response.Headers.Location!.ToString()).IsEqualTo("/organization");
-        var page = await app.GetPageAsync(client, "/organization");
-        await Assert.That(page.Contains("value=\"owner\" selected")).IsTrue();
+        var page = await app.GetPageAsync(client, "/access?tab=members");
+        await Assert.That(page.Contains("Organization Owner")).IsTrue();
     }
 
     // --- Organization and projects -------------------------------------------

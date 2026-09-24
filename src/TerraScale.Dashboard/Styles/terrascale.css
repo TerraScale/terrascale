@@ -26,6 +26,8 @@
 @import "components/toasts.css" layer(components);
 @import "components/charts.css" layer(components);
 @import "components/text.css" layer(components);
+@import "components/filters.css" layer(components);
+@import "components/stat-tiles.css" layer(components);
 @import "components/terms.css" layer(components);
 @import "components/avatars.css" layer(components);
 
@@ -67,13 +69,12 @@
 @import "../Features/Backups/backups.css" layer(features);
 @import "../Features/AccessRules/access-rules.css" layer(features);
 @import "../Features/Usage/notes-audit.css" layer(features);
+@import "../Features/Audit/audit.css" layer(features);
 @import "../Features/Subscriptions/checkout.css" layer(features);
 @import "../Features/Home/home.css" layer(features);
-@import "../Features/Data/data-parity.css" layer(features);
-@import "../Features/Notifications/precision.css" layer(features);
 @import "../Features/Organization/modal.css" layer(features);
 @import "../Features/Auth/console.css" layer(features);
-@import "../Features/Notifications/notifications.css" layer(features);
+@import "../Features/Notifications/notifications-core.css" layer(features);
 
 /* Helpers intentionally load last so utility classes win predictably. */
 @import "core/utilities.css" layer(utilities);

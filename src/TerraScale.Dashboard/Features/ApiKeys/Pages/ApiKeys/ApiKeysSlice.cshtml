@@ -7,61 +7,58 @@
     string DatabaseLabel(string id) => id.Length == 0 ? "Project" : (Model.Databases.FirstOrDefault(d => d.Id == id).Name ?? id);
     string LastUsed(CredentialView c) => ApiKeyFormatting.UtcDateTime(c.LastUsedAt);
     string Expires(CredentialView c) => ApiKeyFormatting.UtcDateTime(c.ExpiresAt);
+    string TabHref(string kind)
+    {
+        var query = new List<string>();
+        if (Model.Query.Length > 0) query.Add($"q={Uri.EscapeDataString(Model.Query)}");
+        if (kind.Length > 0) query.Add($"kind={Uri.EscapeDataString(kind)}");
+        if (Model.Status.Length > 0) query.Add($"status={Uri.EscapeDataString(Model.Status)}");
+        if (Model.DatabaseId.Length > 0) query.Add($"database={Uri.EscapeDataString(Model.DatabaseId)}");
+        return query.Count is 0 ? "/api-keys" : "/api-keys?" + string.Join('&', query);
+    }
 }
 @ShellHtml.Top(shell)
-<div class="ts-page ts-notes-page">
+<div class="ts-page ts-api-keys">
     @if (Model.LoadError is { } loadError)
     {
-        <div class="ts-alert ts-alert-warning">
+        <div class="ts-alert ts-alert-warning" role="alert">
             <span class="ts-alert-title">@Icons.TriangleAlert(16) @loadError</span>
         </div>
     }
 
-    <section class="ts-apikeys-section">
-        <div class="ts-apikeys-heading">
-            <div>
-                <h2 class="ts-panel-title">Credentials</h2>
-                <p class="ts-panel-subtitle">API keys and machine-to-machine clients stored by the authentication service</p>
-            </div>
-            <div class="ts-apikeys-actions">
-                <a class="ts-btn ts-btn-primary ts-btn-lg" href="/api-keys?create=key">@Icons.Plus(16) Create key</a>
-                <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/api-keys?create=m2m">@Icons.Cpu(16) Create OAuth client</a>
-            </div>
-        </div>
-
-        <div class="ts-apikeys-counts" aria-label="Credential counts">
-            <span><strong>@Model.ActiveKeys</strong> active keys</span>
-            <span><strong>@Model.Expiring</strong> expiring</span>
-            <span><strong>@Model.M2mClients</strong> M2M clients</span>
-        </div>
-
-        <form class="ts-filter-bar ts-apikeys-filters" method="get" action="/api-keys" role="search">
-            <div class="ts-filter-field ts-apikeys-search">
-                <label class="ts-filter-label" for="credential-filter">Filter credentials</label>
-                <div class="ts-apikeys-search-box">
+    <div class="ts-toolbar ts-api-keys-toolbar">
+        <nav class="ts-tabs" aria-label="Credential types">
+            <a class="ts-tab" href="@TabHref("")" aria-current="@(Model.Kind.Length == 0 ? "page" : null)" aria-selected="@(Model.Kind.Length == 0 ? "true" : "false")">@Icons.KeyRound(16) All credentials</a>
+            <a class="ts-tab" href="@TabHref("key")" aria-current="@(Model.Kind == "key" ? "page" : null)" aria-selected="@(Model.Kind == "key" ? "true" : "false")">@Icons.KeyRound(16) API keys</a>
+            <a class="ts-tab" href="@TabHref("m2m")" aria-current="@(Model.Kind == "m2m" ? "page" : null)" aria-selected="@(Model.Kind == "m2m" ? "true" : "false")">@Icons.Cpu(16) M2M clients</a>
+        </nav>
+        <form class="ts-filters ts-api-keys-filters" method="get" action="/api-keys" role="search" aria-label="Filter credentials">
+            <div class="ts-filter-field ts-api-keys-search">
+                <label class="ts-filter-label ts-sr-only" for="credential-filter">Filter credentials</label>
+                <div class="ts-api-keys-search-box">
                     @Icons.Search(16)
                     <input class="ts-input ts-search-input" id="credential-filter" type="search" name="q" value="@Model.Query" placeholder="Search credentials" />
                 </div>
             </div>
             <div class="ts-filter-field">
-                <span class="ts-filter-label" id="credential-kind-label">Type</span>
+                <span class="ts-filter-label ts-sr-only" id="credential-kind-label">Type</span>
                 <input type="hidden" name="kind" value="@Model.Kind" />
                 <details class="ts-menu ts-filter-menu">
-                    <summary class="ts-select ts-filter-select ts-filter-trigger" aria-labelledby="credential-kind-label credential-kind-value"><span id="credential-kind-value">@(Model.Kind == "key" ? "API keys" : Model.Kind == "m2m" ? "M2M clients" : "All types")</span></summary>
+                    <summary class="ts-select ts-filter-select" aria-labelledby="credential-kind-label credential-kind-value"><span id="credential-kind-value">@(Model.Kind == "key" ? "API keys" : Model.Kind == "m2m" ? "M2M clients" : "All types")</span></summary>
                     <div class="ts-menu-panel">
-                        <button class="ts-menu-item" type="button" data-filter-value="" aria-current="@(Model.Kind == "" ? "true" : null)">All types</button>
+                        <button class="ts-menu-item" type="button" data-filter-value="" aria-current="@(Model.Kind.Length == 0 ? "true" : null)">All types</button>
                         <button class="ts-menu-item" type="button" data-filter-value="key" aria-current="@(Model.Kind == "key" ? "true" : null)">API keys</button>
                         <button class="ts-menu-item" type="button" data-filter-value="m2m" aria-current="@(Model.Kind == "m2m" ? "true" : null)">M2M clients</button>
                     </div>
                 </details>
             </div>
             <div class="ts-filter-field">
-                <span class="ts-filter-label" id="credential-status-label">Status</span>
+                <span class="ts-filter-label ts-sr-only" id="credential-status-label">Status</span>
                 <input type="hidden" name="status" value="@Model.Status" />
                 <details class="ts-menu ts-filter-menu">
-                    <summary class="ts-select ts-filter-select ts-filter-trigger" aria-labelledby="credential-status-label credential-status-value"><span id="credential-status-value">@(Model.Status == "Active" || Model.Status == "Expiring" || Model.Status == "Revoked" ? Model.Status : "All statuses")</span></summary>
+                    <summary class="ts-select ts-filter-select" aria-labelledby="credential-status-label credential-status-value"><span id="credential-status-value">@(Model.Status is "Active" or "Expiring" or "Revoked" ? Model.Status : "All statuses")</span></summary>
                     <div class="ts-menu-panel">
-                        <button class="ts-menu-item" type="button" data-filter-value="" aria-current="@(Model.Status == "" ? "true" : null)">All statuses</button>
+                        <button class="ts-menu-item" type="button" data-filter-value="" aria-current="@(Model.Status.Length == 0 ? "true" : null)">All statuses</button>
                         <button class="ts-menu-item" type="button" data-filter-value="Active" aria-current="@(Model.Status == "Active" ? "true" : null)">Active</button>
                         <button class="ts-menu-item" type="button" data-filter-value="Expiring" aria-current="@(Model.Status == "Expiring" ? "true" : null)">Expiring</button>
                         <button class="ts-menu-item" type="button" data-filter-value="Revoked" aria-current="@(Model.Status == "Revoked" ? "true" : null)">Revoked</button>
@@ -69,12 +66,12 @@
                 </details>
             </div>
             <div class="ts-filter-field">
-                <span class="ts-filter-label" id="credential-database-label">Database</span>
+                <span class="ts-filter-label ts-sr-only" id="credential-database-label">Database</span>
                 <input type="hidden" name="database" value="@Model.DatabaseId" />
                 <details class="ts-menu ts-filter-menu">
-                    <summary class="ts-select ts-filter-select ts-filter-trigger" aria-labelledby="credential-database-label credential-database-value"><span id="credential-database-value">@(Model.Databases.FirstOrDefault(d => d.Id == Model.DatabaseId).Name ?? "All databases")</span></summary>
+                    <summary class="ts-select ts-filter-select" aria-labelledby="credential-database-label credential-database-filter-value"><span id="credential-database-filter-value">@(Model.Databases.FirstOrDefault(d => d.Id == Model.DatabaseId).Name ?? "All databases")</span></summary>
                     <div class="ts-menu-panel">
-                        <button class="ts-menu-item" type="button" data-filter-value="" aria-current="@(Model.DatabaseId == "" ? "true" : null)">All databases</button>
+                        <button class="ts-menu-item" type="button" data-filter-value="" aria-current="@(Model.DatabaseId.Length == 0 ? "true" : null)">All databases</button>
                         @foreach (var database in Model.Databases)
                         {
                             <button class="ts-menu-item" type="button" data-filter-value="@database.Id" aria-current="@(Model.DatabaseId == database.Id ? "true" : null)">@database.Name</button>
@@ -82,46 +79,64 @@
                     </div>
                 </details>
             </div>
-            <button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit">Apply filters</button>
             @if (Model.Query.Length > 0 || Model.Kind.Length > 0 || Model.Status.Length > 0 || Model.DatabaseId.Length > 0)
             {
-                <a class="ts-btn ts-btn-ghost ts-btn-lg" href="/api-keys">Clear</a>
+                <a class="ts-btn ts-btn-ghost" href="/api-keys">Clear</a>
             }
         </form>
+    </div>
+
+    <section class="ts-api-keys-section" aria-labelledby="credentials-title">
+        <div class="ts-section-head">
+            <div>
+                <h2 class="ts-panel-title" id="credentials-title">Credentials</h2>
+                <p class="ts-meta">API keys and machine-to-machine clients stored by the authentication service</p>
+            </div>
+            <div class="ts-api-keys-actions">
+                <a class="ts-btn ts-btn-primary" href="/api-keys?create=key">@Icons.Plus(16) Create key</a>
+                <a class="ts-btn ts-btn-secondary" href="/api-keys?create=m2m">@Icons.Cpu(16) Create OAuth client</a>
+            </div>
+        </div>
+
+        <dl class="ts-kpis" aria-label="Credential counts">
+            <div>
+                <dt>@Icons.KeyRound(14) Active keys</dt>
+                <dd><span class="ts-kpi-value">@Model.ActiveKeys</span></dd>
+                <small class="ts-meta">Available for project access</small>
+            </div>
+            <div>
+                <dt>@Icons.Clock3(14) Expiring</dt>
+                <dd><span class="ts-kpi-value">@Model.Expiring</span></dd>
+                <small class="ts-meta">Keys nearing their expiry window</small>
+            </div>
+            <div>
+                <dt>@Icons.Cpu(14) M2M clients</dt>
+                <dd><span class="ts-kpi-value">@Model.M2mClients</span></dd>
+                <small class="ts-meta">Machine-to-machine credentials</small>
+            </div>
+        </dl>
 
         @if (!Model.HasAnyCredentials)
         {
-            <div class="ts-credential-empty">
-                <div class="ts-empty-state">
-                    <div class="ts-empty-state-content">
-                        <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
-                        <span class="ts-empty-state-title">No credentials</span>
-                        <p class="ts-empty-state-desc">Create an API key or a machine client when a service needs to authenticate with this project.</p>
-                    </div>
-                    <div class="ts-empty-state-action">
-                        <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/api-keys?create=key">Create key</a>
-                    </div>
-                </div>
+            <div class="ts-empty">
+                <span class="ts-empty-icon">@Icons.SearchX(16)</span>
+                <span class="ts-empty-title">No credentials</span>
+                <span class="ts-empty-meta">Create an API key or a machine client when a service needs to authenticate with this project.</span>
+                <a class="ts-btn ts-btn-secondary" href="/api-keys?create=key">Create key</a>
             </div>
         }
         else if (Model.Credentials.Count == 0)
         {
-            <div class="ts-credential-empty">
-                <div class="ts-empty-state">
-                    <div class="ts-empty-state-content">
-                        <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
-                        <span class="ts-empty-state-title">No credentials match</span>
-                        <p class="ts-empty-state-desc">Adjust the search or filters to see another credential.</p>
-                    </div>
-                    <div class="ts-empty-state-action">
-                        <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/api-keys">Clear filters</a>
-                    </div>
-                </div>
+            <div class="ts-empty">
+                <span class="ts-empty-icon">@Icons.SearchX(16)</span>
+                <span class="ts-empty-title">No credentials match</span>
+                <span class="ts-empty-meta">Adjust the search or filters to see another credential.</span>
+                <a class="ts-btn ts-btn-secondary" href="/api-keys">Clear filters</a>
             </div>
         }
         else
         {
-            <div class="ts-table-wrap ts-apikeys-table-wrap">
+            <div class="ts-table-wrap ts-apikeys-table-wrap ts-api-keys-table">
                 <table class="ts-table">
                     <thead>
                         <tr>
@@ -155,6 +170,26 @@
                     </tbody>
                 </table>
             </div>
+            <nav class="ts-pager" aria-label="Credential pages">
+                <span class="ts-meta">Showing @Model.First–@Model.Last of @Model.Total</span>
+                @if (Model.PageCount > 1)
+                {
+                    <div class="ts-row ts-row-tight">
+                        @if (Model.Page > 1)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page - 1)" rel="prev"><span class="ts-api-keys-flip">@Icons.ChevronRight(14)</span> Previous</a>
+                        }
+                        @for (var pageNumber = 1; pageNumber <= Model.PageCount; pageNumber++)
+                        {
+                            <a class="ts-btn ts-btn-ghost ts-pager-page" href="@Model.Href(pageNumber)" aria-current="@(pageNumber == Model.Page ? "page" : null)">@pageNumber</a>
+                        }
+                        @if (Model.Page < Model.PageCount)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                        }
+                    </div>
+                }
+            </nav>
             @foreach (var credential in Model.Credentials)
             {
                 var revoked = credential.Status == "Revoked";

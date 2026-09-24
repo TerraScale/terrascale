@@ -1,5 +1,5 @@
-/* Usage toolbar, filters, caps, charts, and allowance sections.
-   Used by the usage page. Keep page-specific rules in Features/. */
+/* Usage caps, charts, allowance and page-specific section styles.
+   Generic toolbar, filters and terms live in Styles/components/. */
 
 /* ===== Feature: Usage/Audit/Notifications ===== */
 
@@ -67,52 +67,6 @@
 .ts-text-danger { color: var(--ts-danger); }
 .ts-text-warning { color: var(--ts-warning); }
 
-/* Usage page: flat sections (no boxed panels) split by hairlines; tabs +
-   filters toolbar, allowance rings, area history, share bars, settings list. */
-/* Filter labels are sr-only so every tab's toolbar is one control tall. */
-/* Underline tabs sit on the toolbar hairline; the page starts closer to the top. */
-.ts-usage-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0 var(--ts-md);
-  min-height: 60px;
-  border-bottom: 1px solid var(--ts-line);
-}
-
-@media (min-width: 48rem) {
-  .ts-main:has(> .ts-usage) { padding-top: var(--ts-lg); }
-}
-
-.ts-usage-toolbar .ts-tabs {
-  align-self: stretch;
-  gap: var(--ts-xl);
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: none;
-}
-
-.ts-usage-toolbar .ts-tab {
-  height: 60px;
-  padding: 0 2px;
-  border-radius: 0;
-  font-size: var(--ts-fs-body);
-  box-shadow: inset 0 -2px 0 transparent;
-}
-
-.ts-usage-toolbar .ts-tab:hover { box-shadow: inset 0 -2px 0 var(--ts-line); }
-
-.ts-usage-toolbar .ts-tab[aria-selected="true"] {
-  background: none;
-  color: var(--ts-ink);
-  font-weight: var(--ts-fw-semibold);
-  box-shadow: inset 0 -2px 0 var(--ts-accent);
-}
-
-.ts-usage-toolbar .ts-tab svg { opacity: 0.8; }
-
 /* Caps editor: project rows lead, database rows indent under them. */
 .ts-usage-caps tbody + tbody { border-top: 1px solid var(--ts-line); }
 
@@ -149,31 +103,11 @@
 
 .ts-usage-cap > .ts-input:invalid { border-color: var(--ts-danger); }
 
-.ts-usage-filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--ts-sm);
-}
-
-.ts-usage-filters .ts-filter-field {
-  flex: 1 1 10rem;
-  min-width: 10rem;
-}
-
 .ts-usage-section {
   display: grid;
   gap: var(--ts-lg);
   min-width: 0;
   align-content: start;
-}
-
-.ts-usage-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--ts-md);
 }
 
 .ts-usage-allowance {
@@ -183,23 +117,13 @@
   gap: var(--ts-xl) 48px;
 }
 
-.ts-usage-allowance > .ts-usage-stats { flex: 1 1 16rem; }
+.ts-usage-allowance > .ts-stats { flex: 1 1 16rem; }
 
-.ts-usage-columns,
 .ts-usage-divided {
   display: grid;
   gap: var(--ts-xl);
   padding-top: 20px;
   border-top: 1px solid var(--ts-line);
-}
-
-@media (min-width: 64rem) {
-  .ts-usage-columns { grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr); }
-
-  .ts-usage-aside {
-    padding-left: var(--ts-xl);
-    border-left: 1px solid var(--ts-line);
-  }
 }
 
 .ts-usage-gauge {

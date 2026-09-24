@@ -20,8 +20,20 @@ public sealed class DeleteDatabaseEndpoint(DashboardStore store) : EndpointWitho
         var database = store.FindDatabase(databaseId);
         if (database is null || confirm != database.Name)
         {
+            var query = new List<string> { "delete=" + Uri.EscapeDataString(databaseId) };
+            var filter = form["q"].ToString();
+            if (filter.Length > 0)
+            {
+                query.Add("q=" + Uri.EscapeDataString(filter));
+            }
+
+            if (int.TryParse(form["page"].ToString(), out var page) && page > 1)
+            {
+                query.Add("page=" + page);
+            }
+
             return Results.Redirect(
-                "/databases?delete=" + Uri.EscapeDataString(databaseId),
+                "/databases?" + string.Join('&', query),
                 false,
                 false);
         }

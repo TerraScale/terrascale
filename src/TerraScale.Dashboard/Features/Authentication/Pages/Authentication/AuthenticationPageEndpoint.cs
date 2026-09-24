@@ -19,7 +19,8 @@ public sealed class AuthenticationPageEndpoint(DashboardStore store) : EndpointW
             return Task.FromResult<IResult>(Results.NotFound());
         HttpContext.Response.Headers.CacheControl = "no-store";
         var query = HttpContext.Request.Query;
-        var model = AuthenticationPageModel.From(store, path, section, query["toast"].FirstOrDefault(), query["error"].FirstOrDefault(), query["q"].ToString(), query["id"].ToString(), query["create"] == "1");
+        var requestedPage = int.TryParse(query["page"], out var page) ? page : 1;
+        var model = AuthenticationPageModel.From(store, path, section, query["toast"].FirstOrDefault(), query["error"].FirstOrDefault(), query["q"].ToString(), query["id"].ToString(), query["create"] == "1", requestedPage);
         return Task.FromResult<IResult>(AuthenticationSlice.Create(model));
     }
 }
@@ -36,7 +37,8 @@ public sealed class AuthenticationOverviewEndpoint(DashboardStore store) : Endpo
     public override Task<IResult> HandleAsync(CancellationToken ct)
     {
         var query = HttpContext.Request.Query;
-        var model = AuthenticationPageModel.From(store, "/auth", "overview", query["toast"].FirstOrDefault(), query["error"].FirstOrDefault(), query["q"].ToString(), query["id"].ToString(), query["create"] == "1");
+        var requestedPage = int.TryParse(query["page"], out var page) ? page : 1;
+        var model = AuthenticationPageModel.From(store, "/auth", "overview", query["toast"].FirstOrDefault(), query["error"].FirstOrDefault(), query["q"].ToString(), query["id"].ToString(), query["create"] == "1", requestedPage);
         return Task.FromResult<IResult>(AuthenticationSlice.Create(model));
     }
 }

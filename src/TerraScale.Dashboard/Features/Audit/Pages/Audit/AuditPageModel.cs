@@ -11,20 +11,29 @@ public sealed record AuditPageModel(
     string Severity,
     string Range,
     int Critical,
-    int Warn) : IPageModel
+    int Warn,
+    int Info,
+    int FilteredCount,
+    int Page,
+    int PageCount) : IPageModel
 {
+    public const int PageSize = 10;
+
     public ShellModel Shell { get; init; } = null!;
 
-    public static AuditPageModel From(DashboardStore store, string href, string? search, string? action, string? severity, string? range)
+    public static AuditPageModel From(DashboardStore store, string href, string? search, string? action, string? severity, string? range, int page = 1)
     {
         var all = store.AuditEvents;
         var retained = DashboardStore.FilterAuditEvents([.. all], range: "90d", retentionDays: store.AuditRetentionDays);
         var filtered = DashboardStore.FilterAuditEvents(retained, action, severity, range, search, retentionDays: store.AuditRetentionDays);
         var actionOptions = new List<string> { "all" };
         actionOptions.AddRange(retained.Select(a => a.Action).Distinct().Order(StringComparer.Ordinal));
+        var pageCount = Math.Max(1, (filtered.Count + PageSize - 1) / PageSize);
+        var currentPage = Math.Clamp(page, 1, pageCount);
+        var rows = filtered.Skip((currentPage - 1) * PageSize).Take(PageSize);
 
         return new(
-            Rows: [.. filtered.Select(ToRow)],
+            Rows: [.. rows.Select(ToRow)],
             AllEvents: retained,
             ActionOptions: actionOptions,
             Search: search ?? "",
@@ -32,7 +41,11 @@ public sealed record AuditPageModel(
             Severity: DashboardStore.ParseAuditSeverity(severity),
             Range: DashboardStore.ParseAuditRange(range),
             Critical: CountSeverity(filtered, "critical"),
-            Warn: CountSeverity(filtered, "warn"))
+            Warn: CountSeverity(filtered, "warn"),
+            Info: CountSeverity(filtered, "info"),
+            FilteredCount: filtered.Count,
+            Page: currentPage,
+            PageCount: pageCount)
         {
             Shell = ShellFactory.Create(store, href),
         };
@@ -48,6 +61,7 @@ public sealed record AuditPageModel(
             Actor: auditEvent.Actor,
             ActorType: DashboardStore.AuditActorType(auditEvent),
             Action: auditEvent.Action,
+            ActionLabel: ActionLabel(auditEvent.Action),
             ActionIcon: ActionIcon(auditEvent.Action),
             Target: auditEvent.Target,
             Source: auditEvent.Source,
@@ -76,4 +90,22 @@ public sealed record AuditPageModel(
         : action.Contains("auth") || action.Contains("login") ? "ShieldCheck"
         : action.Contains("policy") || action.Contains("role") ? "Shield"
         : "ScrollText";
+
+    private static string ActionLabel(string action) => action switch
+    {
+        "api_key.created" => "API key created",
+        "member.role_changed" => "Member role changed",
+        "document.batch_upsert" => "Documents batch upserted",
+        "database.deleted" => "Database deleted",
+        "backup.restore_completed" => "Backup restore completed",
+        _ => FormatActionLabel(action),
+    };
+
+    private static string FormatActionLabel(string action)
+    {
+        var words = action.Replace('.', ' ').Replace('_', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return words.Length is 0
+            ? action
+            : string.Join(' ', words.Select((word, index) => index is 0 ? char.ToUpperInvariant(word[0]) + word[1..] : word));
+    }
 }
