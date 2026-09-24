@@ -408,6 +408,7 @@ async fn create_saml(
         instance_id: context.instance.id.clone(),
         r#type: "saml".into(),
         name,
+        scopes: Vec::new(),
         enabled: true,
         org_id: Some(org.id.clone()),
         issuer_url: None,
@@ -518,11 +519,21 @@ async fn create_oauth_provider(
             tracing::error!(?error, "could not encrypt admin provider secret");
             CreateError::internal()
         })?;
+    let scopes = if connection_type == "oidc" {
+        vec![
+            "openid".to_owned(),
+            "email".to_owned(),
+            "profile".to_owned(),
+        ]
+    } else {
+        Vec::new()
+    };
     let connection = Connection {
         id: format!("con_{}", random_token(20)),
         instance_id: context.instance.id.clone(),
         r#type: connection_type.into(),
         name,
+        scopes,
         enabled: true,
         org_id: Some(org.id.clone()),
         issuer_url,
@@ -662,6 +673,10 @@ async fn fetch_discovery(issuer: &Url) -> Result<Discovery, CreateError> {
     let response = client
         .get(&discovery_url)
         .header(header::ACCEPT, "application/json")
+        .header(
+            header::USER_AGENT,
+            "TerraScale-Auth/1.0 (OpenID Connect provider discovery)",
+        )
         .send()
         .await
         .map_err(|_| {
@@ -1019,6 +1034,7 @@ mod tests {
             instance_id: "ins_1".into(),
             r#type: "saml".into(),
             name: "Enterprise SSO".into(),
+            scopes: Vec::new(),
             enabled: true,
             org_id: Some("org_1".into()),
             issuer_url: None,

@@ -100,6 +100,11 @@ fn limiter() -> &'static RateLimiter {
     LIMITER.get_or_init(RateLimiter::default)
 }
 
+/// Process-local fixed-window limiter for Management API bearer keys.
+///
+/// Each service replica maintains its own counters, which reset when that
+/// process restarts. This is protective throttling, not a distributed quota.
+///
 /// Global Axum middleware for Management API bearer keys.
 ///
 /// Install once around the composed app router with `from_fn_with_state`. Invalid
@@ -107,7 +112,7 @@ fn limiter() -> &'static RateLimiter {
 /// A valid key is charged once per request after its route-family scope is checked.
 pub async fn management_gate(
     State(state): State<AppState>,
-    mut request: Request,
+    request: Request,
     next: Next,
 ) -> Response {
     let Some(secret) = bearer_secret(request.headers()) else {
@@ -122,16 +127,6 @@ pub async fn management_gate(
         Ok(Some(key)) if !key.revoked => key,
         Ok(_) => return next.run(request).await,
         Err(error) => return error.into_response(),
-    };
-
-    let instance = match state
-        .store
-        .get::<Instance>("instances", &api_key.instance_id)
-        .await
-    {
-        Ok(Some(instance)) => instance,
-        Ok(None) => return next.run(request).await,
-        Err(_) => return AppError::internal().into_response(),
     };
 
     if !scope_allows(&api_key.scopes, request.uri().path()) {
@@ -175,13 +170,6 @@ pub async fn management_gate(
         return response;
     }
 
-    // Preserve the resolved context for middleware/extractor consumers while route
-    // handlers can use `resolve_instance` when they only have headers and a slug.
-    request.extensions_mut().insert(InstanceContext {
-        instance,
-        api_key_id: api_key.id,
-        scopes: api_key.scopes,
-    });
     next.run(request).await
 }
 
@@ -205,7 +193,10 @@ pub async fn resolve_instance(
         .store
         .get::<Instance>("instances", &key.instance_id)
         .await
-        .map_err(|_| AppError::internal())?
+        .map_err(|error| {
+            tracing::error!(?error, "management instance lookup failed");
+            AppError::internal()
+        })?
         .filter(|instance| instance.slug == slug)
         .ok_or_else(unauthorized)?;
     Ok(InstanceContext {
@@ -233,7 +224,10 @@ async fn find_api_key(state: &AppState, secret: &str) -> AppResult<Option<ApiKey
         .store
         .query_one::<ApiKey>("api_keys", "secretKey", &sha256_hex(secret))
         .await
-        .map_err(|_| AppError::internal())
+        .map_err(|error| {
+            tracing::error!(?error, "management API key lookup failed");
+            AppError::internal()
+        })
 }
 
 fn bearer_secret(headers: &HeaderMap) -> Option<&str> {

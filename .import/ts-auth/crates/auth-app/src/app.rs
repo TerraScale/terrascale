@@ -82,6 +82,13 @@ pub fn storage_error(error: &StoreError) -> AppError {
     }
 }
 
+/// Returns whether a bounded request-body read failed because its byte limit was hit.
+/// Axum exposes the underlying `http-body-util::LengthLimitError` as the source.
+pub(crate) fn body_limit_exceeded(error: &axum::Error) -> bool {
+    std::error::Error::source(error)
+        .is_some_and(|source| source.to_string() == "length limit exceeded")
+}
+
 /// Build the exact document served by the public OpenAPI endpoint and Scalar.
 pub fn build_openapi() -> OpenApi {
     let mut document = OpenApi::new(Info::new("TerraScale Auth API", "v1"), Paths::new());
@@ -308,7 +315,7 @@ pub fn build_state_with_mode(
         options.audit_signing_key.clone(),
         options.audit_verification_keys.clone(),
     ));
-    let key_ring = Arc::new(KeyRing::new(store.clone()));
+    let key_ring = Arc::new(KeyRing::new(store.clone(), options.master_key.clone()));
     let email: Arc<dyn EmailSender> = match (
         &options.smtp_host,
         &options.smtp_username,
@@ -369,9 +376,12 @@ pub async fn serve(options: AuthOptions) -> Result<(), Box<dyn Error>> {
         let _ = shutdown_rx.await;
     }));
     tracing::info!(address = %listener.local_addr()?, "ts-auth listening");
-    let server_result = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await;
+    let server_result = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await;
     let _ = shutdown_tx.send(());
     if let Err(error) = dispatcher.await {
         tracing::error!(%error, "webhook dispatcher stopped unexpectedly");

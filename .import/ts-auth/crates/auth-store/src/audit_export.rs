@@ -62,7 +62,7 @@ pub fn verify_audit_events(
             event.integrity_hash.as_deref(),
             audit_hash(&event),
         ) {
-            (Some(1), Some(hash), Ok(expected)) if constant_time_equal(hash, &expected) => {
+            (Some(2), Some(hash), Ok(expected)) if constant_time_equal(hash, &expected) => {
                 Some(hash)
             }
             _ => None,
@@ -151,7 +151,7 @@ mod tests {
             actor_id: Some("usr_operator".into()),
             data: serde_json::from_value(json!({"field":"name"})).unwrap(),
             created_at: 1_700_000_000,
-            integrity_version: Some(1),
+            integrity_version: Some(2),
             integrity_hash: None,
             integrity_signature: None,
             integrity_key_fingerprint: None,

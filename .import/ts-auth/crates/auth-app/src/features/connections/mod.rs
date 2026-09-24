@@ -3,7 +3,7 @@
 pub(crate) mod saml;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -36,6 +36,9 @@ const OIDC_STATE_COOKIE: &str = "tsauth_oidc_state";
 const GITHUB_AUTHORIZATION: &str = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN: &str = "https://github.com/login/oauth/access_token";
 const GITHUB_EMAILS: &str = "https://api.github.com/user/emails";
+const DEFAULT_OIDC_SCOPES: &[&str] = &["openid", "email", "profile"];
+const MAX_OIDC_SCOPES: usize = 64;
+const MAX_OIDC_SCOPE_LENGTH: usize = 128;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -160,6 +163,13 @@ async fn create_connection(
             "name is required",
         ));
     };
+    if body.scopes.is_some() && body.r#type.as_deref() != Some("oidc") {
+        return Ok(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "scopes may only be configured for OIDC connections",
+        ));
+    }
     let connection = match body.r#type.as_deref() {
         Some("oidc") => {
             match create_oidc_connection(&state, &context.instance.id, name, &body).await {
@@ -206,6 +216,13 @@ async fn create_oidc_connection(
     name: &str,
     body: &CreateConnectionRequest,
 ) -> Result<Connection, Response> {
+    let scopes = normalize_oidc_scopes(body.scopes.as_deref()).map_err(|()| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "scopes must contain openid and email and use valid OIDC scope tokens",
+        )
+    })?;
     let Some(raw_issuer) = body.issuer_url.as_deref() else {
         return Err(api_error(
             StatusCode::BAD_REQUEST,
@@ -324,6 +341,7 @@ async fn create_oidc_connection(
         instance_id: instance_id.to_owned(),
         r#type: "oidc".into(),
         name: name.trim().to_owned(),
+        scopes,
         enabled: true,
         org_id: clean_option(body.org_id.as_deref()),
         issuer_url: Some(issuer.to_string()),
@@ -403,6 +421,7 @@ async fn create_github_connection(
         instance_id: instance_id.to_owned(),
         r#type: "github".into(),
         name: name.trim().to_owned(),
+        scopes: Vec::new(),
         enabled: true,
         org_id: clean_option(body.org_id.as_deref()),
         issuer_url: None,
@@ -474,6 +493,7 @@ fn create_saml_connection(
         instance_id: instance_id.to_owned(),
         r#type: "saml".into(),
         name: name.trim().to_owned(),
+        scopes: Vec::new(),
         enabled: true,
         org_id: clean_option(body.org_id.as_deref()),
         issuer_url: None,
@@ -838,7 +858,7 @@ async fn authorize_oidc(
             &oidc_callback_url(&state, &slug, &connection.id),
         )
         .append_pair("response_type", "code")
-        .append_pair("scope", "openid email profile")
+        .append_pair("scope", &connection.scopes.join(" "))
         .append_pair("state", &state_value)
         .append_pair("nonce", &nonce)
         .append_pair("code_challenge", &challenge)
@@ -1743,11 +1763,45 @@ async fn find_connection(
 
 fn connection_view(connection: &Connection) -> Value {
     json!({
-        "id":connection.id,"type":connection.r#type,"name":connection.name,"enabled":connection.enabled,"org_id":connection.org_id,
+        "id":connection.id,"type":connection.r#type,"name":connection.name,"scopes":connection.scopes,"enabled":connection.enabled,"org_id":connection.org_id,
         "issuer_url":connection.issuer_url,"client_id":connection.client_id,"authorization_endpoint":connection.authorization_endpoint,
         "token_endpoint":connection.token_endpoint,"userinfo_endpoint":connection.userinfo_endpoint,"idp_entity_id":connection.idp_entity_id,
         "sso_redirect_url":connection.sso_redirect_url,"sp_entity_id":connection.sp_entity_id,"created_at":connection.created_at
     })
+}
+
+fn normalize_oidc_scopes(scopes: Option<&[String]>) -> Result<Vec<String>, ()> {
+    let Some(scopes) = scopes else {
+        return Ok(DEFAULT_OIDC_SCOPES
+            .iter()
+            .map(|scope| (*scope).to_owned())
+            .collect());
+    };
+    if scopes.is_empty() || scopes.len() > MAX_OIDC_SCOPES {
+        return Err(());
+    }
+    let mut normalized = Vec::with_capacity(scopes.len());
+    let mut seen = HashSet::with_capacity(scopes.len());
+    for scope in scopes {
+        let scope = scope.trim();
+        if scope.len() > MAX_OIDC_SCOPE_LENGTH
+            || scope.is_empty()
+            || !scope.bytes().all(|byte| {
+                byte == b'!' || (b'#'..=b'[').contains(&byte) || (b']'..=b'~').contains(&byte)
+            })
+        {
+            return Err(());
+        }
+        if seen.insert(scope) {
+            normalized.push(scope.to_owned());
+        }
+    }
+    if !normalized.iter().any(|scope| scope == "openid")
+        || !normalized.iter().any(|scope| scope == "email")
+    {
+        return Err(());
+    }
+    Ok(normalized)
 }
 
 fn api_error(status: StatusCode, code: &str, message: &str) -> Response {
@@ -1888,11 +1942,51 @@ enum UpstreamFailure {
 mod tests {
     use super::{
         MAX_PROVIDER_JSON_BYTES, ProviderJsonError, append_oidc_state_cookie,
-        clear_oidc_state_cookie, read_provider_json, valid_http_url, verify_oidc_id_token,
+        clear_oidc_state_cookie, normalize_oidc_scopes, read_provider_json, valid_http_url,
+        verify_oidc_id_token,
     };
     use auth_security::tokens;
     use axum::{http::header, response::IntoResponse};
     use std::io::{Read, Write};
+
+    #[test]
+    fn oidc_scopes_default_normalize_deduplicate_and_enforce_required_tokens() {
+        assert_eq!(
+            normalize_oidc_scopes(None).expect("omitted scopes use the safe OIDC default"),
+            ["openid", "email", "profile"]
+        );
+        assert_eq!(
+            normalize_oidc_scopes(Some(&[
+                "openid".to_owned(),
+                " email ".to_owned(),
+                "groups:read".to_owned(),
+                "email".to_owned(),
+            ]))
+            .expect("well-formed custom scope tokens are accepted"),
+            ["openid", "email", "groups:read"]
+        );
+        assert!(normalize_oidc_scopes(Some(&["openid".to_owned()])).is_err());
+        for invalid in ["two words", "bad\\token", "bad\"token", ""] {
+            assert!(
+                normalize_oidc_scopes(Some(&[
+                    "openid".to_owned(),
+                    "email".to_owned(),
+                    invalid.to_owned(),
+                ]))
+                .is_err(),
+                "invalid OIDC scope token should be rejected: {invalid:?}"
+            );
+        }
+        assert!(normalize_oidc_scopes(Some(&vec!["openid".to_owned(); 65])).is_err());
+        assert!(
+            normalize_oidc_scopes(Some(&[
+                "openid".to_owned(),
+                "email".to_owned(),
+                "x".repeat(129),
+            ]))
+            .is_err()
+        );
+    }
 
     async fn local_provider_response(
         wire_response: Vec<u8>,

@@ -2,19 +2,23 @@
 
 use std::{
     array,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
+use auth_security::tokens::{fixed_time_equals, sha256_hex};
 use axum::{
     Json, Router,
     extract::State,
     http::{HeaderMap, StatusCode, header},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::get,
 };
 use serde::Serialize;
-use subtle::ConstantTimeEq;
+use tokio::sync::{Mutex, watch};
 use utoipa::OpenApi;
 
 use crate::app::AppState;
@@ -22,8 +26,26 @@ use crate::app::AppState;
 const METHODS: [&str; 8] = [
     "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "OTHER",
 ];
-const EVENT_KINDS: [&str; 5] = ["authentication", "session", "webhook", "storage", "other"];
-const OUTCOMES: [&str; 2] = ["success", "failure"];
+const READINESS_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const READINESS_CACHE_TTL: Duration = Duration::from_secs(1);
+
+#[derive(Clone)]
+struct ReadinessObservation {
+    completed_at: Instant,
+    ready: bool,
+    region: Option<String>,
+}
+
+struct InFlightProbe {
+    id: Arc<()>,
+    receiver: watch::Receiver<Option<ReadinessObservation>>,
+}
+
+#[derive(Default)]
+struct ReadinessCache {
+    latest: Option<ReadinessObservation>,
+    in_flight: Option<InFlightProbe>,
+}
 
 /// Process-local counters with a deliberately closed label set.
 ///
@@ -35,7 +57,7 @@ pub struct AuthMetrics {
     ready: AtomicBool,
     live: AtomicBool,
     terrabase_ready: AtomicBool,
-    events: [AtomicU64; EVENT_KINDS.len() * OUTCOMES.len()],
+    readiness_cache: Mutex<ReadinessCache>,
     requests: [AtomicU64; METHODS.len() * 5],
     request_duration_nanos: [AtomicU64; METHODS.len() * 5],
 }
@@ -47,7 +69,7 @@ impl AuthMetrics {
             ready: AtomicBool::new(false),
             live: AtomicBool::new(true),
             terrabase_ready: AtomicBool::new(false),
-            events: array::from_fn(|_| AtomicU64::new(0)),
+            readiness_cache: Mutex::new(ReadinessCache::default()),
             requests: array::from_fn(|_| AtomicU64::new(0)),
             request_duration_nanos: array::from_fn(|_| AtomicU64::new(0)),
         }
@@ -76,15 +98,6 @@ impl AuthMetrics {
         }
         self.terrabase_ready.store(value, Ordering::Relaxed);
         true
-    }
-
-    pub fn record_event(&self, kind: &str, success: bool) {
-        let kind_index = EVENT_KINDS
-            .iter()
-            .position(|item| *item == kind)
-            .unwrap_or(EVENT_KINDS.len() - 1);
-        let outcome_index = usize::from(!success);
-        self.events[kind_index * OUTCOMES.len() + outcome_index].fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_request(&self, method: &str, status_code: u16, elapsed: Duration) {
@@ -120,7 +133,7 @@ impl AuthMetrics {
         );
         metric(
             &mut output,
-            "# HELP ts_auth_ready Whether the HTTP process is ready to serve requests.",
+            "# HELP ts_auth_ready Whether the latest completed /readyz observation found the process ready (0 until the first observation).",
         );
         metric(&mut output, "# TYPE ts_auth_ready gauge");
         metric(
@@ -138,7 +151,7 @@ impl AuthMetrics {
         );
         metric(
             &mut output,
-            "# HELP ts_auth_dependency_ready Whether a required dependency is ready.",
+            "# HELP ts_auth_dependency_ready Whether the latest completed /readyz observation found a required dependency ready.",
         );
         metric(&mut output, "# TYPE ts_auth_dependency_ready gauge");
         metric(
@@ -148,25 +161,6 @@ impl AuthMetrics {
                 u8::from(self.terrabase_ready.load(Ordering::Relaxed))
             ),
         );
-        metric(
-            &mut output,
-            "# HELP ts_auth_events_total Closed lifecycle event outcomes.",
-        );
-        metric(&mut output, "# TYPE ts_auth_events_total counter");
-        for (kind_index, kind) in EVENT_KINDS.iter().enumerate() {
-            for (outcome_index, outcome) in OUTCOMES.iter().enumerate() {
-                let count = self.events[kind_index * OUTCOMES.len() + outcome_index]
-                    .load(Ordering::Relaxed);
-                if count != 0 {
-                    metric(
-                        &mut output,
-                        &format!(
-                            "ts_auth_events_total{{kind=\"{kind}\",outcome=\"{outcome}\"}} {count}"
-                        ),
-                    );
-                }
-            }
-        }
         metric(
             &mut output,
             "# HELP ts_auth_http_requests_total HTTP requests by bounded method and status class.",
@@ -231,6 +225,24 @@ struct ReadyBody {
     region: Option<String>,
 }
 
+impl ReadinessObservation {
+    fn into_response(self) -> Response {
+        let (status_code, status) = if self.ready {
+            (StatusCode::OK, "ready")
+        } else {
+            (StatusCode::SERVICE_UNAVAILABLE, "not_ready")
+        };
+        (
+            status_code,
+            Json(ReadyBody {
+                status,
+                region: self.region,
+            }),
+        )
+            .into_response()
+    }
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/healthz", get(healthz))
@@ -244,50 +256,146 @@ async fn healthz(State(state): State<AppState>) -> Json<StatusBody> {
     Json(StatusBody { status: "ok" })
 }
 
+async fn readiness_observation(state: &AppState) -> ReadinessObservation {
+    let (probe_id, mut receiver, start_probe) = {
+        let mut cache = state.metrics.readiness_cache.lock().await;
+        if let Some(latest) = cache.latest.as_ref()
+            && Instant::now().saturating_duration_since(latest.completed_at) < READINESS_CACHE_TTL
+        {
+            return latest.clone();
+        }
+
+        if let Some(probe_id) = cache.in_flight.as_ref().and_then(|probe| {
+            probe
+                .receiver
+                .has_changed()
+                .is_err()
+                .then(|| Arc::clone(&probe.id))
+        }) {
+            let observation = failed_readiness_observation();
+            let _ =
+                cache_failed_probe_if_current(&state.metrics, &mut cache, &probe_id, &observation);
+            return observation;
+        }
+
+        if let Some(probe) = &cache.in_flight {
+            (Arc::clone(&probe.id), probe.receiver.clone(), None)
+        } else {
+            let (sender, receiver) = watch::channel(None);
+            let probe_id = Arc::new(());
+            cache.in_flight = Some(InFlightProbe {
+                id: Arc::clone(&probe_id),
+                receiver: receiver.clone(),
+            });
+            (probe_id, receiver, Some(sender))
+        }
+    };
+
+    if let Some(sender) = start_probe {
+        let store = Arc::clone(&state.store);
+        let metrics = Arc::clone(&state.metrics);
+        let worker_probe_id = Arc::clone(&probe_id);
+        tokio::spawn(async move {
+            let result = tokio::time::timeout(READINESS_PROBE_TIMEOUT, store.health()).await;
+            let observation = match result {
+                Ok(Ok(health)) => ReadinessObservation {
+                    completed_at: Instant::now(),
+                    ready: health.healthy,
+                    region: Some(health.region),
+                },
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "readiness check failed");
+                    ReadinessObservation {
+                        completed_at: Instant::now(),
+                        ready: false,
+                        region: None,
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("readiness check timed out");
+                    ReadinessObservation {
+                        completed_at: Instant::now(),
+                        ready: false,
+                        region: None,
+                    }
+                }
+            };
+
+            let mut cache = metrics.readiness_cache.lock().await;
+            let _ =
+                publish_readiness_observation(&metrics, &mut cache, &worker_probe_id, &observation);
+            drop(cache);
+            let _ = sender.send(Some(observation));
+        });
+    }
+
+    let observation = receiver.wait_for(Option::is_some).await.map(|observation| {
+        observation
+            .as_ref()
+            .expect("readiness observation is present")
+            .clone()
+    });
+    match observation {
+        Ok(observation) => observation,
+        Err(_) => {
+            let observation = failed_readiness_observation();
+            let mut cache = state.metrics.readiness_cache.lock().await;
+            let _ =
+                cache_failed_probe_if_current(&state.metrics, &mut cache, &probe_id, &observation);
+            observation
+        }
+    }
+}
+
+fn failed_readiness_observation() -> ReadinessObservation {
+    ReadinessObservation {
+        completed_at: Instant::now(),
+        ready: false,
+        region: None,
+    }
+}
+
+fn publish_readiness_observation(
+    metrics: &AuthMetrics,
+    cache: &mut ReadinessCache,
+    probe_id: &Arc<()>,
+    observation: &ReadinessObservation,
+) -> bool {
+    if !cache
+        .in_flight
+        .as_ref()
+        .is_some_and(|probe| Arc::ptr_eq(&probe.id, probe_id))
+    {
+        return false;
+    }
+
+    metrics.set_ready(observation.ready);
+    metrics.set_dependency_ready("terrabase", observation.ready);
+    cache.latest = Some(observation.clone());
+    cache.in_flight = None;
+    true
+}
+
+fn cache_failed_probe_if_current(
+    metrics: &AuthMetrics,
+    cache: &mut ReadinessCache,
+    probe_id: &Arc<()>,
+    observation: &ReadinessObservation,
+) -> bool {
+    if !cache.in_flight.as_ref().is_some_and(|probe| {
+        Arc::ptr_eq(&probe.id, probe_id) && probe.receiver.has_changed().is_err()
+    }) {
+        return false;
+    }
+    publish_readiness_observation(metrics, cache, probe_id, observation)
+}
+
 #[utoipa::path(get, path = "/readyz", responses(
     (status = 200, body = ReadyBody),
     (status = 503, body = ReadyBody)
 ))]
-async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
-    match state.store.health().await {
-        Ok(health) if health.healthy => {
-            state.metrics.set_ready(true);
-            state.metrics.set_dependency_ready("terrabase", true);
-            (
-                StatusCode::OK,
-                Json(ReadyBody {
-                    status: "ready",
-                    region: Some(health.region),
-                }),
-            )
-                .into_response()
-        }
-        Ok(health) => {
-            state.metrics.set_ready(false);
-            state.metrics.set_dependency_ready("terrabase", false);
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ReadyBody {
-                    status: "not_ready",
-                    region: Some(health.region),
-                }),
-            )
-                .into_response()
-        }
-        Err(error) => {
-            tracing::warn!(%error, "readiness check failed");
-            state.metrics.set_ready(false);
-            state.metrics.set_dependency_ready("terrabase", false);
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ReadyBody {
-                    status: "not_ready",
-                    region: None,
-                }),
-            )
-                .into_response()
-        }
-    }
+async fn readyz(State(state): State<AppState>) -> Response {
+    readiness_observation(&state).await.into_response()
 }
 
 #[utoipa::path(get, path = "/metrics", params(
@@ -302,10 +410,12 @@ async fn metrics(State(state): State<AppState>, headers: HeaderMap) -> impl Into
         .get("X-TerraScale-Metrics-Key")
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
-    if expected.is_empty()
-        || presented.is_empty()
-        || !bool::from(expected.as_bytes().ct_eq(presented.as_bytes()))
-    {
+    if expected.is_empty() || presented.is_empty() {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let expected_digest = sha256_hex(expected);
+    let presented_digest = sha256_hex(presented);
+    if !fixed_time_equals(&expected_digest, &presented_digest) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
 
@@ -342,8 +452,6 @@ mod tests {
         metrics.set_liveness(false);
         assert!(metrics.set_dependency_ready("terrabase", true));
         assert!(!metrics.set_dependency_ready("customer-secret", false));
-        metrics.record_event("webhook", true);
-        metrics.record_event("tenant-123", false);
         metrics.record_request("GET", 200, Duration::from_millis(25));
         metrics.record_request("/secret/path", 429, Duration::from_millis(10));
 
@@ -351,11 +459,110 @@ mod tests {
         assert!(text.contains("ts_auth_ready 1\n"));
         assert!(text.contains("ts_auth_liveness 0\n"));
         assert!(text.contains("dependency=\"terrabase\"} 1"));
-        assert!(text.contains("kind=\"webhook\",outcome=\"success\"} 1"));
-        assert!(text.contains("kind=\"other\",outcome=\"failure\"} 1"));
+        assert!(!text.contains("ts_auth_events_total"));
         assert!(text.contains("method=\"GET\",status_class=\"2xx\"} 1"));
         assert!(text.contains("method=\"OTHER\",status_class=\"4xx\"} 1"));
         assert!(!text.contains("customer-secret"));
         assert!(!text.contains("/secret/path"));
+    }
+
+    #[tokio::test]
+    async fn closed_probe_failure_updates_the_latest_observation_and_gauges() {
+        let metrics = AuthMetrics::new();
+        metrics.set_ready(true);
+        assert!(metrics.set_dependency_ready("terrabase", true));
+
+        let probe_id = Arc::new(());
+        let (sender, receiver) = watch::channel(None);
+        {
+            let mut cache = metrics.readiness_cache.lock().await;
+            cache.latest = Some(ReadinessObservation {
+                completed_at: Instant::now() - READINESS_CACHE_TTL - Duration::from_millis(1),
+                ready: true,
+                region: Some("GRU".to_owned()),
+            });
+            cache.in_flight = Some(InFlightProbe {
+                id: Arc::clone(&probe_id),
+                receiver,
+            });
+        }
+        drop(sender);
+
+        let observation = failed_readiness_observation();
+        {
+            let mut cache = metrics.readiness_cache.lock().await;
+            assert!(cache_failed_probe_if_current(
+                &metrics,
+                &mut cache,
+                &probe_id,
+                &observation,
+            ));
+            assert!(cache.in_flight.is_none());
+            let latest = cache
+                .latest
+                .as_ref()
+                .expect("failed observation should be cached");
+            assert!(!latest.ready);
+            assert!(latest.region.is_none());
+            assert!(latest.completed_at.elapsed() < READINESS_CACHE_TTL);
+        }
+
+        assert!(!metrics.is_ready());
+        assert!(!metrics.terrabase_ready.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn stale_probe_failure_does_not_replace_a_newer_flight_or_observation() {
+        let metrics = AuthMetrics::new();
+        metrics.set_ready(true);
+        assert!(metrics.set_dependency_ready("terrabase", true));
+
+        let stale_probe_id = Arc::new(());
+        let (stale_sender, stale_receiver) = watch::channel::<Option<ReadinessObservation>>(None);
+        drop(stale_sender);
+
+        let current_probe_id = Arc::new(());
+        let (current_sender, current_receiver) = watch::channel(None);
+        {
+            let mut cache = metrics.readiness_cache.lock().await;
+            cache.latest = Some(ReadinessObservation {
+                completed_at: Instant::now() - READINESS_CACHE_TTL - Duration::from_millis(1),
+                ready: true,
+                region: Some("GRU".to_owned()),
+            });
+            cache.in_flight = Some(InFlightProbe {
+                id: Arc::clone(&current_probe_id),
+                receiver: current_receiver,
+            });
+        }
+        drop(stale_receiver);
+
+        let observation = failed_readiness_observation();
+        {
+            let mut cache = metrics.readiness_cache.lock().await;
+            assert!(!cache_failed_probe_if_current(
+                &metrics,
+                &mut cache,
+                &stale_probe_id,
+                &observation,
+            ));
+            let current = cache
+                .in_flight
+                .as_ref()
+                .expect("newer in-flight probe should remain");
+            assert!(Arc::ptr_eq(&current.id, &current_probe_id));
+            assert!(current.receiver.has_changed().is_ok());
+            assert!(
+                cache
+                    .latest
+                    .as_ref()
+                    .expect("previous completed observation should remain")
+                    .ready
+            );
+        }
+
+        assert!(metrics.is_ready());
+        assert!(metrics.terrabase_ready.load(Ordering::Relaxed));
+        drop(current_sender);
     }
 }

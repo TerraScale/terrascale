@@ -80,6 +80,7 @@ impl TestServer {
 
     fn client(&self) -> Client {
         Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("test client should build")
@@ -113,6 +114,516 @@ async fn create_instance(server: &TestServer, client: &Client, slug: &str) -> Va
         .json()
         .await
         .expect("instance response should be JSON")
+}
+
+#[derive(Clone, Copy)]
+enum TestClientAuthentication {
+    None,
+    Basic,
+    Post,
+    EmptyPost,
+}
+
+async fn oauth_operation(
+    client: &Client,
+    origin: &str,
+    slug: &str,
+    operation: &str,
+    client_id: &str,
+    client_secret: &str,
+    authentication: TestClientAuthentication,
+) -> reqwest::Response {
+    let mut form = vec![("client_id".to_owned(), client_id.to_owned())];
+    match operation {
+        "token" => form.push(("grant_type".to_owned(), "client_credentials".to_owned())),
+        "introspect" | "revoke" => {
+            form.push(("token".to_owned(), "unknown-token".to_owned()));
+        }
+        _ => panic!("unknown OAuth test operation"),
+    }
+    let mut request = client.post(format!("{origin}/{slug}/oauth/{operation}"));
+    match authentication {
+        TestClientAuthentication::None => {}
+        TestClientAuthentication::Basic => {
+            request = request.basic_auth(client_id, Some(client_secret));
+        }
+        TestClientAuthentication::Post => {
+            form.push(("client_secret".to_owned(), client_secret.to_owned()));
+        }
+        TestClientAuthentication::EmptyPost => {
+            form.push(("client_secret".to_owned(), String::new()));
+        }
+    }
+    request
+        .form(&form)
+        .send()
+        .await
+        .expect("OAuth endpoint request should reach the service")
+}
+
+#[tokio::test]
+async fn client_authentication_store_outages_are_static_server_errors_on_all_endpoints() {
+    let server = TestServer::start().await;
+    let client = server.client();
+    let instance =
+        create_instance(&server, &client, "oauth-client-outage-test").await["instance"].clone();
+    let instance_id = instance["id"].as_str().expect("instance ID is returned");
+    let slug = instance["slug"]
+        .as_str()
+        .expect("instance slug is returned");
+    let client_id = "outage-sensitive-client";
+    let client_secret = "outage-sensitive-secret";
+    server
+        .state
+        .store
+        .create_oauth_client(&OAuthClient {
+            id: "cli_oauth_outage".to_owned(),
+            instance_id: instance_id.to_owned(),
+            client_id: client_id.to_owned(),
+            client_key: format!("{instance_id}:{client_id}"),
+            name: "Authentication outage acceptance client".to_owned(),
+            client_secret_hash: Some(sha256_hex(client_secret)),
+            redirect_uris: Vec::new(),
+            allowed_origins: Vec::new(),
+            token_endpoint_auth_method: "client_secret_post".to_owned(),
+            r#public: false,
+            created_at: now(),
+        })
+        .await
+        .expect("OAuth client should be seedable");
+
+    for operation in ["token", "introspect", "revoke"] {
+        server._storage.fail_next_query("oauth_clients");
+        let response = oauth_operation(
+            &client,
+            &server.origin,
+            slug,
+            operation,
+            client_id,
+            client_secret,
+            TestClientAuthentication::Post,
+        )
+        .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{operation}"
+        );
+        let body: Value = response
+            .json()
+            .await
+            .expect("OAuth authentication errors should be JSON");
+        assert_eq!(body["error"], "server_error", "{operation}");
+        assert_eq!(
+            body["error_description"], "client authentication is temporarily unavailable",
+            "{operation} must use the static client-facing error"
+        );
+        assert!(!body.to_string().contains("injected_query_failure"));
+    }
+}
+
+#[tokio::test]
+async fn stored_client_authentication_method_is_enforced_on_token_introspect_and_revoke() {
+    let server = TestServer::start().await;
+    let client = server.client();
+    let instance =
+        create_instance(&server, &client, "oauth-client-method-test").await["instance"].clone();
+    let instance_id = instance["id"].as_str().expect("instance ID is returned");
+    let slug = instance["slug"]
+        .as_str()
+        .expect("instance slug is returned");
+    let clients = [
+        ("auth-none-client", "none", ""),
+        ("auth-basic-client", "client_secret_basic", "basic-secret"),
+        ("auth-post-client", "client_secret_post", "post-secret"),
+    ];
+    for (index, (client_id, method, secret)) in clients.iter().enumerate() {
+        server
+            .state
+            .store
+            .create_oauth_client(&OAuthClient {
+                id: format!("cli_auth_method_{index}"),
+                instance_id: instance_id.to_owned(),
+                client_id: (*client_id).to_owned(),
+                client_key: format!("{instance_id}:{client_id}"),
+                name: format!("Authentication method {method} client"),
+                client_secret_hash: (*method != "none").then(|| sha256_hex(secret)),
+                redirect_uris: Vec::new(),
+                allowed_origins: Vec::new(),
+                token_endpoint_auth_method: (*method).to_owned(),
+                r#public: *method == "none",
+                created_at: now(),
+            })
+            .await
+            .expect("OAuth client should be seedable");
+    }
+
+    for operation in ["token", "introspect", "revoke"] {
+        for (client_id, method, secret) in clients {
+            let matching_auth = match method {
+                "none" => TestClientAuthentication::None,
+                "client_secret_basic" => TestClientAuthentication::Basic,
+                "client_secret_post" => TestClientAuthentication::Post,
+                _ => unreachable!(),
+            };
+            let response = oauth_operation(
+                &client,
+                &server.origin,
+                slug,
+                operation,
+                client_id,
+                secret,
+                matching_auth,
+            )
+            .await;
+            if operation == "token" && method == "none" {
+                let body: Value = response.json().await.unwrap();
+                assert_eq!(body["error"], "unauthorized_client");
+            } else {
+                assert_eq!(response.status(), StatusCode::OK, "{operation}, {method}");
+            }
+
+            let mismatched_authentications: &[TestClientAuthentication] = match method {
+                "none" => &[
+                    TestClientAuthentication::Basic,
+                    TestClientAuthentication::Post,
+                    TestClientAuthentication::EmptyPost,
+                ],
+                "client_secret_basic" => &[
+                    TestClientAuthentication::None,
+                    TestClientAuthentication::Post,
+                ],
+                "client_secret_post" => &[
+                    TestClientAuthentication::None,
+                    TestClientAuthentication::Basic,
+                ],
+                _ => unreachable!(),
+            };
+            for mismatched in mismatched_authentications {
+                let response = oauth_operation(
+                    &client,
+                    &server.origin,
+                    slug,
+                    operation,
+                    client_id,
+                    secret,
+                    *mismatched,
+                )
+                .await;
+                assert_eq!(
+                    response.status(),
+                    StatusCode::UNAUTHORIZED,
+                    "{operation}, {method}"
+                );
+                let body: Value = response.json().await.unwrap();
+                assert_eq!(body["error"], "invalid_client", "{operation}, {method}");
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn oauth_authorization_prompts_return_explicit_protocol_errors() {
+    let server = TestServer::start().await;
+    let client = server.client();
+    let instance = create_instance(&server, &client, "oauth-prompt-test").await["instance"].clone();
+    let instance_id = instance["id"].as_str().expect("instance ID is returned");
+    let slug = instance["slug"]
+        .as_str()
+        .expect("instance slug is returned");
+    let client_id = "prompt-client";
+    let redirect_uri = "https://client.example.test/callback";
+    server
+        .state
+        .store
+        .create_oauth_client(&OAuthClient {
+            id: "cli_oauth_prompt".to_owned(),
+            instance_id: instance_id.to_owned(),
+            client_id: client_id.to_owned(),
+            client_key: format!("{instance_id}:{client_id}"),
+            name: "Authorization prompt acceptance client".to_owned(),
+            client_secret_hash: Some(sha256_hex("prompt-secret")),
+            redirect_uris: vec![redirect_uri.to_owned()],
+            allowed_origins: Vec::new(),
+            token_endpoint_auth_method: "client_secret_post".to_owned(),
+            r#public: false,
+            created_at: now(),
+        })
+        .await
+        .expect("OAuth client should be seedable");
+
+    let endpoint = format!("{}/{slug}/oauth/authorize", server.origin);
+    for (prompt, expected_error) in [
+        ("consent", "consent_required"),
+        ("login", "login_required"),
+        ("select_account", "account_selection_required"),
+        ("login consent", "interaction_required"),
+        ("none", "login_required"),
+        ("unknown", "invalid_request"),
+        ("login login", "invalid_request"),
+        ("none login", "invalid_request"),
+    ] {
+        let response = client
+            .get(&endpoint)
+            .query(&[
+                ("client_id", client_id),
+                ("redirect_uri", redirect_uri),
+                ("response_type", "code"),
+                ("scope", "openid"),
+                ("state", "rp-state"),
+                ("prompt", prompt),
+            ])
+            .send()
+            .await
+            .expect("authorization request should reach the service");
+        assert_eq!(response.status(), StatusCode::SEE_OTHER, "prompt={prompt}");
+        let location = response
+            .headers()
+            .get(header::LOCATION)
+            .expect("OAuth prompt errors redirect to the relying party")
+            .to_str()
+            .expect("redirect location is valid text");
+        let location = reqwest::Url::parse(location).expect("redirect location is absolute");
+        let returned = location
+            .query_pairs()
+            .find_map(|(key, value)| (key == "error").then(|| value.into_owned()));
+        assert_eq!(returned.as_deref(), Some(expected_error), "prompt={prompt}");
+    }
+
+    let duplicate_prompt = client
+        .get(&endpoint)
+        .query(&[
+            ("client_id", client_id),
+            ("redirect_uri", redirect_uri),
+            ("response_type", "code"),
+            ("scope", "openid"),
+            ("state", "rp-state"),
+            ("prompt", "login"),
+            ("prompt", "consent"),
+        ])
+        .send()
+        .await
+        .expect("duplicated prompt request should reach the service");
+    assert_eq!(duplicate_prompt.status(), StatusCode::SEE_OTHER);
+    let location = reqwest::Url::parse(
+        duplicate_prompt
+            .headers()
+            .get(header::LOCATION)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        location
+            .query_pairs()
+            .find_map(|(key, value)| (key == "error").then(|| value.into_owned()))
+            .as_deref(),
+        Some("invalid_request")
+    );
+
+    let absent_prompt = client
+        .get(&endpoint)
+        .query(&[
+            ("client_id", client_id),
+            ("redirect_uri", redirect_uri),
+            ("response_type", "code"),
+            ("scope", "openid"),
+        ])
+        .send()
+        .await
+        .expect("authorization request without prompt should reach the service");
+    assert_eq!(absent_prompt.status(), StatusCode::SEE_OTHER);
+    assert!(
+        absent_prompt
+            .headers()
+            .get(header::LOCATION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with(&format!("/ui/{slug}/sign-in?next=")),
+        "omitted prompt preserves the existing interactive sign-in redirect"
+    );
+}
+
+#[tokio::test]
+async fn connection_scopes_round_trip_and_non_oidc_scope_input_is_rejected() {
+    let server = TestServer::start().await;
+    let client = server.client();
+    let bootstrap = create_instance(&server, &client, "connection-scope-test").await;
+    let instance = bootstrap["instance"].clone();
+    let instance_id = instance["id"].as_str().expect("instance ID is returned");
+    let slug = instance["slug"]
+        .as_str()
+        .expect("instance slug is returned");
+    let api_key = bootstrap["api_key"]
+        .as_str()
+        .expect("management key is returned");
+    let timestamp = now();
+    server
+        .state
+        .store
+        .create_connection(&Connection {
+            id: "con_scope_custom".to_owned(),
+            instance_id: instance_id.to_owned(),
+            r#type: "oidc".to_owned(),
+            name: "Custom scopes".to_owned(),
+            scopes: vec![
+                "openid".to_owned(),
+                "email".to_owned(),
+                "groups:read".to_owned(),
+            ],
+            enabled: true,
+            org_id: None,
+            issuer_url: Some("https://issuer.example.test".to_owned()),
+            client_id: Some("scope-client".to_owned()),
+            client_secret_box: None,
+            authorization_endpoint: Some("https://issuer.example.test/authorize".to_owned()),
+            token_endpoint: Some("https://issuer.example.test/token".to_owned()),
+            userinfo_endpoint: None,
+            idp_entity_id: None,
+            sso_redirect_url: None,
+            x509_certificate_pem: None,
+            sp_entity_id: None,
+            created_at: timestamp,
+        })
+        .await
+        .expect("OIDC connection with normalized scopes should be seedable");
+
+    server
+        .state
+        .store
+        .create(
+            "connections",
+            "con_scope_legacy",
+            &json!({
+                "id": "con_scope_legacy",
+                "instanceId": instance_id,
+                "type": "oidc",
+                "name": "Legacy scopes",
+                "enabled": true,
+                "issuerUrl": "https://legacy-issuer.example.test",
+                "clientId": "legacy-scope-client",
+                "authorizationEndpoint": "https://legacy-issuer.example.test/authorize",
+                "tokenEndpoint": "https://legacy-issuer.example.test/token",
+                "createdAt": timestamp,
+            }),
+        )
+        .await
+        .expect("legacy connection without scopes should be seedable");
+
+    let response = client
+        .get(format!("{}/v1/{slug}/connections", server.origin))
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .expect("connection list should reach the service");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    let custom = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|connection| connection["id"] == "con_scope_custom")
+        .expect("custom OIDC connection should be listed");
+    assert_eq!(custom["scopes"], json!(["openid", "email", "groups:read"]));
+    let legacy = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|connection| connection["id"] == "con_scope_legacy")
+        .expect("legacy OIDC connection should be listed");
+    assert_eq!(legacy["scopes"], json!(["openid", "email", "profile"]));
+
+    let response = client
+        .post(format!("{}/v1/{slug}/connections", server.origin))
+        .bearer_auth(api_key)
+        .json(&json!({
+            "type": "github",
+            "name": "GitHub",
+            "scopes": ["openid", "email"],
+        }))
+        .send()
+        .await
+        .expect("non-OIDC scope input should reach the service");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "invalid_request");
+    assert_eq!(
+        body["error"]["message"],
+        "scopes may only be configured for OIDC connections"
+    );
+}
+
+#[tokio::test]
+async fn oauth_client_registration_rejects_conflicting_public_and_secret_methods() {
+    let server = TestServer::start().await;
+    let client = server.client();
+    let bootstrap = create_instance(&server, &client, "oauth-client-registration-test").await;
+    let instance = bootstrap["instance"].clone();
+    let slug = instance["slug"]
+        .as_str()
+        .expect("instance slug is returned");
+    let api_key = bootstrap["api_key"]
+        .as_str()
+        .expect("management key is returned");
+    let endpoint = format!("{}/v1/{slug}/oauth-clients", server.origin);
+    for method in ["client_secret_basic", "client_secret_post"] {
+        let response = client
+            .post(&endpoint)
+            .bearer_auth(api_key)
+            .json(&json!({
+                "name": format!("Conflicting {method} client"),
+                "redirect_uris": ["https://client.example.test/callback"],
+                "public": true,
+                "token_endpoint_auth_method": method,
+            }))
+            .send()
+            .await
+            .expect("conflicting client registration should reach the service");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "invalid_request");
+        assert_eq!(
+            body["error"]["message"],
+            "public clients must use token_endpoint_auth_method=none"
+        );
+    }
+
+    let listing = client
+        .get(&endpoint)
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .expect("OAuth client list should reach the service");
+    assert_eq!(listing.status(), StatusCode::OK);
+    assert_eq!(listing.json::<Value>().await.unwrap()["clients"], json!([]));
+
+    for (name, public) in [
+        ("Default public method", true),
+        ("Explicit none method", false),
+    ] {
+        let mut body = json!({
+            "name": name,
+            "redirect_uris": ["https://client.example.test/callback"],
+            "public": public,
+        });
+        if !public {
+            body["token_endpoint_auth_method"] = json!("none");
+        }
+        let response = client
+            .post(&endpoint)
+            .bearer_auth(api_key)
+            .json(&body)
+            .send()
+            .await
+            .expect("non-conflicting public client registration should reach the service");
+        assert_eq!(response.status(), StatusCode::OK);
+        let registered: Value = response.json().await.unwrap();
+        assert_eq!(registered["client"]["public"], true);
+        assert_eq!(registered["client"]["token_endpoint_auth_method"], "none");
+        assert_eq!(registered["client_secret"], Value::Null);
+    }
 }
 
 #[tokio::test]
@@ -577,7 +1088,7 @@ async fn federated_first_factor_waits_for_local_mfa_and_persists_continuation() 
             user_id: user_id.to_owned(),
             r#type: "totp".to_owned(),
             secret_box: Some("unused-test-factor-secret".to_owned()),
-            recovery_codes: None,
+            recovery_code_hashes: None,
             confirmed: true,
             created_at: timestamp,
             last_used_totp_step: None,
@@ -647,6 +1158,11 @@ async fn oidc_callback_requires_browser_correlation_before_consuming_state() {
             instance_id: instance_id.to_owned(),
             r#type: "oidc".to_owned(),
             name: "Correlation test provider".to_owned(),
+            scopes: vec![
+                "openid".to_owned(),
+                "email".to_owned(),
+                "profile".to_owned(),
+            ],
             enabled: true,
             org_id: None,
             issuer_url: Some("https://issuer.example.test".to_owned()),
@@ -933,6 +1449,25 @@ async fn scim_directory_deactivation_disables_oauth_user_tokens() {
         })
         .await
         .expect("confidential OAuth client should be seedable");
+    let other_client_id = "oauth-scim-other-client";
+    server
+        .state
+        .store
+        .create_oauth_client(&OAuthClient {
+            id: "cli_oauth_scim_other".to_owned(),
+            instance_id: instance_id.to_owned(),
+            client_id: other_client_id.to_owned(),
+            client_key: format!("{instance_id}:{other_client_id}"),
+            name: "Other public OAuth client".to_owned(),
+            client_secret_hash: None,
+            redirect_uris: Vec::new(),
+            allowed_origins: Vec::new(),
+            token_endpoint_auth_method: "none".to_owned(),
+            r#public: true,
+            created_at: timestamp,
+        })
+        .await
+        .expect("other public OAuth client should be seedable");
     server
         .state
         .store
@@ -1011,6 +1546,26 @@ async fn scim_directory_deactivation_disables_oauth_user_tokens() {
                 ("token", token),
             ])
     };
+    let introspect_as_other_client = |token: &str| {
+        client
+            .post(format!("{}/{slug}/oauth/introspect", server.origin))
+            .form(&[("client_id", other_client_id), ("token", token)])
+    };
+    for (description, token) in [
+        ("user access token", access_token),
+        ("client-credentials token", client_credentials_token),
+    ] {
+        let response = introspect_as_other_client(token)
+            .send()
+            .await
+            .expect("cross-client token introspection should reach the service");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["active"],
+            false,
+            "a different authenticated client cannot introspect the {description}"
+        );
+    }
     let active_access = introspect(access_token)
         .send()
         .await

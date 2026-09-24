@@ -25,7 +25,7 @@ use utoipa::openapi::{
     security::{HttpAuthScheme, HttpBuilder, SecurityRequirement, SecurityScheme},
 };
 
-use crate::AppState;
+use crate::{AppState, app::body_limit_exceeded};
 
 const BODY_LIMIT: usize = 1024 * 1024;
 const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
@@ -65,6 +65,7 @@ pub fn openapi() -> OpenApiDoc {
             ))
             .response("200", json_response("Created or replayed instance and initial API key.", Some("CreateInstanceResponse")))
             .response("400", json_response("Invalid request body or idempotency key.", Some("ManagementError")))
+            .response("413", json_response("The request body exceeds the 1 MiB limit.", Some("ManagementError")))
             .response("401", json_response("Missing or invalid operator credentials.", Some("ManagementError")))
             .response("409", json_response("The slug already exists or the key was reused for different input.", Some("ManagementError")))
             .response("500", json_response("Bootstrap storage failed.", Some("ManagementError")))
@@ -317,7 +318,7 @@ async fn create_instance(
         id: operation.api_key_id.clone(),
         instance_id: instance.id.clone(),
         name: "default".to_owned(),
-        secret_key: sha256_hex(&combined),
+        secret_key_hash: sha256_hex(&combined),
         scopes: vec!["*".to_owned()],
         created_at: operation.created_at,
         last_used_at: None,
@@ -335,7 +336,7 @@ async fn create_instance(
         };
         if existing.instance_id != key.instance_id
             || existing.name != key.name
-            || existing.secret_key != key.secret_key
+            || existing.secret_key_hash != key.secret_key_hash
             || existing.scopes != key.scopes
             || existing.revoked
         {
@@ -381,9 +382,13 @@ fn operator_authorized(headers: &HeaderMap, expected: &str) -> bool {
     else {
         return false;
     };
-    let Some(presented) = value.strip_prefix("Bearer ") else {
+    let Some(scheme) = value.get(..7) else {
         return false;
     };
+    if !scheme.eq_ignore_ascii_case("Bearer ") {
+        return false;
+    }
+    let presented = &value[7..];
     fixed_time_equals(presented, expected)
 }
 
@@ -394,12 +399,20 @@ fn operator_authorized(headers: &HeaderMap, expected: &str) -> bool {
 async fn read_json<T: for<'de> Deserialize<'de>>(request: Request) -> Result<T, Response> {
     let bytes = to_bytes(request.into_body(), BODY_LIMIT)
         .await
-        .map_err(|_| {
-            api_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "a JSON body is required",
-            )
+        .map_err(|error| {
+            if body_limit_exceeded(&error) {
+                api_error(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "payload_too_large",
+                    "the request body exceeds the 1 MiB limit",
+                )
+            } else {
+                api_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    "a JSON body is required",
+                )
+            }
         })?;
     serde_json::from_slice(&bytes).map_err(|_| {
         api_error(

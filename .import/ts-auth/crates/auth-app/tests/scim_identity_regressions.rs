@@ -80,6 +80,7 @@ impl TestServer {
 
     fn client(&self) -> Client {
         Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("test client should build")

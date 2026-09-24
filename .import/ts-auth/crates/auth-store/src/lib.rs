@@ -213,9 +213,13 @@ impl AuthStore {
         id: &str,
         record: &T,
     ) -> StoreResult<()> {
-        if matches!(collection, "organizations" | "scim_directories") {
+        if matches!(
+            collection,
+            "organizations" | "scim_directories" | "memberships" | "invitations" | "org_domains"
+        ) {
             return Err(StoreError::InvalidConfiguration(
-                "lifecycle record writes require versioned compare-and-put".into(),
+                "lifecycle record writes require validated create or versioned compare-and-put"
+                    .into(),
             ));
         }
         self.client
@@ -342,11 +346,17 @@ impl AuthStore {
         }
     }
     pub async fn delete(&self, collection: &str, id: &str) -> StoreResult<()> {
-        if collection == "organizations" {
+        if matches!(
+            collection,
+            "organizations" | "scim_directories" | "memberships" | "org_domains"
+        ) {
             return Err(StoreError::InvalidConfiguration(
-                "organization deletion requires the tombstone cascade".into(),
+                "lifecycle record deletion requires its typed cleanup".into(),
             ));
         }
+        self.delete_unchecked(collection, id).await
+    }
+    async fn delete_unchecked(&self, collection: &str, id: &str) -> StoreResult<()> {
         self.client
             .documents()
             .delete(&self.scope(), collection, id)
@@ -355,6 +365,16 @@ impl AuthStore {
     }
     pub async fn delete_ignoring_missing(&self, collection: &str, id: &str) -> StoreResult<()> {
         match self.delete(collection, id).await {
+            Err(error) if error.is_not_found() => Ok(()),
+            result => result,
+        }
+    }
+    async fn delete_ignoring_missing_unchecked(
+        &self,
+        collection: &str,
+        id: &str,
+    ) -> StoreResult<()> {
+        match self.delete_unchecked(collection, id).await {
             Err(error) if error.is_not_found() => Ok(()),
             result => result,
         }
@@ -373,7 +393,7 @@ impl AuthStore {
         let rows = page
             .documents
             .into_iter()
-            .map(|row| serde_json::from_value(row.value.clone()).map(|record| (record, row)))
+            .map(|row| T::deserialize(&row.value).map(|record| (record, row)))
             .collect::<Result<Vec<_>, _>>()?;
         if page.has_more && page.next_after.is_none() {
             return Err(StoreError::InvalidConfiguration(
@@ -452,14 +472,27 @@ impl AuthStore {
         )
         .await
     }
-    pub async fn release_unique(&self, kind: &str, key: &str) -> StoreResult<()> {
+    pub async fn release_unique(&self, kind: &str, key: &str, owner_id: &str) -> StoreResult<()> {
         if kind == "quota-seat" {
             return Err(StoreError::InvalidConfiguration(
                 "quota seats must use the quota admission ledger".into(),
             ));
         }
-        self.delete_ignoring_missing("uniques", &unique_claim_id(kind, key))
-            .await
+        if self.release_unique_if_owned(kind, key, owner_id).await? {
+            return Ok(());
+        }
+        let id = unique_claim_id(kind, key);
+        let claim: Option<Value> = self.get("uniques", &id).await?;
+        match claim {
+            None => Ok(()),
+            Some(claim)
+                if claim.get("ownerType").and_then(Value::as_str) == Some(kind)
+                    && claim.get("ownerId").and_then(Value::as_str) == Some(owner_id) =>
+            {
+                Err(StoreError::Contention)
+            }
+            Some(_) => Err(StoreError::Precondition),
+        }
     }
     pub async fn release_unique_if_owned(
         &self,
@@ -497,14 +530,18 @@ impl AuthStore {
         limit: u32,
         after: Option<&str>,
     ) -> StoreResult<(Vec<User>, Option<String>)> {
-        let raw = self.list_raw("users", limit, after).await?;
-        let next = raw.last().map(|(id, _)| id.clone());
-        let users = raw
+        let (rows, next) = self
+            .query_page::<User>(
+                "users",
+                &[Predicate::equal("instanceId", instance_id)?],
+                limit,
+                after,
+            )
+            .await?;
+        let users = rows
             .into_iter()
-            .map(|(_, value)| serde_json::from_value::<User>(value))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .filter(|user| user.instance_id == instance_id && user.scim_provisioning.is_none())
+            .map(|(user, _)| user)
+            .filter(|user| user.scim_provisioning.is_none())
             .collect();
         Ok((users, next))
     }
@@ -1401,7 +1438,7 @@ impl AuthStore {
         else {
             return Ok(false);
         };
-        let Some(codes) = &mut factor.recovery_codes else {
+        let Some(codes) = &mut factor.recovery_code_hashes else {
             return Ok(false);
         };
         let prior_len = codes.len();
@@ -1782,7 +1819,7 @@ impl AuthStore {
     }
     #[must_use]
     pub fn has_valid_audit_integrity(&self, event: &AuditEvent) -> bool {
-        event.integrity_version == Some(1)
+        event.integrity_version == Some(2)
             && event.integrity_hash.as_ref().is_some_and(|hash| {
                 audit_hash(event).is_ok_and(|expected| constant_time_equal(hash, &expected))
             })
@@ -1798,7 +1835,7 @@ impl AuthStore {
                 .any(|key| Self::audit_integrity_for_key(event, key))
     }
     fn audit_integrity_for_key(event: &AuditEvent, key: &[u8]) -> bool {
-        if event.integrity_version != Some(1) {
+        if event.integrity_version != Some(2) {
             return false;
         }
         let Some(hash) = &event.integrity_hash else {
@@ -1848,26 +1885,53 @@ fn unix_seconds() -> i64 {
 }
 
 fn audit_hash(event: &AuditEvent) -> StoreResult<String> {
-    let ordered: std::collections::BTreeMap<&str, &Value> = event
-        .data
-        .iter()
-        .map(|(key, value)| (key.as_str(), value))
-        .collect();
-    let canonical = format!(
-        "{}\n{}\n{}\n{}\n{}\n{}",
-        event.id,
-        event.instance_id,
-        event.r#type,
-        event.actor_id.as_deref().unwrap_or(""),
-        event.created_at,
-        serde_json::to_string(&ordered)?
-    );
-    Ok(format!("{:x}", Sha256::digest(canonical.as_bytes())))
+    fn canonicalize(value: &Value) -> StoreResult<Value> {
+        match value {
+            Value::Object(object) => {
+                let ordered: std::collections::BTreeMap<String, Value> = object
+                    .iter()
+                    .map(|(key, value)| Ok((key.clone(), canonicalize(value)?)))
+                    .collect::<StoreResult<_>>()?;
+                Ok(serde_json::to_value(ordered)?)
+            }
+            Value::Array(values) => values
+                .iter()
+                .map(canonicalize)
+                .collect::<StoreResult<Vec<_>>>()
+                .map(Value::Array),
+            value => Ok(value.clone()),
+        }
+    }
+
+    fn append_frame(output: &mut Vec<u8>, value: &[u8]) -> StoreResult<()> {
+        let length = u64::try_from(value.len()).map_err(|_| {
+            StoreError::InvalidConfiguration("audit field exceeds supported length".into())
+        })?;
+        output.extend_from_slice(&length.to_be_bytes());
+        output.extend_from_slice(value);
+        Ok(())
+    }
+
+    let canonical_data = serde_json::to_vec(&canonicalize(&Value::Object(event.data.clone()))?)?;
+    let mut canonical = b"terrascale-auth-audit-event-v2\0".to_vec();
+    append_frame(&mut canonical, event.id.as_bytes())?;
+    append_frame(&mut canonical, event.instance_id.as_bytes())?;
+    append_frame(&mut canonical, event.r#type.as_bytes())?;
+    match event.actor_id.as_deref() {
+        Some(actor_id) => {
+            canonical.push(1);
+            append_frame(&mut canonical, actor_id.as_bytes())?;
+        }
+        None => canonical.push(0),
+    }
+    canonical.extend_from_slice(&event.created_at.to_be_bytes());
+    append_frame(&mut canonical, &canonical_data)?;
+    Ok(format!("{:x}", Sha256::digest(&canonical)))
 }
 
 fn audit_signature(key: &[u8], hash: &str) -> String {
     let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts arbitrary key lengths");
-    mac.update(format!("v1:{hash}").as_bytes());
+    mac.update(format!("v2:{hash}").as_bytes());
     let result = mac.finalize().into_bytes();
     hex_lower(&result)
 }

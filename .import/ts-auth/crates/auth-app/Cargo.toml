@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-auth-contracts.workspace = true
+auth-contracts = { workspace = true, features = ["axum-response"] }
 auth-store.workspace = true
 auth-security.workspace = true
 terrascale.workspace = true

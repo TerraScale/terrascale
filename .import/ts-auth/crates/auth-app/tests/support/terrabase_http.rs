@@ -6,7 +6,10 @@
 
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 use tokio::sync::oneshot;
 
@@ -35,8 +38,12 @@ struct FixtureState {
     update_pauses: Arc<Mutex<Vec<UpdatePause>>>,
     delete_failures: Arc<Mutex<Vec<String>>>,
     delete_pauses: Arc<Mutex<Vec<DeletePauseRequest>>>,
+    query_failures: Arc<Mutex<Vec<String>>>,
     query_pauses: Arc<Mutex<Vec<QueryPause>>>,
     get_failures: Arc<Mutex<Vec<String>>>,
+    health_requests: Arc<AtomicUsize>,
+    health_pauses: Arc<Mutex<Vec<HealthPause>>>,
+    health_healthy: Arc<Mutex<Option<bool>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -67,6 +74,11 @@ struct QueryPause {
     resume: oneshot::Receiver<()>,
 }
 
+struct HealthPause {
+    entered: oneshot::Sender<()>,
+    resume: oneshot::Receiver<()>,
+}
+
 struct DeletePauseRequest {
     collection: String,
     entered: oneshot::Sender<()>,
@@ -83,6 +95,13 @@ pub struct CompareAndPutPause {
 /// Test handle for pausing a query after its snapshot has been captured.
 #[allow(dead_code)] // Only the assigned webhook and checkout race tests use this control.
 pub struct QueryResponsePause {
+    entered: Option<oneshot::Receiver<()>>,
+    resume: Option<oneshot::Sender<()>>,
+}
+
+/// Test handle for pausing one TerraBase health response until resumed.
+#[allow(dead_code)]
+pub struct HealthCheckPause {
     entered: Option<oneshot::Receiver<()>>,
     resume: Option<oneshot::Sender<()>>,
 }
@@ -111,6 +130,21 @@ impl CompareAndPutPause {
 
 #[allow(dead_code)]
 impl QueryResponsePause {
+    pub async fn wait_until_paused(&mut self) {
+        if let Some(entered) = self.entered.take() {
+            let _ = entered.await;
+        }
+    }
+
+    pub fn resume(mut self) {
+        if let Some(resume) = self.resume.take() {
+            let _ = resume.send(());
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl HealthCheckPause {
     pub async fn wait_until_paused(&mut self) {
         if let Some(entered) = self.entered.take() {
             let _ = entered.await;
@@ -272,6 +306,16 @@ impl TerraBaseHttpFixture {
             .push(collection.into());
     }
 
+    /// Fail the next document query for `collection` before returning results.
+    #[allow(dead_code)] // OAuth authentication tests inject client-lookup outages.
+    pub fn fail_next_query(&self, collection: impl Into<String>) {
+        self.state
+            .query_failures
+            .lock()
+            .expect("fixture query-failure lock is healthy")
+            .push(collection.into());
+    }
+
     /// Pause the next document DELETE in `collection` after its version check.
     #[allow(dead_code)] // The HTTP surface owns deterministic SCIM cleanup-owner races.
     pub fn pause_next_delete_before_commit(
@@ -315,6 +359,39 @@ impl TerraBaseHttpFixture {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn health_request_count(&self) -> usize {
+        self.state.health_requests.load(Ordering::Relaxed)
+    }
+
+    #[allow(dead_code)]
+    pub fn set_health_healthy(&self, healthy: bool) {
+        *self
+            .state
+            .health_healthy
+            .lock()
+            .expect("fixture health lock is healthy") = Some(healthy);
+    }
+
+    /// Pause the next management health response until the test resumes it.
+    #[allow(dead_code)]
+    pub fn pause_next_health_check(&self) -> HealthCheckPause {
+        let (entered_tx, entered_rx) = oneshot::channel();
+        let (resume_tx, resume_rx) = oneshot::channel();
+        self.state
+            .health_pauses
+            .lock()
+            .expect("fixture health-pause lock is healthy")
+            .push(HealthPause {
+                entered: entered_tx,
+                resume: resume_rx,
+            });
+        HealthCheckPause {
+            entered: Some(entered_rx),
+            resume: Some(resume_tx),
+        }
+    }
+
     fn arm_create_failure(&self, collection: impl Into<String>, timing: CreateFailureTiming) {
         self.state
             .create_failures
@@ -333,10 +410,25 @@ impl Drop for TerraBaseHttpFixture {
     }
 }
 
-async fn health() -> Json<Value> {
+async fn health(State(state): State<FixtureState>) -> Json<Value> {
+    state.health_requests.fetch_add(1, Ordering::Relaxed);
+    let pause = state
+        .health_pauses
+        .lock()
+        .expect("fixture health-pause lock is healthy")
+        .pop();
+    if let Some(pause) = pause {
+        let _ = pause.entered.send(());
+        let _ = pause.resume.await;
+    }
+    let healthy = state
+        .health_healthy
+        .lock()
+        .expect("fixture health lock is healthy")
+        .unwrap_or(true);
     Json(json!({
         "region": "GRU",
-        "healthy": true,
+        "healthy": healthy,
         "version": "contract-fixture",
     }))
 }
@@ -364,6 +456,9 @@ async fn query_documents(
 ) -> Response {
     if !authorized(&headers) {
         return error(StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+    if take_query_failure(&state, &collection) {
+        return injected_query_failure();
     }
     if query.limit == 0 || query.limit > 1_000 || query.predicates.len() > 32 {
         return error(StatusCode::BAD_REQUEST, "invalid_query");
@@ -726,6 +821,18 @@ fn take_query_pause(state: &FixtureState, collection: &str) -> Option<QueryPause
     Some(pauses.remove(index))
 }
 
+fn take_query_failure(state: &FixtureState, collection: &str) -> bool {
+    let mut failures = state
+        .query_failures
+        .lock()
+        .expect("fixture query-failure lock is healthy");
+    let Some(index) = failures.iter().position(|failure| failure == collection) else {
+        return false;
+    };
+    failures.remove(index);
+    true
+}
+
 fn take_delete_failure(state: &FixtureState, collection: &str) -> bool {
     let mut failures = state
         .delete_failures
@@ -789,6 +896,14 @@ fn injected_delete_failure() -> Response {
 
 fn injected_get_failure() -> Response {
     let mut response = error(StatusCode::SERVICE_UNAVAILABLE, "injected_get_failure");
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from_static("31"));
+    response
+}
+
+fn injected_query_failure() -> Response {
+    let mut response = error(StatusCode::SERVICE_UNAVAILABLE, "injected_query_failure");
     response
         .headers_mut()
         .insert(header::RETRY_AFTER, HeaderValue::from_static("31"));

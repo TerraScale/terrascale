@@ -928,7 +928,7 @@ async fn add_totp_factor(
             user_id: user.id.clone(),
             r#type: "totp".to_owned(),
             secret_box: Some(secret_box),
-            recovery_codes: None,
+            recovery_code_hashes: None,
             confirmed: true,
             created_at: now(),
             last_used_totp_step: None,

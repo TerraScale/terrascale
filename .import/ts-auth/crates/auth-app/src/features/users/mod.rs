@@ -621,6 +621,7 @@ pub async fn update_user(
     let username_for_record = next_username.clone();
     let password_for_record = password_hash.clone();
     let changed_email = next_email != current.email;
+    let both_identifiers_patched = changes.email.is_some() && changes.username.is_some();
     if changed_email {
         // Invalidate links sent to the old mailbox. Consumers also compare the
         // snapshot to the current address to cover concurrent issuance/re-key.
@@ -673,7 +674,17 @@ pub async fn update_user(
             },
         )
         .await
-        .map_err(map_store_error)?;
+        .map_err(|error| {
+            if error.is_conflict() && both_identifiers_patched {
+                AppError::new(
+                    StatusCode::CONFLICT,
+                    "identifier_taken",
+                    "email or username already exists",
+                )
+            } else {
+                map_store_error(error)
+            }
+        })?;
     if !updated {
         return Err(not_found());
     }
@@ -2901,13 +2912,9 @@ async fn revoke_all_sessions(
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
-#[path = "../../../tests/support/terrabase_http.rs"]
-mod identity_password_gate_fixture;
-
-#[cfg(test)]
 mod password_gate_tests {
     use super::*;
+    use crate::test_support as identity_password_gate_fixture;
     use auth_contracts::models::Instance;
     use axum::{
         Form,

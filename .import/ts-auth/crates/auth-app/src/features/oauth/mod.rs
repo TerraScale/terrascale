@@ -17,7 +17,7 @@ use auth_security::{
 use auth_store::{AuthStore, Predicate};
 use axum::{
     Form, Json, Router,
-    extract::{Path, Query, State},
+    extract::{Path, Query, RawQuery, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{delete, get, post},
@@ -26,7 +26,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use url::Url;
+use url::{Host, Url};
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{OpenApi, ToSchema};
 
@@ -38,6 +38,16 @@ const REFRESH_TOKEN_TTL: i64 = 30 * 24 * 60 * 60;
 const AUTHORIZATION_CODE_TTL: i64 = 60;
 const SUPPORTED_SCOPES: &[&str] = &["openid", "profile", "email"];
 const SESSION_COOKIE: &str = "tsauth_session";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthorizationPrompt {
+    Default,
+    None,
+    Login,
+    Consent,
+    SelectAccount,
+    InteractionRequired,
+}
 
 #[derive(OpenApi)]
 #[openapi(
@@ -285,6 +295,7 @@ async fn authorize(
     State(state): State<AppState>,
     Path(slug): Path<String>,
     Query(query): Query<HashMap<String, String>>,
+    RawQuery(raw_query): RawQuery,
     headers: HeaderMap,
 ) -> AppResult<Response> {
     let Some(instance) = state
@@ -400,13 +411,53 @@ async fn authorize(
         ));
     }
 
+    let parsed_prompt = if raw_query
+        .as_deref()
+        .is_some_and(|value| has_duplicate_query_parameter(value, "prompt"))
+    {
+        Err(())
+    } else {
+        parse_authorization_prompt(query.get("prompt").map(String::as_str))
+    };
+    let prompt = match parsed_prompt {
+        Ok(prompt) => prompt,
+        Err(()) => {
+            return Ok(redirect_error(
+                redirect_uri,
+                state_value,
+                "invalid_request",
+                "prompt is empty, duplicated, unknown, or combines none with another value",
+            ));
+        }
+    };
+    let unsupported_prompt_error = match prompt {
+        AuthorizationPrompt::Login => Some(("login_required", "interactive login is required")),
+        AuthorizationPrompt::Consent => Some(("consent_required", "user consent is required")),
+        AuthorizationPrompt::SelectAccount => Some((
+            "account_selection_required",
+            "account selection is required",
+        )),
+        AuthorizationPrompt::InteractionRequired => {
+            Some(("interaction_required", "user interaction is required"))
+        }
+        AuthorizationPrompt::Default | AuthorizationPrompt::None => None,
+    };
+    if let Some((error, description)) = unsupported_prompt_error {
+        return Ok(redirect_error(
+            redirect_uri,
+            state_value,
+            error,
+            description,
+        ));
+    }
+
     let cookie = cookie_value(&headers, SESSION_COOKIE);
     let resolved = match cookie {
         Some(value) => crate::features::users::resolve_session(&state, &instance.id, value).await?,
         None => None,
     };
     let Some((session, user)) = resolved else {
-        if query.get("prompt").map(String::as_str) == Some("none") {
+        if prompt == AuthorizationPrompt::None {
             return Ok(redirect_error(
                 redirect_uri,
                 state_value,
@@ -474,6 +525,47 @@ async fn authorize(
     Ok(Redirect::to(callback.as_str()).into_response())
 }
 
+fn parse_authorization_prompt(value: Option<&str>) -> Result<AuthorizationPrompt, ()> {
+    let Some(value) = value else {
+        return Ok(AuthorizationPrompt::Default);
+    };
+    let values = value.split_ascii_whitespace().collect::<Vec<_>>();
+    if values.is_empty() {
+        return Err(());
+    }
+    let mut seen = HashSet::new();
+    for value in &values {
+        if !seen.insert(*value)
+            || !matches!(*value, "none" | "login" | "consent" | "select_account")
+        {
+            return Err(());
+        }
+    }
+    if seen.contains("none") {
+        return (seen.len() == 1)
+            .then_some(AuthorizationPrompt::None)
+            .ok_or(());
+    }
+    if seen.contains("login") && seen.contains("consent") {
+        return Ok(AuthorizationPrompt::InteractionRequired);
+    }
+    if seen.contains("login") {
+        return Ok(AuthorizationPrompt::Login);
+    }
+    if seen.contains("consent") {
+        return Ok(AuthorizationPrompt::Consent);
+    }
+    if seen.contains("select_account") {
+        return Ok(AuthorizationPrompt::SelectAccount);
+    }
+    Err(())
+}
+
+fn has_duplicate_query_parameter(query: &str, name: &str) -> bool {
+    let mut values = url::form_urlencoded::parse(query.as_bytes()).filter(|(key, _)| key == name);
+    values.next().is_some() && values.next().is_some()
+}
+
 #[utoipa::path(
     post,
     path = "/{slug}/oauth/token",
@@ -503,14 +595,7 @@ async fn token(
     };
     let client = match authenticate_client(&state.store, &instance.id, &headers, &form).await {
         Ok(client) => client,
-        Err((status, message, basic)) => {
-            return Ok(token_error(
-                StatusCode::from_u16(status).unwrap_or(StatusCode::UNAUTHORIZED),
-                "invalid_client",
-                &message,
-                basic,
-            ));
-        }
+        Err(error) => return Ok(client_authentication_error_response(error)),
     };
     let grant = form
         .get("grant_type")
@@ -1245,14 +1330,7 @@ async fn introspect(
     };
     let client = match authenticate_client(&state.store, &instance.id, &headers, &form).await {
         Ok(value) => value,
-        Err((status, message, basic)) => {
-            return Ok(token_error(
-                StatusCode::from_u16(status).unwrap_or(StatusCode::UNAUTHORIZED),
-                "invalid_client",
-                &message,
-                basic,
-            ));
-        }
+        Err(error) => return Ok(no_store(client_authentication_error_response(error))),
     };
     let raw = form.get("token").map(String::as_str).unwrap_or_default();
     if raw.is_empty() {
@@ -1265,12 +1343,17 @@ async fn introspect(
     }
     if raw.contains('.') {
         if let Some(claims) = verify_access_token(&state, &instance, raw).await? {
-            let Some(subject) = claims.get("sub").and_then(Value::as_str) else {
+            let Some(audience) = claims.get("aud").and_then(aud_string) else {
                 return Ok(no_store(
                     (StatusCode::OK, Json(json!({"active":false}))).into_response(),
                 ));
             };
-            let Some(audience) = claims.get("aud").and_then(aud_string) else {
+            if audience != client.client_id {
+                return Ok(no_store(
+                    (StatusCode::OK, Json(json!({"active":false}))).into_response(),
+                ));
+            };
+            let Some(subject) = claims.get("sub").and_then(Value::as_str) else {
                 return Ok(no_store(
                     (StatusCode::OK, Json(json!({"active":false}))).into_response(),
                 ));
@@ -1390,14 +1473,7 @@ async fn revoke(
     };
     let client = match authenticate_client(&state.store, &instance.id, &headers, &form).await {
         Ok(value) => value,
-        Err((status, message, basic)) => {
-            return Ok(token_error(
-                StatusCode::from_u16(status).unwrap_or(StatusCode::UNAUTHORIZED),
-                "invalid_client",
-                &message,
-                basic,
-            ));
-        }
+        Err(error) => return Ok(client_authentication_error_response(error)),
     };
     let raw = form.get("token").map(String::as_str).unwrap_or_default();
     if raw.is_empty() {
@@ -1589,6 +1665,13 @@ async fn create_client(
             "token_endpoint_auth_method must be client_secret_basic, client_secret_post, or none",
         ));
     }
+    if body.is_public && auth_method != "none" {
+        return Ok(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "public clients must use token_endpoint_auth_method=none",
+        ));
+    }
     let is_public = body.is_public || auth_method == "none";
     let secret = (!is_public).then(|| tokens::random_token(40));
     let client_id = tokens::random_token(24);
@@ -1684,12 +1767,41 @@ async fn delete_client(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ClientAuthenticationError {
+    InvalidCredentials {
+        description: &'static str,
+        used_basic: bool,
+    },
+    StorageUnavailable,
+}
+
+fn client_authentication_error_response(error: ClientAuthenticationError) -> Response {
+    match error {
+        ClientAuthenticationError::InvalidCredentials {
+            description,
+            used_basic,
+        } => token_error(
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            description,
+            used_basic,
+        ),
+        ClientAuthenticationError::StorageUnavailable => token_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "client authentication is temporarily unavailable",
+            false,
+        ),
+    }
+}
+
 async fn authenticate_client(
     store: &AuthStore,
     instance_id: &str,
     headers: &HeaderMap,
     form: &HashMap<String, String>,
-) -> Result<OAuthClient, (u16, String, bool)> {
+) -> Result<OAuthClient, ClientAuthenticationError> {
     let authorization = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -1698,14 +1810,25 @@ async fn authenticate_client(
         .get(..6)
         .is_some_and(|value| value.eq_ignore_ascii_case("Basic "));
     let (client_id, secret) = if used_basic {
-        let decoded = STANDARD
-            .decode(authorization[6..].trim())
-            .map_err(|_| (401, "malformed Basic authorization header".into(), true))?;
-        let decoded = String::from_utf8(decoded)
-            .map_err(|_| (401, "malformed Basic authorization header".into(), true))?;
-        let (id, secret) = decoded
-            .split_once(':')
-            .ok_or_else(|| (401, "malformed Basic authorization header".into(), true))?;
+        let decoded = STANDARD.decode(authorization[6..].trim()).map_err(|_| {
+            ClientAuthenticationError::InvalidCredentials {
+                description: "malformed Basic authorization header",
+                used_basic: true,
+            }
+        })?;
+        let decoded = String::from_utf8(decoded).map_err(|_| {
+            ClientAuthenticationError::InvalidCredentials {
+                description: "malformed Basic authorization header",
+                used_basic: true,
+            }
+        })?;
+        let (id, secret) =
+            decoded
+                .split_once(':')
+                .ok_or(ClientAuthenticationError::InvalidCredentials {
+                    description: "malformed Basic authorization header",
+                    used_basic: true,
+                })?;
         let decode_form = |part: &str| {
             url::form_urlencoded::parse(format!("v={part}").as_bytes())
                 .next()
@@ -1722,25 +1845,77 @@ async fn authenticate_client(
         )
     };
     if client_id.is_empty() {
-        return Err((401, "client_id is required".into(), used_basic));
+        return Err(ClientAuthenticationError::InvalidCredentials {
+            description: "client_id is required",
+            used_basic,
+        });
     }
     let client = store
         .find_oauth_client(instance_id, &client_id)
         .await
-        .map_err(|error| (500, format!("storage failure: {error}"), used_basic))?
-        .ok_or_else(|| (401, "unknown client".into(), used_basic))?;
-    match client.client_secret_hash.as_deref() {
-        None => Ok(client),
-        Some(expected) => {
-            let Some(secret) = secret else {
-                return Err((401, "client secret required".into(), used_basic));
-            };
-            if tokens::fixed_time_equals(&tokens::sha256_hex(&secret), expected) {
-                Ok(client)
-            } else {
-                Err((401, "invalid client secret".into(), used_basic))
-            }
+        .map_err(|error| {
+            tracing::error!(?error, "OAuth client lookup failed during authentication");
+            ClientAuthenticationError::StorageUnavailable
+        })?
+        .ok_or(ClientAuthenticationError::InvalidCredentials {
+            description: "unknown client",
+            used_basic,
+        })?;
+
+    match client.token_endpoint_auth_method.as_str() {
+        "none"
+            if !used_basic
+                && secret.is_none()
+                && !form.contains_key("client_secret")
+                && client.client_secret_hash.is_none() =>
+        {
+            Ok(client)
         }
+        "none" => Err(ClientAuthenticationError::InvalidCredentials {
+            description: "client authentication method mismatch",
+            used_basic,
+        }),
+        "client_secret_basic" if used_basic && form.get("client_secret").is_none() => {
+            verify_client_secret(client, secret, used_basic)
+        }
+        "client_secret_post" if !used_basic => verify_client_secret(client, secret, used_basic),
+        "client_secret_basic" | "client_secret_post" => {
+            Err(ClientAuthenticationError::InvalidCredentials {
+                description: "client authentication method mismatch",
+                used_basic,
+            })
+        }
+        _ => Err(ClientAuthenticationError::InvalidCredentials {
+            description: "unsupported client authentication method",
+            used_basic,
+        }),
+    }
+}
+
+fn verify_client_secret(
+    client: OAuthClient,
+    secret: Option<String>,
+    used_basic: bool,
+) -> Result<OAuthClient, ClientAuthenticationError> {
+    let Some(expected) = client.client_secret_hash.as_deref() else {
+        return Err(ClientAuthenticationError::InvalidCredentials {
+            description: "client authentication method is not configured",
+            used_basic,
+        });
+    };
+    let Some(secret) = secret else {
+        return Err(ClientAuthenticationError::InvalidCredentials {
+            description: "client secret required",
+            used_basic,
+        });
+    };
+    if tokens::fixed_time_equals(&tokens::sha256_hex(&secret), expected) {
+        Ok(client)
+    } else {
+        Err(ClientAuthenticationError::InvalidCredentials {
+            description: "invalid client secret",
+            used_basic,
+        })
     }
 }
 
@@ -2114,12 +2289,23 @@ fn aud_string(value: &Value) -> Option<String> {
 
 fn valid_redirect_uri(value: &str) -> bool {
     Url::parse(value).is_ok_and(|url| {
-        matches!(url.scheme(), "https" | "http")
+        let valid_transport =
+            url.scheme() == "https" || (url.scheme() == "http" && is_loopback_host(&url));
+        valid_transport
             && url.host_str().is_some()
             && url.username().is_empty()
             && url.password().is_none()
             && url.fragment().is_none()
     })
+}
+
+fn is_loopback_host(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(address)) => address.is_loopback(),
+        Some(Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
 }
 
 fn same_origin(left: &str, right: &str) -> bool {
@@ -2156,7 +2342,70 @@ fn urlencoding_fallback(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_access_token_claims, openapi};
+    use super::{
+        AuthorizationPrompt, has_duplicate_query_parameter, is_access_token_claims, openapi,
+        parse_authorization_prompt, valid_redirect_uri,
+    };
+
+    #[test]
+    fn redirect_uri_requires_https_except_localhost_and_parsed_loopback_addresses() {
+        for uri in [
+            "https://client.example/callback",
+            "http://localhost/callback",
+            "http://127.0.0.1:3000/callback",
+            "http://[::1]:3000/callback",
+        ] {
+            assert!(valid_redirect_uri(uri), "expected {uri} to be allowed");
+        }
+        for uri in [
+            "http://client.example/callback",
+            "http://localhost.example/callback",
+            "http://127.0.0.1.example/callback",
+            "http://192.0.2.1/callback",
+        ] {
+            assert!(!valid_redirect_uri(uri), "expected {uri} to be rejected");
+        }
+    }
+
+    #[test]
+    fn authorization_prompt_parsing_rejects_unsupported_and_conflicting_values() {
+        assert_eq!(
+            parse_authorization_prompt(None),
+            Ok(AuthorizationPrompt::Default)
+        );
+        assert_eq!(
+            parse_authorization_prompt(Some("none")),
+            Ok(AuthorizationPrompt::None)
+        );
+        assert_eq!(
+            parse_authorization_prompt(Some("login")),
+            Ok(AuthorizationPrompt::Login)
+        );
+        assert_eq!(
+            parse_authorization_prompt(Some("consent")),
+            Ok(AuthorizationPrompt::Consent)
+        );
+        assert_eq!(
+            parse_authorization_prompt(Some("login consent")),
+            Ok(AuthorizationPrompt::InteractionRequired)
+        );
+        assert!(parse_authorization_prompt(Some("none login")).is_err());
+        assert!(parse_authorization_prompt(Some("unknown")).is_err());
+        assert!(parse_authorization_prompt(Some("login login")).is_err());
+        assert!(parse_authorization_prompt(Some("  ")).is_err());
+        assert!(has_duplicate_query_parameter(
+            "client_id=a&prompt=login&prompt=consent",
+            "prompt"
+        ));
+        assert!(has_duplicate_query_parameter(
+            "%70rompt=login&prompt=consent",
+            "prompt"
+        ));
+        assert!(!has_duplicate_query_parameter(
+            "prompt=login&client_id=a",
+            "prompt"
+        ));
+    }
 
     #[test]
     fn only_explicit_access_purpose_claims_are_accepted_as_access_tokens() {

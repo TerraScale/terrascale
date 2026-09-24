@@ -11,7 +11,7 @@ use auth_contracts::{
     },
 };
 use auth_security::tokens::{random_token, sha256_hex};
-use auth_store::{Predicate, unique_claim_id};
+use auth_store::{Predicate, StoreError, unique_claim_id};
 use axum::{
     Json, Router,
     body::to_bytes,
@@ -723,10 +723,10 @@ pub fn openapi() -> OpenApiDoc {
             HttpMethod::Delete,
             "Delete SCIM directory",
             "204",
-            "Directory deleted; no response body.",
+            "Directory deleted; no response body. Retry deletion after cleanup errors to re-run child sweeps, including groups left by in-flight creates.",
             None,
         )
-        .errors(&["401", "403", "404", "500"]),
+        .errors(&["401", "403", "404", "500", "503"]),
         DocOperation::new(
             "/v1/{slug}/directories/{directory_id}/rotate",
             HttpMethod::Post,
@@ -821,7 +821,7 @@ pub fn openapi() -> OpenApiDoc {
         )
         .scim()
         .request("ScimGroupRequest")
-        .errors(&["400", "401", "500"]),
+        .errors(&["400", "401", "500", "503"]),
         DocOperation::new(
             "/scim/{directory_id}/Groups/{group_id}",
             HttpMethod::Get,
@@ -1451,8 +1451,9 @@ async fn delete_directory(
             ));
         }
     }
-    // The tombstone denies new tokens before sweeping. Any in-flight group creation
-    // rechecks the directory after its write and removes its own record.
+    // The tombstone denies new tokens before sweeping. In-flight group writes may
+    // finish later; their create handlers clean themselves up, and retrying this
+    // DELETE re-runs the sweep while the Deleted tombstone is retained.
     for _ in 0..8 {
         let groups: Vec<ScimGroup> =
             query_all(&state, GROUPS, "directoryId", &directory.id).await?;
@@ -1472,8 +1473,8 @@ async fn delete_directory(
         .is_empty()
     {
         return Ok(api_error(
-            StatusCode::CONFLICT,
-            "directory_changed",
+            StatusCode::SERVICE_UNAVAILABLE,
+            "directory_deletion_in_progress",
             "groups are still changing; retry directory deletion",
         ));
     }
@@ -1515,8 +1516,8 @@ async fn delete_directory(
     for link in query_all::<ScimUserLink>(&state, USER_LINKS, "directoryId", &directory.id).await? {
         if !link.cleanup_complete {
             return Ok(api_error(
-                StatusCode::CONFLICT,
-                "directory_changed",
+                StatusCode::SERVICE_UNAVAILABLE,
+                "directory_deletion_in_progress",
                 "links are still changing; retry directory deletion",
             ));
         }
@@ -1561,16 +1562,26 @@ async fn delete_directory(
         Some(ScimDirectoryStatus::Deleted)
     ) {
         return Ok(api_error(
-            StatusCode::CONFLICT,
-            "directory_changed",
-            "directory state changed concurrently",
+            StatusCode::SERVICE_UNAVAILABLE,
+            "directory_deletion_in_progress",
+            "directory deletion is still in progress; retry the request",
         ));
     }
-    state
+    match state
         .store
-        .release_unique_if_owned("scim-token", &directory.token_key, &directory.id)
+        .release_unique("scim-token", &directory.token_key, &directory.id)
         .await
-        .map_err(internal)?;
+    {
+        Ok(()) => {}
+        Err(StoreError::Contention) => {
+            return Ok(api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "directory_deletion_in_progress",
+                "directory cleanup is still in progress; retry the request",
+            ));
+        }
+        Err(error) => return Err(internal(error)),
+    }
     audit_directory_deleted(&state, &context, &directory).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -1627,7 +1638,7 @@ async fn rotate_directory_token(
         Ok(false) => {
             state
                 .store
-                .release_unique("scim-token", &new_key)
+                .release_unique("scim-token", &new_key, &directory.id)
                 .await
                 .map_err(internal)?;
             return Ok(api_error(
@@ -1637,16 +1648,24 @@ async fn rotate_directory_token(
             ));
         }
         Err(error) => {
-            let release = state.store.release_unique("scim-token", &new_key).await;
-            if let Err(release_error) = release {
-                tracing::error!(?release_error, "failed to release unused SCIM token claim");
+            if let Err(release_error) = state
+                .store
+                .release_unique("scim-token", &new_key, &directory.id)
+                .await
+            {
+                tracing::error!(
+                    ?error,
+                    ?release_error,
+                    "failed to release unused SCIM token claim after directory update failed"
+                );
+                return Err(internal(release_error));
             }
             return Err(internal(error));
         }
     }
     state
         .store
-        .release_unique("scim-token", &directory.token_key)
+        .release_unique("scim-token", &directory.token_key, &directory.id)
         .await
         .map_err(internal)?;
     management_audit(
@@ -3518,7 +3537,19 @@ async fn create_group(
         );
     }
     if !matches!(directory_is_active(&state, &directory).await, Ok(true)) {
-        let _ = state.store.delete_ignoring_missing(GROUPS, &group.id).await;
+        if let Err(error) = state.store.delete_ignoring_missing(GROUPS, &group.id).await {
+            tracing::error!(
+                ?error,
+                directory_id = %directory.id,
+                group_id = %group.id,
+                "failed to remove SCIM group created while directory was inactive"
+            );
+            return scim_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "directory deletion is still in progress; retry directory deletion to finish group cleanup",
+                None,
+            );
+        }
         return scim_error(
             StatusCode::UNAUTHORIZED,
             "directory is no longer active",

@@ -12,3 +12,10 @@ Cargo.lock
 rust-toolchain.toml
 README.md
 artifacts/ci/tests/
+.env
+.env.*
+!.env.example
+!.env.template
+!.env.sample
+.secrets/
+secrets/

@@ -25,7 +25,7 @@ the evidence still needed for live integrations.
 | Management API | Full developer REST API with `sk_...` keys, per-family key scopes, pagination, rate limiting |
 | JWT templates | Custom-claim tokens (`{{user.email}}` substitution) minted on demand |
 | Webhooks | HMAC-signed outbound events with retries, durable delivery status, dead-letter listing, and operator replay |
-| Audit logs | Every significant action, queryable API |
+| Audit logs | Signed audit events in production, with query and verification APIs |
 | Billing | Stripe subscriptions: Checkout, customer portal, signature-verified webhooks, plan quotas |
 
 Multi-instance: one ts-auth deployment hosts many customer instances; every
@@ -91,7 +91,7 @@ mise exec -- cargo run --locked -p auth-app
 | `TS_AUTH_OPERATOR_KEY` | Bearer key that can create instances (`POST /v1/instances`) |
 | `TS_AUTH_METRICS_KEY` | Dedicated private `/metrics` scrape key sent as `X-TerraScale-Metrics-Key` (required outside Development) |
 | `TS_AUTH_LISTEN` | Listen URL (default `http://+:8080`) |
-| `TS_AUTH_RATE_LIMIT` | Management API requests per key per 5 min (default 1000) |
+| `TS_AUTH_RATE_LIMIT` | Management API requests per key per 5-minute process-local window (default 1000) |
 | `TS_AUTH_STRIPE_SECRET_KEY` | Stripe secret key (billing routes 503 when unset) |
 | `TS_AUTH_STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (`whsec_...`) |
 | `TS_AUTH_PRICE_PRO` / `TS_AUTH_PRICE_ENTERPRISE` | Stripe price ids for the plans |
@@ -105,6 +105,10 @@ mise exec -- cargo run --locked -p auth-app
 The four `TS_AUTH_SMTP_HOST` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` are
 all-or-nothing: setting any one without the others fails startup with the list
 of missing variables.
+
+The management rate limit is a fixed window maintained separately by each
+service process. Replicas do not share counters, and restarting a process resets
+its counters; this is protective throttling rather than a distributed quota.
 
 ### Self-service authentication setup
 
@@ -120,17 +124,49 @@ them. The hosted sign-in choices are at `/ui/{slug}/connections/list`.
 SAML sign-in accepts one verified signature on the response or its sole
 assertion under the configured profile. Starting another sign-in tab for the
 same connection replaces the first flow's correlation cookie; complete the
-latest flow.
+latest flow. Validated SAML assertions also create durable replay claims, so a
+duplicate assertion fails closed. Current storage has no expiry cleanup for
+these claims, so they are retained permanently. Do not remove them until a
+verified assertion-expiry and storage-lifecycle contract exists.
+
+The OAuth provider advertises and accepts `openid`, `profile`, and `email`.
+OAuth clients register `none`, `client_secret_basic`, or
+`client_secret_post`; endpoints enforce the registered method. Method `none`
+makes a client public, and public clients cannot register either secret-based
+method. Redirect URIs must use HTTPS except `localhost` or a loopback IP over
+HTTP, and authorization requests must exactly match a registered URI without a
+fragment or credentials.
+`prompt=none` uses only an active session and returns `login_required` when none
+exists. Forced reauthentication, consent, and account selection are unsupported:
+`prompt=login`, `prompt=consent`, and `prompt=select_account` return
+`login_required`, `consent_required`, and `account_selection_required`. The
+combined `prompt=login consent` returns `interaction_required`. Empty, duplicate,
+unknown, or `none` combined with another prompt value returns `invalid_request`.
+
+Upstream OIDC connections request `openid email profile` by default. A custom
+OIDC scope list must contain `openid` and `email`; valid configured scopes are
+stored on the connection and sent to the provider.
 
 Uniqueness of user-chosen identifiers (emails, usernames, org slugs,
 credentials) is enforced with atomic claim documents: CreateOnly writes the
 engine rejects on collision — race-safe without transactions. See
 `docs/parity.md` for the full Clerk/WorkOS/Auth0 feature matrix.
 An ambiguous TerraBase write can leave a uniqueness or quota claim reserved,
-or commit an API key before its plaintext is returned. The service fails
-closed; a timeout or compensation attempt does not prove that a delayed write
-did not commit. Operators may need to reconcile orphaned claims and list or
-revoke uncertain keys before retrying an operation.
+or commit an API key before its plaintext is returned. A timeout, a failed
+immediate read, or a compensation attempt does not prove that a delayed write
+did not commit. Keep an ambiguous claim reserved; never release it immediately
+from the failed request. Any manual repair must first quiesce the relevant
+writers, verify the claim and its expected owner, and use an owner-checked,
+conditional release. If the state is uncertain, retain the claim. List or
+revoke an uncertain API key before retrying its creation.
+
+Management mutations and audit writes are separate operations. User
+create/update/delete, instance update, and API-key revocation return success
+after the mutation commits even if audit persistence then fails; that failure
+is logged, and the mutation and audit event are not atomic. API-key creation
+and impersonation fail closed on audit errors: the new key or token is withheld
+and cleanup is attempted, though a second storage failure can prevent cleanup
+from being confirmed.
 
 New SCIM-created identities stay hidden as provisional, deleted users until
 their directory link and required organization membership are durable. The
@@ -143,10 +179,13 @@ or release its claims based only on a failed request.
 Instance-wide SCIM directories also control authentication: every associated
 active directory must have an active link to the user. A missing or `Deleting`
 directory denies authentication; a durably `Deleted` directory releases its
-authority. SCIM User DELETE denies authentication until a fresh SCIM User POST
-restores the link. Organization-scoped directories affect membership only, and
-an admin ban remains an independent denial. Reactivation can make an existing,
-unexpired session usable again; deactivation does not itself revoke sessions.
+authority. Directory DELETE can return `503` while child cleanup is changing;
+retry it to rerun group and link sweeps, even after the directory is `Deleted`,
+so late in-flight writes can be cleaned up. SCIM User DELETE denies
+authentication until a fresh SCIM User POST restores the link.
+Organization-scoped directories affect membership only, and an admin ban
+remains an independent denial. Reactivation can make an existing, unexpired
+session usable again; deactivation does not itself revoke sessions.
 
 ### Repairing a stranded SCIM userName claim
 
@@ -281,20 +320,41 @@ the global placement and creates the database through the regional data API.
   `/v1/S/api-keys*`, `/v1/S/oauth-clients*`, `/v1/S/connections*`,
   `/v1/S/directories*`, `/v1/S/organizations*` (incl. org `domains*`),
   `/v1/S/domains/{domain}/enroll`, `/v1/S/jwt-templates*`, `/v1/S/webhooks*`,
-  `/v1/S/audit-events`,
+  `/v1/S/audit-events`, `/v1/S/audit-events/verify`,
   `/v1/S/billing*`, `/v1/S/instance`
 - Billing webhook: `POST /v1/billing/webhook` (Stripe signature)
 - Quota repair: `POST /v1/{slug}/billing/quota/reconcile` removes expired pending seat claims whose user is absent, then recounts durable owners and unresolved admissions. Active claims remain reserved. It returns examined/removed/retained claim counts and requires the instance's authenticated management key.
 
+Seat assignment currently probes create-only claims up to the plan cap to
+preserve race-safe ownership. Dense allocation can require work proportional to
+that cap; an indexed or atomic allocator contract remains future work.
+
 Outbound webhook signing secrets are envelope-encrypted with `TS_AUTH_MASTER_KEY` at rest and are returned only once when an endpoint is created.
 Webhook delivery checkpoints are stored durably per instance, so a process restart resumes from the last successful tick and does not silently skip queued audit events.
-Each endpoint/event delivery also has a durable outcome (`succeeded`, `pending`, or `dead`); dead deliveries are visible at `/v1/{slug}/webhooks/dead-letter` and can be replayed with the corresponding operator endpoint after remediation. Audit exports include their integrity digest and authenticity seal so downstream retention systems can verify them.
-Audit exports carry integrity digests and authenticity seals. Keep the active and retained rotation keys available to verify historical exports after key rotation.
+Each endpoint/event delivery also has a durable outcome (`succeeded`, `pending`, or
+`dead`); dead deliveries are visible at `/v1/{slug}/webhooks/dead-letter` and can
+be replayed with the corresponding operator endpoint after remediation. Dispatch
+scans each tenant's pending audit events and pending deliveries, so work grows
+with that tenant's pending backlog. Due-time filtering happens after the scoped
+query because the current query contract cannot select only due deliveries.
+Audit events and dead letters use tenant-scoped cursor pages: list and
+dead-letter pages return at most 100 rows, while an audit-verification page
+checks at most 1,000 events. Cursors are opaque; audit list order follows the
+storage provider and is not guaranteed chronological. Verification covers only
+the events in the returned page and does not establish global completeness or
+detect deleted or omitted events. Audit exports include integrity digests and
+authenticity seals so downstream retention systems can verify them; keep active
+and retained rotation keys available to verify historical exports after key
+rotation.
 - Operator: `POST /v1/instances` (Bearer `TS_AUTH_OPERATOR_KEY`) requires an
   `Idempotency-Key` unique to each intentional instance bootstrap. Reuse the
   same key when retrying that request so its first key can be recovered.
-- Liveness/readiness: `GET /healthz` and `GET /readyz` (`/readyz` checks TerraBase member health).
-- Private metrics: `GET /metrics` (`X-TerraScale-Metrics-Key`), with bounded request, uptime, build, and readiness metrics.
+- Liveness/readiness: `GET /healthz` is process liveness; `GET /readyz`
+  checks TerraBase management health. Readiness responses and gauges reflect
+  the latest completed check, coalesced and cached per process for one second
+  after completion. Each check is capped at two seconds, and readiness starts
+  at zero until a check completes.
+- Private metrics: `GET /metrics` (`X-TerraScale-Metrics-Key`), with bounded request, uptime, build, and latest-observation readiness gauges.
 
 ## CI
 

@@ -1,10 +1,12 @@
 pub mod models;
 
+#[cfg(feature = "axum-response")]
 use axum::{
     Json,
-    http::StatusCode,
     response::{IntoResponse, Response},
 };
+use http::StatusCode;
+#[cfg(feature = "axum-response")]
 use serde::Serialize;
 
 pub type AppResult<T> = Result<T, AppError>;
@@ -16,11 +18,13 @@ pub struct AppError {
     pub message: String,
 }
 
+#[cfg(feature = "axum-response")]
 #[derive(Serialize)]
 struct ErrorBody<'a> {
     error: ErrorDetail<'a>,
 }
 
+#[cfg(feature = "axum-response")]
 #[derive(Serialize)]
 struct ErrorDetail<'a> {
     code: &'a str,
@@ -55,6 +59,7 @@ impl AppError {
     }
 }
 
+#[cfg(feature = "axum-response")]
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         (

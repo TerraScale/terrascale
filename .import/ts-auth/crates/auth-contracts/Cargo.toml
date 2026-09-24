@@ -3,11 +3,17 @@ name = "auth-contracts"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+axum-response = ["dep:axum"]
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-axum.workspace = true
+http = "1"
+axum = { workspace = true, optional = true }
 
 [lints]
 workspace = true

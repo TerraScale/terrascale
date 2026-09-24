@@ -568,9 +568,14 @@ fn email_from_session(session: &saml_rs::SsoSession) -> Option<String> {
         let values = session.attributes().get(name)?.values();
         (values.len() == 1).then(|| values[0].as_str())
     });
-    let candidate = from_attribute
-        .unwrap_or_else(|| session.name_id().value())
-        .trim();
+    let candidate = from_attribute.or_else(|| {
+        matches!(
+            session.name_id().format(),
+            Some(saml_rs::NameIdFormat::EmailAddress)
+        )
+        .then(|| session.name_id().value())
+    })?;
+    let candidate = candidate.trim();
     valid_email(candidate).then(|| candidate.to_owned())
 }
 
@@ -602,8 +607,10 @@ fn name_from_session(session: &saml_rs::SsoSession) -> Option<String> {
 mod tests {
     use super::*;
     use saml_rs::{
-        CertificatePem, Credentials, IdpConfig, IdpValidationPolicy, NameId, PrivateKeyPem,
-        RespondSso, SpDescriptor, SsoEndpoint, Subject,
+        CertificatePem, Credentials, IdpConfig, IdpValidationPolicy, NameId, NameIdFormat,
+        PrivateKeyPem, RespondSso, SpDescriptor, SsoEndpoint, Subject,
+        raw::{LoginResponseOptions, User as RawUser},
+        template::{LoginResponseAttribute, LoginResponseTemplate},
     };
 
     // Public saml-rs test fixture key pair, embedded so tests run offline.
@@ -750,6 +757,8 @@ yyoWAJDUHiAmvFA=
 
     fn signed_exchange(
         assertion_signed: bool,
+        name_id_format: Option<NameIdFormat>,
+        include_email_attribute: bool,
     ) -> Result<SignedExchange, Box<dyn std::error::Error>> {
         const SP_ID: &str = "https://sp.example.test/acs";
         const IDP_ID: &str = "https://idp.example.test/metadata";
@@ -775,17 +784,31 @@ yyoWAJDUHiAmvFA=
             metadata_sp.metadata_xml(),
             MetadataTrustPolicy::UnsignedForCompatibility,
         )?;
-        let idp = Saml::idp(
-            IdpConfig::builder(EntityId::try_new(IDP_ID)?)
-                .sso_endpoint(SsoEndpoint::redirect(IDP_SSO)?)
-                .credentials(Credentials {
-                    signing_key: Some(PrivateKeyPem::new(TEST_KEY)),
-                    signing_certificate: Some(CertificatePem::new(TEST_CERT)),
-                    ..Credentials::default()
-                })
-                .validation(IdpValidationPolicy::compatibility())
-                .build()?,
-        )?;
+        let mut idp_config = IdpConfig::builder(EntityId::try_new(IDP_ID)?)
+            .sso_endpoint(SsoEndpoint::redirect(IDP_SSO)?)
+            .credentials(Credentials {
+                signing_key: Some(PrivateKeyPem::new(TEST_KEY)),
+                signing_certificate: Some(CertificatePem::new(TEST_CERT)),
+                ..Credentials::default()
+            })
+            .validation(IdpValidationPolicy::compatibility());
+        if include_email_attribute {
+            idp_config = idp_config.templates(saml_rs::TemplatePolicy {
+                login_response_template: Some(LoginResponseTemplate {
+                    attributes: vec![LoginResponseAttribute {
+                        name: "email".into(),
+                        name_format: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic".into(),
+                        value_xsi_type: "xs:string".into(),
+                        value_tag: "email".into(),
+                        value_xmlns_xs: None,
+                        value_xmlns_xsi: None,
+                    }],
+                    ..LoginResponseTemplate::default()
+                }),
+                ..saml_rs::TemplatePolicy::default()
+            });
+        }
+        let idp = Saml::idp(idp_config.build()?)?;
         let idp_descriptor = IdpDescriptor::from_metadata_xml_for(
             EntityId::try_new(IDP_ID)?,
             idp.metadata_xml(),
@@ -801,19 +824,49 @@ yyoWAJDUHiAmvFA=
             BrowserInput::<AuthnRequest>::redirect(redirect.query().ok_or("missing SAML query")?),
             SamlValidationContext::new(SystemTime::now(), ReplayPolicy::DisabledForCompatibility),
         )?;
-        let response = idp.respond_sso(
-            &sp_descriptor,
-            &received,
-            Subject::new(NameId::new("alice@example.test", None), Vec::new()),
-            RespondSso::post(),
-        )?;
-        let fields = response.post_form()?.fields().to_vec();
+        let fields = if include_email_attribute {
+            let response = idp.raw_identity_provider().create_login_response(
+                sp.raw_service_provider(),
+                Binding::Post,
+                &RawUser {
+                    name_id: "alice@example.test".into(),
+                    attributes: vec![("email".into(), "claimed@example.test".into())],
+                    ..RawUser::default()
+                },
+                &LoginResponseOptions {
+                    in_response_to: Some(received.message().id().as_str()),
+                    relay_state: Some("test-relay"),
+                    ..LoginResponseOptions::default()
+                },
+            )?;
+            vec![
+                FormField::new("SAMLResponse", response.context),
+                FormField::new(
+                    "RelayState",
+                    response.relay_state.as_deref().unwrap_or("test-relay"),
+                ),
+            ]
+        } else {
+            idp.respond_sso(
+                &sp_descriptor,
+                &received,
+                Subject::new(
+                    NameId::new("alice@example.test", name_id_format),
+                    Vec::new(),
+                ),
+                RespondSso::post(),
+            )?
+            .post_form()?
+            .fields()
+            .to_vec()
+        };
         let xml = String::from_utf8(
             STANDARD.decode(
-                response
-                    .post_form()?
-                    .value("SAMLResponse")
-                    .ok_or("missing SAML response")?,
+                fields
+                    .iter()
+                    .find(|field| field.name() == "SAMLResponse")
+                    .ok_or("missing SAML response")?
+                    .value(),
             )?,
         )?;
         Ok((sp, idp_descriptor, started.pending, fields, xml))
@@ -823,7 +876,8 @@ yyoWAJDUHiAmvFA=
     fn validates_signed_response_and_signed_assertion_and_rejects_tampering()
     -> Result<(), Box<dyn std::error::Error>> {
         for assertion_signed in [false, true] {
-            let (sp, idp, pending, fields, xml) = signed_exchange(assertion_signed)?;
+            let (sp, idp, pending, fields, xml) =
+                signed_exchange(assertion_signed, Some(NameIdFormat::EmailAddress), false)?;
             assert!(safe_saml_xml_profile(xml.as_bytes()));
             let session = sp.finish_sso(
                 &idp,
@@ -913,9 +967,42 @@ yyoWAJDUHiAmvFA=
     }
 
     #[test]
+    fn signed_unspecified_and_persistent_name_ids_are_not_email_fallbacks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for format in [NameIdFormat::Unspecified, NameIdFormat::Persistent] {
+            let (sp, idp, pending, fields, _) = signed_exchange(false, Some(format), false)?;
+            let session = sp.finish_sso(
+                &idp,
+                &pending,
+                BrowserInput::<SsoResponse>::post(fields),
+                SamlValidationContext::new(
+                    SystemTime::now(),
+                    ReplayPolicy::DisabledForCompatibility,
+                ),
+            )?;
+            assert_eq!(email_from_session(&session), None);
+        }
+
+        let (sp, idp, pending, fields, _) =
+            signed_exchange(false, Some(NameIdFormat::Persistent), true)?;
+        let session = sp.finish_sso(
+            &idp,
+            &pending,
+            BrowserInput::<SsoResponse>::post(fields),
+            SamlValidationContext::new(SystemTime::now(), ReplayPolicy::DisabledForCompatibility),
+        )?;
+        assert_eq!(
+            email_from_session(&session).as_deref(),
+            Some("claimed@example.test")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn rejects_a_valid_signature_from_an_unpinned_certificate()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (sp, _, pending, fields, _) = signed_exchange(false)?;
+        let (sp, _, pending, fields, _) =
+            signed_exchange(false, Some(NameIdFormat::EmailAddress), false)?;
         let foreign_metadata = try_generate_idp_metadata(&IdpMetadataConfig {
             entity_id: "https://idp.example.test/metadata".into(),
             signing_certs: vec![FOREIGN_CERT.into()],

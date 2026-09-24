@@ -66,7 +66,8 @@ OP_KEY="smoke-operator-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
 METRICS_KEY="smoke-metrics-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
 if [[ ! -x "$SERVICE_BINARY" ]]; then
     echo "Rust service binary missing: $SERVICE_BINARY"
-    echo "Build it with: cargo build --release --locked -p auth-app"
+    echo "Set up sibling ../ts-rust at commit c590cd41eabf05bbd5982a1580c1bb01880c346a as documented under Running in README.md, then build from the repository root:"
+    echo "  cargo build --release --locked -p auth-app"
     exit 2
 fi
 
@@ -210,15 +211,44 @@ else
     check "webhook endpoint accepts controlled HTTPS sink" "yes" \
         "$([[ -n "$WH_SECRET" ]] && echo yes || echo no)"
 
-    API_USER_ID=$(curl -sf -H "Authorization: Bearer $API_KEY" "$SERVICE_LISTEN/v1/$SLUG/users?limit=10" | jq -re '.data[] | select(.email | startswith("api-user-")) | .id' | head -1)
+    API_USERS_RESULT=$(curl -sS -w $'\n%{http_code}' \
+        -H "Authorization: Bearer $API_KEY" \
+        "$SERVICE_LISTEN/v1/$SLUG/users?limit=10")
+    API_USERS_CURL_STATUS=$?
+    API_USERS_HTTP_STATUS=${API_USERS_RESULT##*$'\n'}
+    API_USERS_BODY=${API_USERS_RESULT%$'\n'*}
+
+    API_USER_ID=""
+    if [[ $API_USERS_CURL_STATUS -ne 0 ]]; then
+        fail "webhook trigger user-list request failed (curl exit $API_USERS_CURL_STATUS, HTTP $API_USERS_HTTP_STATUS)"
+    elif [[ "$API_USERS_HTTP_STATUS" != "200" ]]; then
+        fail "webhook trigger user-list request returned HTTP $API_USERS_HTTP_STATUS"
+    elif ! jq -e '(.data | type) == "array"' <<<"$API_USERS_BODY" >/dev/null 2>&1; then
+        fail "webhook trigger user-list response did not contain a valid data array"
+    else
+        API_USER_ID=$(jq -r '[.data[] | select((.email? | type) == "string") | select(.email | startswith("api-user-")) | .id | select((type == "string") and (length > 0))] | first // empty' <<<"$API_USERS_BODY")
+        if [[ -z "$API_USER_ID" ]]; then
+            fail "webhook trigger user was not found in the API user-list response"
+        fi
+    fi
+    WEBHOOK_TRIGGER_READY=0
     if [[ -n "$WH_SECRET" && -n "$API_USER_ID" ]]; then
-        curl -sf -o /dev/null -X PATCH -H "Authorization: Bearer $API_KEY" \
+        TRIGGER_HTTP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer $API_KEY" \
             -H 'Content-Type: application/json' -d '{"name":"Renamed User"}' \
-            "$SERVICE_LISTEN/v1/$SLUG/users/$API_USER_ID"
+            "$SERVICE_LISTEN/v1/$SLUG/users/$API_USER_ID")
+        TRIGGER_CURL_STATUS=$?
+        if [[ $TRIGGER_CURL_STATUS -ne 0 ]]; then
+            fail "webhook trigger update request failed (curl exit $TRIGGER_CURL_STATUS, HTTP $TRIGGER_HTTP_STATUS)"
+        elif [[ "$TRIGGER_HTTP_STATUS" != "200" ]]; then
+            fail "webhook trigger update request returned HTTP $TRIGGER_HTTP_STATUS"
+        else
+            WEBHOOK_TRIGGER_READY=1
+        fi
     fi
 
     DELIVERY=""
-    if [[ -n "$WH_SECRET" && -n "$API_USER_ID" ]]; then
+    if [[ $WEBHOOK_TRIGGER_READY -eq 1 ]]; then
         for _ in $(seq 1 30); do
             DELIVERY=$(tail -n "+$((SINK_MARK + 1))" "$WEBHOOK_SINK_CAPTURE_FILE" | \
                 jq -rc --arg user_id "$API_USER_ID" \
@@ -227,11 +257,12 @@ else
             sleep 1
         done
     fi
-    if [[ -z "$DELIVERY" ]]; then
-        fail "webhook delivery reaches the controlled sink"
-    else
-        pass "webhook delivery reaches the controlled sink"
-        SIGNATURE_OK=$(python3 -c "
+    if [[ $WEBHOOK_TRIGGER_READY -eq 1 ]]; then
+        if [[ -z "$DELIVERY" ]]; then
+            fail "webhook delivery reaches the controlled sink"
+        else
+            pass "webhook delivery reaches the controlled sink"
+            SIGNATURE_OK=$(python3 -c "
 import hashlib, hmac, json, sys
 d = json.loads(sys.argv[1]); secret = sys.argv[2].encode()
 headers = {k.lower(): v for k, v in d['headers'].items()}
@@ -239,7 +270,8 @@ ts = headers.get('x-tsauth-timestamp', '')
 sig = headers.get('x-tsauth-signature', '')
 expected = 'sha256=' + hmac.new(secret, (ts + '.' + d['body']).encode(), hashlib.sha256).hexdigest()
 print('yes' if hmac.compare_digest(expected, sig) else 'no')" "$DELIVERY" "$WH_SECRET")
-        check "webhook HMAC signature verifies" "yes" "$SIGNATURE_OK"
+            check "webhook HMAC signature verifies" "yes" "$SIGNATURE_OK"
+        fi
     fi
 fi
 

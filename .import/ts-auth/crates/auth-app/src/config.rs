@@ -15,6 +15,8 @@ pub struct AuthOptions {
     pub audit_verification_keys: Vec<Vec<u8>>,
     pub operator_key: String,
     pub metrics_key: Option<String>,
+    /// Protective per-process management request limit. Counters are local to
+    /// each replica and reset when its process restarts.
     pub rate_limit_per_window: u32,
     pub stripe_secret_key: Option<String>,
     pub stripe_webhook_secret: Option<String>,

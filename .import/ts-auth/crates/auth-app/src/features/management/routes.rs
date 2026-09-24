@@ -36,6 +36,7 @@ use utoipa::{
 
 use crate::{
     AppState,
+    app::body_limit_exceeded,
     features::{management::InstanceContext, users},
 };
 
@@ -104,6 +105,7 @@ impl OpenApi for ApiDoc {
                 Some("CreateUserRequest"),
                 vec![
                     ErrorResponse::bad_request(),
+                    ErrorResponse::new("413", "The request body exceeds the 1 MiB limit."),
                     ErrorResponse::unauthorized(),
                     ErrorResponse::forbidden(),
                     ErrorResponse::conflict(),
@@ -135,6 +137,7 @@ impl OpenApi for ApiDoc {
                 Some("UpdateUserRequest"),
                 vec![
                     ErrorResponse::bad_request(),
+                    ErrorResponse::new("413", "The request body exceeds the 1 MiB limit."),
                     ErrorResponse::unauthorized(),
                     ErrorResponse::forbidden(),
                     ErrorResponse::not_found("User not found"),
@@ -241,6 +244,7 @@ impl OpenApi for ApiDoc {
                 Some("UpdateInstanceRequest"),
                 vec![
                     ErrorResponse::bad_request(),
+                    ErrorResponse::new("413", "The request body exceeds the 1 MiB limit."),
                     ErrorResponse::unauthorized(),
                     ErrorResponse::forbidden(),
                     ErrorResponse::not_found("Instance not found"),
@@ -275,6 +279,7 @@ impl OpenApi for ApiDoc {
                 Some("CreateApiKeyRequest"),
                 vec![
                     ErrorResponse::bad_request(),
+                    ErrorResponse::new("413", "The request body exceeds the 1 MiB limit."),
                     ErrorResponse::unauthorized(),
                     ErrorResponse::forbidden(),
                     ErrorResponse::rate_limited(),
@@ -884,7 +889,7 @@ async fn create_user(
     if body
         .password
         .as_deref()
-        .is_some_and(|password| !password.is_empty() && !(8..=1024).contains(&password.len()))
+        .is_some_and(|password| !(8..=1024).contains(&password.len()))
     {
         return api_error(
             StatusCode::BAD_REQUEST,
@@ -893,7 +898,7 @@ async fn create_user(
         );
     }
     if let Some(email) = body.email.as_deref() {
-        if !valid_email(email) {
+        if !users::is_valid_email(email) {
             return api_error(
                 StatusCode::BAD_REQUEST,
                 "invalid_email",
@@ -931,7 +936,13 @@ async fn create_user(
             if let Err(error) =
                 audit(&state, &context, "user.created", json!({"user_id":user.id})).await
             {
-                return error.into_response();
+                tracing::error!(
+                    ?error,
+                    instance_id = %context.instance.id,
+                    user_id = %user.id,
+                    operation = "user.created",
+                    "management mutation committed but audit recording failed"
+                );
             }
             (StatusCode::CREATED, Json(user_view(&user, true))).into_response()
         }
@@ -1000,7 +1011,7 @@ async fn update_user(
             );
         }
         Ok(Patch::Value(value)) => {
-            if !valid_email(&value) {
+            if !users::is_valid_email(&value) {
                 return api_error(
                     StatusCode::BAD_REQUEST,
                     "invalid_email",
@@ -1023,6 +1034,7 @@ async fn update_user(
         Ok(patch) => patch_to_option(patch),
         Err(response) => return response,
     };
+    let username_was_patched = username.is_some();
     let name = match patch_string(body.name, "name") {
         Ok(patch) => patch_to_option(patch),
         Err(response) => return response,
@@ -1077,12 +1089,24 @@ async fn update_user(
             )
             .await
             {
-                return error.into_response();
+                tracing::error!(
+                    ?error,
+                    instance_id = %context.instance.id,
+                    user_id = %updated.id,
+                    operation = "user.updated",
+                    "management mutation committed but audit recording failed"
+                );
             }
             Json(user_view(&updated, true)).into_response()
         }
         Err(error) if error.status == StatusCode::CONFLICT => {
-            if email_was_patched {
+            if email_was_patched && username_was_patched {
+                api_error(
+                    StatusCode::CONFLICT,
+                    "identifier_taken",
+                    "email or username already exists",
+                )
+            } else if email_was_patched {
                 api_error(
                     StatusCode::CONFLICT,
                     "email_taken",
@@ -1123,10 +1147,18 @@ async fn delete_user(
     let was_live = !existing.deleted;
     match users::deprovision_user(&state, &context.instance.id, &user_id).await {
         Ok(true) if was_live => {
-            match audit(&state, &context, "user.deleted", json!({"user_id":user_id})).await {
-                Ok(()) => StatusCode::NO_CONTENT.into_response(),
-                Err(error) => error.into_response(),
+            if let Err(error) =
+                audit(&state, &context, "user.deleted", json!({"user_id":user_id})).await
+            {
+                tracing::error!(
+                    ?error,
+                    instance_id = %context.instance.id,
+                    user_id = %user_id,
+                    operation = "user.deleted",
+                    "management mutation committed but audit recording failed"
+                );
             }
+            StatusCode::NO_CONTENT.into_response()
         }
         Ok(true) => api_error(
             StatusCode::NOT_FOUND,
@@ -1282,6 +1314,35 @@ async fn impersonate_user(
     )
     .await
     {
+        tracing::error!(
+            ?error,
+            instance_id = %context.instance.id,
+            user_id = %user.id,
+            session_id = %session.id,
+            operation = "user.impersonated",
+            "impersonation audit recording failed; revoking the unreturned session"
+        );
+        match revoke_one_session(&state, &context.instance.id, &session.id).await {
+            Ok(true) => tracing::warn!(
+                instance_id = %context.instance.id,
+                user_id = %user.id,
+                session_id = %session.id,
+                "unreturned impersonation session revoked after audit failure"
+            ),
+            Ok(false) => tracing::error!(
+                instance_id = %context.instance.id,
+                user_id = %user.id,
+                session_id = %session.id,
+                "unreturned impersonation session was missing during audit-failure cleanup"
+            ),
+            Err(cleanup_error) => tracing::error!(
+                ?cleanup_error,
+                instance_id = %context.instance.id,
+                user_id = %user.id,
+                session_id = %session.id,
+                "failed to revoke unreturned impersonation session after audit failure"
+            ),
+        }
         return error.into_response();
     }
     (
@@ -1385,7 +1446,12 @@ async fn update_instance(
         Err(error) => return store_error(error),
     };
     if let Err(error) = audit(&state, &context, "instance.updated", json!({})).await {
-        return error.into_response();
+        tracing::error!(
+            ?error,
+            instance_id = %context.instance.id,
+            operation = "instance.updated",
+            "management mutation committed but audit recording failed"
+        );
     }
     Json(json!({"id":updated.id,"slug":updated.slug,"name":updated.name,"logo_url":updated.logo_url,"theme_color":updated.theme_color})).into_response()
 }
@@ -1438,7 +1504,7 @@ async fn create_api_key(
         id,
         instance_id: context.instance.id.clone(),
         name: name.trim().to_owned(),
-        secret_key: sha256_hex(&combined),
+        secret_key_hash: sha256_hex(&combined),
         scopes,
         created_at: now(),
         last_used_at: None,
@@ -1504,7 +1570,7 @@ async fn revoke_unreturned_api_key(state: &AppState, expected: &ApiKey) -> Resul
         if current.id != expected.id
             || current.instance_id != expected.instance_id
             || current.name != expected.name
-            || current.secret_key != expected.secret_key
+            || current.secret_key_hash != expected.secret_key_hash
             || current.scopes != expected.scopes
             || current.created_at != expected.created_at
         {
@@ -1559,7 +1625,13 @@ async fn revoke_api_key(
     )
     .await
     {
-        return error.into_response();
+        tracing::error!(
+            ?error,
+            instance_id = %context.instance.id,
+            api_key_id = %key.id,
+            operation = "api_key.revoked",
+            "management mutation committed but audit recording failed"
+        );
     }
     StatusCode::NO_CONTENT.into_response()
 }
@@ -1735,12 +1807,20 @@ fn patch_metadata(patch: Patch<Value>) -> Result<Option<Map<String, Value>>, Res
 async fn read_json<T: DeserializeOwned>(request: Request) -> Result<T, Response> {
     let bytes = to_bytes(request.into_body(), BODY_LIMIT)
         .await
-        .map_err(|_| {
-            api_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "a JSON body is required",
-            )
+        .map_err(|error| {
+            if body_limit_exceeded(&error) {
+                api_error(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "payload_too_large",
+                    "the request body exceeds the 1 MiB limit",
+                )
+            } else {
+                api_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    "a JSON body is required",
+                )
+            }
         })?;
     serde_json::from_slice(&bytes).map_err(|_| {
         api_error(
@@ -1749,17 +1829,6 @@ async fn read_json<T: DeserializeOwned>(request: Request) -> Result<T, Response>
             "the request body is not valid JSON",
         )
     })
-}
-
-fn valid_email(email: &str) -> bool {
-    let email = email.trim();
-    if email.len() < 3 || email.len() > 254 || email.chars().any(char::is_whitespace) {
-        return false;
-    }
-    let mut parts = email.split('@');
-    matches!(parts.next(), Some(local) if !local.is_empty())
-        && matches!(parts.next(), Some(domain) if domain.contains('.'))
-        && parts.next().is_none()
 }
 
 fn store_error(error: StoreError) -> Response {

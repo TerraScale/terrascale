@@ -24,7 +24,8 @@ pub trait EmailSender: Send + Sync + 'static {
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 }
 
-/// Logs emails instead of sending them, for zero-configuration development setups.
+/// Records non-sensitive delivery metadata instead of sending email, for
+/// zero-configuration development setups.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LoggingEmailSender;
 
@@ -36,7 +37,12 @@ impl EmailSender for LoggingEmailSender {
         body: &'a str,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
-            tracing::info!(to, subject, body, "email delivery (logging sender)");
+            tracing::info!(
+                recipient_bytes = to.len(),
+                subject_bytes = subject.len(),
+                body_bytes = body.len(),
+                "email delivery (logging sender)"
+            );
         })
     }
 }
@@ -135,4 +141,70 @@ struct EmailOpenApi;
 /// Returns an empty OpenAPI document because this module exposes no route surface.
 pub fn openapi() -> utoipa::openapi::OpenApi {
     EmailOpenApi::openapi()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        future::Future,
+        io,
+        sync::{Arc, Mutex},
+        task::{Context, Poll},
+    };
+
+    #[derive(Clone)]
+    struct CapturedLog(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for CapturedLog {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .expect("captured log lock should remain healthy")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn logging_sender_records_only_non_sensitive_message_metadata() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer_output = Arc::clone(&output);
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_target(false)
+            .with_writer(move || CapturedLog(Arc::clone(&writer_output)))
+            .finish();
+        let recipient = "private-person@example.test";
+        let subject = "Reset your password";
+        let body = "https://auth.example/reset?token=one-time-secret";
+        let mut context = Context::from_waker(std::task::Waker::noop());
+
+        tracing::subscriber::with_default(subscriber, || {
+            let mut delivery = Box::pin(LoggingEmailSender.send(recipient, subject, body));
+            assert!(matches!(
+                delivery.as_mut().poll(&mut context),
+                Poll::Ready(())
+            ));
+        });
+
+        let log = String::from_utf8(
+            output
+                .lock()
+                .expect("captured log lock should remain healthy")
+                .clone(),
+        )
+        .expect("captured log should be UTF-8");
+        assert!(log.contains(&format!("recipient_bytes={}", recipient.len())));
+        assert!(log.contains(&format!("subject_bytes={}", subject.len())));
+        assert!(log.contains(&format!("body_bytes={}", body.len())));
+        assert!(!log.contains(recipient));
+        assert!(!log.contains(subject));
+        assert!(!log.contains(body));
+    }
 }

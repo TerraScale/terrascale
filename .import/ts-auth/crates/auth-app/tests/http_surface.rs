@@ -22,7 +22,7 @@ use reqwest::{Client, StatusCode, header};
 use saml_rs::{
     AcsEndpoint, AssertionSignaturePolicy, AudienceValidationPolicy, AuthnRequest,
     AuthnRequestSigningPolicy, BrowserInput, CertificatePem, Credentials, EntityId, IdpConfig,
-    IdpValidationPolicy, MetadataTrustPolicy, NameId, PrivateKeyPem, RespondSso,
+    IdpValidationPolicy, MetadataTrustPolicy, NameId, NameIdFormat, PrivateKeyPem, RespondSso,
     ResponseSignaturePolicy, Saml, SamlValidationContext, SpConfig, SpDescriptor,
     SpValidationPolicy, SsoEndpoint, Subject,
 };
@@ -958,7 +958,10 @@ fn signed_saml_response(redirect_url: &str, acs_url: &str, email: &str) -> (Stri
         .respond_sso(
             &sp_descriptor,
             &received,
-            Subject::new(NameId::new(email, None), Vec::new()),
+            Subject::new(
+                NameId::new(email, Some(NameIdFormat::EmailAddress)),
+                Vec::new(),
+            ),
             RespondSso::post(),
         )
         .expect("test IdP should sign its SAML response");
@@ -1070,7 +1073,7 @@ async fn saml_acs_waits_for_local_mfa_and_restores_the_safe_continuation() {
             user_id: user.id.clone(),
             r#type: "totp".to_owned(),
             secret_box: Some(secret_box),
-            recovery_codes: None,
+            recovery_code_hashes: None,
             confirmed: true,
             created_at: unix_now(),
             last_used_totp_step: None,

@@ -84,6 +84,7 @@ impl TestServer {
 
     fn client(&self) -> Client {
         Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("client should build")
@@ -335,7 +336,7 @@ async fn mfa_recovery_link_carries_pending_sign_in_without_a_session() {
             user_id: user.id.clone(),
             r#type: "totp".into(),
             secret_box: Some(secret_box),
-            recovery_codes: None,
+            recovery_code_hashes: None,
             confirmed: true,
             created_at: now(),
             last_used_totp_step: None,
@@ -351,7 +352,7 @@ async fn mfa_recovery_link_carries_pending_sign_in_without_a_session() {
             user_id: user.id.clone(),
             r#type: "recovery".into(),
             secret_box: None,
-            recovery_codes: Some(vec![tokens::sha256_hex(recovery_code)]),
+            recovery_code_hashes: Some(vec![tokens::sha256_hex(recovery_code)]),
             confirmed: true,
             created_at: now(),
             last_used_totp_step: None,
@@ -446,7 +447,7 @@ async fn mfa_recovery_link_carries_pending_sign_in_without_a_session() {
         .expect("factor lookup should succeed")
         .expect("factor should remain");
     assert_eq!(
-        factor.recovery_codes,
+        factor.recovery_code_hashes,
         Some(Vec::new()),
         "the recovery code should be single-use"
     );

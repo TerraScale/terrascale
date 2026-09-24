@@ -10,7 +10,7 @@ use auth_contracts::{
     },
 };
 use auth_security::tokens::{random_token, sha256_hex};
-use auth_store::Predicate;
+use auth_store::{Predicate, StoreError};
 use axum::{
     Json, Router,
     body::to_bytes,
@@ -1083,11 +1083,17 @@ async fn delete_organization(
             "no such organization",
         ));
     };
-    state
-        .store
-        .delete_organization(&organization.id)
-        .await
-        .map_err(internal)?;
+    match state.store.delete_organization(&organization.id).await {
+        Ok(()) => {}
+        Err(StoreError::Contention) => {
+            return Ok(api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "organization_deletion_in_progress",
+                "organization cleanup is still in progress; retry the request",
+            ));
+        }
+        Err(error) => return Err(internal(error)),
+    }
     audit_organization_deleted(
         &state,
         &context.instance.id,

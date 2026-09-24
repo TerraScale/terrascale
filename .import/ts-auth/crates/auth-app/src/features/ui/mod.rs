@@ -52,7 +52,9 @@ fn render_page(
     logo_url: Option<&str>,
 ) -> String {
     let brand_override = if theme_color.is_some() || logo_url.is_some() {
-        let accent = escape_html(theme_color.unwrap_or("#6c5ce7"));
+        let accent = theme_color
+            .filter(|color| is_hex_color(color))
+            .unwrap_or("#6c5ce7");
         format!("<style>:root{{--accent:{accent}}}</style>")
     } else {
         String::new()
@@ -72,6 +74,12 @@ fn render_page(
         logo,
         body,
     )
+}
+
+fn is_hex_color(color: &str) -> bool {
+    color.len() == 7
+        && color.starts_with('#')
+        && color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Build the hosted session cookie with the source service's CSRF and browser
@@ -171,6 +179,23 @@ mod tests {
             Some("https://example.test/logo?a=1&b=2"),
         );
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn theme_color_accepts_only_six_hex_digits_before_css_interpolation() {
+        let valid = render_page("Sign in", "<p>Welcome</p>", None, Some("#12aBcD"), None);
+        assert!(valid.contains("<style>:root{--accent:#12aBcD}</style>"));
+
+        for invalid in [
+            "#112233;}body{display:none",
+            "red;background:url(https://attacker.example/pixel)",
+            "#12é456",
+            "#12345",
+        ] {
+            let html = render_page("Sign in", "<p>Welcome</p>", None, Some(invalid), None);
+            assert!(html.contains("<style>:root{--accent:#6c5ce7}</style>"));
+            assert!(!html.contains(invalid));
+        }
     }
 
     #[test]

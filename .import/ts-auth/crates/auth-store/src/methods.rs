@@ -1,5 +1,7 @@
 use super::*;
 
+const MAX_LIFECYCLE_SWEEP_PASSES: usize = 8;
+
 /// Operational fanout state shares the atomic audit document write, but is not
 /// part of the immutable event or its signed/exported representation.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -18,6 +20,13 @@ macro_rules! record_rw {
         }
         pub async fn $upsert(&self, record: &$model) -> StoreResult<()> {
             self.upsert($collection, &record.id, record).await
+        }
+    };
+}
+macro_rules! record_get {
+    ($model:ty, $collection:literal, $get:ident) => {
+        pub async fn $get(&self, id: &str) -> StoreResult<Option<$model>> {
+            self.get($collection, id).await
         }
     };
 }
@@ -683,9 +692,6 @@ impl AuthStore {
     ) -> StoreResult<Option<Organization>> {
         self.get("organizations", id).await
     }
-    pub async fn upsert_organization(&self, record: &Organization) -> StoreResult<()> {
-        self.upsert("organizations", &record.id, record).await
-    }
     async fn organization_is_active(&self, id: &str, instance_id: &str) -> StoreResult<bool> {
         Ok(self
             .get_organization(id)
@@ -728,16 +734,19 @@ impl AuthStore {
         let Some(org) = self.mark_organization_deleting(id).await? else {
             return Ok(());
         };
-        loop {
+        for pass in 0..=MAX_LIFECYCLE_SWEEP_PASSES {
             let memberships = self.list_memberships_by_org(id).await?;
             if memberships.is_empty() {
                 break;
+            }
+            if pass == MAX_LIFECYCLE_SWEEP_PASSES {
+                return Err(StoreError::Contention);
             }
             for member in memberships {
                 self.delete_membership(&member.id).await?;
             }
         }
-        loop {
+        for pass in 0..=MAX_LIFECYCLE_SWEEP_PASSES {
             let domains: Vec<_> = self
                 .list_org_domains(&org.instance_id)
                 .await?
@@ -747,14 +756,20 @@ impl AuthStore {
             if domains.is_empty() {
                 break;
             }
+            if pass == MAX_LIFECYCLE_SWEEP_PASSES {
+                return Err(StoreError::Contention);
+            }
             for domain in domains {
                 self.delete_org_domain(&domain.id).await?;
             }
         }
-        loop {
+        for pass in 0..=MAX_LIFECYCLE_SWEEP_PASSES {
             let invitations = self.list_invitations(id).await?;
             if invitations.is_empty() {
                 break;
+            }
+            if pass == MAX_LIFECYCLE_SWEEP_PASSES {
+                return Err(StoreError::Contention);
             }
             for invitation in invitations {
                 self.delete_ignoring_missing("invitations", &invitation.id)
@@ -769,7 +784,7 @@ impl AuthStore {
         {
             self.delete_scim_directory(&directory.id).await?;
         }
-        loop {
+        for pass in 0..=MAX_LIFECYCLE_SWEEP_PASSES {
             let claims: Vec<Value> = self
                 .query_all(
                     "scim_membership_claims",
@@ -779,6 +794,9 @@ impl AuthStore {
                 .await?;
             if claims.is_empty() {
                 break;
+            }
+            if pass == MAX_LIFECYCLE_SWEEP_PASSES {
+                return Err(StoreError::Contention);
             }
             for claim in claims {
                 let claim_id = claim.get("id").and_then(Value::as_str).ok_or_else(|| {
@@ -822,12 +840,7 @@ impl AuthStore {
             .filter(|org| org.status == OrganizationStatus::Active)
             .collect())
     }
-    record_rw!(
-        OrgMembership,
-        "memberships",
-        get_membership,
-        upsert_membership
-    );
+    record_get!(OrgMembership, "memberships", get_membership);
     pub async fn create_membership(&self, record: &OrgMembership) -> StoreResult<OrgMembership> {
         self.create_membership_inner(record, None).await
     }
@@ -971,7 +984,8 @@ impl AuthStore {
     }
     pub async fn delete_membership(&self, id: &str) -> StoreResult<()> {
         let record = self.get_membership(id).await?;
-        self.delete_ignoring_missing("memberships", id).await?;
+        self.delete_ignoring_missing_unchecked("memberships", id)
+            .await?;
         if let Some(record) = record {
             self.release_unique_if_owned("membership", &record.member_key, &record.id)
                 .await?;
@@ -992,7 +1006,7 @@ impl AuthStore {
         "orgId",
         100
     );
-    record_rw!(Invitation, "invitations", get_invitation, upsert_invitation);
+    record_get!(Invitation, "invitations", get_invitation);
     pub async fn create_invitation(&self, record: &Invitation) -> StoreResult<Invitation> {
         if !self
             .organization_is_active(&record.org_id, &record.instance_id)
@@ -1063,13 +1077,46 @@ impl AuthStore {
         "instanceId",
         100
     );
+    pub async fn list_pending_webhook_deliveries(
+        &self,
+        instance_id: &str,
+    ) -> StoreResult<Vec<WebhookDelivery>> {
+        self.query_all(
+            "webhook_deliveries",
+            &[
+                Predicate::equal("instanceId", instance_id)?,
+                Predicate::equal("status", "pending")?,
+            ],
+            100,
+        )
+        .await
+    }
+    pub async fn list_webhook_deliveries_page(
+        &self,
+        instance_id: &str,
+        status: &str,
+        limit: u32,
+        after: Option<&str>,
+    ) -> StoreResult<(Vec<WebhookDelivery>, Option<String>)> {
+        let predicates = [
+            Predicate::equal("instanceId", instance_id)?,
+            Predicate::equal("status", status)?,
+        ];
+        let (rows, next) = self
+            .query_page("webhook_deliveries", &predicates, limit, after)
+            .await?;
+        Ok((
+            rows.into_iter().map(|(delivery, _)| delivery).collect(),
+            next,
+        ))
+    }
     pub async fn get_audit_event(&self, id: &str) -> StoreResult<Option<AuditEvent>> {
         self.get("audit_events", id).await
     }
     pub async fn create_audit_event(&self, event: &AuditEvent) -> StoreResult<AuditEvent> {
         let mut sealed = event.clone();
         let hash = audit_hash(event)?;
-        sealed.integrity_version = Some(1);
+        sealed.integrity_version = Some(2);
         sealed.integrity_hash = Some(hash.clone());
         sealed.integrity_signature = self
             .audit_signing_key
@@ -1206,12 +1253,7 @@ impl AuthStore {
         "instanceId",
         100
     );
-    record_rw!(
-        ScimDirectory,
-        "scim_directories",
-        get_scim_directory,
-        upsert_scim_directory
-    );
+    record_get!(ScimDirectory, "scim_directories", get_scim_directory);
     pub async fn create_scim_directory(
         &self,
         record: &ScimDirectory,
@@ -1268,7 +1310,7 @@ impl AuthStore {
             }
         }
         let record = record.ok_or(StoreError::Contention)?;
-        loop {
+        for pass in 0..=MAX_LIFECYCLE_SWEEP_PASSES {
             let links: Vec<ScimUserLink> = self
                 .query_all(
                     "scim_user_links",
@@ -1279,17 +1321,23 @@ impl AuthStore {
             if links.is_empty() {
                 break;
             }
+            if pass == MAX_LIFECYCLE_SWEEP_PASSES {
+                return Err(StoreError::Contention);
+            }
             for link in links {
                 self.delete_ignoring_missing("scim_user_links", &link.id)
                     .await?;
             }
         }
-        loop {
+        for pass in 0..=MAX_LIFECYCLE_SWEEP_PASSES {
             let groups: Vec<Value> = self
                 .query_all("scim_groups", &[Predicate::equal("directoryId", id)?], 100)
                 .await?;
             if groups.is_empty() {
                 break;
+            }
+            if pass == MAX_LIFECYCLE_SWEEP_PASSES {
+                return Err(StoreError::Contention);
             }
             for group in groups {
                 let group_id = group.get("id").and_then(Value::as_str).ok_or_else(|| {
@@ -1377,7 +1425,7 @@ impl AuthStore {
         "instanceId",
         100
     );
-    record_rw!(OrgDomain, "org_domains", get_org_domain, upsert_org_domain);
+    record_get!(OrgDomain, "org_domains", get_org_domain);
     pub async fn create_org_domain(&self, record: &OrgDomain) -> StoreResult<OrgDomain> {
         if !self
             .organization_is_active(&record.org_id, &record.instance_id)
@@ -1408,7 +1456,8 @@ impl AuthStore {
     }
     pub async fn delete_org_domain(&self, id: &str) -> StoreResult<()> {
         let record = self.get_org_domain(id).await?;
-        self.delete_ignoring_missing("org_domains", id).await?;
+        self.delete_ignoring_missing_unchecked("org_domains", id)
+            .await?;
         if let Some(record) = record {
             self.release_unique_if_owned("org-domain", &record.domain_key, &record.id)
                 .await?;
@@ -1527,6 +1576,22 @@ impl AuthStore {
             .sort_by(|left, right| (right.created_at, &right.id).cmp(&(left.created_at, &left.id)));
         events.truncate(limit);
         Ok(events)
+    }
+    pub async fn list_audit_events_page(
+        &self,
+        instance_id: &str,
+        limit: u32,
+        after: Option<&str>,
+    ) -> StoreResult<(Vec<AuditEvent>, Option<String>)> {
+        let (rows, next) = self
+            .query_page(
+                "audit_events",
+                &[Predicate::equal("instanceId", instance_id)?],
+                limit,
+                after,
+            )
+            .await?;
+        Ok((rows.into_iter().map(|(event, _)| event).collect(), next))
     }
     pub async fn list_audit_events_since(
         &self,

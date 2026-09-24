@@ -4,7 +4,9 @@ use std::collections::HashSet;
 
 use auth_contracts::{
     AppError,
-    models::{Connection, Instance, Organization, OrganizationStatus, ScimDirectory, User},
+    models::{
+        Connection, Instance, OrgMembership, Organization, OrganizationStatus, ScimDirectory, User,
+    },
 };
 use auth_security::tokens::random_token;
 use axum::{
@@ -108,22 +110,29 @@ pub(super) async fn resolve_admin(
         .store
         .list_organizations(&instance.id)
         .await
-        .map_err(internal)?;
-    let mut admin_organizations = Vec::new();
-    for organization in organizations
+        .map_err(internal)?
         .into_iter()
         .filter(|org| is_active_organization_for_instance(org, &instance.id))
-    {
-        let memberships = state
+        .collect::<Vec<_>>();
+    let memberships = if organizations.is_empty() {
+        Vec::new()
+    } else {
+        state
             .store
-            .list_memberships_by_org(&organization.id)
+            .list_memberships_by_user(&user.id)
             .await
-            .map_err(internal)?;
+            .map_err(internal)?
+    };
+    let mut admin_organizations = Vec::new();
+    for organization in organizations {
         let mut has_eligible_admin_membership = false;
         for membership in memberships.iter().filter(|membership| {
-            membership.instance_id == instance.id
-                && membership.user_id == user.id
-                && membership.role == "admin"
+            is_admin_membership_for_organization(
+                membership,
+                &instance.id,
+                &user.id,
+                &organization.id,
+            )
         }) {
             if state
                 .store
@@ -151,11 +160,25 @@ fn is_active_organization_for_instance(organization: &Organization, instance_id:
     organization.instance_id == instance_id && organization.status == OrganizationStatus::Active
 }
 
+fn is_admin_membership_for_organization(
+    membership: &OrgMembership,
+    instance_id: &str,
+    user_id: &str,
+    organization_id: &str,
+) -> bool {
+    membership.instance_id == instance_id
+        && membership.user_id == user_id
+        && membership.org_id == organization_id
+        && membership.role == "admin"
+}
+
 fn session_token(headers: &HeaderMap) -> Option<&str> {
     let cookie = headers.get(header::COOKIE)?.to_str().ok()?;
     let mut found = None;
     for part in cookie.split(';').map(str::trim) {
-        let (name, value) = part.split_once('=')?;
+        let Some((name, value)) = part.split_once('=') else {
+            continue;
+        };
         if name == ui::SESSION_COOKIE_NAME {
             if found.is_some() || value.is_empty() {
                 return None;
@@ -300,6 +323,7 @@ fn render_portal(
 
 fn render_connection(connection: &Connection, origin: &str, slug: &str) -> String {
     let callback = callback_url_for_portal(origin, slug, connection);
+    let slug_path = encode_segment(slug);
     let provider = match connection.r#type.as_str() {
         "github" => "GitHub",
         "oidc" => "OpenID Connect",
@@ -327,7 +351,7 @@ fn render_connection(connection: &Connection, origin: &str, slug: &str) -> Strin
         "Enable"
     };
     format!(
-        "<div class=\"row\"><div><strong>{}</strong><small>{} · {}{}</small></div><form method=\"post\" action=\"/ui/{slug}/admin/connections/{connection_id}/{action}\"><button class=\"btn btn-secondary\" type=\"submit\">{button}</button></form></div>",
+        "<div class=\"row\"><div><strong>{}</strong><small>{} · {}{}</small></div><form method=\"post\" action=\"/ui/{slug_path}/admin/connections/{connection_id}/{action}\"><button class=\"btn btn-secondary\" type=\"submit\">{button}</button></form></div>",
         ui::escape_html(&connection.name),
         ui::escape_html(provider),
         state,
@@ -449,6 +473,65 @@ mod tests {
         assert!(!is_active_organization_for_instance(&deleted, "ins_1"));
     }
 
+    #[test]
+    fn admin_memberships_are_scoped_to_the_user_instance_and_organization() {
+        let admin = OrgMembership {
+            id: "mem_1".into(),
+            instance_id: "ins_1".into(),
+            org_id: "org_1".into(),
+            user_id: "usr_1".into(),
+            member_key: "ins_1:org_1:usr_1".into(),
+            role: "admin".into(),
+            created_at: 1,
+        };
+
+        assert!(is_admin_membership_for_organization(
+            &admin, "ins_1", "usr_1", "org_1"
+        ));
+        assert!(!is_admin_membership_for_organization(
+            &admin,
+            "ins_other",
+            "usr_1",
+            "org_1"
+        ));
+        assert!(!is_admin_membership_for_organization(
+            &admin,
+            "ins_1",
+            "usr_other",
+            "org_1"
+        ));
+        assert!(!is_admin_membership_for_organization(
+            &admin,
+            "ins_1",
+            "usr_1",
+            "org_other"
+        ));
+        assert!(!is_admin_membership_for_organization(
+            &OrgMembership {
+                role: "member".into(),
+                ..admin
+            },
+            "ins_1",
+            "usr_1",
+            "org_1"
+        ));
+    }
+
+    #[test]
+    fn session_token_skips_malformed_cookie_segments() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_str(&format!(
+                "flag; {}=session-token; malformed",
+                ui::SESSION_COOKIE_NAME
+            ))
+            .expect("cookie header is valid"),
+        );
+
+        assert_eq!(session_token(&headers), Some("session-token"));
+    }
+
     #[tokio::test]
     async fn admin_html_nonce_matches_its_csp_without_enabling_unsafe_eval() {
         let response = html_response("Authentication", "<main>Admin</main>", StatusCode::OK);
@@ -484,6 +567,7 @@ mod tests {
             instance_id: "ins_1".into(),
             r#type: "oidc".into(),
             name: "<img src=x onerror=alert(1)>".into(),
+            scopes: vec!["openid".into(), "email".into(), "profile".into()],
             enabled: true,
             org_id: Some("org_1".into()),
             issuer_url: None,
@@ -507,6 +591,7 @@ mod tests {
             )
         );
         assert!(html.contains("/admin/connections/con_abc/disable"));
+        assert!(html.contains("action=\"/ui/tenant%252Fone/admin/connections/con_abc/disable\""));
         assert_eq!(encode_segment("tenant/one"), "tenant%2Fone");
     }
 }

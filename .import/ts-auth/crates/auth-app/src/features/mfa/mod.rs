@@ -435,7 +435,7 @@ pub async fn verify_code(state: &AppState, user_id: &str, code: &str) -> AppResu
         }
         if factor.r#type == "recovery"
             && factor.confirmed
-            && factor.recovery_codes.as_ref().is_some_and(|codes| {
+            && factor.recovery_code_hashes.as_ref().is_some_and(|codes| {
                 codes
                     .iter()
                     .any(|stored| tokens::fixed_time_equals(stored, &candidate_hash))
@@ -546,7 +546,7 @@ async fn start_enrollment(
         user_id: user.id.clone(),
         r#type: "totp".into(),
         secret_box: Some(secret_box),
-        recovery_codes: None,
+        recovery_code_hashes: None,
         confirmed: false,
         created_at: now(),
         last_used_totp_step: None,
@@ -688,7 +688,7 @@ async fn confirm_enrollment(
         match state
             .store
             .try_update_mfa_factor(&recovery.id, &brand.id, &user.id, |factor| {
-                factor.recovery_codes = Some(hashes.clone());
+                factor.recovery_code_hashes = Some(hashes.clone());
                 true
             })
             .await
@@ -710,7 +710,7 @@ async fn confirm_enrollment(
             user_id: user.id.clone(),
             r#type: "recovery".into(),
             secret_box: None,
-            recovery_codes: Some(hashes),
+            recovery_code_hashes: Some(hashes),
             confirmed: true,
             created_at: now(),
             last_used_totp_step: None,
@@ -977,7 +977,7 @@ async fn recovery_page(
     if !factors.iter().any(|factor| {
         factor.r#type == "recovery"
             && factor
-                .recovery_codes
+                .recovery_code_hashes
                 .as_ref()
                 .is_some_and(|codes| !codes.is_empty())
     }) {
@@ -1339,7 +1339,7 @@ async fn regenerate_recovery_codes(
     let updated = state
         .store
         .try_update_mfa_factor(&id, &context.instance.id, &user_id, |factor| {
-            factor.recovery_codes = Some(hashes.clone());
+            factor.recovery_code_hashes = Some(hashes.clone());
             true
         })
         .await;

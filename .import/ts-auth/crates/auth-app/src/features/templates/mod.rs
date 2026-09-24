@@ -32,6 +32,15 @@ use crate::{
 
 const BODY_LIMIT: usize = 1024 * 1024;
 const RESERVED_CLAIMS: &[&str] = &["token_use", "iss", "exp", "iat", "nbf"];
+const TEMPLATE_PLACEHOLDERS: &[&str] = &[
+    "user.id",
+    "user.email",
+    "user.username",
+    "user.name",
+    "user.email_verified",
+    "org.id",
+    "org.role",
+];
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -208,6 +217,9 @@ async fn create_template(
     if has_reserved_claims(&claims) {
         return reserved_claim_error();
     }
+    if let Some(placeholder) = first_unknown_placeholder(&claims) {
+        return unknown_placeholder_error(placeholder);
+    }
     if body.lifetime_seconds.is_some_and(|lifetime| lifetime <= 0) {
         return api_error(
             StatusCode::BAD_REQUEST,
@@ -317,8 +329,15 @@ async fn update_template(
     }
     let claims = match body.claims {
         Some(claims) => match string_claims(claims) {
-            Some(claims) if has_reserved_claims(&claims) => return reserved_claim_error(),
-            Some(claims) => Some(claims),
+            Some(claims) => {
+                if has_reserved_claims(&claims) {
+                    return reserved_claim_error();
+                }
+                if let Some(placeholder) = first_unknown_placeholder(&claims) {
+                    return unknown_placeholder_error(placeholder);
+                }
+                Some(claims)
+            }
             None => {
                 return api_error(
                     StatusCode::BAD_REQUEST,
@@ -635,11 +654,7 @@ fn render_claim(value: &str, user: &User, membership: Option<&OrgMembership>) ->
         };
         let raw_placeholder = &after_open[..close];
         let placeholder = raw_placeholder.trim();
-        if !placeholder.is_empty()
-            && placeholder
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte == b'_' || byte == b'.')
-        {
+        if syntactically_valid_placeholder(placeholder) {
             rendered.push_str(match placeholder {
                 "user.id" => &user.id,
                 "user.email" => user.email.as_deref().unwrap_or(""),
@@ -680,6 +695,33 @@ fn has_org_placeholder(value: &str) -> bool {
         remaining = &after_open[close + 2..];
     }
     false
+}
+
+fn syntactically_valid_placeholder(placeholder: &str) -> bool {
+    !placeholder.is_empty()
+        && placeholder
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_' || byte == b'.')
+}
+
+fn first_unknown_placeholder(claims: &std::collections::BTreeMap<String, String>) -> Option<&str> {
+    for claim in claims.values() {
+        let mut remaining = claim.as_str();
+        while let Some(open) = remaining.find("{{") {
+            let after_open = &remaining[open + 2..];
+            let Some(close) = after_open.find("}}") else {
+                break;
+            };
+            let placeholder = after_open[..close].trim();
+            if syntactically_valid_placeholder(placeholder)
+                && !TEMPLATE_PLACEHOLDERS.contains(&placeholder)
+            {
+                return Some(placeholder);
+            }
+            remaining = &after_open[close + 2..];
+        }
+    }
+    None
 }
 
 #[expect(
@@ -768,6 +810,14 @@ fn reserved_claim_error() -> Response {
         StatusCode::BAD_REQUEST,
         "reserved_claim",
         "token_use, iss, exp, iat, and nbf are reserved template claims",
+    )
+}
+
+fn unknown_placeholder_error(placeholder: &str) -> Response {
+    api_error(
+        StatusCode::BAD_REQUEST,
+        "invalid_placeholder",
+        &format!("unknown template placeholder '{placeholder}'"),
     )
 }
 
@@ -886,6 +936,43 @@ mod tests {
         assert!(has_org_placeholder("{{user.id}}/{{ org.role }}"));
         assert!(!has_org_placeholder("{{ org.unknown }}"));
         assert!(!has_org_placeholder("{{ org.id"));
+    }
+
+    #[test]
+    fn placeholder_validation_rejects_unknown_identifiers_and_preserves_literals() {
+        let supported = std::collections::BTreeMap::from([(
+            "sub".into(),
+            "{{user.id}} {{user.email}} {{user.username}} {{user.name}} {{user.email_verified}} {{org.id}} {{org.role}}".into(),
+        )]);
+        assert_eq!(first_unknown_placeholder(&supported), None);
+
+        let unknown =
+            std::collections::BTreeMap::from([("sub".into(), "account={{user.mail}}".into())]);
+        assert_eq!(first_unknown_placeholder(&unknown), Some("user.mail"));
+
+        let literal_malformed = std::collections::BTreeMap::from([(
+            "sub".into(),
+            "{{User.ID}} {{user.mail-address}} {{user.id".into(),
+        )]);
+        assert_eq!(first_unknown_placeholder(&literal_malformed), None);
+    }
+
+    #[test]
+    fn optional_org_placeholders_still_render_empty_without_membership() {
+        let user: User = serde_json::from_value(json!({
+            "id": "usr_template_review",
+            "instanceId": "ins_template_review"
+        }))
+        .expect("minimal template user should deserialize");
+
+        assert_eq!(
+            render_claim("{{user.id}}/{{org.id}}/{{org.role}}", &user, None),
+            "usr_template_review//"
+        );
+        assert_eq!(
+            render_claim("{{User.ID}} {{user.id", &user, None),
+            "{{User.ID}} {{user.id"
+        );
     }
 
     #[test]

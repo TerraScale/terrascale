@@ -12,8 +12,9 @@ use std::{
 };
 
 use auth_contracts::models::{
-    AuditEvent, Instance, OrgMembership, Organization, OrganizationStatus, RefreshToken,
-    ScimDirectory, ScimDirectoryStatus, Subscription, User, VerificationToken,
+    AuditEvent, Instance, MfaFactor, OrgDomain, OrgMembership, Organization, OrganizationStatus,
+    RefreshToken, ScimDirectory, ScimDirectoryStatus, Subscription, User, VerificationToken,
+    WebhookDelivery,
 };
 use auth_store::{AuthStore, QueryTransport, RefreshRotateOutcome, ScimActivationOutcome};
 use serde_json::{Value, json};
@@ -28,6 +29,7 @@ struct Document {
 type PauseDelete = Arc<Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>>;
 type PausePut = Arc<Mutex<Option<(String, String, mpsc::Sender<()>, mpsc::Receiver<()>)>>>;
 type PauseGet = PausePut;
+type StaleQuery = Arc<Mutex<Option<(String, String, Value, Value)>>>;
 
 struct PutFault {
     collection: String,
@@ -43,6 +45,7 @@ struct Fixture {
     pause_put: PausePut,
     pause_get: PauseGet,
     put_fault: Arc<Mutex<Option<PutFault>>>,
+    stale_query: StaleQuery,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -62,12 +65,14 @@ impl Fixture {
         let pause_put: PausePut = Arc::new(Mutex::new(None));
         let pause_get: PauseGet = Arc::new(Mutex::new(None));
         let put_fault = Arc::new(Mutex::new(None::<PutFault>));
+        let stale_query: StaleQuery = Arc::new(Mutex::new(None));
         let records = Arc::clone(&documents);
         let signal = Arc::clone(&stop);
         let pause = Arc::clone(&pause_delete);
         let put_pause = Arc::clone(&pause_put);
         let get_pause = Arc::clone(&pause_get);
         let fault = Arc::clone(&put_fault);
+        let stale = Arc::clone(&stale_query);
         let thread = thread::spawn(move || {
             while !signal.load(Ordering::SeqCst) {
                 match listener.accept() {
@@ -77,6 +82,7 @@ impl Fixture {
                         let put_pause = Arc::clone(&put_pause);
                         let get_pause = Arc::clone(&get_pause);
                         let fault = Arc::clone(&fault);
+                        let stale_query = Arc::clone(&stale);
                         thread::spawn(move || {
                             stream
                                 .set_read_timeout(Some(Duration::from_secs(5)))
@@ -121,7 +127,7 @@ impl Fixture {
                             }
                             wait_for_target_put(&headers, &put_pause);
                             let (status, response, etag) =
-                                respond_with_fault(&headers, body, &records, &fault);
+                                respond_with_fault(&headers, body, &records, &fault, &stale_query);
                             wait_for_target_get_after_snapshot(&headers, &get_pause);
                             let phrase = if status >= 400 { "Error" } else { "OK" };
                             let response_text = response.to_string();
@@ -149,6 +155,7 @@ impl Fixture {
             pause_put,
             pause_get,
             put_fault,
+            stale_query,
             thread: Some(thread),
         }
     }
@@ -225,6 +232,25 @@ impl Fixture {
             commit,
         });
     }
+
+    fn inject_stale_query_row(
+        &self,
+        collection: &str,
+        predicate_path: &str,
+        predicate_value: Value,
+        row: Value,
+    ) {
+        *self.stale_query.lock().expect("stale query lock") = Some((
+            collection.into(),
+            predicate_path.into(),
+            predicate_value,
+            row,
+        ));
+    }
+
+    fn clear_stale_query_row(&self) {
+        *self.stale_query.lock().expect("stale query lock") = None;
+    }
 }
 
 fn wait_for_target_put(headers: &str, target: &PausePut) {
@@ -292,6 +318,7 @@ fn respond_with_fault(
     body: &[u8],
     records: &Arc<Mutex<HashMap<(String, String), Document>>>,
     fault: &Arc<Mutex<Option<PutFault>>>,
+    stale_query: &StaleQuery,
 ) -> (u16, Value, Option<u64>) {
     let injected = {
         let mut pending = fault.lock().expect("put fault lock");
@@ -309,7 +336,7 @@ fn respond_with_fault(
     };
     match injected {
         Some(PutFault { commit: true, .. }) => {
-            let _ = respond(headers, body, records);
+            let _ = respond(headers, body, records, stale_query);
             (503, json!({"error":{"code":"injected_after_commit"}}), None)
         }
         Some(PutFault { commit: false, .. }) => (
@@ -317,7 +344,7 @@ fn respond_with_fault(
             json!({"error":{"code":"injected_before_commit"}}),
             None,
         ),
-        None => respond(headers, body, records),
+        None => respond(headers, body, records, stale_query),
     }
 }
 
@@ -325,6 +352,7 @@ fn respond(
     headers: &str,
     body: &[u8],
     documents: &Arc<Mutex<HashMap<(String, String), Document>>>,
+    stale_query: &StaleQuery,
 ) -> (u16, Value, Option<u64>) {
     assert!(
         headers
@@ -371,6 +399,21 @@ fn respond(
             })
             .map(|((_, id), doc)| json!({"id":id,"version":doc.version,"value":doc.value}))
             .collect();
+        let stale_row = stale_query
+            .lock()
+            .expect("stale query lock")
+            .as_ref()
+            .and_then(|(target, path, value, row)| {
+                (target == collection
+                    && predicates.iter().any(|predicate| {
+                        predicate["path"].as_str() == Some(path.as_str())
+                            && predicate["value"] == *value
+                    }))
+                .then(|| row.clone())
+            });
+        if let Some(stale_row) = stale_row {
+            rows.push(stale_row);
+        }
         rows.sort_by(|left, right| left["id"].as_str().cmp(&right["id"].as_str()));
         let limit = request["limit"].as_u64().unwrap_or(100) as usize;
         let has_more = rows.len() > limit;
@@ -455,6 +498,155 @@ fn subscription(plan: &str) -> Subscription {
         "plan":plan, "status":"active"
     }))
     .expect("subscription model")
+}
+
+#[tokio::test]
+async fn user_pages_filter_by_tenant_before_applying_the_cursor() {
+    let fixture = Fixture::start();
+    let store = fixture.store();
+    for (id, instance_id) in [
+        ("a-target", "inst"),
+        ("b-foreign", "other"),
+        ("c-target", "inst"),
+        ("d-foreign", "other"),
+        ("e-target", "inst"),
+        ("f-foreign", "other"),
+    ] {
+        let mut record = user();
+        record.id = id.into();
+        record.instance_id = instance_id.into();
+        store
+            .create("users", id, &record)
+            .await
+            .expect("create user");
+    }
+
+    let (first, cursor) = store
+        .list_users("inst", 2, None)
+        .await
+        .expect("first tenant page");
+    assert_eq!(
+        first
+            .iter()
+            .map(|user| user.id.as_str())
+            .collect::<Vec<_>>(),
+        ["a-target", "c-target"]
+    );
+    assert_eq!(cursor.as_deref(), Some("c-target"));
+
+    let (second, cursor) = store
+        .list_users("inst", 2, cursor.as_deref())
+        .await
+        .expect("second tenant page");
+    assert_eq!(
+        second
+            .iter()
+            .map(|user| user.id.as_str())
+            .collect::<Vec<_>>(),
+        ["e-target"]
+    );
+    assert!(cursor.is_none());
+}
+
+#[tokio::test]
+async fn webhook_delivery_queries_filter_tenant_status_and_cursor() {
+    let fixture = Fixture::start();
+    let store = fixture.store();
+    for (id, instance_id, status) in [
+        ("delivery-a", "inst", "pending"),
+        ("delivery-b", "inst", "dead"),
+        ("delivery-c", "inst", "pending"),
+        ("delivery-d", "inst", "dead"),
+        ("delivery-e", "other", "dead"),
+    ] {
+        let delivery: WebhookDelivery = serde_json::from_value(json!({
+            "id":id,
+            "instanceId":instance_id,
+            "endpointId":"endpoint-1",
+            "eventId":"event-1",
+            "status":status
+        }))
+        .expect("webhook delivery");
+        store
+            .create("webhook_deliveries", id, &delivery)
+            .await
+            .expect("create delivery");
+    }
+
+    let pending = store
+        .list_pending_webhook_deliveries("inst")
+        .await
+        .expect("list pending");
+    assert_eq!(
+        pending
+            .iter()
+            .map(|delivery| delivery.id.as_str())
+            .collect::<Vec<_>>(),
+        ["delivery-a", "delivery-c"]
+    );
+
+    let (first, cursor) = store
+        .list_webhook_deliveries_page("inst", "dead", 1, None)
+        .await
+        .expect("first dead page");
+    assert_eq!(first[0].id, "delivery-b");
+    assert_eq!(cursor.as_deref(), Some("delivery-b"));
+    let (second, cursor) = store
+        .list_webhook_deliveries_page("inst", "dead", 1, cursor.as_deref())
+        .await
+        .expect("second dead page");
+    assert_eq!(second[0].id, "delivery-d");
+    assert!(cursor.is_none());
+}
+
+#[tokio::test]
+async fn recovery_code_consumption_uses_hashes_and_keeps_the_wire_key() {
+    let fixture = Fixture::start();
+    let store = fixture.store();
+    let factor: MfaFactor = serde_json::from_value(json!({
+        "id":"factor-1",
+        "instanceId":"inst",
+        "userId":"user-1",
+        "type":"totp",
+        "recoveryCodes":["hash-one", "hash-two"],
+        "confirmed":true,
+        "createdAt":1
+    }))
+    .expect("MFA factor with persisted recovery-code digest list");
+    assert_eq!(
+        factor
+            .recovery_code_hashes
+            .as_deref()
+            .expect("recovery codes")
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["hash-one", "hash-two"]
+    );
+    store
+        .create("mfa_factors", &factor.id, &factor)
+        .await
+        .expect("create factor");
+
+    assert!(
+        store
+            .consume_recovery_code("factor-1", "hash-one")
+            .await
+            .expect("consume code hash")
+    );
+    assert!(
+        !store
+            .consume_recovery_code("factor-1", "hash-one")
+            .await
+            .expect("cannot reuse code hash")
+    );
+    let persisted: Value = store
+        .get("mfa_factors", "factor-1")
+        .await
+        .expect("read persisted factor")
+        .expect("factor remains");
+    assert_eq!(persisted["recoveryCodes"], json!(["hash-two"]));
+    assert!(persisted.get("recoveryCodeHashes").is_none());
 }
 
 #[tokio::test]
@@ -592,7 +784,12 @@ async fn generic_unique_helpers_cannot_bypass_quota_ledger() {
         store.claim_quota_seat("inst", 1, "user-1").await.unwrap(),
         0
     );
-    assert!(store.release_unique("quota-seat", "inst:0").await.is_err());
+    assert!(
+        store
+            .release_unique("quota-seat", "inst:0", "user-1")
+            .await
+            .is_err()
+    );
     assert!(
         store
             .release_unique_if_owned("quota-seat", "inst:0", "user-1")
@@ -1184,6 +1381,97 @@ async fn family_marker_blocks_replacement_after_rotation_and_audit_seal_detects_
 }
 
 #[tokio::test]
+async fn audit_v2_seals_are_framed_and_recursively_canonical() {
+    let fixture = Fixture::start();
+    let store = fixture.store();
+    let event: AuditEvent = serde_json::from_value(json!({
+        "id":"audit-canonical",
+        "instanceId":"inst",
+        "type":"user.updated",
+        "actorId":"operator",
+        "data":{"nested":{"a":1,"b":2}},
+        "createdAt":42
+    }))
+    .expect("audit model");
+    let mut sealed = store.create_audit_event(&event).await.expect("seal event");
+    assert_eq!(sealed.integrity_version, Some(2));
+
+    let mut nested = serde_json::Map::new();
+    nested.insert("b".into(), json!(2));
+    nested.insert("a".into(), json!(1));
+    sealed.data.insert("nested".into(), Value::Object(nested));
+    assert!(store.has_valid_audit_integrity(&sealed));
+
+    let first: AuditEvent = serde_json::from_value(json!({
+        "id":"x\ny", "instanceId":"z", "type":"user.updated",
+        "data":{}, "createdAt":42
+    }))
+    .expect("first delimiter event");
+    let second: AuditEvent = serde_json::from_value(json!({
+        "id":"x", "instanceId":"y\nz", "type":"user.updated",
+        "data":{}, "createdAt":42
+    }))
+    .expect("second delimiter event");
+    let first = store.create_audit_event(&first).await.expect("seal first");
+    let second = store
+        .create_audit_event(&second)
+        .await
+        .expect("seal second");
+    assert_ne!(first.integrity_hash, second.integrity_hash);
+}
+
+#[tokio::test]
+async fn audit_pages_use_tenant_predicate_and_provider_cursor() {
+    let fixture = Fixture::start();
+    let store = fixture.store();
+    for (id, instance_id, created_at) in [
+        ("audit-a", "inst", 100),
+        ("audit-b-foreign", "other", 200),
+        ("audit-c", "inst", 10),
+        ("audit-e", "inst", 50),
+    ] {
+        let event: AuditEvent = serde_json::from_value(json!({
+            "id":id,
+            "instanceId":instance_id,
+            "type":"user.updated",
+            "data":{},
+            "createdAt":created_at
+        }))
+        .expect("audit event");
+        store
+            .create_audit_event(&event)
+            .await
+            .expect("create event");
+    }
+
+    let (first, cursor) = store
+        .list_audit_events_page("inst", 2, None)
+        .await
+        .expect("first audit page");
+    assert_eq!(
+        first
+            .iter()
+            .map(|event| event.id.as_str())
+            .collect::<Vec<_>>(),
+        ["audit-a", "audit-c"]
+    );
+    assert_eq!(cursor.as_deref(), Some("audit-c"));
+
+    let (second, cursor) = store
+        .list_audit_events_page("inst", 2, cursor.as_deref())
+        .await
+        .expect("second audit page");
+    assert_eq!(
+        second
+            .iter()
+            .map(|event| event.id.as_str())
+            .collect::<Vec<_>>(),
+        ["audit-e"]
+    );
+    assert!(cursor.is_none());
+}
+
+#[tokio::test]
 async fn unique_claim_release_requires_exact_owner() {
     let fixture = Fixture::start();
     let store = fixture.store();
@@ -1191,6 +1479,13 @@ async fn unique_claim_release_requires_exact_owner() {
         .claim_unique("user-email", "inst:a@example.com", "user-1")
         .await
         .expect("claim");
+    assert!(
+        store
+            .release_unique("user-email", "inst:a@example.com", "user-2")
+            .await
+            .expect_err("foreign release")
+            .is_precondition()
+    );
     assert!(
         !store
             .release_unique_if_owned("user-email", "inst:a@example.com", "user-2")
@@ -1204,16 +1499,88 @@ async fn unique_claim_release_requires_exact_owner() {
             .expect_err("claim remains held")
             .is_conflict()
     );
-    assert!(
-        store
-            .release_unique_if_owned("user-email", "inst:a@example.com", "user-1")
-            .await
-            .expect("owner release")
-    );
+    store
+        .release_unique("user-email", "inst:a@example.com", "user-1")
+        .await
+        .expect("owner release");
     store
         .claim_unique("user-email", "inst:a@example.com", "user-2")
         .await
         .expect("new owner claim");
+}
+
+#[tokio::test]
+async fn generic_child_deletes_require_typed_claim_cleanup() {
+    let fixture = Fixture::start();
+    let store = fixture.store();
+    let org: Organization = serde_json::from_value(json!({
+        "id":"org-1", "instanceId":"inst", "name":"Team", "slugKey":"inst:team"
+    }))
+    .expect("organization model");
+    store.create_organization(&org).await.expect("create org");
+    store
+        .create("users", "user-1", &user())
+        .await
+        .expect("create user");
+    let membership: OrgMembership = serde_json::from_value(json!({
+        "id":"member-1", "instanceId":"inst", "orgId":"org-1", "userId":"user-1",
+        "memberKey":"org-1:user-1", "role":"member"
+    }))
+    .expect("membership model");
+    store
+        .create_membership(&membership)
+        .await
+        .expect("create membership");
+    let membership_claim_id = auth_store::unique_claim_id("membership", "org-1:user-1");
+    assert!(store.delete("memberships", "member-1").await.is_err());
+    assert!(
+        store
+            .get::<Value>("uniques", &membership_claim_id)
+            .await
+            .expect("read membership claim")
+            .is_some()
+    );
+    store
+        .delete_membership("member-1")
+        .await
+        .expect("typed membership cleanup");
+    assert!(
+        store
+            .get::<Value>("uniques", &membership_claim_id)
+            .await
+            .expect("verify membership claim released")
+            .is_none()
+    );
+
+    let domain: OrgDomain = serde_json::from_value(json!({
+        "id":"domain-1", "instanceId":"inst", "orgId":"org-1",
+        "domain":"example.com", "domainKey":"inst:example.com", "createdAt":1
+    }))
+    .expect("organization domain model");
+    store
+        .create_org_domain(&domain)
+        .await
+        .expect("create organization domain");
+    let domain_claim_id = auth_store::unique_claim_id("org-domain", &domain.domain_key);
+    assert!(store.delete("org_domains", "domain-1").await.is_err());
+    assert!(
+        store
+            .get::<Value>("uniques", &domain_claim_id)
+            .await
+            .expect("read domain claim")
+            .is_some()
+    );
+    store
+        .delete_org_domain("domain-1")
+        .await
+        .expect("typed domain cleanup");
+    assert!(
+        store
+            .get::<Value>("uniques", &domain_claim_id)
+            .await
+            .expect("verify domain claim released")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -1271,6 +1638,123 @@ async fn organization_tombstone_rejects_child_committing_after_deletion_sweep() 
         .delete_organization("org-1")
         .await
         .expect("idempotent cleanup retry");
+}
+
+#[tokio::test]
+async fn organization_sweep_bounds_stale_children_and_resumes_from_tombstone() {
+    let fixture = Fixture::start();
+    let store = fixture.store();
+    let org: Organization = serde_json::from_value(json!({
+        "id":"org-1", "instanceId":"inst", "name":"Team", "slugKey":"inst:team"
+    }))
+    .expect("organization model");
+    store.create_organization(&org).await.expect("create org");
+    fixture.inject_stale_query_row(
+        "memberships",
+        "orgId",
+        json!("org-1"),
+        json!({
+            "id":"stale-membership", "version":1,
+            "value":{
+                "id":"stale-membership", "instanceId":"inst", "orgId":"org-1",
+                "userId":"user-1", "memberKey":"org-1:user-1", "role":"member"
+            }
+        }),
+    );
+
+    assert!(matches!(
+        store.delete_organization("org-1").await,
+        Err(auth_store::StoreError::Contention)
+    ));
+    assert_eq!(
+        store
+            .get_organization_for_deletion("org-1")
+            .await
+            .expect("read tombstone")
+            .expect("organization remains for retry")
+            .status,
+        OrganizationStatus::Deleting
+    );
+
+    fixture.clear_stale_query_row();
+    store
+        .delete_organization("org-1")
+        .await
+        .expect("retry completes cleanup");
+    assert_eq!(
+        store
+            .get_organization_for_deletion("org-1")
+            .await
+            .expect("read completed organization")
+            .expect("organization tombstone remains")
+            .status,
+        OrganizationStatus::Deleted
+    );
+}
+
+#[tokio::test]
+async fn scim_directory_sweep_bounds_stale_children_and_resumes_from_tombstone() {
+    let fixture = Fixture::start();
+    let store = fixture.store();
+    let directory: ScimDirectory = serde_json::from_value(json!({
+        "id":"dir-1", "instanceId":"inst", "tokenKey":"token-hash"
+    }))
+    .expect("directory model");
+    store
+        .create_scim_directory(&directory)
+        .await
+        .expect("create directory");
+    fixture.inject_stale_query_row(
+        "scim_user_links",
+        "directoryId",
+        json!("dir-1"),
+        json!({
+            "id":"stale-link", "version":1,
+            "value":{
+                "id":"stale-link", "instanceId":"inst", "directoryId":"dir-1",
+                "userId":"user-1"
+            }
+        }),
+    );
+
+    assert!(matches!(
+        store.delete_scim_directory("dir-1").await,
+        Err(auth_store::StoreError::Contention)
+    ));
+    assert_eq!(
+        store
+            .get_scim_directory("dir-1")
+            .await
+            .expect("read tombstone")
+            .expect("directory remains for retry")
+            .status,
+        ScimDirectoryStatus::Deleting
+    );
+
+    fixture.clear_stale_query_row();
+    store
+        .delete_scim_directory("dir-1")
+        .await
+        .expect("retry completes cleanup");
+    assert_eq!(
+        store
+            .get_scim_directory("dir-1")
+            .await
+            .expect("read completed directory")
+            .expect("directory tombstone remains")
+            .status,
+        ScimDirectoryStatus::Deleted
+    );
+    assert!(
+        store
+            .get::<Value>(
+                "uniques",
+                &auth_store::unique_claim_id("scim-token", "token-hash")
+            )
+            .await
+            .expect("read released token claim")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -1351,6 +1835,16 @@ async fn organization_cleanup_tombstones_directory_and_removes_scim_dependents()
     }))
     .unwrap();
     store.create_scim_directory(&directory).await.unwrap();
+    assert!(store.delete("scim_directories", "dir-1").await.is_err());
+    assert_eq!(
+        store
+            .get_scim_directory("dir-1")
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        ScimDirectoryStatus::Active
+    );
     store
         .create(
             "scim_user_links",

@@ -198,7 +198,9 @@ pub struct ApiKey {
     pub id: String,
     pub instance_id: String,
     pub name: String,
-    pub secret_key: String,
+    /// SHA-256 digest of the derived API key; never the raw bearer secret.
+    #[serde(rename = "secretKey")]
+    pub secret_key_hash: String,
     pub scopes: Vec<String>,
     pub created_at: i64,
     #[serde(default)]
@@ -217,7 +219,9 @@ pub struct MfaFactor {
     #[serde(default)]
     pub secret_box: Option<String>,
     #[serde(default)]
-    pub recovery_codes: Option<Vec<String>>,
+    /// SHA-256 digests of the one-time recovery codes; never plaintext codes.
+    #[serde(rename = "recoveryCodes")]
+    pub recovery_code_hashes: Option<Vec<String>>,
     #[serde(default)]
     pub confirmed: bool,
     pub created_at: i64,
@@ -379,7 +383,8 @@ pub struct SigningKeyRecord {
     pub id: String,
     pub instance_id: String,
     pub algorithm: String,
-    pub secret_base64: String,
+    /// Authenticated-encryption envelope under TS_AUTH_MASTER_KEY.
+    pub secret_box: String,
     #[serde(default)]
     pub active: bool,
     #[serde(default)]
@@ -395,6 +400,8 @@ pub struct Connection {
     pub instance_id: String,
     pub r#type: String,
     pub name: String,
+    #[serde(default = "default_connection_scopes")]
+    pub scopes: Vec<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
@@ -519,6 +526,9 @@ pub struct JwtTemplate {
 fn default_true() -> bool {
     true
 }
+fn default_connection_scopes() -> Vec<String> {
+    vec!["openid".into(), "email".into(), "profile".into()]
+}
 fn default_lifetime_seconds() -> i32 {
     300
 }
@@ -532,4 +542,79 @@ pub struct OrgDomain {
     pub domain: String,
     pub domain_key: String,
     pub created_at: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ApiKey, Connection, MfaFactor};
+
+    #[test]
+    fn connection_scopes_default_and_round_trip() {
+        let mut connection: Connection = serde_json::from_value(serde_json::json!({
+            "id": "conn_test",
+            "instanceId": "ins_test",
+            "type": "oidc",
+            "name": "Example issuer"
+        }))
+        .unwrap();
+        assert_eq!(
+            connection.scopes,
+            vec![
+                "openid".to_owned(),
+                "email".to_owned(),
+                "profile".to_owned()
+            ]
+        );
+
+        connection.scopes = vec!["openid".into(), "email".into(), "address".into()];
+        let json = serde_json::to_value(connection).unwrap();
+        assert_eq!(
+            json["scopes"],
+            serde_json::json!(["openid", "email", "address"])
+        );
+    }
+
+    #[test]
+    fn hash_field_renames_preserve_persisted_json_names() {
+        let api_key = ApiKey {
+            id: "sk_test".into(),
+            instance_id: "ins_test".into(),
+            name: "test".into(),
+            secret_key_hash: "api-key-digest".into(),
+            scopes: Vec::new(),
+            created_at: 1,
+            last_used_at: None,
+            revoked: false,
+        };
+        let api_key_json = serde_json::to_value(&api_key).unwrap();
+        assert_eq!(api_key_json["secretKey"], "api-key-digest");
+        assert!(api_key_json.get("secretKeyHash").is_none());
+        assert_eq!(
+            serde_json::from_value::<ApiKey>(api_key_json)
+                .unwrap()
+                .secret_key_hash,
+            "api-key-digest"
+        );
+
+        let factor = MfaFactor {
+            id: "mfa_test".into(),
+            instance_id: "ins_test".into(),
+            user_id: "user_test".into(),
+            r#type: "recovery".into(),
+            secret_box: None,
+            recovery_code_hashes: Some(vec!["recovery-digest".into()]),
+            confirmed: true,
+            created_at: 1,
+            last_used_totp_step: None,
+        };
+        let factor_json = serde_json::to_value(&factor).unwrap();
+        assert_eq!(factor_json["recoveryCodes"][0], "recovery-digest");
+        assert!(factor_json.get("recoveryCodeHashes").is_none());
+        assert_eq!(
+            serde_json::from_value::<MfaFactor>(factor_json)
+                .unwrap()
+                .recovery_code_hashes,
+            Some(vec!["recovery-digest".into()])
+        );
+    }
 }

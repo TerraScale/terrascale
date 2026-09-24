@@ -83,6 +83,7 @@ impl TestServer {
 
     fn client(&self) -> Client {
         Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("client should build")
@@ -132,7 +133,7 @@ async fn create_deletable_organization(
         id: format!("key_organization_delete_{slug}"),
         instance_id: instance.id.clone(),
         name: "organization deletion test".into(),
-        secret_key: sha256_hex(&secret),
+        secret_key_hash: sha256_hex(&secret),
         scopes: vec!["organizations".into()],
         created_at: current_time,
         last_used_at: None,
@@ -420,7 +421,7 @@ async fn direct_domain_enrollment_requires_verified_email_and_current_organizati
         id: "key_domain_enrollment".into(),
         instance_id: instance.id.clone(),
         name: "domain enrollment test".into(),
-        secret_key: sha256_hex(secret),
+        secret_key_hash: sha256_hex(secret),
         scopes: vec!["domains".into()],
         created_at: current_time,
         last_used_at: None,
@@ -565,7 +566,7 @@ async fn user_organization_list_hides_memberships_for_tombstoned_organizations()
         id: "key_hidden_tombstone_membership".into(),
         instance_id: instance.id.clone(),
         name: "users test".into(),
-        secret_key: sha256_hex(secret),
+        secret_key_hash: sha256_hex(secret),
         scopes: vec!["users".into()],
         created_at: current_time,
         last_used_at: None,
@@ -649,7 +650,7 @@ async fn organization_membership_routes_hide_deleting_scim_rows_but_keep_manual_
         id: "key_membership_auth_eligibility".into(),
         instance_id: instance.id.clone(),
         name: "organization membership test".into(),
-        secret_key: sha256_hex(secret),
+        secret_key_hash: sha256_hex(secret),
         scopes: vec!["organizations".into(), "users".into(), "domains".into()],
         created_at: current_time,
         last_used_at: None,
