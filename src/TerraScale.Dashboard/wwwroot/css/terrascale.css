@@ -261,6 +261,406 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 }
 
+@layer features {
+  /* Audit page: flat event review with filters, totals, and a full filtered export. */
+  .ts-audit-page {
+    gap: var(--ts-xl);
+  }
+
+  .ts-audit-page .ts-toolbar {
+    gap: var(--ts-md);
+  }
+
+  .ts-audit-filters {
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  .ts-audit-search-field {
+    flex: 1 1 18rem !important;
+    max-width: 26rem;
+  }
+
+  .ts-audit-filters .ts-input,
+  .ts-audit-filters .ts-select {
+    width: 100%;
+  }
+
+  @media (min-width: 64rem) {
+    .ts-audit-page .ts-toolbar {
+      flex-wrap: nowrap;
+    }
+
+    .ts-audit-filters {
+      flex: 1 1 auto;
+      flex-wrap: nowrap;
+    }
+
+    .ts-audit-search-field {
+      flex: 1 1 14rem !important;
+      max-width: 20rem;
+    }
+
+    .ts-audit-filters > .ts-filter-field:not(.ts-audit-search-field) {
+      flex: 0 1 auto;
+      min-width: 7rem;
+    }
+  }
+
+  .ts-audit-section {
+    padding-bottom: var(--ts-xl);
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-audit-section:last-of-type {
+    border-bottom: 0;
+  }
+
+  .ts-audit-section .ts-kpis {
+    width: 100%;
+  }
+
+  .ts-audit-table-wrap {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .ts-audit-table {
+    min-width: 58rem;
+  }
+
+  .ts-audit-table thead th {
+    padding-inline: var(--ts-md);
+  }
+
+  .ts-audit-table tbody td {
+    padding: var(--ts-lg) var(--ts-md);
+    vertical-align: top;
+  }
+
+  .ts-audit-table tbody tr:hover {
+    background: color-mix(in oklab, var(--ts-surface-muted) 50%, transparent);
+  }
+
+  .ts-audit-breakdown {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ts-audit-breakdown .ts-bar-track {
+    height: 6px;
+  }
+
+  .ts-audit-bar-warning {
+    background: var(--ts-warning);
+  }
+
+  .ts-audit-bar-danger {
+    background: var(--ts-danger);
+  }
+
+  .ts-audit-flip {
+    display: inline-flex;
+    transform: scaleX(-1);
+  }
+
+  @media (max-width: 64rem) {
+    .ts-audit-page .ts-toolbar {
+      align-items: flex-start;
+      padding-block: var(--ts-md);
+    }
+
+    .ts-audit-filters {
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 40rem) {
+    .ts-audit-page .ts-toolbar .ts-tabs,
+    .ts-audit-page .ts-toolbar .ts-tab {
+      height: 52px;
+    }
+
+    .ts-audit-filters > .ts-filter-field,
+    .ts-audit-filters > .ts-btn {
+      flex: 1 1 100%;
+      max-width: none;
+      width: 100%;
+    }
+
+    .ts-audit-breakdown {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .ts-audit-section .ts-section-head > .ts-row,
+    .ts-audit-section .ts-section-head > .ts-btn {
+      width: 100%;
+    }
+
+    .ts-audit-section .ts-section-head > .ts-row .ts-btn {
+      flex: 1;
+    }
+  }
+}
+
+@layer features {
+  /* Engine page: live health, region catalog, and metric families without panels. */
+  .ts-engine-page {
+    gap: var(--ts-xl);
+  }
+
+  .ts-engine-section {
+    padding-bottom: var(--ts-xl);
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-engine-section:last-child {
+    border-bottom: 0;
+  }
+
+  .ts-engine-setup-alert {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-md);
+    padding: var(--ts-lg) 0 0;
+    border: 0;
+    border-top: 1px solid var(--ts-line);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .ts-engine-setup-alert .ts-alert-body {
+    display: block;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .ts-engine-setup-alert code {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .ts-engine-table-wrap {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .ts-engine-table-wrap .ts-table {
+    min-width: 42rem;
+  }
+
+  .ts-engine-table-wrap .ts-table th,
+  .ts-engine-table-wrap .ts-table td {
+    padding-inline: var(--ts-md);
+  }
+
+  .ts-engine-metric-list {
+    max-height: 26rem;
+    overflow-y: auto;
+  }
+
+  @media (max-width: 40rem) {
+    .ts-engine-page .ts-toolbar {
+      min-height: 52px;
+    }
+
+    .ts-engine-page .ts-toolbar .ts-tab {
+      height: 52px;
+    }
+
+    .ts-engine-page .ts-toolbar > .ts-btn {
+      width: 100%;
+    }
+
+    .ts-engine-table-wrap .ts-table {
+      min-width: 36rem;
+    }
+  }
+}
+
+@layer features {
+  /* Notifications page: a flat inbox with compact totals and action forms. */
+  .ts-notifications-page {
+    gap: var(--ts-xl);
+  }
+
+  .ts-notifications-toolbar-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--ts-sm);
+  }
+
+  .ts-notifications-toolbar-actions form {
+    display: flex;
+  }
+
+  .ts-notifications-filters {
+    margin-left: auto;
+  }
+
+  .ts-notifications-filters .ts-filter-field,
+  .ts-notifications-filters .ts-select {
+    min-width: 11rem;
+  }
+
+  .ts-notifications-section {
+    padding-bottom: var(--ts-xl);
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-notifications-section:last-child {
+    border-bottom: 0;
+  }
+
+  .ts-notifications-list {
+    display: grid;
+    min-width: 0;
+  }
+
+  .ts-notifications-page .ts-notification {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    align-items: start;
+    gap: var(--ts-lg);
+    min-height: 0;
+    padding: var(--ts-lg) 0;
+    border: 0;
+    border-top: 1px solid var(--ts-line);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .ts-notifications-page .ts-notification:first-child {
+    border-top: 0;
+  }
+
+  .ts-notifications-page .ts-notification-unread {
+    padding-left: var(--ts-md);
+    border-left: 2px solid var(--ts-accent);
+    background: color-mix(in oklab, var(--ts-accent) 5%, transparent);
+  }
+
+  .ts-notifications-page .ts-notification-icon {
+    display: grid;
+    width: 40px;
+    height: 40px;
+    margin: 0;
+    place-items: center;
+    border: 0;
+    border-radius: var(--ts-radius-control);
+    background: color-mix(in oklab, var(--ts-info) 12%, transparent);
+    color: var(--ts-info);
+  }
+
+  .ts-notifications-page .ts-notification-icon-danger {
+    background: color-mix(in oklab, var(--ts-danger) 12%, transparent);
+    color: var(--ts-danger);
+  }
+
+  .ts-notifications-page .ts-notification-icon-warning {
+    background: color-mix(in oklab, var(--ts-warning) 12%, transparent);
+    color: var(--ts-warning);
+  }
+
+  .ts-notifications-page .ts-notification-icon-success {
+    background: color-mix(in oklab, var(--ts-success) 12%, transparent);
+    color: var(--ts-success);
+  }
+
+  .ts-notifications-page .ts-notification-body {
+    gap: var(--ts-sm);
+  }
+
+  .ts-notifications-page .ts-notification-heading,
+  .ts-notifications-page .ts-notification-details {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--ts-sm);
+  }
+
+  .ts-notifications-page .ts-notification-text {
+    line-height: 1.5;
+  }
+
+  .ts-notifications-page .ts-notification-meta {
+    margin: 0;
+  }
+
+  .ts-notifications-page .ts-notification-mark {
+    min-height: var(--ts-control-h-sm);
+    height: var(--ts-control-h-sm);
+    margin-top: var(--ts-xs);
+    border: 1px solid var(--ts-line);
+  }
+
+  .ts-notifications-section .ts-pager {
+    padding-top: var(--ts-lg);
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-notifications-flip {
+    display: inline-flex;
+    transform: scaleX(-1);
+  }
+
+  .ts-notifications-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: var(--ts-xxxl) var(--ts-xl);
+    text-align: center;
+  }
+
+  @media (max-width: 40rem) {
+    .ts-notifications-page .ts-toolbar {
+      align-items: flex-start;
+      padding-block: var(--ts-md);
+    }
+
+    .ts-notifications-page .ts-toolbar .ts-tabs,
+    .ts-notifications-page .ts-toolbar .ts-tab {
+      height: 52px;
+    }
+
+    .ts-notifications-toolbar-actions,
+    .ts-notifications-toolbar-actions form,
+    .ts-notifications-toolbar-actions .ts-btn {
+      width: 100%;
+    }
+
+    .ts-notifications-filters {
+      width: 100%;
+      margin-left: 0;
+    }
+
+    .ts-notifications-filters .ts-filter-field,
+    .ts-notifications-filters .ts-filter-field .ts-select,
+    .ts-notifications-filters > .ts-btn {
+      width: 100%;
+    }
+
+    .ts-notifications-page .ts-notification {
+      grid-template-columns: 40px minmax(0, 1fr);
+      padding-block: var(--ts-lg);
+    }
+
+    .ts-notifications-page .ts-notification form {
+      grid-column: 2;
+    }
+
+    .ts-notifications-page .ts-notification-mark {
+      margin-top: 0;
+    }
+  }
+}
+
 @layer base {
 
   /* 2. Fonts ================================================================ */
@@ -3116,121 +3516,23 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   /* --- Feature: Home --------------------------------------------------
-     v1 sources: app/(dashboard)/page-styles.ts, src/features/home/home-styles.ts,
-     src/components/ui/Panel.tsx, src/components/ui/ChartShell.tsx. */
-
-  /* Metric cards (page-styles.ts metricCard/metricLabel/metricValue/metricDetail).
-     Scoped: other features keep the shared mono KPI look. */
-  .ts-home-metrics .ts-card {
-    box-shadow: var(--ts-shadow-panel);
-  }
-
-  .ts-home-metrics .ts-metric-label {
-    font-size: var(--ts-fs-ui);
-    font-weight: var(--ts-fw-semibold);
-  }
-
-  .ts-home-metrics .ts-metric-value {
-    font-family: var(--ts-font-sans);
-    font-size: 24px;
-    font-weight: var(--ts-fw-semibold);
-    line-height: 32px;
-  }
-
-  .ts-home-metrics .ts-metric-detail {
-    font-size: var(--ts-fs-ui);
-    line-height: 1.6;
-  }
-
-  /* MetricSparkline island: rule + summary row + 48px chart (home-styles.ts). */
-  .ts-metric-chart {
-    border-top: 1px solid color-mix(in oklab, var(--ts-line) 70%, transparent);
-    margin-top: var(--ts-md);
-    padding-top: var(--ts-md);
-  }
-
-  .ts-metric-summary {
-    display: flex;
-    justify-content: space-between;
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    margin-bottom: var(--ts-xs);
-  }
-
-  .ts-home-metrics .ts-sparkline {
-    height: 48px;
-    margin-top: 0;
-  }
-
-  /* Home panels use v1's glass Panel (Panel.tsx: borderWidth 0, glassBg,
-     cardEdge, paddingBlock 20, gap 20, header rule with 20/16px insets). */
-  .ts-home .ts-panel {
-    border: none;
-    background-color: var(--ts-glass-bg);
-    backdrop-filter: blur(var(--ts-blur));
-    -webkit-backdrop-filter: blur(var(--ts-blur));
-    box-shadow: var(--ts-card-edge);
-    padding: 20px 0;
-    gap: 20px;
-  }
-
-  .ts-home .ts-panel-header {
-    border-bottom: 1px solid var(--ts-line);
-    padding: 0 20px 20px;
-  }
-
-  @media (min-width: 64rem) {
-    .ts-home .ts-panel-header {
-      padding: 0 16px 16px;
-    }
-  }
-
-  .ts-home .ts-panel-subtitle {
-    font-size: var(--ts-fs-body);
-    line-height: 1.6;
-  }
+     Flat workspace summary, setup guidance and activity chart. Shared
+     toolbar, KPI, section, chart and empty-state rules stay generic. */
 
   .ts-panel-icon {
     color: var(--ts-ink-muted);
   }
 
-  /* Activity panel (ChartShell body padding 16px, home-styles.ts controls). */
+  /* Activity chart stays a direct child of its flat section. */
   .ts-chart-body {
     display: flex;
     flex-direction: column;
     gap: var(--ts-md);
-    padding: var(--ts-lg);
     min-width: 0;
   }
 
   .ts-home .ts-chart {
     height: 224px;
-  }
-
-  /* Segmented range control: muted track, raised active segment. */
-  .ts-activity-tabs {
-    background-color: var(--ts-surface-muted);
-  }
-
-  .ts-activity-tabs .ts-tab[aria-selected="true"] {
-    background-color: var(--ts-surface);
-    box-shadow: var(--ts-shadow-panel);
-  }
-
-  .ts-activity-controls {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--ts-md);
-  }
-
-  .ts-activity-total {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--ts-sm);
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-ui);
   }
 
   .ts-activity-total-dot {
@@ -3240,61 +3542,14 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     background-color: var(--ts-success);
   }
 
-  .ts-activity-total strong {
-    color: var(--ts-ink);
-    font-weight: var(--ts-fw-semibold);
-  }
-
-  .ts-activity-empty {
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-control);
-    background-color: var(--ts-surface-muted);
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-ui);
-    padding: var(--ts-sm) var(--ts-md);
-  }
-
-  /* Getting-started side rail (page-styles.ts:77-161). */
-  .ts-home-panel-body {
-    display: grid;
-    gap: var(--ts-xl);
-    padding: var(--ts-xl);
-  }
+  /* Getting-started list and connection options stay flat and share the
+     section hairline rhythm. */
 
   .ts-home-intro {
     margin: 0;
     max-width: 72ch;
     font-size: var(--ts-fs-body);
     line-height: 1.6;
-  }
-
-  .ts-getting-started-item {
-    display: flex;
-    gap: var(--ts-md);
-    align-items: flex-start;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    padding: var(--ts-lg);
-    background-color: var(--ts-surface-muted);
-  }
-
-  .ts-getting-started-number {
-    display: grid;
-    place-items: center;
-    flex-shrink: 0;
-    width: 28px;
-    height: 28px;
-    border-radius: var(--ts-radius-control);
-    background-color: var(--ts-surface);
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    font-weight: var(--ts-fw-semibold);
-  }
-
-  .ts-getting-started-title {
-    font-size: var(--ts-fs-body);
-    font-weight: var(--ts-fw-semibold);
-    color: var(--ts-ink);
   }
 
   .ts-getting-started-cta {
@@ -3310,73 +3565,6 @@ cross-fade replayed on every page change and made the dashboard flicker. */
 
   .ts-getting-started-cta:hover {
     text-decoration: underline;
-  }
-
-  /* Connect section (page-styles.ts:154-256). */
-  .ts-connect-section {
-    display: grid;
-    gap: var(--ts-lg);
-    border-top: 1px solid var(--ts-line);
-    padding-top: var(--ts-xl);
-  }
-
-  .ts-connect-grid {
-    gap: var(--ts-md);
-  }
-
-  .ts-connect-card {
-    padding: var(--ts-lg);
-    gap: var(--ts-sm);
-  }
-
-  .ts-connect-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: var(--ts-radius-control);
-    background-color: var(--ts-surface-muted);
-    color: var(--ts-accent);
-  }
-
-  .ts-connect-card .ts-getting-started-title {
-    font-size: var(--ts-fs-ui);
-  }
-
-  .ts-badge-preview {
-    border-radius: var(--ts-radius-pill);
-    text-transform: uppercase;
-    letter-spacing: 0.025em;
-    font-weight: var(--ts-fw-semibold);
-    justify-self: start;
-  }
-
-  .ts-connect-snippet {
-    background-color: var(--ts-surface);
-    border-radius: var(--ts-radius-panel);
-  }
-
-  .ts-connect-snippet .ts-snippet-header {
-    background-color: var(--ts-surface-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.025em;
-    font-weight: var(--ts-fw-semibold);
-  }
-
-  .ts-connect-snippet .ts-snippet-body {
-    padding: var(--ts-lg);
-  }
-
-  /* Overview two-column layout (page-styles.ts:10-17: gap xl, fluid rail). */
-  .ts-overview-grid {
-    gap: var(--ts-xl);
-  }
-
-  @media (min-width: 80rem) {
-    .ts-overview-grid {
-      grid-template-columns: minmax(0, 1fr) minmax(360px, 0.85fr);
-    }
   }
 
   /* Stale monitoring alert (v1 compat alert.tsx + shadcn alert: padding
@@ -3410,6 +3598,197 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     gap: var(--ts-md);
     align-items: center;
     justify-content: space-between;
+  }
+
+  /* Flat Home layout: shared toolbar, section, KPI and chart primitives carry
+     the structure; these rules only cover Home's setup and connection lists. */
+  .ts-home-section {
+    gap: var(--ts-lg);
+    min-width: 0;
+  }
+
+  .ts-home-section + .ts-home-section {
+    padding-top: var(--ts-xl);
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-home-metrics > div { gap: var(--ts-xs); }
+
+  .ts-home-metrics dt {
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-home-metrics .ts-kpi-value {
+    font-family: var(--ts-font-sans);
+    font-size: 24px;
+    line-height: 32px;
+  }
+
+  .ts-home-section-body {
+    display: grid;
+    gap: var(--ts-xl);
+    min-width: 0;
+  }
+
+  .ts-home-intro {
+    margin: 0;
+    max-width: 72ch;
+    font-size: var(--ts-fs-body);
+    line-height: 1.6;
+  }
+
+  .ts-home-steps { display: grid; }
+
+  .ts-getting-started-item {
+    display: flex;
+    gap: var(--ts-md);
+    align-items: flex-start;
+    min-width: 0;
+    padding: var(--ts-lg) 0;
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-getting-started-item:last-child { border-bottom: 1px solid var(--ts-line); }
+
+  .ts-getting-started-number {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-getting-started-content {
+    display: grid;
+    gap: var(--ts-xs);
+    min-width: 0;
+    flex: 1;
+  }
+
+  .ts-getting-started-title {
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-body);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-getting-started-content p { margin: 0; }
+
+  .ts-home-connect {
+    display: grid;
+    gap: var(--ts-lg);
+    padding-top: var(--ts-xl);
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-home-connect-grid {
+    display: grid;
+    gap: var(--ts-lg);
+    grid-template-columns: minmax(0, 1fr);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  @media (min-width: 48rem) {
+    .ts-home-connect-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  @media (min-width: 80rem) {
+    .ts-home-connect-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
+
+  .ts-home-connect-item {
+    display: grid;
+    align-content: start;
+    gap: var(--ts-sm);
+    min-width: 0;
+    padding-bottom: var(--ts-lg);
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-home-connect-item p { margin: 0; }
+
+  .ts-connect-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    color: var(--ts-accent);
+  }
+
+  .ts-home-connect-item .ts-getting-started-title { font-size: var(--ts-fs-ui); }
+
+  .ts-connect-snippet {
+    border-top: 1px solid var(--ts-line);
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-connect-snippet .ts-snippet-header {
+    background-color: transparent;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-connect-snippet .ts-snippet-body { padding: var(--ts-lg) 0; }
+
+  .ts-chart-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ts-md);
+    min-width: 0;
+  }
+
+  .ts-home .ts-chart { height: 224px; }
+
+  .ts-home-activity-total {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ts-sm);
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+  }
+
+  .ts-home-activity-total strong {
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-home-range-tabs {
+    display: flex;
+    gap: var(--ts-lg);
+    overflow-x: auto;
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-home-range-tab {
+    display: inline-flex;
+    align-items: center;
+    height: 40px;
+    padding-inline: 2px;
+    border-bottom: 2px solid transparent;
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-medium);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .ts-home-range-tab:hover { color: var(--ts-ink); }
+
+  .ts-home-range-tab[aria-selected="true"] {
+    border-bottom-color: var(--ts-accent);
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-semibold);
   }
 
 }
@@ -4021,7 +4400,7 @@ cross-fade replayed on every page change and made the dashboard flicker. */
   }
 
   @media (min-width: 48rem) {
-    .ts-main:has(> .ts-usage) { padding-top: var(--ts-lg); }
+    .ts-main:has(> .ts-page > .ts-toolbar) { padding-top: var(--ts-lg); }
   }
 
   .ts-toolbar .ts-tabs {
@@ -8291,7 +8670,10 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     background-color: color-mix(in oklab, var(--ts-surface-muted) 50%, transparent);
   }
 
-  /* v1 CredentialsTable renders its DataTable bare (no wrapper chrome). */
+  /* ApiKeys keeps its table flush with the page sections. The legacy hook is
+     retained on the wrapper because the journey test locates the table with
+     it; styling belongs to the page's generic class. */
+  .ts-api-keys-table,
   .ts-apikeys-table-wrap {
     border: none;
     border-radius: 0;
@@ -8299,41 +8681,42 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     background-color: transparent;
   }
 
-  .ts-notes-page .ts-apikeys-table-wrap .ts-table {
+  .ts-api-keys-table .ts-table {
     table-layout: fixed;
     min-width: 900px;
   }
 
-  .ts-apikeys-table-wrap th:first-child {
+  .ts-api-keys-table th:first-child {
     width: 25%;
   }
 
-  .ts-apikeys-table-wrap th:nth-child(2) {
+  .ts-api-keys-table th:nth-child(2) {
     width: 9rem;
   }
 
-  .ts-apikeys-table-wrap th:last-child {
+  .ts-api-keys-table th:last-child {
     width: 8rem;
   }
 
-  .ts-notes-page .ts-apikeys-table-wrap .ts-table th,
-  .ts-notes-page .ts-apikeys-table-wrap .ts-table td {
+  .ts-api-keys-table .ts-table th,
+  .ts-api-keys-table .ts-table td {
     padding-inline: var(--ts-md);
   }
 
-  /* v1 searchField: label above, icon inset 12px, text starts at 36px. */
-  .ts-apikeys-search {
+  /* Search icon is inset in the control while its label stays screen-reader
+     only, keeping the toolbar one control tall. */
+  .ts-api-keys-search {
     flex-basis: 18rem;
     flex-grow: 1;
     max-width: 28rem;
     min-width: 0;
   }
 
-  .ts-apikeys-search-box {
+  .ts-api-keys-search-box {
     position: relative;
   }
 
-  .ts-apikeys-search-box svg {
+  .ts-api-keys-search-box svg {
     color: var(--ts-ink-muted);
     pointer-events: none;
     position: absolute;
@@ -8342,72 +8725,79 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     transform: translateY(-50%);
   }
 
-  .ts-apikeys-section {
+  .ts-api-keys-section {
     display: grid;
     gap: var(--ts-lg);
     min-width: 0;
   }
 
-  .ts-apikeys-heading,
-  .ts-apikeys-actions,
-  .ts-apikeys-counts {
+  .ts-api-keys-actions {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: var(--ts-md);
   }
 
-  .ts-apikeys-heading {
-    justify-content: space-between;
-  }
-
-  .ts-apikeys-counts {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-ui);
-  }
-
-  .ts-apikeys-counts strong {
-    color: var(--ts-ink);
-    font-weight: var(--ts-fw-semibold);
-  }
-
-  .ts-apikeys-counts span + span::before {
-    content: "·";
-    margin-right: var(--ts-md);
-  }
-
-  .ts-apikeys-filters {
-    padding: 0 0 var(--ts-lg);
+  .ts-api-keys-filters {
+    min-width: 0;
+    padding: 0;
     gap: var(--ts-sm);
   }
 
-  .ts-apikeys-filters .ts-filter-field {
+  .ts-api-keys-filters .ts-filter-field {
     flex: 1 1 10rem;
     min-width: 10rem;
   }
 
-  .ts-apikeys-filters .ts-apikeys-search {
+  .ts-api-keys-filters .ts-api-keys-search {
     flex: 2 1 16rem;
     max-width: none;
   }
 
-  .ts-apikeys-filters .ts-select,
-  .ts-apikeys-filters .ts-input {
+  .ts-api-keys-filters .ts-select,
+  .ts-api-keys-filters .ts-input {
     width: 100%;
   }
 
-  .ts-apikeys-filters > .ts-btn {
-    align-self: end;
+  @media (min-width: 64rem) {
+    .ts-api-keys-toolbar {
+      flex-wrap: nowrap;
+    }
+
+    .ts-api-keys-toolbar .ts-tabs {
+      flex: 0 1 auto;
+      gap: var(--ts-lg);
+    }
+
+    .ts-api-keys-filters {
+      flex: 1 1 auto;
+      flex-wrap: nowrap;
+    }
+
+    .ts-api-keys-filters .ts-filter-field {
+      flex: 0 1 9rem;
+      min-width: 0;
+    }
+
+    .ts-api-keys-filters .ts-api-keys-search {
+      flex: 1 1 12rem;
+      max-width: 16rem;
+    }
+
+    .ts-api-keys-filters .ts-filter-select {
+      min-width: 0;
+    }
   }
 
-  .ts-apikeys-section .ts-credential-empty {
-    padding: 0;
+  .ts-api-keys-flip {
+    display: inline-flex;
+    transform: scaleX(-1);
   }
 
   @media (max-width: 40rem) {
-    .ts-apikeys-actions,
-    .ts-apikeys-actions .ts-btn,
-    .ts-apikeys-filters .ts-filter-field {
+    .ts-api-keys-actions,
+    .ts-api-keys-actions .ts-btn,
+    .ts-api-keys-filters .ts-filter-field {
       width: 100%;
     }
   }
@@ -8569,6 +8959,219 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     .ts-auth-orbit { left: 0; }
     .ts-auth-stat-grid, .ts-auth-connection-grid { grid-template-columns: 1fr; }
     .ts-auth-stat-card strong { font-size: 26px; }
+  }
+}
+
+@layer features {
+  /* Authentication pages use the Usage anatomy: scrollable section tabs,
+     flat sections, KPI rows, and flush resource tables. Dialog internals and
+     shell navigation stay shared; this block only lays out auth content. */
+  .ts-auth-console {
+    gap: var(--ts-xl);
+  }
+
+  .ts-auth-toolbar {
+    min-width: 0;
+    padding: 0;
+  }
+
+  .ts-auth-tabs {
+    min-width: 0;
+    flex: 1 1 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .ts-auth-tabs::-webkit-scrollbar { display: none; }
+  .ts-auth-tabs .ts-tab { flex: 0 0 auto; }
+
+  .ts-auth-more-menu {
+    flex: 0 0 auto;
+  }
+
+  .ts-auth-more-trigger {
+    height: 40px;
+    padding-inline: var(--ts-md);
+  }
+
+  .ts-auth-more-trigger svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .ts-auth-more-menu > .ts-menu-panel {
+    top: calc(100% + var(--ts-xs));
+    right: 0;
+    max-height: min(70vh, 28rem);
+    overflow-y: auto;
+  }
+
+  .ts-auth-filters {
+    min-width: 0;
+    flex: 0 1 18rem;
+  }
+
+  .ts-auth-search {
+    position: relative;
+    min-width: 0;
+  }
+
+  .ts-auth-search svg {
+    position: absolute;
+    left: var(--ts-md);
+    top: 50%;
+    color: var(--ts-ink-muted);
+    pointer-events: none;
+    transform: translateY(-50%);
+  }
+
+  .ts-auth-search .ts-input {
+    width: 100%;
+    padding-left: 36px;
+  }
+
+  .ts-auth-overview-section,
+  .ts-auth-special-section,
+  .ts-auth-resource-section {
+    min-width: 0;
+  }
+
+  .ts-auth-overview-section + .ts-auth-overview-section,
+  .ts-auth-special-section + .ts-auth-special-section {
+    padding-top: var(--ts-xl);
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-auth-overview-kpis {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .ts-auth-stat-link {
+    color: var(--ts-ink-muted);
+    text-decoration: none;
+  }
+
+  .ts-auth-stat-link:hover { color: var(--ts-accent); }
+
+  .ts-auth-checklist {
+    display: grid;
+    gap: 0;
+  }
+
+  .ts-auth-check {
+    border-top: 1px solid var(--ts-line);
+    border-radius: 0;
+  }
+
+  .ts-auth-check:last-child { border-bottom: 1px solid var(--ts-line); }
+
+  .ts-auth-code-block {
+    margin: 0;
+    border: 0;
+    border-top: 1px solid var(--ts-line);
+    border-radius: 0;
+    background: none;
+  }
+
+  .ts-auth-resource-section > .ts-alert { margin-top: 0; }
+
+  .ts-auth-table-wrap {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+    contain: paint;
+  }
+
+  .ts-auth-table-wrap .ts-table {
+    min-width: 46rem;
+  }
+
+  .ts-auth-table-wrap .ts-table th:last-child,
+  .ts-auth-table-wrap .ts-table td:last-child {
+    width: 1%;
+    white-space: nowrap;
+  }
+
+  .ts-auth-row-actions {
+    justify-content: flex-end;
+  }
+
+  .ts-auth-detail {
+    margin: var(--ts-xl) 0 0;
+    padding: var(--ts-xl) 0 0;
+    border: 0;
+    border-top: 1px solid var(--ts-line);
+    border-radius: 0;
+    background: none;
+  }
+
+  .ts-auth-detail-grid {
+    border: 0;
+    border-radius: 0;
+  }
+
+  .ts-auth-detail-grid > div {
+    border-top: 1px solid var(--ts-line);
+    background: none;
+  }
+
+  .ts-auth-detail-grid > div:last-child { border-bottom: 1px solid var(--ts-line); }
+
+  .ts-auth-contract-list {
+    padding: 0;
+  }
+
+  .ts-auth-contract-list > div {
+    padding: var(--ts-md) 0;
+    border-top: 1px solid var(--ts-line);
+    border-radius: 0;
+  }
+
+  .ts-auth-contract-list > div:last-child { border-bottom: 1px solid var(--ts-line); }
+
+  .ts-auth-settings-form {
+    padding: 0;
+  }
+
+  .ts-auth-billing-content {
+    display: grid;
+    gap: var(--ts-md);
+    max-width: 44rem;
+  }
+
+  .ts-auth-billing-content strong {
+    font-size: 1.5rem;
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-auth-billing-content p { margin: 0; color: var(--ts-ink-muted); }
+
+  .ts-auth-steps {
+    padding: 0;
+  }
+
+  @media (min-width: 64rem) {
+    .ts-auth-toolbar {
+      flex-wrap: nowrap;
+    }
+
+    .ts-auth-filters {
+      flex: 0 0 18rem;
+      width: 18rem;
+    }
+  }
+
+  @media (max-width: 64rem) {
+    .ts-auth-overview-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  @media (max-width: 48rem) {
+    .ts-auth-toolbar { align-items: stretch; }
+    .ts-auth-filters { flex-basis: 100%; }
+    .ts-auth-overview-kpis { grid-template-columns: 1fr 1fr; gap: var(--ts-sm); }
+    .ts-auth-detail-grid > div { grid-template-columns: 1fr; gap: var(--ts-xs); }
+    .ts-auth-secret { align-items: flex-start; flex-wrap: wrap; }
   }
 }
 
@@ -8813,5 +9416,291 @@ cross-fade replayed on every page change and made the dashboard flicker. */
     }
     .ts-notification form { grid-column: 2; }
     .ts-notes-page .ts-notification-mark { margin: 0; }
+  }
+
+  /* Data workspace pages use the shared toolbar, flat sections and table
+     primitives. Keep feature rules here for collection-specific controls. */
+  .ts-data > .ts-section {
+    gap: var(--ts-lg);
+  }
+
+  .ts-data > .ts-section + .ts-section {
+    padding-top: var(--ts-xl);
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-data .ts-toolbar {
+    align-items: flex-end;
+  }
+
+  .ts-data-tabs {
+    display: flex;
+    gap: var(--ts-xl);
+    min-width: 0;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-data-tabs .ts-tab {
+    flex: 0 0 auto;
+    height: 44px;
+    padding: 0 2px;
+    border-radius: 0;
+    box-shadow: inset 0 -2px 0 transparent;
+    font-size: var(--ts-fs-ui);
+  }
+
+  .ts-data-tabs .ts-tab:hover {
+    box-shadow: inset 0 -2px 0 var(--ts-line);
+  }
+
+  .ts-data-tabs .ts-tab[aria-selected="true"] {
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-semibold);
+    box-shadow: inset 0 -2px 0 var(--ts-accent);
+  }
+
+  .ts-data .ts-filters {
+    flex: 1 1 20rem;
+    justify-content: flex-end;
+  }
+
+  .ts-data .ts-filter-field {
+    min-width: 10rem;
+  }
+
+  .ts-data .ts-data-search {
+    flex: 1 1 14rem;
+  }
+
+  .ts-data .ts-filters .ts-input,
+  .ts-data .ts-filters .ts-select {
+    width: 100%;
+  }
+
+  .ts-data .ts-table-wrap {
+    overflow-x: auto;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .ts-data .ts-table {
+    min-width: 640px;
+  }
+
+  .ts-data .ts-table tbody td {
+    vertical-align: top;
+  }
+
+  .ts-data .ts-data-form {
+    width: min(100%, 52rem);
+  }
+
+  .ts-data.ts-schema .ts-textarea {
+    field-sizing: fixed;
+    height: 16rem;
+    min-height: 16rem;
+  }
+
+  .ts-data .ts-data-progress {
+    display: grid;
+    gap: var(--ts-sm);
+    max-width: 48rem;
+  }
+
+  .ts-data .ts-schema-changes {
+    display: grid;
+    gap: var(--ts-sm);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .ts-data .ts-schema-changes li {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-sm);
+    min-width: 0;
+  }
+
+  .ts-data .ts-schema-changes .ts-code-meta {
+    overflow-wrap: anywhere;
+  }
+
+  .ts-data .ts-history-filters {
+    flex-basis: 32rem;
+  }
+
+  .ts-data .ts-history-filters .ts-filter-field {
+    flex: 1 1 8rem;
+    min-width: 8rem;
+  }
+
+  @media (max-width: 40rem) {
+    .ts-data .ts-toolbar {
+      align-items: stretch;
+      gap: var(--ts-md);
+      padding-block: var(--ts-md);
+    }
+
+    .ts-data .ts-toolbar .ts-tabs {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .ts-data .ts-toolbar .ts-tab {
+      flex: 0 0 auto;
+    }
+
+    .ts-data-tabs {
+      gap: var(--ts-lg);
+    }
+
+    .ts-data .ts-filters {
+      width: 100%;
+      flex-basis: 100%;
+      justify-content: stretch;
+    }
+
+    .ts-data .ts-filters .ts-filter-field,
+    .ts-data .ts-filters .ts-btn {
+      flex: 1 1 100%;
+      min-width: 0;
+    }
+
+    .ts-data .ts-section-head > .ts-btn,
+    .ts-data .ts-section-head > .ts-badge {
+      align-self: flex-start;
+    }
+
+    .ts-data .ts-page-desc {
+      margin-top: 0;
+    }
+  }
+
+  /* Databases uses one toolbar for its page tab and search filter. Keep the
+     table wide enough to preserve readable columns on narrow screens. */
+  .ts-db-page > .ts-toolbar {
+    align-items: center;
+  }
+
+  .ts-db-page .ts-filters {
+    flex: 1 1 20rem;
+    justify-content: flex-end;
+  }
+
+  .ts-db-page .ts-db-search {
+    flex: 1 1 18rem;
+    max-width: 24rem;
+  }
+
+  .ts-db-page .ts-db-search .ts-input { width: 100%; }
+
+  .ts-db-section {
+    gap: var(--ts-lg);
+    min-width: 0;
+  }
+
+  .ts-db-table-wrap {
+    min-width: 0;
+    overflow-x: auto;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .ts-db-page .ts-db-table {
+    min-width: 720px;
+    table-layout: auto;
+  }
+
+  @media (max-width: 40rem) {
+    .ts-db-page > .ts-toolbar {
+      align-items: stretch;
+      gap: var(--ts-md);
+      padding-block: var(--ts-md);
+    }
+
+    .ts-db-page > .ts-toolbar .ts-tabs {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .ts-db-page .ts-filters {
+      width: 100%;
+      flex-basis: 100%;
+      justify-content: stretch;
+    }
+
+    .ts-db-page .ts-db-search {
+      flex: 1 1 auto;
+      max-width: none;
+      min-width: 0;
+    }
+
+    .ts-db-page .ts-filters .ts-btn { flex: 0 0 auto; }
+
+  }
+
+  /* Database detail keeps identity visible while secondary lifecycle views
+     are linkable tabs. Each view is a flat section with scrollable tables. */
+  .ts-db-detail-page > .ts-section {
+    gap: var(--ts-lg);
+    min-width: 0;
+  }
+
+  .ts-db-detail-page > .ts-section + .ts-section {
+    padding-top: var(--ts-xl);
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-db-detail-identity .ts-section-head { align-items: center; }
+
+  .ts-db-detail-body {
+    display: grid;
+    gap: var(--ts-lg);
+    min-width: 0;
+  }
+
+  .ts-db-detail-section-icon {
+    flex-shrink: 0;
+    color: var(--ts-ink-muted);
+  }
+
+  .ts-db-detail-table-wrap {
+    min-width: 0;
+    overflow-x: auto;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .ts-db-detail-table-wrap .ts-table { min-width: 32rem; }
+
+  .ts-db-detail-setting {
+    padding-block: var(--ts-lg);
+    border-top: 1px solid var(--ts-line);
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  @media (max-width: 40rem) {
+    .ts-db-detail-page > .ts-toolbar {
+      overflow-x: auto;
+    }
+
+    .ts-db-detail-page > .ts-toolbar .ts-tabs {
+      flex-wrap: nowrap;
+      max-width: none;
+    }
+
+    .ts-db-detail-identity .ts-section-head {
+      align-items: flex-start;
+    }
+
+    .ts-db-detail-identity .ts-section-head > .ts-btn { width: 100%; }
   }
 }

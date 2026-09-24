@@ -3,6 +3,8 @@
     var shell = Model.Shell;
     var document = Model.Document;
     var migration = document.Migration;
+    var requestedTab = HttpContext?.Request.Query["tab"].ToString();
+    var schemaTab = requestedTab == "diff" || Model.Applied || Model.DraftError is not null ? "diff" : "viewer";
     var currentSchemaJson = System.Text.Json.JsonSerializer.Serialize(
         new
         {
@@ -15,15 +17,41 @@
             }),
         },
         new System.Text.Json.JsonSerializerOptions { WriteIndented = true, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+    (string Id, string Label, string Icon, string Href)[] tabs =
+    [
+        ("data", "Explorer", "Table", "/data"),
+        ("schema", "Schema", "FileText", "/schema"),
+        ("indexes", "Indexes", "Table", "/indexes"),
+        ("history", "History", "History", "/history"),
+    ];
 }
 @ShellHtml.Top(shell)
-<div class="ts-page">
-    <section class="ts-panel">
-        <div class="ts-stack-xs">
-            <h2 class="ts-title-22">Schema</h2>
-            <p class="ts-page-desc">Inspect the persisted schema, preview a typed diff, and follow resumable migration progress.</p>
-        </div>
-    </section>
+<div class="ts-page ts-data ts-schema">
+    @if (shell.PageTitle is null)
+    {
+        <h1 class="ts-sr-only">Schema</h1>
+    }
+    <div class="ts-toolbar">
+        <nav class="ts-tabs" aria-label="Data views">
+            @foreach (var (id, label, icon, href) in tabs)
+            {
+                <a class="ts-tab" href="@href" aria-current="@(id == "schema" ? "page" : null)" aria-selected="@(id == "schema" ? "true" : "false")">@IconByName(icon, 16) @label</a>
+            }
+        </nav>
+        <form class="ts-filters" method="get" action="/schema" role="search" aria-label="Choose schema collection">
+            <input type="hidden" name="tab" value="@schemaTab" />
+            <label class="ts-filter-field">
+                <span class="ts-sr-only">Collection</span>
+                <input class="ts-input" name="collection" value="@Model.Collection" placeholder="Collection" />
+            </label>
+            <button class="ts-btn ts-btn-secondary" type="submit">Load</button>
+        </form>
+    </div>
+
+    <nav class="ts-data-tabs" aria-label="Schema sections">
+        <a class="ts-tab" href="/schema?tab=viewer&amp;collection=@Uri.EscapeDataString(Model.Collection)" aria-current="@(schemaTab == "viewer" ? "page" : null)" aria-selected="@(schemaTab == "viewer" ? "true" : "false")">@Icons.Table(14) Viewer</a>
+        <a class="ts-tab" href="/schema?tab=diff&amp;collection=@Uri.EscapeDataString(Model.Collection)" aria-current="@(schemaTab == "diff" ? "page" : null)" aria-selected="@(schemaTab == "diff" ? "true" : "false")">@Icons.FileText(14) Schema diff</a>
+    </nav>
 
     @if (Model.LoadError is { } loadError)
     {
@@ -31,114 +59,111 @@
             <span class="ts-alert-title">@Icons.CircleAlert(16) @loadError</span>
         </div>
     }
-
-    <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h3 class="ts-panel-title">Schema viewer</h3>
-            <p class="ts-panel-subtitle">@Model.Collection</p>
-        </div>
-        <div class="ts-panel-pad ts-stack-lg">
-            <div class="ts-schema-toolbar">
-                <label class="ts-field ts-schema-collection">
-                    <span class="ts-label">Collection</span>
-                    <input class="ts-input" value="@Model.Collection" readonly />
-                    <span class="ts-hint">Schema version @document.Version</span>
-                </label>
-                <span class="ts-badge ts-badge-success">Producer available</span>
+    @if (schemaTab == "viewer")
+    {
+    <section class="ts-section" aria-labelledby="schema-viewer-title">
+        <div class="ts-section-head">
+            <div>
+                <h2 class="ts-panel-title" id="schema-viewer-title">Schema viewer</h2>
+                <p class="ts-meta">Inspect the persisted schema for @Model.Collection and follow resumable migration progress.</p>
             </div>
-
-            @if (document.Collections.Length == 0)
-            {
-                <div class="ts-empty">
+            <span class="ts-badge ts-badge-success">@Icons.CircleCheck(12) Producer available</span>
+        </div>
+        @if (document.Collections.Length == 0)
+        {
+            <div class="ts-empty">
+                <div class="ts-empty-content">
+                    <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
                     <span class="ts-empty-title">No collections in this schema</span>
                     <span class="ts-ui">The producer returned an empty schema.</span>
                 </div>
-            }
-            else
-            {
-                <div class="ts-table-frame">
-                    <table class="ts-table">
-                        <thead>
-                            <tr>
-                                <th>Collection</th>
-                                <th>Fields</th>
-                                <th>Indexes</th>
-                                <th>Definition</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var collection in document.Collections)
-                            {
-                                <tr>
-                                    <td><strong>@collection.Name</strong></td>
-                                    <td class="ts-table-num">@collection.Fields.Length</td>
-                                    <td class="ts-table-num">@collection.Indexes.Length</td>
-                                    <td><span class="ts-code-meta">@string.Join(", ", collection.Fields.Select(f => $"{f.Name}: {f.Type}"))</span></td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                </div>
-            }
-
-            @if (migration is not null)
-            {
-                var total = Math.Max(0, migration.Total);
-                var completed = Math.Min(total > 0 ? total : migration.Completed, Math.Max(0, migration.Completed));
-                var percent = total > 0 ? (int)Math.Round((double)completed / total * 100) : migration.State == "complete" ? 100 : 0;
-                var tone = migration.State == "failed" ? "ts-badge-danger" : migration.State == "complete" ? "ts-badge-success" : "ts-badge-info";
-                <div class="ts-stack-xs">
-                    <span>Migration · <span class="ts-badge @tone">@migration.State</span></span>
-                    <div class="ts-progress"><div class="ts-progress-bar" style="width:@percent%"></div></div>
-                    <span class="ts-meta">@completed / @total · @percent%@(migration.Watermark is { } watermark ? $" · watermark {watermark}" : "")</span>
-                </div>
-            }
-
-            <section class="ts-form" aria-labelledby="schema-diff-title">
-                <div>
-                    <h3 id="schema-diff-title" class="ts-section-h3">Schema diff</h3>
-                    <p class="ts-meta">Paste the next typed schema to preview field and index changes.</p>
-                </div>
-                <form class="ts-stack-md" method="post" action="/api/v1/dashboard/schema">
-                    <label class="ts-field">
-                        <span class="ts-label">Proposed schema JSON</span>
-                        <textarea class="ts-textarea ts-textarea-mono" name="schema" rows="10" spellcheck="false" placeholder="@currentSchemaJson">@Model.ProposedJson</textarea>
-                    </label>
-                    @if (Model.DraftError is { } draftError)
-                    {
-                        <div class="ts-alert ts-alert-danger" role="alert" data-code="schema_draft_invalid">
-                            <span class="ts-alert-title">@Icons.CircleAlert(16) @draftError</span>
-                        </div>
-                    }
-                    @if (Model.Applied)
-                    {
-                        <div class="ts-alert ts-alert-success" role="alert" data-code="schema_apply_requested">
-                            <span class="ts-alert-title">@Icons.CircleCheck(16) Schema migration requested.</span>
-                        </div>
-                    }
-                    @if (Model.Diff is { } diff)
-                    {
-                        <div class="ts-alert @(diff.Breaking ? "ts-alert-warning" : "ts-alert-info")" role="alert" data-code="schema_diff_summary">
-                            <span class="ts-alert-title">@(diff.Changes.Length == 0 ? "No changes" : $"{diff.Changes.Length} change(s)")</span>
-                            <span class="ts-alert-body">@(diff.Breaking
-                                ? "Removing fields or collections can be breaking for existing documents."
-                                : "Changes are compatible with the current schema.")</span>
-                        </div>
-                        @if (diff.Changes.Length > 0)
+            </div>
+        }
+        else
+        {
+            <div class="ts-table-wrap">
+                <table class="ts-table">
+                    <thead><tr><th>Collection</th><th>Fields</th><th>Indexes</th><th>Definition</th></tr></thead>
+                    <tbody>
+                        @foreach (var collection in document.Collections)
                         {
-                            <ul class="ts-schema-changes">
-                                @foreach (var change in diff.Changes)
-                                {
-                                    var changeTone = change.Kind == "removed" ? "ts-badge-danger" : change.Kind == "added" ? "ts-badge-success" : "ts-badge-info";
-                                    <li><span class="ts-badge @changeTone">@change.Kind</span> <span class="ts-code-meta">@change.Path</span></li>
-                                }
-                            </ul>
+                            <tr>
+                                <td class="ts-table-strong">@collection.Name</td>
+                                <td class="ts-table-num">@collection.Fields.Length</td>
+                                <td class="ts-table-num">@collection.Indexes.Length</td>
+                                <td><span class="ts-code-meta">@string.Join(", ", collection.Fields.Select(f => $"{f.Name}: {f.Type}"))</span></td>
+                            </tr>
                         }
-                    }
-                    <div><button class="ts-btn ts-btn-primary" type="submit">Apply schema migration</button></div>
-                </form>
-            </section>
-        </div>
+                    </tbody>
+                </table>
+            </div>
+        }
+        @if (migration is not null)
+        {
+            var total = Math.Max(0, migration.Total);
+            var completed = Math.Min(total > 0 ? total : migration.Completed, Math.Max(0, migration.Completed));
+            var percent = total > 0 ? (int)Math.Round((double)completed / total * 100) : migration.State == "complete" ? 100 : 0;
+            var tone = migration.State == "failed" ? "ts-badge-danger" : migration.State == "complete" ? "ts-badge-success" : "ts-badge-info";
+            <div class="ts-data-progress">
+                <div class="ts-row ts-row-tight"><span class="ts-table-strong">Migration</span><span class="ts-badge @tone">@migration.State</span></div>
+                <div class="ts-bar-track" role="img" aria-label="@percent% of migration complete"><span class="ts-bar-fill" style="width:@percent%"></span></div>
+                <span class="ts-meta">@completed / @total · @percent%@(migration.Watermark is { } watermark ? $" · watermark {watermark}" : "")</span>
+            </div>
+        }
     </section>
+    }
+
+    @if (schemaTab == "diff")
+    {
+    <section class="ts-section" aria-labelledby="schema-diff-title">
+        <div class="ts-section-head">
+            <div>
+                <h2 class="ts-panel-title" id="schema-diff-title">Schema diff</h2>
+                <p class="ts-meta">Paste the next typed schema to preview field and index changes.</p>
+            </div>
+        </div>
+        <form class="ts-form ts-data-form" method="post" action="/api/v1/dashboard/schema">
+            <label class="ts-field">
+                <span class="ts-label">Proposed schema JSON</span>
+                <textarea class="ts-textarea ts-textarea-mono" name="schema" rows="10" spellcheck="false" placeholder="@currentSchemaJson">@Model.ProposedJson</textarea>
+            </label>
+            @if (Model.DraftError is { } draftError)
+            {
+                <div class="ts-alert ts-alert-danger" role="alert" data-code="schema_draft_invalid">
+                    <span class="ts-alert-title">@Icons.CircleAlert(16) @draftError</span>
+                </div>
+            }
+            @if (Model.Applied)
+            {
+                <div class="ts-alert ts-alert-success" role="status" data-code="schema_apply_requested">
+                    <span class="ts-alert-title">@Icons.CircleCheck(16) Schema migration requested.</span>
+                </div>
+            }
+            @if (Model.Diff is { } diff)
+            {
+                <div class="ts-alert @(diff.Breaking ? "ts-alert-warning" : "ts-alert-info")" role="status" data-code="schema_diff_summary">
+                    <span class="ts-alert-title">@(diff.Changes.Length == 0 ? "No changes" : $"{diff.Changes.Length} change(s)")</span>
+                    <span class="ts-alert-body">@(diff.Breaking ? "Removing fields or collections can be breaking for existing documents." : "Changes are compatible with the current schema.")</span>
+                </div>
+                @if (diff.Changes.Length > 0)
+                {
+                    <ul class="ts-schema-changes">
+                        @foreach (var change in diff.Changes)
+                        {
+                            var changeTone = change.Kind == "removed" ? "ts-badge-danger" : change.Kind == "added" ? "ts-badge-success" : "ts-badge-info";
+                            <li><span class="ts-badge @changeTone">@change.Kind</span> <span class="ts-code-meta">@change.Path</span></li>
+                        }
+                    </ul>
+                }
+            }
+            <div><button class="ts-btn ts-btn-primary" type="submit">Apply schema migration</button></div>
+        </form>
+    </section>
+    }
 </div>
+@functions
+{
+    private static Microsoft.AspNetCore.Html.HtmlString IconByName(string name, int size) =>
+        (typeof(Icons).GetMethod(name)?.Invoke(null, [size]) as Microsoft.AspNetCore.Html.HtmlString) ?? Icons.Circle(size);
+}
 @ShellHtml.Bottom(shell)

@@ -18,9 +18,14 @@ public sealed class PagesSmokeTests
         await Assert.That(page.Contains("Workspace metrics")).IsTrue();
         await Assert.That(page.Text.Contains("Project users 3 users with project access", StringComparison.Ordinal)).IsTrue();
         await Assert.That(page.Contains("Getting started")).IsTrue();
-        await Assert.That(page.Contains("Connect your AI or platform")).IsTrue();
-        await Assert.That(page.Html.IndexOf("<section class=\"ts-panel\" aria-label=\"Activity\">", StringComparison.Ordinal))
-            .IsGreaterThan(page.Html.IndexOf("<h2 class=\"ts-panel-title\">Getting started</h2>", StringComparison.Ordinal));
+        await Assert.That(page.Contains("href=\"/?tab=connect\"")).IsTrue();
+        await Assert.That(page.Contains("href=\"/?tab=activity\"")).IsTrue();
+
+        var connect = await app.GetPageAsync(client, "/?tab=connect");
+        await Assert.That(connect.Contains("Connect your AI or platform")).IsTrue();
+
+        var activity = await app.GetPageAsync(client, "/?tab=activity");
+        await Assert.That(activity.Contains("Activity")).IsTrue();
     }
 
     [Test]
@@ -259,7 +264,7 @@ public sealed class PagesSmokeTests
             var page = await app.GetPageAsync(client, path);
             await Assert.That(page.StatusCode).IsEqualTo(200);
             await Assert.That(page.Heading).IsEqualTo("Authentication");
-            await Assert.That(page.Contains("<h1 class=\"ts-page-title-24\">")).IsTrue();
+            await Assert.That(page.Contains("<h1 class=\"ts-sr-only\">Authentication</h1>")).IsTrue();
             await Assert.That(page.Contains("ts-auth-header")).IsFalse();
             await Assert.That(page.Contains("IDENTITY PLATFORM")).IsFalse();
         }
@@ -419,7 +424,8 @@ public sealed class PagesSmokeTests
 
         var overview = await app.GetPageAsync(client, "/");
         await Assert.That(overview.Contains("Monitoring snapshot may be stale")).IsTrue();
-        await Assert.That(overview.Contains("No activity recorded in this range yet.")).IsTrue();
+        var activity = await app.GetPageAsync(client, "/?tab=activity");
+        await Assert.That(activity.Contains("No activity recorded in this range yet.")).IsTrue();
 
         var databases = await app.GetPageAsync(client, "/databases");
         await Assert.That(databases.Contains("No databases saved")).IsTrue();

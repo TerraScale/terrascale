@@ -2,32 +2,44 @@
 @{
     var shell = Model.Shell;
     var db = Model.Database;
+    var requestedTab = HttpContext?.Request.Query["tab"].ToString();
+    var activeTab = requestedTab is "placement" or "backups" or "branches" or "import" ? requestedTab : "overview";
+    string TabHref(string tab) => $"/databases/{db.Id}?tab={tab}";
 }
 @ShellHtml.Top(shell)
-<div class="ts-page">
-    <section class="ts-panel ts-panel-20">
-        <div class="ts-row-header-actions">
-            <div class="ts-panel-header ts-min-width-flex">
-                <h2 class="ts-panel-title">@db.Name</h2>
-                <p class="ts-panel-subtitle">Database lifecycle and persisted placement</p>
+<div class="ts-page ts-db-detail-page">
+    <div class="ts-toolbar">
+        <nav class="ts-tabs" aria-label="Database detail sections">
+            @foreach (var tab in new[] { (Id: "overview", Label: "Overview"), (Id: "placement", Label: "Placement"), (Id: "backups", Label: "Backups"), (Id: "branches", Label: "Branches"), (Id: "import", Label: "Import and export") })
+            {
+                var icon = tab.Id == "overview" ? Icons.BarChart3(16) : tab.Id == "placement" ? Icons.MapPin(16) : tab.Id == "backups" ? Icons.Archive(16) : tab.Id == "branches" ? Icons.GitBranch(16) : Icons.Upload(16);
+                <a class="ts-tab" href="@TabHref(tab.Id)" aria-current="@(activeTab == tab.Id ? "page" : null)" aria-selected="@(activeTab == tab.Id ? "true" : "false")">@icon @tab.Label</a>
+            }
+        </nav>
+    </div>
+
+    <section class="ts-section ts-db-detail-identity" aria-labelledby="database-title">
+        <div class="ts-section-head">
+            <div>
+                <h1 class="ts-panel-title" id="database-title">@db.Name</h1>
+                <p class="ts-meta">Database lifecycle and persisted placement</p>
             </div>
-            <a class="ts-icon-btn" href="/databases" aria-label="Back to databases">@Icons.ArrowLeft(18)</a>
+            <a class="ts-btn ts-btn-ghost" href="/databases" aria-label="Back to databases">@Icons.ArrowLeft(16) Back to databases</a>
         </div>
-        <div class="ts-panel-pad">
-            <p class="ts-db-id-line">@Icons.Database(14) <span class="ts-mono">@db.Id</span></p>
-        </div>
+        <p class="ts-db-id-line">@Icons.Database(14) <span class="ts-mono">@db.Id</span></p>
     </section>
 
-    <div class="ts-stack-lg">
-        <section class="ts-panel">
-            <div class="ts-row-header-actions">
-                <div class="ts-panel-header ts-min-width-flex">
-                    <h2 class="ts-panel-title">Placement and latency</h2>
-                    <p class="ts-panel-subtitle">Placement is inherited from the project and cannot be widened later</p>
+    @if (activeTab is "overview" or "placement")
+    {
+        <section class="ts-section ts-db-detail-section" aria-labelledby="placement-title">
+            <div class="ts-section-head">
+                <div>
+                    <h2 class="ts-panel-title" id="placement-title">Placement and latency</h2>
+                    <p class="ts-meta">Placement is inherited from the project and cannot be widened later</p>
                 </div>
-                <span aria-hidden="true">@Icons.LockKeyhole(18)</span>
+                <span class="ts-db-detail-section-icon" aria-hidden="true">@Icons.LockKeyhole(18)</span>
             </div>
-            <div class="ts-panel-pad ts-stack-md">
+            <div class="ts-db-detail-body">
                 <div class="ts-db-summary-grid">
                     <div class="ts-summary-field">
                         <span class="ts-summary-label">Database status</span>
@@ -63,7 +75,7 @@
                         <span class="ts-alert-body">The selected regions and backup region are enforced by the TerraScale API for backups, restores, branches, and exports.</span>
                     </div>
                 </div>
-                <div class="ts-table-wrap">
+                <div class="ts-table-wrap ts-db-detail-table-wrap">
                     <table class="ts-table">
                         <thead>
                             <tr>
@@ -85,17 +97,20 @@
                 <p class="ts-meta">Estimates captured @DashboardStore.FormatUtcDateTime(Model.LatencyCapturedAt) · Nearest region: @Model.NearestRegion.ToUpperInvariant()</p>
             </div>
         </section>
+    }
 
-        <section class="ts-panel">
-            <div class="ts-row-header-actions">
-                <div class="ts-panel-header ts-min-width-flex">
-                    <h2 class="ts-panel-title">Backups</h2>
-                    <p class="ts-panel-subtitle">Enable or disable scheduled backups for this database</p>
+    @if (activeTab == "backups")
+    {
+        <section class="ts-section ts-db-detail-section" aria-labelledby="backups-title">
+            <div class="ts-section-head">
+                <div>
+                    <h2 class="ts-panel-title" id="backups-title">Backups</h2>
+                    <p class="ts-meta">Enable or disable scheduled backups for this database</p>
                 </div>
-                <span aria-hidden="true">@Icons.Archive(18)</span>
+                <span class="ts-db-detail-section-icon" aria-hidden="true">@Icons.Archive(18)</span>
             </div>
-            <div class="ts-panel-pad ts-stack-md">
-                <form class="ts-row-between" method="post" action="/api/v1/dashboard/databases/backup-policy">
+            <div class="ts-db-detail-body">
+                <form class="ts-row-between ts-db-detail-setting" method="post" action="/api/v1/dashboard/databases/backup-policy">
                     <input type="hidden" name="databaseId" value="@db.Id" />
                     <input type="hidden" name="enabled" value="@(Model.BackupsEnabled ? "false" : "true")" />
                     <span class="ts-stack-xs">
@@ -110,16 +125,19 @@
                 }
             </div>
         </section>
+    }
 
-        <section class="ts-panel">
-            <div class="ts-row-header-actions">
-                <div class="ts-panel-header ts-min-width-flex">
-                    <h2 class="ts-panel-title">Branches</h2>
-                    <p class="ts-panel-subtitle">Cloud development and preview branches use an isolated database incarnation</p>
+    @if (activeTab == "branches")
+    {
+        <section class="ts-section ts-db-detail-section" aria-labelledby="branches-title">
+            <div class="ts-section-head">
+                <div>
+                    <h2 class="ts-panel-title" id="branches-title">Branches</h2>
+                    <p class="ts-meta">Cloud development and preview branches use an isolated database incarnation</p>
                 </div>
-                <span aria-hidden="true">@Icons.GitBranch(18)</span>
+                <span class="ts-db-detail-section-icon" aria-hidden="true">@Icons.GitBranch(18)</span>
             </div>
-            <div class="ts-panel-pad ts-stack-md">
+            <div class="ts-db-detail-body">
                 <div class="ts-db-summary-grid">
                     <div class="ts-summary-field">
                         <span class="ts-summary-label">Admission</span>
@@ -163,16 +181,19 @@
                 </div>
             </div>
         </section>
+    }
 
-        <section class="ts-panel">
-            <div class="ts-row-header-actions">
-                <div class="ts-panel-header ts-min-width-flex">
-                    <h2 class="ts-panel-title">Import and export</h2>
-                    <p class="ts-panel-subtitle">Lossless JSONL and CSV controls will appear when the SDK contract is published</p>
+    @if (activeTab == "import")
+    {
+        <section class="ts-section ts-db-detail-section" aria-labelledby="import-title">
+            <div class="ts-section-head">
+                <div>
+                    <h2 class="ts-panel-title" id="import-title">Import and export</h2>
+                    <p class="ts-meta">Lossless JSONL and CSV controls will appear when the SDK contract is published</p>
                 </div>
                 <span class="ts-icon-label" aria-hidden="true">@Icons.Upload(16) @Icons.Download(16)</span>
             </div>
-            <div class="ts-panel-pad ts-stack-md">
+            <div class="ts-db-detail-body">
                 <div class="ts-alert ts-alert-info" role="note">
                     <div class="ts-stack-xs">
                         <span class="ts-alert-title">@Icons.Info(16) No local import or export</span>
@@ -191,6 +212,6 @@
                 </div>
             </div>
         </section>
-    </div>
+    }
 </div>
 @ShellHtml.Bottom(shell)

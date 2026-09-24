@@ -2,103 +2,141 @@
 @{
     var shell = Model.Shell;
     Microsoft.AspNetCore.Html.HtmlString Icon(string name, int size = 15) => (typeof(Icons).GetMethod(name)?.Invoke(null, [size]) as Microsoft.AspNetCore.Html.HtmlString) ?? Icons.Circle(size);
-    string RangeHref(string range)
+
+    string QueryHref(string? range = null, int? page = null)
     {
-        var query = new System.Collections.Generic.List<string>();
-        if (Model.Action != "all") { query.Add("action=" + Uri.EscapeDataString(Model.Action)); }
+        var query = new List<string>();
         if (Model.Search.Length > 0) { query.Add("search=" + Uri.EscapeDataString(Model.Search)); }
+        if (Model.Action != "all") { query.Add("action=" + Uri.EscapeDataString(Model.Action)); }
         if (Model.Severity != "all") { query.Add("severity=" + Uri.EscapeDataString(Model.Severity)); }
-        query.Add("range=" + range);
+        query.Add("range=" + Uri.EscapeDataString(range ?? Model.Range));
+        if (page is > 1) { query.Add("page=" + page.Value); }
         return "/audit?" + string.Join("&", query);
     }
+
     string ExportHref(string format)
     {
-        var query = new System.Collections.Generic.List<string> { "format=" + format };
-        if (Model.Action != "all") { query.Add("action=" + Uri.EscapeDataString(Model.Action)); }
+        var query = new List<string> { "format=" + format };
         if (Model.Search.Length > 0) { query.Add("search=" + Uri.EscapeDataString(Model.Search)); }
+        if (Model.Action != "all") { query.Add("action=" + Uri.EscapeDataString(Model.Action)); }
         if (Model.Severity != "all") { query.Add("severity=" + Uri.EscapeDataString(Model.Severity)); }
-        query.Add("range=" + Model.Range);
+        query.Add("range=" + Uri.EscapeDataString(Model.Range));
         return "/audit/export?" + string.Join("&", query);
     }
-    string Percent(int value, int total) => total is 0 ? "0" : Math.Round(value * 100.0 / total).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    var first = Model.FilteredCount is 0 ? 0 : ((Model.Page - 1) * AuditPageModel.PageSize) + 1;
+    var last = Model.FilteredCount is 0 ? 0 : Math.Min(Model.FilteredCount, Model.Page * AuditPageModel.PageSize);
+    var infoPercent = Model.FilteredCount is 0 ? 0 : Math.Round(Model.Info * 100.0 / Model.FilteredCount);
+    var warnPercent = Model.FilteredCount is 0 ? 0 : Math.Round(Model.Warn * 100.0 / Model.FilteredCount);
+    var criticalPercent = Model.FilteredCount is 0 ? 0 : Math.Round(Model.Critical * 100.0 / Model.FilteredCount);
 }
 @ShellHtml.Top(shell)
-<div class="ts-page ts-notes-page">
-    <section class="ts-panel ts-panel-20">
-        <div class="ts-row-between">
-            <h2 class="ts-audit-title">Audit</h2>
+<div class="ts-page ts-audit-page">
+    <div class="ts-toolbar">
+        <nav class="ts-tabs" aria-label="Audit sections">
+            <a class="ts-tab" href="/audit" aria-current="page" aria-selected="true">@Icons.ScrollText(16) Audit log</a>
+        </nav>
+        <form class="ts-filters ts-audit-filters" method="get" action="/audit" role="search" aria-label="Filter audit events">
+            <div class="ts-filter-field ts-audit-search-field">
+                <label class="ts-sr-only" for="audit-search">Search audit events</label>
+                <input class="ts-input" id="audit-search" name="search" type="search" value="@Model.Search" placeholder="Actor, action, resource, or source" />
+            </div>
+            <div class="ts-filter-field">
+                <span class="ts-filter-label ts-sr-only" id="audit-action-label">Action type</span>
+                <input type="hidden" name="action" value="@(Model.Action == "all" ? "" : Model.Action)" />
+                <details class="ts-menu ts-filter-menu">
+                    <summary class="ts-select ts-filter-select" aria-labelledby="audit-action-label audit-action-value"><span id="audit-action-value">@(Model.Action == "all" ? "All actions" : Model.Action)</span></summary>
+                    <div class="ts-menu-panel">
+                        <button class="ts-menu-item" type="button" data-filter-value="" aria-current="@(Model.Action == "all" ? "true" : null)">All actions</button>
+                        @foreach (var option in Model.ActionOptions.Where(option => option != "all"))
+                        {
+                            <button class="ts-menu-item" type="button" data-filter-value="@option" aria-current="@(option == Model.Action ? "true" : null)">@option</button>
+                        }
+                    </div>
+                </details>
+            </div>
+            <div class="ts-filter-field">
+                <span class="ts-filter-label ts-sr-only" id="audit-severity-label">Severity</span>
+                <input type="hidden" name="severity" value="@(Model.Severity == "all" ? "" : Model.Severity)" />
+                <details class="ts-menu ts-filter-menu">
+                    <summary class="ts-select ts-filter-select" aria-labelledby="audit-severity-label audit-severity-value"><span id="audit-severity-value">@(Model.Severity switch { "all" => "All severities", "info" => "Info", "warn" => "Warning", _ => "Critical severity" })</span></summary>
+                    <div class="ts-menu-panel">
+                        @foreach (var option in DashboardStore.AuditSeverityOptions)
+                        {
+                            <button class="ts-menu-item" type="button" data-filter-value="@(option == "all" ? "" : option)" aria-current="@(option == Model.Severity ? "true" : null)">@(option switch { "all" => "All severities", "info" => "Info", "warn" => "Warning", _ => "Critical severity" })</button>
+                        }
+                    </div>
+                </details>
+            </div>
+            <div class="ts-filter-field">
+                <span class="ts-filter-label ts-sr-only" id="audit-range-label">Date range</span>
+                <input type="hidden" name="range" value="@Model.Range" />
+                <details class="ts-menu ts-filter-menu">
+                    <summary class="ts-select ts-filter-select" aria-labelledby="audit-range-label audit-range-value"><span id="audit-range-value">@Model.Range</span></summary>
+                    <div class="ts-menu-panel">
+                        @foreach (var option in DashboardStore.AuditRangeOptions)
+                        {
+                            <button class="ts-menu-item" type="button" data-filter-value="@option" aria-current="@(option == Model.Range ? "true" : null)">@option</button>
+                        }
+                    </div>
+                </details>
+            </div>
+            @if (Model.Search.Length > 0 || Model.Action != "all" || Model.Severity != "all" || Model.Range != "7d")
+            {
+                <a class="ts-btn ts-btn-ghost" href="/audit">Clear</a>
+            }
+        </form>
+    </div>
+
+    <section class="ts-section ts-audit-section" aria-labelledby="audit-overview-title">
+        <div class="ts-section-head">
+            <div>
+                <h2 class="ts-panel-title" id="audit-overview-title">Audit activity</h2>
+                <p class="ts-meta">Security events for the current project, filtered to @Model.Range · retention is managed in Settings</p>
+            </div>
             <a class="ts-btn ts-btn-ghost" href="/settings?tab=audit">@Icons.Settings(16) Retention settings</a>
         </div>
-        <dl class="ts-audit-kpis">
-            <div><dt>Events</dt><dd>@Model.Rows.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</dd></div>
-            <div><dt>High risk</dt><dd class="ts-text-danger">@Model.Critical.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</dd></div>
-            <div><dt>Warnings</dt><dd class="ts-text-warning">@Model.Warn.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</dd></div>
+        <dl class="ts-kpis" aria-label="Audit totals">
+            <div>
+                <dt>@Icons.ScrollText(14) Events</dt>
+                <dd><span class="ts-kpi-value">@Model.FilteredCount.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></dd>
+                <small class="ts-meta">Showing @first–@last of @Model.AllEvents.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) retained events</small>
+            </div>
+            <div>
+                <dt>@Icons.Shield(14) High risk</dt>
+                <dd><span class="ts-kpi-value">@Model.Critical.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></dd>
+                <small class="ts-meta">Critical events in the current view</small>
+            </div>
+            <div>
+                <dt>@Icons.TriangleAlert(14) Warnings</dt>
+                <dd><span class="ts-kpi-value">@Model.Warn.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></dd>
+                <small class="ts-meta">Warning events in the current view</small>
+            </div>
+            <div>
+                <dt>@Icons.Info(14) Informational</dt>
+                <dd><span class="ts-kpi-value">@Model.Info.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></dd>
+                <small class="ts-meta">Informational events in the current view</small>
+            </div>
         </dl>
     </section>
 
-    <section class="ts-panel">
-        <div class="ts-panel-header ts-audit-activity-header">
-            <h2 class="ts-panel-title">Recent activity</h2>
+    <section class="ts-section ts-audit-section" aria-labelledby="audit-activity-title">
+        <div class="ts-section-head">
+            <div>
+                <h2 class="ts-panel-title" id="audit-activity-title">Recent activity</h2>
+                <p class="ts-meta">Showing @first–@last of @Model.FilteredCount.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) events · exports include every matching event</p>
+            </div>
             <div class="ts-row">
-                <a class="ts-btn ts-btn-ghost ts-audit-reset" href="/audit">@Icons.Filter(16) Reset filters</a>
-                <button class="ts-btn ts-btn-primary" type="button" @(Model.Rows.Count == 0 ? "disabled" : null) data-on:click="document.querySelector('#audit-export-dialog').showModal()">@Icons.Download(16) Export audit</button>
+                <button class="ts-btn ts-btn-primary" type="button" @(Model.FilteredCount == 0 ? "disabled" : null) data-open-dialog="audit-export-dialog">@Icons.Download(16) Export audit</button>
             </div>
         </div>
 
-        <form method="get" action="/audit" class="ts-audit-form">
-            <div class="ts-field">
-                <label class="ts-label" for="audit-search">Search</label>
-                <div class="ts-audit-search-box">
-                    @Icons.Search(16)
-                    <input class="ts-input ts-search-input" id="audit-search" name="search" type="search" value="@Model.Search" placeholder="Actor, action, resource, or source" />
-                </div>
-            </div>
-            <div class="ts-field">
-                <label class="ts-label" for="audit-action">Action type</label>
-                <select class="ts-select" id="audit-action" name="action">
-                    @foreach (var option in Model.ActionOptions)
-                    {
-                        <option value="@option" selected="@(option == Model.Action)">@(option == "all" ? "All actions" : option)</option>
-                    }
-                </select>
-            </div>
-            <div class="ts-field">
-                <label class="ts-label" for="audit-severity">Severity</label>
-                <select class="ts-select" id="audit-severity" name="severity">
-                    @foreach (var option in DashboardStore.AuditSeverityOptions)
-                    {
-                        <option value="@option" selected="@(option == Model.Severity)">@(option switch { "all" => "All severities", "info" => "Info", "warn" => "Warning", _ => "Critical severity" })</option>
-                    }
-                </select>
-            </div>
-            <input type="hidden" name="range" value="@Model.Range" />
-            <div class="ts-field ts-audit-form-actions">
-                <button class="ts-btn ts-btn-secondary" type="submit">Apply filters</button>
-            </div>
-        </form>
-
-        <div class="ts-row-between ts-audit-range-row">
-            <div class="ts-audit-meta-row ts-muted">
-                @Icons.Calendar(15)
-                <span class="ts-audit-range-label">Range</span>
-                <div class="ts-filter-group" role="group" aria-label="Audit date range">
-                    @foreach (var option in DashboardStore.AuditRangeOptions)
-                    {
-                        <a class="ts-filter-link @(Model.Range == option ? "ts-filter-active" : null)" href="@RangeHref(option)" aria-current="@(Model.Range == option ? "page" : null)">@option</a>
-                    }
-                </div>
-            </div>
-            <span class="ts-meta">Showing @Model.Rows.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) of @Model.AllEvents.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) events</span>
-        </div>
-
-        @if (Model.Rows.Count is 0)
+        @if (Model.FilteredCount is 0)
         {
-            <div class="ts-padded">
-                <div class="ts-empty">
-                    <span class="ts-empty-icon">@Icons.SearchX(16)</span>
-                    <span class="ts-empty-title">No audit events</span>
-                    <span class="ts-empty-meta">The TerraScale Dashboard API returned no persisted audit events matching this view.</span>
-                </div>
+            <div class="ts-empty">
+                <span class="ts-empty-icon">@Icons.SearchX(16)</span>
+                <span class="ts-empty-title">No audit events</span>
+                <span class="ts-empty-meta">The TerraScale Dashboard API returned no persisted audit events matching this view.</span>
             </div>
         }
         else
@@ -143,37 +181,56 @@
                     </tbody>
                 </table>
             </div>
+            <nav class="ts-pager" aria-label="Audit event pages">
+                <span class="ts-meta">Showing @first–@last of @Model.FilteredCount.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) events</span>
+                @if (Model.PageCount > 1)
+                {
+                    <div class="ts-row ts-row-tight">
+                        @if (Model.Page > 1)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@QueryHref(page: Model.Page - 1)" rel="prev"><span class="ts-audit-flip">@Icons.ChevronRight(14)</span> Previous</a>
+                        }
+                        @for (var pageNumber = 1; pageNumber <= Model.PageCount; pageNumber++)
+                        {
+                            <a class="ts-btn ts-btn-ghost ts-pager-page" href="@QueryHref(page: pageNumber)" aria-current="@(pageNumber == Model.Page ? "page" : null)">@pageNumber</a>
+                        }
+                        @if (Model.Page < Model.PageCount)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@QueryHref(page: Model.Page + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                        }
+                    </div>
+                }
+            </nav>
         }
     </section>
 
-    <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Severity breakdown</h2>
-            <p class="ts-panel-subtitle">Events in current view</p>
-        </div>
-        <div class="ts-stack-md ts-padded">
-            <div class="ts-severity-box">
-                <div class="ts-row-between">
-                    <span class="ts-row ts-row-tight">@Icons.ShieldCheck(16) Info</span>
-                    <span class="ts-metric-inline">@(Model.Rows.Count(r => r.Severity == "info"))</span>
-                </div>
-                <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-info" style="width:@(Percent(Model.Rows.Count(r => r.Severity == "info"), Model.Rows.Count))%"></div></div>
-            </div>
-            <div class="ts-severity-box">
-                <div class="ts-row-between">
-                    <span class="ts-row ts-row-tight">@Icons.ShieldAlert(16) Warning</span>
-                    <span class="ts-metric-inline">@Model.Warn</span>
-                </div>
-                <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-warning" style="width:@(Percent(Model.Warn, Model.Rows.Count))%"></div></div>
-            </div>
-            <div class="ts-severity-box">
-                <div class="ts-row-between">
-                    <span class="ts-row ts-row-tight">@Icons.Shield(16) Critical severity</span>
-                    <span class="ts-metric-inline">@Model.Critical</span>
-                </div>
-                <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-danger" style="width:@(Percent(Model.Critical, Model.Rows.Count))%"></div></div>
+    <section class="ts-section ts-audit-section" aria-labelledby="audit-breakdown-title">
+        <div class="ts-section-head">
+            <div>
+                <h2 class="ts-panel-title" id="audit-breakdown-title">Severity breakdown</h2>
+                <p class="ts-meta">Events in the current filtered view</p>
             </div>
         </div>
+        <dl class="ts-stats ts-audit-breakdown">
+            <div>
+                <dt>@Icons.Info(14) Informational</dt>
+                <dd>@Model.Info.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</dd>
+                <small class="ts-meta">@infoPercent% of filtered events</small>
+                <span class="ts-bar-track" role="img" aria-label="@infoPercent% informational events"><span class="ts-bar-fill" style="width:@infoPercent%"></span></span>
+            </div>
+            <div>
+                <dt>@Icons.TriangleAlert(14) Warning</dt>
+                <dd>@Model.Warn.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</dd>
+                <small class="ts-meta">@warnPercent% of filtered events</small>
+                <span class="ts-bar-track" role="img" aria-label="@warnPercent% warning events"><span class="ts-bar-fill ts-audit-bar-warning" style="width:@warnPercent%"></span></span>
+            </div>
+            <div>
+                <dt>@Icons.Shield(14) Critical severity</dt>
+                <dd>@Model.Critical.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</dd>
+                <small class="ts-meta">@criticalPercent% of filtered events</small>
+                <span class="ts-bar-track" role="img" aria-label="@criticalPercent% critical events"><span class="ts-bar-fill ts-audit-bar-danger" style="width:@criticalPercent%"></span></span>
+            </div>
+        </dl>
     </section>
 </div>
 
@@ -181,7 +238,7 @@
     <div class="ts-dialog-content" data-signals="{ auditExportFormat: 'csv' }">
         <div class="ts-dialog-header">
             <h3 class="ts-dialog-title">Export audit log</h3>
-            <p class="ts-dialog-description">@Model.Rows.Count event@(Model.Rows.Count == 1 ? "" : "s") ready to export.</p>
+            <p class="ts-dialog-description">@Model.FilteredCount event@(Model.FilteredCount == 1 ? "" : "s") ready to export. The export includes every event matching the current filters.</p>
         </div>
         <div class="ts-audit-export-grid">
             <button type="button" class="ts-btn ts-btn-secondary ts-audit-export-option" data-class:ts-audit-export-option-active="$auditExportFormat === 'csv'" data-on:click="$auditExportFormat = 'csv'">
@@ -194,7 +251,7 @@
             </button>
         </div>
         <div class="ts-dialog-footer">
-            <button type="button" class="ts-btn ts-btn-ghost ts-btn-lg" data-on:click="document.querySelector('#audit-export-dialog').close()">Cancel</button>
+            <button type="button" class="ts-btn ts-btn-ghost ts-btn-lg" data-close-dialog>Cancel</button>
             <a class="ts-btn ts-btn-primary ts-btn-lg" data-show="$auditExportFormat === 'csv'" href="@ExportHref("csv")">@Icons.Download(16) Export CSV</a>
             <a class="ts-btn ts-btn-primary ts-btn-lg" data-show="$auditExportFormat === 'json'" href="@ExportHref("json")">@Icons.Download(16) Export JSON</a>
         </div>

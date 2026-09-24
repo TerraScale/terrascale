@@ -25,7 +25,7 @@ public sealed class MutationsTests
 
         var audit = await app.GetPageAsync(client, "/audit?range=90d");
         await Assert.That(audit.Contains("No audit events")).IsTrue();
-        await Assert.That(audit.Contains("Showing 0 of 0 events")).IsTrue();
+        await Assert.That(audit.Contains("Showing 0–0 of 0 events")).IsTrue();
 
         using var export = await client.GetAsync("/audit/export?range=90d&format=json");
         var json = await export.Content.ReadAsStringAsync();
@@ -93,18 +93,18 @@ public sealed class MutationsTests
         using var app = new DashboardTestApp();
         using var client = app.CreateDemoClient();
 
-        var initial = await app.GetPageAsync(client, $"/databases/{corePrimaryId}");
+        var initial = await app.GetPageAsync(client, $"/databases/{corePrimaryId}?tab=backups");
         await Assert.That(initial.Contains("aria-checked=\"true\"")).IsTrue();
 
         using var off = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/databases/backup-policy",
             new Dictionary<string, string> { ["databaseId"] = corePrimaryId, ["enabled"] = "false" });
         await Assert.That(off.Headers.Location!.ToString()).IsEqualTo($"/databases/{corePrimaryId}");
-        var disabled = await app.GetPageAsync(client, $"/databases/{corePrimaryId}");
+        var disabled = await app.GetPageAsync(client, $"/databases/{corePrimaryId}?tab=backups");
         await Assert.That(disabled.Contains("aria-checked=\"false\"")).IsTrue();
 
         await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/databases/backup-policy",
             new Dictionary<string, string> { ["databaseId"] = corePrimaryId, ["enabled"] = "true" });
-        var enabled = await app.GetPageAsync(client, $"/databases/{corePrimaryId}");
+        var enabled = await app.GetPageAsync(client, $"/databases/{corePrimaryId}?tab=backups");
         await Assert.That(enabled.Contains("aria-checked=\"true\"")).IsTrue();
     }
 
