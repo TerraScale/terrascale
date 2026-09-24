@@ -1,0 +1,179 @@
+{{define "content"}}
+<main class="ts-page ts-org">
+  <header class="ts-section-head">
+    <h1 class="ts-panel-title">{{.Data.Organization.Name}}</h1>
+    <a class="ts-btn ts-btn-secondary" href="/access">Manage team</a>
+  </header>
+  {{if .Data.Error}}<div class="ts-alert ts-alert-danger" role="alert">{{.Data.Error}}</div>{{end}}
+  <section class="ts-section">
+    <h2 class="ts-panel-title">Organization overview</h2>
+    <p>{{.Data.Organization.Kind}} · {{.Data.Organization.Status}} · {{.Data.Organization.ID}}</p>
+    <p>{{len .Data.Members}} members · {{len .Data.Projects}} projects</p>
+    {{if .Data.CanManage}}
+    <form method="post" action="/api/v1/dashboard/organization/rename">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <label for="organization-name">Organization name</label>
+      <input id="organization-name" name="name" value="{{.Data.Organization.Name}}" required>
+      <button class="ts-btn ts-btn-secondary" type="submit">Save name</button>
+    </form>
+    {{end}}
+  </section>
+  <section class="ts-section">
+    <div class="ts-section-head">
+      <h2 class="ts-panel-title">Projects</h2>
+      {{if .Data.CanProvision}}
+      <details><summary class="ts-btn ts-btn-primary">Create project</summary>
+        <form method="post" action="/api/v1/dashboard/organization/projects">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+          <label for="project-name">Project name</label><input id="project-name" name="name" required>
+          <label for="project-regions">Project regions</label>
+          <select id="project-regions" name="regions" multiple required>{{range .Data.Regions}}<option value="{{.}}" selected>{{.}}</option>{{end}}</select>
+          <label for="project-region">Primary region</label>
+          <select id="project-region" name="region">{{range .Data.Regions}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+          <label for="project-backup">Backup region</label>
+          <select id="project-backup" name="backupRegion">{{range .Data.Regions}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+          <button class="ts-btn ts-btn-primary" type="submit">Create project</button>
+        </form>
+      </details>
+      {{end}}
+    </div>
+    <div class="ts-table-wrap">
+      <table class="ts-table">
+        <thead><tr><th>Project</th><th>Slug</th><th>Placement</th><th>Actions</th></tr></thead>
+        <tbody>
+        {{range .Data.Projects}}
+          {{$project := .}}
+          <tr>
+            <td><strong>{{.Name}}</strong><br><span class="ts-meta">{{.ID}}</span></td>
+            <td>{{.Slug}}</td>
+            <td>{{.Region}} · backup {{.BackupRegion}}</td>
+            <td>
+              {{if not .Selected}}
+              <form method="post" action="/api/v1/dashboard/switch-project">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                <input type="hidden" name="projectId" value="{{.ID}}">
+                <input type="hidden" name="returnUrl" value="/organization">
+                <button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Select</button>
+              </form>
+              {{end}}
+              {{if $.Data.CanManage}}
+              <form method="post" action="/api/v1/dashboard/organization/projects/{{.ID}}/rename">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                <label for="rename-{{.ID}}">Rename project</label>
+                <input id="rename-{{.ID}}" name="name" value="{{.Name}}" required>
+                <select name="regions" multiple>{{range .RegionOptions}}<option value="{{.Code}}" {{if .Selected}}selected{{end}}>{{.Code}}</option>{{end}}</select>
+                <select name="region">{{range $.Data.Regions}}<option value="{{.}}" {{if eq . $project.Region}}selected{{end}}>{{.}}</option>{{end}}</select>
+                <select name="backupRegion">{{range $.Data.Regions}}<option value="{{.}}" {{if eq . $project.BackupRegion}}selected{{end}}>{{.}}</option>{{end}}</select>
+                <button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Save project</button>
+              </form>
+              {{end}}
+            </td>
+          </tr>
+        {{else}}
+          <tr><td colspan="4">No projects yet. Create one when this organization can provision resources.</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <section class="ts-section">
+    <h2 class="ts-panel-title">Members</h2>
+    <div class="ts-table-wrap"><table class="ts-table">
+      <thead><tr><th>Member</th><th>Role</th><th>Joined</th><th>Actions</th></tr></thead>
+      <tbody>{{range .Data.Members}}
+        <tr><td>{{.Name}}<br><span class="ts-meta">{{.Email}}</span></td>
+          <td>{{.Role}}</td><td>{{.JoinedAt}}</td><td>
+          {{if .CanEdit}}
+            <form method="post" action="/api/v1/dashboard/organization/members/{{.ID}}/role">
+              <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+              <select name="role"><option value="member" {{if eq .Role "member"}}selected{{end}}>Member</option><option value="viewer" {{if eq .Role "viewer"}}selected{{end}}>Viewer</option></select>
+              <button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Save role</button>
+            </form>
+            <form method="post" action="/api/v1/dashboard/organization/members/{{.ID}}/remove">
+              <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+              <button class="ts-btn ts-btn-destructive ts-btn-sm" type="submit">Remove</button>
+            </form>
+          {{else}}{{if .IsSelf}}You{{else}}Owner{{end}}{{end}}
+          </td></tr>
+      {{end}}</tbody>
+    </table></div>
+  </section>
+  {{if .Data.NewOrganization}}
+  <section class="ts-section ts-onboarding-card" data-signals="{ organizationName: '', selectedPlan: 'starter', interval: 'monthly' }">
+    <p class="ts-meta">NEW ORGANIZATION · {{if eq .Data.NewOrganization "organization"}}STEP 1 OF 3{{else if eq .Data.NewOrganization "payment"}}STEP 2 OF 3{{else}}STEP 3 OF 3{{end}}</p>
+    <h2 class="ts-panel-title">{{if eq .Data.NewOrganization "organization"}}Create organization{{else if eq .Data.NewOrganization "payment"}}Set up billing{{else}}Create the first project{{end}}</h2>
+    {{if eq .Data.NewOrganization "payment"}}
+    <p class="ts-meta">Business organizations need their own billing before they can provision projects.</p>
+    <form method="post" action="/api/v1/dashboard/organization/new-organization" class="ts-form">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <input type="hidden" name="step" value="payment-method">
+      <input type="hidden" name="organizationID" value="{{.Data.NewOrganizationID}}">
+      <div class="ts-field"><label class="ts-label" for="organization-plan">Plan</label>
+        <select class="ts-select" id="organization-plan" name="plan" required>{{range .Data.Plans}}<option value="{{.Key}}">{{.Name}} · {{.MonthlyPrice}} / month</option>{{end}}</select>
+      </div>
+      <div class="ts-field"><label class="ts-label" for="organization-interval">Billing interval</label>
+        <select class="ts-select" id="organization-interval" name="interval"><option value="monthly">Monthly</option><option value="annual">Annual</option></select>
+      </div>
+      <button class="ts-btn ts-btn-primary" type="submit">Continue to checkout</button>
+    </form>
+    {{else if eq .Data.NewOrganization "project"}}
+    <form method="post" action="/api/v1/dashboard/organization/new-organization" class="ts-form">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <input type="hidden" name="step" value="project">
+      <input type="hidden" name="organizationID" value="{{.Data.NewOrganizationID}}">
+      <div class="ts-field"><label class="ts-label" for="wizard-project-name">Project name</label><input class="ts-input" id="wizard-project-name" name="name" maxlength="128" required></div>
+      <div class="ts-field"><label class="ts-label" for="wizard-project-regions">Project regions</label><select class="ts-select" id="wizard-project-regions" name="regions" multiple required>{{range .Data.Regions}}<option value="{{.}}" selected>{{.}}</option>{{end}}</select></div>
+      <div class="ts-field"><label class="ts-label" for="wizard-project-region">Primary region</label><select class="ts-select" id="wizard-project-region" name="region">{{range .Data.Regions}}<option value="{{.}}">{{.}}</option>{{end}}</select></div>
+      <div class="ts-field"><label class="ts-label" for="wizard-project-backup">Backup region</label><select class="ts-select" id="wizard-project-backup" name="backupRegion">{{range .Data.Regions}}<option value="{{.}}">{{.}}</option>{{end}}</select></div>
+      <button class="ts-btn ts-btn-primary" type="submit">Create project</button>
+    </form>
+    {{else}}
+    <form method="post" action="/api/v1/dashboard/organization/new-organization">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <input type="hidden" name="step" value="organization">
+      <label for="new-organization-name">Organization name</label>
+      <input id="new-organization-name" name="name" maxlength="128" required data-bind:organizationName>
+      <button class="ts-btn ts-btn-primary" type="submit">Create organization</button>
+    </form>
+    {{end}}
+  </section>
+  {{else}}
+  <section class="ts-section">
+    <h2 class="ts-panel-title">New organization</h2>
+    <p class="ts-meta">Business organizations require their own billing before their first project can be created.</p>
+    <a class="ts-btn ts-btn-primary" href="/organization?newOrganization=organization">Create organization</a>
+  </section>
+  {{end}}
+  <section class="ts-section">
+    {{if .Data.CanLeave}}
+    <form method="post" action="/api/v1/dashboard/organization/leave">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <button class="ts-btn ts-btn-ghost" type="submit">Leave organization</button>
+    </form>
+    {{end}}
+    {{if .Data.CanManage}}
+    <h2 class="ts-panel-title">Organization management</h2>
+    <form method="post" action="/api/v1/dashboard/organization/members/ownership">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <label for="new-owner">Transfer ownership to</label>
+      <select id="new-owner" name="userID" required>{{range .Data.Members}}{{if not .IsOwner}}<option value="{{.ID}}">{{.Name}} · {{.Email}}</option>{{end}}{{end}}</select>
+      <button class="ts-btn ts-btn-secondary" type="submit">Request transfer</button>
+    </form>
+    {{if ne .Data.Organization.Kind "personal"}}
+    <form method="post" action="/api/v1/dashboard/organization/deletion">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <label for="deletion-confirmation">Enter {{.Data.Organization.Name}} to request deletion</label>
+      <input id="deletion-confirmation" name="confirmation" required {{if .Data.Organization.DeletionRequested}}disabled{{end}}>
+      <button class="ts-btn ts-btn-destructive" type="submit" {{if .Data.Organization.DeletionRequested}}disabled{{end}}>Request deletion</button>
+    </form>
+    {{end}}
+    {{else if .Data.CanConfirmOwnership}}
+    <h2 class="ts-panel-title">Confirm ownership transfer</h2>
+    <form method="post" action="/api/v1/dashboard/organization/members/ownership/confirm">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <button class="ts-btn ts-btn-primary" type="submit">Accept ownership</button>
+    </form>
+    {{end}}
+  </section>
+</main>
+{{end}}

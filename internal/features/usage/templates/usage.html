@@ -1,0 +1,58 @@
+{{define "content"}}
+<main class="ts-page">
+  <header class="ts-page-header"><div><p class="ts-eyebrow">Organization billing</p><h1>Usage</h1><p>Current project: {{.Shell.ProjectName}}</p></div></header>
+  <nav aria-label="Usage sections">
+    <a href="/usage?tab=overview&amp;project={{.Data.SelectedProject}}"{{if eq .Data.Tab "overview"}} aria-current="page"{{end}}>Overview</a>
+    <a href="/usage?tab=billing&amp;project={{.Data.SelectedProject}}"{{if eq .Data.Tab "billing"}} aria-current="page"{{end}}>Billing</a>
+    <a href="/usage?tab=settings&amp;project={{.Data.SelectedProject}}"{{if eq .Data.Tab "settings"}} aria-current="page"{{end}}>Spending controls</a>
+  </nav>
+  {{if eq .Data.Saved "ok"}}<p role="status" class="ts-alert ts-alert-success">Spending controls saved.</p>{{end}}
+  {{if eq .Data.Saved "invalid"}}<p role="alert" class="ts-alert ts-alert-danger">Enter a non-negative dollar amount with at most two decimal places.</p>{{end}}
+  {{if eq .Data.Tab "overview"}}
+    <section aria-labelledby="usage-summary"><h2 id="usage-summary">Project usage summary</h2>
+      <p>{{.Data.UsageSource}}</p>{{if .Data.UsageError}}<p role="status" class="ts-alert ts-alert-warning">{{.Data.UsageError}}</p>{{end}}
+      <dl>
+        <div><dt>Databases</dt><dd>{{.Data.ActiveDatabases}}</dd></div>
+        <div><dt>Distinct database regions</dt><dd>{{.Data.RegionCount}}</dd></div>
+        <div><dt>Read operations</dt><dd>{{.Data.Reads}}</dd></div>
+        <div><dt>Write units</dt><dd>{{.Data.Writes}}</dd></div>
+        <div><dt>Read and write operations</dt><dd>{{.Data.Requests}}</dd></div>
+        {{if gt .Data.StorageByteSeconds 0}}<div><dt>Storage activity</dt><dd>{{.Data.StorageByteSeconds}} byte-seconds</dd></div>{{end}}
+      </dl>
+    </section>
+    <section aria-labelledby="database-usage"><h2 id="database-usage">Project databases</h2>
+      <form method="get" action="/usage"><input type="hidden" name="tab" value="overview"><input type="hidden" name="project" value="{{.Data.SelectedProject}}">
+        <label>Database filter <select name="database"><option value="">All databases</option>{{range .Data.Databases}}<option value="{{.ID}}"{{if eq .ID $.Data.SelectedDatabase}} selected{{end}}>{{.Name}}</option>{{end}}</select></label><button type="submit">Apply</button>
+      </form>
+      {{if .Data.Databases}}<table><thead><tr><th>Database</th><th>Region</th><th>Status</th><th>Documents</th><th>Spend cap</th><th>Effective limit</th></tr></thead><tbody>
+        {{range .Data.Databases}}<tr><td>{{.Name}}</td><td>{{.Region}}</td><td>{{.Status}}</td><td>{{.Documents}}</td><td>{{if .SpendCap}}${{.SpendCap}}{{else}}No database cap{{end}}</td><td>{{.Effective}}</td></tr>{{end}}
+      </tbody></table>{{else}}<p>No databases match this project filter.</p>{{end}}
+    </section>
+  {{else if eq .Data.Tab "billing"}}
+    <section aria-labelledby="billing-summary"><h2 id="billing-summary">Billing summary</h2>
+      <dl><div><dt>Plan</dt><dd>{{.Data.PlanName}}</dd></div><div><dt>Billing status</dt><dd>{{if .Data.BillingStatus}}{{.Data.BillingStatus}}{{else}}Not reported{{end}}</dd></div>
+        <div><dt>Invoices</dt><dd>{{.Data.InvoiceCount}}</dd></div><div><dt>Current spending limit</dt><dd>{{.Data.EffectiveCap}}</dd></div>
+        {{if not .Data.BillingRenewal.IsZero}}<div><dt>Renewal</dt><dd>{{.Data.BillingRenewal.UTC.Format "Jan 2, 2006"}}</dd></div>{{end}}
+      </dl>
+      {{if .Data.Invoices}}<h3>Recent invoices</h3><table><thead><tr><th>Invoice</th><th>Status</th><th>Amount</th><th>Date</th></tr></thead><tbody>{{range .Data.Invoices}}<tr><td>{{.Number}}</td><td>{{.Status}}</td><td>{{.Amount}}</td><td>{{.CreatedAt.UTC.Format "Jan 2, 2006"}}</td></tr>{{end}}</tbody></table>
+      {{else}}<p>No invoices are available for this organization.</p>{{end}}
+    </section>
+  {{else}}
+    <section aria-labelledby="spending-controls"><h2 id="spending-controls">Spending controls</h2>
+      <p>Organization, project, and database caps work together. The tightest configured limit applies to each database.</p>
+      {{if .Data.CanManage}}
+      <form method="post" action="/api/v1/dashboard/usage/spending-controls">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+        <label>Monthly organization spending cap in USD <input name="spendCap" inputmode="decimal" pattern="\d+(\.\d{1,2})?" value="{{.Data.OrganizationCap}}"></label>
+        <label><input type="checkbox" name="paidExcess" value="true"{{if .Data.PaidExcess}} checked{{end}}> Allow usage beyond included plan resources</label>
+        <h3>Project caps</h3>
+        {{range .Data.Projects}}<label>{{.Name}} project cap in USD <input name="projCap_{{.ID}}" inputmode="decimal" pattern="\d+(\.\d{1,2})?" value="{{.SpendCap}}"> <small>Effective: {{.Effective}}</small></label>{{end}}
+        <h3>Database caps</h3>
+        {{range .Data.Databases}}<label>{{.Name}} database cap in USD <input name="dbCap_{{.ID}}" inputmode="decimal" pattern="\d+(\.\d{1,2})?" value="{{.SpendCap}}"> <small>Effective: {{.Effective}}</small></label>{{end}}
+        <button type="submit">Save spending controls</button>
+      </form>
+      {{else}}<p>Only organization owners and admins can change spending controls.</p>{{end}}
+    </section>
+  {{end}}
+</main>
+{{end}}

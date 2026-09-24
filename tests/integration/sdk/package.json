@@ -1,0 +1,124 @@
+{
+  "name": "@terrascale/sdk",
+  "version": "0.3.0",
+  "description": "TypeScript SDK for TerraScale public REST APIs.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "private": false,
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./admin": {
+      "types": "./dist/admin.d.ts",
+      "import": "./dist/admin.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
+    },
+    "./sql": {
+      "types": "./dist/sql.d.ts",
+      "import": "./dist/sql.js"
+    },
+    "./management": {
+      "types": "./dist/management.d.ts",
+      "import": "./dist/management.js"
+    },
+    "./ts-auth": {
+      "types": "./dist/ts-auth.d.ts",
+      "import": "./dist/ts-auth.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js"
+    },
+    "./svelte": {
+      "types": "./dist/svelte/index.d.ts",
+      "import": "./dist/svelte/index.js"
+    },
+    "./tanstack": {
+      "types": "./dist/tanstack/index.d.ts",
+      "import": "./dist/tanstack/index.js"
+    },
+    "./better-auth": {
+      "types": "./dist/better-auth.d.ts",
+      "workerd": "./dist/better-auth.js",
+      "browser": null,
+      "node": "./dist/better-auth.js"
+    },
+    "./local": {
+      "types": "./dist/local/index.d.ts",
+      "node": "./dist/local/index.js"
+    }
+  },
+  "bin": {
+    "terrascale-local": "./dist/local/cli.js"
+  },
+  "files": [
+    "dist",
+    "!dist/integration",
+    "!dist/internal",
+    "!dist/**/*.test.*",
+    "!dist/**/*capture*",
+    "!dist/**/*.map",
+    "sdk-route-manifest.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "qualify:artifact": "node scripts/qualify-npm-artifact.ts",
+    "check:route-manifest": "node scripts/generate-client-route-manifest.ts --check",
+    "check:openapi-contract-descriptor": "node scripts/generate-openapi-contract-descriptor.ts --check",
+    "check:public-contract-fixture": "vitest run test/public-contract-fixture.test.ts",
+    "check:forbidden-surface": "vitest run test/forbidden-surface.test.ts",
+    "check:sbom": "node scripts/check-sbom.mjs",
+    "check:vulnerabilities": "node scripts/check-vulnerabilities.mjs",
+    "generate:route-manifest": "npm run build && node scripts/generate-client-route-manifest.ts",
+    "generate:openapi-contract-descriptor": "npm run build && node scripts/generate-openapi-contract-descriptor.ts",
+    "local": "node dist/local/cli.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:browser": "playwright test"
+  },
+  "peerDependencies": {
+    "@better-auth/core": "1.7.2",
+    "react": ">=18.2.0 <20.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@better-auth/core": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@better-auth/core": "1.7.2",
+    "@better-auth/test-utils": "1.7.2",
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^26.0.0",
+    "better-auth": "1.7.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": "22.x || 24.x",
+    "npm": ">=11.0.0"
+  },
+  "browserslist": {
+    "production": [
+      "last 1 Chrome major version",
+      "last 1 Firefox major version",
+      "last 1 Safari major version",
+      "last 1 Edge major version"
+    ]
+  },
+  "packageManager": "npm@11.18.0"
+}

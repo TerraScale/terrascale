@@ -1,0 +1,58 @@
+# github.com/CAFxX/httpcompression v0.0.9
+## explicit; go 1.11
+github.com/CAFxX/httpcompression
+github.com/CAFxX/httpcompression/contrib/andybalholm/brotli
+github.com/CAFxX/httpcompression/contrib/compress/gzip
+github.com/CAFxX/httpcompression/contrib/compress/zlib
+github.com/CAFxX/httpcompression/contrib/internal/utils
+github.com/CAFxX/httpcompression/contrib/klauspost/zstd
+# github.com/andybalholm/brotli v1.2.0
+## explicit; go 1.22
+github.com/andybalholm/brotli
+github.com/andybalholm/brotli/matchfinder
+# github.com/coder/websocket v1.8.15
+## explicit; go 1.23
+github.com/coder/websocket
+github.com/coder/websocket/internal/bpool
+github.com/coder/websocket/internal/errd
+github.com/coder/websocket/internal/util
+github.com/coder/websocket/internal/wsjs
+# github.com/klauspost/compress v1.18.0
+## explicit; go 1.22
+github.com/klauspost/compress
+github.com/klauspost/compress/fse
+github.com/klauspost/compress/huff0
+github.com/klauspost/compress/internal/cpuinfo
+github.com/klauspost/compress/internal/le
+github.com/klauspost/compress/internal/snapref
+github.com/klauspost/compress/zstd
+github.com/klauspost/compress/zstd/internal/xxhash
+# github.com/klauspost/cpuid/v2 v2.0.12
+## explicit; go 1.15
+github.com/klauspost/cpuid/v2
+# github.com/starfederation/datastar-go v1.2.2
+## explicit; go 1.24
+github.com/starfederation/datastar-go/datastar
+# github.com/stripe/stripe-go/v86 v86.4.2
+## explicit; go 1.22
+github.com/stripe/stripe-go/v86
+github.com/stripe/stripe-go/v86/form
+github.com/stripe/stripe-go/v86/webhook
+# github.com/valyala/bytebufferpool v1.0.0
+## explicit
+github.com/valyala/bytebufferpool
+# github.com/zeebo/blake3 v0.2.4
+## explicit; go 1.18
+github.com/zeebo/blake3
+github.com/zeebo/blake3/internal/alg
+github.com/zeebo/blake3/internal/alg/compress
+github.com/zeebo/blake3/internal/alg/compress/compress_pure
+github.com/zeebo/blake3/internal/alg/compress/compress_sse41
+github.com/zeebo/blake3/internal/alg/hash
+github.com/zeebo/blake3/internal/alg/hash/hash_avx2
+github.com/zeebo/blake3/internal/alg/hash/hash_pure
+github.com/zeebo/blake3/internal/consts
+github.com/zeebo/blake3/internal/utils
+# terrascale.tech/sdk v0.0.0-20260923161729-3088ef2e3bd0
+## explicit; go 1.24.0
+terrascale.tech/sdk

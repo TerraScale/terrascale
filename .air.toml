@@ -1,0 +1,25 @@
+root = "."
+tmp_dir = "bin"
+
+[build]
+cmd = "GOFLAGS=-mod=vendor go build -o ./bin/dashboard ./cmd/dashboard"
+bin = "bin/dashboard"
+delay = 600
+include_ext = ["go", "html", "css", "js", "svg", "woff2"]
+exclude_dir = ["bin", "node_modules", "vendor", "tests", "web/assets", "src", "tools", "docs", "e2e"]
+exclude_regex = ["_test.go"]
+stop_on_error = true
+send_interrupt = true
+kill_delay = "500ms"
+
+[log]
+time = true
+
+[color]
+main = "magenta"
+watcher = "cyan"
+build = "yellow"
+runner = "green"
+
+[misc]
+clean_on_exit = false

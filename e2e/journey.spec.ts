@@ -1,113 +1,113 @@
-import { test, expect } from "@playwright/test";
-import { login, logout, registerAndOnboard } from "./support/journey";
+import { mkdirSync } from "node:fs";
+import { test, expect } from "./support/test";
+import { login, logout, registerAndOnboard, type AccountCredentials } from "./support/journey";
+import { captureResponsiveScreenshots } from "./support/screenshots";
 
-test("account creation → onboarding → dashboard works end to end", async ({ page }) => {
-  const email = `e2e-journey-${Date.now()}@example.test`;
-  const password = "E2e-journey-123!";
+function credentials(label: string): AccountCredentials {
+  return {
+    email: `e2e-${label}-${Date.now()}@example.test`,
+    password: "E2e-journey-123!",
+    displayName: `E2E ${label}`,
+  };
+}
 
-  await registerAndOnboard(page, { email, password, displayName: "E2E Journey" });
+async function dashboardSessionToken(page: import("@playwright/test").Page): Promise<string> {
+  const session = (await page.context().cookies()).find((cookie) => cookie.name === "ts_dashboard_session");
+  expect(session, "account creation must establish an HttpOnly dashboard session").toBeDefined();
+  return session!.value;
+}
+
+test("fresh account registration, demo onboarding, session, and sign-in work end to end", async ({ page }) => {
+  const account = credentials("journey");
+  mkdirSync("/tmp/dsh-198-after", { recursive: true });
+  await page.goto("/login");
+  await captureResponsiveScreenshots(page, "login");
+  await page.goto("/onboarding");
+  await captureResponsiveScreenshots(page, "onboarding");
+  await registerAndOnboard(page, account);
+
+  await captureResponsiveScreenshots(page, "dashboard");
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
-  await expect(page.getByText("E2E Journey").first()).toBeVisible();
+  await expect(page.getByText(account.displayName).first()).toBeVisible();
+  await page.screenshot({ path: "/tmp/dsh-198-after/member-desktop.png", fullPage: true });
 
-  // Session survives navigation across the inner dashboard.
-  await page.goto("/databases");
-  await expect(page.getByRole("heading", { name: "Databases", exact: true })).toBeVisible();
+  const currentUser = await page.request.get("/api/v1/auth/me");
+  expect(currentUser.status()).toBe(200);
+  expect(await currentUser.json()).toMatchObject({
+    user: { email: account.email.toLowerCase(), name: account.displayName, onboardingCompleted: true },
+  });
 
-  // Logout clears the session; the dashboard redirects anonymous users.
   await logout(page);
-  await page.goto("/");
-  await page.waitForURL("**/login**");
-});
-
-test("registered account can sign in again with its password", async ({ page }) => {
-  const email = `e2e-return-${Date.now()}@example.test`;
-  const password = "E2e-return-123!";
-  await registerAndOnboard(page, { email, password, displayName: "E2E Return" });
-  await logout(page);
-  await login(page, email, password);
+  await login(page, account.email, account.password);
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
 });
 
-test("member can create a database and open its detail page", async ({ page }) => {
-  await registerAndOnboard(page, {
-    email: `e2e-db-${Date.now()}@example.test`,
-    password: "E2e-dbcreate-123!",
-    displayName: "E2E Db",
-  });
+test("a database and project key stay inside the account that created them", async ({ browser, baseURL }) => {
+  const owner = await browser.newContext({ baseURL });
+  const other = await browser.newContext({ baseURL });
+  const anonymous = await browser.newContext({ baseURL });
+  try {
+    const ownerPage = await owner.newPage();
+    const ownerAccount = credentials("tenant-a");
+    await registerAndOnboard(ownerPage, ownerAccount);
+    await ownerPage.goto("/databases");
 
-  await page.goto("/databases");
-  // Databases has no inline create panel: the floating action button is the
-  // only entry point and deep-links to the auto-opened create dialog.
-  await page.getByRole("link", { exact: true, name: "Create database" }).click();
-  await expect(page).toHaveURL(/\/databases\?create=1$/);
-  const dialog = page.getByRole("dialog", { name: "Create a database" });
-  await dialog.getByLabel("Database name").fill("journey-primary");
-  await dialog.getByRole("button", { exact: true, name: "Create database" }).click();
-  await expect(page.getByRole("link", { name: "journey-primary" })).toBeVisible();
+    const projectId = await ownerPage.locator("main[data-project-id]").getAttribute("data-project-id");
+    expect(projectId, "database page must expose its selected project identity").toBeTruthy();
 
-  await page.click('a[href^="/databases/db_"]');
-  await expect(page.getByText("journey-primary").first()).toBeVisible();
-});
+    const create = ownerPage.locator('form[action="/api/v1/dashboard/databases"]');
+    const databaseName = `e2e-${Date.now()}`;
+    await create.locator('[name="name"]').fill(databaseName);
+    await create.locator('[name="region"]').selectOption("GRU");
+    await create.getByRole("button", { name: "Create database" }).click();
+    await ownerPage.waitForURL((url) => url.pathname.startsWith("/databases/db_"));
+    await expect(ownerPage.getByRole("heading", { name: databaseName })).toBeVisible();
 
-test("member can create and revoke an API key", async ({ page }) => {
-  await registerAndOnboard(page, {
-    email: `e2e-key-${Date.now()}@example.test`,
-    password: "E2e-apikey-123!",
-    displayName: "E2E Key",
-  });
+    const databaseResponse = await ownerPage.request.get("/api/v1/dashboard/databases");
+    expect(databaseResponse.status()).toBe(200);
+    const databases = await databaseResponse.json() as { id: string; name: string }[];
+    const database = databases.find((item) => item.name === databaseName);
+    expect(database, "created database must remain listed for its owning account").toBeDefined();
 
-  await page.goto("/api-keys?create=key");
-  await page.fill("#key-name", "service credential");
-  await page.fill("#key-scopes", "database:read");
-  await page.getByRole("button", { name: "Create key" }).click();
-  await page.getByRole("dialog", { name: "Credential secret" }).getByRole("link", { name: "Done" }).click();
-  const table = page.locator(".ts-apikeys-table-wrap table");
-  await expect(table.locator("thead th")).toHaveText(["Name", "Type", "Last used", "Expires", "Status", ""]);
-  const row = table.locator("tbody tr").filter({ hasText: "service credential" });
-  await expect(row).toBeVisible();
-  await row.getByRole("button", { name: "Details for service credential" }).click();
-  const details = page.getByRole("dialog", { name: "service credential" });
-  await expect(details.getByText("database:read")).toBeVisible();
-  await expect(details.getByText("Owner / creator")).toBeVisible();
-  await expect(details.getByRole("button", { name: "Rotate" })).toBeEnabled();
-  await details.getByRole("button", { name: "Delete" }).click();
-  const confirmation = page.getByRole("dialog", { name: "Delete credential" });
-  await confirmation.getByRole("button", { name: "Delete credential" }).click();
-  await expect(row.getByText("Revoked")).toBeVisible();
+    const session = await dashboardSessionToken(ownerPage);
+    const keyPath = `/api/v1/projects/${projectId}/auth/api-keys`;
+    const createdKeyResponse = await ownerPage.request.post(keyPath, {
+      headers: { Authorization: `Bearer ${session}` },
+      data: { name: "journey key", scopes: ["database:read"], databaseId: database!.id },
+    });
+    expect(createdKeyResponse.status()).toBe(201);
+    const createdKey = await createdKeyResponse.json() as {
+      apiKey: { databaseId: string; scopes: string[]; isActive: boolean };
+      secret: string;
+    };
+    expect(createdKey.secret).toMatch(/^tsk_demo_/);
+    expect(createdKey.apiKey).toMatchObject({ databaseId: database!.id, scopes: ["database:read"], isActive: true });
 
-  await page.locator("#credential-kind-value").click();
-  await page.locator('[name="kind"] + details [data-filter-value="key"]').click();
-  await expect(page).toHaveURL(/kind=key/);
-  await page.locator("#credential-status-value").click();
-  await page.locator('[name="status"] + details [data-filter-value="Active"]').click();
-  await expect(page).toHaveURL(/kind=key.*status=Active/);
-  await expect(page.locator("#credential-kind-value")).toHaveText("API keys");
-  await expect(page.locator("#credential-status-value")).toHaveText("Active");
-});
+    const listedKeysResponse = await ownerPage.request.get(keyPath, {
+      headers: { Authorization: `Bearer ${session}` },
+    });
+    expect(listedKeysResponse.status()).toBe(200);
+    expect(await listedKeysResponse.json()).toMatchObject({ apiKeys: [expect.objectContaining({ name: "journey key" })] });
 
-test("member can invite a teammate from the team page", async ({ page }) => {
-  await registerAndOnboard(page, {
-    email: `e2e-invite-${Date.now()}@example.test`,
-    password: "E2e-invite-123!",
-    displayName: "E2E Invite",
-  });
+    const otherPage = await other.newPage();
+    await registerAndOnboard(otherPage, credentials("tenant-b"));
+    await otherPage.goto("/databases");
+    const otherDatabases = await otherPage.request.get("/api/v1/dashboard/databases");
+    expect(otherDatabases.status()).toBe(200);
+    expect(await otherDatabases.json()).toEqual([]);
 
-  await page.goto("/access");
-  await page.fill("#invite-email", "teammate@example.test");
-  await page.getByRole("button", { name: "Send invite" }).click();
-  await expect(page.getByText("teammate@example.test").first()).toBeVisible();
-});
+    const otherSession = await dashboardSessionToken(otherPage);
+    const crossAccountKeys = await otherPage.request.get(keyPath, {
+      headers: { Authorization: `Bearer ${otherSession}` },
+    });
+    expect(crossAccountKeys.status()).toBe(404);
 
-test("member can update profile name and read notifications", async ({ page }) => {
-  await registerAndOnboard(page, {
-    email: `e2e-profile-${Date.now()}@example.test`,
-    password: "E2e-profile-123!",
-    displayName: "E2E Profile",
-  });
-
-  await page.goto("/profile");
-  await expect(page.getByRole("heading", { name: "Profile", exact: true })).toBeVisible();
-
-  await page.goto("/notifications");
-  await expect(page.getByRole("heading", { name: "Notifications" })).toBeVisible();
+    const anonymousPage = await anonymous.newPage();
+    const anonymousKeys = await anonymousPage.request.get(keyPath);
+    expect(anonymousKeys.status()).toBe(401);
+  } finally {
+    await owner.close();
+    await other.close();
+    await anonymous.close();
+  }
 });

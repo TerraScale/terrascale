@@ -1,0 +1,132 @@
+{{define "content"}}
+<main id="access-page" class="ts-page ts-access-page">
+  <header class="ts-section-head">
+    <div><p class="ts-meta">ORGANIZATION ACCESS</p><h1 class="ts-panel-title">Team</h1>
+      <p class="ts-meta">Manage people and projects in {{.Data.OrganizationName}}.</p></div>
+  </header>
+  {{if .Data.Error}}<div class="ts-alert ts-alert-danger" role="alert">{{.Data.Error}}</div>{{end}}
+  {{if .Data.InviteURL}}
+  <section class="ts-alert ts-alert-success" aria-labelledby="invitation-link-title">
+    <strong id="invitation-link-title">Invitation created</strong>
+    <p>Share this one-time link with the invitee. It will only be shown again if you resend the invitation.</p>
+    <a class="ts-link" href="{{.Data.InviteURL}}" rel="noreferrer">{{.Data.InviteURL}}</a>
+  </section>
+  {{end}}
+
+  <nav class="ts-tabs" aria-label="Team sections">
+    <a class="ts-tab {{if eq .Data.Tab "overview"}}ts-tab-active{{end}}" href="/access">Overview</a>
+    <a class="ts-tab {{if eq .Data.Tab "members"}}ts-tab-active{{end}}" href="/access?tab=members">Members</a>
+    <a class="ts-tab {{if eq .Data.Tab "projects"}}ts-tab-active{{end}}" href="/access?tab=projects">Projects</a>
+    <a class="ts-tab {{if eq .Data.Tab "invitations"}}ts-tab-active{{end}}" href="/access?tab=invitations">Invitations</a>
+  </nav>
+
+  {{if or (eq .Data.Tab "overview") (eq .Data.Tab "members")}}
+  <section class="ts-section" aria-labelledby="team-members-heading">
+    <div class="ts-section-head"><div><h2 class="ts-panel-title" id="team-members-heading">Members</h2><p class="ts-meta">Members can work with project data. Viewers have read-only access.</p></div></div>
+    {{if eq .Data.Tab "members"}}
+    <form id="access-filter-form" method="get" action="/access" class="ts-filters" data-on:submit="@get('/access', {contentType:'form'})">
+      <input type="hidden" name="tab" value="members">
+      <div class="ts-field"><label class="ts-label" for="member-search">Search members</label><input class="ts-input" id="member-search" name="q" value="{{.Data.Query}}"></div>
+      <div class="ts-field"><label class="ts-label" for="member-role-filter">Filter by role</label>
+        <select class="ts-select" id="member-role-filter" name="role" data-on:change="document.getElementById('access-filter-form').requestSubmit()">
+          <option value="all" {{if eq .Data.RoleFilter "all"}}selected{{end}}>All roles</option>
+          <option value="owner" {{if eq .Data.RoleFilter "owner"}}selected{{end}}>Owner</option>
+          <option value="member" {{if eq .Data.RoleFilter "member"}}selected{{end}}>Member</option>
+          <option value="viewer" {{if eq .Data.RoleFilter "viewer"}}selected{{end}}>Viewer</option>
+        </select>
+      </div>
+      <button class="ts-btn ts-btn-secondary" type="submit">Search</button>
+    </form>
+    {{end}}
+    <div class="ts-table-wrap">
+      <table class="ts-table">
+        <thead><tr><th>Member</th><th>Role</th><th>Joined</th><th>Actions</th></tr></thead>
+        <tbody>
+        {{range .Data.Members}}
+          <tr>
+            <td><strong>{{.Name}}</strong><br><span class="ts-meta">{{.Email}}</span></td>
+            <td>{{if .IsOwner}}<span class="ts-badge ts-badge-success">Organization owner</span>{{else}}{{.Role}}{{end}}</td>
+            <td>{{.JoinedAt}}</td>
+            <td>
+            {{if .CanEdit}}
+              <form method="post" action="/api/v1/access/members/{{.ID}}/role">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                <label class="ts-sr-only" for="role-{{.ID}}">Role for {{.Name}}</label>
+                <select class="ts-select" id="role-{{.ID}}" name="role">
+                  <option value="member" {{if eq .Role "member"}}selected{{end}}>Member</option>
+                  <option value="viewer" {{if eq .Role "viewer"}}selected{{end}}>Viewer</option>
+                </select>
+                <button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Save role</button>
+              </form>
+              <form method="post" action="/api/v1/access/members/{{.ID}}/revoke">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                <button class="ts-btn ts-btn-destructive ts-btn-sm" type="submit">Remove access</button>
+              </form>
+            {{else}}{{if .IsSelf}}You{{else}}Owner{{end}}{{end}}
+            </td>
+          </tr>
+        {{else}}
+          <tr><td colspan="4">No members match these filters.</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{if or .Data.PreviousURL .Data.NextURL}}
+    <div class="ts-pagination">
+      <span class="ts-meta">Showing {{.Data.First}}–{{.Data.Last}} of {{.Data.Total}}</span>
+      {{if .Data.PreviousURL}}<a class="ts-btn ts-btn-secondary ts-btn-sm" href="{{.Data.PreviousURL}}">Previous</a>{{end}}
+      {{if .Data.NextURL}}<a class="ts-btn ts-btn-secondary ts-btn-sm" href="{{.Data.NextURL}}">Next</a>{{end}}
+    </div>
+    {{end}}
+  </section>
+  {{end}}
+
+  {{if or (eq .Data.Tab "overview") (eq .Data.Tab "projects")}}
+  <section class="ts-section" aria-labelledby="team-projects-heading">
+    <div class="ts-section-head"><div><h2 class="ts-panel-title" id="team-projects-heading">Projects</h2><p class="ts-meta">Project access follows organization membership.</p></div></div>
+    <div class="ts-table-wrap">
+      <table class="ts-table">
+        <thead><tr><th>Project</th><th>Primary region</th><th>Backup region</th><th>Status</th></tr></thead>
+        <tbody>{{range .Data.Projects}}
+          <tr><td><strong>{{.Name}}</strong><br><span class="ts-meta">{{.ID}}</span></td><td>{{.Region}}</td><td>{{.BackupRegion}}</td><td>{{if .Selected}}Current{{else}}Available{{end}}</td></tr>
+        {{else}}<tr><td colspan="4">No projects are available in this organization.</td></tr>{{end}}</tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
+
+  {{if or (eq .Data.Tab "overview") (eq .Data.Tab "invitations")}}
+  <section class="ts-section" aria-labelledby="team-invitations-heading">
+    <div class="ts-section-head"><div><h2 class="ts-panel-title" id="team-invitations-heading">Invitations</h2><p class="ts-meta">Links expire after seven days and can be refreshed by an owner.</p></div></div>
+    {{if .Data.CanManage}}
+    <form method="post" action="/api/v1/access/invitations" class="ts-access-invite-form">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <div class="ts-field"><label class="ts-label" for="invite-email">Email address</label><input class="ts-input" id="invite-email" name="email" type="email" autocomplete="email" required></div>
+      <div class="ts-field"><label class="ts-label" for="invite-role">Role</label>
+        <select class="ts-select" id="invite-role" name="role"><option value="member">Member</option><option value="viewer">Viewer</option></select>
+      </div>
+      <button class="ts-btn ts-btn-primary" type="submit">Create invitation</button>
+    </form>
+    {{end}}
+    <div class="ts-table-wrap">
+      <table class="ts-table">
+        <thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Expires</th><th>Actions</th></tr></thead>
+        <tbody>{{range .Data.Invitations}}
+          <tr>
+            <td>{{.Email}}</td><td>{{.Role}}</td><td>{{.Status}}</td><td>{{.ExpiresAt}}</td>
+            <td>{{if and $.Data.CanManage (eq .Status "Pending")}}
+              <form method="post" action="/api/v1/access/invitations/{{.ID}}/resend">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Resend</button>
+              </form>
+              <form method="post" action="/api/v1/access/invitations/{{.ID}}/revoke">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}"><button class="ts-btn ts-btn-destructive ts-btn-sm" type="submit">Cancel</button>
+              </form>
+            {{else}}—{{end}}</td>
+          </tr>
+        {{else}}<tr><td colspan="5">No invitations have been created.</td></tr>{{end}}</tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
+</main>
+{{end}}

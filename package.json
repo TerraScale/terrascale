@@ -11,8 +11,10 @@
   },
   "scripts": {
     "build:css": "node scripts/build-css.mjs",
-    "e2e": "dotnet build TerraScale.Dashboard.slnx && playwright test",
-    "e2e:headed": "playwright test --headed",
+    "build:test-sdk": "npm --prefix tests/integration/sdk ci --no-audit --no-fund && npm --prefix tests/integration/sdk run build",
+    "watch:css": "node scripts/build-css.mjs --watch --dev",
+    "e2e": "npm run build:test-sdk && playwright test",
+    "e2e:headed": "npm run build:test-sdk && playwright test --headed",
     "perf": "node scripts/performance.mjs"
   }
 }

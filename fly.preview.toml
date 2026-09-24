@@ -2,7 +2,7 @@
 primary_region = "gru"
 
 [env]
-  ASPNETCORE_ENVIRONMENT = "Production"
+  DASHBOARD_ADDR = ":8080"
   TS_DASHBOARD_PRODUCTION_DEMO = "1"
   # The preview E2E suite runs against this app exactly like the local
   # Playwright webServer does, so the testing dev shim must be available for
@@ -20,3 +20,11 @@ primary_region = "gru"
 [[vm]]
   size = "shared-cpu-1x"
   memory = "256mb"
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  path = "/health/ready"
+  protocol = "http"
+  timeout = "5s"

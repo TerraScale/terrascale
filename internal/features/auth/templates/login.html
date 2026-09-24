@@ -1,0 +1,27 @@
+{{define "content"}}
+<main class="ts-login">
+  <section class="ts-auth-card" aria-labelledby="login-title">
+    <img class="ts-brand-logo" src="/brand/logo-terrascale-auth.svg" alt="TerraScale">
+    <h1 id="login-title">Sign in</h1>
+    <p>Access your databases and cloud operations.</p>
+    {{if .Data.Error}}
+    <p role="alert" class="ts-alert ts-alert-danger">{{.Data.Error}}</p>
+    {{end}}
+    <form class="ts-auth-form" method="post" action="/api/v1/auth/password/login" data-signals="{ passwordVisible: false }">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <div class="ts-field">
+        <label class="ts-label" for="email">Email</label>
+        <input class="ts-input" id="email" name="email" type="email" autocomplete="email" required>
+      </div>
+      <div class="ts-field">
+        <label class="ts-label" for="password">Password</label>
+        <input class="ts-input" id="password" name="password" type="password" autocomplete="current-password" required data-attr:type="$passwordVisible ? 'text' : 'password'">
+        <button class="ts-btn ts-btn-secondary" type="button" data-on:click="$passwordVisible = !$passwordVisible" data-attr:aria-pressed="$passwordVisible ? 'true' : 'false'">Show password</button>
+      </div>
+      <input type="hidden" name="redirectTo" value="/">
+      <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Sign in</button>
+    </form>
+    <p class="ts-auth-footer">New to TerraScale? <a href="/onboarding">Create account</a></p>
+  </section>
+</main>
+{{end}}

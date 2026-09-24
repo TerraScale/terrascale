@@ -1,0 +1,202 @@
+/* Usage caps, charts, allowance and page-specific section styles.
+   Generic toolbar, filters and terms live in web/assets/css/components/. */
+
+/* ===== Feature: Usage/Audit/Notifications ===== */
+
+/* Keep the action beside the title in a grid so it never wraps below it. */
+.ts-usage-head-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--ts-xs);
+}
+
+/* v1 BillingControls actionRow: gap sm, plan select min-width 13rem. */
+.ts-usage-head-actions .ts-row { gap: var(--ts-sm); }
+
+.ts-usage-head-actions .ts-select { min-width: 13rem; }
+
+/* v1 EmptyState restyle (global per spec exact values): dashed panel, icon box. */
+.ts-empty {
+  padding: var(--ts-xl);
+  border: 1px dashed var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: color-mix(in oklab, var(--ts-surface-muted) 30%, transparent);
+}
+
+.ts-empty-title {
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+}
+
+.ts-empty-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--ts-sm);
+  flex-shrink: 0;
+}
+
+.ts-empty-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* v1 statValue: 24px sans semibold, 32px line (global per spec exact values). */
+.ts-metric-value-sm {
+  font-family: var(--ts-font-sans);
+  font-weight: var(--ts-fw-semibold);
+  font-size: 24px;
+  line-height: 32px;
+}
+
+.ts-metric-inline {
+  font-size: var(--ts-fs-panel-title);
+  font-weight: var(--ts-fw-semibold);
+  font-family: var(--ts-font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ts-ink);
+}
+
+.ts-text-danger { color: var(--ts-danger); }
+.ts-text-warning { color: var(--ts-warning); }
+
+/* Caps editor: project rows lead, database rows indent under them. */
+.ts-usage-caps tbody + tbody { border-top: 1px solid var(--ts-line); }
+
+.ts-usage-cap-name {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ts-sm);
+}
+
+.ts-usage-cap-name > svg { flex: none; margin-top: 3px; color: var(--ts-ink-muted); }
+
+.ts-usage-cap-name > span { display: grid; gap: 2px; }
+
+.ts-usage-cap-database .ts-usage-cap-name { padding-left: var(--ts-xl); }
+
+.ts-usage-cap-database .ts-table-strong { font-weight: var(--ts-fw-medium); }
+
+.ts-usage-cap {
+  position: relative;
+  display: block;
+  width: 11rem;
+}
+
+.ts-usage-cap > span {
+  position: absolute;
+  left: var(--ts-md);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ts-ink-muted);
+  pointer-events: none;
+}
+
+.ts-usage-cap > .ts-input { width: 100%; padding-left: 26px; font-variant-numeric: tabular-nums; }
+
+.ts-usage-cap > .ts-input:invalid { border-color: var(--ts-danger); }
+
+.ts-usage-section {
+  display: grid;
+  gap: var(--ts-lg);
+  min-width: 0;
+  align-content: start;
+}
+
+.ts-usage-allowance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-xl) 48px;
+}
+
+.ts-usage-allowance > .ts-stats { flex: 1 1 16rem; }
+
+.ts-usage-divided {
+  display: grid;
+  gap: var(--ts-xl);
+  padding-top: 20px;
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-usage-gauge {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-lg);
+  min-width: 0;
+}
+
+.ts-usage-gauge .ts-metric-label {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-xs);
+}
+
+.ts-usage-gauge-value {
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: var(--ts-fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-usage-gauge-value small {
+  white-space: nowrap;
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+  color: var(--ts-ink-muted);
+}
+
+.ts-usage-ring {
+  position: relative;
+  flex: 0 0 auto;
+  width: 96px;
+  height: 96px;
+}
+
+.ts-ring {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.ts-ring circle {
+  fill: none;
+  stroke-width: 10;
+}
+
+.ts-ring-track { stroke: var(--ts-surface-muted); }
+
+.ts-ring-fill {
+  stroke-linecap: round;
+  transition: stroke-dasharray var(--ts-t-base) var(--ts-ease);
+}
+
+.ts-ring-success .ts-ring-fill { stroke: var(--ts-accent); }
+.ts-ring-warning .ts-ring-fill { stroke: var(--ts-warning); }
+.ts-ring-danger .ts-ring-fill { stroke: var(--ts-danger); }
+
+.ts-usage-ring-value {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+}
+
+.ts-usage-ring-value strong {
+  font-size: 20px;
+  line-height: 1.1;
+  font-weight: var(--ts-fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-usage-ring-value small {
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+}

@@ -1,7 +1,0 @@
-<Solution>
-  <Project Path="src/TerraScale.Datastar/TerraScale.Datastar.csproj" />
-  <Project Path="src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
-  <Project Path="tests/TerraScale.Dashboard.Testing/TerraScale.Dashboard.Testing.csproj" />
-  <Project Path="tests/TerraScale.Dashboard.FastTests/TerraScale.Dashboard.FastTests.csproj" />
-  <Project Path="tests/TerraScale.Dashboard.SlowTests/TerraScale.Dashboard.SlowTests.csproj" />
-</Solution>

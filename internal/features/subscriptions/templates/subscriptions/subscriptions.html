@@ -1,0 +1,74 @@
+{{define "content"}}
+<main class="ts-page">
+  <header class="ts-page-header">
+    <div>
+      <h1 class="ts-title-22">Plans and billing</h1>
+      <p class="ts-sub-desc">Billing for {{.Data.OrganizationName}}.</p>
+    </div>
+    {{if .Data.Demo}}<span class="ts-badge ts-badge-info">Demo billing</span>{{end}}
+  </header>
+
+  {{if .Data.PaymentNotice}}<p class="ts-alert ts-alert-info" role="status">{{.Data.PaymentNotice}}</p>{{end}}
+
+  <section class="ts-panel" aria-labelledby="billing-summary-title">
+    <div class="ts-panel-header">
+      <div>
+        <h2 id="billing-summary-title" class="ts-panel-title">Current plan</h2>
+        <p class="ts-panel-subtitle">Your plan and billing status for this organization.</p>
+      </div>
+    </div>
+    <dl class="ts-kv">
+      <div><dt>Plan</dt><dd>{{if .Data.PlanName}}{{.Data.PlanName}}{{else}}Free{{end}}</dd></div>
+      <div><dt>Status</dt><dd>{{.Data.BillingStatus}}</dd></div>
+      {{if .Data.BillingInterval}}<div><dt>Interval</dt><dd>{{.Data.BillingInterval}}</dd></div>{{end}}
+      <div><dt>Renewal</dt><dd>{{.Data.Renewal}}</dd></div>
+      <div><dt>Payment method</dt><dd>{{if .Data.PaymentValidated}}On file{{else}}Not set{{end}}</dd></div>
+    </dl>
+    <div class="ts-row ts-gap-8">
+      <a class="ts-btn ts-btn-secondary" href="/billing/portal">Manage billing</a>
+    </div>
+  </section>
+
+  <section class="ts-panel" aria-labelledby="available-plans-title">
+    <div class="ts-panel-header">
+      <div>
+        <h2 id="available-plans-title" class="ts-panel-title">Available plans</h2>
+        <p class="ts-panel-subtitle">Choose a billing interval to continue.</p>
+      </div>
+    </div>
+    <div class="ts-grid ts-grid-3">
+      {{range .Data.Plans}}
+      <article class="ts-card" aria-labelledby="plan-{{.Key}}">
+        <div class="ts-stack-12">
+          <h3 id="plan-{{.Key}}" class="ts-title-18">{{.Name}}</h3>
+          <p class="ts-title-22">{{.MonthlyPrice}} <small>/ month</small></p>
+          {{if .AnnualAvailable}}<p class="ts-meta">{{.AnnualPrice}} billed annually</p>{{end}}
+          {{if gt .TrialDays 0}}<p class="ts-meta">{{.TrialDays}} day trial</p>{{end}}
+          {{if .ShowLimits}}<p class="ts-meta">{{.StorageMiB}} MiB storage · {{.MonthlyRequests}} requests per month</p>{{end}}
+          <div class="ts-stack-8">
+            <form method="post" action="/billing/checkout">
+              <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+              <input type="hidden" name="plan" value="{{.Key}}">
+              <input type="hidden" name="interval" value="monthly">
+              <input type="hidden" name="return" value="/subscriptions">
+              <button class="ts-btn ts-btn-primary" type="submit">Choose monthly</button>
+            </form>
+            {{if .AnnualAvailable}}
+              <form method="post" action="/billing/checkout">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                <input type="hidden" name="plan" value="{{.Key}}">
+                <input type="hidden" name="interval" value="annual">
+                <input type="hidden" name="return" value="/subscriptions">
+                <button class="ts-btn ts-btn-secondary" type="submit">Choose annual</button>
+              </form>
+            {{end}}
+          </div>
+        </div>
+      </article>
+      {{else}}
+      <p class="ts-empty-state">No paid plans are available right now.</p>
+      {{end}}
+    </div>
+  </section>
+</main>
+{{end}}

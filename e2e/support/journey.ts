@@ -1,51 +1,67 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
-/** Registers a fresh account through the onboarding wizard and completes
- * activation: registration → optional payment bypass →
- * project "Personal" → dashboard. */
+export type AccountCredentials = {
+  email: string;
+  password: string;
+  displayName: string;
+};
+
+/** Creates a fresh demo account and finishes the payment and project steps. */
 export async function registerAndOnboard(
   page: Page,
-  opts: { email: string; password: string; displayName: string },
+  opts: AccountCredentials,
 ): Promise<void> {
   await registerAndOpenPaymentStep(page, opts);
 
-  // Payment step: continue without payment so the test stays on the free
-  // allowance path.
-  await page.getByRole("button", { name: "Continue without payment" }).click();
-  await page.waitForURL((url) => url.pathname === "/onboarding");
+  const payment = await onboardingStep(page, "payment-method");
+  await payment.getByRole("button", { name: "Continue without adding a payment method" }).click();
 
-  // Project step: name the first project and open the dashboard.
-  await page.fill("#projectName", "Personal");
-  await page.getByRole("button", { name: "Create project and open Dashboard" }).click();
+  const project = await onboardingStep(page, "project");
+  await project.locator('[name="name"]').fill("Personal");
+  await project.locator('[name="region"]').selectOption("GRU");
+  await project.getByRole("button", { name: "Create project" }).click();
   await page.waitForURL((url) => url.pathname === "/" && !url.search);
 }
 
-/** Registers a fresh account and stops on the payment step of the activation
- * wizard. Registration already provisions the immutable "Personal" workspace. */
+/** Registers an account and leaves it on the payment-method step. */
 export async function registerAndOpenPaymentStep(
   page: Page,
-  opts: { email: string; password: string; displayName: string },
+  opts: AccountCredentials,
 ): Promise<void> {
   await page.goto("/onboarding");
-  await page.fill('input[name="displayName"]', opts.displayName);
-  await page.fill('input[name="email"]', opts.email);
-  await page.fill('input[name="password"]', opts.password);
-  await page.fill('input[name="confirmPassword"]', opts.password);
-  await page.check('input[name="terms"]');
-  await page.click('button[type="submit"]');
-  await page.waitForURL("**/onboarding**");
-  await page.waitForSelector(".ts-onboarding-plan");
+  const form = page.locator('form[action="/onboarding/register"]');
+  await form.locator('[name="displayName"]').fill(opts.displayName);
+  await form.locator('[name="email"]').fill(opts.email);
+  await form.locator('[name="password"]').fill(opts.password);
+  await form.locator('[name="confirmPassword"]').fill(opts.password);
+  await form.locator('[name="terms"]').check();
+  await form.getByRole("button", { name: "Save" }).click();
+
+  await page.waitForURL((url) => url.pathname === "/onboarding");
+  await onboardingStep(page, "payment-method");
 }
 
 export async function login(page: Page, email: string, password: string): Promise<void> {
   await page.goto("/login");
-  await page.fill("#email", email);
-  await page.fill("#password", password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL((url) => !url.pathname.startsWith("/login"));
+  const form = page.locator('form[action="/api/v1/auth/password/login"]');
+  await form.locator('[name="email"]').fill(email);
+  await form.locator('[name="password"]').fill(password);
+  await form.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForURL((url) => url.pathname !== "/login");
 }
 
 export async function logout(page: Page): Promise<void> {
-  await page.request.post("/api/v1/auth/logout");
-  await page.context().clearCookies();
+  await page.goto("/");
+  await page.locator('form[action="/api/v1/auth/logout"]').evaluate((form) => {
+    (form as HTMLFormElement).requestSubmit();
+  });
+  await page.waitForURL("**/login**");
+}
+
+async function onboardingStep(page: Page, name: string): Promise<Locator> {
+  const form = page.locator('form[action="/onboarding/step"]').filter({
+    has: page.locator(`[name="step"][value="${name}"]`),
+  });
+  await form.waitFor({ state: "visible" });
+  return form;
 }

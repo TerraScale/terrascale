@@ -1,0 +1,46 @@
+{{define "content"}}
+<main class="ts-page">
+  <header class="ts-page-header">
+    <div><p class="ts-eyebrow">Account activity</p><h1>Notifications</h1><p>Review updates for your selected organization and project.</p></div>
+    <form method="post" action="/api/v1/notifications/read-all">
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <button type="submit"{{if eq .Data.Unread 0}} disabled="disabled"{{end}}>Mark all read</button>
+    </form>
+  </header>
+  <section aria-label="Inbox summary">
+    <p>{{.Data.Unread}} unread{{if gt .Data.Critical 0}} · {{.Data.Critical}} critical{{end}} · {{.Data.Total}} total</p>
+    <nav aria-label="Notification filter">
+      <a href="/notifications"{{if eq .Data.Status "all"}} aria-current="page"{{end}}>All</a>
+      <a href="/notifications?status=unread"{{if eq .Data.Status "unread"}} aria-current="page"{{end}}>Unread</a>
+    </nav>
+  </section>
+  {{if .Data.Notifications}}
+    <ol class="ts-notification-list">
+      {{range .Data.Notifications}}
+      <li>
+        <article aria-label="{{.Severity}} notification">
+          <p><strong>{{.Title}}</strong> <span>{{.Severity}}</span></p>
+          <p>{{.Body}}</p>
+          <p><time datetime="{{.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.CreatedAt.UTC.Format "Jan 2, 2006 15:04 UTC"}}</time> · {{.Status}}</p>
+          {{if eq .Status "Unread"}}
+          <form method="post" action="/api/v1/notifications/{{.ID}}/read">
+            <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+            <button type="submit">Mark read</button>
+          </form>
+          {{end}}
+        </article>
+      </li>
+      {{end}}
+    </ol>
+  {{else}}
+    <section class="ts-empty-state"><h2>You're all caught up</h2><p>No {{if eq .Data.Status "unread"}}unread {{end}}notifications in this scope.</p></section>
+  {{end}}
+  {{if gt .Data.PageCount 1}}
+    <nav aria-label="Notification pages">
+      <span>Page {{.Data.Page}} of {{.Data.PageCount}}</span>
+      {{if .Data.HasPrevious}}<a href="/notifications?page={{.Data.Previous}}{{if eq .Data.Status "unread"}}&amp;status=unread{{end}}">Previous</a>{{end}}
+      {{if .Data.HasNext}}<a href="/notifications?page={{.Data.Next}}{{if eq .Data.Status "unread"}}&amp;status=unread{{end}}">Next</a>{{end}}
+    </nav>
+  {{end}}
+</main>
+{{end}}

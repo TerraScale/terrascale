@@ -1,0 +1,76 @@
+{{define "content"}}
+<main class="ts-page">
+  <header class="ts-page-header"><div><p class="ts-eyebrow">{{.Data.ProjectName}}</p><h1>Settings</h1><p>Manage security, data protection, and project controls.</p></div></header>
+  {{if .Data.Toast}}<p role="status" class="ts-alert ts-alert-success">{{.Data.Toast}}</p>{{end}}
+  {{if .Data.Error}}<p role="alert" class="ts-alert ts-alert-danger">{{.Data.Error}}</p>{{end}}
+  <nav aria-label="Settings sections">
+    <a href="/settings?tab=identity"{{if eq .Data.Tab "identity"}} aria-current="page"{{end}}>Identity</a>
+    <a href="/settings?tab=credentials"{{if eq .Data.Tab "credentials"}} aria-current="page"{{end}}>Credentials</a>
+    <a href="/settings?tab=webhooks"{{if eq .Data.Tab "webhooks"}} aria-current="page"{{end}}>Webhooks</a>
+    <a href="/settings?tab=backups"{{if eq .Data.Tab "backups"}} aria-current="page"{{end}}>Backups</a>
+    <a href="/settings?tab=audit"{{if eq .Data.Tab "audit"}} aria-current="page"{{end}}>Audit retention</a>
+    <a href="/settings?tab=danger"{{if eq .Data.Tab "danger"}} aria-current="page"{{end}}>Danger zone</a>
+  </nav>
+  {{if eq .Data.Tab "identity"}}
+    <section aria-labelledby="identity-title"><h2 id="identity-title">Authentication product</h2>
+      <p>Controls whether this project uses the TerraScale Authentication integration.</p>
+      {{if .Data.CanManage}}
+      <form method="post" action="/api/v1/dashboard/settings/authentication">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+        <label><input type="checkbox" name="enabled" value="true"{{if .Data.Authentication}} checked{{end}}> Enable authentication integration</label>
+        <button type="submit">Save identity settings</button>
+      </form>
+      {{else}}<p>Only organization owners and admins can change this setting.</p>{{end}}
+      {{if .Data.UpdatedAt}}<p>Last changed {{.Data.UpdatedAt}}</p>{{end}}
+    </section>
+  {{else if eq .Data.Tab "credentials"}}
+    <section aria-labelledby="credentials-title"><h2 id="credentials-title">Project credentials</h2>
+      {{if .Data.Credentials}}<ul>{{range .Data.Credentials}}<li><strong>{{.Name}}</strong> · {{.Prefix}}…{{.LastFour}} · {{if .RevokedAt.IsZero}}Active{{else}}Revoked{{end}}</li>{{end}}</ul>
+      {{else}}<p>No project credentials. <a href="/api-keys">Create an API key</a> when your application is ready.</p>{{end}}
+    </section>
+  {{else if eq .Data.Tab "webhooks"}}
+    <section aria-labelledby="webhooks-title"><h2 id="webhooks-title">Project webhooks</h2><p>No webhooks are configured for this project.</p><p>Webhook delivery configuration is unavailable until a provider endpoint is connected.</p></section>
+  {{else if eq .Data.Tab "backups"}}
+    <section aria-labelledby="backups-title"><h2 id="backups-title">Backup policy</h2>
+      {{if .Data.Databases}}
+      <form method="get" action="/settings">
+        <input type="hidden" name="tab" value="backups">
+        <label>Database <select name="database">{{range .Data.Databases}}<option value="{{.ID}}"{{if eq .ID $.Data.SelectedDatabaseID}} selected{{end}}>{{.Name}} · {{.Region}}</option>{{end}}</select></label>
+        <button type="submit">Select database</button>
+      </form>
+      {{if .Data.CanManage}}
+      <form method="post" action="/api/v1/dashboard/settings/backup-policy">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}"><input type="hidden" name="databaseId" value="{{.Data.SelectedDatabaseID}}">
+        <label>Full backup schedule <input name="fullBackupCron" value="{{.Data.Policy.FullBackupCron}}" required></label>
+        <label>Incremental backup schedule <input name="incrementalBackupCron" value="{{.Data.Policy.IncrementalBackupCron}}" required></label>
+        <label>Retention days <input type="number" min="1" max="35" name="retentionDays" value="{{.Data.Policy.RetentionDays}}" required></label>
+        <label><input type="checkbox" name="disabled" value="true"{{if .Data.Policy.Disabled}} checked{{end}}> Disable scheduled backups</label>
+        <button type="submit">Save backup policy</button>
+      </form>
+      <form method="post" action="/api/v1/dashboard/settings/backup-now">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}"><input type="hidden" name="databaseId" value="{{.Data.SelectedDatabaseID}}">
+        <button type="submit">Start backup now</button>
+      </form>
+      {{end}}
+      <h3>Backup history</h3>
+      {{if .Data.SelectedBackups}}<ol>{{range .Data.SelectedBackups}}<li>{{.Status}} · {{.CreatedAt.UTC.Format "Jan 2, 2006 15:04 UTC"}}
+        {{if eq .Status "Succeeded"}}<form method="post" action="/api/v1/dashboard/settings/restore"><input type="hidden" name="_csrf" value="{{$.CSRFToken}}"><input type="hidden" name="generation" value="{{.ID}}"><button type="submit">Restore side by side</button></form>{{end}}
+      </li>{{end}}</ol>{{else}}<p>No restore points are available for this database.</p>{{end}}
+      {{if .Data.Demo}}<p>Demo mode: backup and restore actions update only this in-memory dashboard account.</p>{{end}}
+      {{else}}<p>No databases are available in this project.</p><a href="/databases">Create a database</a>{{end}}
+    </section>
+  {{else if eq .Data.Tab "audit"}}
+    <section aria-labelledby="audit-retention-title"><h2 id="audit-retention-title">Audit retention</h2><p>Choose how long project and organization activity remains available.</p>
+      {{if .Data.CanManage}}<form method="post" action="/api/v1/dashboard/settings/audit-retention"><input type="hidden" name="_csrf" value="{{.CSRFToken}}"><label>Retention days <input type="number" name="retentionDays" min="1" max="90" value="{{.Data.AuditRetention}}" required></label><button type="submit">Save retention</button></form>
+      {{else}}<p>Only organization owners and admins can change audit retention.</p>{{end}}
+      <a href="/audit">Review audit events</a>
+    </section>
+  {{else}}
+    <section aria-labelledby="danger-title"><h2 id="danger-title">Danger zone</h2><p>Delete the selected project and its dashboard configuration.</p>
+      {{if .Data.ProjectCanBeDeleted}}
+        {{if .Data.CanManage}}<form method="post" action="/api/v1/dashboard/settings/delete-project"><input type="hidden" name="_csrf" value="{{.CSRFToken}}"><input type="hidden" name="projectId" value="{{.Data.ProjectID}}"><label>Type {{.Data.ProjectName}} to confirm <input name="confirmName" required></label><button type="submit">Delete project</button></form>{{end}}
+      {{else}}<p>The default or only project cannot be deleted.</p>{{end}}
+    </section>
+  {{end}}
+</main>
+{{end}}

@@ -1,0 +1,20 @@
+{{define "auth"}}
+<!doctype html>
+<html lang="en" data-theme="dark"{{if .Nonce}} data-nonce="{{.Nonce}}"{{end}}{{if .DevMode}} data-dev-reload{{end}}>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e0f14">
+  <title>{{if .Title}}{{.Title}} · TerraScale{{else}}TerraScale{{end}}</title>
+  <link rel="icon" type="image/svg+xml" href="/brand/logo-icon-blue.svg">
+  <link rel="stylesheet" href="/css/terrascale.css" data-dashboard-css>
+  <script type="module" src="/js/datastar.js" defer{{if .Nonce}} nonce="{{.Nonce}}"{{end}}></script>
+  <script src="/js/dashboard.js" defer{{if .Nonce}} nonce="{{.Nonce}}"{{end}}></script>
+</head>
+<body>
+  <a class="ts-skip-link" href="#ts-auth-main">Skip to main content</a>
+  <div id="ts-auth-main">{{template "content" .}}</div>
+</body>
+</html>
+{{end}}

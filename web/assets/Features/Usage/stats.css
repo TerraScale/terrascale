@@ -1,0 +1,124 @@
+/* Usage figures, charts, share bars and usage-only table presentation.
+   Shared stat tiles, bars and pagination live in web/assets/css/components/. */
+
+.ts-usage-flip { display: inline-flex; transform: scaleX(-1); }
+
+.ts-usage-figures {
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(4.5rem, auto);
+}
+
+.ts-cat-1 { --ts-series: var(--ts-cat-1); }
+.ts-cat-2 { --ts-series: var(--ts-cat-2); }
+.ts-cat-3 { --ts-series: var(--ts-cat-3); }
+.ts-chart .ts-chart-line[class*="ts-cat-"] { stroke: var(--ts-series); }
+.ts-chart-swatch[class*="ts-cat-"] { background-color: var(--ts-series); }
+.ts-usage-figures dt { display: flex; align-items: center; gap: var(--ts-xs); }
+
+/* Keep axis text legible on phones: scroll the plot instead of shrinking it. */
+.ts-chart-shell:has(> .ts-tschart) { overflow-x: auto; }
+
+.ts-tschart {
+  position: relative;
+  min-width: 36rem;
+}
+
+.ts-tschart .ts-chart { display: block; }
+
+.ts-tschart-col { position: absolute; }
+
+.ts-tschart-col::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 50%;
+  border-left: 1px dashed var(--ts-ink-muted);
+}
+
+.ts-tschart-dot {
+  position: absolute;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--ts-series);
+  box-shadow: 0 0 0 2px var(--ts-surface);
+  transform: translate(-50%, -50%);
+}
+
+.ts-tschart-tip {
+  position: absolute;
+  top: 0;
+  left: calc(50% + 12px);
+  z-index: 1;
+  display: grid;
+  gap: var(--ts-xs);
+  min-width: 12rem;
+  padding: var(--ts-sm) var(--ts-md);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  box-shadow: var(--ts-overlay-edge);
+  font-size: var(--ts-fs-meta);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.ts-tschart-tip-left { left: auto; right: calc(50% + 12px); }
+.ts-tschart-tip time { color: var(--ts-ink-muted); }
+.ts-tschart-tip dl { display: grid; gap: 2px; margin: 0; }
+.ts-tschart-tip dl > div { display: flex; justify-content: space-between; gap: var(--ts-lg); }
+.ts-tschart-tip dt { display: flex; align-items: center; gap: var(--ts-xs); color: var(--ts-ink-muted); }
+.ts-tschart-tip dd { margin: 0; color: var(--ts-ink); font-family: var(--ts-font-mono); }
+
+.ts-tschart-col::before,
+.ts-tschart-dot,
+.ts-tschart-tip { opacity: 0; }
+
+.ts-tschart-col:hover::before,
+.ts-tschart-col:hover .ts-tschart-dot,
+.ts-tschart-col:hover .ts-tschart-tip { opacity: 1; }
+
+.ts-usage-share {
+  display: grid;
+  gap: var(--ts-lg);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts-usage-share li {
+  display: grid;
+  gap: 6px;
+}
+
+.ts-usage-share-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-md);
+  min-width: 0;
+}
+
+.ts-usage-share-head > :last-child { white-space: nowrap; }
+
+.ts-usage-share .ts-bar-fill { background-color: var(--ts-accent); }
+
+.ts-usage-drill { color: var(--ts-ink); }
+.ts-usage-drill:hover { color: var(--ts-accent); }
+
+.ts-usage-disclosure { line-height: 1.6; }
+
+.ts-usage .ts-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-xs);
+  white-space: nowrap;
+}
+
+/* Tables sit on the page like the rest of the sections: rows, no box. */
+.ts-usage .ts-table-wrap {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background-color: transparent;
+}

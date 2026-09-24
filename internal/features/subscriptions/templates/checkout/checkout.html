@@ -1,0 +1,34 @@
+{{define "content"}}
+<main class="ts-flow-root">
+  <section class="ts-flow-panel">
+    <div class="ts-flow-section">
+      <div class="ts-flow-header">
+        <span class="ts-flow-icon" aria-hidden="true">◈</span>
+        <div>
+          <h1 class="ts-flow-title">Local payment setup</h1>
+          <p class="ts-flow-subtitle">{{.Data.PlanName}} · billed {{.Data.Interval}}</p>
+        </div>
+      </div>
+      <div class="ts-alert ts-alert-info" role="status">
+        <span class="ts-alert-title">Demo simulator only</span>
+        <span class="ts-alert-body">No card details are collected, no Stripe service is contacted, and no real payment or charge occurs.</span>
+      </div>
+      <dl class="ts-kv">
+        <dt>Checkout session</dt><dd class="ts-mono">{{.Data.SessionID}}</dd>
+        <dt>Expires</dt><dd>{{.Data.ExpiresAt}}</dd>
+      </dl>
+      <div class="ts-flow-actions">
+        <form method="post" action="/checkout/{{.Data.SessionID}}/complete">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+          <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Confirm local demo setup</button>
+        </form>
+        <form method="post" action="/checkout/{{.Data.SessionID}}/cancel">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+          <button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit">Cancel checkout</button>
+        </form>
+      </div>
+      <a class="ts-btn ts-btn-ghost" href="/subscriptions">Return to subscriptions</a>
+    </div>
+  </section>
+</main>
+{{end}}

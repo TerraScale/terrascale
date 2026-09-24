@@ -1,18 +1,19 @@
 # Tools
 
-Offline code generation. Nothing here runs in CI — the generated files are
+Offline asset generation. Nothing here runs in CI — generated files are
 committed.
 
-## Region map
+## Dotted region map
 
-`generate-region-map.mjs` regenerates `wwwroot/brand/region-map.svg` (dotted
-world map) and `Framework/RegionMap.cs` (projected pin coordinates for every
-OCI region we may support, keyed by 3-letter code). Rerun it only when the
-region list changes:
+`generate-region-map.mjs` regenerates
+`web/static/brand/region-map.svg`, a decorative dotted world map produced with
+`dotted-map`. The SVG records its projection, grid, view box, title, and
+description so a route that renders it can identify the visual layer. Region
+selection remains available through ordinary labeled form controls and does
+not depend on the map.
+
+Rerun it only when the map artwork changes:
 
 ```sh
 cd tools && npm ci && node generate-region-map.mjs
 ```
-
-Pages highlight regions with `@RegionMap.Highlight(new[] { "SFO", "GRU", "FRA" })`;
-each pin group carries `id="ts-region-<CODE>"` for CSS/JS targeting.

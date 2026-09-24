@@ -1,10 +1,15 @@
-**/.git/
-**/bin/
-**/obj/
-**/node_modules/
-tools/
-.forgejo/
-# Never bake sandbox credentials into the image; Fly/CI injects real settings.
-.env
-.env.local
-.env.*.local
+.git
+**/.git
+**/bin
+**/obj
+**/node_modules
+**/.env
+**/.env.*
+.forgejo
+/tests/
+/e2e/
+playwright.config.ts
+playwright.sdk.config.ts
+docs/screenshots
+test-results
+playwright-report
