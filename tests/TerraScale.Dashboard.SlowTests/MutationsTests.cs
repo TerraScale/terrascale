@@ -166,6 +166,7 @@ public sealed class MutationsTests
 
         var reveal = await app.GetPageAsync(client, location);
         await Assert.That(reveal.Contains("Secret is shown once")).IsTrue();
+        await Assert.That(reveal.Html.Contains("class=\"ts-toasts\"", StringComparison.Ordinal)).IsFalse();
         await Assert.That(reveal.Contains("mutation-probe-key")).IsTrue();
         var secret = Regex.Match(reveal.Html, @"data-copy=""(tsk_live_[0-9a-f]+)""").Groups[1].Value;
         await Assert.That(secret.Length > 0).IsTrue();
@@ -229,6 +230,7 @@ public sealed class MutationsTests
             .IsEqualTo("/api-keys?rotated=1&toast=Credential%20rotated.");
         var page = await app.GetPageAsync(client, "/api-keys?rotated=1&toast=Credential%20rotated.");
         await Assert.That(page.Contains("Credential rotated.")).IsTrue();
+        await Assert.That(page.Html.Contains("class=\"ts-toasts\"", StringComparison.Ordinal)).IsFalse();
         await Assert.That(page.Contains("local-dev")).IsTrue();
     }
 

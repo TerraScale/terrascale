@@ -266,11 +266,6 @@ max-content and let wide tables/code blow out narrow viewports. */
    provides the 20px block rhythm, so the inline inset is scoped here. */
 .ts-org-summary { padding-inline: 20px; }
 
-/* v1 padded/body sections are 16px inline at every width (shared-page-styles
-   padding: spacing.lg); .ts-padded widens to 20px below 64rem to track the
-   header instead. */
-.ts-org .ts-padded { padding-inline: 16px; }
-
 /* v1 pageStyles.summaryTerms: the dl holds a 32rem floor from 64rem. */
 @media (min-width: 64rem) {
   .ts-org .ts-summary-terms { min-width: 32rem; }
