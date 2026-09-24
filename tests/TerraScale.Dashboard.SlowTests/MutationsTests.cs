@@ -25,7 +25,7 @@ public sealed class MutationsTests
 
         var audit = await app.GetPageAsync(client, "/audit?range=90d");
         await Assert.That(audit.Contains("No audit events")).IsTrue();
-        await Assert.That(audit.Contains("Showing 0–0 of 0 events")).IsTrue();
+        await Assert.That(audit.Contains("0 retained under the current policy")).IsTrue();
 
         using var export = await client.GetAsync("/audit/export?range=90d&format=json");
         var json = await export.Content.ReadAsStringAsync();

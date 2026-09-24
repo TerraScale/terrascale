@@ -12,24 +12,41 @@
     }
 
     <div class="ts-toolbar ts-auth-toolbar">
-        <nav class="ts-tabs ts-auth-tabs" aria-label="Authentication sections">
-            @foreach (var authSection in Model.Sections)
+        <nav class="ts-tabs ts-auth-tabs" aria-label="Authentication areas">
+            @foreach (var group in Model.NavigationGroups)
             {
-                <a class="ts-tab" href="@authSection.Href" aria-current="@(Model.Section == authSection.Key ? "page" : null)" aria-selected="@(Model.Section == authSection.Key ? "true" : "false")">@Icon(authSection.Icon, 16) @authSection.Title</a>
+                <a class="ts-tab" href="@group.Href" aria-current="@(Model.CurrentGroup.Key == group.Key ? "page" : null)" aria-selected="@(Model.CurrentGroup.Key == group.Key ? "true" : "false")">@Icon(group.Icon, 16) @group.Title</a>
             }
         </nav>
-        <details class="ts-menu ts-menu-end ts-auth-more-menu">
-            <summary class="ts-btn ts-btn-ghost ts-auth-more-trigger" aria-label="More authentication sections">@Icons.Ellipsis(16) <span>More</span> @Icons.ChevronDown(14)</summary>
-            <div class="ts-menu-panel">
-                @foreach (var authSection in Model.Sections)
+        <details class="ts-menu ts-auth-area-menu">
+            <summary class="ts-select ts-auth-area-trigger" aria-label="Choose an authentication area"><span>@Model.CurrentGroup.Title</span>@Icons.ChevronDown(14)</summary>
+            <div class="ts-menu-panel" aria-label="Authentication areas">
+                <span class="ts-auth-menu-heading">Authentication areas</span>
+                @foreach (var group in Model.NavigationGroups)
                 {
-                    <a class="ts-menu-item" href="@authSection.Href" aria-current="@(Model.Section == authSection.Key ? "page" : null)" aria-selected="@(Model.Section == authSection.Key ? "true" : "false")">
-                        <span class="ts-menu-item-icon">@Icon(authSection.Icon, 16)</span>
-                        <span class="ts-menu-label">@authSection.Title</span>
+                    <a class="ts-menu-item" href="@group.Href" aria-current="@(Model.CurrentGroup.Key == group.Key ? "page" : null)">
+                        <span class="ts-menu-item-icon">@Icon(group.Icon, 16)</span>
+                        <span class="ts-menu-label">@group.Title</span>
                     </a>
                 }
             </div>
         </details>
+        @if (Model.CurrentGroupSections.Count > 1)
+        {
+            <details class="ts-menu ts-menu-end ts-auth-resource-menu">
+                <summary class="ts-select ts-auth-resource-trigger" aria-label="Choose a @Model.CurrentGroup.Title section"><span>@Model.Current.Title</span>@Icons.ChevronDown(14)</summary>
+                <div class="ts-menu-panel" aria-label="@Model.CurrentGroup.Title sections">
+                    <span class="ts-auth-menu-heading">@Model.CurrentGroup.Title</span>
+                    @foreach (var authSection in Model.CurrentGroupSections)
+                    {
+                        <a class="ts-menu-item" href="@authSection.Href" aria-current="@(Model.Section == authSection.Key ? "page" : null)">
+                            <span class="ts-menu-item-icon">@Icon(authSection.Icon, 16)</span>
+                            <span class="ts-menu-label">@authSection.Title</span>
+                        </a>
+                    }
+                </div>
+            </details>
+        }
         @if (Model.Current.Columns.Length > 0)
         {
             <form class="ts-filters ts-auth-filters" method="get" action="@Model.Current.Href" role="search" aria-label="Search @Model.Current.Title">

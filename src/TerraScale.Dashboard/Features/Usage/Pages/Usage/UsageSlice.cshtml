@@ -522,7 +522,7 @@
         return new(
             $"<div class=\"ts-filter-field\"><span class=\"ts-filter-label ts-sr-only\" id=\"usage-{name}-label\">{label}</span>"
             + $"<input type=\"hidden\" name=\"{name}\" value=\"{E(value)}\" />"
-            + $"<details class=\"ts-menu ts-filter-menu\"><summary class=\"ts-select ts-filter-select ts-filter-trigger\" aria-labelledby=\"usage-{name}-label usage-{name}-value\"><span id=\"usage-{name}-value\">{E(current)}</span></summary>"
+            + $"<details class=\"ts-menu ts-filter-menu\"><summary class=\"ts-select ts-filter-select\" aria-labelledby=\"usage-{name}-label usage-{name}-value\"><span id=\"usage-{name}-value\">{E(current)}</span></summary>"
             + $"<div class=\"ts-menu-panel\">{items}</div></details></div>");
     }
 

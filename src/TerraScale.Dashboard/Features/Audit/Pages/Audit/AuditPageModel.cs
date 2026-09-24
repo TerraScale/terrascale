@@ -61,6 +61,7 @@ public sealed record AuditPageModel(
             Actor: auditEvent.Actor,
             ActorType: DashboardStore.AuditActorType(auditEvent),
             Action: auditEvent.Action,
+            ActionLabel: ActionLabel(auditEvent.Action),
             ActionIcon: ActionIcon(auditEvent.Action),
             Target: auditEvent.Target,
             Source: auditEvent.Source,
@@ -89,4 +90,22 @@ public sealed record AuditPageModel(
         : action.Contains("auth") || action.Contains("login") ? "ShieldCheck"
         : action.Contains("policy") || action.Contains("role") ? "Shield"
         : "ScrollText";
+
+    private static string ActionLabel(string action) => action switch
+    {
+        "api_key.created" => "API key created",
+        "member.role_changed" => "Member role changed",
+        "document.batch_upsert" => "Documents batch upserted",
+        "database.deleted" => "Database deleted",
+        "backup.restore_completed" => "Backup restore completed",
+        _ => FormatActionLabel(action),
+    };
+
+    private static string FormatActionLabel(string action)
+    {
+        var words = action.Replace('.', ' ').Replace('_', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return words.Length is 0
+            ? action
+            : string.Join(' ', words.Select((word, index) => index is 0 ? char.ToUpperInvariant(word[0]) + word[1..] : word));
+    }
 }

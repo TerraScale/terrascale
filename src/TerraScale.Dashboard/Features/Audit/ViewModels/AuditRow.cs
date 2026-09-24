@@ -7,6 +7,7 @@ public sealed record AuditRow(
     string Actor,
     string ActorType,
     string Action,
+    string ActionLabel,
     string ActionIcon,
     string Target,
     string Source,

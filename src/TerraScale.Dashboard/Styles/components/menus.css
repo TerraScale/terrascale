@@ -15,6 +15,20 @@ details.ts-menu > summary::-webkit-details-marker {
   display: none;
 }
 
+/* Select-shaped menu triggers share the native select's vertical alignment. */
+details.ts-menu > summary.ts-select {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+details.ts-menu > summary.ts-select > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 details.ts-menu > .ts-menu-panel {
   position: absolute;
   z-index: var(--ts-z-dropdown);

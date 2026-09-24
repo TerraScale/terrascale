@@ -67,10 +67,6 @@
 .ts-text-danger { color: var(--ts-danger); }
 .ts-text-warning { color: var(--ts-warning); }
 
-@media (min-width: 48rem) {
-  .ts-main:has(> .ts-usage) { padding-top: var(--ts-lg); }
-}
-
 /* Caps editor: project rows lead, database rows indent under them. */
 .ts-usage-caps tbody + tbody { border-top: 1px solid var(--ts-line); }
 

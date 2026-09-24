@@ -44,7 +44,7 @@
                 <span class="ts-filter-label ts-sr-only" id="credential-kind-label">Type</span>
                 <input type="hidden" name="kind" value="@Model.Kind" />
                 <details class="ts-menu ts-filter-menu">
-                    <summary class="ts-select ts-filter-select ts-filter-trigger" aria-labelledby="credential-kind-label credential-kind-value"><span id="credential-kind-value">@(Model.Kind == "key" ? "API keys" : Model.Kind == "m2m" ? "M2M clients" : "All types")</span></summary>
+                    <summary class="ts-select ts-filter-select" aria-labelledby="credential-kind-label credential-kind-value"><span id="credential-kind-value">@(Model.Kind == "key" ? "API keys" : Model.Kind == "m2m" ? "M2M clients" : "All types")</span></summary>
                     <div class="ts-menu-panel">
                         <button class="ts-menu-item" type="button" data-filter-value="" aria-current="@(Model.Kind.Length == 0 ? "true" : null)">All types</button>
                         <button class="ts-menu-item" type="button" data-filter-value="key" aria-current="@(Model.Kind == "key" ? "true" : null)">API keys</button>
@@ -56,7 +56,7 @@
                 <span class="ts-filter-label ts-sr-only" id="credential-status-label">Status</span>
                 <input type="hidden" name="status" value="@Model.Status" />
                 <details class="ts-menu ts-filter-menu">
-                    <summary class="ts-select ts-filter-select ts-filter-trigger" aria-labelledby="credential-status-label credential-status-value"><span id="credential-status-value">@(Model.Status is "Active" or "Expiring" or "Revoked" ? Model.Status : "All statuses")</span></summary>
+                    <summary class="ts-select ts-filter-select" aria-labelledby="credential-status-label credential-status-value"><span id="credential-status-value">@(Model.Status is "Active" or "Expiring" or "Revoked" ? Model.Status : "All statuses")</span></summary>
                     <div class="ts-menu-panel">
                         <button class="ts-menu-item" type="button" data-filter-value="" aria-current="@(Model.Status.Length == 0 ? "true" : null)">All statuses</button>
                         <button class="ts-menu-item" type="button" data-filter-value="Active" aria-current="@(Model.Status == "Active" ? "true" : null)">Active</button>
@@ -69,7 +69,7 @@
                 <span class="ts-filter-label ts-sr-only" id="credential-database-label">Database</span>
                 <input type="hidden" name="database" value="@Model.DatabaseId" />
                 <details class="ts-menu ts-filter-menu">
-                    <summary class="ts-select ts-filter-select ts-filter-trigger" aria-labelledby="credential-database-label credential-database-filter-value"><span id="credential-database-filter-value">@(Model.Databases.FirstOrDefault(d => d.Id == Model.DatabaseId).Name ?? "All databases")</span></summary>
+                    <summary class="ts-select ts-filter-select" aria-labelledby="credential-database-label credential-database-filter-value"><span id="credential-database-filter-value">@(Model.Databases.FirstOrDefault(d => d.Id == Model.DatabaseId).Name ?? "All databases")</span></summary>
                     <div class="ts-menu-panel">
                         <button class="ts-menu-item" type="button" data-filter-value="" aria-current="@(Model.DatabaseId.Length == 0 ? "true" : null)">All databases</button>
                         @foreach (var database in Model.Databases)

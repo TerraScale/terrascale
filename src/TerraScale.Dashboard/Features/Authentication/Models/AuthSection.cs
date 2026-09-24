@@ -55,3 +55,26 @@ public sealed record AuthSection(string Key, string Title, string Description, s
 
     public static AuthSection? Find(string key) => All.FirstOrDefault(section => section.Key == key);
 }
+
+/// <summary>Small, task-oriented groups keep the console navigation scannable while every resource route stays linkable.</summary>
+public sealed record AuthNavGroup(string Key, string Title, string Description, string Icon, string[] SectionKeys)
+{
+    public string Href => AuthSection.Find(SectionKeys[0])?.Href ?? "/auth";
+
+    public IReadOnlyList<AuthSection> Sections => [.. SectionKeys
+        .Select(AuthSection.Find)
+        .OfType<AuthSection>()];
+
+    public static readonly AuthNavGroup[] All =
+    [
+        new("overview", "Overview", "Session access and the identity workspace.", "BarChart3", ["overview"]),
+        new("people", "People", "Users, organizations and membership lifecycle.", "Users", ["users", "sessions", "organizations", "memberships", "invitations", "domains"]),
+        new("sign-in", "Sign-in", "Connections and workforce provisioning.", "GlobeLock", ["connections", "directories"]),
+        new("developer", "Developer", "OAuth clients, token templates and API access.", "KeySquare", ["clients", "templates", "keys"]),
+        new("operations", "Operations", "Event delivery and change history.", "Activity", ["webhooks", "deliveries", "audit"]),
+        new("configure", "Configure", "Quickstart, plan and hosted sign-in settings.", "Settings", ["quickstart", "billing", "settings"]),
+    ];
+
+    public static AuthNavGroup For(string section) =>
+        All.FirstOrDefault(group => group.SectionKeys.Contains(section, StringComparer.Ordinal)) ?? All[0];
+}

@@ -163,8 +163,8 @@
 }
 
 .ts-fab-nav {
-  left: var(--ts-lg);
-  top: var(--ts-lg);
+  left: var(--ts-md);
+  top: var(--ts-md);
   width: var(--ts-control-h);
   height: var(--ts-control-h);
   border: 1px solid var(--ts-line);
@@ -173,7 +173,7 @@
   box-shadow: var(--ts-shadow-panel);
 }
 
-@media (min-width: 64rem) {
+@media (min-width: 48rem) {
   .ts-fab-nav { display: none; }
 }
 

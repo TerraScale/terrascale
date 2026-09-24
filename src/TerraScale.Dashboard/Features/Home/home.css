@@ -1,8 +1,7 @@
-/* Home page styles.
-   Used by the home page styles. feature. Keep page-specific rules in Features/. */
+/* Home page layout, setup guidance and activity presentation.
+   Shared toolbar, KPI, section, chart and empty-state rules stay in core. */
 
-/* Flat workspace summary, setup guidance and activity chart. Shared toolbar,
-   KPI, section, chart and empty-state rules stay in the core components. */
+/* Flat workspace summary, setup guidance and activity chart. */
 .ts-chart-body {
   display: flex;
   flex-direction: column;
@@ -40,7 +39,44 @@
 .ts-getting-started-cta:hover { text-decoration: underline; }
 
 .ts-home {
-  gap: var(--ts-xl);
+  gap: var(--ts-lg);
+}
+
+/* The overview is a single dashboard: metrics and activity stack on the
+   left, while setup guidance spans the full height of the right rail. */
+.ts-home-overview {
+  display: grid;
+  gap: var(--ts-lg);
+  align-items: stretch;
+  min-width: 0;
+}
+
+.ts-home-primary {
+  display: grid;
+  gap: var(--ts-lg);
+  align-content: start;
+  min-width: 0;
+}
+
+.ts-home-primary > .ts-home-section + .ts-home-section {
+  padding-top: var(--ts-lg);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-home-getting-started {
+  min-width: 0;
+  align-content: start;
+}
+
+@media (min-width: 64rem) {
+  .ts-home-overview {
+    grid-template-columns: minmax(0, 2fr) minmax(20rem, 1fr);
+  }
+
+  .ts-home-getting-started {
+    padding-left: var(--ts-xl);
+    border-left: 1px solid var(--ts-line);
+  }
 }
 
 .ts-home .ts-alert {
@@ -68,11 +104,6 @@
 .ts-home-section {
   gap: var(--ts-lg);
   min-width: 0;
-}
-
-.ts-home-section + .ts-home-section {
-  padding-top: var(--ts-xl);
-  border-top: 1px solid var(--ts-line);
 }
 
 .ts-home-metrics > div { gap: var(--ts-xs); }
@@ -135,13 +166,6 @@
 
 .ts-getting-started-content p { margin: 0; }
 
-.ts-home-connect {
-  display: grid;
-  gap: var(--ts-lg);
-  padding-top: var(--ts-xl);
-  border-top: 1px solid var(--ts-line);
-}
-
 .ts-home-connect-grid {
   display: grid;
   gap: var(--ts-lg);
@@ -183,6 +207,10 @@
 
 .ts-home-connect-item .ts-getting-started-title { font-size: var(--ts-fs-ui); }
 
+.ts-home-connect-page {
+  max-width: 80rem;
+}
+
 .ts-connect-snippet {
   border-top: 1px solid var(--ts-line);
   border-bottom: 1px solid var(--ts-line);
@@ -210,30 +238,17 @@
   font-weight: var(--ts-fw-semibold);
 }
 
-.ts-home-range-tabs {
+.ts-home-range-picker {
   display: flex;
-  gap: var(--ts-lg);
-  overflow-x: auto;
-  border-bottom: 1px solid var(--ts-line);
+  justify-content: flex-end;
 }
 
-.ts-home-range-tab {
-  display: inline-flex;
+.ts-home-range-picker .ts-menu {
+  width: 9rem;
+}
+
+.ts-home-range-picker .ts-select {
+  display: flex;
   align-items: center;
-  height: 40px;
-  padding-inline: 2px;
-  border-bottom: 2px solid transparent;
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-ui);
-  font-weight: var(--ts-fw-medium);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.ts-home-range-tab:hover { color: var(--ts-ink); }
-
-.ts-home-range-tab[aria-selected="true"] {
-  border-bottom-color: var(--ts-accent);
-  color: var(--ts-ink);
-  font-weight: var(--ts-fw-semibold);
+  min-height: var(--ts-control-h-lg);
 }

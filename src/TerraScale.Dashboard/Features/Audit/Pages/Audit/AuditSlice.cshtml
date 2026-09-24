@@ -29,17 +29,24 @@
     var infoPercent = Model.FilteredCount is 0 ? 0 : Math.Round(Model.Info * 100.0 / Model.FilteredCount);
     var warnPercent = Model.FilteredCount is 0 ? 0 : Math.Round(Model.Warn * 100.0 / Model.FilteredCount);
     var criticalPercent = Model.FilteredCount is 0 ? 0 : Math.Round(Model.Critical * 100.0 / Model.FilteredCount);
+    var hasFilters = Model.Search.Length > 0 || Model.Action != "all" || Model.Severity != "all" || Model.Range != "7d";
+    string RangeLabel(string range) => range switch
+    {
+        "24h" => "Last 24 hours",
+        "7d" => "Last 7 days",
+        "30d" => "Last 30 days",
+        "90d" => "Last 90 days",
+        _ => range,
+    };
 }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-audit-page">
     <div class="ts-toolbar">
-        <nav class="ts-tabs" aria-label="Audit sections">
-            <a class="ts-tab" href="/audit" aria-current="page" aria-selected="true">@Icons.ScrollText(16) Audit log</a>
-        </nav>
+        <div class="ts-audit-toolbar-title">@Icons.ScrollText(16) <span>Audit log</span></div>
         <form class="ts-filters ts-audit-filters" method="get" action="/audit" role="search" aria-label="Filter audit events">
             <div class="ts-filter-field ts-audit-search-field">
                 <label class="ts-sr-only" for="audit-search">Search audit events</label>
-                <input class="ts-input" id="audit-search" name="search" type="search" value="@Model.Search" placeholder="Actor, action, resource, or source" />
+                <input class="ts-input" id="audit-search" name="search" type="search" value="@Model.Search" placeholder="Search actor, action, resource, or source" />
             </div>
             <div class="ts-filter-field">
                 <span class="ts-filter-label ts-sr-only" id="audit-action-label">Action type</span>
@@ -72,18 +79,18 @@
                 <span class="ts-filter-label ts-sr-only" id="audit-range-label">Date range</span>
                 <input type="hidden" name="range" value="@Model.Range" />
                 <details class="ts-menu ts-filter-menu">
-                    <summary class="ts-select ts-filter-select" aria-labelledby="audit-range-label audit-range-value"><span id="audit-range-value">@Model.Range</span></summary>
+                    <summary class="ts-select ts-filter-select" aria-labelledby="audit-range-label audit-range-value"><span id="audit-range-value">@RangeLabel(Model.Range)</span></summary>
                     <div class="ts-menu-panel">
                         @foreach (var option in DashboardStore.AuditRangeOptions)
                         {
-                            <button class="ts-menu-item" type="button" data-filter-value="@option" aria-current="@(option == Model.Range ? "true" : null)">@option</button>
+                            <button class="ts-menu-item" type="button" data-filter-value="@option" aria-current="@(option == Model.Range ? "true" : null)">@RangeLabel(option)</button>
                         }
                     </div>
                 </details>
             </div>
-            @if (Model.Search.Length > 0 || Model.Action != "all" || Model.Severity != "all" || Model.Range != "7d")
+            @if (hasFilters)
             {
-                <a class="ts-btn ts-btn-ghost" href="/audit">Clear</a>
+                <a class="ts-btn ts-btn-ghost" href="/audit">Clear filters</a>
             }
         </form>
     </div>
@@ -92,15 +99,15 @@
         <div class="ts-section-head">
             <div>
                 <h2 class="ts-panel-title" id="audit-overview-title">Audit activity</h2>
-                <p class="ts-meta">Security events for the current project, filtered to @Model.Range · retention is managed in Settings</p>
+                <p class="ts-meta">Security events for the current project, filtered to @RangeLabel(Model.Range) · retention is managed in Settings</p>
             </div>
             <a class="ts-btn ts-btn-ghost" href="/settings?tab=audit">@Icons.Settings(16) Retention settings</a>
         </div>
         <dl class="ts-kpis" aria-label="Audit totals">
             <div>
-                <dt>@Icons.ScrollText(14) Events</dt>
+                <dt>@Icons.ScrollText(14) Matching events</dt>
                 <dd><span class="ts-kpi-value">@Model.FilteredCount.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></dd>
-                <small class="ts-meta">Showing @first–@last of @Model.AllEvents.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) retained events</small>
+                <small class="ts-meta">@Model.AllEvents.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) retained under the current policy</small>
             </div>
             <div>
                 <dt>@Icons.Shield(14) High risk</dt>
@@ -124,7 +131,7 @@
         <div class="ts-section-head">
             <div>
                 <h2 class="ts-panel-title" id="audit-activity-title">Recent activity</h2>
-                <p class="ts-meta">Showing @first–@last of @Model.FilteredCount.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) events · exports include every matching event</p>
+                <p class="ts-meta">Every event matching the current filters · exports include the complete result</p>
             </div>
             <div class="ts-row">
                 <button class="ts-btn ts-btn-primary" type="button" @(Model.FilteredCount == 0 ? "disabled" : null) data-open-dialog="audit-export-dialog">@Icons.Download(16) Export audit</button>
@@ -137,12 +144,18 @@
                 <span class="ts-empty-icon">@Icons.SearchX(16)</span>
                 <span class="ts-empty-title">No audit events</span>
                 <span class="ts-empty-meta">The TerraScale Dashboard API returned no persisted audit events matching this view.</span>
+                @if (hasFilters)
+                {
+                    <a class="ts-btn ts-btn-secondary" href="/audit">Clear filters</a>
+                }
             </div>
         }
         else
         {
-            <div class="ts-table-wrap ts-audit-table-wrap">
+            <p class="ts-meta ts-audit-table-hint">Scroll horizontally to see actor, action, resource, source and severity.</p>
+            <div class="ts-table-wrap ts-audit-table-wrap" tabindex="0" aria-label="Audit events table. Scroll horizontally for all columns.">
                 <table class="ts-table ts-audit-table">
+                    <caption class="ts-sr-only">Audit events matching the current filters</caption>
                     <thead>
                         <tr>
                             <th>Timestamp</th>
@@ -164,8 +177,13 @@
                                         <span class="ts-meta">@(row.ActorType == "service" ? "Service" : "User")</span>
                                     </div>
                                 </td>
-                                <td><span class="ts-row ts-row-tight ts-muted">@(Icon(row.ActionIcon)) <code class="ts-mono">@row.Action</code></span></td>
-                                <td>@(row.Target.Length > 0 ? row.Target : "-")</td>
+                                <td>
+                                    <span class="ts-audit-action">
+                                        <span class="ts-row ts-row-tight ts-table-strong">@(Icon(row.ActionIcon)) @row.ActionLabel</span>
+                                        <code class="ts-meta ts-mono" title="Raw action code">@row.Action</code>
+                                    </span>
+                                </td>
+                                <td>@(row.Target.Length > 0 ? row.Target : "Not reported")</td>
                                 <td class="ts-table-mono ts-nowrap-meta">@row.Source</td>
                                 <td>
                                     <div class="ts-row ts-row-tight">

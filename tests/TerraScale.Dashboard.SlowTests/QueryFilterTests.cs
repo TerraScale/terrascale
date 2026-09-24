@@ -41,7 +41,7 @@ public sealed class QueryFilterTests
         await Assert.That(allActions.Contains("Showing 1–5 of 5 events")).IsTrue();
 
         var range24 = await app.GetPageAsync(client, "/audit?range=24h");
-        await Assert.That(range24.Contains("Showing 0–0 of 0 events")).IsTrue();
+        await Assert.That(range24.Contains("5 retained under the current policy")).IsTrue();
         await Assert.That(range24.Contains("No audit events")).IsTrue();
     }
 

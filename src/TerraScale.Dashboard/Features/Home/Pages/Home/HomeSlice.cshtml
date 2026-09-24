@@ -3,10 +3,9 @@
     var shell = Model.Shell;
     var copy = HomeCopy.En;
     var requestedTab = HttpContext?.Request.Query["tab"].ToString();
-    var requestedRange = HttpContext?.Request.Query["range"].ToString();
-    var activeTab = requestedTab is "connect" or "activity"
-        ? requestedTab
-        : string.IsNullOrEmpty(requestedTab) && !string.IsNullOrEmpty(requestedRange) ? "activity" : "overview";
+    // The overview is one composed dashboard. Keep the connect query route
+    // working for existing links, while activity remains in the overview.
+    var activeTab = requestedTab is "connect" ? "connect" : "overview";
 }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-home">
@@ -23,137 +22,135 @@
             </div>
         </div>
     }
-    <div class="ts-toolbar">
-        <nav class="ts-tabs" aria-label="Overview sections">
-            @foreach (var tab in new[] { (Id: "overview", Label: "Overview"), (Id: "connect", Label: "Connect"), (Id: "activity", Label: "Activity") })
-            {
-                var icon = tab.Id == "overview" ? Icons.BarChart3(16) : tab.Id == "connect" ? Icons.Network(16) : Icons.Activity(16);
-                <a class="ts-tab" aria-current="@(activeTab == tab.Id ? "page" : null)" aria-selected="@(activeTab == tab.Id ? "true" : "false")" href="/?tab=@tab.Id">@icon @tab.Label</a>
-            }
-        </nav>
-    </div>
 
-    @if (activeTab == "overview")
+    @if (activeTab == "connect")
     {
-    <section class="ts-section ts-home-section" aria-labelledby="home-metrics-title">
-        <div class="ts-section-head">
-            <div>
-                <h2 class="ts-panel-title" id="home-metrics-title">@copy.WorkspaceMetrics</h2>
-                <p class="ts-meta">Current project totals and recent changes</p>
-            </div>
-        </div>
-        <dl class="ts-kpis ts-home-metrics" aria-label="@copy.WorkspaceMetrics">
-            @foreach (var metric in new[]
-            {
-                (Label: copy.Databases, Value: Model.Databases, Detail: copy.DatabaseDetail(Model.Databases)),
-                (Label: copy.ProjectUsers, Value: Model.ProjectUsers, Detail: copy.ProjectUsersDetail(Model.ProjectUsers)),
-                (Label: copy.UnreadAlerts, Value: Model.UnreadNotifications, Detail: copy.NotificationsLoaded(Model.TotalNotifications)),
-            })
-            {
+        <section class="ts-section ts-home-section ts-home-connect-page" aria-labelledby="connect-title">
+            <div class="ts-section-head">
                 <div>
-                    <dt>@(metric.Label == copy.Databases ? Icons.Database(14) : metric.Label == copy.ProjectUsers ? Icons.Users(14) : Icons.Bell(14)) @metric.Label</dt>
-                    <dd><span class="ts-kpi-value">@metric.Value</span></dd>
-                    <small class="ts-meta">@metric.Detail</small>
+                    <h2 class="ts-panel-title" id="connect-title">@copy.ConnectTitle</h2>
+                    <p class="ts-meta">@copy.ConnectSubtitle</p>
                 </div>
-            }
-        </dl>
-    </section>
-
-    <section class="ts-section ts-home-section" aria-labelledby="getting-started-title">
-        <div class="ts-section-head">
-            <div>
-                <h2 class="ts-panel-title" id="getting-started-title">@copy.GettingStarted</h2>
-                <p class="ts-meta">@copy.GettingStartedSubtitle</p>
             </div>
-        </div>
-        <div class="ts-home-section-body">
-            <p class="ts-muted ts-home-intro">@copy.GettingStartedIntro</p>
-            <div class="ts-home-steps">
-                @{ var steps = new[] {
-                       (Title: copy.CreateFirstDatabase, Body: copy.StepDatabaseBody, Cta: copy.StepDatabaseCta, Href: "/databases", Icon: "Database", Done: Model.Databases > 0),
-                       (Title: copy.CreateCredential, Body: copy.StepCredentialBody, Cta: copy.StepCredentialCta, Href: "/api-keys", Icon: "KeyRound", Done: Model.ActiveCredentials > 0),
-                   }; }
-                @for (var i = 0; i < steps.Length; i++)
-                {
-                    var step = steps[i];
-                    <div class="ts-getting-started-item">
-                        <span class="ts-getting-started-number">@(i + 1)</span>
-                        <div class="ts-getting-started-content">
-                            <div class="ts-row-between">
-                                <span class="ts-getting-started-title">@step.Title</span>
-                                <span class="ts-badge @(step.Done ? "ts-badge-success" : "ts-badge-warning")">@(step.Done ? copy.Done : copy.Open)</span>
-                            </div>
-                            <p class="ts-muted ts-ui">@step.Body</p>
-                            <a class="ts-getting-started-cta" href="@step.Href">
-                                @(typeof(Icons).GetMethod(step.Icon)?.Invoke(null, [15]))
-                                @step.Cta
-                                @Icons.ArrowRight(14)
-                            </a>
-                        </div>
-                    </div>
-                }
+            <div class="ts-home-section-body">
+                <ul class="ts-home-connect-grid">
+                    @foreach (var option in new[]
+                    {
+                        (Title: copy.ConnectMcpTitle, Body: copy.ConnectMcpBody, Icon: "Bot"),
+                        (Title: copy.ConnectSdkTitle, Body: copy.ConnectSdkBody, Icon: "Cpu"),
+                        (Title: copy.ConnectApiTitle, Body: copy.ConnectApiBody, Icon: "Network"),
+                        (Title: copy.ConnectCliTitle, Body: copy.ConnectCliBody, Icon: "Terminal"),
+                    })
+                    {
+                        <li class="ts-home-connect-item">
+                            <span class="ts-connect-icon">@(typeof(Icons).GetMethod(option.Icon)?.Invoke(null, [18]))</span>
+                            <span class="ts-getting-started-title">@option.Title</span>
+                            <p class="ts-muted ts-ui">@option.Body</p>
+                            <span class="ts-badge ts-badge-outline ts-badge-preview">@copy.ConnectSoon</span>
+                        </li>
+                    }
+                </ul>
+                <div class="ts-snippet ts-connect-snippet">
+                    <div class="ts-snippet-header">@Icons.Terminal(14) @copy.ConnectSnippetLabel</div>
+                    <pre class="ts-snippet-body">@copy.ConnectSnippet</pre>
+                </div>
             </div>
-        </div>
-    </section>
-    }
-    else if (activeTab == "connect")
-    {
-    <section class="ts-section ts-home-section" aria-labelledby="connect-title">
-        <div class="ts-section-head">
-            <div>
-                <h2 class="ts-panel-title" id="connect-title">@copy.ConnectTitle</h2>
-                <p class="ts-meta">@copy.ConnectSubtitle</p>
-            </div>
-        </div>
-        <div class="ts-home-section-body">
-            <ul class="ts-home-connect-grid">
-                @foreach (var option in new[]
-                {
-                    (Title: copy.ConnectMcpTitle, Body: copy.ConnectMcpBody, Icon: "Bot"),
-                    (Title: copy.ConnectSdkTitle, Body: copy.ConnectSdkBody, Icon: "Cpu"),
-                    (Title: copy.ConnectApiTitle, Body: copy.ConnectApiBody, Icon: "Network"),
-                    (Title: copy.ConnectCliTitle, Body: copy.ConnectCliBody, Icon: "Terminal"),
-                })
-                {
-                    <li class="ts-home-connect-item">
-                        <span class="ts-connect-icon">@(typeof(Icons).GetMethod(option.Icon)?.Invoke(null, [18]))</span>
-                        <span class="ts-getting-started-title">@option.Title</span>
-                        <p class="ts-muted ts-ui">@option.Body</p>
-                        <span class="ts-badge ts-badge-outline ts-badge-preview">@copy.ConnectSoon</span>
-                    </li>
-                }
-            </ul>
-            <div class="ts-snippet ts-connect-snippet">
-                <div class="ts-snippet-header">@Icons.Terminal(14) @copy.ConnectSnippetLabel</div>
-                <pre class="ts-snippet-body">@copy.ConnectSnippet</pre>
-            </div>
-        </div>
-    </section>
+        </section>
     }
     else
     {
-    <section class="ts-section ts-home-section" aria-label="Activity">
-        <div class="ts-section-head">
-            <div>
-                <h2 class="ts-panel-title">@copy.ActivityTitle</h2>
-                <p class="ts-meta">@copy.ActivitySubtitle</p>
+        <div class="ts-home-overview">
+            <div class="ts-home-primary">
+                <section class="ts-section ts-home-section" aria-labelledby="home-metrics-title">
+                    <div class="ts-section-head">
+                        <div>
+                            <h2 class="ts-panel-title" id="home-metrics-title">@copy.WorkspaceMetrics</h2>
+                            <p class="ts-meta">Current project totals and recent changes</p>
+                        </div>
+                    </div>
+                    <dl class="ts-kpis ts-home-metrics" aria-label="@copy.WorkspaceMetrics">
+                        @foreach (var metric in new[]
+                        {
+                            (Label: copy.Databases, Value: Model.Databases, Detail: copy.DatabaseDetail(Model.Databases)),
+                            (Label: copy.ProjectUsers, Value: Model.ProjectUsers, Detail: copy.ProjectUsersDetail(Model.ProjectUsers)),
+                            (Label: copy.UnreadAlerts, Value: Model.UnreadNotifications, Detail: copy.NotificationsLoaded(Model.TotalNotifications)),
+                        })
+                        {
+                            <div>
+                                <dt>@(metric.Label == copy.Databases ? Icons.Database(14) : metric.Label == copy.ProjectUsers ? Icons.Users(14) : Icons.Bell(14)) @metric.Label</dt>
+                                <dd><span class="ts-kpi-value">@metric.Value</span></dd>
+                                <small class="ts-meta">@metric.Detail</small>
+                            </div>
+                        }
+                    </dl>
+                </section>
+
+                <section class="ts-section ts-home-section" aria-labelledby="home-activity-title">
+                    <div class="ts-section-head">
+                        <div>
+                            <h2 class="ts-panel-title" id="home-activity-title">@copy.ActivityTitle</h2>
+                            <p class="ts-meta">@copy.ActivitySubtitle</p>
+                        </div>
+                        <span class="ts-home-activity-total"><span class="ts-activity-total-dot" aria-hidden="true"></span> @copy.Events <strong>@Model.ActivityEvents.ToString("N0")</strong></span>
+                    </div>
+                    <div class="ts-home-range-picker">
+                        <span class="ts-sr-only" id="home-range-label">Activity range</span>
+                        <details class="ts-menu ts-menu-end">
+                            <summary class="ts-select" aria-labelledby="home-range-label home-range-value"><span id="home-range-value">@Model.ActivityRange</span></summary>
+                            <div class="ts-menu-panel">
+                                @foreach (var (range, _) in Model.Workloads)
+                                {
+                                    <a class="ts-menu-item" aria-current="@(range == Model.ActivityRange ? "page" : null)" href="/?range=@range">@range</a>
+                                }
+                            </div>
+                        </details>
+                    </div>
+                    <div class="ts-chart-body">
+                        @if (Model.ActivityEvents == 0)
+                        {
+                            <div class="ts-empty"><span class="ts-empty-icon">@Icons.SearchX(16)</span><span class="ts-empty-title">@copy.NoActivity</span><span class="ts-meta">Choose another range to view persisted activity.</span></div>
+                        }
+                        @Charts.LineChart([.. Model.ActivityPoints], copy.ActivityChart(Model.ActivityPoints.Length))
+                    </div>
+                </section>
             </div>
-            <span class="ts-home-activity-total"><span class="ts-activity-total-dot" aria-hidden="true"></span> @copy.Events <strong>@Model.ActivityEvents.ToString("N0")</strong></span>
+            <aside class="ts-section ts-home-section ts-home-getting-started" aria-labelledby="getting-started-title">
+                <div class="ts-section-head">
+                    <div>
+                        <h2 class="ts-panel-title" id="getting-started-title">@copy.GettingStarted</h2>
+                        <p class="ts-meta">@copy.GettingStartedSubtitle</p>
+                    </div>
+                </div>
+                <div class="ts-home-section-body">
+                    <p class="ts-muted ts-home-intro">@copy.GettingStartedIntro</p>
+                    <div class="ts-home-steps">
+                        @{ var steps = new[] {
+                               (Title: copy.CreateFirstDatabase, Body: copy.StepDatabaseBody, Cta: copy.StepDatabaseCta, Href: "/databases", Icon: "Database", Done: Model.Databases > 0),
+                               (Title: copy.CreateCredential, Body: copy.StepCredentialBody, Cta: copy.StepCredentialCta, Href: "/api-keys", Icon: "KeyRound", Done: Model.ActiveCredentials > 0),
+                           }; }
+                        @for (var i = 0; i < steps.Length; i++)
+                        {
+                            var step = steps[i];
+                            <div class="ts-getting-started-item">
+                                <span class="ts-getting-started-number">@(i + 1)</span>
+                                <div class="ts-getting-started-content">
+                                    <div class="ts-row-between">
+                                        <span class="ts-getting-started-title">@step.Title</span>
+                                        <span class="ts-badge @(step.Done ? "ts-badge-success" : "ts-badge-warning")">@(step.Done ? copy.Done : copy.Open)</span>
+                                    </div>
+                                    <p class="ts-muted ts-ui">@step.Body</p>
+                                    <a class="ts-getting-started-cta" href="@step.Href">
+                                        @(typeof(Icons).GetMethod(step.Icon)?.Invoke(null, [15]))
+                                        @step.Cta
+                                        @Icons.ArrowRight(14)
+                                    </a>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </aside>
         </div>
-        <nav class="ts-home-range-tabs" aria-label="Activity range">
-            @foreach (var (range, _) in Model.Workloads)
-            {
-                <a class="ts-home-range-tab" aria-current="@(range == Model.ActivityRange ? "page" : null)" aria-selected="@(range == Model.ActivityRange ? "true" : "false")" href="/?tab=activity&amp;range=@range">@range</a>
-            }
-        </nav>
-        <div class="ts-chart-body">
-            @if (Model.ActivityEvents == 0)
-            {
-                <div class="ts-empty"><span class="ts-empty-icon">@Icons.SearchX(16)</span><span class="ts-empty-title">@copy.NoActivity</span><span class="ts-meta">Choose another range to view persisted activity.</span></div>
-            }
-            @Charts.LineChart([.. Model.ActivityPoints], copy.ActivityChart(Model.ActivityPoints.Length))
-        </div>
-    </section>
     }
 </div>
 @ShellHtml.Bottom(shell)

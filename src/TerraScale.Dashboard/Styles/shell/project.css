@@ -14,14 +14,22 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--ts-md);
+  gap: var(--ts-sm);
   width: 100%;
+  min-height: var(--ts-control-h-sm);
+  height: var(--ts-control-h-sm);
+  padding-inline: var(--ts-gap-cozy);
+}
+
+.ts-project-trigger svg {
+  width: 16px;
+  height: 16px;
 }
 
 .ts-project-trigger-label {
   font-weight: var(--ts-fw-semibold);
   text-align: left;
-  max-width: 160px;
+  max-width: 124px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -31,6 +39,12 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+details.ts-menu.ts-project-menu > .ts-menu-panel,
+details.ts-menu.ts-account > .ts-menu-panel {
+  min-width: 0;
+  width: 100%;
 }
 
 .ts-project-panel-scroll {
@@ -46,22 +60,6 @@
   font-size: var(--ts-fs-meta);
   font-weight: var(--ts-fw-medium);
   color: var(--ts-ink-muted);
-}
-
-.ts-current-project {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ts-sm);
-  padding: var(--ts-md);
-  border-radius: var(--ts-radius-control);
-  border: 1px solid var(--ts-line);
-  background-color: var(--ts-surface-muted);
-}
-
-.ts-project-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--ts-xs);
 }
 
 .ts-project-rename {
@@ -104,12 +102,6 @@
   pointer-events: none;
 }
 
-.ts-project-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ts-xs);
-}
-
 .ts-project-option-content {
   display: flex;
   flex-direction: column;
@@ -121,14 +113,6 @@
 .ts-project-meta-compact {
   gap: var(--ts-sm);
   font-size: var(--ts-fs-meta);
-}
-
-.ts-project-footer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ts-xs);
-  padding: var(--ts-sm) var(--ts-md);
-  border-top: 1px solid var(--ts-line);
 }
 
 .ts-current-project {
@@ -170,20 +154,6 @@
   color: var(--ts-ink);
   font-size: var(--ts-fs-ui);
   font-weight: var(--ts-fw-semibold);
-}
-
-.ts-active-label {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px var(--ts-sm);
-  border-radius: var(--ts-radius-pill);
-  border: 1px solid var(--ts-line);
-  background-color: var(--ts-surface);
-  color: var(--ts-success);
-  font-size: 10px;
-  font-weight: var(--ts-fw-semibold);
-  letter-spacing: 0.025em;
-  text-transform: uppercase;
 }
 
 .ts-project-meta {
@@ -277,9 +247,9 @@
 .ts-account-trigger {
   display: flex;
   align-items: center;
-  gap: var(--ts-md);
+  gap: var(--ts-sm);
   width: 100%;
-  padding: var(--ts-sm);
+  padding: var(--ts-gap-tight);
   border-radius: var(--ts-radius-control);
   border: 1px solid transparent;
   background-color: transparent;
@@ -302,8 +272,8 @@ details.ts-menu[open] > summary.ts-account-trigger {
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   border-radius: var(--ts-radius-pill);
   border: 1px solid color-mix(in oklab, var(--ts-accent) 30%, transparent);
   background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);

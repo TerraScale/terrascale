@@ -13,7 +13,9 @@ public sealed record AuthenticationPageModel : IPageModel
     public required ImmutableArray<AuthResource> AllResources { get; init; }
     public string Section => Current.Key;
     public string InstanceName => Instance.Name;
-    public ImmutableArray<AuthSection> Sections => [.. AuthSection.All];
+    public ImmutableArray<AuthNavGroup> NavigationGroups => [.. AuthNavGroup.All];
+    public AuthNavGroup CurrentGroup => AuthNavGroup.For(Section);
+    public IReadOnlyList<AuthSection> CurrentGroupSections => CurrentGroup.Sections;
     public string Issuer => $"https://auth.terrascale.tech/{InstanceSlug}";
     public IReadOnlyList<string> Roles { get; } = ["organization:owner", "project:admin"];
     public IReadOnlyList<string> Permissions { get; } = ["members:read", "invitations:write", "projects:read", "usage:read"];

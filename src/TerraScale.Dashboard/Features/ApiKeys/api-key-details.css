@@ -9,41 +9,6 @@
   display: inline-flex;
 }
 
-.ts-filter-select {
-  min-width: 10rem;
-}
-
-.ts-filter-menu > .ts-filter-trigger {
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-}
-
-.ts-filter-trigger > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ts-filter-menu > .ts-menu-panel {
-  top: calc(100% + var(--ts-xs));
-  left: 0;
-  width: 100%;
-  min-width: 0;
-  max-height: 16rem;
-  overflow-y: auto;
-}
-
-.ts-filter-menu .ts-menu-item[aria-current="true"] {
-  background-color: var(--ts-surface-muted);
-  color: var(--ts-accent);
-}
-
-.ts-filter-menu .ts-menu-item:focus-visible {
-  outline: none;
-  box-shadow: var(--ts-focus-ring);
-}
-
 /* Credentials table cells. */
 .ts-credential-name {
   gap: var(--ts-sm);

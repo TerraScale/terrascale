@@ -3,11 +3,28 @@
    in the core components and Usage partials. */
 
 .ts-audit-page {
-  gap: var(--ts-xl);
+  gap: var(--ts-lg);
 }
 
 .ts-audit-page .ts-toolbar {
   gap: var(--ts-md);
+}
+
+/* Audit has one view, so the toolbar title names the page while the controls
+   stay available in the same row. A single-item tab strip would imply that
+   more views are available. */
+.ts-audit-toolbar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  min-height: 60px;
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-body);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-audit-toolbar-title svg {
+  color: var(--ts-ink-muted);
 }
 
 .ts-audit-filters {
@@ -23,6 +40,11 @@
 .ts-audit-filters .ts-input,
 .ts-audit-filters .ts-select {
   width: 100%;
+}
+
+.ts-audit-filters .ts-menu-panel {
+  max-height: min(22rem, calc(100vh - 8rem));
+  overflow-y: auto;
 }
 
 @media (min-width: 64rem) {
@@ -83,6 +105,20 @@
   background: color-mix(in oklab, var(--ts-surface-muted) 50%, transparent);
 }
 
+.ts-audit-action {
+  display: grid;
+  gap: var(--ts-xs);
+  min-width: 12rem;
+}
+
+.ts-audit-action .ts-row {
+  white-space: nowrap;
+}
+
+.ts-audit-table-hint {
+  display: none;
+}
+
 .ts-audit-breakdown {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -107,7 +143,7 @@
 @media (max-width: 64rem) {
   .ts-audit-page .ts-toolbar {
     align-items: flex-start;
-    padding-block: var(--ts-md);
+    padding-block: var(--ts-sm);
   }
 
   .ts-audit-filters {
@@ -116,9 +152,14 @@
 }
 
 @media (max-width: 40rem) {
-  .ts-audit-page .ts-toolbar .ts-tabs,
-  .ts-audit-page .ts-toolbar .ts-tab {
+  .ts-audit-page .ts-toolbar {
+    gap: var(--ts-sm);
+    padding-block: 0;
+  }
+
+  .ts-audit-toolbar-title {
     height: 52px;
+    min-height: 52px;
   }
 
   .ts-audit-filters > .ts-filter-field,
@@ -126,6 +167,19 @@
     flex: 1 1 100%;
     max-width: none;
     width: 100%;
+  }
+
+  .ts-audit-filters .ts-menu-panel {
+    max-height: min(18rem, 48vh);
+  }
+
+  .ts-audit-table-hint {
+    display: block;
+    margin: calc(var(--ts-sm) * -1) 0 0;
+  }
+
+  .ts-audit-action {
+    min-width: 13rem;
   }
 
   .ts-audit-breakdown {

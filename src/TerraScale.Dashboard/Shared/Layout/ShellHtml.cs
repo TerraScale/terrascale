@@ -159,13 +159,13 @@ public static class ShellHtml
         var others = store.Projects.Where(p => p.Id != project.Id).ToArray();
         var builder = new StringBuilder("                <div class=\"ts-project-controls\" data-signals=\"{projectSearch:''}\">");
         builder.AppendLine("""                    <details class="ts-menu ts-project-menu">""");
-        builder.AppendLine($"""                        <summary class="ts-btn ts-btn-secondary ts-btn-lg ts-project-trigger">{Icons.FolderKanban(16).Value}<span class="ts-project-trigger-label">{Escape(project.Name)}</span>{Icons.ChevronDown(15).Value}</summary>""");
+        builder.AppendLine($"""                        <summary class="ts-btn ts-btn-secondary ts-project-trigger">{Icons.FolderKanban(16).Value}<span class="ts-project-trigger-label">{Escape(project.Name)}</span>{Icons.ChevronDown(15).Value}</summary>""");
         builder.AppendLine("                        <div class=\"ts-menu-panel ts-project-panel\">");
         builder.AppendLine("                            <div class=\"ts-project-panel-scroll\">");
         builder.AppendLine("""                                <div class="ts-current-project">""");
         builder.AppendLine("""                                    <div class="ts-current-project-top">""");
         builder.AppendLine("""                                        <div class="ts-current-project-name"><span class="ts-status-dot" aria-hidden="true"></span><span class="ts-project-name">""" + Escape(project.Name) + "</span></div>");
-        builder.AppendLine($"""                                        <div class="ts-project-actions"><span class="ts-active-label">Active</span><a class="ts-project-rename" href="/organization" aria-label="Rename project">{Icons.Pencil(13).Value}</a></div>""");
+        builder.AppendLine($"""                                        <a class="ts-project-rename" href="/organization" aria-label="Rename project">{Icons.Pencil(13).Value}</a>""");
         builder.AppendLine("                                    </div>");
         builder.AppendLine("""                                    <div class="ts-project-meta">""");
         builder.AppendLine($"""                                        <span class="ts-project-meta-item">{Icons.Database(12).Value} {databaseCount} {(databaseCount == 1 ? "database" : "databases")}</span>""");
@@ -200,7 +200,7 @@ public static class ShellHtml
         builder.AppendLine("""                            <div class="ts-project-footer">""");
         builder.AppendLine($"""                                <a class="ts-project-footer-link" href="/organization?create=1">{Icons.Plus(15).Value} Create new project</a>""");
         builder.AppendLine($"""                                <a class="ts-project-footer-link" href="/settings">{Icons.Settings(15).Value} Project settings</a>""");
-        builder.AppendLine($"""                                <a class="ts-project-footer-link" href="/organization">{Icons.Building2(15).Value} Browse all workspaces</a>""");
+        builder.AppendLine($"""                                <a class="ts-project-footer-link" href="/organization">{Icons.Building2(15).Value} All workspaces</a>""");
         builder.AppendLine("                            </div>");
         builder.AppendLine("                        </div>");
         builder.AppendLine("                    </details>");
