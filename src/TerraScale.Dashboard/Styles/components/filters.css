@@ -56,9 +56,11 @@
 
 .ts-filter-menu > .ts-menu-panel {
   top: calc(100% + var(--ts-xs));
-  left: 0;
-  width: 100%;
-  min-width: 0;
+  right: 0;
+  left: auto;
+  width: max-content;
+  min-width: 100%;
+  max-width: calc(100vw - 2 * var(--ts-lg));
   max-height: 16rem;
   overflow-y: auto;
 }
