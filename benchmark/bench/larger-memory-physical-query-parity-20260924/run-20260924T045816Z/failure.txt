@@ -1,0 +1,19 @@
+System.OutOfMemoryException: Exception of type 'System.OutOfMemoryException' was thrown.
+   at System.Text.Encoding.GetBytes(String s)
+   at TerraBase.Indexing.Runtime.RuntimeIndexCodec.EncodeDocumentValue(Document document) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/RuntimeIndexCodec.cs:line 1091
+   at TerraBase.Indexing.Runtime.DurableIndexStore.StageFrame(Int64 transactionId, IndexRuntimeFrame frame, ArrayEligibilityProof& eligibility, List`1 pointDeltas, LogicalWriteAccumulator logicalWrites, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs:line 2251
+   at TerraBase.Indexing.Runtime.DurableIndexStore.<>c__DisplayClass98_0.<ApplyFrameAsync>b__0(Int64 transactionId) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs:line 810
+   at TerraBase.Indexing.Runtime.DurableIndexStore.ExecuteTransaction[T](Func`2 work, UInt64 committedSequence, CancellationToken cancellationToken, Action onCommitted, Action onRolledBack) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs:line 3800
+   at TerraBase.Indexing.Runtime.DurableIndexStore.ApplyFrameAsync(IndexRuntimeFrame frame, DurableIndexLogicalWriteAdmission logicalWriteAdmission, DurableIndexLogicalWriteAdmissionCapability logicalWriteAdmissionCapability, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs:line 807
+   at TerraBase.Indexing.Runtime.DurableIndexStore.ApplyFrameAsync(IndexRuntimeFrame frame, DurableIndexLogicalWriteAdmission logicalWriteAdmission, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs:line 775
+   at TerraBase.Indexing.Runtime.DurableIndexStore.ApplyFrameAsync(IndexRuntimeFrame frame, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs:line 766
+   at Program.<>c__DisplayClass0_4.<<<Main>$>g__Frame|28>d.MoveNext() in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/Program.cs:line 256
+--- End of stack trace from previous location ---
+   at Program.<>c__DisplayClass0_4.<<<Main>$>b__29>d.MoveNext() in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/Program.cs:line 232
+--- End of stack trace from previous location ---
+   at Program.<<Main>$>g__Measure|0_13(String name, String path, Func`1 operation) in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/Program.cs:line 379
+   at Program.<>c__DisplayClass0_0.<<<Main>$>g__RunTerraBase|2>d.MoveNext() in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/Program.cs:line 229
+--- End of stack trace from previous location ---
+   at Program.<>c__DisplayClass0_0.<<<Main>$>g__RunTerraBase|2>d.MoveNext() in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/Program.cs:line 236
+--- End of stack trace from previous location ---
+   at Program.<Main>$(String[] args) in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/Program.cs:line 53

@@ -1,0 +1,11 @@
+# Resource envelope: 150k bounded-cache gate
+
+- Command: systemd-run --user --wait --collect -p MemoryMax=268435456 -p MemorySwapMax=0 -- nice -n 19 dotnet TerraBase.Benchmarks.dll --workload larger-memory --backend storage-engine --memory-cap-bytes 268435456 --dataset-size 150000 --payload-size 2048 --samples 5 --operations 20 --writes 20 --warmup 100
+- Result: exit code 1; `System.OutOfMemoryException` during compressed random-access point read
+- Runtime: 2026-09-23T00:27:54Z to 2026-09-23T00:29:56Z (2m02s)
+- MemoryMax: 268435456 bytes (256 MiB)
+- MemoryPeak: 268435456 bytes (256 MiB)
+- MemorySwapMax: 0 bytes
+- memory.events observed before unit teardown: `max 159`, `oom 0`, `oom_kill 0`, `oom_group_kill 0`
+- Artifact SHA-256: 186cf1171e9e131bcf66bfebed1c22090e167a3b5e7f4199ff62d409ce6909fe
+- Receipt: `larger-memory-receipt.json`

@@ -1,0 +1,34 @@
+Runtime-order paired trial validation
+
+Subject: /tmp/terrabase-indexing-mirror-fixed-20260923T013001Z
+Commit: 7e5a1851ce356a2f4cccbfdeffeb54635f6e9cc6
+Tree digest: 6ac4eeb26a369bf87e645158802da3873f6dca23
+Working-tree digest: 2a27753aa2a328d3bed7066b34ca4f04ec84876626e99adc9edb056484d2764d
+AutomaticIndexRuntime.cs SHA-256: 14652b784401f132f7003255a95c2e05c7f70f327e9bd072c5f2091c404d29db
+Patch diff SHA-256: 1c0336c11e35922bd2bfdc98fa076a6ebf49faaa913befd8546411c1c8e9dc12
+
+Configuration:
+- documents=2000
+- samples=30
+- maximum-indexes=2
+- maintenance-documents=100
+- cold lanes omit --index-perf
+- diagnostic lanes include --index-perf
+
+Builds:
+- TerraBase Release build: passed before trials, 0 warnings/errors.
+- TerraBase.Benchmarks Release build with TerraBaseRepo, TerraBaseProject, and TerraBaseZoneTreeProject overrides: passed before trials, 0 warnings/errors.
+
+Receipt self-check:
+- `TerraBase.Benchmarks --self-check`: PASS.
+
+Trials:
+- Six receipts found (three cold/diagnostic pairs); all status=complete and exitCode=0.
+- All six receipts report working-tree digest 2a27753aa2a328d3bed7066b34ca4f04ec84876626e99adc9edb056484d2764d.
+- All cold indexed rows report first/repeat index service and result coverage.
+- Both evaluated shapes report 100% repeat index service in all cold lanes.
+
+Artifacts:
+- Summary: /home/mariogk/Projects/TerraScale/ts-benchmark/bench/query-independent-instrumentation-20260923T014427Z-runtime-order/cross-trial-summary.md
+- JSON summary: /home/mariogk/Projects/TerraScale/ts-benchmark/bench/query-independent-instrumentation-20260923T014427Z-runtime-order/cross-trial-summary.json
+- Raw trial Markdown, console logs, and run receipts are in the six trial directories below this root.

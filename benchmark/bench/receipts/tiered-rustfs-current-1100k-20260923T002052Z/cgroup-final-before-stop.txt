@@ -1,0 +1,42 @@
+capturedAtUtc=2026-09-23T00:26:22Z
+pid=2778092
+    PID    PPID  NI STAT     ELAPSED %CPU %MEM   RSS    VSZ CMD
+2778092 2778089  19 SNl        05:29  134  0.6 198792 19590272 /home/mariogk/.local/share/mise/dotnet-root/dotnet /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload tiered-segment --records 1100000 --batch 1000 --payload-bytes 128 --updates 0 --deletes 0 --point-reads 512 --checkpoint-records 100000 --cache-bytes 16777216 --prefix terrabase-tiered/current-1100k-20260923T002052Z --output /home/mariogk/Projects/TerraScale/ts-benchmark/bench/receipts/tiered-rustfs-current-1100k-20260923T002052Z
+--- cgroup path ---
+/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-p2778092-i7041281.scope
+--- memory.current ---
+176603136
+--- memory.peak ---
+451637248
+--- memory.max ---
+4294967296
+--- memory.swap.current ---
+0
+--- memory.swap.max ---
+0
+--- memory.events ---
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+sock_throttled 0
+--- cpu.stat ---
+usage_usec 443963127
+user_usec 384817676
+system_usec 59145451
+nice_usec 384553470
+core_sched.force_idle_usec 0
+nr_periods 0
+nr_throttled 0
+throttled_usec 0
+nr_bursts 0
+burst_usec 0
+--- systemd properties ---
+Id=run-p2778092-i7041281.scope
+Result=success
+MemoryPeak=451637248
+CPUUsageNSec=443975899000
+MemoryMax=4294967296
+MemorySwapMax=0

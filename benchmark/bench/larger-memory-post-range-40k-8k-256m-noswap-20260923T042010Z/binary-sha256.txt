@@ -1,0 +1,3 @@
+a5e277a8c9eb436d9037984dfe37d472ce46cd89390ec755a0733767c6d24358  terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll
+3114f0005531431c9283098c1941d05df039b78fb1fdbf0a0154cef9a717f629  terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.dll
+6fb17f72fa996c1e4d480cbb4307d3b2b3c83e4f57401ce4f201b9241e6903f4  terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.ZoneTree.dll

@@ -1,0 +1,11 @@
+System.OutOfMemoryException: Exception of type 'System.OutOfMemoryException' was thrown.
+   at ZoneTree.Segments.DiskSegmentVariations.VariableSizeDiskSegment`2.ReadValue(Int64 index, BlockPin blockPin) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase.ZoneTree/Segments/DiskSegmentVariations/VariableSizeDiskSegment.cs:line 198
+   at ZoneTree.Core.ZoneTreeIterator`2.NextInternal() in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase.ZoneTree/Core/ZoneTreeIterator.cs:line 364
+   at TerraBase.Indexing.Runtime.DurableIndexStore.ReadRetainedDocuments(CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs:line 1840
+   at TerraBase.Indexing.Runtime.DurableIndexStore.HasStaleEntryGeneration() in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs:line 1970
+   at TerraBase.Indexing.Runtime.DurableIndexStore.InvalidateStaleEntryGenerationIfNeeded() in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs:line 1951
+   at TerraBase.Indexing.Runtime.DurableIndexStore..ctor(String path, IndexDefinition definition, Boolean deferCodecMigration, Boolean requireLogicalWriteAdmission, UInt64 maximumGeneratedLogicalWriteBytes, UInt64 maximumGeneratedLogicalWriteOperations, IRuntimeMetrics metrics) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs:line 231
+   at TerraBase.Indexing.Runtime.DurableIndexStore..ctor(String path, IndexDefinition definition) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs:line 142
+   at Program.<>c__DisplayClass0_0.<<<Main>$>g__RunTerraBase|2>d.MoveNext() in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/Program.cs:line 354
+--- End of stack trace from previous location ---
+   at Program.<Main>$(String[] args) in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/Program.cs:line 77

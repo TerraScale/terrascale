@@ -1,0 +1,7 @@
+Subject validation
+
+- TerraBase Release build: passed, 0 warnings, 0 errors.
+- TerraBase.Api.Tests Release build: passed, 0 warnings, 0 errors.
+- `dotnet run --project tests/TerraBase.Api.Tests/TerraBase.Api.Tests.csproj --configuration Release --no-build --no-restore -- --treenode-filter '/*/*/DurableSnapshotBatchTests/*' --maximum-parallel-tests 1`: 13 passed, 0 failed, 0 skipped.
+- `dotnet run --project tests/TerraBase.Api.Tests/TerraBase.Api.Tests.csproj --configuration Release --no-build --no-restore -- --treenode-filter '/*/*/IndexSnapshotReplacementTests/*' --maximum-parallel-tests 1`: 33 passed, 0 failed, 0 skipped.
+- No paired benchmark trials run after the mirror fix; prior failed patched trials remain at query-independent-instrumentation-20260923T011419Z-patched.

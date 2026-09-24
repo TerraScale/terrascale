@@ -1,0 +1,17 @@
+unit=terrabase-larger-memory-1790129337
+controlGroup=/user.slice/user-1000.slice/user@1000.service/app.slice/terrabase-larger-memory-1790129337.service
+captured=2026-09-23T02:31:15Z (immediately before controlled SIGINT)
+runnerExitCode=1
+Result=exit-code
+ExecMainCode=1
+ExecMainStatus=1
+memory.max=268435456
+memory.peak=268435456
+memory.swap.max=0
+memory.swap.peak=0
+memory.events.low=0
+memory.events.high=0
+memory.events.max=122128
+memory.events.oom=0
+memory.events.oom_kill=0
+memory.events.oom_group_kill=0

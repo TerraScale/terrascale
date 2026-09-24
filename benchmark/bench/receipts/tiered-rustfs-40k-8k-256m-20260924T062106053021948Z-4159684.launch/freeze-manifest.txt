@@ -1,0 +1,35 @@
+schema=terrabase-final-source-matched-release-v1
+frozenAtUtc=2026-09-24T06:19:51Z
+repository=/home/mariogk/Projects/TerraScale/terrabase
+benchmarkProject=/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj
+commit=47b235dcc78240a9eb5330e454a7bf3273ffcba9
+treeDigest=1808109fb3bee474a93829a76c9d17d5d22328c3
+workingTreeDigest=dc0a283a9ceb0eb1d103bef727533aa0bb6979b5e591d049767c1dffb7effcd8
+sourceDirty=true
+buildConfiguration=Release
+buildOutput=/tmp/terrabase-final-source-matched-build.jmal4c/bin/TerraBase.Benchmarks/release
+binaryClosure=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/binaries/terrabase-final-source-matched-release-20260924T061758Z
+dotnetVersion=11.0.100-rc.1.26425.128
+sourceArchive=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/binaries/terrabase-final-source-matched-release-20260924T061758Z/terrabase-source.tar
+sourceArchiveSha256=e41ea74b618b76484dde18443ff30d1ced5da96696b92f60b5f7b394e6718538
+sourceFileCount=1682
+sourceFileBytes=17217947
+benchmarkRepository=/home/mariogk/Projects/TerraScale/ts-benchmark
+benchmarkCommit=0359e5c1efb3ed38d9e3c8255e39334e0b88f0d7
+benchmarkTreeDigest=3f2c963efe6b4ec7c4f5772708d2e3d7c7ae33d9
+benchmarkWorkingTreeDigest=26083266b70639659df85c8c97011d5bc657a092a7f3f888d93f64fb80d45b62
+benchmarkWorkingTreeStatusDigest=26083266b70639659df85c8c97011d5bc657a092a7f3f888d93f64fb80d45b62
+benchmarkDirty=true
+benchmarkSourceArchive=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/binaries/terrabase-final-source-matched-release-20260924T061758Z/ts-benchmark-source.tar
+benchmarkSourceArchiveSha256=7eaf3db355896d96c34265f9150ea23bbbfd088708cfdbee35199dbd95239545
+benchmarkSourceFileCount=33
+benchmarkSourceFileBytes=1225501
+restoreCommand=nice -n 19 dotnet restore /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj --artifacts-path /tmp/terrabase-final-source-matched-build.jmal4c --disable-parallel
+buildCommand=nice -n 19 dotnet build /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj -c Release --no-restore --artifacts-path /tmp/terrabase-final-source-matched-build.jmal4c -p:UseSharedCompilation=false -p:BuildInParallel=false
+provenanceReceipt=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/binaries/terrabase-final-source-matched-release-20260924T061758Z/source-provenance/run-receipt.json
+provenanceExit=2
+
+coreHashes:
+2b2b6dd9ddf0f7d0a8766dd51b98744ad47c4d13b9858ce055886f4a259f78db  /home/mariogk/Projects/TerraScale/ts-benchmark/bench/binaries/terrabase-final-source-matched-release-20260924T061758Z/TerraBase.Benchmarks.dll
+0ae3e41df5eced27be0c62f9b3a3127b45073b6552cd113469a1e265fd7c2b8d  /home/mariogk/Projects/TerraScale/ts-benchmark/bench/binaries/terrabase-final-source-matched-release-20260924T061758Z/TerraBase.dll
+260e5b0b4232b17c475924c50138fd3b96398af8f7f201cbb06d4f52076d08a4  /home/mariogk/Projects/TerraScale/ts-benchmark/bench/binaries/terrabase-final-source-matched-release-20260924T061758Z/TerraBase.ZoneTree.dll

@@ -1,0 +1,9 @@
+run_id=20260923T165616Z
+root=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/query-independent-deterministic-20260923T165616Z
+dll=/tmp/terrabase-bench-build-20260923-nosdk/bin/TerraBase.Benchmarks/Release/net11.0/TerraBase.Benchmarks.dll
+1233089290f2255a067910d08d4890c216e599d7c15d22e483f5ee23a140283d  /tmp/terrabase-bench-build-20260923-nosdk/bin/TerraBase.Benchmarks/Release/net11.0/TerraBase.Benchmarks.dll
+c310997c2ffb43d0b22ea3f1afe1ef3f0f3df33cd1d933094e771e366a2970a4  /tmp/terrabase-bench-build-20260923-nosdk/bin/TerraBase.Benchmarks/Release/net11.0/TerraBase.dll
+085029bfafcdc9d5ff27d9b3a79c9325780f3e367a8cadb27c0d57b3cbc74799  /tmp/terrabase-bench-build-20260923-nosdk/bin/TerraBase.Benchmarks/Release/net11.0/TerraBase.ZoneTree.dll
+7c26bc6966dd43108ca4a2dc26319658198565099bff4a86428ca0a5a8db6a09  /tmp/terrabase-bench-build-20260923-nosdk/bin/TerraBase.Benchmarks/Release/net11.0/TerraScale.Endpoints.dll
+api_suite_status=passed_1737_of_1746_9_skipped
+campaign_status=completed

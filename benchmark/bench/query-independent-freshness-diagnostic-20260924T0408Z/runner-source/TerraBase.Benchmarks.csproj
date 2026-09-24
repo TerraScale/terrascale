@@ -1,0 +1,92 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <RootNamespace>TerraBase.Benchmarks</RootNamespace>
+    <AssemblyName>TerraBase.Benchmarks</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>15.0</LangVersion>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="AWSSDK.Core"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/AWSSDK.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AWSSDK.S3"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/AWSSDK.S3.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Ardalis.SmartEnum"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Ardalis.SmartEnum.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Google.Protobuf"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Google.Protobuf.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Grpc.AspNetCore.Server"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Grpc.AspNetCore.Server.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Grpc.Core.Api"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Grpc.Core.Api.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Grpc.Net.Client"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Grpc.Net.Client.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Grpc.Net.Common"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Grpc.Net.Common.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="LiteDB"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/LiteDB.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="MessagePack.Annotations"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/MessagePack.Annotations.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="MessagePack"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/MessagePack.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.AspNetCore.OpenApi"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.AspNetCore.OpenApi.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.Data.Sqlite"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.Data.Sqlite.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.Extensions.AmbientMetadata.Application"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.Extensions.AmbientMetadata.Application.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.Extensions.Compliance.Abstractions"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.Extensions.Compliance.Abstractions.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.Extensions.DependencyInjection.AutoActivation"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.Extensions.DependencyInjection.AutoActivation.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.Extensions.Diagnostics.ExceptionSummarization"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.Extensions.Diagnostics.ExceptionSummarization.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.Extensions.Http.Diagnostics"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.Extensions.Http.Diagnostics.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.Extensions.Http.Resilience"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.Extensions.Http.Resilience.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.Extensions.Resilience"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.Extensions.Resilience.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.Extensions.Telemetry.Abstractions"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.Extensions.Telemetry.Abstractions.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.Extensions.Telemetry"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.Extensions.Telemetry.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.NET.StringTools"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.NET.StringTools.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.OpenApi"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Microsoft.OpenApi.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="NativeCompressions.LZ4.Core"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/NativeCompressions.LZ4.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="NativeCompressions.Zstandard.Core"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/NativeCompressions.Zstandard.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="OpenTelemetry.Api.ProviderBuilderExtensions"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/OpenTelemetry.Api.ProviderBuilderExtensions.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="OpenTelemetry.Api"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/OpenTelemetry.Api.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/OpenTelemetry.Exporter.OpenTelemetryProtocol.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="OpenTelemetry.Extensions.Hosting"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/OpenTelemetry.Extensions.Hosting.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="OpenTelemetry.Instrumentation.AspNetCore"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/OpenTelemetry.Instrumentation.AspNetCore.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="OpenTelemetry.Instrumentation.Http"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/OpenTelemetry.Instrumentation.Http.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="OpenTelemetry.Instrumentation.Runtime"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/OpenTelemetry.Instrumentation.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="OpenTelemetry"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/OpenTelemetry.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Polly.Core"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Polly.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Polly.Extensions"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Polly.Extensions.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Polly.RateLimiting"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Polly.RateLimiting.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SQLitePCLRaw.batteries_v2"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/SQLitePCLRaw.batteries_v2.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SQLitePCLRaw.core"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/SQLitePCLRaw.core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SQLitePCLRaw.provider.e_sqlite3"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/SQLitePCLRaw.provider.e_sqlite3.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Scalar.AspNetCore"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Scalar.AspNetCore.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Sentry.AspNetCore"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Sentry.AspNetCore.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Sentry.Extensions.Logging"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Sentry.Extensions.Logging.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Sentry"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Sentry.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System.IO.Hashing"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/System.IO.Hashing.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="TerraBase.ZoneTree"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/TerraBase.ZoneTree.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="TerraBase"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/TerraBase.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="TerraScale.DotNet"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/TerraScale.DotNet.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="TerraScale.Endpoints"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/TerraScale.Endpoints.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Turso.Data.Sqlite"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Turso.Data.Sqlite.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Turso.Data"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Turso.Data.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Turso.Raw"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Turso.Raw.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Ulid"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Ulid.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Utf8StringInterpolation"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/Utf8StringInterpolation.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="ZLinq"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/ZLinq.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="ZLogger"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/ZLogger.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="ZString"><HintPath>/tmp/tsb-qidx-snapshot-20260924/bin/TerraBase.Benchmarks/release/ZString.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="LiteDB" Version="6.0.0-prerelease.181" />
+    <PackageReference Include="Turso.Data.Sqlite.Provider" Version="0.8.0-pre.11" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TerraBaseSubjectProject</_Parameter1>
+      <_Parameter2>/tmp/terrabase-heldout-snapshot-20260924T0340Z/terrabase/src/TerraBase/TerraBase.csproj</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TerraScaleSdkAvailable</_Parameter1>
+      <_Parameter2>false</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

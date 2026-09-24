@@ -1,0 +1,79 @@
+Thread (0x308695):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.WaitHandle.WaitOneNoCheck(int32,bool,class System.Object,value class WaitHandleWaitSourceMap)
+  System.Private.CoreLib!System.Threading.Condition.Wait(int32,class System.Object)
+  System.Private.CoreLib!System.Threading.ManualResetEventSlim.Wait(int32,value class System.Threading.CancellationToken)
+  System.Private.CoreLib!System.Threading.Tasks.Task.SpinThenBlockingWait(int32,value class System.Threading.CancellationToken)
+  System.Private.CoreLib!System.Threading.Tasks.Task.InternalWaitCore(int32,value class System.Threading.CancellationToken)
+  System.Private.CoreLib!System.Threading.Tasks.Task.InternalWait(int32,value class System.Threading.CancellationToken)
+  System.Private.CoreLib!System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(class System.Threading.Tasks.Task,value class System.Threading.Tasks.ConfigureAwaitOptions)
+  System.Private.CoreLib!System.Runtime.CompilerServices.AsyncHelpers.HandleAsyncEntryPoint(class System.Threading.Tasks.Task`1<int32>)
+  TerraBase.Benchmarks!Program.<Main>(class System.String[])
+  System.Private.CoreLib!System.Environment.CallEntryPoint(int,class System.String[]*,int32*,bool,class System.Exception*)
+
+Thread (0x308711):
+  [Native Frames]
+  System.Net.Sockets!Interop+Sys.WaitForSocketEvents(int,value class SocketEvent*,int32*)
+  System.Net.Sockets!System.Net.Sockets.SocketAsyncEngine.EventLoop()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x308712):
+  [Native Frames]
+  System.Net.Sockets!Interop+Sys.WaitForSocketEvents(int,value class SocketEvent*,int32*)
+  System.Net.Sockets!System.Net.Sockets.SocketAsyncEngine.EventLoop()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x308715):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.WaitHandle.WaitOneNoCheck(int32,bool,class System.Object,value class WaitHandleWaitSourceMap)
+  System.Private.CoreLib!System.Threading.PortableThreadPool+GateThread.GateThreadStart()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x30871A):
+  [Native Frames]
+  TerraBase.ZoneTree!ZoneTree.Segments.RandomAccess.CompressedFileRandomAccessDevice.ReadBlock(int32)
+  TerraBase.ZoneTree!ZoneTree.Segments.RandomAccess.CompressedFileRandomAccessDevice.ReadBlockAndAddToCache(int32,int32,int32,class ZoneTree.Segments.Block.SingleBlockPin)
+  TerraBase.ZoneTree!ZoneTree.Segments.Disk.DiskSegment`2[System.Memory`1[System.Byte],System.Memory`1[System.Byte]].ZoneTree.Segments.IReadOnlySegment<TKey,TValue>.TryGet(required_modifier System.Runtime.InteropServices.InAttribute !0&,!1&,value class ZoneTree.Hashers.KeyHashProvider`1<!0>&)
+  TerraBase.ZoneTree!ZoneTree.Core.ZoneTree`2[System.Memory`1[System.Byte],System.Memory`1[System.Byte]].TryGetFromReadonlySegments(!0&,!1&,value class ZoneTree.Hashers.KeyHashProvider`1<!0>&)
+  TerraBase!TerraBase.DocumentStore.ReadAsync(value class TerraBase.DocumentKey,value class System.Threading.CancellationToken)
+  TerraBase.Benchmarks!LargerThanMemoryWorkload+<ReadAsync>d__7.MoveNext()
+  TerraBase.Benchmarks!LargerThanMemoryWorkload.ReadAsync(class TerraBase.DocumentStore,value class TerraBase.DocumentKey,class PayloadFactory,class ExpectedState,bool,value class System.Threading.CancellationToken)
+  TerraBase.Benchmarks!LargerThanMemoryWorkload+<>c__DisplayClass6_1+<<RunOperationsAsync>b__1>d.MoveNext()
+  System.Private.CoreLib!System.Runtime.CompilerServices.AsyncMethodBuilderCore.Start(!!0&)
+  System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder.Start(!!0&)
+  TerraBase.Benchmarks!LargerThanMemoryWorkload+<>c__DisplayClass6_1.<RunOperationsAsync>b__1()
+  System.Private.CoreLib!System.Threading.Tasks.Task`1[System.__Canon].InnerInvoke()
+  System.Private.CoreLib!System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(class System.Threading.Thread,class System.Threading.ExecutionContext,class System.Threading.ContextCallback,class System.Object)
+  System.Private.CoreLib!System.Threading.Tasks.Task.ExecuteWithThreadLocal(class System.Threading.Tasks.Task&,class System.Threading.Thread)
+  System.Private.CoreLib!System.Threading.ThreadPoolWorkQueue.Dispatch()
+  System.Private.CoreLib!System.Threading.PortableThreadPool+WorkerThread.WorkerDoWork(class System.Threading.PortableThreadPool)
+  System.Private.CoreLib!System.Threading.PortableThreadPool+WorkerThread.WorkerThreadStart()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x308791):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.WaitHandle.WaitOneNoCheck(int32,bool,class System.Object,value class WaitHandleWaitSourceMap)
+  System.Private.CoreLib!System.Threading.TimerQueue.TimerThread()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x30A15C):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.Block(int32)
+  System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitAsWaiter(int32)
+  System.Private.CoreLib!System.Threading.PortableThreadPool+WorkerThread.WorkerThreadStart()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x30D4C6):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.Block(int32)
+  System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitAsWaiter(int32)
+  System.Private.CoreLib!System.Threading.PortableThreadPool+WorkerThread.WorkerThreadStart()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x30DB7D):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.Block(int32)
+  System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitAsWaiter(int32)
+  System.Private.CoreLib!System.Threading.PortableThreadPool+WorkerThread.WorkerThreadStart()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+

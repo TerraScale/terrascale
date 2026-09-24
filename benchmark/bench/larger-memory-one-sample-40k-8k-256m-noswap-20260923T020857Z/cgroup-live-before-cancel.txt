@@ -1,0 +1,19 @@
+captured=2026-09-23T02:31:15Z
+ActiveState=active
+SubState=running
+ControlGroup=/user.slice/user-1000.slice/user@1000.service/app.slice/terrabase-larger-memory-1790129337.service
+MemoryPeak=268435456
+CPUUsageNSec=1462743232000
+memory.max=268435456
+memory.peak=268435456
+memory.swap.max=0
+memory.swap.peak=0
+memory.events=low 0
+high 0
+max 122128
+oom 0
+oom_kill 0
+oom_group_kill 0
+sock_throttled 0
+1.5G	/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-one-sample-40k-8k-256m-noswap-20260923T020857Z/larger-than-memory
+0 /home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-one-sample-40k-8k-256m-noswap-20260923T020857Z/raw-samples-larger-than-memory-StorageEngine.jsonl

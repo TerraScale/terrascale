@@ -1,0 +1,107 @@
+Thread (0x34572A):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.WaitSubsystem+ThreadWaitInfo.Wait(int32,bool,bool,value class LockHolder&)
+  System.Private.CoreLib!System.Threading.WaitSubsystem.Wait(class IWaitableObject,class ThreadWaitInfo,int32,bool)
+  System.Private.CoreLib!System.Threading.WaitHandle.WaitOneNoCheck(int32,bool,class System.Object,value class WaitHandleWaitSourceMap)
+  System.Private.CoreLib!System.Threading.Condition.Wait(int32,class System.Object)
+  System.Private.CoreLib!System.Threading.ManualResetEventSlim.Wait(int32,value class System.Threading.CancellationToken)
+  System.Private.CoreLib!System.Threading.Tasks.Task.SpinThenBlockingWait(int32,value class System.Threading.CancellationToken)
+  System.Private.CoreLib!System.Threading.Tasks.Task.InternalWaitCore(int32,value class System.Threading.CancellationToken)
+  System.Private.CoreLib!System.Threading.Tasks.Task.InternalWait(int32,value class System.Threading.CancellationToken)
+  System.Private.CoreLib!System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(class System.Threading.Tasks.Task,value class System.Threading.Tasks.ConfigureAwaitOptions)
+  System.Private.CoreLib!System.Runtime.CompilerServices.AsyncHelpers.HandleAsyncEntryPoint(class System.Threading.Tasks.Task`1<int32>)
+  TerraBase.Benchmarks!Program.<Main>(class System.String[])
+  System.Private.CoreLib!System.Environment.CallEntryPoint(int,class System.String[]*,int32*,bool,class System.Exception*)
+
+Thread (0x345791):
+  [Native Frames]
+  System.Net.Sockets!Interop+Sys.WaitForSocketEvents(int,value class SocketEvent*,int32*)
+  System.Net.Sockets!System.Net.Sockets.SocketAsyncEngine.EventLoop()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x345792):
+  [Native Frames]
+  System.Net.Sockets!Interop+Sys.WaitForSocketEvents(int,value class SocketEvent*,int32*)
+  System.Net.Sockets!System.Net.Sockets.SocketAsyncEngine.EventLoop()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x345795):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.WaitHandle.WaitOneNoCheck(int32,bool,class System.Object,value class WaitHandleWaitSourceMap)
+  System.Private.CoreLib!System.Threading.PortableThreadPool+GateThread.GateThreadStart()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x3457AC):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.WaitHandle.WaitOneNoCheck(int32,bool,class System.Object,value class WaitHandleWaitSourceMap)
+  System.Private.CoreLib!System.Threading.TimerQueue.TimerThread()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x346DC3):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.Tasks.Task.InternalWaitCore(int32,value class System.Threading.CancellationToken)
+  System.Private.CoreLib!System.Threading.Tasks.Task.InternalWait(int32,value class System.Threading.CancellationToken)
+  TerraBase!TerraBase.StorageEngine.ZoneTreeStorageStateMap`2[System.UInt64,System.__Canon].Flush()
+  TerraBase!TerraBase.StorageEngine.ZoneTreeStorageStateMap`2[System.UInt64,System.__Canon].TryAdd(!0,!1)
+  TerraBase!TerraBase.StorageEngine.ZoneTreeStorageStateMap`2[System.UInt64,System.__Canon].TryAddMonotonic(unsigned int64,!1)
+  TerraBase!TerraBase.StorageEngine.StorageEngine.AddPhysicalRecordUnsafe(class TerraBase.StorageEngine.StorageLogRecord,value class System.Nullable`1<int64>,bool)
+  TerraBase!TerraBase.StorageEngine.StorageEngine.CompactAsync(value class System.Threading.CancellationToken)
+  TerraBase.Benchmarks!TerraBase.Benchmarks.TieredRustFsQualificationWorkload+<>c__DisplayClass2_1.<RunAsync>b__3()
+  TerraBase.Benchmarks!TerraBase.Benchmarks.TieredRustFsQualificationWorkload+<MeasureOperationAsync>d__18`1[System.__Canon].MoveNext()
+  System.Private.CoreLib!System.Runtime.CompilerServices.AsyncMethodBuilderCore.Start(!!0&)
+  System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1[System.__Canon].Start(!!0&)
+  TerraBase.Benchmarks!TerraBase.Benchmarks.TieredRustFsQualificationWorkload.MeasureOperationAsync(class System.Func`1<class System.Threading.Tasks.Task`1<!!0>>,class DiskUsageTracker,class System.String)
+  TerraBase.Benchmarks!TerraBase.Benchmarks.TieredRustFsQualificationWorkload+<RunAsync>d__2.MoveNext()
+  System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Int32,TerraBase.Benchmarks.TieredRustFsQualificationWorkload+<RunAsync>d__2].ExecutionContextCallback(class System.Object)
+  System.Private.CoreLib!System.Threading.ExecutionContext.RunInternal(class System.Threading.ExecutionContext,class System.Threading.ContextCallback,class System.Object)
+  System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Int32,TerraBase.Benchmarks.TieredRustFsQualificationWorkload+<RunAsync>d__2].MoveNext(class System.Threading.Thread,value class Flags)
+  System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Int32,TerraBase.Benchmarks.TieredRustFsQualificationWorkload+<RunAsync>d__2].MoveNext(class System.Threading.Thread)
+  System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Int32,TerraBase.Benchmarks.TieredRustFsQualificationWorkload+<RunAsync>d__2].MoveNext()
+  System.Private.CoreLib!System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction(class System.Runtime.CompilerServices.IAsyncStateMachineBox,bool)
+  System.Private.CoreLib!System.Threading.Tasks.Task.RunContinuations(class System.Object)
+  System.Private.CoreLib!System.Runtime.CompilerServices.AsyncHelpers+RuntimeAsyncTask`1[System.Threading.Tasks.VoidTaskResult].DispatchContinuations()
+  System.Private.CoreLib!Microsoft.Win32.SafeHandles.SafeFileHandle+ThreadPoolValueTaskSource.ExecuteInternal()
+  System.Private.CoreLib!Microsoft.Win32.SafeHandles.SafeFileHandle+ThreadPoolValueTaskSource.System.Threading.IThreadPoolWorkItem.Execute()
+  System.Private.CoreLib!System.Threading.ThreadPoolWorkQueue.Dispatch()
+  System.Private.CoreLib!System.Threading.PortableThreadPool+WorkerThread.WorkerDoWork(class System.Threading.PortableThreadPool)
+  System.Private.CoreLib!System.Threading.PortableThreadPool+WorkerThread.WorkerThreadStart()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x34C222):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.Block(int32)
+  System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitAsWaiter(int32)
+  System.Private.CoreLib!System.Threading.PortableThreadPool+WorkerThread.WorkerThreadStart()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x34C76C):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.Block(int32)
+  System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitAsWaiter(int32)
+  System.Private.CoreLib!System.Threading.PortableThreadPool+WorkerThread.WorkerThreadStart()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x34ED79):
+  [Native Frames]
+  System.Private.CoreLib!System.Threading.Thread.JoinInternal(int32)
+  System.Private.CoreLib!System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(class System.Threading.Thread,class System.Threading.ExecutionContext,class System.Threading.ContextCallback,class System.Object)
+  System.Private.CoreLib!System.Threading.Tasks.Task.ExecuteWithThreadLocal(class System.Threading.Tasks.Task&,class System.Threading.Thread)
+  System.Private.CoreLib!System.Threading.ThreadPoolWorkQueue.Dispatch()
+  System.Private.CoreLib!System.Threading.PortableThreadPool+WorkerThread.WorkerDoWork(class System.Threading.PortableThreadPool)
+  System.Private.CoreLib!System.Threading.PortableThreadPool+WorkerThread.WorkerThreadStart()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+
+Thread (0x34EFEA):
+  CPU_TIME
+  NativeCompressions.LZ4.Core!NativeCompressions.Interop.LZ4NativeMethods.LZ4F_decompress(value class NativeCompressions.Interop.LZ4F_dctx_s*,void*,unsigned int*,void*,unsigned int*,value class NativeCompressions.Interop.LZ4F_decompressOptions_t*)
+  TerraBase.ZoneTree!ZoneTree.Compression.LZ4DataCompression.Decompress(value class System.Memory`1<unsigned int8>,int32)
+  TerraBase.ZoneTree!ZoneTree.Compression.DataCompression.Decompress(value class ZoneTree.Options.CompressionMethod,value class System.Memory`1<unsigned int8>,int32)
+  TerraBase.ZoneTree!ZoneTree.Segments.RandomAccess.CompressedFileRandomAccessDevice.ReadBlock(int32)
+  TerraBase.ZoneTree!ZoneTree.Segments.RandomAccess.CompressedFileRandomAccessDevice.ReadBlockAndAddToCache(int32,int32,int32,class ZoneTree.Segments.Block.SingleBlockPin)
+  TerraBase.ZoneTree!ZoneTree.Segments.RandomAccess.CompressedFileRandomAccessDevice.GetBytes(int64,int32,class ZoneTree.Segments.Block.SingleBlockPin)
+  TerraBase.ZoneTree!ZoneTree.Segments.DiskSegmentVariations.VariableSizeDiskSegment`2[System.Memory`1[System.Byte],System.Memory`1[System.Byte]].ReadValue(int64,class ZoneTree.Segments.Block.BlockPin)
+  TerraBase.ZoneTree!ZoneTree.Core.ZoneTree`2+<>c__DisplayClass136_0[System.Memory`1[System.Byte],System.Memory`1[System.Byte]].<MergeReadOnlySegmentsInternal>g__skipElement|5()
+  TerraBase.ZoneTree!ZoneTree.Core.ZoneTree`2[System.Memory`1[System.Byte],System.Memory`1[System.Byte]].MergeReadOnlySegmentsInternal()
+  TerraBase.ZoneTree!ZoneTree.Core.ZoneTree`2[System.Memory`1[System.Byte],System.Memory`1[System.Byte]].StartMergeOperationInternal()
+  System.Private.CoreLib!System.Threading.Thread.StartCallback(class System.Threading.Thread*)
+

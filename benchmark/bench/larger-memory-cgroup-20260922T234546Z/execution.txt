@@ -1,0 +1,3 @@
+output=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-cgroup-20260922T234546Z
+unit=terrabase-larger-memory-1790120746
+systemd_run_exit=1
