@@ -1,0 +1,1363 @@
+{
+  "schemaVersion": 1,
+  "generatedAtUtc": "2026-09-24T08:17:29.2276603+00:00",
+  "status": "complete",
+  "activitySource": "TerraBase.Indexing.Query",
+  "query": "s17 = status",
+  "indexDefinition": "by-status",
+  "commitSequence": 42,
+  "fixture": {
+    "baseDocuments": 1000,
+    "maintenanceDocuments": 20,
+    "payloadBytes": 4096,
+    "samples": 5,
+    "qualified": false
+  },
+  "resultCount": 11,
+  "expectedIdsSha256": "bf4cea4625788f0e8c709e018c0c12f95dd04298b2c8875382eae1c7870f7a66",
+  "pairs": [
+    {
+      "pair": 1,
+      "plain": {
+        "wallMilliseconds": 13.8991,
+        "traced": false,
+        "access": "EqualitySeek",
+        "estimatedCandidates": 11,
+        "actualMatches": 11,
+        "diagnosticCandidates": null,
+        "diagnosticResults": null,
+        "rows": [
+          {
+            "id": "doc-000017",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000117",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000217",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000317",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000417",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000517",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000617",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000717",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000817",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000917",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-maint-000017",
+            "version": 2,
+            "status": "s17",
+            "segment": "g17",
+            "value": 3,
+            "payloadCharacters": 5464
+          }
+        ],
+        "orderedIdsSha256": "bf4cea4625788f0e8c709e018c0c12f95dd04298b2c8875382eae1c7870f7a66",
+        "stageTotals": null,
+        "observerStartMilliseconds": null,
+        "activities": []
+      },
+      "traced": {
+        "wallMilliseconds": 17.4853,
+        "traced": true,
+        "access": "EqualitySeek",
+        "estimatedCandidates": 11,
+        "actualMatches": 11,
+        "diagnosticCandidates": 11,
+        "diagnosticResults": 11,
+        "rows": [
+          {
+            "id": "doc-000017",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000117",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000217",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000317",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000417",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000517",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000617",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000717",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000817",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000917",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-maint-000017",
+            "version": 2,
+            "status": "s17",
+            "segment": "g17",
+            "value": 3,
+            "payloadCharacters": 5464
+          }
+        ],
+        "orderedIdsSha256": "bf4cea4625788f0e8c709e018c0c12f95dd04298b2c8875382eae1c7870f7a66",
+        "stageTotals": {
+          "entry_seek": 0.131256,
+          "committed_document_read": 10.532686,
+          "decode_clone": 0.067425,
+          "predicate_recheck": 0.0718,
+          "sort": 0.003493,
+          "gate_wait": 9.8E-05,
+          "total": 12.041301
+        },
+        "observerStartMilliseconds": 1.208386,
+        "activities": [
+          {
+            "name": "index.query",
+            "traceId": "1c273d334419d932ec9416715a765351",
+            "durationMilliseconds": 12.5739,
+            "tags": {
+              "query.instrumentation.enabled": "True",
+              "query.shape": "0:status;",
+              "query.access": "EqualitySeek",
+              "query.cache": "none",
+              "query.hit_path": "direct",
+              "query.stage.candidate_seek_ns": "131256",
+              "query.stage.committed_read_ns": "10532686",
+              "query.stage.decode_ns": "67425",
+              "query.stage.predicate_ns": "71800",
+              "query.stage.sort_ns": "3493",
+              "query.stage.total_ns": "12041301",
+              "query.stage.gate_wait_ns": "98",
+              "query.rows.candidates": "11",
+              "query.rows.results": "11",
+              "query.source_cut": "42",
+              "query.completed": "True",
+              "query.observer.start_ns": "1208386"
+            }
+          }
+        ]
+      },
+      "observedTraceOverheadMilliseconds": 3.586199999999998
+    },
+    {
+      "pair": 2,
+      "plain": {
+        "wallMilliseconds": 10.7963,
+        "traced": false,
+        "access": "EqualitySeek",
+        "estimatedCandidates": 11,
+        "actualMatches": 11,
+        "diagnosticCandidates": null,
+        "diagnosticResults": null,
+        "rows": [
+          {
+            "id": "doc-000017",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000117",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000217",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000317",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000417",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000517",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000617",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000717",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000817",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000917",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-maint-000017",
+            "version": 2,
+            "status": "s17",
+            "segment": "g17",
+            "value": 3,
+            "payloadCharacters": 5464
+          }
+        ],
+        "orderedIdsSha256": "bf4cea4625788f0e8c709e018c0c12f95dd04298b2c8875382eae1c7870f7a66",
+        "stageTotals": null,
+        "observerStartMilliseconds": null,
+        "activities": []
+      },
+      "traced": {
+        "wallMilliseconds": 11.4998,
+        "traced": true,
+        "access": "EqualitySeek",
+        "estimatedCandidates": 11,
+        "actualMatches": 11,
+        "diagnosticCandidates": 11,
+        "diagnosticResults": 11,
+        "rows": [
+          {
+            "id": "doc-000017",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000117",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000217",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000317",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000417",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000517",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000617",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000717",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000817",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000917",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-maint-000017",
+            "version": 2,
+            "status": "s17",
+            "segment": "g17",
+            "value": 3,
+            "payloadCharacters": 5464
+          }
+        ],
+        "orderedIdsSha256": "bf4cea4625788f0e8c709e018c0c12f95dd04298b2c8875382eae1c7870f7a66",
+        "stageTotals": {
+          "entry_seek": 0.11384,
+          "committed_document_read": 11.011573,
+          "decode_clone": 0.078118,
+          "predicate_recheck": 0.096547,
+          "sort": 0.003999,
+          "gate_wait": 0.000144,
+          "total": 11.359354
+        },
+        "observerStartMilliseconds": 0.03099,
+        "activities": [
+          {
+            "name": "index.query",
+            "traceId": "0da08d466878d7c5e28eee22ce1cba6f",
+            "durationMilliseconds": 11.3847,
+            "tags": {
+              "query.instrumentation.enabled": "True",
+              "query.shape": "0:status;",
+              "query.access": "EqualitySeek",
+              "query.cache": "none",
+              "query.hit_path": "direct",
+              "query.stage.candidate_seek_ns": "113840",
+              "query.stage.committed_read_ns": "11011573",
+              "query.stage.decode_ns": "78118",
+              "query.stage.predicate_ns": "96547",
+              "query.stage.sort_ns": "3999",
+              "query.stage.total_ns": "11359354",
+              "query.stage.gate_wait_ns": "144",
+              "query.rows.candidates": "11",
+              "query.rows.results": "11",
+              "query.source_cut": "42",
+              "query.completed": "True",
+              "query.observer.start_ns": "30990"
+            }
+          }
+        ]
+      },
+      "observedTraceOverheadMilliseconds": 0.7035
+    },
+    {
+      "pair": 3,
+      "plain": {
+        "wallMilliseconds": 12.0271,
+        "traced": false,
+        "access": "EqualitySeek",
+        "estimatedCandidates": 11,
+        "actualMatches": 11,
+        "diagnosticCandidates": null,
+        "diagnosticResults": null,
+        "rows": [
+          {
+            "id": "doc-000017",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000117",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000217",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000317",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000417",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000517",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000617",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000717",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000817",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000917",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-maint-000017",
+            "version": 2,
+            "status": "s17",
+            "segment": "g17",
+            "value": 3,
+            "payloadCharacters": 5464
+          }
+        ],
+        "orderedIdsSha256": "bf4cea4625788f0e8c709e018c0c12f95dd04298b2c8875382eae1c7870f7a66",
+        "stageTotals": null,
+        "observerStartMilliseconds": null,
+        "activities": []
+      },
+      "traced": {
+        "wallMilliseconds": 14.7421,
+        "traced": true,
+        "access": "EqualitySeek",
+        "estimatedCandidates": 11,
+        "actualMatches": 11,
+        "diagnosticCandidates": 11,
+        "diagnosticResults": 11,
+        "rows": [
+          {
+            "id": "doc-000017",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000117",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000217",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000317",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000417",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000517",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000617",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000717",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000817",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000917",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-maint-000017",
+            "version": 2,
+            "status": "s17",
+            "segment": "g17",
+            "value": 3,
+            "payloadCharacters": 5464
+          }
+        ],
+        "orderedIdsSha256": "bf4cea4625788f0e8c709e018c0c12f95dd04298b2c8875382eae1c7870f7a66",
+        "stageTotals": {
+          "entry_seek": 0.171022,
+          "committed_document_read": 12.880069,
+          "decode_clone": 1.449518,
+          "predicate_recheck": 0.105322,
+          "sort": 0.004406,
+          "gate_wait": 9.4E-05,
+          "total": 14.668323
+        },
+        "observerStartMilliseconds": 0.020296,
+        "activities": [
+          {
+            "name": "index.query",
+            "traceId": "3213764f8beb74f9e81cf6973cdffd02",
+            "durationMilliseconds": 14.6902,
+            "tags": {
+              "query.instrumentation.enabled": "True",
+              "query.shape": "0:status;",
+              "query.access": "EqualitySeek",
+              "query.cache": "none",
+              "query.hit_path": "direct",
+              "query.stage.candidate_seek_ns": "171022",
+              "query.stage.committed_read_ns": "12880069",
+              "query.stage.decode_ns": "1449518",
+              "query.stage.predicate_ns": "105322",
+              "query.stage.sort_ns": "4406",
+              "query.stage.total_ns": "14668323",
+              "query.stage.gate_wait_ns": "94",
+              "query.rows.candidates": "11",
+              "query.rows.results": "11",
+              "query.source_cut": "42",
+              "query.completed": "True",
+              "query.observer.start_ns": "20296"
+            }
+          }
+        ]
+      },
+      "observedTraceOverheadMilliseconds": 2.715
+    },
+    {
+      "pair": 4,
+      "plain": {
+        "wallMilliseconds": 10.6375,
+        "traced": false,
+        "access": "EqualitySeek",
+        "estimatedCandidates": 11,
+        "actualMatches": 11,
+        "diagnosticCandidates": null,
+        "diagnosticResults": null,
+        "rows": [
+          {
+            "id": "doc-000017",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000117",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000217",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000317",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000417",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000517",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000617",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000717",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000817",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000917",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-maint-000017",
+            "version": 2,
+            "status": "s17",
+            "segment": "g17",
+            "value": 3,
+            "payloadCharacters": 5464
+          }
+        ],
+        "orderedIdsSha256": "bf4cea4625788f0e8c709e018c0c12f95dd04298b2c8875382eae1c7870f7a66",
+        "stageTotals": null,
+        "observerStartMilliseconds": null,
+        "activities": []
+      },
+      "traced": {
+        "wallMilliseconds": 12.5374,
+        "traced": true,
+        "access": "EqualitySeek",
+        "estimatedCandidates": 11,
+        "actualMatches": 11,
+        "diagnosticCandidates": 11,
+        "diagnosticResults": 11,
+        "rows": [
+          {
+            "id": "doc-000017",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000117",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000217",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000317",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000417",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000517",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000617",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000717",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000817",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000917",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-maint-000017",
+            "version": 2,
+            "status": "s17",
+            "segment": "g17",
+            "value": 3,
+            "payloadCharacters": 5464
+          }
+        ],
+        "orderedIdsSha256": "bf4cea4625788f0e8c709e018c0c12f95dd04298b2c8875382eae1c7870f7a66",
+        "stageTotals": {
+          "entry_seek": 0.098381,
+          "committed_document_read": 12.178663,
+          "decode_clone": 0.072046,
+          "predicate_recheck": 0.072999,
+          "sort": 0.004825,
+          "gate_wait": 7.4E-05,
+          "total": 12.477051
+        },
+        "observerStartMilliseconds": 0.008977,
+        "activities": [
+          {
+            "name": "index.query",
+            "traceId": "ab72af56c5e85bd1064aa3ad345043e4",
+            "durationMilliseconds": 12.4929,
+            "tags": {
+              "query.instrumentation.enabled": "True",
+              "query.shape": "0:status;",
+              "query.access": "EqualitySeek",
+              "query.cache": "none",
+              "query.hit_path": "direct",
+              "query.stage.candidate_seek_ns": "98381",
+              "query.stage.committed_read_ns": "12178663",
+              "query.stage.decode_ns": "72046",
+              "query.stage.predicate_ns": "72999",
+              "query.stage.sort_ns": "4825",
+              "query.stage.total_ns": "12477051",
+              "query.stage.gate_wait_ns": "74",
+              "query.rows.candidates": "11",
+              "query.rows.results": "11",
+              "query.source_cut": "42",
+              "query.completed": "True",
+              "query.observer.start_ns": "8977"
+            }
+          }
+        ]
+      },
+      "observedTraceOverheadMilliseconds": 1.8999000000000006
+    },
+    {
+      "pair": 5,
+      "plain": {
+        "wallMilliseconds": 10.242,
+        "traced": false,
+        "access": "EqualitySeek",
+        "estimatedCandidates": 11,
+        "actualMatches": 11,
+        "diagnosticCandidates": null,
+        "diagnosticResults": null,
+        "rows": [
+          {
+            "id": "doc-000017",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000117",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000217",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000317",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000417",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000517",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000617",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000717",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000817",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000917",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-maint-000017",
+            "version": 2,
+            "status": "s17",
+            "segment": "g17",
+            "value": 3,
+            "payloadCharacters": 5464
+          }
+        ],
+        "orderedIdsSha256": "bf4cea4625788f0e8c709e018c0c12f95dd04298b2c8875382eae1c7870f7a66",
+        "stageTotals": null,
+        "observerStartMilliseconds": null,
+        "activities": []
+      },
+      "traced": {
+        "wallMilliseconds": 10.7029,
+        "traced": true,
+        "access": "EqualitySeek",
+        "estimatedCandidates": 11,
+        "actualMatches": 11,
+        "diagnosticCandidates": 11,
+        "diagnosticResults": 11,
+        "rows": [
+          {
+            "id": "doc-000017",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000117",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000217",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000317",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000417",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000517",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000617",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000717",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000817",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-000917",
+            "version": 1,
+            "status": "s17",
+            "segment": "g17",
+            "value": 2,
+            "payloadCharacters": 5464
+          },
+          {
+            "id": "doc-maint-000017",
+            "version": 2,
+            "status": "s17",
+            "segment": "g17",
+            "value": 3,
+            "payloadCharacters": 5464
+          }
+        ],
+        "orderedIdsSha256": "bf4cea4625788f0e8c709e018c0c12f95dd04298b2c8875382eae1c7870f7a66",
+        "stageTotals": {
+          "entry_seek": 0.08033,
+          "committed_document_read": 10.374519,
+          "decode_clone": 0.066792,
+          "predicate_recheck": 0.07085,
+          "sort": 0.004035,
+          "gate_wait": 6.3E-05,
+          "total": 10.642863
+        },
+        "observerStartMilliseconds": 0.012226,
+        "activities": [
+          {
+            "name": "index.query",
+            "traceId": "03cb1e8232683eb8ef41f2a391ed0111",
+            "durationMilliseconds": 10.6585,
+            "tags": {
+              "query.instrumentation.enabled": "True",
+              "query.shape": "0:status;",
+              "query.access": "EqualitySeek",
+              "query.cache": "none",
+              "query.hit_path": "direct",
+              "query.stage.candidate_seek_ns": "80330",
+              "query.stage.committed_read_ns": "10374519",
+              "query.stage.decode_ns": "66792",
+              "query.stage.predicate_ns": "70850",
+              "query.stage.sort_ns": "4035",
+              "query.stage.total_ns": "10642863",
+              "query.stage.gate_wait_ns": "63",
+              "query.rows.candidates": "11",
+              "query.rows.results": "11",
+              "query.source_cut": "42",
+              "query.completed": "True",
+              "query.observer.start_ns": "12226"
+            }
+          }
+        ]
+      },
+      "observedTraceOverheadMilliseconds": 0.46089999999999876
+    }
+  ],
+  "medians": {
+    "plainWallP50Milliseconds": 10.7963,
+    "tracedWallP50Milliseconds": 12.5374,
+    "pairedListenerOverheadP50Milliseconds": 1.8999000000000006,
+    "observerStartP50Milliseconds": 0.020296,
+    "plainWallSamplesMilliseconds": [
+      10.242,
+      10.6375,
+      10.7963,
+      12.0271,
+      13.8991
+    ],
+    "tracedWallSamplesMilliseconds": [
+      10.7029,
+      11.4998,
+      12.5374,
+      14.7421,
+      17.4853
+    ],
+    "pairedListenerOverheadSamplesMilliseconds": [
+      0.46089999999999876,
+      0.7035,
+      1.8999000000000006,
+      2.715,
+      3.586199999999998
+    ],
+    "tracedStageP50Milliseconds": {
+      "entry_seek": 0.11384,
+      "committed_document_read": 11.011573,
+      "decode_clone": 0.072046,
+      "predicate_recheck": 0.072999,
+      "sort": 0.004035,
+      "gate_wait": 9.4E-05,
+      "total": 12.041301
+    },
+    "detailedStageSumP50Milliseconds": 11.274493
+  },
+  "dataDirectoryBytesBeforeCleanup": 4236046,
+  "subject": {
+    "sourceRoot": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "811b705c092f16931bc3740ac59d375ad1bfbed0",
+    "dirty": true,
+    "workingTreeChanges": [
+      " M AGENTS.md",
+      "M  src/TerraBase/Api/Host/ConfiguredDatabaseHostRuntime.cs",
+      "M  src/TerraBase/Api/Host/HostDatabaseProviderCache.cs",
+      "M  src/TerraBase/Backup/BackupArchivalWorker.cs",
+      "M  src/TerraBase/Backup/BackupContracts.cs",
+      "M  src/TerraBase/Backup/BackupGarbageCollector.cs",
+      "M  src/TerraBase/Backup/BackupManager.cs",
+      "M  src/TerraBase/Backup/BackupManifestSignatures.cs",
+      "M  src/TerraBase/Backup/BackupRestoreContracts.cs",
+      "A  src/TerraBase/Backup/BackupSourceIdentity.cs",
+      "A  src/TerraBase/Backup/IBackupRestoreSourceIdentityTarget.cs",
+      "MM src/TerraBase/Backup/StorageEngineRestoreTarget.cs",
+      " M src/TerraBase/Indexing/Automatic/AutomaticIndexRuntime.cs",
+      " M src/TerraBase/Indexing/Runtime/DurableIndexBackend.cs",
+      " M src/TerraBase/Indexing/Runtime/DurableIndexStore.LogicalWrites.cs",
+      " M src/TerraBase/Indexing/Runtime/DurableIndexStore.Replacement.cs",
+      " M src/TerraBase/Indexing/Runtime/DurableIndexStore.cs",
+      " M src/TerraBase/Indexing/Runtime/IndexQueryDiagnostics.cs",
+      "M  src/TerraBase/Storage/Backup/StorageEngineBackupSource.cs",
+      "M  src/TerraBase/Storage/DatabaseBinding/DefaultDatabaseProviderFactory.cs",
+      "M  src/TerraBase/Storage/DatabaseBinding/IStorageRestoreTargetFactory.cs",
+      " M tests/TerraBase.Api.Tests/AutomaticIndexCurrentCodecRepairBudgetTests.cs",
+      " M tests/TerraBase.Api.Tests/AutomaticIndexLifecycleReplacementTests.cs",
+      " M tests/TerraBase.Api.Tests/AutomaticIndexMeasuredBudgetIntegrationTests.cs",
+      "A  tests/TerraBase.Api.Tests/BackupSourceIdentityTests.cs",
+      " M tests/TerraBase.Api.Tests/DurableIndexEntryValueTests.cs",
+      "M  tests/TerraBase.Api.Tests/FreshIdentityDecisionMigrationTests.cs",
+      "M  tests/TerraBase.Api.Tests/FreshIdentityS3RestoreTests.cs",
+      " M tests/TerraBase.Api.Tests/IndexQueryDiagnosticsTests.cs",
+      " M tests/TerraBase.Api.Tests/RestoreRootIntegrityRegressionTests.cs",
+      "M  tests/TerraBase.Api.Tests/SchemaPitrBackupRestoreTests.cs",
+      " M tests/TerraBase.Tests/DurableIndexEntryCorruptionTests.cs",
+      "?? src/TerraBase/Indexing/Runtime/DurableIndexStore.CodecMigration.cs",
+      "?? src/TerraBase/Indexing/Runtime/IndexCodecMigrationAwaitingReplacementException.cs"
+    ],
+    "sourceFiles": [
+      {
+        "path": "src/TerraBase/Indexing/Runtime/DurableIndexStore.cs",
+        "sha256": "1f86200a9ae1291b5af8f1c687574274d8abe7139c6eba3596ac55d0b9ab206d"
+      },
+      {
+        "path": "src/TerraBase/Indexing/Runtime/IndexQueryDiagnostics.cs",
+        "sha256": "66707bbf5862153b07813868ae684e18a11173620e41f9d352240ca103c11fbe"
+      }
+    ],
+    "harnessFiles": [
+      {
+        "path": "Program.cs",
+        "sha256": "63eb888912ff33b989b47b698c508a25a3435e3f0a126f918f301b24d01c0a7e"
+      },
+      {
+        "path": "DurableIndexQueryStageTrace.csproj",
+        "sha256": "d7764ea75dfd6740dbbb2cf0426524f6dbac167c55d5fbfc3a52d2ab3ef7c98e"
+      },
+      {
+        "path": "README.md",
+        "sha256": "abebd3c52ad0ec79b2be7546c4821b6c7db743d5655b83e3c43a186fdc4d62a5"
+      }
+    ],
+    "loadedAssemblies": [
+      {
+        "name": "TerraBase",
+        "version": "1.0.0.0",
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/durable-index-full-body-stage-trace-20260924/bin/Release/net11.0/TerraBase.dll",
+        "sha256": "3d870c94b929b0ef64b5e980014a1065d8f52577041aa6afc9b6c5bb4d04c779"
+      },
+      {
+        "name": "TerraBase.ZoneTree",
+        "version": "1.9.7.0",
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/durable-index-full-body-stage-trace-20260924/bin/Release/net11.0/TerraBase.ZoneTree.dll",
+        "sha256": "c81d4859b66484c476f9d38a25e92090b87633fa55d57cec2af6d3c7bafaf897"
+      }
+    ]
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "osVersion": "Unix 7.2.5.0",
+    "osDescription": "NixOS 26.05 (Yarara)",
+    "processArchitecture": "X64",
+    "processorCount": 46,
+    "runtimeVersion": "11.0.0",
+    "targetFramework": ".NETCoreApp,Version=v11.0",
+    "stopwatchHighResolution": true,
+    "stopwatchFrequency": 1000000000
+  }
+}
