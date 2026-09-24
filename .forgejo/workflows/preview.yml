@@ -12,19 +12,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        env:
-          INPUT_GO-VERSION: '1.27.1'
-        with:
-          cache: false
-      - uses: actions/setup-node@v4
-        env:
-          INPUT_NODE-VERSION: '24'
-          INPUT_CACHE-DEPENDENCY-PATH: |
-            package-lock.json
-            tests/integration/sdk/package-lock.json
-        with:
-          cache: npm
+      - name: Set up pinned Go and Node.js toolchains
+        run: scripts/setup-ci-toolchains.sh
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
       - name: Install Chromium
