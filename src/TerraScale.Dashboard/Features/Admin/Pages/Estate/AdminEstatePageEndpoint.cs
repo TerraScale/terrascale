@@ -24,8 +24,8 @@ public sealed class AdminEstatePageEndpoint(DashboardStore store)
 
         var hosts = AdminPresentation.FilterRows(
             allHosts, query, row => $"{row.DatabaseId} {row.Name} {string.Join(' ', row.Regions)}");
-        var regionPage = AdminPresentation.Paginate(regions, requestedPage);
-        var hostPage = AdminPresentation.Paginate(hosts, requestedPage);
+        var regionPage = AdminPresentation.Paginate(regions, tab == "regions" ? requestedPage : null);
+        var hostPage = AdminPresentation.Paginate(hosts, tab == "hosts" ? requestedPage : null);
 
         var available = DashboardStore.EstateSections.Count(s => Store.AdminEstateFacts.TryGetValue(s.Key, out var facts) && !facts.IsDefaultOrEmpty && facts.Length > 0);
 

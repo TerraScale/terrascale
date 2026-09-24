@@ -12,11 +12,11 @@ public static class AdminPresentation
 
     public sealed record Page<T>(IReadOnlyList<T> Rows, int Number, int TotalPages, int TotalRows);
 
-    public static HtmlString Stat(string label, string value, string icon = "Activity") => new(
+    public static HtmlString Stat(string label, string value, Func<int, HtmlString>? icon = null) => new(
         $"""
         <div>
-            <dt>{Icon(icon, 14).Value} {label}</dt>
-            <dd><span class="ts-kpi-value">{value}</span></dd>
+            <dt>{(icon ?? Icons.Activity)(14).Value} {Escape(label)}</dt>
+            <dd><span class="ts-kpi-value">{Escape(value)}</span></dd>
         </div>
         """);
 
@@ -136,6 +136,4 @@ public static class AdminPresentation
         return Escape($"{action}?{string.Join("&", parameters)}");
     }
 
-    private static HtmlString Icon(string name, int size) =>
-        (typeof(Icons).GetMethod(name)?.Invoke(null, [size]) as HtmlString) ?? Icons.Circle(size);
 }

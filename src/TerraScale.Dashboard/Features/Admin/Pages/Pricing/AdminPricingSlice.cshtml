@@ -10,8 +10,8 @@
         <p class="ts-admin-subtitle">Owner-only pricing plan administration.</p>
     </div>
     <dl class="ts-kpis ts-admin-kpis" aria-label="Pricing summary">
-        @(AdminPresentation.Stat("Plans", Model.TotalRows.ToString(), "CreditCard"))
-        @(AdminPresentation.Stat("Visible", Model.Plans.Count(plan => plan.Visible).ToString(), "Eye"))
+        @(AdminPresentation.Stat("Plans", Model.TotalRows.ToString(), Icons.CreditCard))
+        @(AdminPresentation.Stat("Visible", Model.Plans.Count(plan => plan.Visible).ToString(), Icons.Eye))
     </dl>
     <div class="ts-toolbar ts-admin-tabs-toolbar">
         <nav class="ts-tabs" aria-label="Pricing sections">

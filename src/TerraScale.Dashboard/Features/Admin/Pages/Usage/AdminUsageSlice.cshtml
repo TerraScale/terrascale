@@ -8,9 +8,9 @@
         <p class="ts-admin-subtitle">Owner-only platform usage summary.</p>
     </div>
     <dl class="ts-kpis ts-admin-kpis" aria-label="Platform summary">
-        @(AdminPresentation.Stat("Organizations", Model.Overview.Organizations.ToString(), "Building2"))
-        @(AdminPresentation.Stat("Projects", Model.Overview.Projects.ToString(), "FolderKanban"))
-        @(AdminPresentation.Stat("Databases", Model.Overview.Databases.ToString(), "Database"))
+        @(AdminPresentation.Stat("Organizations", Model.Overview.Organizations.ToString(), Icons.Building2))
+        @(AdminPresentation.Stat("Projects", Model.Overview.Projects.ToString(), Icons.FolderKanban))
+        @(AdminPresentation.Stat("Databases", Model.Overview.Databases.ToString(), Icons.Database))
     </dl>
     @(AdminPresentation.TableStart("Usage"))
     @if (Model.TotalRows == 0)

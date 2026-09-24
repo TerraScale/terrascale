@@ -10,9 +10,9 @@
         <p class="ts-admin-subtitle">Owner-only region and placement state.</p>
     </div>
     <dl class="ts-kpis ts-admin-kpis" aria-label="Estate summary">
-        @(AdminPresentation.Stat("Regions", Model.RegionTotalRows.ToString(), "Globe2"))
-        @(AdminPresentation.Stat("Available regions", Model.AvailableRegionCount.ToString(), "CircleCheck"))
-        @(AdminPresentation.Stat("Placed databases", Model.HostTotalRows.ToString(), "Database"))
+        @(AdminPresentation.Stat("Regions", Model.RegionTotalRows.ToString(), Icons.Globe2))
+        @(AdminPresentation.Stat("Available regions", Model.AvailableRegionCount.ToString(), Icons.CircleCheck))
+        @(AdminPresentation.Stat("Placed databases", Model.HostTotalRows.ToString(), Icons.Database))
     </dl>
     <div class="ts-toolbar ts-admin-tabs-toolbar">
         <nav class="ts-tabs" aria-label="Estate sections">

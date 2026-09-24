@@ -8,8 +8,9 @@ public sealed class AdminUsagePageEndpoint(DashboardStore store)
 {
     protected override AdminUsagePageModel Load()
     {
-        var page = AdminPresentation.Paginate(Store.AdminUsage.Usage, HttpContext.Request.Query["page"].FirstOrDefault());
-        return new AdminUsagePageModel(Store.AdminUsage, page.Rows, page.Number, page.TotalPages, page.TotalRows)
+        var usage = Store.AdminUsage;
+        var page = AdminPresentation.Paginate(usage.Usage, HttpContext.Request.Query["page"].FirstOrDefault());
+        return new AdminUsagePageModel(usage, page.Rows, page.Number, page.TotalPages, page.TotalRows)
         {
             Shell = ShellFactory.Create(Store, PageRoute),
         };

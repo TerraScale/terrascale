@@ -12,9 +12,9 @@
     </div>
     @(AdminPresentation.Filter("/admin/users", "Users", Model.Query))
     <dl class="ts-kpis ts-admin-kpis" aria-label="User summary">
-        @(AdminPresentation.Stat("Users", Model.TotalRows.ToString(), "Users"))
-        @(AdminPresentation.Stat("Enabled", Model.EnabledRows.ToString(), "CircleCheck"))
-        @(AdminPresentation.Stat("Owners", Model.OwnerRows.ToString(), "ShieldCheck"))
+        @(AdminPresentation.Stat("Users", Model.TotalRows.ToString(), Icons.Users))
+        @(AdminPresentation.Stat("Enabled", Model.EnabledRows.ToString(), Icons.CircleCheck))
+        @(AdminPresentation.Stat("Owners", Model.OwnerRows.ToString(), Icons.ShieldCheck))
     </dl>
     @(AdminPresentation.TableStart("Users"))
     @if (Model.Rows.Count == 0)

@@ -8,8 +8,8 @@
     </div>
     @(AdminPresentation.Filter("/admin/organizations", "Organizations", Model.Query))
     <dl class="ts-kpis ts-admin-kpis" aria-label="Organization summary">
-        @(AdminPresentation.Stat("Organizations", Model.TotalRows.ToString(), "Building2"))
-        @(AdminPresentation.Stat("With owners", Model.WithOwners.ToString(), "UserRound"))
+        @(AdminPresentation.Stat("Organizations", Model.TotalRows.ToString(), Icons.Building2))
+        @(AdminPresentation.Stat("With owners", Model.WithOwners.ToString(), Icons.UserRound))
     </dl>
     @(AdminPresentation.TableStart("Organizations"))
     @if (Model.Rows.Count == 0)
