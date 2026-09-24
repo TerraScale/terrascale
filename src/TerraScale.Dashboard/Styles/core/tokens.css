@@ -27,7 +27,7 @@
   --ts-accent-soft: #60A5FA;
   --ts-link: #60A5FA;
   --ts-on-accent: #FFFFFF;
-  --ts-accent-rgb: 37, 99, 235;
+  --ts-accent-rgb: 59, 130, 246;
   --ts-nav-accent: #3B82F6; /* per-destination override on nav links */
 
   /* Status — state only, never decorative. */
@@ -73,8 +73,8 @@
   /* Shadows. */
   --ts-shadow-panel: 0 4px 16px -4px rgba(0, 0, 0, 0.5), 0 2px 6px -2px rgba(0, 0, 0, 0.4);
   --ts-shadow-overlay: 0 16px 48px -12px rgba(0, 0, 0, 0.7);
-  --ts-focus-ring: 0 0 0 3px color-mix(in oklab, #3B82F6 50%, transparent);
-  --ts-focus-ring-invalid: 0 0 0 3px color-mix(in oklab, #F87171 20%, transparent);
+  --ts-focus-ring: 0 0 0 3px color-mix(in oklab, var(--ts-accent) 50%, transparent);
+  --ts-focus-ring-invalid: 0 0 0 3px color-mix(in oklab, var(--ts-danger) 20%, transparent);
   --ts-card-edge:
   0 0 0 1px color-mix(in oklab, #F2F3F5 10%, transparent),
   0 1px 3px 0 rgba(0, 0, 0, 0.1),
@@ -140,6 +140,6 @@
   --ts-table-head-h: 48px;
 
   /* Shell. */
-  --sidebar-width: 18rem;
-  --datasubnav-width: 16rem;
+  --ts-sidebar-width: 18rem;
+  --ts-datasubnav-width: 16rem;
 }

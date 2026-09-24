@@ -1,7 +1,8 @@
 /* Toast viewport and toast message presentation.
    Used by navigation feedback and mutations. Keep page-specific rules in Features/. */
 
-/* Toast (sonner-style, top-right). */
+/* Toast (sonner-style, top-right). Native modal dialogs use the browser top
+   layer, so flows that open one must render success text inside the dialog. */
 .ts-toasts {
   position: fixed;
   top: var(--ts-lg);

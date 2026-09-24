@@ -11,7 +11,7 @@ public sealed class CssWatcher(IWebHostEnvironment environment, ILogger<CssWatch
 {
     private Process? _node;
 
-    public static bool Enabled(IWebHostEnvironment _) =>
+    public static bool Enabled() =>
         Environment.GetEnvironmentVariable("DOTNET_WATCH") == "1";
 
     public Task StartAsync(CancellationToken cancellationToken)

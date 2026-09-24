@@ -2,6 +2,7 @@ FROM node:24-alpine AS css
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
+COPY .browserslistrc ./
 COPY scripts/build-css.mjs scripts/
 COPY src/TerraScale.Dashboard/Styles src/TerraScale.Dashboard/Styles
 COPY src/TerraScale.Dashboard/Features src/TerraScale.Dashboard/Features

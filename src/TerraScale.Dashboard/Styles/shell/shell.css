@@ -15,7 +15,7 @@
   bottom: 0;
   left: 0;
   z-index: var(--ts-z-overlay);
-  width: var(--sidebar-width);
+  width: var(--ts-sidebar-width);
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--ts-line);
@@ -55,7 +55,7 @@
 .ts-admin-sidebar-title {
   padding: 0 var(--ts-xs);
   color: var(--ts-ink);
-  font-size: var(--ts-fs-lg);
+  font-size: var(--ts-fs-panel-title);
   font-weight: var(--ts-fw-semibold);
 }
 
@@ -239,8 +239,8 @@
   position: fixed;
   top: 0;
   bottom: 0;
-  left: var(--sidebar-width);
-  width: var(--datasubnav-width);
+  left: var(--ts-sidebar-width);
+  width: var(--ts-datasubnav-width);
   height: 100svh;
   z-index: var(--ts-z-sticky);
   flex-direction: column;
@@ -258,7 +258,7 @@
 
   /* v1 pairs the fixed subnav with an in-flow spacer of the same width. */
   .ts-shell[data-datasubnav] .ts-inset {
-    margin-left: calc(var(--sidebar-width) + var(--datasubnav-width));
+    margin-left: calc(var(--ts-sidebar-width) + var(--ts-datasubnav-width));
   }
 }
 
@@ -312,7 +312,7 @@
    gap keeps page content clear of the sidebar at desktop widths. */
 @media (min-width: 48rem) {
   .ts-inset {
-    margin-left: var(--sidebar-width);
+    margin-left: var(--ts-sidebar-width);
   }
 }
 

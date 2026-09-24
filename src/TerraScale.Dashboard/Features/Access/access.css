@@ -7,10 +7,6 @@
   padding: 20px;
 }
 
-.ts-padded {
-  padding: var(--ts-lg);
-}
-
 .ts-stack-20 {
   gap: 20px;
   display: grid;

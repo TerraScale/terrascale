@@ -174,7 +174,7 @@
   height: var(--ts-control-h-lg);
   min-width: 0;
   padding-inline: 12px;
-  box-shadow: var(--ts-shadow-sm);
+  box-shadow: var(--ts-shadow-panel);
   border-color: color-mix(in oklab, var(--ts-ink-muted) 70%, transparent);
   transition-property: background-color, border-color, box-shadow, color, opacity, transform;
 }

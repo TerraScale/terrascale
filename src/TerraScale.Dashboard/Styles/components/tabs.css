@@ -44,13 +44,15 @@
 /* Native <dialog> styled as the Radix dialog. */
 dialog.ts-dialog {
   border: none;
-  border-radius: 14.4px;
+  border-radius: var(--ts-radius-panel);
   padding: 0;
   background-color: var(--ts-surface);
   color: var(--ts-ink);
   box-shadow: var(--ts-overlay-edge);
   width: min(32rem, calc(100vw - 2 * var(--ts-lg)));
   max-height: min(85vh, 100%);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 dialog.ts-dialog::backdrop {

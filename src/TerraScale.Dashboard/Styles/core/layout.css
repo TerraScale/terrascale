@@ -21,6 +21,14 @@
   font-weight: var(--ts-fw-semibold);
 }
 
+/* Shared content inset. Keep the narrow header/body alignment used by the
+   organization page while allowing the wider desktop shell rhythm. */
+.ts-padded { padding: var(--ts-lg) 20px; }
+
+@media (min-width: 64rem) {
+  .ts-padded { padding-inline: 16px; }
+}
+
 .ts-stack-xs { display: flex; flex-direction: column; gap: var(--ts-xs); }
 .ts-stack-sm { display: flex; flex-direction: column; gap: var(--ts-sm); }
 .ts-stack-md { display: flex; flex-direction: column; gap: var(--ts-md); }
