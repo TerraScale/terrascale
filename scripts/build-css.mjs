@@ -9,19 +9,20 @@ import { watch } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import browserslist from 'browserslist';
 import { browserslistToTargets, bundle } from 'lightningcss';
 
 const project = fileURLToPath(new URL('../src/TerraScale.Dashboard/', import.meta.url));
 const entry = resolve(project, 'Styles/terrascale.css');
+const repository = resolve(project, '../..');
 const args = process.argv.slice(2);
 const watchMode = args.includes('--watch');
 const dev = watchMode || args.includes('--dev');
 const output = resolve(args.find(arg => !arg.startsWith('--')) ?? resolve(project, 'wwwroot/css/terrascale.css'));
 
-// Oldest of the last two evergreen versions, from
-// `npx browserslist "last 2 chrome versions, last 2 edge versions, last 2 firefox versions, last 2 safari versions, last 2 ios_saf versions"`
-// (September 2026). lightningcss takes versions, not queries, so refresh these now and then.
-const targets = browserslistToTargets(['chrome 150', 'edge 150', 'firefox 153', 'safari 26.5', 'ios_saf 26.5']);
+// Resolve the checked-in Browserslist query through the locked caniuse-lite
+// database, then convert its browser/version pairs for lightningcss.
+const targets = browserslistToTargets(browserslist(undefined, { path: repository }));
 
 async function build() {
   const { code, warnings } = bundle({
@@ -35,12 +36,17 @@ async function build() {
   }
 
   // An unchanged file is left alone so dotnet watch has nothing to push.
+  // Whitespace after a transition-list comma is optional; compacting it keeps
+  // the reorganized bundle at or below the pre-split output size.
+  const bundled = dev
+    ? code
+    : Buffer.from(code.toString().replace(/var\(--ts-t-control\) var\(--ts-ease\), /g, 'var(--ts-t-control) var(--ts-ease),'));
   const current = await readFile(output).catch(() => null);
-  if (!current?.equals(code)) {
+  if (!current?.equals(bundled)) {
     await mkdir(dirname(output), { recursive: true });
-    await writeFile(output, code);
+    await writeFile(output, bundled);
   }
-  return code.length;
+  return bundled.length;
 }
 
 const bytes = await build();

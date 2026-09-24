@@ -1,0 +1,7 @@
+# Keep the dashboard bundle focused on current evergreen browsers while
+# lowering nesting and other modern syntax for the previous release.
+last 2 Chrome versions
+last 2 Edge versions
+last 2 Firefox versions
+last 2 Safari versions
+last 2 iOS versions
