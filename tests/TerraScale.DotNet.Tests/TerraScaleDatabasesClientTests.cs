@@ -7,6 +7,43 @@ namespace TerraScale.DotNet.Tests;
 public sealed class TerraScaleDatabasesClientTests
 {
     [Test]
+    public async Task CreateAsync_AllowsGloballyReplicatedPlacementWithinExplicitLock()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.BadRequest, "{}");
+        using var http = new HttpClient(handler);
+        var client = CreateClient(http);
+
+        await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Databases.CreateAsync(
+            "ts-auth", ["GRU", "SFO", "FRA"], "auth-create-1", "GRU, SFO, FRA"));
+
+        await Assert.That(handler.Request!.Uri).IsEqualTo("https://api.example.invalid/api/v1/databases");
+        using var body = JsonDocument.Parse(handler.Body!);
+        await Assert.That(body.RootElement.GetProperty("residency").GetString()).IsEqualTo("GRU,SFO,FRA");
+        await Assert.That(body.RootElement.GetProperty("placement").EnumerateArray().Select(value => value.GetString()!))
+            .IsEquivalentTo(["GRU", "SFO", "FRA"]);
+    }
+
+    [Test]
+    public async Task CreateAsync_RejectsPlacementOutsideLockOrDuplicateRegions()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.BadRequest, "{}");
+        using var http = new HttpClient(handler);
+        var client = CreateClient(http);
+
+        foreach (var (placement, lockValue) in new (string[], string)[]
+        {
+            (["GRU", "SFO"], "GRU"),
+            (["GRU", "GRU"], "GRU,SFO"),
+            (["GRU"], "GRU,GRU"),
+            (["GRU"], "GRU,UNKNOWN"),
+        })
+        {
+            Assert.Throws<ArgumentException>(() => client.Databases.CreateAsync("ts-auth", placement, "auth-create-1", lockValue));
+        }
+        await Assert.That(handler.Request).IsNull();
+    }
+
+    [Test]
     public async Task DeleteAsync_SendsConfirmationAndIdempotencyAndReadsAcceptedOperation()
     {
         using var handler = new RecordingHandler(
@@ -166,6 +203,7 @@ public sealed class TerraScaleDatabasesClientTests
     private sealed class RecordingHandler(HttpStatusCode statusCode, string body, string? location = null) : HttpMessageHandler
     {
         public RecordedRequest? Request { get; private set; }
+        public string? Body { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -175,6 +213,7 @@ public sealed class TerraScaleDatabasesClientTests
                 request.RequestUri?.ToString() ?? throw new InvalidOperationException(),
                 request.Headers.TryGetValues("Idempotency-Key", out var keys) ? keys.Single() : null,
                 request.Headers.TryGetValues("X-TerraScale-Delete-Confirmation", out var confirmations) ? confirmations.Single() : null);
+            Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
             var response = new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")

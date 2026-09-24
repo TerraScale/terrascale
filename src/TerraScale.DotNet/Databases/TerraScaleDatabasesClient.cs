@@ -46,17 +46,31 @@ public sealed class TerraScaleDatabasesClient
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(placement);
         ArgumentException.ThrowIfNullOrWhiteSpace(operationId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(residency);
         var normalizedPlacement = placement.Select(region => TerraScaleRegionCodes.Validate(region, nameof(placement))).ToArray();
         if (normalizedPlacement.Length is < 1 or > 20)
         {
             throw new ArgumentException("Placement must contain between 1 and 20 canonical TerraScale regions.", nameof(placement));
         }
-        if (residency is not ("eu-only" or "br-only"))
-            throw new ArgumentException("Residency must be eu-only or br-only.", nameof(residency));
-        if (residency == "eu-only" && normalizedPlacement.Any(region => region != TerraScaleRegions.Fra))
-            throw new ArgumentException("eu-only residency requires FRA placement.", nameof(placement));
-        if (residency == "br-only" && normalizedPlacement.Any(region => region != TerraScaleRegions.Gru))
-            throw new ArgumentException("br-only residency requires GRU placement.", nameof(placement));
+        if (normalizedPlacement.Distinct(StringComparer.Ordinal).Count() != normalizedPlacement.Length)
+            throw new ArgumentException("Placement cannot contain duplicate regions.", nameof(placement));
+
+        string[] allowedRegions;
+        if (residency == "eu-only")
+            allowedRegions = [TerraScaleRegions.Fra];
+        else if (residency == "br-only")
+            allowedRegions = [TerraScaleRegions.Gru];
+        else
+        {
+            allowedRegions = residency.Split(',', StringSplitOptions.TrimEntries);
+            if (allowedRegions.Length == 0 || allowedRegions.Any(region => !TerraScaleRegionCodes.IsKnown(region)))
+                throw new ArgumentException("Residency must be eu-only, br-only, or a comma-separated canonical region list.", nameof(residency));
+            if (allowedRegions.Distinct(StringComparer.Ordinal).Count() != allowedRegions.Length)
+                throw new ArgumentException("Residency cannot contain duplicate regions.", nameof(residency));
+            residency = string.Join(',', allowedRegions);
+        }
+        if (normalizedPlacement.Any(region => !allowedRegions.Contains(region, StringComparer.Ordinal)))
+            throw new ArgumentException("Placement must stay within its residency lock.", nameof(placement));
         return client.CreateDatabaseAsync(new CreateDatabaseRequest(Name: name.Trim(), Placement: normalizedPlacement, Residency: residency, OperationId: operationId), operationId, cancellationToken);
     }
 
