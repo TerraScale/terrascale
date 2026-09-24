@@ -1,0 +1,115 @@
+/* Text, code, breadcrumbs, separators, skeletons, and summary terms.
+   Used by shared page content. Keep page-specific rules in Features/. */
+
+
+.ts-muted { color: var(--ts-ink-muted); }
+.ts-meta { font-size: var(--ts-fs-meta); color: var(--ts-ink-muted); }
+.ts-ui { font-size: var(--ts-fs-ui); }
+.ts-tabular { font-variant-numeric: tabular-nums; }
+
+.ts-link {
+  color: var(--ts-link);
+  text-decoration: none;
+}
+
+.ts-link:hover {
+  text-decoration: underline;
+}
+
+.ts-snippet {
+  border-radius: var(--ts-radius-control);
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-surface-muted);
+  overflow: hidden;
+}
+
+.ts-snippet-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  padding: var(--ts-sm) var(--ts-md);
+  border-bottom: 1px solid var(--ts-line);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+}
+
+.ts-snippet-body {
+  margin: 0;
+  padding: var(--ts-md);
+  overflow-x: auto;
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
+  line-height: 1.7;
+  color: var(--ts-ink);
+}
+
+.ts-eyebrow {
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-semibold);
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  color: var(--ts-ink-muted);
+}
+
+.ts-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+  flex-wrap: wrap;
+}
+
+.ts-breadcrumb a {
+  color: var(--ts-ink-muted);
+}
+
+.ts-breadcrumb a:hover {
+  color: var(--ts-ink);
+}
+
+.ts-separator {
+  border: none;
+  border-top: 1px solid var(--ts-line);
+  margin: 0;
+}
+
+.ts-separator-v {
+  width: 1px;
+  align-self: stretch;
+  background-color: var(--ts-line);
+  border: none;
+}
+
+.ts-skeleton {
+  border-radius: var(--ts-radius-control);
+  background: linear-gradient(
+  90deg,
+  var(--ts-surface-muted) 25%,
+  var(--ts-line) 50%,
+  var(--ts-surface-muted) 75%
+  );
+  background-size: 200% 100%;
+  animation: ts-shimmer 1.4s infinite linear;
+  min-height: var(--ts-fs-body);
+}
+
+/* Key/value summary list (ClaimList / SummaryTerm). */
+.ts-kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--ts-sm) var(--ts-lg);
+  font-size: var(--ts-fs-ui);
+}
+
+.ts-kv dt {
+  color: var(--ts-ink-muted);
+}
+
+.ts-kv dd {
+  margin: 0;
+  color: var(--ts-ink);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

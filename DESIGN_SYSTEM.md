@@ -1,6 +1,6 @@
 # TerraScale Dashboard Design System
 
-The Usage page (`Features/Usage/Pages/Usage/UsageSlice.cshtml`) is the reference. Every other page is refactored to match it. All styles live in `src/TerraScale.Dashboard/wwwroot/css/terrascale.css`. There is one CSS file and no page stylesheets.
+The Usage page (`Features/Usage/Pages/Usage/UsageSlice.cshtml`) is the reference. Every other page is refactored to match it. Source styles live in readable partials under `src/TerraScale.Dashboard/Styles/` and `src/TerraScale.Dashboard/Features/`; the build serves exactly one generated `wwwroot/css/terrascale.css` file and no page links a separate stylesheet.
 
 ## Principles
 

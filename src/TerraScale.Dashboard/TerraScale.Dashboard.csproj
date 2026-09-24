@@ -42,4 +42,28 @@
     <PackageReference Include="TerraScale.DotNet" Version="0.1.0" />
   </ItemGroup>
 
+  <!-- Stylesheet: lightningcss bundles Styles/terrascale.css and the partials it
+       imports (Styles/**, Features/**/*.css) into wwwroot/css/terrascale.css, which
+       is gitignored build output. Every build refreshes it when a partial changed;
+       under dotnet watch, CssWatcher keeps it current between builds. Docker
+       builds the minified file in its node stage and passes SkipCssBuild=true. -->
+  <ItemGroup>
+    <CssPartial Include="Styles/**/*.css;Features/**/*.css" />
+    <!-- dotnet watch tracks source partials so its static asset hot reload can
+         apply the generated file after the in-process CSS watcher rebuilds it. -->
+    <Watch Include="Styles/**/*.css;Features/**/*.css" />
+    <!-- Declared explicitly so a clean checkout, where the file does not exist
+         yet at evaluation time, still serves it as a static web asset. -->
+    <Content Remove="wwwroot/css/terrascale.css" />
+    <Content Include="wwwroot/css/terrascale.css" />
+  </ItemGroup>
+
+  <Target Name="BuildCss" BeforeTargets="ResolveProjectStaticWebAssets" Condition="'$(SkipCssBuild)' != 'true'"
+          Inputs="@(CssPartial);$(MSBuildProjectDirectory)/../../scripts/build-css.mjs;$(MSBuildProjectDirectory)/../../package-lock.json"
+          Outputs="$(MSBuildProjectDirectory)/wwwroot/css/terrascale.css">
+    <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(MSBuildProjectDirectory)/../.."
+          Condition="!Exists('$(MSBuildProjectDirectory)/../../node_modules/lightningcss')" />
+    <Exec Command="node scripts/build-css.mjs --dev" WorkingDirectory="$(MSBuildProjectDirectory)/../.." />
+  </Target>
+
 </Project>

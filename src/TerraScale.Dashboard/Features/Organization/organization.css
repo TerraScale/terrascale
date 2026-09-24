@@ -1,0 +1,355 @@
+/* Settings, profile, and organization page styles.
+   Used by the settings, profile, and organization page styles. feature. Keep page-specific rules in Features/. */
+
+/* ===== Feature: Settings/Profile/Org ===== */
+
+/* Shared page vocabulary (ported from app/shared-page-styles.ts). */
+.ts-page > .ts-panel + .ts-panel { margin-top: 0; }
+
+.ts-row-header {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+@media (min-width: 64rem) {
+  .ts-row-header {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+}
+
+.ts-row.ts-gap-16 { gap: var(--ts-lg); }
+.ts-row.ts-gap-12 { gap: var(--ts-md); }
+.ts-row.ts-gap-8 { gap: var(--ts-sm); }
+
+.ts-min-width { min-width: 0; }
+
+.ts-padded { padding: var(--ts-lg) 20px; }
+
+@media (min-width: 64rem) {
+  .ts-padded { padding-inline: 16px; }
+}
+
+/* minmax(0,1fr) keeps the implicit track clamped — auto tracks size to
+max-content and let wide tables/code blow out narrow viewports. */
+.ts-stack-12 { display: grid; gap: var(--ts-md); grid-template-columns: minmax(0, 1fr); }
+.ts-stack-16 { display: grid; gap: var(--ts-lg); grid-template-columns: minmax(0, 1fr); }
+.ts-stack-20 { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
+.ts-stack-8 { display: grid; gap: var(--ts-sm); grid-template-columns: minmax(0, 1fr); }
+
+.ts-break-words { overflow-wrap: anywhere; }
+
+.ts-title-22 {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-page-title);
+  font-weight: var(--ts-fw-bold);
+}
+
+.ts-page-desc {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  line-height: 1.5;
+  margin-top: var(--ts-md);
+  max-width: 48rem;
+}
+
+.ts-stat-card {
+  display: grid;
+  gap: var(--ts-sm);
+  padding: var(--ts-lg);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface-muted);
+}
+
+.ts-stat-value {
+  color: var(--ts-ink);
+  font-size: 24px;
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-text-upper {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  text-transform: uppercase;
+}
+
+.ts-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.ts-query-cell {
+  display: block;
+  max-width: 36rem;
+  overflow: hidden;
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-db-placement-note {
+  margin: 0;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  line-height: 20px;
+  padding: var(--ts-sm) var(--ts-md);
+}
+
+.ts-dialog-form {
+  display: grid;
+  gap: 16px;
+}
+
+.ts-dialog-actions-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-md);
+}
+
+.ts-summary-field {
+  display: grid;
+  gap: var(--ts-xs);
+}
+
+.ts-summary-label {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+}
+
+.ts-text-strong { color: var(--ts-ink); font-weight: var(--ts-fw-medium); }
+
+.ts-grid-tight { display: grid; gap: 2px; }
+
+.ts-break-all { overflow-wrap: anywhere; }
+
+/* Security summary strip: 1px line grid running edge to edge inside the
+   borderless panel (v1 summaryGrid — no inset, bottom corners only). */
+.ts-summary-grid {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  background-color: var(--ts-line);
+  border-radius: 0 0 var(--ts-radius-panel) var(--ts-radius-panel);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 40rem) {
+  .ts-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 64rem) {
+  .ts-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.ts-summary-cell {
+  padding: var(--ts-lg);
+  gap: var(--ts-xs);
+  background-color: var(--ts-surface);
+  display: grid;
+}
+
+.ts-summary-value {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+}
+
+.ts-icon-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-sm);
+}
+
+/* Organization deletion block (organization-management.tsx panelFlush). */
+.ts-org-deletion {
+  border-top: 1px solid color-mix(in oklab, var(--ts-danger) 20%, transparent);
+}
+
+.ts-org-deletion-form {
+  padding: var(--ts-lg);
+  gap: var(--ts-md);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 64rem) {
+  .ts-org-deletion-form { grid-template-columns: minmax(0, 1fr) auto; }
+  .ts-org-deletion-form .ts-form-actions { align-self: end; }
+}
+
+/* Organization switcher (v1 switchForm: bordered grid below the terms). */
+.ts-org-switch-form {
+  display: grid;
+  gap: var(--ts-md);
+  grid-template-columns: minmax(0, 1fr);
+  border-top: 1px solid var(--ts-line);
+  margin-top: 20px;
+  padding-top: 20px;
+}
+
+@media (min-width: 40rem) {
+  .ts-org-switch-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+}
+
+/* Create-project form (v1 projectForm: bordered, md gap, sm region stack). */
+.ts-project-form {
+  gap: var(--ts-md);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-project-regions { gap: var(--ts-sm); }
+
+/* Buttons that fill narrow viewports like v1 buttonFull. */
+.ts-btn-full { width: 100%; }
+
+@media (min-width: 48rem) {
+  .ts-btn-full { width: auto; }
+}
+
+/* v1 actionEnd: actions anchored to the leading edge. */
+.ts-form-actions-start { justify-content: flex-start; }
+
+/* Inline rename disclosure (v1 renameRoot + renameForm). */
+.ts-rename {
+  display: grid;
+  gap: var(--ts-sm);
+  min-width: 14rem;
+  justify-items: start;
+}
+
+.ts-rename-form {
+  display: grid;
+  gap: var(--ts-md);
+  width: 100%;
+  border-top: 1px solid var(--ts-line);
+  padding-top: var(--ts-md);
+}
+
+/* Invitation create form (v1 formBorderBottom). */
+.ts-form-stacked {
+  display: grid;
+  gap: var(--ts-md);
+  padding: var(--ts-lg);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+/* Member row controls (v1 memberControls grid + ownership transfer). */
+.ts-member-controls {
+  display: grid;
+  gap: var(--ts-sm);
+  justify-items: start;
+}
+
+/* v1 OwnershipTransferControls: fieldGroup with plain body-size text. */
+.ts-org-transfer {
+  display: grid;
+  gap: var(--ts-sm);
+  justify-items: start;
+}
+
+/* ===== organization page (v1 app/(dashboard)/organization) ============== */
+
+/* v1 PanelHeader insets: 20px inline, 16px from 64rem (ui/Panel.tsx);
+   the shared .ts-panel-header has none because .ts-panel pads block only. */
+.ts-org .ts-panel-header { padding-inline: 20px; }
+
+@media (min-width: 64rem) {
+  .ts-org .ts-panel-header { padding-inline: 16px; }
+}
+
+/* v1 summary Panel carries panel20 (20px all round) — .ts-panel only
+   provides the 20px block rhythm, so the inline inset is scoped here. */
+.ts-org-summary { padding-inline: 20px; }
+
+/* v1 padded/body sections are 16px inline at every width (shared-page-styles
+   padding: spacing.lg); .ts-padded widens to 20px below 64rem to track the
+   header instead. */
+.ts-org .ts-padded { padding-inline: 16px; }
+
+/* v1 pageStyles.summaryTerms: the dl holds a 32rem floor from 64rem. */
+@media (min-width: 64rem) {
+  .ts-org .ts-summary-terms { min-width: 32rem; }
+}
+
+/* v1 DataTable (ui/DataTable.tsx): 16px body, 14px semibold wide-tracked
+   head, 16/20 cell padding, top-aligned cells, chrome-less scroller and a
+   50% muted row hover — the shared .ts-table base is denser and boxed. */
+.ts-org .ts-table { font-size: var(--ts-fs-body); }
+
+.ts-org .ts-table thead th {
+  padding: 16px 20px;
+  font-size: var(--ts-fs-ui);
+  letter-spacing: 0.025em;
+}
+
+.ts-org .ts-table tbody td {
+  padding: 16px 20px;
+  vertical-align: top;
+}
+
+.ts-org .ts-table-wrap {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.ts-org .ts-table tbody tr:hover {
+  background-color: color-mix(in oklab, var(--ts-surface-muted) 50%, transparent);
+}
+
+/* v1 statusSuccess: 10px block / 12px inline padding, 10% success fill. */
+.ts-org .ts-status-success {
+  padding: 10px 12px;
+  background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
+}
+
+/* v1 textDescription: 24px line-height capped at 42rem. */
+.ts-org-desc {
+  line-height: 24px;
+  max-width: 42rem;
+}
+
+/* v1 Input/NativeSelect render body-size (16px) control text; the shared
+   control base is ui-size. */
+.ts-org .ts-input,
+.ts-org .ts-select {
+  font-size: var(--ts-fs-body);
+}
+
+/* v1 grids stretch their button children (formTight, memberControls,
+   OwnershipTransferControls fieldGroup; switchForm and deletionForm only
+   below their two-column breakpoints). The v2 button wrappers sit inside
+   no-JS <form>s, so the forms stretch too. */
+.ts-org .ts-inline-form { grid-template-columns: minmax(0, 1fr); }
+
+.ts-org .ts-inline-form .ts-btn,
+.ts-org .ts-stack-12 > form .ts-btn,
+.ts-org .ts-member-controls .ts-btn,
+.ts-org .ts-org-transfer .ts-btn,
+.ts-org .ts-org-switch-form .ts-btn,
+.ts-org .ts-org-deletion-form .ts-btn {
+  width: 100%;
+}
+
+.ts-org .ts-member-controls form,
+.ts-org .ts-org-transfer form { width: 100%; }
+
+@media (min-width: 40rem) {
+  .ts-org .ts-org-switch-form .ts-btn { width: auto; }
+}
+
+@media (min-width: 64rem) {
+  .ts-org .ts-org-deletion-form .ts-btn { width: auto; }
+}

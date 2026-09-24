@@ -1,0 +1,111 @@
+/* Tabs and native dialog layout primitives.
+   Used by page navigation and modal forms. Keep page-specific rules in Features/. */
+
+/* 10. Tabs, dialogs, menus, tooltips, toasts =============================== */
+
+.ts-tabs {
+  display: inline-flex;
+  gap: var(--ts-xs);
+  padding: var(--ts-xs);
+  border-radius: var(--ts-radius-control);
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-surface);
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.ts-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  height: 32px;
+  padding: 0 var(--ts-md);
+  border-radius: var(--ts-radius-badge);
+  border: none;
+  background: transparent;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--ts-t-control) var(--ts-ease), color var(--ts-t-control) var(--ts-ease);
+}
+
+.ts-tab:hover {
+  color: var(--ts-ink);
+}
+
+.ts-tab[aria-selected="true"],
+.ts-tab.is-active {
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink);
+}
+
+/* Native <dialog> styled as the Radix dialog. */
+dialog.ts-dialog {
+  border: none;
+  border-radius: 14.4px;
+  padding: 0;
+  background-color: var(--ts-surface);
+  color: var(--ts-ink);
+  box-shadow: var(--ts-overlay-edge);
+  width: min(32rem, calc(100vw - 2 * var(--ts-lg)));
+  max-height: min(85vh, 100%);
+}
+
+dialog.ts-dialog::backdrop {
+  background-color: var(--ts-scrim);
+  backdrop-filter: blur(2px);
+}
+
+@supports (transition-behavior: allow-discrete) {
+  @media (prefers-reduced-motion: no-preference) {
+    dialog.ts-dialog {
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity var(--ts-t-fast), transform var(--ts-t-fast),
+        display var(--ts-t-fast) allow-discrete, overlay var(--ts-t-fast) allow-discrete;
+    }
+
+    dialog.ts-dialog[open] {
+      opacity: 1;
+      transform: none;
+    }
+
+    @starting-style {
+      dialog.ts-dialog[open] {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+    }
+  }
+}
+
+.ts-dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-lg);
+  padding: var(--ts-xl);
+}
+
+.ts-dialog-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-xs);
+}
+
+.ts-dialog-title {
+  font-size: 20px;
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-dialog-description {
+  font-size: var(--ts-fs-ui);
+  color: var(--ts-ink-muted);
+}
+
+.ts-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ts-sm);
+}

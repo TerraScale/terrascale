@@ -1,0 +1,127 @@
+/* Badges, status pips, and semantic alerts.
+   Used by tables, forms, and page summaries. Keep page-specific rules in Features/. */
+
+/* 7. Badges & status ======================================================= */
+
+.ts-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-xs);
+  height: var(--ts-badge-h);
+  padding: 0 var(--ts-sm);
+  border-radius: var(--ts-radius-badge);
+  border: 1px solid transparent;
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ts-badge-neutral {
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink-muted);
+  border-color: var(--ts-line);
+}
+
+.ts-badge-accent {
+  background-color: color-mix(in oklab, var(--ts-accent) 15%, transparent);
+  color: var(--ts-info);
+}
+
+.ts-badge-success {
+  background-color: color-mix(in oklab, var(--ts-success) 15%, transparent);
+  color: var(--ts-success);
+}
+
+.ts-badge-warning {
+  background-color: color-mix(in oklab, var(--ts-warning) 15%, transparent);
+  color: var(--ts-warning);
+}
+
+.ts-badge-danger {
+  background-color: color-mix(in oklab, var(--ts-danger) 15%, transparent);
+  color: var(--ts-danger);
+}
+
+.ts-badge-info {
+  background-color: color-mix(in oklab, var(--ts-info) 15%, transparent);
+  color: var(--ts-info);
+}
+
+.ts-badge-outline {
+  background-color: transparent;
+  color: var(--ts-ink-muted);
+  border-color: var(--ts-line);
+}
+
+/* Status pip: never color-alone, pair with a label. */
+.ts-pip {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-ink-muted);
+  flex-shrink: 0;
+}
+
+.ts-pip-success { background-color: var(--ts-success); }
+.ts-pip-warning { background-color: var(--ts-warning); }
+.ts-pip-danger { background-color: var(--ts-danger); }
+.ts-pip-info { background-color: var(--ts-info); }
+
+.ts-alert {
+  display: flex;
+  gap: var(--ts-md);
+  align-items: flex-start;
+  border-radius: var(--ts-radius-control);
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-surface);
+  padding: var(--ts-md);
+  font-size: var(--ts-fs-ui);
+}
+
+.ts-alert-title {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  font-weight: var(--ts-fw-semibold);
+  color: var(--ts-ink);
+}
+
+.ts-alert-body {
+  color: var(--ts-ink-muted);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-sm);
+  min-width: 0;
+}
+
+.ts-alert-warning {
+  border-color: color-mix(in oklab, var(--ts-warning) 35%, transparent);
+  background-color: color-mix(in oklab, var(--ts-warning) 10%, transparent);
+}
+
+.ts-alert-warning .ts-alert-title { color: var(--ts-warning); }
+
+.ts-alert-danger {
+  border-color: color-mix(in oklab, var(--ts-danger) 35%, transparent);
+  background-color: color-mix(in oklab, var(--ts-danger) 10%, transparent);
+}
+
+.ts-alert-danger .ts-alert-title { color: var(--ts-danger); }
+
+.ts-alert-success {
+  border-color: color-mix(in oklab, var(--ts-success) 35%, transparent);
+  background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
+}
+
+.ts-alert-success .ts-alert-title { color: var(--ts-success); }
+
+.ts-alert-info {
+  border-color: color-mix(in oklab, var(--ts-info) 35%, transparent);
+  background-color: color-mix(in oklab, var(--ts-info) 10%, transparent);
+}
+
+.ts-alert-info .ts-alert-title { color: var(--ts-info); }
+
+/* 8. Forms ================================================================= */

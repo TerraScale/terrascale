@@ -1,0 +1,104 @@
+/* Notification and audit parity styles.
+   Used by the notification and audit parity styles. feature. Keep page-specific rules in Features/. */
+
+/* ===== Feature: Usage/Audit/Notifications (notes-audit parity) ===== */
+
+/* Compact ghost "Mark read" (v1 actionCompact + actionCompactOffset). */
+.ts-notification-mark {
+  height: var(--ts-control-h-lg);
+  min-height: var(--ts-control-h-lg);
+  padding: 0 var(--ts-sm);
+  font-size: var(--ts-fs-meta);
+  margin-top: var(--ts-xs);
+  background-color: transparent;
+  color: var(--ts-ink);
+}
+
+.ts-notification-mark:hover {
+  background-color: var(--ts-surface-muted);
+}
+
+/* Audit table (v1 DataTable: no outer chrome, 16px body, 16/20 cells). */
+.ts-audit-table-wrap {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background-color: transparent;
+}
+
+.ts-audit-table {
+  font-size: var(--ts-fs-body);
+}
+
+.ts-audit-table thead th {
+  padding: var(--ts-lg) 20px;
+  font-size: var(--ts-fs-ui);
+}
+
+.ts-audit-table tbody td {
+  padding: var(--ts-lg) 20px;
+  vertical-align: top;
+}
+
+.ts-audit-table tbody tr:hover {
+  background-color: color-mix(in oklab, var(--ts-surface-muted) 50%, transparent);
+}
+
+.ts-audit-table td.ts-table-mono {
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+}
+
+.ts-nowrap-meta {
+  white-space: nowrap;
+}
+
+.ts-audit-table code.ts-mono {
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink);
+}
+
+/* Export dialog format options (v1 AuditExportButton). */
+.ts-audit-export-grid {
+  display: grid;
+  gap: var(--ts-md);
+}
+
+@media (min-width: 40rem) {
+  .ts-audit-export-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ts-audit-export-option {
+  height: auto;
+  min-height: 36px;
+  width: 100%;
+  padding: var(--ts-lg);
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: var(--ts-xs);
+  text-align: left;
+  white-space: normal;
+}
+
+.ts-audit-export-option-active {
+  border-color: var(--ts-accent);
+  background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);
+}
+
+.ts-audit-export-option-label {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-audit-export-option-description {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  line-height: 24px;
+}

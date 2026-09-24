@@ -1,0 +1,180 @@
+/* Labels, inputs, selects, textareas, checks, switches, and form actions.
+   Used by dashboard forms. Keep page-specific rules in Features/. */
+
+.ts-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-sm);
+  min-width: 0;
+}
+
+.ts-label {
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+  color: var(--ts-ink);
+}
+
+.ts-label-muted {
+  color: var(--ts-ink-muted);
+  font-weight: var(--ts-fw-medium);
+}
+
+.ts-hint {
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+}
+
+.ts-form {
+  display: grid;
+  gap: var(--ts-lg);
+}
+
+.ts-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-sm);
+  justify-content: flex-end;
+}
+
+.ts-input,
+.ts-select,
+.ts-textarea {
+  width: 100%;
+  min-height: var(--ts-control-h-lg);
+  padding: 0 var(--ts-pad-inline);
+  border-radius: var(--ts-radius-control);
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-input-fill);
+  color: var(--ts-ink);
+  font-family: var(--ts-font-sans);
+  font-size: var(--ts-fs-ui);
+  transition:
+  background-color var(--ts-t-control) var(--ts-ease),
+  border-color var(--ts-t-control) var(--ts-ease);
+}
+
+.ts-textarea {
+  min-height: 88px;
+  padding-top: var(--ts-sm);
+  padding-bottom: var(--ts-sm);
+  resize: vertical;
+}
+
+.ts-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238B93A4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--ts-md) center;
+  padding-right: 36px;
+}
+
+.ts-input::placeholder,
+.ts-textarea::placeholder {
+  color: var(--ts-ink-muted);
+}
+
+.ts-input:hover,
+.ts-select:hover,
+.ts-textarea:hover {
+  background-color: var(--ts-fill-hover);
+}
+
+.ts-input:focus-visible,
+.ts-select:focus-visible,
+.ts-textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--ts-focus-ring);
+  border-color: var(--ts-accent);
+}
+
+.ts-input[aria-invalid="true"],
+.ts-textarea[aria-invalid="true"] {
+  border-color: var(--ts-danger);
+  box-shadow: var(--ts-focus-ring-invalid);
+}
+
+.ts-input-mono {
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
+}
+
+.ts-field-error {
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-danger);
+}
+
+.ts-checkbox {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-input-tint);
+  cursor: pointer;
+  display: inline-grid;
+  place-content: center;
+  transition: background-color var(--ts-t-control) var(--ts-ease), border-color var(--ts-t-control) var(--ts-ease);
+}
+
+.ts-checkbox::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  transform: scale(0);
+  transition: transform var(--ts-t-control) var(--ts-ease);
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+  background-color: var(--ts-on-accent);
+}
+
+.ts-checkbox:checked {
+  background-color: var(--ts-accent);
+  border-color: var(--ts-accent);
+}
+
+.ts-checkbox:checked::before {
+  transform: scale(1);
+}
+
+.ts-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  font-size: var(--ts-fs-ui);
+  cursor: pointer;
+}
+
+/* Switch: track 32x18.4, thumb slides, checked = accent. */
+.ts-switch {
+  appearance: none;
+  position: relative;
+  width: 32px;
+  height: 18.4px;
+  flex-shrink: 0;
+  border-radius: var(--ts-radius-pill);
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-switch-track);
+  cursor: pointer;
+  transition: background-color var(--ts-t-control) var(--ts-ease), border-color var(--ts-t-control) var(--ts-ease);
+}
+
+.ts-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12.4px;
+  height: 12.4px;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-switch-thumb);
+  transition: transform var(--ts-t-control) var(--ts-ease);
+}
+
+.ts-switch:checked {
+  background-color: var(--ts-accent);
+  border-color: var(--ts-accent);
+}
+
+.ts-switch:checked::after {
+  transform: translateX(13.6px);
+}

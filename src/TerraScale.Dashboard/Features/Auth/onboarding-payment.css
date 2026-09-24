@@ -1,0 +1,247 @@
+/* Onboarding payment step and plan cards.
+   Used by onboarding payment pages. Keep page-specific rules in Features/. */
+
+/* Payment step: billing interval segmented control (v1 intervalSegmented). */
+.ts-onboarding-interval {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-surface-muted);
+}
+
+.ts-onboarding-interval-header { display: none; }
+
+@media (min-width: 64rem) {
+  .ts-onboarding-interval-header { display: inline-flex; }
+}
+
+.ts-onboarding-interval-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-md);
+}
+
+@media (min-width: 64rem) {
+  .ts-onboarding-interval-switch { display: none; }
+}
+
+.ts-onboarding-interval-switch-label {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+}
+
+.ts-onboarding-interval-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-gap-cozy);
+  padding: 6px var(--ts-md);
+  border: 0;
+  border-radius: var(--ts-radius-pill);
+  background-color: transparent;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+  cursor: pointer;
+}
+
+.ts-onboarding-interval-option:hover {
+  background-color: var(--ts-surface);
+  color: var(--ts-ink);
+}
+
+.ts-onboarding-interval-option[aria-pressed="true"] {
+  background-color: var(--ts-surface);
+  color: var(--ts-ink);
+}
+
+.ts-onboarding-interval-option:focus-visible {
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
+}
+
+.ts-onboarding-interval-badge {
+  padding: 2px var(--ts-sm);
+  border-radius: var(--ts-radius-pill);
+  background-color: color-mix(in oklab, var(--ts-accent) 16%, transparent);
+  color: var(--ts-accent-soft);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-semibold);
+}
+
+/* Payment step plan cards (v1 PlanCard) with pricing-page tone accents. */
+.ts-onboarding-plans {
+  display: grid;
+  gap: var(--ts-md);
+  align-items: stretch;
+}
+
+@media (min-width: 48rem) {
+  .ts-onboarding-plans { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.ts-onboarding-plan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-md);
+  align-items: stretch;
+  width: 100%;
+  padding: var(--ts-lg);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--ts-t-base) var(--ts-ease),
+    background-color var(--ts-t-base) var(--ts-ease),
+    box-shadow var(--ts-t-base) var(--ts-ease);
+}
+
+.ts-onboarding-plan:hover {
+  border-color: color-mix(in oklab, var(--ts-plan-tone, var(--ts-accent)) 50%, transparent);
+  box-shadow: 0 12px 32px color-mix(in oklab, var(--ts-plan-tone, var(--ts-accent)) 12%, transparent);
+}
+
+.ts-onboarding-plan[aria-checked="true"] {
+  border-color: var(--ts-plan-tone, var(--ts-accent));
+  background-color: color-mix(in oklab, var(--ts-plan-tone, var(--ts-accent)) 8%, var(--ts-surface));
+  box-shadow:
+    0 0 0 1px var(--ts-plan-tone, var(--ts-accent)),
+    0 12px 32px color-mix(in oklab, var(--ts-plan-tone, var(--ts-accent)) 18%, transparent);
+}
+
+.ts-onboarding-plan:focus-visible {
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
+}
+
+/* Pricing-page tones: Starter emerald, Pro blue, Business violet. */
+.ts-onboarding-plan-starter { --ts-plan-tone: #10B981; --ts-plan-price: #34D399; }
+.ts-onboarding-plan-pro { --ts-plan-tone: #2563EB; --ts-plan-price: #60A5FA; }
+.ts-onboarding-plan-business { --ts-plan-tone: #8B5CF6; --ts-plan-price: #A78BFA; }
+
+.ts-onboarding-plan-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ts-md);
+}
+
+.ts-onboarding-plan-name {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-body);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-onboarding-plan-description {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  line-height: 1.5;
+}
+
+.ts-onboarding-plan-check {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  height: 20px;
+  width: 20px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-surface);
+  color: var(--ts-on-accent);
+}
+
+.ts-onboarding-plan-check svg { display: none; }
+
+.ts-onboarding-plan[aria-checked="true"] .ts-onboarding-plan-check {
+  border-color: var(--ts-plan-tone, var(--ts-accent));
+  background-color: var(--ts-plan-tone, var(--ts-accent));
+}
+
+.ts-onboarding-plan[aria-checked="true"] .ts-onboarding-plan-check svg { display: block; }
+
+.ts-onboarding-plan-price-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ts-gap-cozy);
+}
+
+.ts-onboarding-plan-strike {
+  color: var(--ts-plan-price, var(--ts-accent-soft));
+  font-family: var(--ts-font-mono);
+  font-size: 32px;
+  font-weight: var(--ts-fw-bold);
+  letter-spacing: -0.025em;
+  line-height: 1;
+  opacity: 0.75;
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+}
+
+.ts-onboarding-plan-per {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+}
+
+.ts-onboarding-plan-trial {
+  color: var(--ts-plan-price, var(--ts-accent-soft));
+  font-family: var(--ts-font-mono);
+  font-size: 38px;
+  font-weight: var(--ts-fw-bold);
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.ts-onboarding-plan-divider {
+  width: 100%;
+  height: 1px;
+  background-color: var(--ts-line);
+}
+
+.ts-onboarding-plan-features {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.ts-onboarding-plan-feature {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+}
+
+.ts-onboarding-plan-feature-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 18px;
+  width: 18px;
+  border-radius: 4px;
+  background-color: color-mix(in oklab, var(--ts-plan-tone, var(--ts-accent)) 16%, transparent);
+  color: var(--ts-plan-price, var(--ts-accent-soft));
+}
+
+.ts-onboarding-provider-notice {
+  margin: 0;
+  padding: var(--ts-lg);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+}
+
+@media (min-width: 64rem) {
+  .ts-onboarding-provider-notice { padding: var(--ts-sm); }
+}

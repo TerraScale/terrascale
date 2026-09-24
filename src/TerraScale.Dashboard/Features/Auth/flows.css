@@ -1,0 +1,320 @@
+/* Shared authentication flow and approval primitives.
+   Used by standalone flow pages. Keep page-specific rules in Features/. */
+
+/* ===== Feature: Auth Flows =============================================== */
+/* Standalone flow pages (no dashboard shell): onboarding wizard, local
+checkout, OAuth consent, agent/CLI approval, invitations. Ported from
+ts-dashboard shared-page-styles.ts, onboarding-styles.ts, and the
+per-feature *-page-styles.ts files. */
+
+.ts-flow-root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 40px var(--ts-lg);
+  background-color: var(--ts-canvas);
+  color: var(--ts-ink);
+}
+
+/* v1 Panel: borderless glass card (blur + cardEdge ring), 20px rhythm. */
+.ts-flow-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  max-width: 36rem;
+  padding: var(--ts-xl);
+  border: 0;
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-glass-bg);
+  backdrop-filter: blur(var(--ts-blur));
+  -webkit-backdrop-filter: blur(var(--ts-blur));
+  box-shadow: var(--ts-card-edge);
+}
+
+@media (min-width: 40rem) {
+  .ts-flow-panel { padding: var(--ts-xxl); }
+}
+
+.ts-flow-panel-narrow { max-width: 32rem; }
+.ts-flow-panel-wide { max-width: 42rem; }
+
+.ts-flow-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-md);
+  padding-bottom: var(--ts-md);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-flow-panel-title {
+  margin: 0;
+  font-size: var(--ts-fs-panel-title);
+  font-weight: var(--ts-fw-semibold);
+  color: var(--ts-ink);
+}
+
+.ts-flow-panel-subtitle {
+  margin: var(--ts-xs) 0 0;
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+}
+
+.ts-flow-panel-icon {
+  margin-inline-start: auto;
+  color: var(--ts-accent);
+}
+
+.ts-flow-header {
+  display: flex;
+  align-items: flex-start;
+  column-gap: var(--ts-md);
+  margin-bottom: var(--ts-xl);
+}
+
+.ts-flow-header-center {
+  display: grid;
+  justify-items: center;
+  gap: var(--ts-sm);
+  text-align: center;
+}
+
+.ts-flow-header-content { min-width: 0; }
+
+.ts-flow-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  height: 40px;
+  width: 40px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-accent-soft);
+}
+
+.ts-flow-icon-lg {
+  display: grid;
+  place-items: center;
+  height: 48px;
+  width: 48px;
+  margin-inline: auto;
+  margin-bottom: 20px;
+  border: 1px solid color-mix(in oklab, var(--ts-accent) 30%, transparent);
+  border-radius: var(--ts-radius-control);
+  background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);
+  color: var(--ts-accent);
+}
+
+.ts-flow-title {
+  margin: 0;
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: var(--ts-fw-semibold);
+  color: var(--ts-ink);
+}
+
+.ts-flow-subtitle {
+  margin: var(--ts-xs) 0 0;
+  font-size: var(--ts-fs-ui);
+  line-height: 24px;
+  color: var(--ts-ink-muted);
+}
+
+.ts-flow-section {
+  display: grid;
+  gap: var(--ts-lg);
+}
+
+/* v1 sectionTight: heading sits 8px above the note/pre. */
+.ts-flow-section-tight {
+  gap: var(--ts-sm);
+}
+
+.ts-flow-section-heading {
+  margin: 0;
+  font-size: var(--ts-fs-panel-title);
+  font-weight: var(--ts-fw-semibold);
+  color: var(--ts-ink);
+}
+
+.ts-flow-section-heading-row {
+  display: flex;
+  align-items: center;
+  column-gap: var(--ts-sm);
+  color: var(--ts-ink-muted);
+}
+
+.ts-flow-details-stack {
+  display: grid;
+  gap: var(--ts-xl);
+}
+
+/* Boxed key/value block (agent request details, OAuth consent summary).
+   v1 uses tokens.radiusPanel (12px), not the consts panel radius (11.2px). */
+.ts-flow-details {
+  margin: 0;
+  padding: var(--ts-lg);
+  display: grid;
+  gap: var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: 12px;
+  background-color: var(--ts-surface-muted);
+  font-size: var(--ts-fs-ui);
+}
+
+@media (min-width: 40rem) {
+  .ts-flow-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.ts-flow-detail {
+  display: grid;
+  gap: var(--ts-xs);
+  align-content: start;
+}
+
+.ts-flow-detail-wide { grid-column: auto; }
+
+@media (min-width: 40rem) {
+  .ts-flow-detail-wide { grid-column: span 2; }
+}
+
+.ts-flow-detail dt {
+  margin: 0;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.ts-flow-detail dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ts-ink);
+  overflow-wrap: anywhere;
+}
+
+/* OAuth consent scope list: v1 keeps the browser-default ul (disc markers,
+   40px indent). Chromium drops the UA ul block margins once display:grid
+   is set, so no margins here either. */
+.ts-flow-scopes {
+  margin: 0;
+  padding-inline-start: 40px;
+  display: grid;
+  gap: var(--ts-xs);
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
+}
+
+/* Capability chips (agent + CLI approvals). */
+.ts-capability-list {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--ts-sm);
+  list-style: none;
+}
+
+.ts-capability {
+  padding: var(--ts-sm) var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-ui);
+  overflow-wrap: anywhere;
+}
+
+.ts-capability-reason {
+  display: block;
+  margin-top: var(--ts-xs);
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-sans);
+  font-size: var(--ts-fs-meta);
+}
+
+.ts-flow-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-md);
+  margin-top: var(--ts-xl);
+}
+
+@media (min-width: 40rem) {
+  .ts-flow-actions { flex-direction: row; flex-wrap: wrap; }
+}
+
+.ts-flow-actions .ts-btn,
+.ts-flow-action { width: 100%; }
+
+@media (min-width: 40rem) {
+  .ts-flow-actions .ts-btn,
+  .ts-flow-action { width: auto; }
+}
+
+.ts-flow-actions-row {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--ts-md);
+  margin-top: var(--ts-xl);
+}
+
+@media (min-width: 40rem) {
+  .ts-flow-actions-row {
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+}
+
+.ts-flow-form {
+  display: grid;
+  gap: var(--ts-lg);
+}
+
+.ts-flow-form-denial {
+  gap: var(--ts-md);
+  padding-top: var(--ts-lg);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-flow-pre {
+  margin: 0;
+  padding: var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+}
+
+.ts-flow-continue-link {
+  display: block;
+  margin-top: var(--ts-md);
+  color: var(--ts-accent);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-semibold);
+  text-align: center;
+  text-decoration: none;
+}
+
+.ts-wordmark-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 28px;
+}
+
+.ts-wordmark-wrap img {
+  width: 12rem;
+  max-width: 100%;
+  height: auto;
+}

@@ -1,0 +1,97 @@
+/* Shared toolbar, filters, section heads, columns and pagination.
+   Used by dashboard collection pages. Feature partials add only page-specific
+   widths, tabs and responsive composition. */
+
+.ts-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 var(--ts-md);
+  min-height: 60px;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-toolbar .ts-tabs {
+  align-self: stretch;
+  gap: var(--ts-xl);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.ts-toolbar .ts-tab {
+  height: 60px;
+  padding: 0 2px;
+  border-radius: 0;
+  font-size: var(--ts-fs-body);
+  box-shadow: inset 0 -2px 0 transparent;
+}
+
+.ts-toolbar .ts-tab:hover { box-shadow: inset 0 -2px 0 var(--ts-line); }
+
+.ts-toolbar .ts-tab[aria-selected="true"] {
+  background: none;
+  color: var(--ts-ink);
+  font-weight: var(--ts-fw-semibold);
+  box-shadow: inset 0 -2px 0 var(--ts-accent);
+}
+
+.ts-toolbar .ts-tab svg { opacity: 0.8; }
+
+.ts-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ts-sm);
+}
+
+.ts-filters .ts-filter-field {
+  flex: 1 1 10rem;
+  min-width: 10rem;
+}
+
+.ts-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ts-md);
+}
+
+.ts-columns {
+  display: grid;
+  gap: var(--ts-xl);
+  padding-top: 20px;
+  border-top: 1px solid var(--ts-line);
+}
+
+@media (min-width: 64rem) {
+  .ts-columns {
+    grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr);
+  }
+
+  .ts-aside {
+    padding-left: var(--ts-xl);
+    border-left: 1px solid var(--ts-line);
+  }
+}
+
+.ts-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-md);
+}
+
+.ts-pager-page {
+  min-width: 2.25rem;
+  justify-content: center;
+}
+
+.ts-pager-page[aria-current="page"] {
+  background-color: var(--ts-fill-hover);
+  color: var(--ts-ink);
+}

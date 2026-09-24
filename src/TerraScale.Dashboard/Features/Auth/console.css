@@ -1,0 +1,228 @@
+/* Authentication console page styles.
+   Used by the authentication console page styles. feature. Keep page-specific rules in Features/. */
+
+/* ts-auth console ------------------------------------------------------ */
+.ts-auth-console { gap: var(--ts-xl); }
+.ts-auth-checklist { display: grid; gap: 2px; padding: 8px; }
+.ts-auth-check { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: var(--ts-radius-control); color: var(--ts-ink); text-decoration: none; }
+.ts-auth-check:hover { background: var(--ts-fill-hover); }
+.ts-auth-check > span:first-child { display: grid; width: 24px; height: 24px; flex: 0 0 auto; place-items: center; border: 1px solid var(--ts-line); border-radius: 50%; color: var(--ts-ink-muted); font-family: var(--ts-font-mono); font-size: var(--ts-fs-meta); }
+.ts-auth-check.is-done > span:first-child { border-color: color-mix(in oklab, var(--ts-success) 50%, var(--ts-line)); color: var(--ts-success); background: rgba(52, 211, 153, .1); }
+.ts-auth-check > span:nth-child(2) { display: grid; flex: 1; gap: 3px; min-width: 0; }
+.ts-auth-check small { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+.ts-auth-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--ts-md); padding: var(--ts-md) var(--ts-lg); border-bottom: 1px solid var(--ts-line); }
+.ts-auth-search { display: flex; flex: 1 1 16rem; align-items: center; gap: 8px; max-width: 30rem; }
+.ts-auth-search > span { color: var(--ts-ink-muted); }
+.ts-auth-search .ts-input { flex: 1; }
+.ts-auth-settings-form { display: grid; gap: var(--ts-xxl); padding: var(--ts-lg); }
+.ts-auth-setting-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--ts-md); padding-top: var(--ts-lg); border-top: 1px solid var(--ts-line); }
+
+/* Authentication pages use the Usage anatomy: scrollable section tabs,
+   flat sections, KPI rows, and flush resource tables. */
+.ts-auth-console {
+  gap: var(--ts-xl);
+}
+
+.ts-auth-toolbar {
+  min-width: 0;
+  padding: 0;
+}
+
+.ts-auth-tabs {
+  min-width: 0;
+  flex: 1 1 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ts-auth-tabs::-webkit-scrollbar { display: none; }
+.ts-auth-tabs .ts-tab { flex: 0 0 auto; }
+
+.ts-auth-more-menu {
+  flex: 0 0 auto;
+}
+
+.ts-auth-more-trigger {
+  height: 40px;
+  padding-inline: var(--ts-md);
+}
+
+.ts-auth-more-trigger svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ts-auth-more-menu > .ts-menu-panel {
+  top: calc(100% + var(--ts-xs));
+  right: 0;
+  max-height: min(70vh, 28rem);
+  overflow-y: auto;
+}
+
+.ts-auth-filters {
+  min-width: 0;
+  flex: 0 1 18rem;
+}
+
+.ts-auth-search {
+  position: relative;
+  min-width: 0;
+}
+
+.ts-auth-search svg {
+  position: absolute;
+  left: var(--ts-md);
+  top: 50%;
+  color: var(--ts-ink-muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.ts-auth-search .ts-input {
+  width: 100%;
+  padding-left: 36px;
+}
+
+.ts-auth-overview-section,
+.ts-auth-special-section,
+.ts-auth-resource-section {
+  min-width: 0;
+}
+
+.ts-auth-overview-section + .ts-auth-overview-section,
+.ts-auth-special-section + .ts-auth-special-section {
+  padding-top: var(--ts-xl);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-auth-overview-kpis {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.ts-auth-stat-link {
+  color: var(--ts-ink-muted);
+  text-decoration: none;
+}
+
+.ts-auth-stat-link:hover { color: var(--ts-accent); }
+
+.ts-auth-checklist {
+  display: grid;
+  gap: 0;
+}
+
+.ts-auth-check {
+  border-top: 1px solid var(--ts-line);
+  border-radius: 0;
+}
+
+.ts-auth-check:last-child { border-bottom: 1px solid var(--ts-line); }
+
+.ts-auth-code-block {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--ts-line);
+  border-radius: 0;
+  background: none;
+}
+
+.ts-auth-resource-section > .ts-alert { margin-top: 0; }
+
+.ts-auth-table-wrap {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  contain: paint;
+}
+
+.ts-auth-table-wrap .ts-table {
+  min-width: 46rem;
+}
+
+.ts-auth-table-wrap .ts-table th:last-child,
+.ts-auth-table-wrap .ts-table td:last-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.ts-auth-row-actions {
+  justify-content: flex-end;
+}
+
+.ts-auth-detail {
+  margin: var(--ts-xl) 0 0;
+  padding: var(--ts-xl) 0 0;
+  border: 0;
+  border-top: 1px solid var(--ts-line);
+  border-radius: 0;
+  background: none;
+}
+
+.ts-auth-detail-grid {
+  border: 0;
+  border-radius: 0;
+}
+
+.ts-auth-detail-grid > div {
+  border-top: 1px solid var(--ts-line);
+  background: none;
+}
+
+.ts-auth-detail-grid > div:last-child { border-bottom: 1px solid var(--ts-line); }
+
+.ts-auth-contract-list {
+  padding: 0;
+}
+
+.ts-auth-contract-list > div {
+  padding: var(--ts-md) 0;
+  border-top: 1px solid var(--ts-line);
+  border-radius: 0;
+}
+
+.ts-auth-contract-list > div:last-child { border-bottom: 1px solid var(--ts-line); }
+
+.ts-auth-settings-form {
+  padding: 0;
+}
+
+.ts-auth-billing-content {
+  display: grid;
+  gap: var(--ts-md);
+  max-width: 44rem;
+}
+
+.ts-auth-billing-content strong {
+  font-size: 1.5rem;
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-auth-billing-content p { margin: 0; color: var(--ts-ink-muted); }
+
+.ts-auth-steps {
+  padding: 0;
+}
+
+@media (min-width: 64rem) {
+  .ts-auth-toolbar {
+    flex-wrap: nowrap;
+  }
+
+  .ts-auth-filters {
+    flex: 0 0 18rem;
+    width: 18rem;
+  }
+}
+
+@media (max-width: 64rem) {
+  .ts-auth-overview-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 48rem) {
+  .ts-auth-toolbar { align-items: stretch; }
+  .ts-auth-filters { flex-basis: 100%; }
+  .ts-auth-overview-kpis { grid-template-columns: 1fr 1fr; gap: var(--ts-sm); }
+  .ts-auth-detail-grid > div { grid-template-columns: 1fr; gap: var(--ts-xs); }
+  .ts-auth-secret { align-items: flex-start; flex-wrap: wrap; }
+}

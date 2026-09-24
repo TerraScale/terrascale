@@ -1,0 +1,194 @@
+/* Flat notification inbox layout for the core dashboard page.
+   Used by NotificationsSlice.cshtml; shared list primitives stay separate. */
+
+.ts-notifications-page {
+  gap: var(--ts-xl);
+}
+
+.ts-notifications-toolbar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ts-sm);
+}
+
+.ts-notifications-toolbar-actions form {
+  display: flex;
+}
+
+.ts-notifications-filters {
+  margin-left: auto;
+}
+
+.ts-notifications-filters .ts-filter-field,
+.ts-notifications-filters .ts-select {
+  min-width: 11rem;
+}
+
+.ts-notifications-section {
+  padding-bottom: var(--ts-xl);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-notifications-section:last-child {
+  border-bottom: 0;
+}
+
+.ts-notifications-list {
+  display: grid;
+  min-width: 0;
+}
+
+.ts-notifications-page .ts-notification {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--ts-lg);
+  min-height: 0;
+  padding: var(--ts-lg) 0;
+  border: 0;
+  border-top: 1px solid var(--ts-line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ts-notifications-page .ts-notification:first-child {
+  border-top: 0;
+}
+
+.ts-notifications-page .ts-notification-unread {
+  padding-left: var(--ts-md);
+  border-left: 2px solid var(--ts-accent);
+  background: color-mix(in oklab, var(--ts-accent) 5%, transparent);
+}
+
+.ts-notifications-page .ts-notification-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  place-items: center;
+  border: 0;
+  border-radius: var(--ts-radius-control);
+  background: color-mix(in oklab, var(--ts-info) 12%, transparent);
+  color: var(--ts-info);
+}
+
+.ts-notifications-page .ts-notification-icon-danger {
+  background: color-mix(in oklab, var(--ts-danger) 12%, transparent);
+  color: var(--ts-danger);
+}
+
+.ts-notifications-page .ts-notification-icon-warning {
+  background: color-mix(in oklab, var(--ts-warning) 12%, transparent);
+  color: var(--ts-warning);
+}
+
+.ts-notifications-page .ts-notification-icon-success {
+  background: color-mix(in oklab, var(--ts-success) 12%, transparent);
+  color: var(--ts-success);
+}
+
+.ts-notifications-page .ts-notification-body {
+  gap: var(--ts-sm);
+}
+
+.ts-notifications-page .ts-notification-heading,
+.ts-notifications-page .ts-notification-details {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ts-sm);
+}
+
+.ts-notification-unread-label {
+  color: var(--ts-info);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-notification-unread-label::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 6px 1px 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.ts-notifications-page .ts-notification-text {
+  line-height: 1.5;
+}
+
+.ts-notifications-page .ts-notification-meta {
+  margin: 0;
+}
+
+.ts-notifications-page .ts-notification-mark {
+  min-height: var(--ts-control-h-sm);
+  height: var(--ts-control-h-sm);
+  margin-top: var(--ts-xs);
+  border: 1px solid var(--ts-line);
+}
+
+.ts-notifications-section .ts-pager {
+  padding-top: var(--ts-lg);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-notifications-flip {
+  display: inline-flex;
+  transform: scaleX(-1);
+}
+
+.ts-notifications-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--ts-xxxl) var(--ts-xl);
+  text-align: center;
+}
+
+@media (max-width: 40rem) {
+  .ts-notifications-page .ts-toolbar {
+    align-items: flex-start;
+    padding-block: var(--ts-md);
+  }
+
+  .ts-notifications-page .ts-toolbar .ts-tabs,
+  .ts-notifications-page .ts-toolbar .ts-tab {
+    height: 52px;
+  }
+
+  .ts-notifications-toolbar-actions,
+  .ts-notifications-toolbar-actions form,
+  .ts-notifications-toolbar-actions .ts-btn {
+    width: 100%;
+  }
+
+  .ts-notifications-filters {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .ts-notifications-filters .ts-filter-field,
+  .ts-notifications-filters .ts-filter-field .ts-select,
+  .ts-notifications-filters > .ts-btn {
+    width: 100%;
+  }
+
+  .ts-notifications-page .ts-notification {
+    grid-template-columns: 40px minmax(0, 1fr);
+    padding-block: var(--ts-lg);
+  }
+
+  .ts-notifications-page .ts-notification form {
+    grid-column: 2;
+  }
+
+  .ts-notifications-page .ts-notification-mark {
+    margin-top: 0;
+  }
+}

@@ -143,7 +143,7 @@ public sealed class PagesSmokeTests
         using var client = app.CreateDemoClient();
         var page = await app.GetPageAsync(client, "/audit");
         await Assert.That(page.StatusCode).IsEqualTo(200);
-        await Assert.That(page.Heading).IsEqualTo("Logs");
+        await Assert.That(page.Heading).IsEqualTo("Audit");
         await Assert.That(page.Contains("Recent activity")).IsTrue();
         await Assert.That(page.Contains("Retention")).IsTrue();
         await Assert.That(page.Contains("Severity breakdown")).IsTrue();

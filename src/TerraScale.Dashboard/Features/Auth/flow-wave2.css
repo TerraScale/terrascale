@@ -1,0 +1,112 @@
+/* Second wave authentication flow precision rules.
+   Used by approval and invitation pages. Keep page-specific rules in Features/. */
+
+/* ===== flow-auth wave2 ====================================================
+   v1 flow pages never reset browser default margins (no universal margin
+   reset in its CSS kernel): h1 keeps 0.67em block margins, p/dl/ul keep
+   1em. v2's base resets p/h1-h6 to 0, so the deployed rhythm is restored
+   here, scoped per route. */
+
+/* Flow buttons: v1 buttonStyles font weight 600. */
+.ts-flow-panel .ts-btn { font-weight: var(--ts-fw-semibold); }
+
+/* Buttons inside .ts-flow-actions-row sit in <form> wrappers; v1 stretches
+   the buttons themselves (flex children) full-width on mobile. */
+.ts-flow-actions-row form { display: flex; }
+
+.ts-flow-actions-row .ts-btn { width: 100%; }
+
+@media (min-width: 40rem) {
+  .ts-flow-actions-row .ts-btn { width: auto; }
+}
+
+/* --- oauth-consent --- */
+.ts-consent-root { padding-inline: 20px; }
+
+/* v1 deployed consent: wordmark sits 24px above the header and the panel
+   keeps the 24px padding at every width (the 32px >= 40rem bump never
+   shipped — verified against the deployed screenshots). */
+.ts-consent-root .ts-flow-panel { padding: var(--ts-xl); }
+
+.ts-consent-root .ts-wordmark-wrap { margin-bottom: 24px; }
+
+.ts-consent-root .ts-flow-header { margin-bottom: 20px; }
+
+.ts-consent-root .ts-flow-title { margin-block: 0.67em; }
+
+.ts-consent-root .ts-flow-subtitle { margin-bottom: 1em; }
+
+.ts-consent-root .ts-flow-details-consent { margin-block: 1em; }
+
+.ts-consent-root .ts-flow-note { margin-bottom: 1em; }
+
+/* v1 oauth-consent-page-styles actions: marginTop spacing.xl. */
+.ts-consent-root .ts-flow-actions-row { margin-top: var(--ts-xl); }
+
+/* --- agent-approve --- */
+.ts-agent-root .ts-flow-title { line-height: 1.25; }
+
+.ts-agent-root .ts-flow-icon-badge { border-radius: 12px; }
+
+/* v1 section headings inherit the body 1.6 line-height; the heading row
+   keeps the ink color (only the icon provides the accent). Wide viewports
+   render the headings tighter (deployed measurements). */
+.ts-agent-root .ts-flow-section-heading { line-height: 1.6; }
+
+@media (min-width: 40rem) {
+  .ts-agent-root .ts-flow-section-heading { line-height: 1.25; }
+}
+
+.ts-agent-root .ts-flow-section-heading-row { color: var(--ts-ink); }
+
+/* v1 FormField labels sit on a 20px flex row with line-height 1. */
+.ts-agent-root .ts-label {
+  display: flex;
+  align-items: center;
+  min-height: 20px;
+  line-height: 1;
+}
+
+/* --- invitations --- */
+.ts-inv-root .ts-wordmark-wrap { margin-bottom: var(--ts-xxl); }
+
+.ts-inv-root .ts-wordmark-wrap img {
+  width: 100%;
+  max-width: 20rem;
+}
+
+/* v1 renders icon/title/description as panel flex children (gap 20) plus
+   their own margins; collapsed into one block with the same net spacing:
+   icon→title 20+20+16, title→subtitle 16+20+8. */
+.ts-inv-root .ts-flow-header-center {
+  display: block;
+  margin-bottom: 0;
+}
+
+.ts-inv-root .ts-flow-icon-lg { margin-bottom: 56px; }
+
+.ts-inv-root .ts-flow-title {
+  margin: 0 0 44px;
+  text-align: center;
+}
+
+.ts-inv-root .ts-flow-subtitle {
+  margin: 0 0 14px;
+  text-align: center;
+}
+
+.ts-inv-root .ts-flow-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ts-md);
+  margin-top: 20px;
+}
+
+@media (min-width: 40rem) {
+  .ts-inv-root .ts-flow-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.ts-inv-root .ts-flow-actions form { display: flex; }
+
+/* v1 Decline uses the default (secondary) variant: borderless fill. */
+.ts-inv-root .ts-btn-secondary { border-color: transparent; }
