@@ -47,6 +47,13 @@ details.ts-menu.ts-account > .ts-menu-panel {
   width: 100%;
 }
 
+@media (max-width: 47.99rem) {
+  details.ts-menu.ts-project-menu > .ts-menu-panel {
+    width: calc(var(--ts-sidebar-width) - 2 * var(--ts-sm));
+    max-width: calc(100vw - 2 * var(--ts-sm));
+  }
+}
+
 .ts-project-panel-scroll {
   display: flex;
   flex-direction: column;

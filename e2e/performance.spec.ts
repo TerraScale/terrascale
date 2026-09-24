@@ -170,6 +170,10 @@ test("mobile shell and flow bindings initialize without script errors", async ({
   await expect(navInset).toHaveAttribute("inert", "");
   await expect(page.locator("body")).toHaveCSS("position", "fixed");
   expect(await page.evaluate(() => document.body.style.top)).toBe(`-${scrollYBeforeOpen}px`);
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator(".ts-project-trigger")).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator(".ts-account-trigger")).toBeFocused();
   for (let index = 0; index < 20; index += 1) {
     await page.keyboard.press("Tab");
     expect(await navDrawer.evaluate((drawer) => drawer.contains(document.activeElement))).toBe(true);
