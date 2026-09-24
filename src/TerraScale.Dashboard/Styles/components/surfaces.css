@@ -6,17 +6,14 @@
 .ts-glass {
   background-color: var(--ts-glass-bg);
   backdrop-filter: blur(var(--ts-blur));
-  -webkit-backdrop-filter: blur(var(--ts-blur));
 }
 
 .ts-glass-strong {
   background-color: var(--ts-glass-strong);
   backdrop-filter: blur(var(--ts-blur));
-  -webkit-backdrop-filter: blur(var(--ts-blur));
 }
 
-/* v1 Panel: borderless glass card, 20px rhythm, header divider
-   (components/ui/Panel.tsx). */
+/* Borderless glass panel with a 20px rhythm and header divider. */
 .ts-panel {
   display: flex;
   flex-direction: column;
@@ -26,7 +23,6 @@
   border-radius: var(--ts-radius-panel);
   background-color: rgba(22, 24, 31, 0.52);
   backdrop-filter: blur(var(--ts-blur));
-  -webkit-backdrop-filter: blur(var(--ts-blur));
   box-shadow: var(--ts-card-edge);
   padding: 0;
   padding-block: 20px;

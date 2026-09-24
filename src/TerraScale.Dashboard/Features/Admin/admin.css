@@ -3,10 +3,10 @@
 
 /* ===== Feature: Admin ===== */
 
-/* Shared admin page shell (1:1 with admin-page-styles.ts + admin-styles.ts). */
+/* Shared admin page shell. */
 .ts-admin-root {
   display: grid;
-  gap: 20px; /* old grid gap-5 */
+  gap: 20px;
 }
 
 .ts-admin-title {

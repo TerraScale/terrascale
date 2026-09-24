@@ -26,6 +26,8 @@
 @import "components/toasts.css" layer(components);
 @import "components/charts.css" layer(components);
 @import "components/text.css" layer(components);
+@import "components/terms.css" layer(components);
+@import "components/avatars.css" layer(components);
 
 /* Signed-in shell and standalone authentication. */
 @import "shell/shell.css" layer(components);

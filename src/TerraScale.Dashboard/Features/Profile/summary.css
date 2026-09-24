@@ -1,48 +1,5 @@
-/* Shared summary terms, panes, context values, and avatars.
-   Used by profile and settings pages. Keep page-specific rules in Features/. */
-
-.ts-summary-terms {
-  display: grid;
-  gap: var(--ts-sm);
-  grid-template-columns: minmax(0, 1fr);
-}
-
-@media (min-width: 40rem) {
-  .ts-summary-terms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-.ts-summary-terms-3 { grid-template-columns: minmax(0, 1fr); }
-
-@media (min-width: 40rem) {
-  .ts-summary-terms-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-
-.ts-summary-term {
-  padding: var(--ts-md);
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-control);
-  background-color: var(--ts-surface-muted);
-  display: grid;
-  gap: 0;
-  min-width: 0;
-}
-
-.ts-summary-term dt {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-meta);
-  font-weight: var(--ts-fw-medium);
-  text-transform: uppercase;
-}
-
-.ts-summary-term dd {
-  margin: var(--ts-xs) 0 0;
-  color: var(--ts-ink);
-  font-size: var(--ts-fs-ui);
-  font-weight: var(--ts-fw-semibold);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* Profile-only grids and context layout.
+   Shared term and avatar surfaces live in Styles/components/. */
 
 /* Two-column feature panes. */
 .ts-grid-two-pane {
@@ -71,29 +28,6 @@
   .ts-grid-two-span { grid-column: span 2; }
 }
 
-/* Context / kv terms. */
-.ts-context-term {
-  padding: var(--ts-md);
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-control);
-  background-color: var(--ts-surface-muted);
-  min-width: 0;
-}
-
-.ts-context-label {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-meta);
-  font-weight: var(--ts-fw-medium);
-  text-transform: uppercase;
-}
-
-.ts-context-value {
-  color: var(--ts-ink);
-  font-size: var(--ts-fs-ui);
-  overflow-wrap: anywhere;
-  margin: var(--ts-xs) 0 0;
-}
-
 .ts-grid-context {
   display: grid;
   gap: var(--ts-md);
@@ -106,30 +40,4 @@
 
 @media (min-width: 64rem) {
   .ts-grid-context { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-
-/* Avatars. */
-.ts-avatar {
-  display: inline-grid;
-  place-items: center;
-  border: 1px solid color-mix(in oklab, var(--ts-accent) 30%, transparent);
-  border-radius: var(--ts-radius-pill);
-  background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);
-  color: var(--ts-accent-strong);
-  font-weight: var(--ts-fw-semibold);
-  flex-shrink: 0;
-}
-
-.ts-avatar-large {
-  border-radius: var(--ts-radius-panel);
-  font-size: var(--ts-fs-panel-title);
-  height: 56px;
-  width: 56px;
-}
-
-.ts-avatar-org {
-  border-radius: var(--ts-radius-control);
-  font-size: var(--ts-fs-ui);
-  height: 48px;
-  width: 48px;
 }

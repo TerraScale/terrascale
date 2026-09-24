@@ -3,7 +3,7 @@
 
 /* ===== Feature: Settings/Profile/Org ===== */
 
-/* Shared page vocabulary (ported from app/shared-page-styles.ts). */
+/* Shared page vocabulary. */
 .ts-page > .ts-panel + .ts-panel { margin-top: 0; }
 
 .ts-row-header {
@@ -280,6 +280,19 @@ max-content and let wide tables/code blow out narrow viewports. */
 /* v1 pageStyles.summaryTerms: the dl holds a 32rem floor from 64rem. */
 @media (min-width: 64rem) {
   .ts-org .ts-summary-terms { min-width: 32rem; }
+}
+
+.ts-summary-terms-3 { grid-template-columns: minmax(0, 1fr); }
+
+@media (min-width: 40rem) {
+  .ts-summary-terms-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.ts-avatar-org {
+  border-radius: var(--ts-radius-control);
+  font-size: var(--ts-fs-ui);
+  height: 48px;
+  width: 48px;
 }
 
 /* v1 DataTable (ui/DataTable.tsx): 16px body, 14px semibold wide-tracked

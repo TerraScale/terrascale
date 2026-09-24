@@ -228,7 +228,6 @@
   background: none;
   box-shadow: none;
   backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 
 .ts-login-column .ts-auth-locale-footer {

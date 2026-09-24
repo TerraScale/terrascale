@@ -21,7 +21,6 @@
   border-right: 1px solid var(--ts-line);
   background-color: var(--ts-glass-bg);
   backdrop-filter: blur(var(--ts-blur));
-  -webkit-backdrop-filter: blur(var(--ts-blur));
   transition: transform var(--ts-t-base) var(--ts-ease);
   overflow: hidden;
 }
@@ -250,7 +249,6 @@
   border-right: 1px solid var(--ts-line);
   background-color: var(--ts-glass-bg);
   backdrop-filter: blur(var(--ts-blur));
-  -webkit-backdrop-filter: blur(var(--ts-blur));
 }
 
 @media (min-width: 64rem) {
@@ -308,7 +306,6 @@
   radial-gradient(1200px 800px at 70% -10%, rgba(var(--ts-accent-rgb), 0.06), transparent 60%),
   linear-gradient(180deg, color-mix(in oklab, var(--ts-canvas) 82%, transparent), color-mix(in oklab, var(--ts-canvas) 68%, transparent));
   backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
 }
 
 /* v1 keeps an in-flow spacer (desktopGap) beside its fixed sidebar; the

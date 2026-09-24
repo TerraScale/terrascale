@@ -18,7 +18,6 @@
   border: 0;
   background-color: var(--ts-glass-bg);
   backdrop-filter: blur(var(--ts-blur));
-  -webkit-backdrop-filter: blur(var(--ts-blur));
   box-shadow: var(--ts-card-edge);
 }
 

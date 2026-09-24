@@ -1,12 +1,9 @@
 /* Shared home overview and dashboard activity presentation.
    Used by the home page. Keep page-specific rules in Features/. */
 
-/* --- Feature: Home --------------------------------------------------
-   v1 sources: app/(dashboard)/page-styles.ts, src/features/home/home-styles.ts,
-   src/components/ui/Panel.tsx, src/components/ui/ChartShell.tsx. */
+/* --- Feature: Home -------------------------------------------------- */
 
-/* Metric cards (page-styles.ts metricCard/metricLabel/metricValue/metricDetail).
-   Scoped: other features keep the shared mono KPI look. */
+/* Metric cards. Scoped: other features keep the shared mono KPI look. */
 .ts-home-metrics .ts-card {
   box-shadow: var(--ts-shadow-panel);
 }
@@ -28,7 +25,7 @@
   line-height: 1.6;
 }
 
-/* MetricSparkline island: rule + summary row + 48px chart (home-styles.ts). */
+/* Metric sparkline: rule, summary row, and compact chart. */
 .ts-metric-chart {
   border-top: 1px solid color-mix(in oklab, var(--ts-line) 70%, transparent);
   margin-top: var(--ts-md);
@@ -48,13 +45,11 @@
   margin-top: 0;
 }
 
-/* Home panels use v1's glass Panel (Panel.tsx: borderWidth 0, glassBg,
-   cardEdge, paddingBlock 20, gap 20, header rule with 20/16px insets). */
+/* Home panels use the shared glass surface with 20px rhythm and inset headers. */
 .ts-home .ts-panel {
   border: none;
   background-color: var(--ts-glass-bg);
   backdrop-filter: blur(var(--ts-blur));
-  -webkit-backdrop-filter: blur(var(--ts-blur));
   box-shadow: var(--ts-card-edge);
   padding: 20px 0;
   gap: 20px;
@@ -80,7 +75,7 @@
   color: var(--ts-ink-muted);
 }
 
-/* Activity panel (ChartShell body padding 16px, home-styles.ts controls). */
+/* Activity panel body and controls. */
 .ts-chart-body {
   display: flex;
   flex-direction: column;
@@ -140,7 +135,7 @@
   padding: var(--ts-sm) var(--ts-md);
 }
 
-/* Getting-started side rail (page-styles.ts:77-161). */
+/* Getting-started side rail. */
 .ts-home-panel-body {
   display: grid;
   gap: var(--ts-xl);
@@ -198,7 +193,7 @@
   text-decoration: underline;
 }
 
-/* Connect section (page-styles.ts:154-256). */
+/* Connect section. */
 .ts-connect-section {
   display: grid;
   gap: var(--ts-lg);
@@ -254,7 +249,7 @@
   padding: var(--ts-lg);
 }
 
-/* Overview two-column layout (page-styles.ts:10-17: gap xl, fluid rail). */
+/* Overview two-column layout. */
 .ts-overview-grid {
   gap: var(--ts-xl);
 }
@@ -265,9 +260,7 @@
   }
 }
 
-/* Stale monitoring alert (v1 compat alert.tsx + shadcn alert: padding
-   14px/16px, radii.panel 11.2px, medium title, icon offset 2px; the
-   staleLayout row is page-styles.ts staleLayout). */
+/* Stale monitoring alert with shared spacing and tone. */
 .ts-home {
   gap: var(--ts-xl);
 }

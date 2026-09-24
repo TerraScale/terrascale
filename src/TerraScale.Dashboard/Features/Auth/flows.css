@@ -3,9 +3,7 @@
 
 /* ===== Feature: Auth Flows =============================================== */
 /* Standalone flow pages (no dashboard shell): onboarding wizard, local
-checkout, OAuth consent, agent/CLI approval, invitations. Ported from
-ts-dashboard shared-page-styles.ts, onboarding-styles.ts, and the
-per-feature *-page-styles.ts files. */
+   checkout, OAuth consent, agent/CLI approval, and invitations. */
 
 .ts-flow-root {
   display: flex;
@@ -29,7 +27,6 @@ per-feature *-page-styles.ts files. */
   border-radius: var(--ts-radius-panel);
   background-color: var(--ts-glass-bg);
   backdrop-filter: blur(var(--ts-blur));
-  -webkit-backdrop-filter: blur(var(--ts-blur));
   box-shadow: var(--ts-card-edge);
 }
 
