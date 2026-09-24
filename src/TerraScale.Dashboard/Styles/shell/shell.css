@@ -29,6 +29,14 @@
    desktop sidebar (and its in-flow gap on .ts-inset) starts at 48rem,
    matching v1's SidebarProvider breakpoint. */
 @media (max-width: 47.99rem) {
+  .ts-sidebar-header > .ts-project-controls {
+    padding-right: calc(var(--ts-control-h) + var(--ts-sm));
+  }
+
+  .ts-admin-sidebar-header {
+    padding-right: calc(var(--ts-control-h) + var(--ts-sm));
+  }
+
   .ts-sidebar {
     transform: translateX(-100%);
     background-color: var(--ts-glass-strong);
@@ -41,9 +49,23 @@
 }
 
 .ts-sidebar-header {
+  position: relative;
   padding: var(--ts-sm);
   padding-bottom: var(--ts-sm);
   flex-shrink: 0;
+}
+
+.ts-sidebar-close {
+  display: none;
+  position: absolute;
+  top: var(--ts-sm);
+  right: var(--ts-sm);
+}
+
+@media (max-width: 47.99rem) {
+  .ts-sidebar-close {
+    display: inline-flex;
+  }
 }
 
 .ts-admin-sidebar-header {

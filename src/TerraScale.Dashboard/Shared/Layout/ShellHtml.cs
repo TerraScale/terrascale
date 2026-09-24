@@ -74,9 +74,10 @@ public static class ShellHtml
     {
         var counts = shell.Store.Databases.GroupBy(database => database.ProjectId)
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
-        var builder = new StringBuilder("        <aside id=\"ts-navigation\" class=\"ts-sidebar\">\n");
+        var builder = new StringBuilder("        <aside id=\"ts-navigation\" class=\"ts-sidebar\" aria-label=\"Primary navigation\">\n");
         builder.AppendLine("            <div class=\"ts-sidebar-header\">");
         builder.Append(ProjectControls(shell, counts));
+        builder.AppendLine($"""                <button type="button" class="ts-sidebar-close ts-icon-btn" aria-label="Close navigation" data-on:click="$navOpen=false">{Icons.X(18).Value}</button>""");
         builder.AppendLine("            </div>");
         builder.AppendLine("""            <div class="ts-sidebar-content">""");
         builder.AppendLine("                <ul class=\"ts-nav\">");
@@ -106,6 +107,7 @@ public static class ShellHtml
         builder.AppendLine("            <div class=\"ts-sidebar-header ts-admin-sidebar-header\">");
         builder.AppendLine($"""                <a class="ts-sidebar-brand" href="/" aria-label="TerraScale Dashboard"><img src="{AssetUrls.Url("/brand/logo-terrascale-blue.svg")}" alt="" aria-hidden="true" decoding="async" /></a>""");
         builder.AppendLine("                <div class=\"ts-admin-sidebar-title\">Administration</div>");
+        builder.AppendLine($"""                <button type="button" class="ts-sidebar-close ts-icon-btn" aria-label="Close navigation" data-on:click="$navOpen=false">{Icons.X(18).Value}</button>""");
         builder.AppendLine("            </div>");
         builder.AppendLine("            <nav class=\"ts-sidebar-content\" aria-label=\"Admin sections\">");
         builder.AppendLine("                <ul class=\"ts-nav\">");
