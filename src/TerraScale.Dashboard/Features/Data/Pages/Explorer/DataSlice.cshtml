@@ -19,7 +19,7 @@
         <nav class="ts-tabs" aria-label="Data views">
             @foreach (var (id, label, icon) in tabs)
             {
-                <a class="ts-tab" href="/data?view=@id" aria-current="@(Model.View == id ? "page" : null)" aria-selected="@(Model.View == id ? "true" : "false")">@IconByName(icon, 16) @label</a>
+                <a class="ts-tab" href="@Model.ViewHref(id)" aria-current="@(Model.View == id ? "page" : null)" aria-selected="@(Model.View == id ? "true" : "false")">@IconByName(icon, 16) @label</a>
             }
         </nav>
         @if (Model.View is "queries" or "table")
@@ -414,9 +414,28 @@
 
     private static string ExtractField(string json, string field)
     {
-        var pattern = "\\\"" + field + "\\\":\\\\s*(\\\"(?<q>[^\\\"]*)\\\"|(?<n>[0-9.]+))";
-        var match = System.Text.RegularExpressions.Regex.Match(json, pattern);
-        return match.Success ? match.Groups["q"].Success ? match.Groups["q"].Value : match.Groups["n"].Value : "";
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object
+                || !document.RootElement.TryGetProperty(field, out var value))
+            {
+                return "";
+            }
+
+            return value.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.String => value.GetString() ?? "",
+                System.Text.Json.JsonValueKind.Number
+                    or System.Text.Json.JsonValueKind.True
+                    or System.Text.Json.JsonValueKind.False => value.GetRawText(),
+                _ => "",
+            };
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return "";
+        }
     }
 
     private static string FormatJson(string json)

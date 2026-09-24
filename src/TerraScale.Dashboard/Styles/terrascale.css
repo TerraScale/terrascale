@@ -72,7 +72,6 @@
 @import "../Features/Audit/audit.css" layer(features);
 @import "../Features/Subscriptions/checkout.css" layer(features);
 @import "../Features/Home/home.css" layer(features);
-@import "../Features/Data/data-parity.css" layer(features);
 @import "../Features/Organization/modal.css" layer(features);
 @import "../Features/Auth/console.css" layer(features);
 @import "../Features/Notifications/notifications-core.css" layer(features);

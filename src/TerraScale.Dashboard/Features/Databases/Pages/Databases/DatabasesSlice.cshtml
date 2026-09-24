@@ -101,6 +101,26 @@
                     </tbody>
                 </table>
             </div>
+            <nav class="ts-pager" aria-label="Database pages">
+                <span class="ts-meta">Showing @Model.First–@Model.Last of @Model.Total databases</span>
+                @if (Model.PageCount > 1)
+                {
+                    <div class="ts-row ts-row-tight">
+                        @if (Model.Page > 1)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page - 1)" rel="prev">@Icons.ArrowLeft(14) Previous</a>
+                        }
+                        @for (var pageNumber = 1; pageNumber <= Model.PageCount; pageNumber++)
+                        {
+                            <a class="ts-btn ts-btn-ghost ts-pager-page" href="@Model.Href(pageNumber)" aria-current="@(pageNumber == Model.Page ? "page" : null)">@pageNumber</a>
+                        }
+                        @if (Model.Page < Model.PageCount)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                        }
+                    </div>
+                }
+            </nav>
         }
     </section>
 </div>
@@ -142,6 +162,14 @@
             </div>
             <form class="ts-dialog-form" method="post" action="/api/v1/dashboard/databases/delete">
                 <input type="hidden" name="databaseId" value="@row.Id" />
+                @if (Model.Query.Length > 0)
+                {
+                    <input type="hidden" name="q" value="@Model.Query" />
+                }
+                @if (Model.Page > 1)
+                {
+                    <input type="hidden" name="page" value="@Model.Page" />
+                }
                 <div class="ts-alert ts-alert-danger" role="alert">
                     <div class="ts-stack-xs">
                         <span class="ts-alert-title">This deletes the saved logical database</span>

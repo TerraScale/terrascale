@@ -17,5 +17,6 @@ public sealed class DatabasesPageEndpoint(DashboardStore store) : EndpointWithou
             store,
             HttpContext.Request.Query["q"].FirstOrDefault(),
             HttpContext.Request.Query["create"].FirstOrDefault() == "1",
-            HttpContext.Request.Query["error"].FirstOrDefault() ?? store.DatabaseListError)));
+            HttpContext.Request.Query["error"].FirstOrDefault() ?? store.DatabaseListError,
+            int.TryParse(HttpContext.Request.Query["page"].FirstOrDefault(), out var page) ? page : 1)));
 }

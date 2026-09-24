@@ -17,6 +17,6 @@ public sealed class ConfigureBackupPolicyEndpoint(DashboardStore store) : Endpoi
         var form = await HttpContext.Request.ReadFormAsync(ct);
         var databaseId = form["databaseId"].ToString();
         store.SetBackupsEnabled(databaseId, form["enabled"] == "true");
-        return Results.Redirect("/databases/" + databaseId, false, false);
+        return Results.Redirect("/databases/" + databaseId + "?tab=backups", false, false);
     }
 }

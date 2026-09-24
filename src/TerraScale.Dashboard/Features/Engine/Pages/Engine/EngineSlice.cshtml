@@ -88,7 +88,7 @@
                 </div>
                 @if (Model.Regions is not null)
                 {
-                    <span class="ts-badge ts-badge-neutral">@DashboardStore.FormatNumber(Model.Regions.Count) regions · @DashboardStore.FormatNumber(Model.HostCount) hosts</span>
+                    <span class="ts-badge ts-badge-neutral">@DashboardStore.FormatNumber(Model.RegionsTotal) regions · @DashboardStore.FormatNumber(Model.HostCount) hosts</span>
                 }
             </div>
             @if (Model.Regions is not null)
@@ -124,6 +124,26 @@
                             </tbody>
                         </table>
                     </div>
+                    <nav class="ts-pager" aria-label="Region catalog pages">
+                        <span class="ts-meta">Showing @Model.RegionsFirst–@Model.RegionsLast of @Model.RegionsTotal regions</span>
+                        @if (Model.RegionsPageCount > 1)
+                        {
+                            <div class="ts-row ts-row-tight">
+                                @if (Model.RegionsPage > 1)
+                                {
+                                    <a class="ts-btn ts-btn-ghost" href="@Model.RegionsHref(Model.RegionsPage - 1)" rel="prev">@Icons.ArrowLeft(14) Previous</a>
+                                }
+                                @for (var pageNumber = 1; pageNumber <= Model.RegionsPageCount; pageNumber++)
+                                {
+                                    <a class="ts-btn ts-btn-ghost ts-pager-page" href="@Model.RegionsHref(pageNumber)" aria-current="@(pageNumber == Model.RegionsPage ? "page" : null)">@pageNumber</a>
+                                }
+                                @if (Model.RegionsPage < Model.RegionsPageCount)
+                                {
+                                    <a class="ts-btn ts-btn-ghost" href="@Model.RegionsHref(Model.RegionsPage + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                                }
+                            </div>
+                        }
+                    </nav>
                 }
             }
             else
@@ -143,7 +163,7 @@
                 </div>
                 @if (Model.Metrics is not null)
                 {
-                    <span class="ts-badge ts-badge-neutral">@DashboardStore.FormatNumber(Model.Metrics.Count) families</span>
+                    <span class="ts-badge ts-badge-neutral">@DashboardStore.FormatNumber(Model.MetricsTotal) families</span>
                 }
             </div>
             @if (Model.Metrics is not null)
@@ -173,6 +193,26 @@
                             </tbody>
                         </table>
                     </div>
+                    <nav class="ts-pager" aria-label="Metric family pages">
+                        <span class="ts-meta">Showing @Model.MetricsFirst–@Model.MetricsLast of @Model.MetricsTotal metric families</span>
+                        @if (Model.MetricsPageCount > 1)
+                        {
+                            <div class="ts-row ts-row-tight">
+                                @if (Model.MetricsPage > 1)
+                                {
+                                    <a class="ts-btn ts-btn-ghost" href="@Model.MetricsHref(Model.MetricsPage - 1)" rel="prev">@Icons.ArrowLeft(14) Previous</a>
+                                }
+                                @for (var pageNumber = 1; pageNumber <= Model.MetricsPageCount; pageNumber++)
+                                {
+                                    <a class="ts-btn ts-btn-ghost ts-pager-page" href="@Model.MetricsHref(pageNumber)" aria-current="@(pageNumber == Model.MetricsPage ? "page" : null)">@pageNumber</a>
+                                }
+                                @if (Model.MetricsPage < Model.MetricsPageCount)
+                                {
+                                    <a class="ts-btn ts-btn-ghost" href="@Model.MetricsHref(Model.MetricsPage + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                                }
+                            </div>
+                        }
+                    </nav>
                 }
             }
             else

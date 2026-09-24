@@ -85,7 +85,7 @@
                 <table class="ts-table">
                     <thead><tr><th>Collection</th><th>Fields</th><th>Indexes</th><th>Definition</th></tr></thead>
                     <tbody>
-                        @foreach (var collection in document.Collections)
+                        @foreach (var collection in Model.VisibleCollections)
                         {
                             <tr>
                                 <td class="ts-table-strong">@collection.Name</td>
@@ -97,6 +97,26 @@
                     </tbody>
                 </table>
             </div>
+            <nav class="ts-pager" aria-label="Schema collection pages">
+                <span class="ts-meta">Showing @Model.First–@Model.Last of @Model.Total collections</span>
+                @if (Model.PageCount > 1)
+                {
+                    <div class="ts-row ts-row-tight">
+                        @if (Model.Page > 1)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page - 1)" rel="prev">Previous</a>
+                        }
+                        @for (var pageNumber = 1; pageNumber <= Model.PageCount; pageNumber++)
+                        {
+                            <a class="ts-btn ts-btn-ghost ts-pager-page" href="@Model.Href(pageNumber)" aria-current="@(pageNumber == Model.Page ? "page" : null)">@pageNumber</a>
+                        }
+                        @if (Model.Page < Model.PageCount)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                        }
+                    </div>
+                }
+            </nav>
         }
         @if (migration is not null)
         {

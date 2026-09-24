@@ -73,6 +73,17 @@ public sealed record DataPageModel(
         return href;
     }
 
+    public string ViewHref(string view)
+    {
+        var href = $"/data?view={Uri.EscapeDataString(view)}";
+        if ((view is "table" or "editor") && (SelectedDatabase.Length > 0 || SelectedCollection.Length > 0))
+        {
+            href += $"&database={Uri.EscapeDataString(SelectedDatabase)}&collection={Uri.EscapeDataString(SelectedCollection)}";
+        }
+
+        return href;
+    }
+
     public static DataPageModel From(DashboardStore store, string view, string? database, string? collection,
         string? edit, string? delete, bool conflict, string? error, string? notice,
         string? sql, string? sqlCollection, bool sqlChecked, string? filter, int page)

@@ -3,10 +3,7 @@
     var shell = Model.Shell;
     var building = Model.Indexes.Count(index => index.State == "building");
     var active = Model.Indexes.Count(index => index.State is "active" or "pinned");
-    var requestedTab = HttpContext?.Request.Query["tab"].ToString();
-    var indexTab = requestedTab is "templates" or "recommendations" or "migration"
-        ? requestedTab
-        : Model.ActionError is not null ? "recommendations" : "overview";
+    var indexTab = Model.Tab;
     var migration = Model.Migration;
     var migrationTotal = Math.Max(0, migration.Total);
     var migrationPercent = migrationTotal > 0 ? Math.Min(100, (int)Math.Round((double)migration.Completed / migrationTotal * 100)) : migration.State == "complete" ? 100 : 0;
@@ -118,7 +115,7 @@
                 <table class="ts-table">
                     <thead><tr><th>Index</th><th>State</th><th>Logical cost</th><th>Build watermark</th></tr></thead>
                     <tbody>
-                        @foreach (var index in Model.Indexes)
+                        @foreach (var index in Model.VisibleIndexes)
                         {
                             <tr>
                                 <td><div class="ts-stack-xs"><span class="ts-table-strong">@index.Name</span><span class="ts-code-meta">@string.Join(", ", index.Fields)</span></div></td>
@@ -130,6 +127,26 @@
                     </tbody>
                 </table>
             </div>
+            <nav class="ts-pager" aria-label="Index state pages">
+                <span class="ts-meta">Showing @Model.First–@Model.Last of @Model.Total indexes</span>
+                @if (Model.PageCount > 1)
+                {
+                    <div class="ts-row ts-row-tight">
+                        @if (Model.Page > 1)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page - 1)" rel="prev">Previous</a>
+                        }
+                        @for (var pageNumber = 1; pageNumber <= Model.PageCount; pageNumber++)
+                        {
+                            <a class="ts-btn ts-btn-ghost ts-pager-page" href="@Model.Href(pageNumber)" aria-current="@(pageNumber == Model.Page ? "page" : null)">@pageNumber</a>
+                        }
+                        @if (Model.Page < Model.PageCount)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                        }
+                    </div>
+                }
+            </nav>
         }
     </section>
     }
@@ -153,13 +170,33 @@
                 <table class="ts-table">
                     <thead><tr><th>Template</th><th>Count</th><th>Logical cost</th></tr></thead>
                     <tbody>
-                        @foreach (var template in Model.Templates)
+                        @foreach (var template in Model.VisibleTemplates)
                         {
                             <tr><td><span class="ts-code-meta">@template.Sql</span></td><td class="ts-table-num">@template.QueryCount</td><td class="ts-table-num">@template.TotalLogicalCost</td></tr>
                         }
                     </tbody>
                 </table>
             </div>
+            <nav class="ts-pager" aria-label="Query template pages">
+                <span class="ts-meta">Showing @Model.First–@Model.Last of @Model.Total query templates</span>
+                @if (Model.PageCount > 1)
+                {
+                    <div class="ts-row ts-row-tight">
+                        @if (Model.Page > 1)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page - 1)" rel="prev">Previous</a>
+                        }
+                        @for (var pageNumber = 1; pageNumber <= Model.PageCount; pageNumber++)
+                        {
+                            <a class="ts-btn ts-btn-ghost ts-pager-page" href="@Model.Href(pageNumber)" aria-current="@(pageNumber == Model.Page ? "page" : null)">@pageNumber</a>
+                        }
+                        @if (Model.Page < Model.PageCount)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                        }
+                    </div>
+                }
+            </nav>
         }
     </section>
     }
@@ -183,7 +220,7 @@
                 <table class="ts-table">
                     <thead><tr><th>Candidate</th><th>Evidence</th><th>State</th><th>Actions</th></tr></thead>
                     <tbody>
-                        @foreach (var recommendation in Model.Recommendations)
+                        @foreach (var recommendation in Model.VisibleRecommendations)
                         {
                             <tr>
                                 <td><span class="ts-code-meta">@(recommendation.Fields.Length == 0 ? "-" : string.Join(", ", recommendation.Fields))</span></td>
@@ -208,6 +245,26 @@
                     </tbody>
                 </table>
             </div>
+            <nav class="ts-pager" aria-label="Index recommendation pages">
+                <span class="ts-meta">Showing @Model.First–@Model.Last of @Model.Total recommendations</span>
+                @if (Model.PageCount > 1)
+                {
+                    <div class="ts-row ts-row-tight">
+                        @if (Model.Page > 1)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page - 1)" rel="prev">Previous</a>
+                        }
+                        @for (var pageNumber = 1; pageNumber <= Model.PageCount; pageNumber++)
+                        {
+                            <a class="ts-btn ts-btn-ghost ts-pager-page" href="@Model.Href(pageNumber)" aria-current="@(pageNumber == Model.Page ? "page" : null)">@pageNumber</a>
+                        }
+                        @if (Model.Page < Model.PageCount)
+                        {
+                            <a class="ts-btn ts-btn-ghost" href="@Model.Href(Model.Page + 1)" rel="next">Next @Icons.ChevronRight(14)</a>
+                        }
+                    </div>
+                }
+            </nav>
         }
     </section>
     }

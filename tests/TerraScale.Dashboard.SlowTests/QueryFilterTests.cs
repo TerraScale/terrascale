@@ -76,9 +76,14 @@ public sealed class QueryFilterTests
         var documents = await app.GetPageAsync(client, "/data?view=table&database=core-primary&collection=orders");
         await Assert.That(documents.Contains("northwind")).IsTrue();
         await Assert.That(documents.Contains("acme")).IsTrue();
+        await Assert.That(documents.Html).Contains("<td class=\"ts-table-mono\">active</td>");
+        await Assert.That(documents.Html).Contains("<td class=\"ts-table-mono\">northwind</td>");
+        await Assert.That(documents.Html).Contains("<td class=\"ts-table-num\">640</td>");
+        await Assert.That(documents.Html).Contains("href=\"/data?view=editor&amp;database=core-primary&amp;collection=orders\"");
 
-        var editor = await app.GetPageAsync(client, "/data?view=editor");
+        var editor = await app.GetPageAsync(client, "/data?view=editor&database=core-primary&collection=orders");
         await Assert.That(editor.Contains("Document editor")).IsTrue();
+        await Assert.That(editor.Html).Contains("href=\"/data?view=table&amp;database=core-primary&amp;collection=orders\"");
 
         var sql = await app.GetPageAsync(client, "/data?view=sql");
         await Assert.That(sql.Contains("SQL console")).IsTrue();

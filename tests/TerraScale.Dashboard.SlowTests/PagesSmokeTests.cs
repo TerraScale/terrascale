@@ -26,6 +26,10 @@ public sealed class PagesSmokeTests
 
         var activity = await app.GetPageAsync(client, "/?tab=activity");
         await Assert.That(activity.Contains("Activity")).IsTrue();
+
+        var activityRange = await app.GetPageAsync(client, "/?range=30d");
+        await Assert.That(activityRange.Contains("Activity")).IsTrue();
+        await Assert.That(activityRange.Contains("aria-current=\"page\" aria-selected=\"true\" href=\"/?tab=activity\"")).IsTrue();
     }
 
     [Test]

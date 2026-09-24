@@ -98,14 +98,35 @@ public sealed class MutationsTests
 
         using var off = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/databases/backup-policy",
             new Dictionary<string, string> { ["databaseId"] = corePrimaryId, ["enabled"] = "false" });
-        await Assert.That(off.Headers.Location!.ToString()).IsEqualTo($"/databases/{corePrimaryId}");
-        var disabled = await app.GetPageAsync(client, $"/databases/{corePrimaryId}?tab=backups");
+        await Assert.That(off.Headers.Location!.ToString()).IsEqualTo($"/databases/{corePrimaryId}?tab=backups");
+        var disabled = await app.GetPageAsync(client, off.Headers.Location!.ToString());
         await Assert.That(disabled.Contains("aria-checked=\"false\"")).IsTrue();
+        await Assert.That(disabled.Contains("href=\"/databases/" + corePrimaryId + "?tab=backups\"")).IsTrue();
+        await Assert.That(disabled.Contains("aria-current=\"page\" aria-selected=\"true\"")).IsTrue();
 
-        await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/databases/backup-policy",
+        using var on = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/databases/backup-policy",
             new Dictionary<string, string> { ["databaseId"] = corePrimaryId, ["enabled"] = "true" });
-        var enabled = await app.GetPageAsync(client, $"/databases/{corePrimaryId}?tab=backups");
+        await Assert.That(on.Headers.Location!.ToString()).IsEqualTo($"/databases/{corePrimaryId}?tab=backups");
+        var enabled = await app.GetPageAsync(client, on.Headers.Location!.ToString());
         await Assert.That(enabled.Contains("aria-checked=\"true\"")).IsTrue();
+    }
+
+    [Test]
+    public async Task DatabaseDetailBranchRequestKeepsBranchesTabAfterRedirect()
+    {
+        const string corePrimaryId = "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC";
+        using var app = new DashboardTestApp();
+        using var client = app.CreateDemoClient();
+
+        using var response = await DashboardTestApp.PostFormAsync(client, "/api/v1/dashboard/databases/branch",
+            new Dictionary<string, string> { ["databaseId"] = corePrimaryId });
+        await Assert.That(response.Headers.Location!.ToString())
+            .IsEqualTo($"/databases/{corePrimaryId}?tab=branches&branched=1");
+
+        var page = await app.GetPageAsync(client, response.Headers.Location!.ToString());
+        await Assert.That(page.Contains("Branch request accepted")).IsTrue();
+        await Assert.That(page.Contains("href=\"/databases/" + corePrimaryId + "?tab=branches\"")).IsTrue();
+        await Assert.That(page.Contains("aria-current=\"page\" aria-selected=\"true\"")).IsTrue();
     }
 
     [Test]

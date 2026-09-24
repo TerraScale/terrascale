@@ -3,7 +3,10 @@
     var shell = Model.Shell;
     var copy = HomeCopy.En;
     var requestedTab = HttpContext?.Request.Query["tab"].ToString();
-    var activeTab = requestedTab is "connect" or "activity" ? requestedTab : "overview";
+    var requestedRange = HttpContext?.Request.Query["range"].ToString();
+    var activeTab = requestedTab is "connect" or "activity"
+        ? requestedTab
+        : string.IsNullOrEmpty(requestedTab) && !string.IsNullOrEmpty(requestedRange) ? "activity" : "overview";
 }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-home">
