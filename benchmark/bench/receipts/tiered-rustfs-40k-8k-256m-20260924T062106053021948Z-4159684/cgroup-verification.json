@@ -1,0 +1,31 @@
+{
+  "verification": "passed",
+  "policy": {
+    "configuredMemoryMaxBytes": 268435456,
+    "finalMemoryCurrentMustBeAtMostMax": true,
+    "memoryPeakMustBeAtMostMax": false,
+    "peakNote": "memory.peak is reported as pressure evidence; cgroup v2 permits brief reclaim overshoot, while final memory.current must be within memory.max",
+    "zeroSwapRequired": true,
+    "zeroOomCountersRequired": true
+  },
+  "memory": {
+    "configuredMaxBytes": 268435456,
+    "finalCurrentBytes": 268390400,
+    "peakBytes": 282312704,
+    "peakExceedsMax": true,
+    "peakOvershootBytes": 13877248
+  },
+  "memoryEvents": {
+    "low": 0,
+    "high": 0,
+    "max": 293503,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0,
+    "sock_throttled": 16129
+  },
+  "pressure": {
+    "memoryEventsMax": 293503,
+    "note": "memory.events.max records cgroup limit pressure; it does not waive the final-current, swap, or OOM gates"
+  }
+}

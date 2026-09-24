@@ -1,0 +1,79 @@
+{
+  "items": [
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-full-body-query-parity-20260924/Program.cs",
+      "copy": "frozen-provenance/source-00-Program.cs",
+      "sha256": "59901530ad5762ac03abece2d354713001a74b97922c251e61d5f725b293d678"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-full-body-query-parity-20260924/FullBodyPhysicalQuery.csproj",
+      "copy": "frozen-provenance/source-01-FullBodyPhysicalQuery.csproj",
+      "sha256": "fa9faf760ef4ceeac617ebd6619e4a5d7464b1bbfadb9804fb6cb3643ce0687b"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-00-Program.cs",
+      "copy": "frozen-provenance/source-02-source-00-Program.cs",
+      "sha256": "9ffeb8603873ad6aa8a80f5c7665e7b8905ab615d8860eb64b8646b781f0ca46"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-01-LargerMemoryPhysicalQuery.csproj",
+      "copy": "frozen-provenance/source-03-source-01-LargerMemoryPhysicalQuery.csproj",
+      "sha256": "74c0df9c15597a1553a7b8862208c2657c260414646c7fa5a9c4fe1c3fd69c36"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-02-Program.cs",
+      "copy": "frozen-provenance/source-04-source-02-Program.cs",
+      "sha256": "11b69a5b20405cef623a3606af12665e0d10d8f8454232c5b6aa88f652ab159a"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-03-DurableIndexStore.cs",
+      "copy": "frozen-provenance/source-05-source-03-DurableIndexStore.cs",
+      "sha256": "94fb6d082103fc4db645e5dc771e0af63e109e06c66498b60598b6d9a7793219"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-04-DurableIndexBackend.cs",
+      "copy": "frozen-provenance/source-06-source-04-DurableIndexBackend.cs",
+      "sha256": "69a967814e013cacebfd03aa183a721a9b204fc2971f3a581c678f479872f7fa"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-05-MutableSegment.cs",
+      "copy": "frozen-provenance/source-07-source-05-MutableSegment.cs",
+      "sha256": "12dfd8fc8cdce4c8d23b0f1aed0d71200a7a64678bb7ed025f85f5040d53e8b8"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-06-ZoneTree.ReadWrite.cs",
+      "copy": "frozen-provenance/source-08-source-06-ZoneTree.ReadWrite.cs",
+      "sha256": "1a80c029b691db1617bba45410bb65e60304c38644f234481cb1b3ef11de0a4c"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-07-ZoneTree.Merge.cs",
+      "copy": "frozen-provenance/source-09-source-07-ZoneTree.Merge.cs",
+      "sha256": "78baad609e3dfb79b4c34b213e766837436d9df9f72329bffd13d206d6e69244"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-08-ZoneTreeMaintainer.cs",
+      "copy": "frozen-provenance/source-10-source-08-ZoneTreeMaintainer.cs",
+      "sha256": "117a71e72c46d0134659b7accee3cf80c172228b0c0933afaea21f22258155ad"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-full-body-query-parity-20260924/bin/Release/net11.0/FullBodyPhysicalQuery.dll",
+      "copy": "frozen-provenance/FullBodyPhysicalQuery.dll",
+      "sha256": "26043c49be9d02c5d3934228fd2c62d5283bb09c604e01df0d99b9ece834f810"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-full-body-query-parity-20260924/bin/Release/net11.0/TerraBase.dll",
+      "copy": "frozen-provenance/TerraBase.dll",
+      "sha256": "003084067b3b857b0606e12f34a370196463b438c21d2102d020d9fa7d21ba16"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-full-body-query-parity-20260924/bin/Release/net11.0/TerraBase.ZoneTree.dll",
+      "copy": "frozen-provenance/TerraBase.ZoneTree.dll",
+      "sha256": "67c60a6b72ccd274b136ea3bd16c93badad73f0c47acbf6cb83d38b25b3a7844"
+    },
+    {
+      "original": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-full-body-query-parity-20260924/bin/Release/net11.0/Microsoft.Data.Sqlite.dll",
+      "copy": "frozen-provenance/Microsoft.Data.Sqlite.dll",
+      "sha256": "b98d957462be432895b00dccca012d3c127e118d3d4262418014b92c7bbd66cf"
+    }
+  ]
+}

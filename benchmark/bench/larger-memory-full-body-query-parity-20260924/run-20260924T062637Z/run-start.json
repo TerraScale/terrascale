@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "startedAtUtc": "2026-09-24T06:26:37.3148017+00:00",
+  "invocation": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-full-body-query-parity-20260924/bin/Release/net11.0/FullBodyPhysicalQuery.dll --continuous",
+  "smoke": false,
+  "continuousIngestion": true,
+  "queryMaterialization": "full-json-body-and-version",
+  "frozenReferenceRun": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z",
+  "baseDocuments": 3000,
+  "maintenanceDocuments": 100,
+  "rawPayloadBytes": 98304,
+  "transactionBatchSize": 25,
+  "terraBaseCheckpointDocuments": 0,
+  "targetMemoryCapBytes": 268435456,
+  "targetGcHeapCapBytes": 134217728,
+  "observedGcAvailableMemoryBytes": 134217728,
+  "dotnetGcHeapHardLimit": "8000000",
+  "cgroup": {
+    "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-p4183277-i16584167.scope",
+    "memoryMaxBytes": 268435456,
+    "swapMaxBytes": 0,
+    "memoryCurrentBytes": 20193280,
+    "memoryPeakBytes": 20193280,
+    "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n"
+  },
+  "sources": [
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-full-body-query-parity-20260924/Program.cs",
+      "sha256": "59901530ad5762ac03abece2d354713001a74b97922c251e61d5f725b293d678"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-full-body-query-parity-20260924/FullBodyPhysicalQuery.csproj",
+      "sha256": "fa9faf760ef4ceeac617ebd6619e4a5d7464b1bbfadb9804fb6cb3643ce0687b"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-00-Program.cs",
+      "sha256": "9ffeb8603873ad6aa8a80f5c7665e7b8905ab615d8860eb64b8646b781f0ca46"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-01-LargerMemoryPhysicalQuery.csproj",
+      "sha256": "74c0df9c15597a1553a7b8862208c2657c260414646c7fa5a9c4fe1c3fd69c36"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-02-Program.cs",
+      "sha256": "11b69a5b20405cef623a3606af12665e0d10d8f8454232c5b6aa88f652ab159a"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-03-DurableIndexStore.cs",
+      "sha256": "94fb6d082103fc4db645e5dc771e0af63e109e06c66498b60598b6d9a7793219"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-04-DurableIndexBackend.cs",
+      "sha256": "69a967814e013cacebfd03aa183a721a9b204fc2971f3a581c678f479872f7fa"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-05-MutableSegment.cs",
+      "sha256": "12dfd8fc8cdce4c8d23b0f1aed0d71200a7a64678bb7ed025f85f5040d53e8b8"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-06-ZoneTree.ReadWrite.cs",
+      "sha256": "1a80c029b691db1617bba45410bb65e60304c38644f234481cb1b3ef11de0a4c"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-07-ZoneTree.Merge.cs",
+      "sha256": "78baad609e3dfb79b4c34b213e766837436d9df9f72329bffd13d206d6e69244"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/run-20260924T054213Z/frozen-provenance/source-08-ZoneTreeMaintainer.cs",
+      "sha256": "117a71e72c46d0134659b7accee3cf80c172228b0c0933afaea21f22258155ad"
+    }
+  ],
+  "runnerAssemblySha256": "26043c49be9d02c5d3934228fd2c62d5283bb09c604e01df0d99b9ece834f810",
+  "terraBaseAssemblySha256": "003084067b3b857b0606e12f34a370196463b438c21d2102d020d9fa7d21ba16",
+  "zoneTreeAssemblySha256": "67c60a6b72ccd274b136ea3bd16c93badad73f0c47acbf6cb83d38b25b3a7844",
+  "sqliteAssemblySha256": "b98d957462be432895b00dccca012d3c127e118d3d4262418014b92c7bbd66cf"
+}

@@ -21,7 +21,12 @@ public static class DiskFullQualificationWorkload
         if (Directory.Exists(engineRoot)) throw new IOException("Use a fresh tmpfs directory.");
         Directory.CreateDirectory(output);
         var objects = new FileSystemBackupObjectStore(Path.Combine(output, "objects"));
-        var segments = new TieredStorageSegmentStore(new(objects, Path.Combine(engineRoot, "cache"), "segments", 0));
+        var segments = new TieredStorageSegmentStore(new(
+            objects,
+            Path.Combine(engineRoot, "cache"),
+            "segments",
+            maximumCacheBytes: 0,
+            allowLocalWalOnly: true));
         var payload = new string('x', 1024);
         var walFailure = 0;
         var compactionFailure = 0;

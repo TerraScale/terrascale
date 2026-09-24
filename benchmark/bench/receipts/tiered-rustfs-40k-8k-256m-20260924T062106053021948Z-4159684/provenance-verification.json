@@ -1,0 +1,27 @@
+{
+  "schema": "terrabase-tiered-rustfs-provenance-verification-v2",
+  "status": "live-checkout-drift",
+  "immutableClosure": {
+    "manifestPath": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/receipts/tiered-rustfs-40k-8k-256m-20260924T062106053021948Z-4159684.launch/freeze-manifest.txt",
+    "manifestSha256": "31514977880b9476b5e16dc880b6f30304a66a76a460eda292f1f3a9bbfb33ca",
+    "binaryClosure": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/binaries/terrabase-final-source-matched-release-20260924T061758Z",
+    "benchmarkAssemblySha256": "2b2b6dd9ddf0f7d0a8766dd51b98744ad47c4d13b9858ce055886f4a259f78db"
+  },
+  "frozenSource": {
+    "project": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/TerraBase.csproj",
+    "repository": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "47b235dcc78240a9eb5330e454a7bf3273ffcba9",
+    "treeDigest": "1808109fb3bee474a93829a76c9d17d5d22328c3",
+    "workingTreeDigest": "dc0a283a9ceb0eb1d103bef727533aa0bb6979b5e591d049767c1dffb7effcd8",
+    "dirty": true
+  },
+  "observedReceiptSubject": {
+    "project": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/TerraBase.csproj",
+    "repository": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "47b235dcc78240a9eb5330e454a7bf3273ffcba9",
+    "treeDigest": "1808109fb3bee474a93829a76c9d17d5d22328c3",
+    "workingTreeDigest": "3796c76bb7bfeaffb5ee077a4f10151ac24f0a5f080d8b1eb2b91580cadf7cbe",
+    "dirty": true
+  },
+  "workingTreeDigestMatches": false
+}

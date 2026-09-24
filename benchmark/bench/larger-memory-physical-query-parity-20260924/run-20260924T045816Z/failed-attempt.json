@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "status": "failed",
+  "startedAtUtc": "2026-09-24T04:58:16Z",
+  "invocation": "systemd-run --user --scope --collect --quiet -p MemoryMax=256M -p MemorySwapMax=0 -p OOMPolicy=stop env DOTNET_GCHeapHardLimit=8000000 dotnet bin/Release/net11.0/LargerMemoryPhysicalQuery.dll",
+  "exitCode": 134,
+  "dataset": {
+    "baseDocuments": 3000,
+    "maintenanceDocuments": 100,
+    "payloadRawBytesPerDocument": 98304,
+    "transactionBatchSize": 25,
+    "indexedFieldAtFailure": "status",
+    "phaseAtFailure": "TerraBase seed-and-incremental-index-build"
+  },
+  "resourceEnvelope": {
+    "cgroupMemoryMaxBytes": 268435456,
+    "cgroupSwapMaxBytes": 0,
+    "dotnetGcHeapHardLimitHex": "8000000",
+    "verifiedGcAvailableMemoryBytesInSameEnvelopeSmoke": 134217728
+  },
+  "failure": {
+    "type": "System.OutOfMemoryException",
+    "sites": [
+      "ZoneTree ZstdDataCompression.Compress during read-only segment merge",
+      "RuntimeIndexCodec.EncodeDocumentValue during frame staging"
+    ],
+    "stackFile": "failure.txt",
+    "stackSha256": "aa168a72350d92986ba8a1dd1d5b28ae4aa5b4c2695963900354912e400a1a54",
+    "partialTerraBaseFileLengthBytes": 125023683
+  },
+  "provenance": {
+    "benchmarkGitHead": "0359e5c1efb3ed38d9e3c8255e39334e0b88f0d7",
+    "subjectGitHead": "47b235dcc78240a9eb5330e454a7bf3273ffcba9",
+    "benchmarkSourceFile": "Program-attempt.cs.txt",
+    "benchmarkSourceSha256": "11b70c9ee9f0f35287e94b052ec9d06e98fb33eaf5ebffb5e24e8f86f7810af7",
+    "benchmarkSourceHashEvidence": "The source copy hash matches its portable PDB document checksum.",
+    "projectSha256": "74c0df9c15597a1553a7b8862208c2657c260414646c7fa5a9c4fe1c3fd69c36",
+    "runnerAssemblySha256": "8aa7d33220c4954ea5984ee44615da7477ed62c435f3268b76da5ae492f4fa75",
+    "runnerPdbSha256": "40c2feed1754a2449fc841b86c09b49abde7bec822b9f02a7d725cd452a67150",
+    "subjectAssemblySha256": "42be6a208ae42fbbb9d65a043cb57ffb9408d938d6b055e879cde45e8ff6b453"
+  },
+  "limits": "The runner wrote no success receipt before failure. The collected cgroup scope no longer exposes this run's exact peak or memory.events. The same-envelope smoke captured its own 66,969,600-byte memory peak and zero OOM events; those values do not describe this failed run."
+}

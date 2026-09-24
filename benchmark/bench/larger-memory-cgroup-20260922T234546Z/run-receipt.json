@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "workload": "larger-memory",
+  "status": "failed",
+  "startedAtUtc": "2026-09-22T23:45:46.8082365Z",
+  "finishedAtUtc": "2026-09-22T23:47:58.7894727Z",
+  "exitCode": 1,
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload larger-memory --backend storage-engine --memory-cap-bytes 268435456 --dataset-size 150000 --payload-size 2048 --samples 5 --operations 500 --writes 500 --warmup 500 --output /home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-cgroup-20260922T234546Z",
+  "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-cgroup-20260922T234546Z",
+  "subject": {
+    "project": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/TerraBase.csproj",
+    "repository": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "67e35f443565c54eb731d6ea2dd989cb5c87b7be",
+    "treeDigest": "69203400f13c7e311cf5fb569a081eeab36e8cbc",
+    "dirty": true,
+    "workingTreeDigest": "232191820f89edaa0b99f6e9aff8749683f507b90b0835efee20b81af09643e5",
+    "workingTreeChanges": [
+      " M src/TerraBase/Backup/BackupArtifactReadLimits.cs",
+      " M src/TerraBase/Backup/BackupManager.cs",
+      " M src/TerraBase/Storage/Backup/StorageEngineBackupSource.cs",
+      " M src/TerraBase/StorageEngine/SegmentStore.cs",
+      " M src/TerraBase/StorageEngine/StorageEngine.cs",
+      " M tests/TerraBase.Api.Tests/S3NativeLargeObjectBoundaryTests.cs",
+      " M tests/TerraBase.Api.Tests/StorageCompactionMergeTests.cs",
+      "?? src/TerraBase/Backup/ISeekableBackupSource.cs",
+      "?? tests/TerraBase.Api.Tests/TieredBackupCaptureCacheTests.cs"
+    ]
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "dotnetVersion": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 46,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "buildConfiguration": "Release"
+  },
+  "artifacts": [
+    {
+      "file": "larger-memory-receipt.json",
+      "bytes": 7158,
+      "sha256": "295a970d9dbeceee3dd0955df63b9497eb35ddfffe89887e99f130bc4b1cdb00"
+    }
+  ],
+  "error": null,
+  "receiptSha256": "e0bf11a5bc7a55b0f5034d6995c7d861bdaf756cc8e71c1261664144593f3d47"
+}

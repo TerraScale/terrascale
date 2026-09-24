@@ -1,0 +1,942 @@
+{
+  "schemaVersion": 2,
+  "generatedAtUtc": "2026-09-24T05:39:45.4988967+00:00",
+  "documents": 2000,
+  "repeatSamples": 10,
+  "maximumIndexBudget": 2,
+  "maintenanceDocuments": 100,
+  "physicalIndexBudgetMiB": 8,
+  "indexPerformance": false,
+  "summaryFile": "query-independent-indexing.md",
+  "summarySha256": "85705a4be247fc9e1c59ea60baeb2e9fd4dd2ca1c608c0e303a76964ca246021",
+  "rows": [
+    {
+      "shape": "status",
+      "strategy": "No secondary index",
+      "indexBudget": "0 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 126677.9,
+        "repeatP50Microseconds": 43785.651,
+        "repeatP95Microseconds": 60914.967,
+        "firstRepeatMicroseconds": 43652.316,
+        "repeatMaximumMicroseconds": 60914.967,
+        "firstRowsExamined": 2100,
+        "repeatRowsExamined": 2100,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": false,
+        "repeatIndexServedFraction": 0,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 126.6779,
+          "cpuMilliseconds": 120.894,
+          "workingSetDeltaBytes": 835584,
+          "allocatedBytes": 4152368
+        },
+        "repeatLatencyMicroseconds": [
+          43652.316,
+          31395.383,
+          31866.836,
+          60914.967,
+          51307.483,
+          44046.223,
+          43785.651,
+          44307.71,
+          43400.201,
+          57015.381
+        ],
+        "firstRepeatDiagnostics": {
+          "before": {
+            "sourceCommitSequence": 22,
+            "indexes": []
+          },
+          "after": {
+            "sourceCommitSequence": 22,
+            "indexes": []
+          },
+          "executionAccess": "Scan",
+          "usedSnapshotFallback": false,
+          "querySpans": [
+            {
+              "name": "automatic_index.query",
+              "spanId": "4d3999ca2ee83907",
+              "parentSpanId": "0000000000000000",
+              "elapsedMilliseconds": 42.5765,
+              "tags": {
+                "query.access": "Scan",
+                "query.snapshot_fallback": "False",
+                "query.rows_examined": "2100"
+              }
+            },
+            {
+              "name": "query.admission",
+              "spanId": "108c3b207c6168eb",
+              "parentSpanId": "4d3999ca2ee83907",
+              "elapsedMilliseconds": 0.2176,
+              "tags": {}
+            },
+            {
+              "name": "planner.explain",
+              "spanId": "f2a120bdd5fb3feb",
+              "parentSpanId": "4d3999ca2ee83907",
+              "elapsedMilliseconds": 0.5935,
+              "tags": {
+                "plan.access": "Scan",
+                "plan.snapshot_fallback": "False"
+              }
+            },
+            {
+              "name": "planner.selected_execute",
+              "spanId": "8d28f8a5f2c47bb4",
+              "parentSpanId": "4d3999ca2ee83907",
+              "elapsedMilliseconds": 38.7153,
+              "tags": {
+                "execution.source_selected": "True",
+                "execution.access": "Scan",
+                "execution.snapshot_fallback": "False",
+                "execution.rows_examined": "2100"
+              }
+            },
+            {
+              "name": "query.observation.publish",
+              "spanId": "e6d8466afecfd4ec",
+              "parentSpanId": "4d3999ca2ee83907",
+              "elapsedMilliseconds": 1.952,
+              "tags": {
+                "query.snapshot_fallback": "False"
+              }
+            }
+          ]
+        }
+      },
+      "activeIndex": false,
+      "activeIndexCount": 0,
+      "correct": true,
+      "queryHistoryBeforeCandidates": null,
+      "initialIngestMilliseconds": 359.9966,
+      "profileMilliseconds": 0,
+      "buildMilliseconds": 0,
+      "inferenceMilliseconds": 0,
+      "inferenceCostUsd": null,
+      "maintenanceMilliseconds": 25.6006,
+      "maintenanceStorageDeltaBytes": 0,
+      "storageAfterWritesBytes": 67132424,
+      "storageBeforeIndexBytes": 67132425,
+      "finalStorageBytes": 67132425,
+      "advice": "not-run",
+      "access": "TerraBase source scan",
+      "indexBuildTimings": "",
+      "indexCatchUpTimings": "",
+      "automaticIndexStorage": null,
+      "indexBuildPhaseDetails": null,
+      "indexCatchUpPhaseDetails": null,
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "nested profile.segment",
+      "strategy": "No secondary index",
+      "indexBudget": "0 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 76145.3,
+        "repeatP50Microseconds": 66701.835,
+        "repeatP95Microseconds": 70902.425,
+        "firstRepeatMicroseconds": 66701.835,
+        "repeatMaximumMicroseconds": 70902.425,
+        "firstRowsExamined": 2100,
+        "repeatRowsExamined": 2100,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": false,
+        "repeatIndexServedFraction": 0,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 76.1453,
+          "cpuMilliseconds": 69.451,
+          "workingSetDeltaBytes": 24576,
+          "allocatedBytes": 5050120
+        },
+        "repeatLatencyMicroseconds": [
+          66701.835,
+          66534.061,
+          68740.872,
+          64255.53,
+          65783.468,
+          65390.94,
+          70371.091,
+          66925.671,
+          70752.325,
+          70902.425
+        ],
+        "firstRepeatDiagnostics": null
+      },
+      "activeIndex": false,
+      "activeIndexCount": 0,
+      "correct": true,
+      "queryHistoryBeforeCandidates": null,
+      "initialIngestMilliseconds": 359.9966,
+      "profileMilliseconds": 0,
+      "buildMilliseconds": 0,
+      "inferenceMilliseconds": 0,
+      "inferenceCostUsd": null,
+      "maintenanceMilliseconds": 25.6006,
+      "maintenanceStorageDeltaBytes": 0,
+      "storageAfterWritesBytes": 67132424,
+      "storageBeforeIndexBytes": 67132425,
+      "finalStorageBytes": 67132425,
+      "advice": "not-run",
+      "access": "TerraBase source scan",
+      "indexBuildTimings": "",
+      "indexCatchUpTimings": "",
+      "automaticIndexStorage": null,
+      "indexBuildPhaseDetails": null,
+      "indexCatchUpPhaseDetails": null,
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "status",
+      "strategy": "Deterministic schema statistics",
+      "indexBudget": "2 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 79188.5,
+        "repeatP50Microseconds": 84.089,
+        "repeatP95Microseconds": 17150.588,
+        "firstRepeatMicroseconds": 17150.588,
+        "repeatMaximumMicroseconds": 17150.588,
+        "firstRowsExamined": 2100,
+        "repeatRowsExamined": 42,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": false,
+        "repeatIndexServedFraction": 1,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 79.1885,
+          "cpuMilliseconds": 111.459,
+          "workingSetDeltaBytes": 475136,
+          "allocatedBytes": 4081392
+        },
+        "repeatLatencyMicroseconds": [
+          17150.588,
+          1509.866,
+          115.886,
+          112.322,
+          93.406,
+          84.089,
+          79.843,
+          77.871,
+          77.017,
+          82.279
+        ],
+        "firstRepeatDiagnostics": {
+          "before": {
+            "sourceCommitSequence": 22,
+            "indexes": [
+              {
+                "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+                "path": "status",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              },
+              {
+                "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+                "path": "profile.segment",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              }
+            ]
+          },
+          "after": {
+            "sourceCommitSequence": 22,
+            "indexes": [
+              {
+                "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+                "path": "status",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              },
+              {
+                "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+                "path": "profile.segment",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              }
+            ]
+          },
+          "executionAccess": "EqualitySeek",
+          "usedSnapshotFallback": false,
+          "querySpans": [
+            {
+              "name": "automatic_index.query",
+              "spanId": "288916243d83359d",
+              "parentSpanId": "0000000000000000",
+              "elapsedMilliseconds": 17.1137,
+              "tags": {
+                "query.access": "EqualitySeek",
+                "query.snapshot_fallback": "False",
+                "query.rows_examined": "42"
+              }
+            },
+            {
+              "name": "query.admission",
+              "spanId": "89419591d7c7ea1c",
+              "parentSpanId": "288916243d83359d",
+              "elapsedMilliseconds": 0.0026,
+              "tags": {}
+            },
+            {
+              "name": "index.inspect.initial",
+              "spanId": "67b8c1e4b29fe11c",
+              "parentSpanId": "288916243d83359d",
+              "elapsedMilliseconds": 0.0663,
+              "tags": {
+                "index.ordinal": "0",
+                "index.visible": "True"
+              }
+            },
+            {
+              "name": "index.inspect.final",
+              "spanId": "521ec9994246f3c6",
+              "parentSpanId": "288916243d83359d",
+              "elapsedMilliseconds": 0.027,
+              "tags": {
+                "index.ordinal": "0",
+                "index.visible": "True"
+              }
+            },
+            {
+              "name": "index.inspect.initial",
+              "spanId": "72bd8d56c1932377",
+              "parentSpanId": "288916243d83359d",
+              "elapsedMilliseconds": 0.0331,
+              "tags": {
+                "index.ordinal": "1",
+                "index.visible": "True"
+              }
+            },
+            {
+              "name": "index.inspect.final",
+              "spanId": "c0a1ce424226c78a",
+              "parentSpanId": "288916243d83359d",
+              "elapsedMilliseconds": 0.0261,
+              "tags": {
+                "index.ordinal": "1",
+                "index.visible": "True"
+              }
+            },
+            {
+              "name": "planner.explain",
+              "spanId": "852a4b1d664a9b3e",
+              "parentSpanId": "288916243d83359d",
+              "elapsedMilliseconds": 1.1924,
+              "tags": {
+                "plan.access": "EqualitySeek",
+                "plan.snapshot_fallback": "False"
+              }
+            },
+            {
+              "name": "planner.selected_execute",
+              "spanId": "9e8ba2dd0c3637b3",
+              "parentSpanId": "288916243d83359d",
+              "elapsedMilliseconds": 8.9154,
+              "tags": {
+                "execution.source_selected": "False",
+                "execution.access": "EqualitySeek",
+                "execution.snapshot_fallback": "False",
+                "execution.rows_examined": "42",
+                "execution.full_document_reads": "21"
+              }
+            },
+            {
+              "name": "physical.point_seek",
+              "spanId": "e28a03d316c52f55",
+              "parentSpanId": "9e8ba2dd0c3637b3",
+              "elapsedMilliseconds": 8.4202,
+              "tags": {
+                "physical.served": "True",
+                "physical.access": "EqualitySeek",
+                "physical.entry_reads": "21",
+                "physical.full_document_reads": "21",
+                "physical.rows_examined": "42"
+              }
+            },
+            {
+              "name": "query.observation.publish",
+              "spanId": "40c5a8a4292f1beb",
+              "parentSpanId": "288916243d83359d",
+              "elapsedMilliseconds": 0.013,
+              "tags": {
+                "query.snapshot_fallback": "False"
+              }
+            }
+          ]
+        }
+      },
+      "activeIndex": true,
+      "activeIndexCount": 2,
+      "correct": true,
+      "queryHistoryBeforeCandidates": 0,
+      "initialIngestMilliseconds": 251.5105,
+      "profileMilliseconds": 204.8654,
+      "buildMilliseconds": 4230.1029,
+      "inferenceMilliseconds": 1.7734,
+      "inferenceCostUsd": null,
+      "maintenanceMilliseconds": 20.5914,
+      "maintenanceStorageDeltaBytes": 0,
+      "storageAfterWritesBytes": 67132424,
+      "storageBeforeIndexBytes": 67132425,
+      "finalStorageBytes": 67588061,
+      "advice": "schema-statistics:query-independent-coverage-hypothesis",
+      "access": "TerraBase source scan (held-out predicate)",
+      "indexBuildTimings": "\u2014",
+      "indexCatchUpTimings": "\u2014",
+      "automaticIndexStorage": {
+        "logicalDocumentEntryBytes": 1004100,
+        "walBytes": 104,
+        "walCompactionStagingBytes": 0
+      },
+      "indexBuildPhaseDetails": [],
+      "indexCatchUpPhaseDetails": [],
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "nested profile.segment",
+      "strategy": "Deterministic schema statistics",
+      "indexBudget": "2 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 2099,
+        "repeatP50Microseconds": 81.817,
+        "repeatP95Microseconds": 151.88,
+        "firstRepeatMicroseconds": 151.88,
+        "repeatMaximumMicroseconds": 151.88,
+        "firstRowsExamined": 42,
+        "repeatRowsExamined": 42,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": true,
+        "repeatIndexServedFraction": 1,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 2.099,
+          "cpuMilliseconds": 2.071,
+          "workingSetDeltaBytes": 0,
+          "allocatedBytes": 98400
+        },
+        "repeatLatencyMicroseconds": [
+          151.88,
+          105.884,
+          84.909,
+          81.817,
+          83.261,
+          75.809,
+          74.747,
+          81.83,
+          76.226,
+          75.068
+        ],
+        "firstRepeatDiagnostics": null
+      },
+      "activeIndex": true,
+      "activeIndexCount": 2,
+      "correct": true,
+      "queryHistoryBeforeCandidates": 0,
+      "initialIngestMilliseconds": 251.5105,
+      "profileMilliseconds": 204.8654,
+      "buildMilliseconds": 4230.1029,
+      "inferenceMilliseconds": 1.7734,
+      "inferenceCostUsd": null,
+      "maintenanceMilliseconds": 20.5914,
+      "maintenanceStorageDeltaBytes": 0,
+      "storageAfterWritesBytes": 67132424,
+      "storageBeforeIndexBytes": 67132425,
+      "finalStorageBytes": 67588061,
+      "advice": "schema-statistics:query-independent-coverage-hypothesis",
+      "access": "TerraBase automatic index",
+      "indexBuildTimings": "\u2014",
+      "indexCatchUpTimings": "\u2014",
+      "automaticIndexStorage": {
+        "logicalDocumentEntryBytes": 1004100,
+        "walBytes": 104,
+        "walCompactionStagingBytes": 0
+      },
+      "indexBuildPhaseDetails": [],
+      "indexCatchUpPhaseDetails": [],
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "status",
+      "strategy": "Deterministic fallback after Von attempt",
+      "indexBudget": "2 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 894544.8,
+        "repeatP50Microseconds": 67.676,
+        "repeatP95Microseconds": 197.607,
+        "firstRepeatMicroseconds": 197.607,
+        "repeatMaximumMicroseconds": 197.607,
+        "firstRowsExamined": 42,
+        "repeatRowsExamined": 42,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": true,
+        "repeatIndexServedFraction": 1,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 894.5448,
+          "cpuMilliseconds": 833.854,
+          "workingSetDeltaBytes": 688128,
+          "allocatedBytes": 3584904
+        },
+        "repeatLatencyMicroseconds": [
+          197.607,
+          190.193,
+          112.576,
+          75.877,
+          64.766,
+          75.291,
+          63.687,
+          66.113,
+          63.159,
+          67.676
+        ],
+        "firstRepeatDiagnostics": {
+          "before": {
+            "sourceCommitSequence": 22,
+            "indexes": [
+              {
+                "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+                "path": "status",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              },
+              {
+                "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+                "path": "profile.segment",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              }
+            ]
+          },
+          "after": {
+            "sourceCommitSequence": 22,
+            "indexes": [
+              {
+                "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+                "path": "status",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              },
+              {
+                "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+                "path": "profile.segment",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              }
+            ]
+          },
+          "executionAccess": "EqualitySeek",
+          "usedSnapshotFallback": false,
+          "querySpans": [
+            {
+              "name": "automatic_index.query",
+              "spanId": "39782bff331b859c",
+              "parentSpanId": "0000000000000000",
+              "elapsedMilliseconds": 0.1852,
+              "tags": {}
+            },
+            {
+              "name": "query.admission",
+              "spanId": "6a9dc558b93a3393",
+              "parentSpanId": "39782bff331b859c",
+              "elapsedMilliseconds": 0.0033,
+              "tags": {}
+            },
+            {
+              "name": "query.observation.publish",
+              "spanId": "f5044b84054266bd",
+              "parentSpanId": "39782bff331b859c",
+              "elapsedMilliseconds": 0.0144,
+              "tags": {
+                "query.snapshot_fallback": "False"
+              }
+            }
+          ]
+        }
+      },
+      "activeIndex": true,
+      "activeIndexCount": 2,
+      "correct": true,
+      "queryHistoryBeforeCandidates": 0,
+      "initialIngestMilliseconds": 148.3827,
+      "profileMilliseconds": 24.5591,
+      "buildMilliseconds": 2463.9375,
+      "inferenceMilliseconds": 16406.7118,
+      "inferenceCostUsd": null,
+      "maintenanceMilliseconds": 6.5872,
+      "maintenanceStorageDeltaBytes": 0,
+      "storageAfterWritesBytes": 67132424,
+      "storageBeforeIndexBytes": 67132425,
+      "finalStorageBytes": 67608739,
+      "advice": "schema-statistics:von-uncertain-or-abstained:von-1.2.0/von-1.2.0",
+      "access": "TerraBase automatic index",
+      "indexBuildTimings": "\u2014",
+      "indexCatchUpTimings": "\u2014",
+      "automaticIndexStorage": {
+        "logicalDocumentEntryBytes": 1004100,
+        "walBytes": 104,
+        "walCompactionStagingBytes": 0
+      },
+      "indexBuildPhaseDetails": [],
+      "indexCatchUpPhaseDetails": [],
+      "inferenceInputTokens": 823,
+      "inferenceOutputTokens": 7,
+      "inferenceRequestedModel": "von-1.2.0",
+      "inferenceActualModel": "von-1.2.0"
+    },
+    {
+      "shape": "nested profile.segment",
+      "strategy": "Deterministic fallback after Von attempt",
+      "indexBudget": "2 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 1477.7,
+        "repeatP50Microseconds": 72.799,
+        "repeatP95Microseconds": 94.698,
+        "firstRepeatMicroseconds": 94.698,
+        "repeatMaximumMicroseconds": 94.698,
+        "firstRowsExamined": 42,
+        "repeatRowsExamined": 42,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": true,
+        "repeatIndexServedFraction": 1,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 1.4777,
+          "cpuMilliseconds": 2.457,
+          "workingSetDeltaBytes": 0,
+          "allocatedBytes": 98400
+        },
+        "repeatLatencyMicroseconds": [
+          94.698,
+          75.918,
+          69.236,
+          72.799,
+          68.906,
+          71.324,
+          65.371,
+          86.99,
+          85.518,
+          87.143
+        ],
+        "firstRepeatDiagnostics": null
+      },
+      "activeIndex": true,
+      "activeIndexCount": 2,
+      "correct": true,
+      "queryHistoryBeforeCandidates": 0,
+      "initialIngestMilliseconds": 148.3827,
+      "profileMilliseconds": 24.5591,
+      "buildMilliseconds": 2463.9375,
+      "inferenceMilliseconds": 16406.7118,
+      "inferenceCostUsd": null,
+      "maintenanceMilliseconds": 6.5872,
+      "maintenanceStorageDeltaBytes": 0,
+      "storageAfterWritesBytes": 67132424,
+      "storageBeforeIndexBytes": 67132425,
+      "finalStorageBytes": 67608739,
+      "advice": "schema-statistics:von-uncertain-or-abstained:von-1.2.0/von-1.2.0",
+      "access": "TerraBase automatic index",
+      "indexBuildTimings": "\u2014",
+      "indexCatchUpTimings": "\u2014",
+      "automaticIndexStorage": {
+        "logicalDocumentEntryBytes": 1004100,
+        "walBytes": 104,
+        "walCompactionStagingBytes": 0
+      },
+      "indexBuildPhaseDetails": [],
+      "indexCatchUpPhaseDetails": [],
+      "inferenceInputTokens": 823,
+      "inferenceOutputTokens": 7,
+      "inferenceRequestedModel": "von-1.2.0",
+      "inferenceActualModel": "von-1.2.0"
+    },
+    {
+      "shape": "status",
+      "strategy": "SQLite tuned no secondary index",
+      "indexBudget": "0 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 3110.1,
+        "repeatP50Microseconds": 753.453,
+        "repeatP95Microseconds": 796.866,
+        "firstRepeatMicroseconds": 796.866,
+        "repeatMaximumMicroseconds": 796.866,
+        "firstRowsExamined": null,
+        "repeatRowsExamined": null,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": false,
+        "repeatIndexServedFraction": 0,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 3.1101,
+          "cpuMilliseconds": 3.067,
+          "workingSetDeltaBytes": 0,
+          "allocatedBytes": 32800
+        },
+        "repeatLatencyMicroseconds": [
+          796.866,
+          765.447,
+          735.64,
+          750.164,
+          753.707,
+          767.93,
+          729.661,
+          746.981,
+          755.542,
+          753.453
+        ],
+        "firstRepeatDiagnostics": null
+      },
+      "activeIndex": false,
+      "activeIndexCount": 0,
+      "correct": true,
+      "queryHistoryBeforeCandidates": null,
+      "initialIngestMilliseconds": 43.3535,
+      "profileMilliseconds": 0,
+      "buildMilliseconds": 0,
+      "inferenceMilliseconds": 0,
+      "inferenceCostUsd": 0,
+      "maintenanceMilliseconds": 2.7617,
+      "maintenanceStorageDeltaBytes": 12360,
+      "storageAfterWritesBytes": 696096,
+      "storageBeforeIndexBytes": 696096,
+      "finalStorageBytes": 708456,
+      "advice": "comparator",
+      "access": "SQLite table scan (EXPLAIN QUERY PLAN)",
+      "indexBuildTimings": "",
+      "indexCatchUpTimings": "not-applicable",
+      "automaticIndexStorage": null,
+      "indexBuildPhaseDetails": null,
+      "indexCatchUpPhaseDetails": null,
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "nested profile.segment",
+      "strategy": "SQLite tuned no secondary index",
+      "indexBudget": "0 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 1586.2,
+        "repeatP50Microseconds": 885.657,
+        "repeatP95Microseconds": 1394.322,
+        "firstRepeatMicroseconds": 917.037,
+        "repeatMaximumMicroseconds": 1394.322,
+        "firstRowsExamined": null,
+        "repeatRowsExamined": null,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": false,
+        "repeatIndexServedFraction": 0,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 1.5862,
+          "cpuMilliseconds": 1.568,
+          "workingSetDeltaBytes": 0,
+          "allocatedBytes": 24600
+        },
+        "repeatLatencyMicroseconds": [
+          917.037,
+          882.692,
+          885.657,
+          1394.322,
+          871.965,
+          871.798,
+          897.609,
+          881.236,
+          889.113,
+          886.208
+        ],
+        "firstRepeatDiagnostics": null
+      },
+      "activeIndex": false,
+      "activeIndexCount": 0,
+      "correct": true,
+      "queryHistoryBeforeCandidates": null,
+      "initialIngestMilliseconds": 43.3535,
+      "profileMilliseconds": 0,
+      "buildMilliseconds": 0,
+      "inferenceMilliseconds": 0,
+      "inferenceCostUsd": 0,
+      "maintenanceMilliseconds": 2.7617,
+      "maintenanceStorageDeltaBytes": 12360,
+      "storageAfterWritesBytes": 696096,
+      "storageBeforeIndexBytes": 696096,
+      "finalStorageBytes": 708456,
+      "advice": "comparator",
+      "access": "SQLite table scan (EXPLAIN QUERY PLAN)",
+      "indexBuildTimings": "",
+      "indexCatchUpTimings": "not-applicable",
+      "automaticIndexStorage": null,
+      "indexBuildPhaseDetails": null,
+      "indexCatchUpPhaseDetails": null,
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "status",
+      "strategy": "SQLite tuned explicit JSONB indexes",
+      "indexBudget": "2 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 910.4,
+        "repeatP50Microseconds": 78.565,
+        "repeatP95Microseconds": 118.372,
+        "firstRepeatMicroseconds": 118.372,
+        "repeatMaximumMicroseconds": 118.372,
+        "firstRowsExamined": null,
+        "repeatRowsExamined": null,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": true,
+        "repeatIndexServedFraction": 1,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 0.9104,
+          "cpuMilliseconds": 0.896,
+          "workingSetDeltaBytes": 0,
+          "allocatedBytes": 32800
+        },
+        "repeatLatencyMicroseconds": [
+          118.372,
+          86.283,
+          78.48,
+          76.469,
+          77.908,
+          94.331,
+          76.381,
+          92.616,
+          91.142,
+          78.565
+        ],
+        "firstRepeatDiagnostics": null
+      },
+      "activeIndex": true,
+      "activeIndexCount": 2,
+      "correct": true,
+      "queryHistoryBeforeCandidates": null,
+      "initialIngestMilliseconds": 35.6751,
+      "profileMilliseconds": 0,
+      "buildMilliseconds": 5.1705,
+      "inferenceMilliseconds": 0,
+      "inferenceCostUsd": 0,
+      "maintenanceMilliseconds": 2.1985,
+      "maintenanceStorageDeltaBytes": 61800,
+      "storageAfterWritesBytes": 696096,
+      "storageBeforeIndexBytes": 696096,
+      "finalStorageBytes": 823816,
+      "advice": "comparator",
+      "access": "SQLite ix_users_status (EXPLAIN QUERY PLAN)",
+      "indexBuildTimings": "explicit indexes aggregate (2): 5.2 ms",
+      "indexCatchUpTimings": "not-applicable",
+      "automaticIndexStorage": null,
+      "indexBuildPhaseDetails": null,
+      "indexCatchUpPhaseDetails": null,
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "nested profile.segment",
+      "strategy": "SQLite tuned explicit JSONB indexes",
+      "indexBudget": "2 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 785.2,
+        "repeatP50Microseconds": 76.404,
+        "repeatP95Microseconds": 125.525,
+        "firstRepeatMicroseconds": 117.707,
+        "repeatMaximumMicroseconds": 125.525,
+        "firstRowsExamined": null,
+        "repeatRowsExamined": null,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": true,
+        "repeatIndexServedFraction": 1,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 0.7852,
+          "cpuMilliseconds": 0.775,
+          "workingSetDeltaBytes": 0,
+          "allocatedBytes": 24600
+        },
+        "repeatLatencyMicroseconds": [
+          117.707,
+          85.89,
+          78.416,
+          125.525,
+          83.889,
+          76.404,
+          75.022,
+          74.707,
+          76.121,
+          74.568
+        ],
+        "firstRepeatDiagnostics": null
+      },
+      "activeIndex": true,
+      "activeIndexCount": 2,
+      "correct": true,
+      "queryHistoryBeforeCandidates": null,
+      "initialIngestMilliseconds": 35.6751,
+      "profileMilliseconds": 0,
+      "buildMilliseconds": 5.1705,
+      "inferenceMilliseconds": 0,
+      "inferenceCostUsd": 0,
+      "maintenanceMilliseconds": 2.1985,
+      "maintenanceStorageDeltaBytes": 61800,
+      "storageAfterWritesBytes": 696096,
+      "storageBeforeIndexBytes": 696096,
+      "finalStorageBytes": 823816,
+      "advice": "comparator",
+      "access": "SQLite ix_users_profile_segment (EXPLAIN QUERY PLAN)",
+      "indexBuildTimings": "explicit indexes aggregate (2): 5.2 ms",
+      "indexCatchUpTimings": "not-applicable",
+      "automaticIndexStorage": null,
+      "indexBuildPhaseDetails": null,
+      "indexCatchUpPhaseDetails": null,
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    }
+  ],
+  "sqliteNoIndexPlans": [
+    "SCAN users USING INDEX sqlite_autoindex_users_1",
+    "SCAN users USING INDEX sqlite_autoindex_users_1"
+  ],
+  "sqliteExplicitPlans": [
+    "SEARCH users USING INDEX ix_users_status (\u003Cexpr\u003E=?); USE TEMP B-TREE FOR ORDER BY",
+    "SEARCH users USING INDEX ix_users_profile_segment (\u003Cexpr\u003E=?); USE TEMP B-TREE FOR ORDER BY"
+  ]
+}

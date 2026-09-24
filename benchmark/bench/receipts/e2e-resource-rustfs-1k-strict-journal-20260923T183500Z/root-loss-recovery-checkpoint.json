@@ -1,0 +1,12 @@
+{
+  "mode": "diagnostic-only",
+  "status": "failed",
+  "phase": "journal-source-recovery",
+  "updatedAtUtc": "2026-09-23T18:34:13.5294863+00:00",
+  "sourceRootDeleted": true,
+  "artifactsExpected": 2,
+  "artifactsVerified": 2,
+  "artifactBytesVerified": 155520,
+  "appliedLogEntries": 0,
+  "failure": "System.IO.InvalidDataException: The tiered StorageEngine root has remote segment objects but no MANIFEST or INITIALIZED marker; recovery is refused.\n   at TerraBase.StorageEngine.StorageEngine.ValidateAuthorityBeforeRecoveryUnsafe() in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/StorageEngine/StorageEngine.cs:line 9382\n   at TerraBase.StorageEngine.StorageEngine..ctor(OpenedRoot opened, IStorageTierPlacement placement, StorageWalDurability walDurability, IStorageSegmentStore segmentStore, IRemoteCommitJournal remoteCommitJournal) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/StorageEngine/StorageEngine.cs:line 398\n   at TerraBase.StorageEngine.StorageEngine..ctor(String path, IStorageTierPlacement placement, StorageWalDurability walDurability, IStorageSegmentStore segmentStore, IRemoteCommitJournal remoteCommitJournal) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/StorageEngine/StorageEngine.cs:line 292\n   at TerraBase.Benchmarks.E2eVolumeWorkload.\u003C\u003Ec__DisplayClass19_1.\u003CRunCoreAsync\u003Eg__OpenSource|1() in /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/E2eVolumeWorkload.cs:line 191\n   at TerraBase.Benchmarks.E2eVolumeWorkload.RunRootLossRecoveryAsync(String sourcePath, String outputDirectory, String targetRoot, BackupManager manager, BackupManifest full, BackupManifest incremental, String sourceOwnershipMarkerContents, Int32 expectedLogEntries, IBackupObjectStore objectStore, RemoteCommitJournal sourceJournal, Func\u00601 openSource, TenantId tenant, CollectionId collection, E2eOptions options, RestoreTargetCleanupLedger restoreTargetCleanup) in /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/E2eVolumeWorkload.cs:line 1584"
+}

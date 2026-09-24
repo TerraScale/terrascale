@@ -1,0 +1,30 @@
+{
+  "atUtc": "2026-09-24T05:45:04.3723292+00:00",
+  "engine": "TerraBase DurableIndexStore",
+  "indexField": "profile.segment",
+  "continuousIngestion": true,
+  "commitSequence": 128,
+  "committedBaseDocuments": 3000,
+  "committedMaintenanceSeedDocuments": 100,
+  "committedMaintenanceUpdates": 100,
+  "maximumSampledMutableWalBytes": 8278189,
+  "maximumSampledReadOnlySegments": 3,
+  "currentSnapshot": {
+    "atUtc": "2026-09-24T05:45:04.3741738+00:00",
+    "fileLengthBytes": 337095761,
+    "workingSetBytes": 181338112,
+    "peakWorkingSetBytes": 233680896,
+    "processReadBytes": 19144687616,
+    "processWriteBytes": 8116813824,
+    "cgroupMemoryCurrentBytes": 246800384,
+    "cgroupMemoryPeakBytes": 268435456
+  },
+  "cgroup": {
+    "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-p3911735-i16516455.scope",
+    "memoryMaxBytes": 268435456,
+    "swapMaxBytes": 0,
+    "memoryCurrentBytes": 246800384,
+    "memoryPeakBytes": 268435456,
+    "memoryEvents": "low 0\nhigh 0\nmax 64786\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n"
+  }
+}

@@ -40,7 +40,13 @@ public static class RunReceipt
     private static readonly JsonSerializerOptions CanonicalJson = new(JsonSerializerDefaults.Web);
     private static readonly JsonSerializerOptions PrettyJson = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
-    /// <summary>Captures the provenance of the TerraBase subject this runner was built against.</summary>
+    /// <summary>
+    /// Captures the provenance of the TerraBase subject this runner was built
+    /// against. A frozen launch supplies an attested source identity through
+    /// environment variables. In that mode the receipt's primary subject is
+    /// the frozen identity and <see cref="SubjectProvenance.Live"/> preserves
+    /// the checkout observation made by the process for drift diagnostics.
+    /// </summary>
     /// <param name="subjectProject">Overrides the embedded subject project path (used by the self-check).</param>
     /// <exception cref="InvalidOperationException">The subject path is unknown, missing, or not a git checkout; the message names the failing path.</exception>
     public static SubjectProvenance CaptureSubject(string? subjectProject = null)
@@ -60,6 +66,12 @@ public static class RunReceipt
 
         var projectDirectory = Path.GetFullPath(Path.GetDirectoryName(project)!);
         var repository = Git(projectDirectory, "rev-parse --show-toplevel");
+        var live = CaptureLiveSubject(project, repository);
+        return ApplyFrozenIdentity(live);
+    }
+
+    private static SubjectProvenance CaptureLiveSubject(string project, string repository)
+    {
         var workingTreeManifestBytes = GitBytes(repository, "status --porcelain=v1 --untracked-files=all");
         var workingTreeManifest = Encoding.UTF8.GetString(workingTreeManifestBytes).TrimEnd('\r', '\n');
         var workingTreeDigest = WorkingTreeDigest(repository, workingTreeManifestBytes);
@@ -71,6 +83,58 @@ public static class RunReceipt
             Dirty: workingTreeManifest.Length != 0,
             WorkingTreeDigest: workingTreeDigest,
             WorkingTreeChanges: workingTreeManifest.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private static SubjectProvenance ApplyFrozenIdentity(SubjectProvenance live)
+    {
+        var frozen = FrozenSourceIdentity.ReadFromEnvironment();
+        if (frozen is null)
+        {
+            return live;
+        }
+
+        var assemblyPath = Path.GetFullPath(Assembly.GetExecutingAssembly().Location);
+        var closure = Path.GetFullPath(frozen.BinaryClosure);
+        if (!IsPathWithin(assemblyPath, closure))
+        {
+            throw new InvalidOperationException(
+                $"Frozen benchmark assembly '{assemblyPath}' is outside the declared binary closure '{closure}'.");
+        }
+
+        var assemblyDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(assemblyPath))).ToLowerInvariant();
+        if (!string.Equals(assemblyDigest, frozen.BenchmarkAssemblySha256, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Frozen benchmark assembly digest does not match the launch identity: expected {frozen.BenchmarkAssemblySha256}, actual {assemblyDigest}.");
+        }
+
+        if (!File.Exists(frozen.ManifestPath) || File.Exists(frozen.ManifestPath) &&
+            !string.Equals(
+                Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(frozen.ManifestPath))).ToLowerInvariant(),
+                frozen.ManifestSha256,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Frozen source manifest '{frozen.ManifestPath}' is missing or its digest changed after launch.");
+        }
+
+        return new SubjectProvenance(
+            Project: frozen.Project,
+            Repository: frozen.Repository,
+            Commit: frozen.Commit,
+            TreeDigest: frozen.TreeDigest,
+            Dirty: frozen.Dirty,
+            WorkingTreeDigest: frozen.WorkingTreeDigest,
+            WorkingTreeChanges: null,
+            Live: live,
+            Frozen: frozen);
+    }
+
+    private static bool IsPathWithin(string candidate, string root)
+    {
+        var relative = Path.GetRelativePath(root, candidate);
+        return relative is not (".." or "") && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || string.Equals(candidate, root, StringComparison.Ordinal);
     }
 
     /// <summary>Writes <c>run-receipt.json</c> into <paramref name="outputDirectory"/> and prints its path and digest.</summary>
@@ -143,9 +207,8 @@ public static class RunReceipt
                 return false;
             }
 
-            var computed = Convert.ToHexString(SHA256.HashData(
-                Encoding.UTF8.GetBytes(document.ToJsonString(CanonicalJson)))).ToLowerInvariant();
-            return string.Equals(recordedDigest, computed, StringComparison.Ordinal);
+            var computed = ComputeDigest(receiptPath);
+            return computed is not null && string.Equals(recordedDigest, computed, StringComparison.Ordinal);
         }
         catch (JsonException)
         {
@@ -154,6 +217,41 @@ public static class RunReceipt
         catch (IOException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Computes the digest over a receipt's canonical JSON payload, excluding
+    /// the recorded <c>receiptSha256</c> property. This is kept beside
+    /// <see cref="Verify"/> so external qualification gates use the same
+    /// System.Text.Json canonicalization as the writer.
+    /// </summary>
+    internal static string? ComputeDigest(string receiptPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(receiptPath);
+        if (!File.Exists(receiptPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var node = JsonNode.Parse(File.ReadAllText(receiptPath));
+            if (node is not JsonObject document || !document.Remove("receiptSha256"))
+            {
+                return null;
+            }
+
+            return Convert.ToHexString(SHA256.HashData(
+                Encoding.UTF8.GetBytes(document.ToJsonString(CanonicalJson)))).ToLowerInvariant();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        catch (IOException)
+        {
+            return null;
         }
     }
 
@@ -175,10 +273,22 @@ public static class RunReceipt
         try
         {
             var startedAtUtc = DateTimeOffset.UtcNow;
+            Check("query-independent percentiles use the nearest-rank definition", BenchmarkPercentile.SelfCheck(), ref failures);
+            var rawArtifactPath = Path.Combine(root, "query-independent-indexing-receipt.json");
+            const string rawArtifactContents = "{\"schemaVersion\":1,\"rows\":[]}";
+            File.WriteAllText(rawArtifactPath, rawArtifactContents);
             var subject = new SubjectProvenance("/self/check/TerraBase.csproj", "/self/check", new string('a', 40), new string('b', 40), Dirty: true);
             var receiptPath = Write(
                 root, "self-check", "complete", 0, startedAtUtc, startedAtUtc.AddSeconds(1), subject);
             Check("receipt verifies after write", Verify(receiptPath), ref failures);
+            var receiptNode = JsonNode.Parse(File.ReadAllText(receiptPath));
+            var expectedArtifactSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawArtifactContents))).ToLowerInvariant();
+            var artifactIndexed = receiptNode?["artifacts"]?.AsArray().Any(artifact =>
+                artifact is JsonObject entry
+                && entry["file"]?.GetValue<string>() == Path.GetFileName(rawArtifactPath)
+                && entry["sha256"]?.GetValue<string>() == expectedArtifactSha256
+                && entry["bytes"]?.GetValue<long>() == Encoding.UTF8.GetByteCount(rawArtifactContents)) == true;
+            Check("raw query receipt is indexed by filename, byte length, and SHA-256", artifactIndexed, ref failures);
 
             var tamperedPayload = Path.Combine(root, "tampered-payload.json");
             File.WriteAllText(tamperedPayload, File.ReadAllText(receiptPath).Replace("self-check", "self-checx", StringComparison.Ordinal));
@@ -211,6 +321,48 @@ public static class RunReceipt
             var changed = CaptureSubject(gitProject).WorkingTreeDigest;
             Check("tracked content changes working-tree digest", baseline is not null && changed is not null
                 && !string.Equals(baseline, changed, StringComparison.Ordinal), ref failures);
+
+            var manifestPath = Path.Combine(root, "frozen-manifest.txt");
+            File.WriteAllText(manifestPath, "schema=receipt-self-check\n");
+            var assemblyPath = Path.GetFullPath(Assembly.GetExecutingAssembly().Location);
+            var assemblyDirectory = Path.GetDirectoryName(assemblyPath)!;
+            var frozenEnvironment = new Dictionary<string, string?>
+            {
+                ["TERRABASE_FROZEN_SOURCE_PROJECT"] = Path.GetFullPath(gitProject),
+                ["TERRABASE_FROZEN_SOURCE_REPOSITORY"] = Path.GetFullPath(gitRoot),
+                ["TERRABASE_FROZEN_SOURCE_COMMIT"] = CaptureSubject(gitProject).Commit,
+                ["TERRABASE_FROZEN_SOURCE_TREE_DIGEST"] = CaptureSubject(gitProject).TreeDigest,
+                ["TERRABASE_FROZEN_SOURCE_DIRTY"] = "false",
+                ["TERRABASE_FROZEN_SOURCE_WORKING_TREE_DIGEST"] = baseline,
+                ["TERRABASE_FROZEN_MANIFEST_PATH"] = Path.GetFullPath(manifestPath),
+                ["TERRABASE_FROZEN_MANIFEST_SHA256"] = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(manifestPath))).ToLowerInvariant(),
+                ["TERRABASE_FROZEN_BINARY_CLOSURE"] = assemblyDirectory,
+                ["TERRABASE_FROZEN_BENCHMARK_ASSEMBLY_SHA256"] = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(assemblyPath))).ToLowerInvariant(),
+            };
+            var previousEnvironment = frozenEnvironment.Keys.ToDictionary(
+                static key => key,
+                Environment.GetEnvironmentVariable,
+                StringComparer.Ordinal);
+            try
+            {
+                foreach (var pair in frozenEnvironment)
+                    Environment.SetEnvironmentVariable(pair.Key, pair.Value);
+
+                var frozen = CaptureSubject(gitProject);
+                Check("frozen launch identity replaces the primary subject", frozen.Commit == frozen.Frozen?.Commit
+                    && frozen.WorkingTreeDigest == baseline
+                    && frozen.Dirty == false
+                    && frozen.Project == Path.GetFullPath(gitProject), ref failures);
+                Check("frozen receipt retains live checkout drift", frozen.Live is { Dirty: true, WorkingTreeDigest: var liveDigest }
+                    && liveDigest == changed, ref failures);
+                Check("frozen launch identity records manifest and binary closure", frozen.Frozen?.ManifestPath == Path.GetFullPath(manifestPath)
+                    && frozen.Frozen.BinaryClosure == assemblyDirectory, ref failures);
+            }
+            finally
+            {
+                foreach (var pair in previousEnvironment)
+                    Environment.SetEnvironmentVariable(pair.Key, pair.Value);
+            }
 
             try
             {
@@ -339,7 +491,101 @@ public sealed record SubjectProvenance(
     string TreeDigest,
     bool Dirty,
     string? WorkingTreeDigest = null,
-    IReadOnlyList<string>? WorkingTreeChanges = null);
+    IReadOnlyList<string>? WorkingTreeChanges = null,
+    SubjectProvenance? Live = null,
+    FrozenSourceIdentity? Frozen = null);
+
+/// <summary>
+/// Immutable source and artifact identity supplied by a frozen benchmark
+/// launcher. The source fields are repeated here so consumers can distinguish
+/// the attested identity from the live checkout observation in a receipt.
+/// </summary>
+public sealed record FrozenSourceIdentity(
+    string Project,
+    string Repository,
+    string Commit,
+    string TreeDigest,
+    bool Dirty,
+    string WorkingTreeDigest,
+    string ManifestPath,
+    string ManifestSha256,
+    string BinaryClosure,
+    string BenchmarkAssemblySha256)
+{
+    private const string Prefix = "TERRABASE_FROZEN_";
+
+    public static FrozenSourceIdentity? ReadFromEnvironment()
+    {
+        var values = new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            [nameof(Project)] = Environment.GetEnvironmentVariable(Prefix + "SOURCE_PROJECT"),
+            [nameof(Repository)] = Environment.GetEnvironmentVariable(Prefix + "SOURCE_REPOSITORY"),
+            [nameof(Commit)] = Environment.GetEnvironmentVariable(Prefix + "SOURCE_COMMIT"),
+            [nameof(TreeDigest)] = Environment.GetEnvironmentVariable(Prefix + "SOURCE_TREE_DIGEST"),
+            [nameof(Dirty)] = Environment.GetEnvironmentVariable(Prefix + "SOURCE_DIRTY"),
+            [nameof(WorkingTreeDigest)] = Environment.GetEnvironmentVariable(Prefix + "SOURCE_WORKING_TREE_DIGEST"),
+            [nameof(ManifestPath)] = Environment.GetEnvironmentVariable(Prefix + "MANIFEST_PATH"),
+            [nameof(ManifestSha256)] = Environment.GetEnvironmentVariable(Prefix + "MANIFEST_SHA256"),
+            [nameof(BinaryClosure)] = Environment.GetEnvironmentVariable(Prefix + "BINARY_CLOSURE"),
+            [nameof(BenchmarkAssemblySha256)] = Environment.GetEnvironmentVariable(Prefix + "BENCHMARK_ASSEMBLY_SHA256"),
+        };
+        var any = values.Values.Any(static value => !string.IsNullOrWhiteSpace(value));
+        if (!any)
+        {
+            return null;
+        }
+
+        string Required(string key)
+        {
+            var value = values[key];
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                throw new InvalidOperationException($"Frozen benchmark provenance is incomplete: missing {Prefix}{key.ToUpperInvariant()}.");
+            }
+
+            return value;
+        }
+
+        var project = Required(nameof(Project));
+        var repository = Required(nameof(Repository));
+        var commit = Required(nameof(Commit));
+        var treeDigest = Required(nameof(TreeDigest));
+        var dirtyText = Required(nameof(Dirty));
+        var workingTreeDigest = Required(nameof(WorkingTreeDigest));
+        var manifestPath = Required(nameof(ManifestPath));
+        var manifestSha256 = Required(nameof(ManifestSha256));
+        var binaryClosure = Required(nameof(BinaryClosure));
+        var benchmarkAssemblySha256 = Required(nameof(BenchmarkAssemblySha256));
+
+        if (!Path.IsPathFullyQualified(project) || !Path.IsPathFullyQualified(repository) ||
+            !Path.IsPathFullyQualified(manifestPath) || !Path.IsPathFullyQualified(binaryClosure))
+        {
+            throw new InvalidOperationException("Frozen benchmark provenance paths must be absolute.");
+        }
+
+        if (!IsHex(commit, 40) || !IsHex(treeDigest, 40) || !IsHex(workingTreeDigest, 64) ||
+            !IsHex(manifestSha256, 64) || !IsHex(benchmarkAssemblySha256, 64) ||
+            !bool.TryParse(dirtyText, out var dirty))
+        {
+            throw new InvalidOperationException("Frozen benchmark provenance contains an invalid digest or sourceDirty value.");
+        }
+
+        return new FrozenSourceIdentity(
+            project,
+            repository,
+            commit,
+            treeDigest,
+            dirty,
+            workingTreeDigest,
+            manifestPath,
+            manifestSha256,
+            binaryClosure,
+            benchmarkAssemblySha256);
+    }
+
+    private static bool IsHex(string value, int length) =>
+        value.Length == length && value.All(Uri.IsHexDigit);
+}
 
 /// <summary>Machine and toolchain identity available to the process at run time.</summary>
 public sealed record ToolchainInfo(

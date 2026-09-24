@@ -1,0 +1,24 @@
+{
+  "runner": {
+    "repository": "/tmp/ts-benchmark-matched-runner-6a20",
+    "commit": "6a20f945f3f2e12ff8869e994da4d0b90be18487",
+    "tree_digest": "d51c97142c8e592c5346e1ed2c75680e76e46b03",
+    "working_tree_clean_after_build_artifacts_outside_worktree": true,
+    "query_independent_source_sha256": "de108fb7d671a5af8d6f6da1c00024604ced4e46988972f517491250168b5956",
+    "query_independent_source": "TerraBase.Benchmarks/QueryIndependentIndexWorkload.cs"
+  },
+  "assemblies": {
+    "clean": {
+      "TerraBase.Benchmarks": "a31c431147bc87a23abdfa6b1ea6c8a8bb59437054663028a374d8909a03ee2d",
+      "TerraBase.Benchmarks.dll": "597a1564b6b41c162f5addff89e666706bec05b9d7a20a6b58f20843a81b7715",
+      "TerraBase.dll": "91706de2d0b2f28399dd836bd2f6e9c9d943612496a0f9a214fafa3b4284114a",
+      "TerraScale.DotNet.dll": "76819914bfba605bc4356f80471300e4cdc15b2aa68a1339e3a2b01f8a87a083"
+    },
+    "patched": {
+      "TerraBase.Benchmarks": "a31c431147bc87a23abdfa6b1ea6c8a8bb59437054663028a374d8909a03ee2d",
+      "TerraBase.Benchmarks.dll": "1d89503a42f040629824e9a76c53c055623860b147137ef745f033984fff1763",
+      "TerraBase.dll": "5c0f580215cf909ab650b444464b21af89d8f7cc90b9a1da581c2677c1321717",
+      "TerraScale.DotNet.dll": "76819914bfba605bc4356f80471300e4cdc15b2aa68a1339e3a2b01f8a87a083"
+    }
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "outcome": "failed_after_continuous_ingestion_before_durable_reopen_verification",
+  "exitCode": 134,
+  "runStart": {
+    "schemaVersion": 1,
+    "startedAtUtc": "2026-09-24T05:18:17.666743+00:00",
+    "invocation": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/bin/Release/net11.0/LargerMemoryPhysicalQuery.dll --continuous",
+    "smoke": false,
+    "continuousIngestion": true,
+    "baseDocuments": 3000,
+    "maintenanceDocuments": 100,
+    "rawPayloadBytes": 98304,
+    "transactionBatchSize": 25,
+    "terraBaseCheckpointDocuments": 0,
+    "targetMemoryCapBytes": 268435456,
+    "targetGcHeapCapBytes": 134217728,
+    "observedGcAvailableMemoryBytes": 134217728,
+    "dotnetGcHeapHardLimit": "8000000",
+    "cgroup": {
+      "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-p3770537-i16405511.scope",
+      "memoryMaxBytes": 268435456,
+      "swapMaxBytes": 0,
+      "memoryCurrentBytes": 21819392,
+      "memoryPeakBytes": 21819392,
+      "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n"
+    },
+    "sources": [
+      {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/Program.cs",
+        "sha256": "16d20e93daefc68b7d7287b2a2950cea10bb8b02c22b6e240589e2d2d4cbb089"
+      },
+      {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/LargerMemoryPhysicalQuery.csproj",
+        "sha256": "74c0df9c15597a1553a7b8862208c2657c260414646c7fa5a9c4fe1c3fd69c36"
+      },
+      {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/sqlite-physical-index-parity-20260924/Program.cs",
+        "sha256": "11b69a5b20405cef623a3606af12665e0d10d8f8454232c5b6aa88f652ab159a"
+      },
+      {
+        "path": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs",
+        "sha256": "8ce3b6d795a8ee4e18f401682c7352d986a1bf78e2d218f83133bef023b41094"
+      },
+      {
+        "path": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexBackend.cs",
+        "sha256": "69a967814e013cacebfd03aa183a721a9b204fc2971f3a581c678f479872f7fa"
+      }
+    ],
+    "runnerAssemblySha256": "9b8107216a8c804982ab5d42dce3c2e29405532473f5fca759285dce8929daa7",
+    "terraBaseAssemblySha256": "847cf827739c6d79946a550cda8920450935965edde7fe70f5bf664fa5975736",
+    "sqliteAssemblySha256": "b98d957462be432895b00dccca012d3c127e118d3d4262418014b92c7bbd66cf"
+  },
+  "lastCommittedProgress": {
+    "atUtc": "2026-09-24T05:19:23.7649976+00:00",
+    "engine": "TerraBase DurableIndexStore",
+    "indexField": "status",
+    "continuousIngestion": true,
+    "commitSequence": 128,
+    "committedBaseDocuments": 3000,
+    "committedMaintenanceSeedDocuments": 100,
+    "committedMaintenanceUpdates": 100,
+    "maximumObservedMutableWalBytes": 27972189,
+    "maximumObservedReadOnlySegments": 0,
+    "currentSnapshot": {
+      "atUtc": "2026-09-24T05:19:23.7652299+00:00",
+      "fileLengthBytes": 337095760,
+      "workingSetBytes": 183312384,
+      "peakWorkingSetBytes": 219045888,
+      "processReadBytes": 4808658944,
+      "processWriteBytes": 3904851968,
+      "cgroupMemoryCurrentBytes": 241291264,
+      "cgroupMemoryPeakBytes": 268435456
+    },
+    "cgroup": {
+      "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-p3770537-i16405511.scope",
+      "memoryMaxBytes": 268435456,
+      "swapMaxBytes": 0,
+      "memoryCurrentBytes": 241291264,
+      "memoryPeakBytes": 268435456,
+      "memoryEvents": "low 0\nhigh 0\nmax 16362\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n"
+    }
+  },
+  "sourceSnapshot": "Program-attempt.cs.txt",
+  "sourceSnapshotSha256": "16d20e93daefc68b7d7287b2a2950cea10bb8b02c22b6e240589e2d2d4cbb089",
+  "failureStackFile": "failure.txt",
+  "failedPhase": "TerraBase status durable-reopen constructor",
+  "failureType": "System.OutOfMemoryException",
+  "finalCgroupCountersAvailable": false,
+  "lastObservedCgroupCounters": {
+    "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-p3770537-i16405511.scope",
+    "memoryMaxBytes": 268435456,
+    "swapMaxBytes": 0,
+    "memoryCurrentBytes": 241291264,
+    "memoryPeakBytes": 268435456,
+    "memoryEvents": "low 0\nhigh 0\nmax 16362\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n"
+  },
+  "measurementCaveats": [
+    "maximumObservedMutableWalBytes is the aggregate of seg/*.wal.0 files sampled after frames; it is not an isolated mutable WAL size",
+    "maximumObservedReadOnlySegments reads on-disk 0.json and is not reliable for the live in-memory backlog"
+  ],
+  "postReopenVerificationCompleted": false,
+  "queryTimingsCompleted": false
+}

@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "startedAtUtc": "2026-09-24T05:41:23.1608906+00:00",
+  "invocation": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/bin/Release/net11.0/LargerMemoryPhysicalQuery --smoke --continuous",
+  "smoke": true,
+  "continuousIngestion": true,
+  "baseDocuments": 200,
+  "maintenanceDocuments": 100,
+  "rawPayloadBytes": 1024,
+  "transactionBatchSize": 25,
+  "terraBaseCheckpointDocuments": 0,
+  "targetMemoryCapBytes": 268435456,
+  "targetGcHeapCapBytes": 134217728,
+  "observedGcAvailableMemoryBytes": 20937965568,
+  "dotnetGcHeapHardLimit": null,
+  "cgroup": {
+    "path": "/sys/fs/cgroup/user.slice/user-1000.slice/session-672.scope",
+    "memoryMaxBytes": null,
+    "swapMaxBytes": null,
+    "memoryCurrentBytes": 6878060544,
+    "memoryPeakBytes": 23258378240,
+    "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 22855\n"
+  },
+  "sources": [
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/Program.cs",
+      "sha256": "9ffeb8603873ad6aa8a80f5c7665e7b8905ab615d8860eb64b8646b781f0ca46"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/LargerMemoryPhysicalQuery.csproj",
+      "sha256": "74c0df9c15597a1553a7b8862208c2657c260414646c7fa5a9c4fe1c3fd69c36"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/sqlite-physical-index-parity-20260924/Program.cs",
+      "sha256": "11b69a5b20405cef623a3606af12665e0d10d8f8454232c5b6aa88f652ab159a"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs",
+      "sha256": "94fb6d082103fc4db645e5dc771e0af63e109e06c66498b60598b6d9a7793219"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexBackend.cs",
+      "sha256": "69a967814e013cacebfd03aa183a721a9b204fc2971f3a581c678f479872f7fa"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase.ZoneTree/Segments/InMemory/MutableSegment.cs",
+      "sha256": "12dfd8fc8cdce4c8d23b0f1aed0d71200a7a64678bb7ed025f85f5040d53e8b8"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase.ZoneTree/Core/ZoneTree.ReadWrite.cs",
+      "sha256": "1a80c029b691db1617bba45410bb65e60304c38644f234481cb1b3ef11de0a4c"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase.ZoneTree/Core/ZoneTree.Merge.cs",
+      "sha256": "78baad609e3dfb79b4c34b213e766837436d9df9f72329bffd13d206d6e69244"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase.ZoneTree/Core/ZoneTreeMaintainer.cs",
+      "sha256": "117a71e72c46d0134659b7accee3cf80c172228b0c0933afaea21f22258155ad"
+    }
+  ],
+  "runnerAssemblySha256": "c52e6bb595b8dce0f876159747b8ed2628f1349dc6689ca94bfa04e6aa0d682a",
+  "terraBaseAssemblySha256": "003084067b3b857b0606e12f34a370196463b438c21d2102d020d9fa7d21ba16",
+  "zoneTreeAssemblySha256": "67c60a6b72ccd274b136ea3bd16c93badad73f0c47acbf6cb83d38b25b3a7844",
+  "sqliteAssemblySha256": "b98d957462be432895b00dccca012d3c127e118d3d4262418014b92c7bbd66cf"
+}

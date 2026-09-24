@@ -27,16 +27,48 @@ internal static class Program
             return RunReceipt.SelfCheck();
         }
 
+        if (TryGetPathArgument(args, "--verify-run-receipt", out var receiptToVerify))
+        {
+            return RunReceipt.Verify(receiptToVerify) ? 0 : 1;
+        }
+
+        if (TryGetPathArgument(args, "--receipt-digest", out var receiptForDigest))
+        {
+            var digest = RunReceipt.ComputeDigest(receiptForDigest);
+            if (digest is null)
+            {
+                Console.Error.WriteLine($"Unable to compute the run receipt digest for '{receiptForDigest}'.");
+                return 1;
+            }
+
+            Console.WriteLine(digest);
+            return 0;
+        }
+
         var helpRequested = args.Any(static argument => argument is "--help" or "-h");
         var startedAtUtc = DateTimeOffset.UtcNow;
         var workloadName = RequestedWorkload(args);
+        if (workloadName.Length == 0 && QueryIndependentIndexWorkload.IsRequested(args))
+        {
+            workloadName = "query-independent";
+        }
         if (workloadName.Length == 0)
         {
             workloadName = "storage-runner";
         }
 
-        var outputDirectory = Path.GetFullPath(CliOutputDirectory(args)
-            ?? Path.Combine("bench", "receipts", $"run-{startedAtUtc:yyyyMMddTHHmmssZ}"));
+        var queryIndependentRun = string.Equals(workloadName, "query-independent", StringComparison.OrdinalIgnoreCase);
+        var requestedOutputDirectory = CliOutputDirectory(args);
+        var defaultOutputDirectory = queryIndependentRun
+            ? Path.Combine("bench", $"query-independent-{startedAtUtc:yyyyMMddTHHmmssZ}")
+            : Path.Combine("bench", "receipts", $"run-{startedAtUtc:yyyyMMddTHHmmssZ}");
+        var outputDirectory = Path.GetFullPath(requestedOutputDirectory ?? defaultOutputDirectory);
+        if (queryIndependentRun && requestedOutputDirectory is null)
+        {
+            // Keep the Markdown table, raw measurement receipt, and compact
+            // provenance receipt in the same per-run directory.
+            args = [.. args, "--output", outputDirectory];
+        }
 
         // The measured subject must resolve before anything runs: a missing
         // subject path fails loudly here instead of producing an unattributed
@@ -105,8 +137,35 @@ internal static class Program
         return null;
     }
 
+    private static bool TryGetPathArgument(string[] args, string option, out string path)
+    {
+        for (var index = 0; index < args.Length; index++)
+        {
+            var argument = args[index];
+            if (argument.StartsWith(option + "=", StringComparison.OrdinalIgnoreCase))
+            {
+                path = argument[(option.Length + 1)..];
+                return !string.IsNullOrWhiteSpace(path);
+            }
+
+            if (argument.Equals(option, StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
+            {
+                path = args[index + 1];
+                return !string.IsNullOrWhiteSpace(path);
+            }
+        }
+
+        path = string.Empty;
+        return false;
+    }
+
     private static async Task<int> RunWorkloadAsync(string[] args)
     {
+        if (TieredRustFsRecoveryProbe.IsRequested(args))
+        {
+            return await TieredRustFsRecoveryProbe.RunAsync(args).ConfigureAwait(false);
+        }
+
         if (RequestedWorkload(args) == "disk-full")
             return await DiskFullQualificationWorkload.RunAsync(args).ConfigureAwait(false);
 
@@ -1358,11 +1417,13 @@ internal static class Program
         public LargerThanMemoryWorkload.Backend Backend { get; private set; } = LargerThanMemoryWorkload.Backend.StorageEngine;
         public int DatasetSize { get; private set; } = 32_768;
         public int PayloadSize { get; private set; } = 2_048;
+        public LargerThanMemoryWorkload.PayloadMode PayloadMode { get; private set; } = LargerThanMemoryWorkload.PayloadMode.Repeated;
         public long MemoryCapBytes { get; private set; } = 256L * 1024 * 1024;
         public bool MemoryCapBytesSpecified { get; private set; }
         public int Samples { get; private set; } = 5;
         public int OperationsPerSample { get; private set; } = 2_000;
         public int SustainedWriteOperations { get; private set; } = 2_000;
+        public int DeleteOperations { get; private set; }
         public int WarmupOperations { get; private set; } = 1_000;
         public int Concurrency { get; private set; } = 1;
         public int Seed { get; private set; } = 1337;
@@ -1398,18 +1459,24 @@ internal static class Program
                     case "payload-size":
                         options.PayloadSize = ParseInteger(value, name, 1);
                         break;
+                    case "payload-mode":
+                        options.PayloadMode = ParseEnum<LargerThanMemoryWorkload.PayloadMode>(value, name);
+                        break;
                     case "memory-cap-bytes":
                         options.MemoryCapBytes = ParseLong(value, name, 1);
                         options.MemoryCapBytesSpecified = true;
                         break;
                     case "samples":
-                        options.Samples = ParseInteger(value, name, 5);
+                        options.Samples = ParseInteger(value, name, 1);
                         break;
                     case "operations":
                         options.OperationsPerSample = ParseInteger(value, name, 1);
                         break;
                     case "writes":
                         options.SustainedWriteOperations = ParseInteger(value, name, 0);
+                        break;
+                    case "deletes":
+                        options.DeleteOperations = ParseInteger(value, name, 0);
                         break;
                     case "warmup":
                         options.WarmupOperations = ParseInteger(value, name, 0);
@@ -1449,9 +1516,12 @@ internal static class Program
               --memory-cap-bytes N           Required explicit resource cap
               --dataset-size N               Seeded documents (default: 32768)
               --payload-size N               Payload string bytes (default: 2048)
-              --samples N                    Post-warmup samples, minimum 5
+              --payload-mode repeated|per-key-incompressible
+                                              Payload generator (default: repeated)
+              --samples N                    Post-warmup samples, minimum 1 (default: 5)
               --operations N                 Operations per phase/sample
               --writes N                     Sustained writes per sample
+              --deletes N                    Final bounded StorageEngine delete set
               --warmup N                     Warmup operations
               --concurrency N                Concurrent workers
               --seed N                       Deterministic seed
@@ -1465,10 +1535,12 @@ internal static class Program
             Backend = Backend,
             DatasetSize = DatasetSize,
             PayloadSize = PayloadSize,
+            PayloadMode = PayloadMode,
             MemoryCapBytes = MemoryCapBytes,
             Samples = Samples,
             OperationsPerSample = OperationsPerSample,
             SustainedWriteOperations = SustainedWriteOperations,
+            DeleteOperations = DeleteOperations,
             WarmupOperations = WarmupOperations,
             Concurrency = Concurrency,
             Seed = Seed,
@@ -1649,9 +1721,55 @@ internal static class Program
         public static string Create(LargerMemoryReceipt receipt)
         {
             var builder = Header("TerraBase larger-than-memory benchmark", receipt.Status, receipt.Environment, receipt.Command);
+            var result = receipt.Result;
+            var payloadMode = result?.PayloadMode is { Length: > 0 } actualMode
+                ? actualMode
+                : receipt.Configuration.PayloadMode.ToString();
+            var payloadGenerator = result?.PayloadGenerator is { Length: > 0 } actualGenerator
+                ? actualGenerator
+                : "unknown";
             builder.AppendLine("## Configuration");
             builder.AppendLine();
-            builder.AppendLine(CultureInfo.InvariantCulture, $"Backend: `{receipt.Configuration.Backend}`; dataset: `{receipt.Configuration.DatasetSize:N0}` rows; payload: `{receipt.Configuration.PayloadSize:N0}` bytes; memory cap: `{receipt.Configuration.MemoryCapBytes:N0}` bytes.");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"Backend: `{receipt.Configuration.Backend}`; dataset: `{receipt.Configuration.DatasetSize:N0}` rows; payload: `{receipt.Configuration.PayloadSize:N0}` bytes; payload mode: `{payloadMode}`; generator: `{payloadGenerator}`; memory cap: `{receipt.Configuration.MemoryCapBytes:N0}` bytes; final delete set: `{receipt.Configuration.DeleteOperations:N0}` rows.");
+            builder.AppendLine();
+            builder.AppendLine("## Storage and capacity");
+            builder.AppendLine();
+            builder.AppendLine("| Measurement | Result |");
+            builder.AppendLine("| --- | ---: |");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"| Payload mode | `{payloadMode}` |");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"| Payload generator | `{payloadGenerator}` |");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"| Estimated logical dataset bytes | {FormatLong(result?.EstimatedLogicalDatasetBytes)} |");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"| Configured memory cap bytes | {FormatLong(result?.ConfiguredMemoryCapBytes ?? receipt.Configuration.MemoryCapBytes)} |");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"| Seeded physical storage bytes | {FormatLong(result?.SeededStorageBytes)} |");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"| Seeded storage exceeds memory cap | {result?.SeededStorageExceedsMemoryCap?.ToString() ?? "unknown"} |");
+            builder.AppendLine();
+            builder.AppendLine("## Delete qualification");
+            builder.AppendLine();
+            builder.AppendLine("The final sample applies the bounded delete set after sustained upserts. The StorageEngine lane verifies both the ordered surviving bodies and point-read absence before and after a cold reopen.");
+            builder.AppendLine();
+            builder.AppendLine("| Sample | Status | Requested | Deleted | Survivors | Delete absence verified | Survivor bodies verified | Delete elapsed ms | Cold reopen elapsed ms | Cold absence verified | Cold survivor bodies verified |");
+            builder.AppendLine("| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+            var deleteRows = result?.Samples
+                .Where(static sample => sample.Deletes is not null)
+                .ToArray() ?? [];
+            if (deleteRows.Length == 0)
+            {
+                builder.AppendLine("| — | not requested | — | — | — | — | — | — | — | — | — |");
+            }
+            else
+            {
+                foreach (var sample in deleteRows)
+                {
+                    var deletes = sample.Deletes!;
+                    builder.Append('|').Append(sample.Sample).Append(" | ").Append(deletes.Status).Append(" | ")
+                        .Append(FormatLong(deletes.RequestedCount)).Append(" | ").Append(FormatLong(deletes.DeletedCount)).Append(" | ")
+                        .Append(FormatLong(deletes.SurvivingCount)).Append(" | ").Append(FormatLong(deletes.DeletedAbsenceVerified)).Append(" | ")
+                        .Append(FormatLong(deletes.SurvivingBodiesVerified)).Append(" | ").Append(Format(deletes.DeleteElapsedMilliseconds)).Append(" | ")
+                        .Append(Format(deletes.ColdReopenElapsedMilliseconds)).Append(" | ")
+                        .Append(FormatLong(deletes.ColdReopenDeletedAbsenceVerified)).Append(" | ")
+                        .Append(FormatLong(deletes.ColdReopenSurvivingBodiesVerified)).AppendLine(" |");
+                }
+            }
             builder.AppendLine();
             builder.AppendLine("## Phase results");
             builder.AppendLine();

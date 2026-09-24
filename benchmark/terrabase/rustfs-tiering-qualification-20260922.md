@@ -13,16 +13,19 @@ footer before cache admission. Cache hits are verified too. Read/backup
 leases pin files; writes and lease release trim the idle cache. Remote objects
 are retained by default.
 
-The idle cache budget excludes active pins and staging space. Backup pins all
-captured segments. WAL and manifests remain local. Restored generations are
-local, and the default host factory does not create remote-tier stores.
+The idle cache budget excludes active pins and staging space. A backup capture
+pins remote object retirement while releasing verified local segment copies
+after each checksum cut; later checks refetch one segment at a time. WAL and
+manifests remain local. The qualification runs described below materialize
+restored generations locally; they do not exercise the separate offline
+fresh-identity S3 restore path.
 
 The inspected ZoneTree fork provides local multipart segments and cache
 controls. Its live-backup interface is not a remote ordinary-read provider.
 This tier uses TerraBase's segment interface. Further changes moved receipts
 to a rebuildable ZoneTree index, streamed receipt recovery, and released state
-on disposal; live documents/history and several whole-corpus operations still
-remain memory-resident.
+on disposal. The segment qualification records the direct tier path; backup,
+restore, and snapshot memory limits are reported by their own workloads.
 
 ## Fixture
 
@@ -40,9 +43,10 @@ The native adapter stores whole-object SHA-256 metadata because RustFS's
 multipart checksum may be absent or composite. Tier downloads independently
 verify actual bytes against the engine manifest.
 
-## Comparable volume runs
+## Historical volume comparisons
 
-Each run below wrote 1,100,000 records with a repeated-character 128-byte
+These runs used an earlier dirty source tree at commit `30c5c6fa`; they do not
+qualify throughput or memory for the current worktree. Each wrote 1,100,000 records with a repeated-character 128-byte
 payload, synced WAL batches of 1,000, four remote segments, and a 16 MiB idle
 cache budget. Every key/body/version was checked after deleting all local
 segment copies. These are shared-host observations without a cgroup envelope.
@@ -63,25 +67,74 @@ lower, and total elapsed time is 115.988 s versus 118.520 s. These are single
 shared-host runs, not statistically established speedups. Earlier 10k/100k
 smoke runs used another tier implementation and async WAL and are not comparable.
 
+## Current qualification ladder receipts
+
+The current direct tier runner has a passing 100,000-record RustFS receipt with
+exact scans, point reads, updates, deletes, compaction, and empty-cache remote
+reopen verification:
+
+| Rung | Summary | Detailed receipt | Resource envelope |
+| --- | --- | --- | --- |
+| 100,000 records | [tiered RustFS summary](../bench/receipts/tiered-rustfs-100k-20260923T000001Z/tiered-rustfs-summary.md) | [tiered receipt](../bench/receipts/tiered-rustfs-100k-20260923T000001Z/tiered-rustfs-receipt.json) | [resource envelope](../bench/receipts/tiered-rustfs-100k-20260923T000001Z/resource-envelope.json) |
+
+This was an uncapped shared-host run (`memory.max=max`, `memory.swap.max=max`)
+with a 429,469,696-byte process peak working set. The cache was already empty:
+both eviction counts and observed cache bytes were zero. It proves a remote
+reopen with no local segment copy, not an observed cache eviction or a memory cap.
+
+No passing 256 MiB cgroup qualification is available. The [256 MiB run
+receipt](../bench/larger-memory-cgroup-20260922T234546Z/larger-memory-summary.md)
+failed while seeding 150,000 records with 2,048-byte payloads, so it remains a
+capacity failure boundary rather than evidence of bounded larger-than-memory
+operation. A later [40,000-record diagnostic](../bench/larger-memory-state-map-budget-v9-incompressible-40k-8k-noswap-20260923T011447Z/diagnostic-stop.md)
+with 8 KiB per-key incompressible payloads reached 1.1 GiB of local storage
+inside a 256 MiB, zero-swap cgroup without an OOM kill. It was stopped during
+its first compaction after 16 minutes, before producing a passing receipt.
+The 100-million-record rung is still pending.
+
+A current-build 1.1-million-record attempt was [stopped at its 100,000-record
+checkpoint](../bench/receipts/tiered-rustfs-current-1100k-20260923T002052Z/tiered-rustfs-aborted.md).
+It ran alongside normal-priority builds and tests, so its 241.327-second seed
+interval is not a clean throughput comparison. A live stack sample found
+repeated compressed state-index reads while appending new physical sequences.
+
 ## Full function checks
 
-The [latest tiered RustFS function receipt](../bench/rustfs-tier-e2e-20260922-v3/e2e-volume-summary.md)
+The [100,000-document tiered RustFS function receipt](../bench/receipts/e2e-rustfs-100k-20260923T001023Z/e2e-volume-summary.md)
 uses `--object-tier s3`, compacts the source to RustFS, and deletes its SSD
 segments before reopen. Backup artifacts also use RustFS.
 
 | Check | Result |
 | --- | --- |
-| Seed / exact scan | 10,000 deterministic random documents |
+| Seed / exact scan | 100,000 deterministic random documents |
 | Point reads / active indexed queries | 500 / 100 |
-| Updates / deletes | 100 version-2 documents / 100 tombstones |
-| Relationships | 100 users/orders; related listing, traversal, restrict-delete verified through restores |
-| Full / incremental backup | 1.420 s / 1.463 s |
-| Full-boundary / PITR / final restore | 1.307 s / 0.786 s / 0.725 s |
-| Final exact scan | 9,900 matches; 100 deleted IDs absent |
+| Updates / deletes | 1,000 version-2 documents / 1,000 tombstones |
+| Full / incremental backup | 34.247 s / 26.192 s |
+| Full-boundary / PITR / final restore | 26.664 s / 27.110 s / 25.600 s |
+| Final exact scan | 99,000 matches; 1,000 deleted IDs absent |
 | Compaction and reopened-engine verification | Passed |
 
-Restored generations are local. This does not establish remote-tier restore
-activation or full function correctness at 100 million records.
+This 100,000-document run disabled relationships. The earlier [10,000-document
+RustFS receipt](../bench/rustfs-tier-e2e-20260922-v3/e2e-volume-summary.md)
+verified related listing, traversal, and restrict-delete behavior through
+restores with 100 users and orders.
+
+A [40-document RustFS function receipt](../bench/e2e-paging-rustfs-agent-root-20260923/e2e-volume-summary.md)
+also passed relationship writes, traversal, restrict-delete, collection
+listing, snapshot document pagination, full/incremental/PITR restore, and a
+cold remote reopen after evicting restored local segment copies. Its scale is
+a functional smoke test, not volume evidence.
+
+These qualification receipts materialize restored generations locally. Current
+source behavior distinguishes that receipt scope from restore activation:
+same-identity S3 activation remains fenced until distributed writer fencing is
+available, while an offline fresh-identity restore can allocate a new database
+namespace, publish its remote generation authority, and reopen after local-root
+loss. Focused restore tests cover the fresh-identity path, but backups that
+contain automatic-index decisions are rejected there pending destination-local
+rebuild. Pre-activation crash recovery, concurrent destination-root reservation
+hardening, provider-independent failure domains, and full function correctness
+at 100 million records remain unqualified.
 
 ## Failure and scale boundaries
 
@@ -102,18 +155,15 @@ left the manifest byte-for-byte unchanged, and retry plus another reopen
 passed. The object store was a filesystem fixture outside the quota. This
 does not establish RustFS disk-full or device power-loss behavior.
 
-Validation also passed 483 core tests (four Windows-only skips), all 1,337 API
-tests before the final cache-layout/buffer adjustment, 66 focused storage
-tests after the layout correction, five receipt-index tests at the final
-buffer size, and three process crash cases. The final Release benchmark build
-had zero warnings and errors.
+The final Release solution build passed with zero warnings and errors. The
+full TUnit suites passed 509 core tests (four Windows-only skips) and 1,444
+API tests (two skips), with zero failures. Focused post-fix suites included
+the compaction merge fast path (6/6) and native restore targets (14/14).
+The three process crash cases and filesystem-full drill are separate receipts.
 
-The earlier [256 MiB cgroup run](../bench/larger-memory-cgroup-20260922T1740Z/larger-memory-summary.md)
-failed while seeding 150,000 records with 2,048-byte payloads. This failure
-predates the receipt changes; it is not a successful capacity receipt.
-
-Remaining work includes disk-backed document/revision/history indexes,
-bounded snapshots and compaction/backup capture, host-tier composition,
-working-space accounting, remote-provider-full and multipart process-resumption drills,
-and a measured workload ladder ending with the actual 100-million-record run.
+Remaining work includes a passing bounded-memory run with incompressible
+payloads, a clean throughput ladder after the append-index probe fix, scalable
+large-history restore and incremental backup, working-space accounting,
+remote-provider-full and multipart process-resumption drills, and the actual
+100-million-record run with full-function verification.
 Throughput extrapolation and S3 backups cannot substitute for those checks.

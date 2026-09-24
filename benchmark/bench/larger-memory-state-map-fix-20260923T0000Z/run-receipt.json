@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "workload": "larger-memory",
+  "status": "invalid",
+  "startedAtUtc": "2026-09-22T23:54:04.3224532Z",
+  "finishedAtUtc": "2026-09-22T23:54:04.5025138Z",
+  "exitCode": 2,
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload larger-memory --backend storage-engine --memory-cap-bytes 268435456 --dataset-size 150000 --payload-size 2048 --samples 1 --operations 20 --writes 20 --warmup 100 --output /home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-state-map-fix-20260923T0000Z",
+  "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-state-map-fix-20260923T0000Z",
+  "subject": {
+    "project": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/TerraBase.csproj",
+    "repository": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "67e35f443565c54eb731d6ea2dd989cb5c87b7be",
+    "treeDigest": "69203400f13c7e311cf5fb569a081eeab36e8cbc",
+    "dirty": true,
+    "workingTreeDigest": "8299429de1c241b052d2bd1b9b4c65b6ea2819f674786373de3a0d37c907fdd0",
+    "workingTreeChanges": [
+      " M docs/storage-tiering.md",
+      " M src/TerraBase/Backup/BackupArtifactReadLimits.cs",
+      " M src/TerraBase/Backup/BackupEncryptionReadLease.cs",
+      " M src/TerraBase/Backup/BackupManager.cs",
+      " M src/TerraBase/Backup/IStreamingBackupEncryptionReadLease.cs",
+      " M src/TerraBase/Storage/Backup/StorageEngineBackupSource.cs",
+      " M src/TerraBase/StorageEngine/SegmentStore.cs",
+      " M src/TerraBase/StorageEngine/StorageEngine.cs",
+      " M src/TerraBase/StorageEngine/ZoneTreeStorageStateMap.cs",
+      " M tests/TerraBase.Api.Tests/AutomaticIndexBackupRestoreTests.cs",
+      " M tests/TerraBase.Api.Tests/S3NativeLargeObjectBoundaryTests.cs",
+      " M tests/TerraBase.Api.Tests/StorageCompactionMergeTests.cs",
+      " M tests/TerraBase.Tests/StorageFaultInjectionTests.cs",
+      "?? src/TerraBase/Backup/ISeekableBackupSource.cs",
+      "?? tests/TerraBase.Api.Tests/TieredBackupCaptureCacheTests.cs"
+    ]
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "dotnetVersion": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 46,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "buildConfiguration": "Release"
+  },
+  "artifacts": [],
+  "error": null,
+  "receiptSha256": "02ca6f522e8e456a489ef398e3977ac05fefe4f93362de7fa270d252bf20bb92"
+}

@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "workload": "e2e-volume",
+  "status": "complete",
+  "startedAtUtc": "2026-09-23T00:10:23.4530451Z",
+  "finishedAtUtc": "2026-09-23T00:20:08.1524811Z",
+  "exitCode": 0,
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload e2e-volume --object-tier s3 --documents 100000 --batch-size 1000 --point-reads 500 --updates 1000 --deletes 1000 --queries 100 --relationships 0 --output bench/receipts/e2e-rustfs-100k-20260923T001023Z",
+  "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/receipts/e2e-rustfs-100k-20260923T001023Z",
+  "subject": {
+    "project": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/TerraBase.csproj",
+    "repository": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "67e35f443565c54eb731d6ea2dd989cb5c87b7be",
+    "treeDigest": "69203400f13c7e311cf5fb569a081eeab36e8cbc",
+    "dirty": true,
+    "workingTreeDigest": "9d6dadc039c48243a4a32b24e3de76a70dfc4e8d8663943e5f12e257e8b87493",
+    "workingTreeChanges": [
+      " M docs/storage-tiering.md",
+      " M src/TerraBase.ZoneTree/Core/ZoneTree.cs",
+      " M src/TerraBase.ZoneTree/Options/DiskSegmentOptions.cs",
+      " M src/TerraBase.ZoneTree/Options/ZoneTreeOptionValidationRules.cs",
+      " M src/TerraBase.ZoneTree/Options/ZoneTreeOptionsValidator.cs",
+      " M src/TerraBase.ZoneTree/Segments/Block/BlockCache.cs",
+      " M src/TerraBase.ZoneTree/Segments/Disk/DiskSegmentCreator.cs",
+      " M src/TerraBase.ZoneTree/Segments/DiskSegmentVariations/FixedSizeKeyAndValueDiskSegment.cs",
+      " M src/TerraBase.ZoneTree/Segments/DiskSegmentVariations/FixedSizeKeyDiskSegment.cs",
+      " M src/TerraBase.ZoneTree/Segments/DiskSegmentVariations/FixedSizeValueDiskSegment.cs",
+      " M src/TerraBase.ZoneTree/Segments/DiskSegmentVariations/VariableSizeDiskSegment.cs",
+      " M src/TerraBase.ZoneTree/Segments/RandomAccess/CompressedFileRandomAccessDevice.cs",
+      " M src/TerraBase.ZoneTree/Segments/RandomAccess/IRandomAccessDeviceManager.cs",
+      " M src/TerraBase.ZoneTree/Segments/RandomAccess/RandomAccessDeviceManager.cs",
+      " M src/TerraBase/Backup/BackupArtifactReadLimits.cs",
+      " M src/TerraBase/Backup/BackupEncryptionReadLease.cs",
+      " M src/TerraBase/Backup/BackupManager.cs",
+      " M src/TerraBase/Backup/BackupSources.cs",
+      " M src/TerraBase/Backup/IStreamingBackupEncryptionReadLease.cs",
+      " M src/TerraBase/Storage/Backup/StorageEngineBackupSource.cs",
+      " M src/TerraBase/Storage/Backup/StorageSnapshotArtifact.cs",
+      " M src/TerraBase/StorageEngine/SegmentStore.cs",
+      " M src/TerraBase/StorageEngine/StorageEngine.cs",
+      " M src/TerraBase/StorageEngine/ZoneTreeStorageStateMap.cs",
+      " M tests/TerraBase.Api.Tests/AutomaticIndexBackupRestoreTests.cs",
+      " M tests/TerraBase.Api.Tests/S3NativeLargeObjectBoundaryTests.cs",
+      " M tests/TerraBase.Api.Tests/StorageCompactionMergeTests.cs",
+      " M tests/TerraBase.Api.Tests/StorageSnapshotV4Tests.cs",
+      " M tests/TerraBase.Tests/StorageFaultInjectionTests.cs",
+      "?? src/TerraBase/Backup/ISeekableBackupSource.cs",
+      "?? tests/TerraBase.Api.Tests/TieredBackupCaptureCacheTests.cs",
+      "?? tests/TerraBase.ZoneTree.UpstreamTests/BlockCacheTests.cs"
+    ]
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "dotnetVersion": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 46,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "buildConfiguration": "Release"
+  },
+  "artifacts": [
+    {
+      "file": "e2e-volume-receipt.json",
+      "bytes": 2336,
+      "sha256": "030392141903defd4060805b7b05e9883fe05817aaf8d285ece01a0d021b8da0"
+    }
+  ],
+  "error": null,
+  "receiptSha256": "954f20dca07623808faf4cd5ca927c9e4cd62b0e242ed749cf062aab5ad4e3b1"
+}

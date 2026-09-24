@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-09-24T04:49:04.6610513+00:00",
+  "documents": 2000,
+  "maximumIndexes": 2,
+  "physicalBudgetMiB": 8,
+  "logicalCapBytes": 4194304,
+  "drawSeed": 1134382920,
+  "documentSeed": 202777073,
+  "requestedModel": "von-1.2.0",
+  "endpoint": "http://127.0.0.1:8000/v1/systemone",
+  "descriptions": {
+    "service.region": "Service region code used by operators to filter accounts for regional operations.",
+    "payload": "Opaque export payload; it has no lookup, filtering, or ordering role.",
+    "review.queue": "Review queue code used by operators to filter assigned accounts.",
+    "account.lookupId": "Stable account identifier used by operators to look up one account."
+  }
+}

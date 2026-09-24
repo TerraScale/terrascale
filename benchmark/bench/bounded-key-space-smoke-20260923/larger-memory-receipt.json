@@ -1,0 +1,98 @@
+{
+  "status": "invalid",
+  "startedAtUtc": "2026-09-23T03:40:14.4652977+00:00",
+  "finishedAtUtc": "2026-09-23T03:40:14.4693597+00:00",
+  "configuration": {
+    "backend": 0,
+    "datasetSize": 8,
+    "payloadSize": 16,
+    "payloadMode": 0,
+    "memoryCapBytes": 1,
+    "memoryCapBytesSpecified": true,
+    "samples": 1,
+    "operationsPerSample": 4,
+    "sustainedWriteOperations": 0,
+    "warmupOperations": 2,
+    "concurrency": 1,
+    "seed": 1337,
+    "zipfExponent": 1.2,
+    "readRatio": 0.8,
+    "outputDirectory": "bench/bounded-key-space-smoke-20260923",
+    "showHelp": false
+  },
+  "environment": {
+    "startedAtUtc": "2026-09-23T03:40:14.4652977+00:00",
+    "runtime": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "buildConfiguration": "Debug",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 46,
+    "availableMemoryBytes": 20937965568,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "serverGc": false,
+    "gcLatencyMode": "Interactive",
+    "gitCommit": "0f73f7874fd873e5aa2605fd06ad6854d1378372",
+    "gitDirty": true,
+    "artifactPath": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Debug/net11.0/TerraBase.Benchmarks.dll",
+    "artifactSha256": "f0a21f9b8785ae99d30521586f671ca140782e53837e26eb46699f8dfc08a6f5"
+  },
+  "result": {
+    "status": "invalid",
+    "backend": "",
+    "rawSamplesPath": "",
+    "storagePath": "",
+    "datasetSize": 0,
+    "payloadSize": 0,
+    "payloadMode": "",
+    "payloadGenerator": "",
+    "estimatedLogicalDatasetBytes": 0,
+    "configuredMemoryCapBytes": 0,
+    "seededStorageBytes": null,
+    "seededStorageExceedsMemoryCap": null,
+    "configuration": {
+      "backend": 0,
+      "datasetSize": 32768,
+      "payloadSize": 2048,
+      "payloadMode": 0,
+      "payloadModeName": "Repeated",
+      "memoryCapBytes": 268435456,
+      "samples": 5,
+      "operationsPerSample": 2000,
+      "sustainedWriteOperations": 2000,
+      "warmupOperations": 1000,
+      "concurrency": 1,
+      "seed": 1337,
+      "zipfExponent": 1.2,
+      "readRatio": 0.8,
+      "initialDistribution": 0,
+      "compactAfterSample": true,
+      "shifts": [
+        {
+          "name": "uniform-read-heavy",
+          "operations": 2000,
+          "distribution": 0,
+          "mix": 1
+        },
+        {
+          "name": "zipf-read-heavy",
+          "operations": 2000,
+          "distribution": 1,
+          "mix": 1
+        },
+        {
+          "name": "zipf-write-heavy",
+          "operations": 2000,
+          "distribution": 1,
+          "mix": 2
+        }
+      ]
+    },
+    "startedAtUtc": "2026-09-23T03:40:14.4652977+00:00",
+    "finishedAtUtc": "2026-09-23T03:40:14.4708414+00:00",
+    "error": "Benchmark execution requires a Release artifact.",
+    "samples": []
+  },
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Debug/net11.0/TerraBase.Benchmarks --workload larger-memory --backend storage-engine --memory-cap-bytes 1 --dataset-size 8 --payload-size 16 --samples 1 --operations 4 --writes 0 --warmup 2 --concurrency 1 --output bench/bounded-key-space-smoke-20260923",
+  "receiptDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/bounded-key-space-smoke-20260923"
+}

@@ -1,0 +1,1725 @@
+{
+  "schemaVersion": 2,
+  "generatedAtUtc": "2026-09-24T06:44:25.1435496+00:00",
+  "documents": 2000,
+  "repeatSamples": 50,
+  "maximumIndexBudget": 2,
+  "maintenanceDocuments": 100,
+  "physicalIndexBudgetMiB": 8,
+  "indexPerformance": false,
+  "summaryFile": "query-independent-indexing.md",
+  "summarySha256": "b1032a0ee289e1d10e7fde3ce38dee866471b22e16326dbecc47b47f098c3221",
+  "rows": [
+    {
+      "shape": "status",
+      "strategy": "No secondary index",
+      "indexBudget": "0 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 110947.59999999999,
+        "repeatP50Microseconds": 34551.288,
+        "repeatP95Microseconds": 79743.357,
+        "firstRepeatMicroseconds": 38135.832,
+        "repeatMaximumMicroseconds": 85943.401,
+        "firstRowsExamined": 2100,
+        "repeatRowsExamined": 2100,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": false,
+        "repeatIndexServedFraction": 0,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 110.9476,
+          "cpuMilliseconds": 107.271,
+          "workingSetDeltaBytes": 868352,
+          "allocatedBytes": 4100888
+        },
+        "repeatLatencyMicroseconds": [
+          38135.832,
+          48072.73,
+          85943.401,
+          31135.235,
+          36932.55,
+          31454.242,
+          28041.296,
+          29505.024,
+          29126.806,
+          32047.152,
+          28739.895,
+          29973.904,
+          31834.311,
+          34191.479,
+          32081.262,
+          32338.661,
+          34206.111,
+          34551.288,
+          37794.956,
+          34523.736,
+          36331.529,
+          35982.491,
+          36497.824,
+          36358.524,
+          37432.149,
+          38987.685,
+          68793.825,
+          66067.725,
+          69449.451,
+          68427.577,
+          68215.268,
+          70262.078,
+          74281.296,
+          79946.383,
+          79743.357,
+          71319.181,
+          75540.408,
+          64918.275,
+          64102.333,
+          44015.9,
+          30371.956,
+          29335.037,
+          26808.088,
+          25887.876,
+          21838.096,
+          16974.49,
+          20944.174,
+          17701.564,
+          14834.739,
+          12878.651
+        ],
+        "firstRepeatDiagnostics": {
+          "before": {
+            "sourceCommitSequence": 22,
+            "indexes": []
+          },
+          "after": {
+            "sourceCommitSequence": 22,
+            "indexes": []
+          },
+          "executionAccess": "Scan",
+          "usedSnapshotFallback": false,
+          "querySpans": [
+            {
+              "name": "automatic_index.query",
+              "spanId": "d372b3c14c4b4a10",
+              "parentSpanId": "0000000000000000",
+              "traceId": "ea47c378c667e34dcd9639af1ec7827e",
+              "elapsedMilliseconds": 40.0103,
+              "monotonicStartTimestamp": 397752451140622,
+              "monotonicStopTimestamp": 397752491143297,
+              "overlapMilliseconds": 40.002675,
+              "tags": {
+                "query.access": "Scan",
+                "query.snapshot_fallback": "False",
+                "query.rows_examined": "2100"
+              }
+            },
+            {
+              "name": "query.admission",
+              "spanId": "40cbc68da620b3ee",
+              "parentSpanId": "d372b3c14c4b4a10",
+              "traceId": "ea47c378c667e34dcd9639af1ec7827e",
+              "elapsedMilliseconds": 0.0021,
+              "monotonicStartTimestamp": 397752451146273,
+              "monotonicStopTimestamp": 397752451149416,
+              "overlapMilliseconds": 0.003143,
+              "tags": {}
+            },
+            {
+              "name": "planner.explain",
+              "spanId": "151baa9c71efff1c",
+              "parentSpanId": "d372b3c14c4b4a10",
+              "traceId": "ea47c378c667e34dcd9639af1ec7827e",
+              "elapsedMilliseconds": 1.5135,
+              "monotonicStartTimestamp": 397752451208433,
+              "monotonicStopTimestamp": 397752452723436,
+              "overlapMilliseconds": 1.515003,
+              "tags": {
+                "plan.access": "Scan",
+                "plan.snapshot_fallback": "False"
+              }
+            },
+            {
+              "name": "planner.selected_execute",
+              "spanId": "c894d087df04bbc2",
+              "parentSpanId": "d372b3c14c4b4a10",
+              "traceId": "ea47c378c667e34dcd9639af1ec7827e",
+              "elapsedMilliseconds": 35.8771,
+              "monotonicStartTimestamp": 397752452792580,
+              "monotonicStopTimestamp": 397752488674037,
+              "overlapMilliseconds": 35.881457,
+              "tags": {
+                "execution.source_selected": "True",
+                "execution.access": "Scan",
+                "execution.snapshot_fallback": "False",
+                "execution.rows_examined": "2100"
+              }
+            },
+            {
+              "name": "query.observation.publish",
+              "spanId": "ce6ddf94eb310447",
+              "parentSpanId": "d372b3c14c4b4a10",
+              "traceId": "ea47c378c667e34dcd9639af1ec7827e",
+              "elapsedMilliseconds": 2.2036,
+              "monotonicStartTimestamp": 397752488935242,
+              "monotonicStopTimestamp": 397752491136962,
+              "overlapMilliseconds": 2.20172,
+              "tags": {
+                "query.snapshot_fallback": "False"
+              }
+            }
+          ],
+          "backgroundSpans": [],
+          "diagnosticRepeatMicroseconds": 40025.308
+        },
+        "firstQueryDiagnostics": {
+          "before": {
+            "sourceCommitSequence": 22,
+            "indexes": []
+          },
+          "after": {
+            "sourceCommitSequence": 22,
+            "indexes": []
+          },
+          "executionAccess": "Scan",
+          "usedSnapshotFallback": false,
+          "querySpans": [
+            {
+              "name": "automatic_index.query",
+              "spanId": "a57aaed5b30a7c99",
+              "parentSpanId": "0000000000000000",
+              "traceId": "0fb943f75cf8bbdc0d58b8586b35cbf4",
+              "elapsedMilliseconds": 96.3534,
+              "monotonicStartTimestamp": 397752344877432,
+              "monotonicStopTimestamp": 397752440898406,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "query.access": "Scan",
+                "query.snapshot_fallback": "False",
+                "query.rows_examined": "2100"
+              }
+            },
+            {
+              "name": "query.admission",
+              "spanId": "04ba27c90dfb1252",
+              "parentSpanId": "a57aaed5b30a7c99",
+              "traceId": "0fb943f75cf8bbdc0d58b8586b35cbf4",
+              "elapsedMilliseconds": 0.4379,
+              "monotonicStartTimestamp": 397752346526977,
+              "monotonicStopTimestamp": 397752347983469,
+              "overlapMilliseconds": 0,
+              "tags": {}
+            },
+            {
+              "name": "planner.explain",
+              "spanId": "739569c32244987f",
+              "parentSpanId": "a57aaed5b30a7c99",
+              "traceId": "0fb943f75cf8bbdc0d58b8586b35cbf4",
+              "elapsedMilliseconds": 2.6296,
+              "monotonicStartTimestamp": 397752362644770,
+              "monotonicStopTimestamp": 397752365274271,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "plan.access": "Scan",
+                "plan.snapshot_fallback": "False"
+              }
+            },
+            {
+              "name": "planner.selected_execute",
+              "spanId": "f16610f20b1f175a",
+              "parentSpanId": "a57aaed5b30a7c99",
+              "traceId": "0fb943f75cf8bbdc0d58b8586b35cbf4",
+              "elapsedMilliseconds": 52.0332,
+              "monotonicStartTimestamp": 397752366372405,
+              "monotonicStopTimestamp": 397752418409549,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "execution.source_selected": "True",
+                "execution.access": "Scan",
+                "execution.snapshot_fallback": "False",
+                "execution.rows_examined": "2100"
+              }
+            },
+            {
+              "name": "query.observation.publish",
+              "spanId": "d2b12b98ec1f8678",
+              "parentSpanId": "a57aaed5b30a7c99",
+              "traceId": "0fb943f75cf8bbdc0d58b8586b35cbf4",
+              "elapsedMilliseconds": 6.1035,
+              "monotonicStartTimestamp": 397752434589401,
+              "monotonicStopTimestamp": 397752440690017,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "query.snapshot_fallback": "False"
+              }
+            }
+          ]
+        }
+      },
+      "activeIndex": false,
+      "activeIndexCount": 0,
+      "correct": true,
+      "queryHistoryBeforeCandidates": null,
+      "initialIngestMilliseconds": 465.2691,
+      "profileMilliseconds": 0,
+      "buildMilliseconds": 0,
+      "inferenceMilliseconds": 0,
+      "inferenceCostUsd": null,
+      "maintenanceMilliseconds": 30.3555,
+      "maintenanceStorageDeltaBytes": 0,
+      "storageAfterWritesBytes": 67132424,
+      "storageBeforeIndexBytes": 67132425,
+      "finalStorageBytes": 67132425,
+      "advice": "not-run",
+      "access": "TerraBase source scan",
+      "indexBuildTimings": "",
+      "indexCatchUpTimings": "",
+      "automaticIndexStorage": null,
+      "indexBuildPhaseDetails": null,
+      "indexCatchUpPhaseDetails": null,
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "nested profile.segment",
+      "strategy": "No secondary index",
+      "indexBudget": "0 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 16804.5,
+        "repeatP50Microseconds": 14779.085,
+        "repeatP95Microseconds": 16686.337,
+        "firstRepeatMicroseconds": 14988.874,
+        "repeatMaximumMicroseconds": 18066.428,
+        "firstRowsExamined": 2100,
+        "repeatRowsExamined": 2100,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": false,
+        "repeatIndexServedFraction": 0,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 16.8045,
+          "cpuMilliseconds": 16.919,
+          "workingSetDeltaBytes": 12288,
+          "allocatedBytes": 4385808
+        },
+        "repeatLatencyMicroseconds": [
+          14988.874,
+          14430.923,
+          15111.025,
+          15450.948,
+          13942.959,
+          14779.085,
+          15015.542,
+          15979.416,
+          13889.34,
+          15189.837,
+          13838.484,
+          15037.048,
+          13876.101,
+          15154.04,
+          14101.345,
+          14823.336,
+          14206.045,
+          14574.065,
+          13395.718,
+          14682.117,
+          13750.767,
+          16686.337,
+          15265.58,
+          15006.961,
+          14778.519,
+          15191.678,
+          18066.428,
+          16798.333,
+          15089.677,
+          14901.958,
+          16645.849,
+          13984.816,
+          15672.539,
+          13814.631,
+          15590.245,
+          14392.662,
+          15163.603,
+          14028.341,
+          15492.563,
+          14148.424,
+          15992.96,
+          14268.727,
+          15628.957,
+          13962.499,
+          14877.239,
+          13978.429,
+          14691.22,
+          14415.668,
+          14718.505,
+          14046.258
+        ],
+        "firstRepeatDiagnostics": null,
+        "firstQueryDiagnostics": null
+      },
+      "activeIndex": false,
+      "activeIndexCount": 0,
+      "correct": true,
+      "queryHistoryBeforeCandidates": null,
+      "initialIngestMilliseconds": 465.2691,
+      "profileMilliseconds": 0,
+      "buildMilliseconds": 0,
+      "inferenceMilliseconds": 0,
+      "inferenceCostUsd": null,
+      "maintenanceMilliseconds": 30.3555,
+      "maintenanceStorageDeltaBytes": 0,
+      "storageAfterWritesBytes": 67132424,
+      "storageBeforeIndexBytes": 67132425,
+      "finalStorageBytes": 67132425,
+      "advice": "not-run",
+      "access": "TerraBase source scan",
+      "indexBuildTimings": "",
+      "indexCatchUpTimings": "",
+      "automaticIndexStorage": null,
+      "indexBuildPhaseDetails": null,
+      "indexCatchUpPhaseDetails": null,
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "status",
+      "strategy": "Deterministic schema statistics",
+      "indexBudget": "2 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 28584.6,
+        "repeatP50Microseconds": 30.83,
+        "repeatP95Microseconds": 51.299,
+        "firstRepeatMicroseconds": 1174.871,
+        "repeatMaximumMicroseconds": 1174.871,
+        "firstRowsExamined": 2100,
+        "repeatRowsExamined": 42,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": false,
+        "repeatIndexServedFraction": 1,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 28.5846,
+          "cpuMilliseconds": 57.078,
+          "workingSetDeltaBytes": 245760,
+          "allocatedBytes": 3603480
+        },
+        "repeatLatencyMicroseconds": [
+          1174.871,
+          71.746,
+          35.781,
+          32.718,
+          31.374,
+          33.99,
+          30.209,
+          30.808,
+          31.225,
+          31.287,
+          29.338,
+          30.46,
+          28.887,
+          36.206,
+          29.993,
+          47.003,
+          34.682,
+          31.448,
+          30.476,
+          30.862,
+          29.593,
+          30.786,
+          28.713,
+          30.743,
+          30.695,
+          34.896,
+          31.234,
+          51.299,
+          32.121,
+          31.339,
+          28.799,
+          31.03,
+          29.569,
+          31.429,
+          28.74,
+          30.866,
+          28.994,
+          30.748,
+          29.131,
+          30.83,
+          29.178,
+          30.935,
+          28.552,
+          31.025,
+          28.917,
+          43.293,
+          29.03,
+          31.076,
+          28.333,
+          30.517
+        ],
+        "firstRepeatDiagnostics": {
+          "before": {
+            "sourceCommitSequence": 22,
+            "indexes": [
+              {
+                "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+                "path": "status",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              },
+              {
+                "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+                "path": "profile.segment",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              }
+            ]
+          },
+          "after": {
+            "sourceCommitSequence": 22,
+            "indexes": [
+              {
+                "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+                "path": "status",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              },
+              {
+                "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+                "path": "profile.segment",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              }
+            ]
+          },
+          "executionAccess": "EqualitySeek",
+          "usedSnapshotFallback": false,
+          "querySpans": [
+            {
+              "name": "automatic_index.query",
+              "spanId": "7f29e4996163d021",
+              "parentSpanId": "0000000000000000",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 15.5303,
+              "monotonicStartTimestamp": 397760921084735,
+              "monotonicStopTimestamp": 397760936630380,
+              "overlapMilliseconds": 15.545645,
+              "tags": {
+                "query.access": "EqualitySeek",
+                "query.snapshot_fallback": "False",
+                "query.rows_examined": "42"
+              }
+            },
+            {
+              "name": "query.admission",
+              "spanId": "ec6d0b34428d9d52",
+              "parentSpanId": "7f29e4996163d021",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0042,
+              "monotonicStartTimestamp": 397760921087266,
+              "monotonicStopTimestamp": 397760921091101,
+              "overlapMilliseconds": 0.003835,
+              "tags": {}
+            },
+            {
+              "name": "index.inspect.initial",
+              "spanId": "f31f700d183b3ac6",
+              "parentSpanId": "7f29e4996163d021",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0644,
+              "monotonicStartTimestamp": 397760921167780,
+              "monotonicStopTimestamp": 397760921230961,
+              "overlapMilliseconds": 0.063181,
+              "tags": {
+                "index.ordinal": "0",
+                "index.visible": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "2bdfa387c7c68f60",
+              "parentSpanId": "f31f700d183b3ac6",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0014,
+              "monotonicStartTimestamp": 397760921174531,
+              "monotonicStopTimestamp": 397760921176239,
+              "overlapMilliseconds": 0.001708,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "60621ed486e60e4c",
+              "parentSpanId": "7f29e4996163d021",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0017,
+              "monotonicStartTimestamp": 397760921235099,
+              "monotonicStopTimestamp": 397760921236189,
+              "overlapMilliseconds": 0.00109,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.inspect.final",
+              "spanId": "1b78b967d8e15131",
+              "parentSpanId": "7f29e4996163d021",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0263,
+              "monotonicStartTimestamp": 397760921237668,
+              "monotonicStopTimestamp": 397760921263919,
+              "overlapMilliseconds": 0.026251,
+              "tags": {
+                "index.ordinal": "0",
+                "index.visible": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "975d6f2e56a89bcf",
+              "parentSpanId": "1b78b967d8e15131",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0011,
+              "monotonicStartTimestamp": 397760921239795,
+              "monotonicStopTimestamp": 397760921240694,
+              "overlapMilliseconds": 0.000899,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.inspect.initial",
+              "spanId": "82c04946ad3e72ab",
+              "parentSpanId": "7f29e4996163d021",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0416,
+              "monotonicStartTimestamp": 397760921267319,
+              "monotonicStopTimestamp": 397760921308370,
+              "overlapMilliseconds": 0.041051,
+              "tags": {
+                "index.ordinal": "1",
+                "index.visible": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "1d9dac45c0d657b7",
+              "parentSpanId": "82c04946ad3e72ab",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0013,
+              "monotonicStartTimestamp": 397760921272266,
+              "monotonicStopTimestamp": 397760921273283,
+              "overlapMilliseconds": 0.001017,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "51987ea419b24111",
+              "parentSpanId": "7f29e4996163d021",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0027,
+              "monotonicStartTimestamp": 397760921311645,
+              "monotonicStopTimestamp": 397760921312736,
+              "overlapMilliseconds": 0.001091,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.inspect.final",
+              "spanId": "89722531f365659d",
+              "parentSpanId": "7f29e4996163d021",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0238,
+              "monotonicStartTimestamp": 397760921314150,
+              "monotonicStopTimestamp": 397760921337712,
+              "overlapMilliseconds": 0.023562,
+              "tags": {
+                "index.ordinal": "1",
+                "index.visible": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "7910fda260971663",
+              "parentSpanId": "89722531f365659d",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0011,
+              "monotonicStartTimestamp": 397760921316093,
+              "monotonicStopTimestamp": 397760921316948,
+              "overlapMilliseconds": 0.000855,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "planner.explain",
+              "spanId": "631be95106b1692b",
+              "parentSpanId": "7f29e4996163d021",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 1.0861,
+              "monotonicStartTimestamp": 397760921377268,
+              "monotonicStopTimestamp": 397760922462780,
+              "overlapMilliseconds": 1.085512,
+              "tags": {
+                "plan.access": "EqualitySeek",
+                "plan.snapshot_fallback": "False"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "b649156b96fdab21",
+              "parentSpanId": "631be95106b1692b",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0036,
+              "monotonicStartTimestamp": 397760921382210,
+              "monotonicStopTimestamp": 397760921385731,
+              "overlapMilliseconds": 0.003521,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "73febaf45e3f153c",
+              "parentSpanId": "631be95106b1692b",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0092,
+              "monotonicStartTimestamp": 397760922434928,
+              "monotonicStopTimestamp": 397760922441145,
+              "overlapMilliseconds": 0.006217,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "planner.selected_execute",
+              "spanId": "d272be8dc73c7c75",
+              "parentSpanId": "7f29e4996163d021",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 8.9613,
+              "monotonicStartTimestamp": 397760922509376,
+              "monotonicStopTimestamp": 397760931471489,
+              "overlapMilliseconds": 8.962113,
+              "tags": {
+                "execution.source_selected": "False",
+                "execution.access": "EqualitySeek",
+                "execution.snapshot_fallback": "False",
+                "execution.rows_examined": "42",
+                "execution.full_document_reads": "21"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "27577fda153f56ee",
+              "parentSpanId": "d272be8dc73c7c75",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0016,
+              "monotonicStartTimestamp": 397760922513678,
+              "monotonicStopTimestamp": 397760922515318,
+              "overlapMilliseconds": 0.00164,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "76a5d7456a82fcf9",
+              "parentSpanId": "d272be8dc73c7c75",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0065,
+              "monotonicStartTimestamp": 397760922680044,
+              "monotonicStopTimestamp": 397760922684854,
+              "overlapMilliseconds": 0.00481,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "physical.point_seek",
+              "spanId": "7db6dfb55ede6941",
+              "parentSpanId": "d272be8dc73c7c75",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 8.5355,
+              "monotonicStartTimestamp": 397760922686997,
+              "monotonicStopTimestamp": 397760931226813,
+              "overlapMilliseconds": 8.539816,
+              "tags": {
+                "physical.served": "True",
+                "physical.access": "EqualitySeek",
+                "physical.entry_reads": "21",
+                "physical.full_document_reads": "21",
+                "physical.rows_examined": "42"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "b0cf5b08391ae48d",
+              "parentSpanId": "7db6dfb55ede6941",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0094,
+              "monotonicStartTimestamp": 397760923858915,
+              "monotonicStopTimestamp": 397760923865210,
+              "overlapMilliseconds": 0.006295,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "query.observation.publish",
+              "spanId": "ca9bcd09f14e9dcd",
+              "parentSpanId": "7f29e4996163d021",
+              "traceId": "25c30d9e001e81354443b88fb7b8e99f",
+              "elapsedMilliseconds": 0.0105,
+              "monotonicStartTimestamp": 397760931562436,
+              "monotonicStopTimestamp": 397760931569951,
+              "overlapMilliseconds": 0.007515,
+              "tags": {
+                "query.snapshot_fallback": "False"
+              }
+            }
+          ],
+          "backgroundSpans": [
+            {
+              "name": "index.gate_wait",
+              "spanId": "6c401aa6914f90d5",
+              "parentSpanId": "0000000000000000",
+              "traceId": "4c72774b572be19d2415cd19f79a9dad",
+              "elapsedMilliseconds": 0.0087,
+              "monotonicStartTimestamp": 397760921067802,
+              "monotonicStopTimestamp": 397760921072959,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "3e845ec1ec642c94",
+              "parentSpanId": "0000000000000000",
+              "traceId": "0a5cf16c5a4724ff13a27c72eb4be98a",
+              "elapsedMilliseconds": 0.002,
+              "monotonicStartTimestamp": 397760921077750,
+              "monotonicStopTimestamp": 397760921079057,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "d35558678bc830ef",
+              "parentSpanId": "0000000000000000",
+              "traceId": "b16e47744891f605db7062a4083b7a8b",
+              "elapsedMilliseconds": 0.0121,
+              "monotonicStartTimestamp": 397760936706385,
+              "monotonicStopTimestamp": 397760936712162,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "becf47ccce7b480c",
+              "parentSpanId": "0000000000000000",
+              "traceId": "dbfc37210e0c3cd747f0d6875b3d5f14",
+              "elapsedMilliseconds": 0.0033,
+              "monotonicStartTimestamp": 397760936716839,
+              "monotonicStopTimestamp": 397760936719504,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            }
+          ],
+          "diagnosticRepeatMicroseconds": 15551.413
+        },
+        "firstQueryDiagnostics": {
+          "before": {
+            "sourceCommitSequence": 22,
+            "indexes": [
+              {
+                "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+                "path": "status",
+                "storeCommitSequence": 21,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              },
+              {
+                "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+                "path": "profile.segment",
+                "storeCommitSequence": 21,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              }
+            ]
+          },
+          "after": {
+            "sourceCommitSequence": 22,
+            "indexes": [
+              {
+                "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+                "path": "status",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              },
+              {
+                "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+                "path": "profile.segment",
+                "storeCommitSequence": 22,
+                "appliedPosition": 21,
+                "targetPosition": 21
+              }
+            ]
+          },
+          "executionAccess": "Scan",
+          "usedSnapshotFallback": true,
+          "querySpans": [
+            {
+              "name": "automatic_index.query",
+              "spanId": "fe0c2e432a62814f",
+              "parentSpanId": "0000000000000000",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 27.6648,
+              "monotonicStartTimestamp": 397760025836869,
+              "monotonicStopTimestamp": 397760053497001,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "query.access": "Scan",
+                "query.snapshot_fallback": "True",
+                "query.rows_examined": "2100"
+              }
+            },
+            {
+              "name": "query.admission",
+              "spanId": "8bf6064a921b2996",
+              "parentSpanId": "fe0c2e432a62814f",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.002,
+              "monotonicStartTimestamp": 397760025845183,
+              "monotonicStopTimestamp": 397760025847618,
+              "overlapMilliseconds": 0,
+              "tags": {}
+            },
+            {
+              "name": "index.inspect.initial",
+              "spanId": "3e0b48cd5ee83147",
+              "parentSpanId": "fe0c2e432a62814f",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.1145,
+              "monotonicStartTimestamp": 397760026113654,
+              "monotonicStopTimestamp": 397760026225687,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "index.ordinal": "0",
+                "index.visible": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "95e9179f8e1e2143",
+              "parentSpanId": "3e0b48cd5ee83147",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.0022,
+              "monotonicStartTimestamp": 397760026124690,
+              "monotonicStopTimestamp": 397760026127673,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "66726070a47baa8d",
+              "parentSpanId": "fe0c2e432a62814f",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.0019,
+              "monotonicStartTimestamp": 397760026230805,
+              "monotonicStopTimestamp": 397760026232097,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.stale_tail.estimate",
+              "spanId": "0be8577cd0384de2",
+              "parentSpanId": "fe0c2e432a62814f",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.1254,
+              "monotonicStartTimestamp": 397760028049179,
+              "monotonicStopTimestamp": 397760028169476,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "index.ordinal": "0",
+                "index.stale_at_entry": "True",
+                "fallback.preferred": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "bed7636577114efd",
+              "parentSpanId": "0be8577cd0384de2",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.0061,
+              "monotonicStartTimestamp": 397760028161487,
+              "monotonicStopTimestamp": 397760028166735,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.inspect.final",
+              "spanId": "68d49bf956cb1cb5",
+              "parentSpanId": "fe0c2e432a62814f",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.0491,
+              "monotonicStartTimestamp": 397760028170993,
+              "monotonicStopTimestamp": 397760028220313,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "index.ordinal": "0",
+                "index.visible": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "8c24f941c6e9ebf1",
+              "parentSpanId": "68d49bf956cb1cb5",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.001,
+              "monotonicStartTimestamp": 397760028178256,
+              "monotonicStopTimestamp": 397760028179184,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.inspect.initial",
+              "spanId": "dce102559807c170",
+              "parentSpanId": "fe0c2e432a62814f",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.0607,
+              "monotonicStartTimestamp": 397760028287252,
+              "monotonicStopTimestamp": 397760028346567,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "index.ordinal": "1",
+                "index.visible": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "61bca8316d935250",
+              "parentSpanId": "dce102559807c170",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.0015,
+              "monotonicStartTimestamp": 397760028292729,
+              "monotonicStopTimestamp": 397760028294622,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "66d214b0339addea",
+              "parentSpanId": "fe0c2e432a62814f",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.0016,
+              "monotonicStartTimestamp": 397760028351096,
+              "monotonicStopTimestamp": 397760028352328,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.inspect.final",
+              "spanId": "3c256596cfae6f58",
+              "parentSpanId": "fe0c2e432a62814f",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.0546,
+              "monotonicStartTimestamp": 397760028820565,
+              "monotonicStopTimestamp": 397760028870568,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "index.ordinal": "1",
+                "index.visible": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "6f9c9a4b9242d120",
+              "parentSpanId": "3c256596cfae6f58",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.0024,
+              "monotonicStartTimestamp": 397760028830271,
+              "monotonicStopTimestamp": 397760028833400,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "planner.explain",
+              "spanId": "199362462cd82844",
+              "parentSpanId": "fe0c2e432a62814f",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 2.9197,
+              "monotonicStartTimestamp": 397760031018894,
+              "monotonicStopTimestamp": 397760033920025,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "plan.access": "Scan",
+                "plan.snapshot_fallback": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "5bf8bad75dff8247",
+              "parentSpanId": "199362462cd82844",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.0115,
+              "monotonicStartTimestamp": 397760031778192,
+              "monotonicStopTimestamp": 397760031784864,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "68e190384e352e98",
+              "parentSpanId": "199362462cd82844",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.01,
+              "monotonicStartTimestamp": 397760033065847,
+              "monotonicStopTimestamp": 397760033072792,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "planner.selected_execute",
+              "spanId": "bb4407c0b04b7e4b",
+              "parentSpanId": "fe0c2e432a62814f",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 18.8318,
+              "monotonicStartTimestamp": 397760034363994,
+              "monotonicStopTimestamp": 397760053197279,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "execution.source_selected": "False",
+                "execution.access": "Scan",
+                "execution.snapshot_fallback": "True",
+                "execution.rows_examined": "2100"
+              }
+            },
+            {
+              "name": "index.gate_wait",
+              "spanId": "a9ee98e692a2a86c",
+              "parentSpanId": "bb4407c0b04b7e4b",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.6899,
+              "monotonicStartTimestamp": 397760038122977,
+              "monotonicStopTimestamp": 397760038810813,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "gate.acquired": "True"
+              }
+            },
+            {
+              "name": "query.observation.publish",
+              "spanId": "811b050072ffe166",
+              "parentSpanId": "fe0c2e432a62814f",
+              "traceId": "aa0368a1d18547eae226067bc00267bf",
+              "elapsedMilliseconds": 0.0475,
+              "monotonicStartTimestamp": 397760053450122,
+              "monotonicStopTimestamp": 397760053494385,
+              "overlapMilliseconds": 0,
+              "tags": {
+                "query.snapshot_fallback": "True"
+              }
+            }
+          ]
+        }
+      },
+      "activeIndex": true,
+      "activeIndexCount": 2,
+      "correct": true,
+      "queryHistoryBeforeCandidates": 0,
+      "initialIngestMilliseconds": 185.7937,
+      "profileMilliseconds": 201.738,
+      "buildMilliseconds": 3400.7217,
+      "inferenceMilliseconds": 1.7018,
+      "inferenceCostUsd": null,
+      "maintenanceMilliseconds": 9.1651,
+      "maintenanceStorageDeltaBytes": 0,
+      "storageAfterWritesBytes": 67132424,
+      "storageBeforeIndexBytes": 67132425,
+      "finalStorageBytes": 67587694,
+      "advice": "schema-statistics:query-independent-coverage-hypothesis",
+      "access": "TerraBase source scan (held-out predicate)",
+      "indexBuildTimings": "\u2014",
+      "indexCatchUpTimings": "\u2014",
+      "automaticIndexStorage": {
+        "logicalDocumentEntryBytes": 1004100,
+        "walBytes": 104,
+        "walCompactionStagingBytes": 0
+      },
+      "indexBuildPhaseDetails": [],
+      "indexCatchUpPhaseDetails": [],
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "nested profile.segment",
+      "strategy": "Deterministic schema statistics",
+      "indexBudget": "2 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 1916.4,
+        "repeatP50Microseconds": 30.127,
+        "repeatP95Microseconds": 43.99,
+        "firstRepeatMicroseconds": 68.068,
+        "repeatMaximumMicroseconds": 68.068,
+        "firstRowsExamined": 42,
+        "repeatRowsExamined": 42,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": true,
+        "repeatIndexServedFraction": 1,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 1.9164,
+          "cpuMilliseconds": 1.885,
+          "workingSetDeltaBytes": 4096,
+          "allocatedBytes": 98400
+        },
+        "repeatLatencyMicroseconds": [
+          68.068,
+          34.506,
+          31.69,
+          29.364,
+          30.512,
+          29.031,
+          30.576,
+          28.479,
+          48.5,
+          32.917,
+          30.9,
+          29.031,
+          30.306,
+          28.694,
+          29.857,
+          28.818,
+          30.09,
+          28.575,
+          30.179,
+          28.273,
+          30,
+          28.707,
+          30.469,
+          28.43,
+          29.978,
+          28.419,
+          30.309,
+          40.854,
+          31.204,
+          28.959,
+          30.296,
+          28.315,
+          30.58,
+          28.819,
+          30.319,
+          28.119,
+          30.127,
+          35.693,
+          43.99,
+          31.104,
+          31.269,
+          28.421,
+          30.742,
+          28.379,
+          31.137,
+          28.26,
+          35.319,
+          28.987,
+          30.918,
+          28.209
+        ],
+        "firstRepeatDiagnostics": null,
+        "firstQueryDiagnostics": null
+      },
+      "activeIndex": true,
+      "activeIndexCount": 2,
+      "correct": true,
+      "queryHistoryBeforeCandidates": 0,
+      "initialIngestMilliseconds": 185.7937,
+      "profileMilliseconds": 201.738,
+      "buildMilliseconds": 3400.7217,
+      "inferenceMilliseconds": 1.7018,
+      "inferenceCostUsd": null,
+      "maintenanceMilliseconds": 9.1651,
+      "maintenanceStorageDeltaBytes": 0,
+      "storageAfterWritesBytes": 67132424,
+      "storageBeforeIndexBytes": 67132425,
+      "finalStorageBytes": 67587694,
+      "advice": "schema-statistics:query-independent-coverage-hypothesis",
+      "access": "TerraBase automatic index",
+      "indexBuildTimings": "\u2014",
+      "indexCatchUpTimings": "\u2014",
+      "automaticIndexStorage": {
+        "logicalDocumentEntryBytes": 1004100,
+        "walBytes": 104,
+        "walCompactionStagingBytes": 0
+      },
+      "indexBuildPhaseDetails": [],
+      "indexCatchUpPhaseDetails": [],
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "status",
+      "strategy": "SQLite tuned no secondary index",
+      "indexBudget": "0 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 2871.9,
+        "repeatP50Microseconds": 740.759,
+        "repeatP95Microseconds": 824.175,
+        "firstRepeatMicroseconds": 789.927,
+        "repeatMaximumMicroseconds": 1002.945,
+        "firstRowsExamined": null,
+        "repeatRowsExamined": null,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": false,
+        "repeatIndexServedFraction": 0,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 2.8719,
+          "cpuMilliseconds": 2.833,
+          "workingSetDeltaBytes": 0,
+          "allocatedBytes": 24600
+        },
+        "repeatLatencyMicroseconds": [
+          789.927,
+          752.164,
+          787.684,
+          746.341,
+          744.703,
+          1002.945,
+          753.132,
+          743.731,
+          732.881,
+          737.887,
+          739.681,
+          746.282,
+          729.989,
+          742.022,
+          735.619,
+          740.541,
+          731.497,
+          739.502,
+          733.498,
+          824.175,
+          748.079,
+          747.078,
+          741.134,
+          748.406,
+          733.909,
+          744.888,
+          732.168,
+          745.689,
+          729.138,
+          741.693,
+          732.293,
+          740.759,
+          732.238,
+          730.431,
+          746.13,
+          744.169,
+          728.011,
+          734.86,
+          955.291,
+          769.34,
+          751.586,
+          731.889,
+          730.514,
+          740.964,
+          742.162,
+          734.105,
+          731.08,
+          738.728,
+          730.575,
+          735.763
+        ],
+        "firstRepeatDiagnostics": null,
+        "firstQueryDiagnostics": null
+      },
+      "activeIndex": false,
+      "activeIndexCount": 0,
+      "correct": true,
+      "queryHistoryBeforeCandidates": null,
+      "initialIngestMilliseconds": 49.2068,
+      "profileMilliseconds": 0,
+      "buildMilliseconds": 0,
+      "inferenceMilliseconds": 0,
+      "inferenceCostUsd": 0,
+      "maintenanceMilliseconds": 1.7402,
+      "maintenanceStorageDeltaBytes": 12360,
+      "storageAfterWritesBytes": 696096,
+      "storageBeforeIndexBytes": 696096,
+      "finalStorageBytes": 708456,
+      "advice": "comparator",
+      "access": "SQLite table scan (EXPLAIN QUERY PLAN)",
+      "indexBuildTimings": "",
+      "indexCatchUpTimings": "not-applicable",
+      "automaticIndexStorage": null,
+      "indexBuildPhaseDetails": null,
+      "indexCatchUpPhaseDetails": null,
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "nested profile.segment",
+      "strategy": "SQLite tuned no secondary index",
+      "indexBudget": "0 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 1591.3999999999999,
+        "repeatP50Microseconds": 870.484,
+        "repeatP95Microseconds": 1035.514,
+        "firstRepeatMicroseconds": 899.152,
+        "repeatMaximumMicroseconds": 1151.215,
+        "firstRowsExamined": null,
+        "repeatRowsExamined": null,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": false,
+        "repeatIndexServedFraction": 0,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 1.5914,
+          "cpuMilliseconds": 1.572,
+          "workingSetDeltaBytes": 0,
+          "allocatedBytes": 32800
+        },
+        "repeatLatencyMicroseconds": [
+          899.152,
+          885.193,
+          1035.514,
+          892.53,
+          874.277,
+          871.115,
+          902.62,
+          997.369,
+          868.652,
+          872.481,
+          871.961,
+          855.81,
+          869.602,
+          867.906,
+          871.244,
+          865.175,
+          853.487,
+          867.147,
+          870.981,
+          894.441,
+          878.062,
+          867.92,
+          870.484,
+          866.988,
+          861.836,
+          869.87,
+          868.388,
+          858.671,
+          909.041,
+          877.552,
+          874.432,
+          882.006,
+          857.175,
+          871.17,
+          866.994,
+          1151.215,
+          907.769,
+          879.261,
+          869.517,
+          867.333,
+          868.358,
+          864.839,
+          863.782,
+          861.248,
+          867.912,
+          856.312,
+          859.577,
+          1060.978,
+          892.035,
+          870.787
+        ],
+        "firstRepeatDiagnostics": null,
+        "firstQueryDiagnostics": null
+      },
+      "activeIndex": false,
+      "activeIndexCount": 0,
+      "correct": true,
+      "queryHistoryBeforeCandidates": null,
+      "initialIngestMilliseconds": 49.2068,
+      "profileMilliseconds": 0,
+      "buildMilliseconds": 0,
+      "inferenceMilliseconds": 0,
+      "inferenceCostUsd": 0,
+      "maintenanceMilliseconds": 1.7402,
+      "maintenanceStorageDeltaBytes": 12360,
+      "storageAfterWritesBytes": 696096,
+      "storageBeforeIndexBytes": 696096,
+      "finalStorageBytes": 708456,
+      "advice": "comparator",
+      "access": "SQLite table scan (EXPLAIN QUERY PLAN)",
+      "indexBuildTimings": "",
+      "indexCatchUpTimings": "not-applicable",
+      "automaticIndexStorage": null,
+      "indexBuildPhaseDetails": null,
+      "indexCatchUpPhaseDetails": null,
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "status",
+      "strategy": "SQLite tuned explicit JSONB indexes",
+      "indexBudget": "2 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 794.5,
+        "repeatP50Microseconds": 71.48,
+        "repeatP95Microseconds": 125.98,
+        "firstRepeatMicroseconds": 124.928,
+        "repeatMaximumMicroseconds": 280.915,
+        "firstRowsExamined": null,
+        "repeatRowsExamined": null,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": true,
+        "repeatIndexServedFraction": 1,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 0.7945,
+          "cpuMilliseconds": 0.779,
+          "workingSetDeltaBytes": 0,
+          "allocatedBytes": 32800
+        },
+        "repeatLatencyMicroseconds": [
+          124.928,
+          82.45,
+          72.238,
+          71.652,
+          69.362,
+          67.268,
+          70.49,
+          67.968,
+          77.945,
+          72.028,
+          82.718,
+          74.021,
+          70.111,
+          82.688,
+          74.215,
+          67.219,
+          69.527,
+          66.914,
+          66.712,
+          68.947,
+          280.915,
+          85.475,
+          196.547,
+          82.412,
+          71.779,
+          68.009,
+          66.987,
+          69.11,
+          66.762,
+          66.535,
+          82.835,
+          125.98,
+          81.379,
+          68.695,
+          87.294,
+          76.492,
+          67.875,
+          69.227,
+          98.869,
+          82.775,
+          71.48,
+          68.05,
+          84.598,
+          70.159,
+          66.507,
+          69.144,
+          66.71,
+          106.732,
+          80.321,
+          67.252
+        ],
+        "firstRepeatDiagnostics": null,
+        "firstQueryDiagnostics": null
+      },
+      "activeIndex": true,
+      "activeIndexCount": 2,
+      "correct": true,
+      "queryHistoryBeforeCandidates": null,
+      "initialIngestMilliseconds": 37.3253,
+      "profileMilliseconds": 0,
+      "buildMilliseconds": 5.0073,
+      "inferenceMilliseconds": 0,
+      "inferenceCostUsd": 0,
+      "maintenanceMilliseconds": 1.9895,
+      "maintenanceStorageDeltaBytes": 61800,
+      "storageAfterWritesBytes": 696096,
+      "storageBeforeIndexBytes": 696096,
+      "finalStorageBytes": 823816,
+      "advice": "comparator",
+      "access": "SQLite ix_users_status (EXPLAIN QUERY PLAN)",
+      "indexBuildTimings": "explicit indexes aggregate (2): 5.0 ms",
+      "indexCatchUpTimings": "not-applicable",
+      "automaticIndexStorage": null,
+      "indexBuildPhaseDetails": null,
+      "indexCatchUpPhaseDetails": null,
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    },
+    {
+      "shape": "nested profile.segment",
+      "strategy": "SQLite tuned explicit JSONB indexes",
+      "indexBudget": "2 secondary",
+      "measurement": {
+        "firstQueryMicroseconds": 691,
+        "repeatP50Microseconds": 68.429,
+        "repeatP95Microseconds": 125.289,
+        "firstRepeatMicroseconds": 125.289,
+        "repeatMaximumMicroseconds": 421.625,
+        "firstRowsExamined": null,
+        "repeatRowsExamined": null,
+        "firstResultCount": 21,
+        "repeatResultCount": 21,
+        "correct": true,
+        "firstIndexServed": true,
+        "repeatIndexServedFraction": 1,
+        "firstQueryMetrics": {
+          "elapsedMilliseconds": 0.691,
+          "cpuMilliseconds": 0.689,
+          "workingSetDeltaBytes": 0,
+          "allocatedBytes": 32800
+        },
+        "repeatLatencyMicroseconds": [
+          125.289,
+          85.379,
+          74.39,
+          68.841,
+          67.164,
+          108.324,
+          80.401,
+          68.1,
+          66.522,
+          68.851,
+          66.496,
+          66.414,
+          67.276,
+          82.252,
+          73.014,
+          66.776,
+          66.256,
+          68.391,
+          99.972,
+          80.819,
+          67.793,
+          66.014,
+          68.666,
+          66.998,
+          65.729,
+          67.216,
+          78.105,
+          73.252,
+          66.548,
+          421.625,
+          95.277,
+          70.639,
+          67.687,
+          68.429,
+          67.006,
+          131.381,
+          83.871,
+          68.051,
+          69.448,
+          107.315,
+          79.386,
+          67.496,
+          65.91,
+          68.526,
+          66.438,
+          65.75,
+          66.383,
+          86.255,
+          74.538,
+          66.994
+        ],
+        "firstRepeatDiagnostics": null,
+        "firstQueryDiagnostics": null
+      },
+      "activeIndex": true,
+      "activeIndexCount": 2,
+      "correct": true,
+      "queryHistoryBeforeCandidates": null,
+      "initialIngestMilliseconds": 37.3253,
+      "profileMilliseconds": 0,
+      "buildMilliseconds": 5.0073,
+      "inferenceMilliseconds": 0,
+      "inferenceCostUsd": 0,
+      "maintenanceMilliseconds": 1.9895,
+      "maintenanceStorageDeltaBytes": 61800,
+      "storageAfterWritesBytes": 696096,
+      "storageBeforeIndexBytes": 696096,
+      "finalStorageBytes": 823816,
+      "advice": "comparator",
+      "access": "SQLite ix_users_profile_segment (EXPLAIN QUERY PLAN)",
+      "indexBuildTimings": "explicit indexes aggregate (2): 5.0 ms",
+      "indexCatchUpTimings": "not-applicable",
+      "automaticIndexStorage": null,
+      "indexBuildPhaseDetails": null,
+      "indexCatchUpPhaseDetails": null,
+      "inferenceInputTokens": null,
+      "inferenceOutputTokens": null,
+      "inferenceRequestedModel": null,
+      "inferenceActualModel": null
+    }
+  ],
+  "sqliteNoIndexPlans": [
+    "SCAN users USING INDEX sqlite_autoindex_users_1",
+    "SCAN users USING INDEX sqlite_autoindex_users_1"
+  ],
+  "sqliteExplicitPlans": [
+    "SEARCH users USING INDEX ix_users_status (\u003Cexpr\u003E=?); USE TEMP B-TREE FOR ORDER BY",
+    "SEARCH users USING INDEX ix_users_profile_segment (\u003Cexpr\u003E=?); USE TEMP B-TREE FOR ORDER BY"
+  ]
+}

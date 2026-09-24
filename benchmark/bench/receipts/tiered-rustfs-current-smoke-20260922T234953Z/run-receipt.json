@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "workload": "tiered-segment",
+  "status": "failed",
+  "startedAtUtc": "2026-09-22T23:49:53.34759Z",
+  "finishedAtUtc": "2026-09-22T23:49:54.5792471Z",
+  "exitCode": 1,
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload tiered-segment --records 1000 --batch 100 --payload-bytes 128 --updates 10 --deletes 10 --point-reads 32 --checkpoint-records 500 --cache-bytes 16777216 --prefix terrabase-tiered/current-smoke-20260922T234953Z --output bench/receipts/tiered-rustfs-current-smoke-20260922T234953Z",
+  "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/receipts/tiered-rustfs-current-smoke-20260922T234953Z",
+  "subject": {
+    "project": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/TerraBase.csproj",
+    "repository": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "67e35f443565c54eb731d6ea2dd989cb5c87b7be",
+    "treeDigest": "69203400f13c7e311cf5fb569a081eeab36e8cbc",
+    "dirty": true,
+    "workingTreeDigest": "3a575ee6c37facfa598601f9fecd03a47364af450cd4a9270c085a2e5531e391",
+    "workingTreeChanges": [
+      " M docs/storage-tiering.md",
+      " M src/TerraBase/Backup/BackupArtifactReadLimits.cs",
+      " M src/TerraBase/Backup/BackupEncryptionReadLease.cs",
+      " M src/TerraBase/Backup/BackupManager.cs",
+      " M src/TerraBase/Backup/IStreamingBackupEncryptionReadLease.cs",
+      " M src/TerraBase/Storage/Backup/StorageEngineBackupSource.cs",
+      " M src/TerraBase/StorageEngine/SegmentStore.cs",
+      " M src/TerraBase/StorageEngine/StorageEngine.cs",
+      " M tests/TerraBase.Api.Tests/S3NativeLargeObjectBoundaryTests.cs",
+      " M tests/TerraBase.Api.Tests/StorageCompactionMergeTests.cs",
+      " M tests/TerraBase.Tests/StorageFaultInjectionTests.cs",
+      "?? src/TerraBase/Backup/ISeekableBackupSource.cs",
+      "?? tests/TerraBase.Api.Tests/TieredBackupCaptureCacheTests.cs"
+    ]
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "dotnetVersion": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 46,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "buildConfiguration": "Release"
+  },
+  "artifacts": [
+    {
+      "file": "tiered-rustfs-receipt.json",
+      "bytes": 2077,
+      "sha256": "2d1b728c59b03ba77599477f0f859f79de2f77dbad44e7f3cfd74021c3632d90"
+    }
+  ],
+  "error": null,
+  "receiptSha256": "378ba0c0adb497104f1368f23faee1e2092ed4d5cf72a649028df4e9146ac6c6"
+}

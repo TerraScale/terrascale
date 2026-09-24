@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "workload": "query-independent",
+  "status": "complete",
+  "startedAtUtc": "2026-09-23T01:47:10.3614656Z",
+  "finishedAtUtc": "2026-09-23T01:47:18.5297413Z",
+  "exitCode": 0,
+  "command": "/tmp/ts-benchmark-instrumentation-20260923T005200Z/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks --workload=query-independent --documents=2000 --samples=30 --maximum-indexes=2 --maintenance-documents=100 --index-perf --output=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/query-independent-instrumentation-20260923T014427Z-runtime-order/trial-2-diagnostic",
+  "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/query-independent-instrumentation-20260923T014427Z-runtime-order/trial-2-diagnostic",
+  "subject": {
+    "project": "/tmp/terrabase-indexing-mirror-fixed-20260923T013001Z/src/TerraBase/TerraBase.csproj",
+    "repository": "/tmp/terrabase-indexing-mirror-fixed-20260923T013001Z",
+    "commit": "7e5a1851ce356a2f4cccbfdeffeb54635f6e9cc6",
+    "treeDigest": "6ac4eeb26a369bf87e645158802da3873f6dca23",
+    "dirty": true,
+    "workingTreeDigest": "2a27753aa2a328d3bed7066b34ca4f04ec84876626e99adc9edb056484d2764d",
+    "workingTreeChanges": [
+      " M src/TerraBase/Indexing/Automatic/AutomaticIndexCoordinator.cs",
+      " M src/TerraBase/Indexing/Automatic/AutomaticIndexRuntime.cs",
+      " M src/TerraBase/Indexing/Automatic/AutomaticIndexSnapshotSpool.cs",
+      " M src/TerraBase/Indexing/Automatic/IAutomaticIndexSnapshotBuildBackend.cs",
+      " M src/TerraBase/Indexing/Automatic/QueryIndependentIndexLifecycleManager.cs",
+      " M src/TerraBase/Indexing/Runtime/DurableIndexStore.Replacement.cs",
+      " M src/TerraBase/Indexing/Runtime/DurableIndexStore.SnapshotBuild.cs",
+      " M src/TerraBase/Indexing/Runtime/DurableIndexStore.cs",
+      " M src/TerraBase/Indexing/Runtime/QueryPlanner.cs",
+      " M tests/TerraBase.Api.Tests/DurableSnapshotBatchTests.cs"
+    ]
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "dotnetVersion": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 46,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "buildConfiguration": "Release"
+  },
+  "artifacts": [],
+  "error": null,
+  "receiptSha256": "80b45642b3889be5c62e864c281de9490c18f2a6fc601b6f8b92f5d2abbe3823"
+}

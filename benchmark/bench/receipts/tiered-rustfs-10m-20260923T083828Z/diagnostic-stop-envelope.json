@@ -1,0 +1,39 @@
+{
+  "capturedUtc": "2026-09-23T08:57:14.245423+00:00",
+  "unit": "terrabase-tiered-10m-20260923T083828Z.scope",
+  "cgroup": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/terrabase-tiered-10m-20260923T083828Z.scope",
+  "files": {
+    "memory.max": "4294967296\n",
+    "memory.peak": "2265645056\n",
+    "memory.current": "531845120\n",
+    "memory.swap.max": "0\n",
+    "memory.swap.current": "0\n",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n",
+    "io.stat": "253:0 \n8:0 rbytes=7041024 wbytes=6945573376 rios=310 wios=78670 dbytes=0 dios=0\n"
+  },
+  "progress": {
+    "utc": "2026-09-23T08:55:32.8345555+00:00",
+    "phase": "seed",
+    "completed": 3500000,
+    "total": 10000000,
+    "elapsedSeconds": 1023.6509072,
+    "workingSetBytes": 232210432,
+    "peakRssBytes": 338112512,
+    "managedBytes": 80241624,
+    "localStorageBytes": 2422449024,
+    "ssdCacheBytes": 0,
+    "stagingBytes": 0,
+    "rustFsObjectCount": null,
+    "rustFsBytes": null,
+    "cgroup": {
+      "Path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/terrabase-tiered-10m-20260923T083828Z.scope",
+      "MemoryMax": "4294967296",
+      "MemoryPeak": "2224427008",
+      "SwapMax": "0",
+      "MemoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+      "MemoryCurrent": "2200002560",
+      "SwapCurrent": "0",
+      "IoStat": "253:0 \n8:0 rbytes=6303744 wbytes=6695303168 rios=293 wios=75809 dbytes=0 dios=0"
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "Status": "complete",
+  "Phase": "complete",
+  "TargetRecords": 10000000,
+  "CompletedRecords": 10000000,
+  "IngestOnly": true,
+  "EngineRoot": "__SOURCE_ENGINE_ROOT__",
+  "Prefix": "tiered-rustfs-recovery-regression",
+  "SegmentObjectPrefix": "tiered-rustfs-recovery-regression/",
+  "JournalObjectPrefix": "tiered-rustfs-recovery-regression-commits",
+  "JournalFramePrefix": "tiered-rustfs-recovery-regression-commits/01ARZ3NDEKTSV4RRFFQ69G5FAV/journal/v1/local/frames/",
+  "DatabaseId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "WriterId": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+  "Region": "local",
+  "S3Endpoint": "http://127.0.0.1:19000",
+  "S3Bucket": "terrabase-tiered",
+  "Batch": 65536,
+  "PayloadBytes": 1024,
+  "PayloadMode": "per-key-incompressible",
+  "PayloadSeed": 1337,
+  "BenchmarkAssembly": "TerraBase.Benchmarks.dll",
+  "BenchmarkAssemblySha256": "__BENCHMARK_ASSEMBLY_SHA256__",
+  "RemoteAck": {
+    "AcknowledgedBatches": 153,
+    "AcknowledgedRecords": 10000001,
+    "AcknowledgedRecordBytes": 4183756852,
+    "TotalAckMilliseconds": 0,
+    "AverageAckMilliseconds": 0,
+    "TotalAckSeconds": 0
+  },
+  "RemoteValidatedFrontier": 10000001,
+  "RemoteJournalObjects": {
+    "ObjectCount": 153,
+    "TotalBytes": 4223773992
+  },
+  "RemoteObjects": {
+    "ObjectCount": 0,
+    "TotalBytes": 0
+  }
+}

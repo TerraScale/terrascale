@@ -1,15 +1,26 @@
-# Scale ladder — all database functions at 10k / 100k / 1M / 10M / 100M (2026-09-20)
+# Historical scale ladder plan — all database functions at 10k / 100k / 1M / 10M / 100M (2026-09-20)
 
-One harness, five scales, one contract: every function (insert, update,
+Status: the 10k, 100k, and 1M rungs have historical receipts; the 10M rung
+did not complete and the 100M rung has not been run. This document records the
+planned contract, not current-source qualification.
+
+The planned contract uses one harness and five scales: every function (insert, update,
 delete, scan, point read, indexed query, relationships, backup, PITR and
 final restore, compaction) exercised at each rung and verified exactly —
 survivors byte-identical, deleted documents provably absent, relationship
 sets derivable and complete. Rungs ran sequentially on one host through a
-workflow orchestrator; each wrote an immutable receipt.
+workflow orchestrator; the completed rungs wrote immutable receipts.
 
-Receipts: `bench/receipts/e2e-ladder-{10k,100k,1m}-20260920/`. The 10M rung
-left `bench/receipts/e2e-ladder-10m-20260920/` (source engine; no receipt —
-the run died in full-backup).
+Receipts: `bench/receipts/e2e-ladder-{10k,100k,1m}-20260920/` are historical.
+The 10M rung left `bench/receipts/e2e-ladder-10m-20260920/` with only a source
+engine and no completed receipt because the run died in full backup. No 100M
+receipt exists.
+
+These local-filesystem receipts do not establish S3 restore activation. Current
+source behavior keeps same-identity S3 activation fenced for distributed writer
+safety, while an offline fresh-identity S3 restore is a separate supported path
+with a new database identity; focused restore tests cover that path, not this
+ladder.
 
 Functions per rung, in phase order: batched insert, relationship write
 (batched documents + schema-driven constraint rebuild), read-back verify,
@@ -64,7 +75,7 @@ already-verified final-restore count.
   body, the dominant per-document term). The 2026-09-19 10M e2e receipts
   (net10) remain the 10M-scale evidence for the insert/scan/backup/restore
   chain.
-- **100M rung — not runnable on any host of this class.** 100M × 1,772 B ≈
+- **100M rung — unqualified and not run.** 100M × 1,772 B ≈
   165 GiB of engine residency vs 31.3 GiB here (5.3× over). Even after the
   body fast path, the per-document dictionaries and sequence indexes scale
   linearly; 100M needs those restructured (or a ~200 GiB host). This rung

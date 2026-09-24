@@ -1,0 +1,12 @@
+{
+  "mode": "diagnostic-only",
+  "status": "complete",
+  "phase": "verified",
+  "updatedAtUtc": "2026-09-23T08:21:26.6762503+00:00",
+  "sourceRootDeleted": true,
+  "artifactsExpected": 2,
+  "artifactsVerified": 2,
+  "artifactBytesVerified": 13206576,
+  "appliedLogEntries": 2,
+  "failure": null
+}

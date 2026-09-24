@@ -1,0 +1,629 @@
+{
+  "schemaVersion": 1,
+  "records": [
+    {
+      "capturedAtUtc": "2026-09-24T04:09:43.4733678+00:00",
+      "requestedStrategy": "Deterministic schema statistics",
+      "measuredStrategy": "Deterministic schema statistics",
+      "shape": "status",
+      "queryIndependentCandidateIdsAndPaths": [
+        {
+          "candidateId": "339c3c051f1687d48cc83ae88c30526eda17867065d5c7de492648aea2d1ca8d",
+          "paths": [
+            "value"
+          ]
+        },
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ]
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ]
+        }
+      ],
+      "advisor": {
+        "provider": "schema-statistics",
+        "reasonCode": "query-independent-coverage-hypothesis",
+        "recommendationCandidateIds": [
+          "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0"
+        ],
+        "modelVersion": null,
+        "inputTokens": null,
+        "outputTokens": null
+      },
+      "sourceCommitSequence": 3,
+      "activeAndPhysicalIndexStates": [
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 2,
+          "targetPosition": 2,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 2,
+          "freshAtSourceCut": false
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 2,
+          "targetPosition": 2,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 2,
+          "freshAtSourceCut": false
+        }
+      ],
+      "preQueryExplain": {
+        "indexName": "",
+        "access": "Scan",
+        "isFresh": false,
+        "watermarkCommitSequence": 0,
+        "usedSnapshotFallback": false,
+        "reason": "No candidate satisfies the query shape and freshness contract.",
+        "candidates": [],
+        "rejectedCandidates": []
+      }
+    },
+    {
+      "capturedAtUtc": "2026-09-24T04:09:44.3873045+00:00",
+      "requestedStrategy": "Deterministic schema statistics",
+      "measuredStrategy": "Deterministic schema statistics",
+      "shape": "nested profile.segment",
+      "queryIndependentCandidateIdsAndPaths": [
+        {
+          "candidateId": "339c3c051f1687d48cc83ae88c30526eda17867065d5c7de492648aea2d1ca8d",
+          "paths": [
+            "value"
+          ]
+        },
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ]
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ]
+        }
+      ],
+      "advisor": {
+        "provider": "schema-statistics",
+        "reasonCode": "query-independent-coverage-hypothesis",
+        "recommendationCandidateIds": [
+          "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0"
+        ],
+        "modelVersion": null,
+        "inputTokens": null,
+        "outputTokens": null
+      },
+      "sourceCommitSequence": 3,
+      "activeAndPhysicalIndexStates": [
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 2,
+          "targetPosition": 2,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 2,
+          "freshAtSourceCut": false
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 2,
+          "targetPosition": 2,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 2,
+          "freshAtSourceCut": false
+        }
+      ],
+      "preQueryExplain": {
+        "indexName": "",
+        "access": "Scan",
+        "isFresh": false,
+        "watermarkCommitSequence": 0,
+        "usedSnapshotFallback": false,
+        "reason": "No candidate satisfies the query shape and freshness contract.",
+        "candidates": [],
+        "rejectedCandidates": []
+      }
+    },
+    {
+      "capturedAtUtc": "2026-09-24T04:10:07.6982612+00:00",
+      "requestedStrategy": "Von configured",
+      "measuredStrategy": "Deterministic fallback after Von attempt",
+      "shape": "status",
+      "queryIndependentCandidateIdsAndPaths": [
+        {
+          "candidateId": "339c3c051f1687d48cc83ae88c30526eda17867065d5c7de492648aea2d1ca8d",
+          "paths": [
+            "value"
+          ]
+        },
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ]
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ]
+        }
+      ],
+      "advisor": {
+        "provider": "schema-statistics",
+        "reasonCode": "von-uncertain-or-abstained",
+        "recommendationCandidateIds": [
+          "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0"
+        ],
+        "modelVersion": "von-1.2.0",
+        "inputTokens": 823,
+        "outputTokens": 7
+      },
+      "sourceCommitSequence": 3,
+      "activeAndPhysicalIndexStates": [
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 2,
+          "targetPosition": 2,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 2,
+          "freshAtSourceCut": false
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 2,
+          "targetPosition": 2,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 2,
+          "freshAtSourceCut": false
+        }
+      ],
+      "preQueryExplain": {
+        "indexName": "",
+        "access": "Scan",
+        "isFresh": false,
+        "watermarkCommitSequence": 0,
+        "usedSnapshotFallback": false,
+        "reason": "No candidate satisfies the query shape and freshness contract.",
+        "candidates": [],
+        "rejectedCandidates": []
+      }
+    },
+    {
+      "capturedAtUtc": "2026-09-24T04:10:07.7019597+00:00",
+      "requestedStrategy": "Von configured",
+      "measuredStrategy": "Deterministic fallback after Von attempt",
+      "shape": "nested profile.segment",
+      "queryIndependentCandidateIdsAndPaths": [
+        {
+          "candidateId": "339c3c051f1687d48cc83ae88c30526eda17867065d5c7de492648aea2d1ca8d",
+          "paths": [
+            "value"
+          ]
+        },
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ]
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ]
+        }
+      ],
+      "advisor": {
+        "provider": "schema-statistics",
+        "reasonCode": "von-uncertain-or-abstained",
+        "recommendationCandidateIds": [
+          "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0"
+        ],
+        "modelVersion": "von-1.2.0",
+        "inputTokens": 823,
+        "outputTokens": 7
+      },
+      "sourceCommitSequence": 3,
+      "activeAndPhysicalIndexStates": [
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 2,
+          "targetPosition": 2,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 2,
+          "freshAtSourceCut": false
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 2,
+          "targetPosition": 2,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 2,
+          "freshAtSourceCut": false
+        }
+      ],
+      "preQueryExplain": {
+        "indexName": "",
+        "access": "Scan",
+        "isFresh": false,
+        "watermarkCommitSequence": 0,
+        "usedSnapshotFallback": false,
+        "reason": "No candidate satisfies the query shape and freshness contract.",
+        "candidates": [],
+        "rejectedCandidates": []
+      }
+    },
+    {
+      "capturedAtUtc": "2026-09-24T04:15:47.7873288+00:00",
+      "requestedStrategy": "Deterministic schema statistics",
+      "measuredStrategy": "Deterministic schema statistics",
+      "shape": "status",
+      "queryIndependentCandidateIdsAndPaths": [
+        {
+          "candidateId": "339c3c051f1687d48cc83ae88c30526eda17867065d5c7de492648aea2d1ca8d",
+          "paths": [
+            "value"
+          ]
+        },
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ]
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ]
+        }
+      ],
+      "advisor": {
+        "provider": "schema-statistics",
+        "reasonCode": "query-independent-coverage-hypothesis",
+        "recommendationCandidateIds": [
+          "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0"
+        ],
+        "modelVersion": null,
+        "inputTokens": null,
+        "outputTokens": null
+      },
+      "sourceCommitSequence": 22,
+      "activeAndPhysicalIndexStates": [
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 21,
+          "targetPosition": 21,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 21,
+          "freshAtSourceCut": false
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 21,
+          "targetPosition": 21,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 21,
+          "freshAtSourceCut": false
+        }
+      ],
+      "preQueryExplain": {
+        "indexName": "",
+        "access": "Scan",
+        "isFresh": false,
+        "watermarkCommitSequence": 0,
+        "usedSnapshotFallback": false,
+        "reason": "No candidate satisfies the query shape and freshness contract.",
+        "candidates": [],
+        "rejectedCandidates": []
+      }
+    },
+    {
+      "capturedAtUtc": "2026-09-24T04:15:48.756993+00:00",
+      "requestedStrategy": "Deterministic schema statistics",
+      "measuredStrategy": "Deterministic schema statistics",
+      "shape": "nested profile.segment",
+      "queryIndependentCandidateIdsAndPaths": [
+        {
+          "candidateId": "339c3c051f1687d48cc83ae88c30526eda17867065d5c7de492648aea2d1ca8d",
+          "paths": [
+            "value"
+          ]
+        },
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ]
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ]
+        }
+      ],
+      "advisor": {
+        "provider": "schema-statistics",
+        "reasonCode": "query-independent-coverage-hypothesis",
+        "recommendationCandidateIds": [
+          "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0"
+        ],
+        "modelVersion": null,
+        "inputTokens": null,
+        "outputTokens": null
+      },
+      "sourceCommitSequence": 22,
+      "activeAndPhysicalIndexStates": [
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 21,
+          "targetPosition": 21,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 21,
+          "freshAtSourceCut": false
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 21,
+          "targetPosition": 21,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 21,
+          "freshAtSourceCut": false
+        }
+      ],
+      "preQueryExplain": {
+        "indexName": "",
+        "access": "Scan",
+        "isFresh": false,
+        "watermarkCommitSequence": 0,
+        "usedSnapshotFallback": false,
+        "reason": "No candidate satisfies the query shape and freshness contract.",
+        "candidates": [],
+        "rejectedCandidates": []
+      }
+    },
+    {
+      "capturedAtUtc": "2026-09-24T04:16:47.2841041+00:00",
+      "requestedStrategy": "Von configured",
+      "measuredStrategy": "Deterministic fallback after Von attempt",
+      "shape": "status",
+      "queryIndependentCandidateIdsAndPaths": [
+        {
+          "candidateId": "339c3c051f1687d48cc83ae88c30526eda17867065d5c7de492648aea2d1ca8d",
+          "paths": [
+            "value"
+          ]
+        },
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ]
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ]
+        }
+      ],
+      "advisor": {
+        "provider": "schema-statistics",
+        "reasonCode": "von-uncertain-or-abstained",
+        "recommendationCandidateIds": [
+          "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0"
+        ],
+        "modelVersion": "von-1.2.0",
+        "inputTokens": 823,
+        "outputTokens": 7
+      },
+      "sourceCommitSequence": 22,
+      "activeAndPhysicalIndexStates": [
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 21,
+          "targetPosition": 21,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 21,
+          "freshAtSourceCut": false
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 21,
+          "targetPosition": 21,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 21,
+          "freshAtSourceCut": false
+        }
+      ],
+      "preQueryExplain": {
+        "indexName": "",
+        "access": "Scan",
+        "isFresh": false,
+        "watermarkCommitSequence": 0,
+        "usedSnapshotFallback": false,
+        "reason": "No candidate satisfies the query shape and freshness contract.",
+        "candidates": [],
+        "rejectedCandidates": []
+      }
+    },
+    {
+      "capturedAtUtc": "2026-09-24T04:16:47.2877576+00:00",
+      "requestedStrategy": "Von configured",
+      "measuredStrategy": "Deterministic fallback after Von attempt",
+      "shape": "nested profile.segment",
+      "queryIndependentCandidateIdsAndPaths": [
+        {
+          "candidateId": "339c3c051f1687d48cc83ae88c30526eda17867065d5c7de492648aea2d1ca8d",
+          "paths": [
+            "value"
+          ]
+        },
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ]
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ]
+        }
+      ],
+      "advisor": {
+        "provider": "schema-statistics",
+        "reasonCode": "von-uncertain-or-abstained",
+        "recommendationCandidateIds": [
+          "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0"
+        ],
+        "modelVersion": "von-1.2.0",
+        "inputTokens": 823,
+        "outputTokens": 7
+      },
+      "sourceCommitSequence": 22,
+      "activeAndPhysicalIndexStates": [
+        {
+          "candidateId": "a8e0e52ae0acec498974c2a6cc17568344d898fdb942265dfb66f40c6fbbfef7",
+          "paths": [
+            "status"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 21,
+          "targetPosition": 21,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 21,
+          "freshAtSourceCut": false
+        },
+        {
+          "candidateId": "e1cadcc0861966acf7e1b783a102a7c966ce3b2c1d4ca4f767594a5f8821a6c0",
+          "paths": [
+            "profile.segment"
+          ],
+          "phase": "Active",
+          "lifecycleVisible": true,
+          "lifecycleAppliedPosition": 21,
+          "targetPosition": 21,
+          "physicalExists": true,
+          "physicalVisible": true,
+          "physicalAppliedPosition": 21,
+          "freshAtSourceCut": false
+        }
+      ],
+      "preQueryExplain": {
+        "indexName": "",
+        "access": "Scan",
+        "isFresh": false,
+        "watermarkCommitSequence": 0,
+        "usedSnapshotFallback": false,
+        "reason": "No candidate satisfies the query shape and freshness contract.",
+        "candidates": [],
+        "rejectedCandidates": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "status": "failed",
+  "startedAtUtc": "2026-09-22T23:54:26.6935192+00:00",
+  "finishedAtUtc": "2026-09-22T23:56:47.3405139+00:00",
+  "configuration": {
+    "backend": 0,
+    "datasetSize": 150000,
+    "payloadSize": 2048,
+    "memoryCapBytes": 268435456,
+    "memoryCapBytesSpecified": true,
+    "samples": 5,
+    "operationsPerSample": 20,
+    "sustainedWriteOperations": 20,
+    "warmupOperations": 100,
+    "concurrency": 1,
+    "seed": 1337,
+    "zipfExponent": 1.2,
+    "readRatio": 0.8,
+    "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-state-map-fix-20260923T0055Z",
+    "showHelp": false
+  },
+  "environment": {
+    "startedAtUtc": "2026-09-22T23:54:26.3369589+00:00",
+    "runtime": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "buildConfiguration": "Release",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 46,
+    "availableMemoryBytes": 201326592,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "serverGc": false,
+    "gcLatencyMode": "Interactive",
+    "gitCommit": "0f73f7874fd873e5aa2605fd06ad6854d1378372",
+    "gitDirty": true,
+    "artifactPath": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll",
+    "artifactSha256": "e36940edfee29a949eab9a3f5e84786ecd4000bf05e2cff449120c191badfd06"
+  },
+  "result": {
+    "status": "failed",
+    "backend": "StorageEngine",
+    "rawSamplesPath": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-state-map-fix-20260923T0055Z/raw-samples-larger-than-memory-StorageEngine.jsonl",
+    "storagePath": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-state-map-fix-20260923T0055Z/larger-than-memory/StorageEngine",
+    "datasetSize": 150000,
+    "payloadSize": 2048,
+    "estimatedLogicalDatasetBytes": 311400000,
+    "configuredMemoryCapBytes": 268435456,
+    "configuration": {
+      "backend": 0,
+      "datasetSize": 150000,
+      "payloadSize": 2048,
+      "memoryCapBytes": 268435456,
+      "samples": 5,
+      "operationsPerSample": 20,
+      "sustainedWriteOperations": 20,
+      "warmupOperations": 100,
+      "concurrency": 1,
+      "seed": 1337,
+      "zipfExponent": 1.2,
+      "readRatio": 0.8,
+      "initialDistribution": 0,
+      "compactAfterSample": true,
+      "shifts": [
+        {
+          "name": "uniform-read-heavy",
+          "operations": 2000,
+          "distribution": 0,
+          "mix": 1
+        },
+        {
+          "name": "zipf-read-heavy",
+          "operations": 2000,
+          "distribution": 1,
+          "mix": 1
+        },
+        {
+          "name": "zipf-write-heavy",
+          "operations": 2000,
+          "distribution": 1,
+          "mix": 2
+        }
+      ]
+    },
+    "startedAtUtc": "2026-09-22T23:54:26.6935192+00:00",
+    "finishedAtUtc": "2026-09-22T23:56:47.3405139+00:00",
+    "error": "System.OutOfMemoryException: Exception of type \u0027System.OutOfMemoryException\u0027 was thrown.\n   at ZoneTree.Compression.LZ4DataCompression.Decompress(Memory\u00601 compressedBytes, Int32 decompressedLength) in /tmp/terrabase-benchmark-subject-7e5a1851/src/TerraBase.ZoneTree/Compression/LZ4DataCompression.cs:line 22\n   at ZoneTree.Compression.DataCompression.Decompress(CompressionMethod method, Memory\u00601 compressedBytes, Int32 decompressedLength) in /tmp/terrabase-benchmark-subject-7e5a1851/src/TerraBase.ZoneTree/Compression/DataCompression.cs:line 25\n   at ZoneTree.Segments.RandomAccess.CompressedFileRandomAccessDevice.ReadBlock(Int32 blockIndex) in /tmp/terrabase-benchmark-subject-7e5a1851/src/TerraBase.ZoneTree/Segments/RandomAccess/CompressedFileRandomAccessDevice.cs:line 341\n   at ZoneTree.Segments.RandomAccess.CompressedFileRandomAccessDevice.ReadBlockAndAddToCache(Int32 blockIndex, Int32 offsetInBlock, Int32 length, SingleBlockPin blockPin) in /tmp/terrabase-benchmark-subject-7e5a1851/src/TerraBase.ZoneTree/Segments/RandomAccess/CompressedFileRandomAccessDevice.cs:line 307\n   at ZoneTree.Segments.Disk.DiskSegment\u00602.ZoneTree.Segments.IReadOnlySegment\u003CTKey,TValue\u003E.TryGet(TKey\u0026 key, TValue\u0026 value, KeyHashProvider\u00601\u0026 keyHashProvider)\n   at ZoneTree.Core.ZoneTree\u00602.TryGetFromReadonlySegments(TKey\u0026 key, TValue\u0026 value, KeyHashProvider\u00601\u0026 keyHashProvider) in /tmp/terrabase-benchmark-subject-7e5a1851/src/TerraBase.ZoneTree/Core/ZoneTree.ReadWrite.cs:line 27\n   at System.Collections.Generic.CollectionExtensions.GetValueOrDefault[TKey,TValue](IReadOnlyDictionary\u00602 dictionary, TKey key)\n   at TerraBase.StorageEngine.StorageEngine.ReadAsync(DocumentKey key, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/StorageEngine/StorageEngine.cs:line 1924\n   at TerraBase.DocumentStore.ReadAsync(DocumentKey key, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Storage/DocumentStore/DocumentStore.cs:line 49\n   at LargerThanMemoryWorkload.ReadAsync(DocumentStore store, DocumentKey key, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/LargerThanMemoryWorkload.cs:line 490\n   at LargerThanMemoryWorkload.\u003C\u003Ec__DisplayClass6_1.\u003C\u003CRunOperationsAsync\u003Eb__1\u003Ed.MoveNext() in /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/LargerThanMemoryWorkload.cs:line 469\n--- End of stack trace from previous location ---\n   at LargerThanMemoryWorkload.RunOperationsAsync(DocumentStore store, Configuration configuration, IReadOnlyList\u00601 keys, JsonElement payload, Int32 operationCount, KeyDistribution distribution, String phaseName, ReadWriteMix mix, KeyDistributionKind keyDistribution, Int32 randomSalt, CancellationToken cancellationToken, Int64[] latencies, Action\u00601 onLogicalBytes, Action\u00601 onReturnedBytes) in /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/LargerThanMemoryWorkload.cs:line 482\n   at LargerThanMemoryWorkload.RunAsync(Configuration configuration, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/LargerThanMemoryWorkload.cs:line 85\n   at LargerThanMemoryWorkload.RunAsync(Configuration configuration, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/LargerThanMemoryWorkload.cs:line 115",
+    "samples": []
+  },
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload larger-memory --backend storage-engine --memory-cap-bytes 268435456 --dataset-size 150000 --payload-size 2048 --samples 5 --operations 20 --writes 20 --warmup 100 --output /home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-state-map-fix-20260923T0055Z",
+  "receiptDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-state-map-fix-20260923T0055Z"
+}

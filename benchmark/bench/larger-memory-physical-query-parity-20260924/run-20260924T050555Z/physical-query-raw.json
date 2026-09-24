@@ -1,0 +1,1078 @@
+{
+  "schemaVersion": 1,
+  "generatedAtUtc": "2026-09-24T05:06:00.9039443+00:00",
+  "invocation": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/bin/Release/net11.0/LargerMemoryPhysicalQuery.dll --smoke",
+  "benchmarkGitHead": "0359e5c1efb3ed38d9e3c8255e39334e0b88f0d7",
+  "subjectGitHead": "47b235dcc78240a9eb5330e454a7bf3273ffcba9",
+  "smoke": true,
+  "baseDocuments": 200,
+  "maintenanceDocuments": 100,
+  "rawPayloadBytes": 1024,
+  "estimatedEncodedPayloadBytes": 410400,
+  "batchSize": 25,
+  "checkpointDocuments": 500,
+  "repeatSamples": 5,
+  "resultLimit": 100,
+  "targetMemoryCapBytes": 268435456,
+  "targetGcHeapCapBytes": 134217728,
+  "observedGcAvailableMemoryBytes": 134217728,
+  "dotnetGcHeapHardLimit": "8000000",
+  "cgroupAtStart": {
+    "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-p3595630-i16261142.scope",
+    "memoryMaxBytes": 268435456,
+    "swapMaxBytes": 0,
+    "memoryCurrentBytes": 17051648,
+    "memoryPeakBytes": 17051648,
+    "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n"
+  },
+  "cgroupAtFinish": {
+    "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-p3595630-i16261142.scope",
+    "memoryMaxBytes": 268435456,
+    "swapMaxBytes": 0,
+    "memoryCurrentBytes": 54673408,
+    "memoryPeakBytes": 55791616,
+    "memoryEvents": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n"
+  },
+  "operatingSystem": "NixOS 26.05 (Yarara)",
+  "architecture": "X64",
+  "dotnetRuntime": "11.0.0",
+  "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+  "terraBaseAssemblyVersion": "1.0.0.0",
+  "microsoftDataSqliteAssemblyVersion": "10.0.12.0",
+  "terraBaseAssemblySha256": "fe96c99b5900bf17544ca4ad3c26501ec83680774cd902ccee728feca244c241",
+  "microsoftDataSqliteAssemblySha256": "b98d957462be432895b00dccca012d3c127e118d3d4262418014b92c7bbd66cf",
+  "sources": [
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/Program.cs",
+      "sha256": "7fef75377f1921d42b9da14014c8cbf2feb54d3454411eb55a91483d8be5f1e5"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-physical-query-parity-20260924/LargerMemoryPhysicalQuery.csproj",
+      "sha256": "74c0df9c15597a1553a7b8862208c2657c260414646c7fa5a9c4fe1c3fd69c36"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/sqlite-physical-index-parity-20260924/Program.cs",
+      "sha256": "11b69a5b20405cef623a3606af12665e0d10d8f8454232c5b6aa88f652ab159a"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexStore.cs",
+      "sha256": "86670c787e78a05e16e68e3df53d36385cda1d058d5dc3f8aa4121ab32d9a832"
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Indexing/Runtime/DurableIndexBackend.cs",
+      "sha256": "2b8f884967a1064c5762a97ddc58c72da5d8095b3bdb6d1eac64ebe0796d390d"
+    }
+  ],
+  "lanes": [
+    {
+      "engine": "SQLite JSONB",
+      "indexField": "status",
+      "version": "3.53.3",
+      "settings": {
+        "journal_mode": "wal",
+        "synchronous": "2",
+        "cache_size": "-16384",
+        "mmap_size": "16777216",
+        "reopen_integrity_check": "ok",
+        "reopen_row_count": "300"
+      },
+      "phases": [
+        {
+          "name": "index-definition",
+          "milliseconds": 2.9,
+          "before": {
+            "atUtc": "2026-09-24T05:05:55.4326942+00:00",
+            "fileLengthBytes": 49256,
+            "workingSetBytes": 65122304,
+            "peakWorkingSetBytes": 65122304,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 69632,
+            "cgroupMemoryCurrentBytes": 28856320,
+            "cgroupMemoryPeakBytes": 28856320
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:55.4467053+00:00",
+            "fileLengthBytes": 57496,
+            "workingSetBytes": 65368064,
+            "peakWorkingSetBytes": 65368064,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 81920,
+            "cgroupMemoryCurrentBytes": 29118464,
+            "cgroupMemoryPeakBytes": 29118464
+          },
+          "notes": ""
+        },
+        {
+          "name": "seed-and-incremental-index-build",
+          "milliseconds": 62.7904,
+          "before": {
+            "atUtc": "2026-09-24T05:05:55.4483447+00:00",
+            "fileLengthBytes": 57496,
+            "workingSetBytes": 65454080,
+            "peakWorkingSetBytes": 65454080,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 81920,
+            "cgroupMemoryCurrentBytes": 29118464,
+            "cgroupMemoryPeakBytes": 29118464
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:55.5125239+00:00",
+            "fileLengthBytes": 848536,
+            "workingSetBytes": 68927488,
+            "peakWorkingSetBytes": 68927488,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 909312,
+            "cgroupMemoryCurrentBytes": 33206272,
+            "cgroupMemoryPeakBytes": 33206272
+          },
+          "notes": ""
+        },
+        {
+          "name": "input-generation-subset-of-seed",
+          "milliseconds": 10.594199999999995,
+          "before": {
+            "atUtc": "2026-09-24T05:05:55.5137345+00:00",
+            "fileLengthBytes": 848536,
+            "workingSetBytes": 69009408,
+            "peakWorkingSetBytes": 69009408,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 909312,
+            "cgroupMemoryCurrentBytes": 33206272,
+            "cgroupMemoryPeakBytes": 33206272
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:55.5148788+00:00",
+            "fileLengthBytes": 848536,
+            "workingSetBytes": 69087232,
+            "peakWorkingSetBytes": 69087232,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 909312,
+            "cgroupMemoryCurrentBytes": 33468416,
+            "cgroupMemoryPeakBytes": 33468416
+          },
+          "notes": "JSON text and deterministic high-entropy payload generation; included inside seed wall time"
+        },
+        {
+          "name": "post-build-maintenance",
+          "milliseconds": 15.9351,
+          "before": {
+            "atUtc": "2026-09-24T05:05:55.5160985+00:00",
+            "fileLengthBytes": 848536,
+            "workingSetBytes": 69173248,
+            "peakWorkingSetBytes": 69173248,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 909312,
+            "cgroupMemoryCurrentBytes": 33468416,
+            "cgroupMemoryPeakBytes": 33468416
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:55.533313+00:00",
+            "fileLengthBytes": 1079256,
+            "workingSetBytes": 70176768,
+            "peakWorkingSetBytes": 70176768,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 1155072,
+            "cgroupMemoryCurrentBytes": 34775040,
+            "cgroupMemoryPeakBytes": 34779136
+          },
+          "notes": ""
+        },
+        {
+          "name": "durable-reopen",
+          "milliseconds": 1.6536,
+          "before": {
+            "atUtc": "2026-09-24T05:05:55.5411513+00:00",
+            "fileLengthBytes": 638976,
+            "workingSetBytes": 70234112,
+            "peakWorkingSetBytes": 70234112,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 1794048,
+            "cgroupMemoryCurrentBytes": 34222080,
+            "cgroupMemoryPeakBytes": 35299328
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:55.5435084+00:00",
+            "fileLengthBytes": 671744,
+            "workingSetBytes": 70348800,
+            "peakWorkingSetBytes": 70348800,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 1826816,
+            "cgroupMemoryCurrentBytes": 34480128,
+            "cgroupMemoryPeakBytes": 35299328
+          },
+          "notes": ""
+        }
+      ],
+      "queries": [
+        {
+          "shape": "status",
+          "indexed": true,
+          "access": "SEARCH users USING INDEX ix_users_status (\u003Cexpr\u003E=?); USE TEMP B-TREE FOR ORDER BY",
+          "expectedIds": [
+            "doc-000017",
+            "doc-000117",
+            "doc-maint-000017"
+          ],
+          "expectedIdsSha256": "a28a67fd19cc34df9e6076dd7d84765616203b9b67e0ff1e4daac47e5ef35d22",
+          "firstIds": [
+            "doc-000017",
+            "doc-000117",
+            "doc-maint-000017"
+          ],
+          "firstMicroseconds": 1113.2,
+          "repeatMicroseconds": [
+            130.2,
+            64.2,
+            51.7,
+            47.4,
+            45.7
+          ],
+          "outputSerializationMicroseconds": 2226.6,
+          "after": {
+            "atUtc": "2026-09-24T05:05:55.5618174+00:00",
+            "fileLengthBytes": 671744,
+            "workingSetBytes": 70864896,
+            "peakWorkingSetBytes": 70864896,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 1826816,
+            "cgroupMemoryCurrentBytes": 34254848,
+            "cgroupMemoryPeakBytes": 35299328
+          }
+        },
+        {
+          "shape": "profile.segment",
+          "indexed": false,
+          "access": "SCAN users USING INDEX sqlite_autoindex_users_1",
+          "expectedIds": [
+            "doc-000023",
+            "doc-000123",
+            "doc-maint-000023"
+          ],
+          "expectedIdsSha256": "8a19af1ad65a66d6e42ab73322bcedcb6c0fb4bec5d9fa832efb73af4b6e9801",
+          "firstIds": [
+            "doc-000023",
+            "doc-000123",
+            "doc-maint-000023"
+          ],
+          "firstMicroseconds": 359.8,
+          "repeatMicroseconds": [
+            207.5,
+            195.1,
+            191.6,
+            203,
+            218.8
+          ],
+          "outputSerializationMicroseconds": 11.8,
+          "after": {
+            "atUtc": "2026-09-24T05:05:55.5644118+00:00",
+            "fileLengthBytes": 671744,
+            "workingSetBytes": 71401472,
+            "peakWorkingSetBytes": 71401472,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 1826816,
+            "cgroupMemoryCurrentBytes": 34516992,
+            "cgroupMemoryPeakBytes": 35299328
+          }
+        }
+      ],
+      "checkpoints": [],
+      "final": {
+        "atUtc": "2026-09-24T05:05:55.5659652+00:00",
+        "fileLengthBytes": 638976,
+        "workingSetBytes": 70807552,
+        "peakWorkingSetBytes": 70807552,
+        "processReadBytes": 5480448,
+        "processWriteBytes": 1826816,
+        "cgroupMemoryCurrentBytes": 34484224,
+        "cgroupMemoryPeakBytes": 35299328
+      }
+    },
+    {
+      "engine": "TerraBase DurableIndexStore",
+      "indexField": "status",
+      "version": "source project",
+      "settings": {
+        "index_definition": "by-status",
+        "durability": "ZoneTree WriteAheadLogMode.Sync",
+        "ingestion_mode": "durable-close-reopen-and-full-verify-every-500-base-documents",
+        "reopen_watermark": "16"
+      },
+      "phases": [
+        {
+          "name": "index-definition",
+          "milliseconds": 229.5251,
+          "before": {
+            "atUtc": "2026-09-24T05:05:55.5783965+00:00",
+            "fileLengthBytes": 0,
+            "workingSetBytes": 71798784,
+            "peakWorkingSetBytes": 71798784,
+            "processReadBytes": 5480448,
+            "processWriteBytes": 1826816,
+            "cgroupMemoryCurrentBytes": 34107392,
+            "cgroupMemoryPeakBytes": 35299328
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:55.8087881+00:00",
+            "fileLengthBytes": 2157,
+            "workingSetBytes": 76275712,
+            "peakWorkingSetBytes": 76275712,
+            "processReadBytes": 6086656,
+            "processWriteBytes": 1863680,
+            "cgroupMemoryCurrentBytes": 37421056,
+            "cgroupMemoryPeakBytes": 37421056
+          },
+          "notes": "Store constructor creates the empty physical index"
+        },
+        {
+          "name": "seed-and-incremental-index-build",
+          "milliseconds": 1817.5553,
+          "before": {
+            "atUtc": "2026-09-24T05:05:55.8096987+00:00",
+            "fileLengthBytes": 2157,
+            "workingSetBytes": 76365824,
+            "peakWorkingSetBytes": 76365824,
+            "processReadBytes": 6086656,
+            "processWriteBytes": 1863680,
+            "cgroupMemoryCurrentBytes": 37421056,
+            "cgroupMemoryPeakBytes": 37683200
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:57.6280136+00:00",
+            "fileLengthBytes": 213979,
+            "workingSetBytes": 86474752,
+            "peakWorkingSetBytes": 86474752,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 11751424,
+            "cgroupMemoryCurrentBytes": 42741760,
+            "cgroupMemoryPeakBytes": 44609536
+          },
+          "notes": ""
+        },
+        {
+          "name": "input-generation-and-json-parse-subset-of-seed",
+          "milliseconds": 14.4516,
+          "before": {
+            "atUtc": "2026-09-24T05:05:57.6288004+00:00",
+            "fileLengthBytes": 213979,
+            "workingSetBytes": 86474752,
+            "peakWorkingSetBytes": 86474752,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 11751424,
+            "cgroupMemoryCurrentBytes": 42741760,
+            "cgroupMemoryPeakBytes": 44609536
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:57.6295579+00:00",
+            "fileLengthBytes": 213979,
+            "workingSetBytes": 86474752,
+            "peakWorkingSetBytes": 86474752,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 11751424,
+            "cgroupMemoryCurrentBytes": 42741760,
+            "cgroupMemoryPeakBytes": 44609536
+          },
+          "notes": "JSON text generation, parse and document/mutation construction; included inside seed wall time"
+        },
+        {
+          "name": "post-build-maintenance",
+          "milliseconds": 739.4289,
+          "before": {
+            "atUtc": "2026-09-24T05:05:57.6303153+00:00",
+            "fileLengthBytes": 213979,
+            "workingSetBytes": 86474752,
+            "peakWorkingSetBytes": 86474752,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 11751424,
+            "cgroupMemoryCurrentBytes": 42741760,
+            "cgroupMemoryPeakBytes": 44609536
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.3704764+00:00",
+            "fileLengthBytes": 213782,
+            "workingSetBytes": 88252416,
+            "peakWorkingSetBytes": 88252416,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 16211968,
+            "cgroupMemoryCurrentBytes": 44105728,
+            "cgroupMemoryPeakBytes": 46411776
+          },
+          "notes": ""
+        },
+        {
+          "name": "durable-reopen",
+          "milliseconds": 48.2156,
+          "before": {
+            "atUtc": "2026-09-24T05:05:58.3787146+00:00",
+            "fileLengthBytes": 213782,
+            "workingSetBytes": 88252416,
+            "peakWorkingSetBytes": 88252416,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 16224256,
+            "cgroupMemoryCurrentBytes": 44097536,
+            "cgroupMemoryPeakBytes": 46411776
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.4278528+00:00",
+            "fileLengthBytes": 213782,
+            "workingSetBytes": 88727552,
+            "peakWorkingSetBytes": 88727552,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 16228352,
+            "cgroupMemoryCurrentBytes": 44613632,
+            "cgroupMemoryPeakBytes": 46411776
+          },
+          "notes": "Previous store was disposed; timing covers opening the same physical index, including recovery and point-map reconstruction"
+        }
+      ],
+      "queries": [
+        {
+          "shape": "status",
+          "indexed": true,
+          "access": "EqualitySeek",
+          "expectedIds": [
+            "doc-000017",
+            "doc-000117",
+            "doc-maint-000017"
+          ],
+          "expectedIdsSha256": "a28a67fd19cc34df9e6076dd7d84765616203b9b67e0ff1e4daac47e5ef35d22",
+          "firstIds": [
+            "doc-000017",
+            "doc-000117",
+            "doc-maint-000017"
+          ],
+          "firstMicroseconds": 570.1,
+          "repeatMicroseconds": [
+            264.7,
+            225.9,
+            192.3,
+            187.2,
+            201.8
+          ],
+          "outputSerializationMicroseconds": 14.8,
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.4330715+00:00",
+            "fileLengthBytes": 213782,
+            "workingSetBytes": 88735744,
+            "peakWorkingSetBytes": 88735744,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 16228352,
+            "cgroupMemoryCurrentBytes": 44613632,
+            "cgroupMemoryPeakBytes": 46411776
+          }
+        },
+        {
+          "shape": "profile.segment",
+          "indexed": false,
+          "access": "Scan",
+          "expectedIds": [
+            "doc-000023",
+            "doc-000123",
+            "doc-maint-000023"
+          ],
+          "expectedIdsSha256": "8a19af1ad65a66d6e42ab73322bcedcb6c0fb4bec5d9fa832efb73af4b6e9801",
+          "firstIds": [
+            "doc-000023",
+            "doc-000123",
+            "doc-maint-000023"
+          ],
+          "firstMicroseconds": 15445.6,
+          "repeatMicroseconds": [
+            13958,
+            11832.2,
+            11650.8,
+            12464.2,
+            13265.4
+          ],
+          "outputSerializationMicroseconds": 10.3,
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.5128825+00:00",
+            "fileLengthBytes": 213782,
+            "workingSetBytes": 88739840,
+            "peakWorkingSetBytes": 88739840,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 16228352,
+            "cgroupMemoryCurrentBytes": 44613632,
+            "cgroupMemoryPeakBytes": 46411776
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "baseDocuments": 200,
+          "maintenanceInserted": true,
+          "maintenanceUpdated": false,
+          "watermark": 12,
+          "reopenMilliseconds": 266.2513,
+          "verificationMilliseconds": 54.7737,
+          "verifiedDocuments": 300,
+          "idsSha256": "8d97e70b9f824aa6c4d82ae2333ac76aa954af222be2c22c76c273621bd4daa6",
+          "before": {
+            "atUtc": "2026-09-24T05:05:57.3045304+00:00",
+            "fileLengthBytes": 628228,
+            "workingSetBytes": 82640896,
+            "peakWorkingSetBytes": 82640896,
+            "processReadBytes": 6086656,
+            "processWriteBytes": 11476992,
+            "cgroupMemoryCurrentBytes": 42962944,
+            "cgroupMemoryPeakBytes": 42962944
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:57.6269114+00:00",
+            "fileLengthBytes": 213979,
+            "workingSetBytes": 86474752,
+            "peakWorkingSetBytes": 86474752,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 11751424,
+            "cgroupMemoryCurrentBytes": 42741760,
+            "cgroupMemoryPeakBytes": 44609536
+          }
+        },
+        {
+          "baseDocuments": 200,
+          "maintenanceInserted": true,
+          "maintenanceUpdated": true,
+          "watermark": 16,
+          "reopenMilliseconds": 89.4437,
+          "verificationMilliseconds": 41.8555,
+          "verifiedDocuments": 300,
+          "idsSha256": "8d97e70b9f824aa6c4d82ae2333ac76aa954af222be2c22c76c273621bd4daa6",
+          "before": {
+            "atUtc": "2026-09-24T05:05:58.2370896+00:00",
+            "fileLengthBytes": 590875,
+            "workingSetBytes": 87130112,
+            "peakWorkingSetBytes": 87130112,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 15937536,
+            "cgroupMemoryCurrentBytes": 43266048,
+            "cgroupMemoryPeakBytes": 44609536
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.3695228+00:00",
+            "fileLengthBytes": 213782,
+            "workingSetBytes": 88252416,
+            "peakWorkingSetBytes": 88252416,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 16211968,
+            "cgroupMemoryCurrentBytes": 44105728,
+            "cgroupMemoryPeakBytes": 46411776
+          }
+        }
+      ],
+      "final": {
+        "atUtc": "2026-09-24T05:05:58.5217175+00:00",
+        "fileLengthBytes": 213782,
+        "workingSetBytes": 88739840,
+        "peakWorkingSetBytes": 88739840,
+        "processReadBytes": 7757824,
+        "processWriteBytes": 16240640,
+        "cgroupMemoryCurrentBytes": 44605440,
+        "cgroupMemoryPeakBytes": 46411776
+      }
+    },
+    {
+      "engine": "SQLite JSONB",
+      "indexField": "profile.segment",
+      "version": "3.53.3",
+      "settings": {
+        "journal_mode": "wal",
+        "synchronous": "2",
+        "cache_size": "-16384",
+        "mmap_size": "16777216",
+        "reopen_integrity_check": "ok",
+        "reopen_row_count": "300"
+      },
+      "phases": [
+        {
+          "name": "index-definition",
+          "milliseconds": 1.0138,
+          "before": {
+            "atUtc": "2026-09-24T05:05:58.5311598+00:00",
+            "fileLengthBytes": 49256,
+            "workingSetBytes": 88834048,
+            "peakWorkingSetBytes": 88834048,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 16306176,
+            "cgroupMemoryCurrentBytes": 44367872,
+            "cgroupMemoryPeakBytes": 46411776
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.5332767+00:00",
+            "fileLengthBytes": 57496,
+            "workingSetBytes": 88846336,
+            "peakWorkingSetBytes": 88846336,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 16318464,
+            "cgroupMemoryCurrentBytes": 44630016,
+            "cgroupMemoryPeakBytes": 46411776
+          },
+          "notes": ""
+        },
+        {
+          "name": "seed-and-incremental-index-build",
+          "milliseconds": 29.3632,
+          "before": {
+            "atUtc": "2026-09-24T05:05:58.5339352+00:00",
+            "fileLengthBytes": 57496,
+            "workingSetBytes": 88846336,
+            "peakWorkingSetBytes": 88846336,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 16318464,
+            "cgroupMemoryCurrentBytes": 44630016,
+            "cgroupMemoryPeakBytes": 46411776
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.56406+00:00",
+            "fileLengthBytes": 848536,
+            "workingSetBytes": 89444352,
+            "peakWorkingSetBytes": 89444352,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 17145856,
+            "cgroupMemoryCurrentBytes": 45940736,
+            "cgroupMemoryPeakBytes": 46411776
+          },
+          "notes": ""
+        },
+        {
+          "name": "input-generation-subset-of-seed",
+          "milliseconds": 9.886100000000004,
+          "before": {
+            "atUtc": "2026-09-24T05:05:58.5651177+00:00",
+            "fileLengthBytes": 848536,
+            "workingSetBytes": 89444352,
+            "peakWorkingSetBytes": 89444352,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 17145856,
+            "cgroupMemoryCurrentBytes": 45940736,
+            "cgroupMemoryPeakBytes": 46411776
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.5658338+00:00",
+            "fileLengthBytes": 848536,
+            "workingSetBytes": 89444352,
+            "peakWorkingSetBytes": 89444352,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 17145856,
+            "cgroupMemoryCurrentBytes": 45940736,
+            "cgroupMemoryPeakBytes": 46411776
+          },
+          "notes": "JSON text and deterministic high-entropy payload generation; included inside seed wall time"
+        },
+        {
+          "name": "post-build-maintenance",
+          "milliseconds": 10.1641,
+          "before": {
+            "atUtc": "2026-09-24T05:05:58.5664588+00:00",
+            "fileLengthBytes": 848536,
+            "workingSetBytes": 89444352,
+            "peakWorkingSetBytes": 89444352,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 17145856,
+            "cgroupMemoryCurrentBytes": 45940736,
+            "cgroupMemoryPeakBytes": 46411776
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.5773118+00:00",
+            "fileLengthBytes": 1079256,
+            "workingSetBytes": 89554944,
+            "peakWorkingSetBytes": 89554944,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 17391616,
+            "cgroupMemoryCurrentBytes": 46202880,
+            "cgroupMemoryPeakBytes": 46411776
+          },
+          "notes": ""
+        },
+        {
+          "name": "durable-reopen",
+          "milliseconds": 0.6754,
+          "before": {
+            "atUtc": "2026-09-24T05:05:58.5817289+00:00",
+            "fileLengthBytes": 638976,
+            "workingSetBytes": 89522176,
+            "peakWorkingSetBytes": 89522176,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 18030592,
+            "cgroupMemoryCurrentBytes": 45649920,
+            "cgroupMemoryPeakBytes": 46727168
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.5834421+00:00",
+            "fileLengthBytes": 671744,
+            "workingSetBytes": 89554944,
+            "peakWorkingSetBytes": 89554944,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 18063360,
+            "cgroupMemoryCurrentBytes": 45649920,
+            "cgroupMemoryPeakBytes": 46727168
+          },
+          "notes": ""
+        }
+      ],
+      "queries": [
+        {
+          "shape": "status",
+          "indexed": false,
+          "access": "SCAN users USING INDEX sqlite_autoindex_users_1",
+          "expectedIds": [
+            "doc-000017",
+            "doc-000117",
+            "doc-maint-000017"
+          ],
+          "expectedIdsSha256": "a28a67fd19cc34df9e6076dd7d84765616203b9b67e0ff1e4daac47e5ef35d22",
+          "firstIds": [
+            "doc-000017",
+            "doc-000117",
+            "doc-maint-000017"
+          ],
+          "firstMicroseconds": 284.5,
+          "repeatMicroseconds": [
+            197,
+            195.6,
+            221.7,
+            187.6,
+            184.4
+          ],
+          "outputSerializationMicroseconds": 28.6,
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.585823+00:00",
+            "fileLengthBytes": 671744,
+            "workingSetBytes": 90193920,
+            "peakWorkingSetBytes": 90193920,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 18063360,
+            "cgroupMemoryCurrentBytes": 45649920,
+            "cgroupMemoryPeakBytes": 46727168
+          }
+        },
+        {
+          "shape": "profile.segment",
+          "indexed": true,
+          "access": "SEARCH users USING INDEX ix_users_profile_segment (\u003Cexpr\u003E=?); USE TEMP B-TREE FOR ORDER BY",
+          "expectedIds": [
+            "doc-000023",
+            "doc-000123",
+            "doc-maint-000023"
+          ],
+          "expectedIdsSha256": "8a19af1ad65a66d6e42ab73322bcedcb6c0fb4bec5d9fa832efb73af4b6e9801",
+          "firstIds": [
+            "doc-000023",
+            "doc-000123",
+            "doc-maint-000023"
+          ],
+          "firstMicroseconds": 75,
+          "repeatMicroseconds": [
+            66.6,
+            90.8,
+            61.9,
+            56.7,
+            58
+          ],
+          "outputSerializationMicroseconds": 10.5,
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.5871949+00:00",
+            "fileLengthBytes": 671744,
+            "workingSetBytes": 90193920,
+            "peakWorkingSetBytes": 90193920,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 18063360,
+            "cgroupMemoryCurrentBytes": 45649920,
+            "cgroupMemoryPeakBytes": 46727168
+          }
+        }
+      ],
+      "checkpoints": [],
+      "final": {
+        "atUtc": "2026-09-24T05:05:58.5886269+00:00",
+        "fileLengthBytes": 638976,
+        "workingSetBytes": 89522176,
+        "peakWorkingSetBytes": 89522176,
+        "processReadBytes": 7757824,
+        "processWriteBytes": 18063360,
+        "cgroupMemoryCurrentBytes": 45617152,
+        "cgroupMemoryPeakBytes": 46727168
+      }
+    },
+    {
+      "engine": "TerraBase DurableIndexStore",
+      "indexField": "profile.segment",
+      "version": "source project",
+      "settings": {
+        "index_definition": "by-profile-segment",
+        "durability": "ZoneTree WriteAheadLogMode.Sync",
+        "ingestion_mode": "durable-close-reopen-and-full-verify-every-500-base-documents",
+        "reopen_watermark": "16"
+      },
+      "phases": [
+        {
+          "name": "index-definition",
+          "milliseconds": 8.9673,
+          "before": {
+            "atUtc": "2026-09-24T05:05:58.5897616+00:00",
+            "fileLengthBytes": 0,
+            "workingSetBytes": 89522176,
+            "peakWorkingSetBytes": 89522176,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 18063360,
+            "cgroupMemoryCurrentBytes": 44978176,
+            "cgroupMemoryPeakBytes": 46727168
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:05:58.5994069+00:00",
+            "fileLengthBytes": 2157,
+            "workingSetBytes": 89522176,
+            "peakWorkingSetBytes": 89522176,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 18100224,
+            "cgroupMemoryCurrentBytes": 45240320,
+            "cgroupMemoryPeakBytes": 46727168
+          },
+          "notes": "Store constructor creates the empty physical index"
+        },
+        {
+          "name": "seed-and-incremental-index-build",
+          "milliseconds": 1536.7674,
+          "before": {
+            "atUtc": "2026-09-24T05:05:58.6001987+00:00",
+            "fileLengthBytes": 2157,
+            "workingSetBytes": 89522176,
+            "peakWorkingSetBytes": 89522176,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 18100224,
+            "cgroupMemoryCurrentBytes": 45240320,
+            "cgroupMemoryPeakBytes": 46727168
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:06:00.1382483+00:00",
+            "fileLengthBytes": 213766,
+            "workingSetBytes": 94965760,
+            "peakWorkingSetBytes": 94965760,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 27987968,
+            "cgroupMemoryCurrentBytes": 50286592,
+            "cgroupMemoryPeakBytes": 52842496
+          },
+          "notes": ""
+        },
+        {
+          "name": "input-generation-and-json-parse-subset-of-seed",
+          "milliseconds": 25.165100000000002,
+          "before": {
+            "atUtc": "2026-09-24T05:06:00.1393711+00:00",
+            "fileLengthBytes": 213766,
+            "workingSetBytes": 94965760,
+            "peakWorkingSetBytes": 94965760,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 27987968,
+            "cgroupMemoryCurrentBytes": 50286592,
+            "cgroupMemoryPeakBytes": 52842496
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:06:00.1404791+00:00",
+            "fileLengthBytes": 213766,
+            "workingSetBytes": 94965760,
+            "peakWorkingSetBytes": 94965760,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 27987968,
+            "cgroupMemoryCurrentBytes": 50286592,
+            "cgroupMemoryPeakBytes": 52842496
+          },
+          "notes": "JSON text generation, parse and document/mutation construction; included inside seed wall time"
+        },
+        {
+          "name": "post-build-maintenance",
+          "milliseconds": 661.1564,
+          "before": {
+            "atUtc": "2026-09-24T05:06:00.1415752+00:00",
+            "fileLengthBytes": 213766,
+            "workingSetBytes": 94965760,
+            "peakWorkingSetBytes": 94965760,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 27987968,
+            "cgroupMemoryCurrentBytes": 50286592,
+            "cgroupMemoryPeakBytes": 52842496
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:06:00.8037965+00:00",
+            "fileLengthBytes": 214005,
+            "workingSetBytes": 97882112,
+            "peakWorkingSetBytes": 97882112,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 32448512,
+            "cgroupMemoryCurrentBytes": 52871168,
+            "cgroupMemoryPeakBytes": 55791616
+          },
+          "notes": ""
+        },
+        {
+          "name": "durable-reopen",
+          "milliseconds": 29.8655,
+          "before": {
+            "atUtc": "2026-09-24T05:06:00.8125136+00:00",
+            "fileLengthBytes": 214005,
+            "workingSetBytes": 97882112,
+            "peakWorkingSetBytes": 97882112,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 32460800,
+            "cgroupMemoryCurrentBytes": 52862976,
+            "cgroupMemoryPeakBytes": 55791616
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:06:00.843538+00:00",
+            "fileLengthBytes": 214005,
+            "workingSetBytes": 98357248,
+            "peakWorkingSetBytes": 98357248,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 32464896,
+            "cgroupMemoryCurrentBytes": 53383168,
+            "cgroupMemoryPeakBytes": 55791616
+          },
+          "notes": "Previous store was disposed; timing covers opening the same physical index, including recovery and point-map reconstruction"
+        }
+      ],
+      "queries": [
+        {
+          "shape": "status",
+          "indexed": false,
+          "access": "Scan",
+          "expectedIds": [
+            "doc-000017",
+            "doc-000117",
+            "doc-maint-000017"
+          ],
+          "expectedIdsSha256": "a28a67fd19cc34df9e6076dd7d84765616203b9b67e0ff1e4daac47e5ef35d22",
+          "firstIds": [
+            "doc-000017",
+            "doc-000117",
+            "doc-maint-000017"
+          ],
+          "firstMicroseconds": 8828,
+          "repeatMicroseconds": [
+            6996.4,
+            7075.4,
+            7030.5,
+            7923.6,
+            6984.9
+          ],
+          "outputSerializationMicroseconds": 7.2,
+          "after": {
+            "atUtc": "2026-09-24T05:06:00.889853+00:00",
+            "fileLengthBytes": 214005,
+            "workingSetBytes": 98357248,
+            "peakWorkingSetBytes": 98357248,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 32464896,
+            "cgroupMemoryCurrentBytes": 53383168,
+            "cgroupMemoryPeakBytes": 55791616
+          }
+        },
+        {
+          "shape": "profile.segment",
+          "indexed": true,
+          "access": "EqualitySeek",
+          "expectedIds": [
+            "doc-000023",
+            "doc-000123",
+            "doc-maint-000023"
+          ],
+          "expectedIdsSha256": "8a19af1ad65a66d6e42ab73322bcedcb6c0fb4bec5d9fa832efb73af4b6e9801",
+          "firstIds": [
+            "doc-000023",
+            "doc-000123",
+            "doc-maint-000023"
+          ],
+          "firstMicroseconds": 201.4,
+          "repeatMicroseconds": [
+            135.7,
+            127.3,
+            128.3,
+            124.5,
+            141.9
+          ],
+          "outputSerializationMicroseconds": 4.9,
+          "after": {
+            "atUtc": "2026-09-24T05:06:00.8921193+00:00",
+            "fileLengthBytes": 214005,
+            "workingSetBytes": 98357248,
+            "peakWorkingSetBytes": 98357248,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 32464896,
+            "cgroupMemoryCurrentBytes": 53383168,
+            "cgroupMemoryPeakBytes": 55791616
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "baseDocuments": 200,
+          "maintenanceInserted": true,
+          "maintenanceUpdated": false,
+          "watermark": 12,
+          "reopenMilliseconds": 70.0626,
+          "verificationMilliseconds": 32.457,
+          "verifiedDocuments": 300,
+          "idsSha256": "8d97e70b9f824aa6c4d82ae2333ac76aa954af222be2c22c76c273621bd4daa6",
+          "before": {
+            "atUtc": "2026-09-24T05:06:00.0327547+00:00",
+            "fileLengthBytes": 628228,
+            "workingSetBytes": 95559680,
+            "peakWorkingSetBytes": 95559680,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 27713536,
+            "cgroupMemoryCurrentBytes": 51531776,
+            "cgroupMemoryPeakBytes": 51531776
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:06:00.1368232+00:00",
+            "fileLengthBytes": 213766,
+            "workingSetBytes": 94965760,
+            "peakWorkingSetBytes": 94965760,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 27987968,
+            "cgroupMemoryCurrentBytes": 50286592,
+            "cgroupMemoryPeakBytes": 52842496
+          }
+        },
+        {
+          "baseDocuments": 200,
+          "maintenanceInserted": true,
+          "maintenanceUpdated": true,
+          "watermark": 16,
+          "reopenMilliseconds": 64.3475,
+          "verificationMilliseconds": 25.5499,
+          "verifiedDocuments": 300,
+          "idsSha256": "8d97e70b9f824aa6c4d82ae2333ac76aa954af222be2c22c76c273621bd4daa6",
+          "before": {
+            "atUtc": "2026-09-24T05:06:00.7111366+00:00",
+            "fileLengthBytes": 590662,
+            "workingSetBytes": 97632256,
+            "peakWorkingSetBytes": 97632256,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 32174080,
+            "cgroupMemoryCurrentBytes": 53170176,
+            "cgroupMemoryPeakBytes": 53170176
+          },
+          "after": {
+            "atUtc": "2026-09-24T05:06:00.8027051+00:00",
+            "fileLengthBytes": 214005,
+            "workingSetBytes": 97882112,
+            "peakWorkingSetBytes": 97882112,
+            "processReadBytes": 7757824,
+            "processWriteBytes": 32448512,
+            "cgroupMemoryCurrentBytes": 52871168,
+            "cgroupMemoryPeakBytes": 55791616
+          }
+        }
+      ],
+      "final": {
+        "atUtc": "2026-09-24T05:06:00.9014703+00:00",
+        "fileLengthBytes": 214005,
+        "workingSetBytes": 98357248,
+        "peakWorkingSetBytes": 98357248,
+        "processReadBytes": 7757824,
+        "processWriteBytes": 32477184,
+        "cgroupMemoryCurrentBytes": 53374976,
+        "cgroupMemoryPeakBytes": 55791616
+      }
+    }
+  ]
+}
