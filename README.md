@@ -12,8 +12,9 @@ one endpoint per file, CI/deploy).
 - **TerraScale.Endpoints** — every route is an endpoint class, one per file,
   discovered at startup (local `ts-libs` checkout preferred, vendored
   `src/TerraScale.Dashboard/nuget/` package fallback)
-- **terrascale.css** — the whole design system in one stylesheet:
-  tokens, base, components, and the dashboard shell (`src/TerraScale.Dashboard/wwwroot/css/terrascale.css`)
+- **terrascale.css** — the whole design system in one stylesheet, assembled
+  from readable partials under `src/TerraScale.Dashboard/Styles/` and
+  `src/TerraScale.Dashboard/Features/`.
 - **TerraScale.Datastar** (`wwwroot/js/datastar.js` and `src/TerraScale.Datastar/`) — the front/back
   communication layer; slices declare `data-*` attributes, and the dashboard
   owns the server-side SSE and signal implementation. The local project
@@ -44,7 +45,8 @@ one endpoint per file, CI/deploy).
   components, models, and the shared `DashboardStore` state.
 - `src/TerraScale.Dashboard/Infrastructure/` — authentication, configuration,
   persistence, and TerraBase integration.
-- `src/TerraScale.Dashboard/wwwroot/css/terrascale.css` — the single-file CSS framework
+- `src/TerraScale.Dashboard/Styles/terrascale.css` — the CSS entry point
+- `src/TerraScale.Dashboard/wwwroot/css/terrascale.css` — generated single-file output
 - `TerraScale.Dashboard.slnx` — solution at the repo root
 
 ## Run
@@ -199,15 +201,18 @@ without Stripe.
 
 ## CSS delivery
 
-Edit only `src/TerraScale.Dashboard/wwwroot/css/terrascale.css`. The Docker build
-uses Lightning CSS to minify it and replaces the published copy at the same
-`/css/terrascale.css` URL. Development keeps the readable source; the runtime
-image contains one stylesheet and needs no Node installation. Minifier errors
-or warnings fail the build.
+Edit the relevant partial under `src/TerraScale.Dashboard/Styles/` or
+`src/TerraScale.Dashboard/Features/`. `dotnet run` builds the generated output
+before serving it. `dotnet watch` starts the partial watcher inside the app and
+hot reloads `/css/terrascale.css`; no second watcher command is needed. The
+Docker build uses Lightning CSS to minify the bundle and the runtime image
+contains one stylesheet with no Node installation. Minifier errors or warnings
+fail the build.
 
-For a publish outside Docker, run `npm ci`, publish the app, then run
-`npm run build:css -- <publish-directory>/wwwroot/css/terrascale.css`.
-`npm run build:css` alone writes a preview to `obj/assets/terrascale.css`.
+For a publish outside Docker, run `npm ci`, then publish the app. The
+`BuildCss` MSBuild target generates the readable development bundle during
+build and `npm run build:css -- <publish-directory>/wwwroot/css/terrascale.css`
+can produce the minified copy for a manually assembled publish directory.
 
 ASP.NET Core negotiates Brotli or gzip from `Accept-Encoding` for supported
 content types over HTTP and HTTPS, before serving static files. Datastar's

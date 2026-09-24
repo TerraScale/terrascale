@@ -1,0 +1,28 @@
+/* Toast viewport and toast message presentation.
+   Used by navigation feedback and mutations. Keep page-specific rules in Features/. */
+
+/* Toast (sonner-style, top-right). Native modal dialogs use the browser top
+   layer, so flows that open one must render success text inside the dialog. */
+.ts-toasts {
+  position: fixed;
+  top: var(--ts-lg);
+  right: var(--ts-lg);
+  z-index: var(--ts-z-toast);
+  display: grid;
+  gap: var(--ts-sm);
+  width: min(22rem, calc(100vw - 2 * var(--ts-lg)));
+}
+
+.ts-toast {
+  display: flex;
+  gap: var(--ts-sm);
+  align-items: flex-start;
+  padding: var(--ts-md);
+  border-radius: var(--ts-radius-panel);
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-glass-strong);
+  backdrop-filter: blur(var(--ts-blur));
+  box-shadow: var(--ts-shadow-overlay);
+  font-size: var(--ts-fs-ui);
+  animation: ts-menu-in var(--ts-t-base) var(--ts-ease);
+}

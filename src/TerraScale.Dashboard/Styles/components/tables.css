@@ -1,0 +1,106 @@
+/* Table layout, compact cells, monospace values, and empty states.
+   Used by data and list pages. Keep page-specific rules in Features/. */
+
+/* 9. Tables ================================================================ */
+
+.ts-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface);
+  box-shadow: var(--ts-shadow-panel);
+}
+
+.ts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ts-fs-ui);
+  min-width: 640px;
+}
+
+.ts-table thead th {
+  height: var(--ts-table-head-h);
+  padding: var(--ts-md) var(--ts-lg);
+  text-align: left;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-semibold);
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--ts-line);
+  white-space: nowrap;
+}
+
+.ts-table tbody td {
+  padding: var(--ts-md) var(--ts-lg);
+  border-bottom: 1px solid var(--ts-line);
+  color: var(--ts-ink);
+  vertical-align: middle;
+}
+
+.ts-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.ts-table tbody tr {
+  transition: background-color var(--ts-t-control) var(--ts-ease);
+}
+
+.ts-table tbody tr:hover {
+  background-color: var(--ts-surface-muted);
+}
+
+.ts-table td.ts-table-mono,
+.ts-table th.ts-table-mono,
+.ts-mono {
+  font-family: var(--ts-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-table-num {
+  text-align: right;
+  font-family: var(--ts-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* v1 EmptyState: dashed tinted box, 32px icon box, 14px title/meta. */
+.ts-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ts-sm);
+  padding: var(--ts-xl);
+  text-align: center;
+  color: var(--ts-ink-muted);
+  border: 1px dashed var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: color-mix(in oklab, var(--ts-surface-muted) 30%, transparent);
+}
+
+.ts-empty-title {
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+  letter-spacing: -0.01em;
+  color: var(--ts-ink);
+}
+
+.ts-empty-icon {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink);
+  margin-bottom: var(--ts-sm);
+}
+
+.ts-empty-meta {
+  font-size: var(--ts-fs-ui);
+  color: var(--ts-ink-muted);
+  line-height: 1.5;
+  max-width: 24rem;
+}

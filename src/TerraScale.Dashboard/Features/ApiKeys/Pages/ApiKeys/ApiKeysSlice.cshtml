@@ -302,6 +302,12 @@
                 <h3 class="ts-dialog-title">Credential secret</h3>
                 <p class="ts-dialog-description">Copy this secret now. It will not be shown again.</p>
             </div>
+            @if (Model.Toast is { } secretToast)
+            {
+                <div class="ts-alert ts-alert-success" role="status">
+                    <span class="ts-alert-title">@Icons.CircleCheck(16) @secretToast</span>
+                </div>
+            }
             <div class="ts-alert ts-alert-warning">
                 <span class="ts-alert-title">@Icons.TriangleAlert(16) Secret is shown once</span>
                 <span class="ts-alert-body">Store this credential secret in a secure vault before closing this dialog.</span>
@@ -326,7 +332,7 @@
     </dialog>
 }
 
-@if (Model.Toast is { } toast)
+@if (Model.Toast is { } toast && Model.SecretValue is null)
 {
     <div class="ts-toasts"><div class="ts-toast"><span class="ts-alert-title">@Icons.CircleCheck(16) @toast</span></div></div>
 }

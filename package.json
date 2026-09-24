@@ -4,6 +4,7 @@
   "type": "module",
   "devDependencies": {
     "@playwright/test": "1.63.0",
+    "browserslist": "^4.29.0",
     "lightningcss": "1.33.0",
     "playwright": "1.63.0",
     "typescript": "^5.9.3"

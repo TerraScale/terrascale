@@ -1,0 +1,91 @@
+/* Reusable page, section, stack, row, grid, and overview layout primitives.
+   Used by dashboard pages and shared components. Keep page-specific rules in Features/. */
+
+/* 4. Layout primitives ==================================================== */
+
+.ts-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.ts-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-md);
+}
+
+.ts-section-title {
+  font-size: var(--ts-fs-panel-title);
+  font-weight: var(--ts-fw-semibold);
+}
+
+/* Shared content inset. Keep the narrow header/body alignment used by the
+   organization page while allowing the wider desktop shell rhythm. */
+.ts-padded { padding: var(--ts-lg) 20px; }
+
+@media (min-width: 64rem) {
+  .ts-padded { padding-inline: 16px; }
+}
+
+.ts-stack-xs { display: flex; flex-direction: column; gap: var(--ts-xs); }
+.ts-stack-sm { display: flex; flex-direction: column; gap: var(--ts-sm); }
+.ts-stack-md { display: flex; flex-direction: column; gap: var(--ts-md); }
+.ts-stack-lg { display: flex; flex-direction: column; gap: var(--ts-lg); }
+.ts-stack-xl { display: flex; flex-direction: column; gap: var(--ts-xl); }
+
+/* Flex items default to min-width:auto, so wide children (code snippets,
+tables, charts) blow out narrow viewports. Let stack children shrink;
+children with overflow (pre, table shells) scroll instead. */
+.ts-stack-xs > *,
+.ts-stack-sm > *,
+.ts-stack-md > *,
+.ts-stack-lg > *,
+.ts-stack-xl > *,
+.ts-overview-grid > * {
+  min-width: 0;
+}
+
+.ts-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-md);
+  flex-wrap: wrap;
+}
+
+.ts-row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-md);
+  flex-wrap: wrap;
+}
+
+.ts-grid {
+  display: grid;
+  gap: var(--ts-lg);
+}
+
+/* Metric grids collapse 4→2→1. */
+.ts-grid-cards { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 48rem) {
+  .ts-grid-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 64rem) {
+  .ts-grid-cards-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ts-grid-cards-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* Overview two-column layout (main + side rail). */
+.ts-overview-grid {
+  display: grid;
+  gap: var(--ts-lg);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+@media (min-width: 80rem) {
+  .ts-overview-grid {
+    grid-template-columns: minmax(0, 1fr) 380px;
+  }
+}

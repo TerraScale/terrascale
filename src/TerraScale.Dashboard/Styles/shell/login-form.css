@@ -1,0 +1,269 @@
+/* Login credential column and auth locale controls.
+   Used by the login page. Keep page-specific rules in Features/. */
+
+.ts-region-node {
+  position: absolute;
+  height: 0;
+  width: 0;
+}
+
+.ts-region-node-core {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 8px;
+  width: 8px;
+  transform: translate(-50%, -50%);
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-accent-soft);
+  box-shadow:
+  0 0 0 2px var(--ts-canvas),
+  0 0 14px rgba(var(--ts-accent-rgb), 0.9),
+  0 0 28px rgba(var(--ts-accent-rgb), 0.58);
+}
+
+.ts-region-node-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 8px;
+  width: 8px;
+  transform: translate(-50%, -50%);
+  border: 1.5px solid rgba(var(--ts-accent-rgb), 0.82);
+  border-radius: var(--ts-radius-pill);
+  animation: ts-pin-pulse 2.6s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+
+@keyframes ts-line-flow {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -20; }
+}
+
+@keyframes ts-pin-pulse {
+  0% { opacity: 0.9; transform: translate(-50%, -50%) scale(1); }
+  80%, 100% { opacity: 0; transform: translate(-50%, -50%) scale(3.8); }
+}
+
+.ts-login-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px var(--ts-lg);
+  min-width: 0;
+}
+
+/* v1 draws the accent seam only next to the map (>= 64rem). */
+@media (min-width: 64rem) {
+  .ts-login-column {
+    border-left: 1px solid color-mix(in oklab, var(--ts-accent) 40%, transparent);
+  }
+}
+
+@media (min-width: 80rem) {
+  .ts-login-column {
+    padding-inline: var(--ts-xxl);
+  }
+}
+
+@media (min-width: 96rem) {
+  .ts-login-column {
+    padding-inline: var(--ts-xxxl);
+  }
+}
+
+.ts-auth-heading {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.ts-auth-form {
+  display: grid;
+  gap: var(--ts-lg);
+}
+
+.ts-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-md);
+  min-height: 20px;
+}
+
+.ts-inline-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding-inline: 4px;
+  color: var(--ts-accent-soft);
+  font-size: var(--ts-fs-ui);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--ts-accent-soft) 60%, transparent);
+  text-underline-offset: 4px;
+  transition: color 200ms ease-out;
+}
+
+.ts-inline-link:active {
+  color: var(--ts-ink);
+}
+
+.ts-input-group {
+  display: flex;
+  align-items: center;
+}
+
+.ts-input-group .ts-input {
+  padding-right: 44px;
+}
+
+.ts-input-adornment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-left: -40px;
+  border: 0;
+  border-radius: var(--ts-radius-control);
+  background-color: transparent;
+  color: var(--ts-ink-muted);
+  cursor: pointer;
+  transition: background-color 200ms ease-out, color 200ms ease-out;
+}
+
+.ts-input-adornment:hover {
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink);
+}
+
+.ts-auth-submit {
+  width: 100%;
+}
+
+.ts-auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: var(--ts-lg);
+}
+
+.ts-auth-divider > span:first-child,
+.ts-auth-divider > span:last-child {
+  flex: 1 1 0%;
+  height: 1px;
+  background-color: var(--ts-ink-muted);
+  opacity: 0.7;
+}
+
+.ts-auth-divider-label {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+}
+
+.ts-auth-providers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ts-md);
+  margin-top: var(--ts-lg);
+}
+
+.ts-auth-provider {
+  justify-content: center;
+  height: var(--ts-control-h-lg);
+  min-width: 0;
+  padding-inline: 12px;
+  box-shadow: var(--ts-shadow-panel);
+  border-color: color-mix(in oklab, var(--ts-ink-muted) 70%, transparent);
+  transition-property: background-color, border-color, box-shadow, color, opacity, transform;
+}
+
+.ts-auth-provider:hover {
+  border-color: var(--ts-ink-muted);
+  transform: translateY(-1px);
+}
+
+.ts-auth-provider:active {
+  transform: translateY(0);
+}
+
+.ts-auth-provider img {
+  width: 20px;
+  height: 20px;
+}
+
+/* v1 AuthLocaleFooter: pinned to the bottom of the column behind a 1px
+   separator (the card above it centers with margin-block: auto). */
+.ts-auth-locale-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  column-gap: 16px;
+  row-gap: 4px;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in oklab, var(--ts-ink-muted) 70%, transparent);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+}
+
+.ts-auth-locale {
+  height: 40px;
+  padding-inline: 12px;
+  border: 1px solid color-mix(in oklab, var(--ts-ink-muted) 70%, transparent);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+}
+
+/* v1 login mode is "embedded": the surface is plain padding on the canvas —
+   no card chrome (reset-password keeps the bordered panel). */
+.ts-login .ts-auth-card {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.ts-login-column .ts-auth-locale-footer {
+  width: min(28rem, 100%);
+}
+
+/* v1 compact spacing for short viewports; kept last so the height
+   overrides win the cascade over the width media rules above. */
+@media (max-height: 799px) {
+  .ts-login-column { padding-block: 8px; }
+  .ts-auth { padding-block: 8px; }
+  .ts-login .ts-auth-card,
+  .ts-auth .ts-auth-card { padding: 12px 16px; }
+  .ts-auth-form,
+  .ts-auth .ts-form { gap: var(--ts-md); }
+  .ts-auth-brand { margin-bottom: 8px; }
+  .ts-auth-heading { margin-bottom: 8px; }
+  .ts-auth-divider,
+  .ts-auth-providers { margin-top: var(--ts-md); }
+  .ts-auth-footer { margin-top: 8px; }
+  .ts-auth-locale-footer { padding-top: 8px; }
+}
+
+@media (min-height: 799.02px) and (max-height: 820px) {
+  .ts-login .ts-auth-card { padding: 24px; }
+  .ts-auth { padding-block: 16px; }
+  .ts-auth-heading { margin-bottom: 16px; }
+  .ts-login-column .ts-auth-locale-footer { padding-top: 12px; }
+}
+
+.ts-oauth-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.ts-project-switch {
+  justify-content: space-between;
+  width: 100%;
+}

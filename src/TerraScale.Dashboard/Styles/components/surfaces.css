@@ -1,0 +1,72 @@
+/* Glass, panel, and card surfaces shared across feature pages.
+   Used by dashboard pages. Keep page-specific rules in Features/. */
+
+/* 5. Surfaces ============================================================== */
+
+.ts-glass {
+  background-color: var(--ts-glass-bg);
+  backdrop-filter: blur(var(--ts-blur));
+}
+
+.ts-glass-strong {
+  background-color: var(--ts-glass-strong);
+  backdrop-filter: blur(var(--ts-blur));
+}
+
+/* Borderless glass panel with a 20px rhythm and header divider. */
+.ts-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--ts-radius-panel);
+  background-color: rgba(22, 24, 31, 0.52);
+  backdrop-filter: blur(var(--ts-blur));
+  box-shadow: var(--ts-card-edge);
+  padding: 0;
+  padding-block: 20px;
+  min-width: 0;
+}
+
+.ts-panel-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-xs);
+  border-bottom: 1px solid var(--ts-line);
+  padding-bottom: var(--ts-lg);
+}
+
+.ts-panel-title {
+  text-wrap: balance;
+  font-size: var(--ts-fs-panel-title);
+  font-weight: var(--ts-fw-panel-title, 600);
+  color: var(--ts-ink);
+}
+
+.ts-panel-subtitle {
+  text-wrap: pretty;
+  font-size: var(--ts-fs-body);
+  line-height: 1.6;
+  color: var(--ts-ink-muted);
+}
+
+.ts-panel-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  border-top: 1px solid var(--ts-line);
+  padding-top: var(--ts-md);
+}
+
+.ts-card {
+  border-radius: var(--ts-radius-panel);
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-surface);
+  box-shadow: var(--ts-card-edge);
+  padding: var(--ts-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-sm);
+  min-width: 0;
+}

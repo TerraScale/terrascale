@@ -1,0 +1,45 @@
+/* Create organization modal styles.
+   Used by the create organization feature. Keep page-specific rules in Features/. */
+/* ===== Feature: Create-organization modal ===== */
+
+/* The wizard reuses the wide onboarding step screens. Its three steps share
+   one box (width + height) so the modal never resizes between steps. */
+dialog.ts-dialog-wizard {
+  width: min(64rem, calc(100vw - 2 * var(--ts-lg)));
+}
+
+dialog.ts-dialog-wizard[open] {
+  display: flex;
+  flex-direction: column;
+  /* One box for all three steps: tall enough for the tallest step (payment,
+     three plan cards) so nothing is clipped, and every step keeps that exact
+     size. Shorter steps center their card in the leftover space; a shorter
+     viewport scrolls the content instead. svh keeps the fixed box inside the
+     visible viewport when mobile toolbars collapse it. */
+  height: min(60rem, 92svh);
+  max-height: min(94svh, 100%);
+}
+
+.ts-dialog-content-wizard {
+  /* Fill the fixed-height dialog so shorter steps center their card in the
+     leftover space; the taller-than-box path scrolls here. */
+  flex: 1;
+  gap: var(--ts-md);
+  padding: 0 0 var(--ts-lg);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ts-dialog-wizard-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ts-md);
+  padding: var(--ts-xl) var(--ts-xl) var(--ts-md);
+}
+
+.ts-dialog-content-wizard .ts-onboarding-container {
+  padding-inline: var(--ts-xl);
+  margin-block: auto;
+}

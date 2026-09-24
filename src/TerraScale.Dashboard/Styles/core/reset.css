@@ -1,0 +1,10 @@
+/* Low-level box sizing reset shared by every dashboard document.
+   Used by the base layer. Keep page-specific rules in Features/. */
+
+/* 3. Base ================================================================= */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}

@@ -1,0 +1,79 @@
+/* Access rule page styles.
+   Used by the access rule page styles. feature. Keep page-specific rules in Features/. */
+
+/* ===== Feature: AccessRules ===== */
+
+.ts-accessrules-meta {
+  margin: var(--ts-lg) 0 0;
+}
+
+.ts-accessrules-rule-source {
+  display: inline-block;
+  max-width: 32rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
+}
+
+.ts-accessrules-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-xs);
+}
+
+.ts-accessrules-row-actions {
+  display: flex;
+  gap: var(--ts-xs);
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.ts-accessrules-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-accessrules-editor-form {
+  display: grid;
+  gap: var(--ts-md);
+}
+
+.ts-accessrules-actions {
+  display: flex;
+  gap: var(--ts-sm);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ts-accessrules-index-note {
+  display: flex;
+  gap: var(--ts-sm);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ts-accessrules-dryrun-form {
+  display: grid;
+  gap: var(--ts-md);
+}
+
+@media (min-width: 48rem) {
+  .ts-accessrules-dryrun-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ts-accessrules-dryrun-footer {
+  grid-column: 1 / -1;
+}
+
+.ts-accessrules-outcome {
+  display: flex;
+  gap: var(--ts-md);
+  align-items: center;
+  flex-wrap: wrap;
+}

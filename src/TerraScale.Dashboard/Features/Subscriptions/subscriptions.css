@@ -1,0 +1,273 @@
+/* Subscription page styles.
+   Used by the subscription page styles. feature. Keep page-specific rules in Features/. */
+
+/* ===== Feature: Subscriptions ============================================ */
+.ts-sub-stats {
+  display: grid;
+  gap: var(--ts-md);
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+}
+
+.ts-sub-stat {
+  display: grid;
+  gap: var(--ts-xs);
+  padding: var(--ts-lg);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface-muted);
+}
+
+.ts-sub-stat-label { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+
+.ts-sub-stat-value {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-panel-title);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-sub-stat-detail { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
+
+.ts-sub-desc {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-body);
+  line-height: 1.6;
+  max-width: 56rem;
+  margin: 0;
+}
+
+.ts-sub-subtitle { font-size: var(--ts-fs-body); line-height: 1.6; }
+
+.ts-sub-form { gap: var(--ts-md); }
+
+.ts-sub-form .ts-label {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+}
+
+.ts-sub-form .ts-select {
+  font-size: var(--ts-fs-body);
+  min-height: var(--ts-control-h-lg);
+  /* v1 NativeSelect wrapper: fit-content width, 50% fade when disabled. */
+  width: fit-content;
+}
+
+.ts-sub-form .ts-select:disabled {
+  opacity: 0.5;
+}
+
+.ts-sub-form .ts-textarea {
+  font-size: var(--ts-fs-body);
+  min-height: 112px;
+}
+
+.ts-sub-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-sm);
+}
+
+/* v1 shows the WebSocket note only when the websocket transport is chosen. */
+.ts-sub-note {
+  display: none;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.ts-sub-form:has(#subscription-transport option:checked[value="websocket"]) + .ts-sub-note {
+  display: block;
+}
+
+.ts-sub-view .ts-pip { width: 8px; height: 8px; }
+
+.ts-sub-view-title {
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-bold);
+}
+
+.ts-subscriptions-grid {
+  display: grid;
+  gap: var(--ts-lg);
+  grid-template-columns: minmax(0, 1fr) minmax(17rem, 0.75fr);
+}
+
+@media (max-width: 48rem) {
+  .ts-subscriptions-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.ts-sub-view { display: grid; gap: var(--ts-lg); }
+
+.ts-sub-metadata {
+  display: grid;
+  gap: var(--ts-sm);
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  margin: 0;
+}
+
+.ts-sub-metadata-item { display: grid; gap: var(--ts-xs); }
+
+.ts-sub-metadata-item dt {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+}
+
+.ts-sub-metadata-item dd {
+  margin: 0;
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-bold);
+  overflow-wrap: anywhere;
+}
+
+/* v1 parity, scoped to admin pages (Panel.tsx / DataTable.tsx / compat
+   badge.tsx / EmptyState.tsx are single shared v1 components; other v2
+   features keep the v2 component styles until their own pass). */
+
+/* v1 Panel anatomy: borderless glass, paddingBlock 20px, gap 20px — body
+   sections (.ts-admin-table-body/.ts-admin-fact-list/.ts-admin-action-panel/
+   .ts-admin-pricing-controls) carry the 16px inline inset. */
+.ts-admin-root .ts-panel:not(.ts-admin-filter-panel) {
+  gap: 20px;
+  padding: 20px 0;
+  border: 0;
+  overflow: hidden;
+  background-color: rgba(22, 24, 31, 0.52);
+  backdrop-filter: blur(20px);
+  box-shadow:
+  0 0 0 1px color-mix(in oklab, #F2F3F5 10%, transparent),
+  0 1px 3px 0 rgba(0, 0, 0, 0.1),
+  0 1px 2px -1px rgba(0, 0, 0, 0.1);
+}
+
+/* v1 PanelHeader: inline 20px / bottom 20px, 16px at >=64rem, always a
+   divider rule under the header. */
+.ts-admin-root .ts-panel-header {
+  padding: 0 20px 20px;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+@media (min-width: 64rem) {
+  .ts-admin-root .ts-panel-header {
+    padding: 0 16px 16px;
+  }
+}
+
+/* v1 Panel description: fontSizeBody, lineHeight 1.6. */
+.ts-admin-root .ts-panel-subtitle {
+  font-size: var(--ts-fs-body);
+  line-height: 1.6;
+}
+
+/* v1 PanelHeader title: lineHeight 1.375. */
+.ts-admin-root .ts-panel-title {
+  line-height: 1.375;
+}
+
+/* v1 DataTable: 16px body, fixed equal columns, 16px/20px padding,
+   top-aligned cells. */
+.ts-admin-root .ts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ts-fs-body);
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.ts-admin-root .ts-table thead th {
+  height: var(--ts-table-head-h);
+  padding: 16px 20px;
+  text-align: left;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-semibold);
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  line-height: 1.4;
+  border-bottom: 1px solid var(--ts-line);
+  white-space: nowrap;
+}
+
+.ts-admin-root .ts-table tbody td {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--ts-line);
+  color: var(--ts-ink);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.ts-admin-root .ts-table tbody tr:hover {
+  background-color: color-mix(in oklab, var(--ts-surface-muted) 50%, transparent);
+}
+
+/* v1 compat Badge: badgeHeightLarge 24px, radiusControl, tinted borders. */
+.ts-admin-root .ts-badge {
+  height: 24px;
+  border-radius: var(--ts-radius-control);
+}
+
+.ts-admin-root .ts-badge-success {
+  background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
+  border-color: color-mix(in oklab, var(--ts-success) 25%, transparent);
+}
+
+.ts-admin-root .ts-badge-warning {
+  border-color: color-mix(in oklab, var(--ts-warning) 30%, transparent);
+}
+
+.ts-admin-root .ts-badge-danger {
+  background-color: color-mix(in oklab, var(--ts-danger) 10%, transparent);
+  border-color: color-mix(in oklab, var(--ts-danger) 25%, transparent);
+}
+
+.ts-admin-root .ts-badge-info {
+  background-color: color-mix(in oklab, var(--ts-info) 10%, transparent);
+  border-color: color-mix(in oklab, var(--ts-info) 25%, transparent);
+}
+
+/* v1 EmptyState: dashed box, tinted background, 32px icon tile with a
+   16px SearchX, 14px medium title, 14px muted description. */
+.ts-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ts-sm);
+  padding: var(--ts-xl);
+  width: 100%;
+  min-width: 0;
+  border: 1px dashed var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: color-mix(in oklab, var(--ts-surface-muted) 30%, transparent);
+  text-align: center;
+}
+
+.ts-empty-icon-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: var(--ts-sm);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink);
+  flex-shrink: 0;
+}
+
+.ts-empty-card-title {
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+  letter-spacing: -0.01em;
+  color: var(--ts-ink);
+  overflow-wrap: anywhere;
+}
+
+.ts-empty-card-desc {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  line-height: 1.5;
+}
