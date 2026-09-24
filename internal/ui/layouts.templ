@@ -1,0 +1,298 @@
+package ui
+
+import (
+	"strconv"
+
+	"terrascale.tech/dashboard/internal/core"
+)
+
+func Auth(page core.Page, body templ.Component) templ.Component {
+	return authDocument(page, body)
+}
+
+func Shell(page core.Page, body templ.Component) templ.Component {
+	return signedInDocument(page, body, false)
+}
+
+func Admin(page core.Page, body templ.Component) templ.Component {
+	return signedInDocument(page, body, true)
+}
+
+templ authDocument(page core.Page, body templ.Component) {
+	<!DOCTYPE html>
+	<html
+		lang="en"
+		data-theme="dark"
+		if page.Nonce != "" {
+			data-nonce={ page.Nonce }
+		}
+		if page.DevMode {
+			data-dev-reload
+		}
+	>
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="theme-color" content="#0e0f14"/>
+			<title>{ title(page.Title) }</title>
+			<link rel="icon" type="image/svg+xml" href="/brand/logo-icon-blue.svg"/>
+			<link rel="stylesheet" href="/css/terrascale.css" data-dashboard-css/>
+			<script type="module" src="/js/rocket-components.js" defer if page.Nonce != "" {
+	nonce={ page.Nonce }
+}></script>
+		</head>
+		<body>
+			<a class="ts-skip-link" href="#ts-auth-main">Skip to main content</a>
+			<div id="ts-auth-main">
+				@body
+			</div>
+		</body>
+	</html>
+}
+
+templ signedInDocument(page core.Page, body templ.Component, admin bool) {
+	<!DOCTYPE html>
+	<html
+		lang="en"
+		data-theme="dark"
+		if page.Nonce != "" {
+			data-nonce={ page.Nonce }
+		}
+		if page.DevMode {
+			data-dev-reload
+		}
+	>
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="theme-color" content="#0e0f14"/>
+			<title>{ title(page.Title) }</title>
+			<link rel="icon" type="image/svg+xml" href="/brand/logo-icon-blue.svg"/>
+			<link rel="stylesheet" href="/css/terrascale.css" data-dashboard-css/>
+			<script type="module" src="/js/rocket-components.js" defer if page.Nonce != "" {
+	nonce={ page.Nonce }
+}></script>
+		</head>
+		<body>
+			<a class="ts-skip-link" href="#ts-main">Skip to main content</a>
+			<ts-mobile-nav class={ shellClass() } data-signals="{navOpen:false}" data-class:nav-open="$navOpen">
+				<div class="ts-nav-backdrop" aria-hidden="true" data-on:click="$navOpen=false"></div>
+				@shellSidebar(page, admin)
+				<div class="ts-inset">
+					<button type="button" class="ts-fab ts-fab-nav" aria-label="Open navigation" aria-controls="ts-navigation" aria-expanded="false" data-on:click="$navOpen=!$navOpen" data-attr:aria-expanded="$navOpen ? 'true' : 'false'">
+						<span aria-hidden="true">☰</span>
+					</button>
+					<div id="ts-main" class="ts-main" tabindex="-1">
+						@body
+					</div>
+				</div>
+			</ts-mobile-nav>
+		</body>
+	</html>
+}
+
+templ shellSidebar(page core.Page, admin bool) {
+	<aside id="ts-navigation" class={ sidebarClass(admin) } aria-label={ sidebarLabel(admin) } tabindex="-1">
+		<div class={ sidebarHeaderClass(admin) }>
+			if admin {
+				<a class="ts-sidebar-brand" href="/" aria-label="TerraScale dashboard">
+					<img src="/brand/logo-terrascale-blue.svg" alt="" aria-hidden="true" decoding="async"/>
+				</a>
+				<div class="ts-admin-sidebar-title">Administration</div>
+			}
+			<div class="ts-project-controls" data-signals="{organizationSearch:'',projectSearch:''}">
+				if len(page.Shell.Organizations) > 0 {
+					<ts-menu>
+						<details class="ts-menu ts-project-menu ts-organization-menu">
+							<summary class="ts-btn ts-btn-secondary ts-project-trigger" aria-label={ projectTriggerLabel("organization", page.Shell.OrganizationName) }>
+								<span class="ts-project-trigger-label">{ displayName(page.Shell.OrganizationName, "Choose organization") }</span>
+								<span aria-hidden="true">⌄</span>
+								for _, organization := range page.Shell.Organizations {
+									if organization.Selected {
+										<span class="ts-sr-only" data-active-organization-id={ organization.ID }>Current organization: { organization.Name }</span>
+									}
+								}
+							</summary>
+							<div class="ts-menu-panel ts-project-panel">
+								<div class="ts-project-panel-scroll">
+									<div class="ts-project-section-label">Organizations</div>
+									if len(page.Shell.Organizations) > 5 {
+										<div class="ts-project-search">
+											<label class="ts-sr-only" for="organizationSearch">Search organizations</label>
+											<input class="ts-input" id="organizationSearch" type="search" placeholder="Search organizations" aria-label="Search organizations" data-bind="organizationSearch"/>
+										</div>
+									}
+									<div class="ts-project-list">
+										for _, organization := range page.Shell.Organizations {
+											<form method="post" action="/api/v1/dashboard/switch-organization" data-show="$organizationSearch === '' || el.dataset.organizationName.toLowerCase().includes($organizationSearch.toLowerCase())" data-organization-name={ organization.Name }>
+												@formToken(page.CSRFToken)
+												<input type="hidden" name="organizationId" value={ organization.ID }/>
+												<button
+													type="submit"
+													class="ts-project-option"
+													data-organization-option={ organization.ID }
+													if organization.Selected {
+														aria-current="true"
+													}
+												>
+													<span class="ts-project-option-heading">
+														<span class="ts-project-option-name">{ organization.Name }</span>
+														if organization.Selected {
+															<span class="ts-badge ts-badge-success">Current</span>
+														}
+													</span>
+												</button>
+											</form>
+										}
+									</div>
+								</div>
+							</div>
+						</details>
+					</ts-menu>
+				}
+				if len(page.Shell.Projects) > 0 {
+					<ts-menu>
+						<details class="ts-menu ts-project-menu">
+							<summary class="ts-btn ts-btn-secondary ts-project-trigger" aria-label={ projectTriggerLabel("project", page.Shell.ProjectName) }>
+								<span class="ts-project-trigger-label">{ displayName(page.Shell.ProjectName, "Choose project") }</span>
+								<span aria-hidden="true">⌄</span>
+							</summary>
+							<div class="ts-menu-panel ts-project-panel">
+								<div class="ts-project-panel-scroll">
+									<div class="ts-current-project">
+										<div class="ts-current-project-top">
+											<div class="ts-current-project-name">
+												<span class="ts-status-dot" aria-hidden="true"></span>
+												<span class="ts-project-name">{ displayName(page.Shell.ProjectName, "No project selected") }</span>
+											</div>
+										</div>
+										for _, project := range page.Shell.Projects {
+											if project.Selected {
+												<span class="ts-sr-only" data-active-project-id={ project.ID }>Current project: { project.Name }</span>
+											}
+										}
+									</div>
+									if len(page.Shell.Projects) > 1 {
+										<div class="ts-project-search-section">
+											<div class="ts-project-section-label">Switch to</div>
+											if len(page.Shell.Projects) > 5 {
+												<div class="ts-project-search">
+													<label class="ts-sr-only" for="projectSearch">Search projects</label>
+													<input class="ts-input" id="projectSearch" type="search" placeholder="Search projects" aria-label="Search projects" data-bind="projectSearch"/>
+												</div>
+											}
+											<div class="ts-project-list">
+												for _, project := range page.Shell.Projects {
+													<form method="post" action="/api/v1/dashboard/switch-project" data-show="$projectSearch === '' || el.dataset.projectName.toLowerCase().includes($projectSearch.toLowerCase())" data-project-name={ project.Name }>
+														@formToken(page.CSRFToken)
+														<input type="hidden" name="projectId" value={ project.ID }/>
+														<input type="hidden" name="returnUrl" value={ page.Shell.ReturnURL }/>
+														<button
+															type="submit"
+															class="ts-project-option"
+															data-project-option={ project.ID }
+															if project.Selected {
+																aria-current="true"
+															}
+														>
+															<span class="ts-project-option-heading">
+																<span class="ts-project-option-name">{ project.Name }</span>
+																if project.Selected {
+																	<span class="ts-badge ts-badge-success">Current</span>
+																}
+															</span>
+														</button>
+													</form>
+												}
+											</div>
+										</div>
+									}
+								</div>
+								<div class="ts-project-footer">
+									<a class="ts-project-footer-link" href="/organization?newProject=1#projects">Create new project</a>
+									<a class="ts-project-footer-link" href="/settings?tab=identity">Project settings</a>
+									<a class="ts-project-footer-link" href="/organization">All workspaces</a>
+								</div>
+							</div>
+						</details>
+					</ts-menu>
+				}
+			</div>
+			<button type="button" class="ts-sidebar-close ts-icon-btn" aria-label="Close navigation" data-on:click="$navOpen=false">
+				<span aria-hidden="true">×</span>
+			</button>
+		</div>
+		<nav class="ts-sidebar-content" aria-label={ navSectionsLabel(admin) }>
+			if len(page.Shell.Navigation) > 0 && !admin {
+				<div class="ts-sidebar-group-label">Workspace</div>
+			}
+			@sidebarNavigation(page.Shell.Navigation)
+			if len(page.Shell.SecondaryNavigation) > 0 {
+				<div class="ts-sidebar-group-label">More</div>
+				@sidebarNavigation(page.Shell.SecondaryNavigation)
+			}
+		</nav>
+		<div class="ts-sidebar-footer">
+			if admin {
+				<a class="ts-menu-item" href="/">Back to dashboard</a>
+			} else {
+				<a class="ts-sidebar-brand" href="/" aria-label="TerraScale dashboard">
+					<img src="/brand/logo-terrascale-blue.svg" alt="" aria-hidden="true" decoding="async"/>
+				</a>
+			}
+			<ts-menu>
+				<details class="ts-menu ts-menu-end ts-menu-up ts-account">
+					<summary class="ts-account-trigger" aria-label="Account menu">
+						<span class="ts-account-avatar" aria-hidden="true">{ displayName(page.Shell.UserInitials, "TS") }</span>
+						<span class="ts-account-meta">
+							<span class="ts-account-name">{ displayName(page.Shell.UserName, "TerraScale user") }</span>
+							<span class="ts-account-email">{ page.Shell.UserEmail }</span>
+						</span>
+						<span class="ts-account-chevron" aria-hidden="true">⌃</span>
+					</summary>
+					<div class="ts-menu-panel">
+						<a class="ts-menu-item" href="/profile"><span class="ts-menu-label">Profile</span></a>
+						<a class="ts-menu-item" href="/notifications"><span class="ts-menu-label">Notifications</span></a>
+						<a class="ts-menu-item" href="/settings"><span class="ts-menu-label">Settings</span></a>
+						if page.Principal.PlatformAdmin {
+							<a class="ts-menu-item" href="/admin"><span class="ts-menu-label">Administration</span></a>
+						}
+						<hr class="ts-menu-separator"/>
+						<form method="post" action="/api/v1/auth/logout">
+							@formToken(page.CSRFToken)
+							<button type="submit" class="ts-menu-item"><span class="ts-menu-label">Sign out</span></button>
+						</form>
+					</div>
+				</details>
+			</ts-menu>
+		</div>
+	</aside>
+}
+
+templ formToken(token string) {
+	<input type="hidden" name="_csrf" value={ token }/>
+}
+
+templ sidebarNavigation(items []core.NavItem) {
+	<ul class="ts-nav">
+		for _, item := range items {
+			<li class="ts-nav-item">
+				<a
+					class="ts-nav-link"
+					href={ item.URL }
+					if item.Active {
+						aria-current="page"
+					}
+				>
+					<span class="ts-nav-indicator" aria-hidden="true"></span>
+					<span>{ item.Label }</span>
+					if item.BadgeCount > 0 {
+						<span class={ navBadgeClass(item.Active) } aria-hidden="true">{ strconv.Itoa(item.BadgeCount) }</span>
+					}
+				</a>
+			</li>
+		}
+	</ul>
+}

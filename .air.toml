@@ -2,13 +2,13 @@ root = "."
 tmp_dir = "bin"
 
 [build]
-cmd = "GOFLAGS=-mod=vendor go build -o ./bin/dashboard ./cmd/dashboard"
+cmd = "GOTOOLCHAIN=local GOFLAGS=-mod=vendor go tool templ generate -path internal -include-version=false -include-timestamp=false && GOTOOLCHAIN=local GOFLAGS=-mod=vendor go build -o ./bin/dashboard ./cmd/dashboard"
 bin = "bin/dashboard"
 delay = 600
-include_ext = ["go", "html", "css", "js", "svg", "woff2"]
+include_ext = ["go", "templ", "html", "css", "js", "svg", "woff2"]
 exclude_dir = ["bin", "node_modules", "vendor", "tests", "web/assets", "src", "tools", "docs", "e2e"]
-exclude_regex = ["_test.go"]
-stop_on_error = true
+exclude_regex = ["_test.go", "_templ.go"]
+stop_on_error = false
 send_interrupt = true
 kill_delay = "500ms"
 

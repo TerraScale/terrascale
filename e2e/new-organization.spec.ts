@@ -8,7 +8,9 @@ test("demo billing upgrades a plan through the local simulator without contactin
     displayName: "E2E Billing",
   });
 
-  await page.goto("/subscriptions");
+  const billingPage = await page.goto("/billing");
+  expect(billingPage?.status()).toBe(200);
+  expect(new URL(page.url()).pathname).toBe("/billing");
   await expect(page.getByRole("heading", { name: "Plans and billing" })).toBeVisible();
   await expect(page.getByText("Demo billing")).toBeVisible();
 
@@ -22,7 +24,7 @@ test("demo billing upgrades a plan through the local simulator without contactin
   await expect(page.getByRole("button", { name: "Confirm local demo setup" })).toBeVisible();
 
   await page.getByRole("button", { name: "Confirm local demo setup" }).click();
-  await page.waitForURL("**/subscriptions?payment=success");
+  await page.waitForURL((url) => url.pathname === "/billing" && url.searchParams.get("payment") === "success");
   const currentPlan = page.locator('section[aria-labelledby="billing-summary-title"]');
   await expect(currentPlan).toContainText("Pro");
   await expect(currentPlan).toContainText("Active");

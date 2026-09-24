@@ -1,0 +1,326 @@
+package data
+
+import (
+	"net/url"
+	"terrascale.tech/dashboard/internal/core"
+)
+
+func dataPath(path string, d pageData, id string) string {
+	values := url.Values{"databaseId": {d.DatabaseID}, "collection": {d.Collection}}
+	if id != "" {
+		values.Set("id", id)
+	}
+	return path + "?" + values.Encode()
+}
+
+func dataViewPath(view string, d pageData) string {
+	values := url.Values{"view": {view}, "databaseId": {d.DatabaseID}, "collection": {d.Collection}}
+	return "/data?" + values.Encode()
+}
+
+func dataTabPath(path, tab string, d pageData) string {
+	values := url.Values{"tab": {tab}, "databaseId": {d.DatabaseID}, "collection": {d.Collection}}
+	return path + "?" + values.Encode()
+}
+
+templ dataContent(page core.Page, d pageData) {
+	<main class="ts-page ts-data" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
+		if d.Mode == "queries" || d.Mode == "table" || d.Mode == "editor" || d.Mode == "sql" {
+			<div class="ts-toolbar">
+				<nav class="ts-tabs" aria-label="Data views">
+					<a class="ts-tab" href={ dataViewPath("queries", d) } aria-current={ currentPage(d.Mode == "queries") }>Saved queries</a>
+					<a class="ts-tab" href={ dataViewPath("table", d) } aria-current={ currentPage(d.Mode == "table") }>Collection documents</a>
+					<a class="ts-tab" href={ dataViewPath("editor", d) } aria-current={ currentPage(d.Mode == "editor") }>Document editor</a>
+					<a class="ts-tab" href={ dataViewPath("sql", d) } aria-current={ currentPage(d.Mode == "sql") }>SQL console</a>
+				</nav>
+				if d.Mode == "queries" || d.Mode == "table" {
+					<form class="ts-filters" method="get" action="/data" role="search" aria-label="Filter data">
+						<input type="hidden" name="view" value={ d.Mode }/>
+						if d.Mode == "table" {
+							<select class="ts-select" name="databaseId" aria-label="Database">
+								for _, db := range d.Databases {
+									<option value={ db.ID } selected?={ db.ID == d.DatabaseID }>{ db.Name }</option>
+								}
+							</select><input class="ts-input" name="collection" value={ d.Collection } placeholder="Collection" aria-label="Collection"/>
+						}
+						<input class="ts-input" name="q" value={ d.Search } placeholder="Search" aria-label="Filter results"/><button class="ts-btn ts-btn-secondary" type="submit">Filter</button>
+						if d.Search != "" {
+							<a class="ts-btn ts-btn-ghost" href={ dataViewPath(d.Mode, d) }>Clear</a>
+						}
+					</form>
+				}
+			</div>
+		} else if d.Mode == "schema" {
+			<header class="ts-section"><h1>Schema</h1><nav class="ts-tabs" aria-label="Schema views"><a class="ts-tab" href={ dataTabPath("/schema", "viewer", d) } aria-current={ currentPage(d.SchemaTab == "viewer") }>Schema viewer</a><a class="ts-tab" href={ dataTabPath("/schema", "diff", d) } aria-current={ currentPage(d.SchemaTab == "diff") }>Schema diff</a></nav></header>
+		} else if d.Mode == "indexes" {
+			<header class="ts-section"><h1>Indexes</h1><nav class="ts-tabs" aria-label="Index views"><a class="ts-tab" href={ dataTabPath("/indexes", "overview", d) } aria-current={ currentPage(d.IndexTab == "overview") }>Overview</a><a class="ts-tab" href={ dataTabPath("/indexes", "templates", d) } aria-current={ currentPage(d.IndexTab == "templates") }>Templates</a><a class="ts-tab" href={ dataTabPath("/indexes", "recommendations", d) } aria-current={ currentPage(d.IndexTab == "recommendations") }>Recommendations</a><a class="ts-tab" href={ dataTabPath("/indexes", "migration", d) } aria-current={ currentPage(d.IndexTab == "migration") }>Migration</a></nav></header>
+		} else {
+			<header class="ts-section"><h1>Document history</h1><nav aria-label="Data tools"><a href={ dataViewPath("table", d) }>Documents</a> · <a href={ dataViewPath("editor", d) }>Document editor</a></nav></header>
+		}
+		if d.Error != "" {
+			<p class="ts-alert ts-alert-danger" role="alert">{ d.Error }</p>
+		}
+		if d.Mode == "queries" {
+			<section class="ts-section" aria-labelledby="data-queries-title">
+				<div class="ts-section-head">
+					<div><h1 id="data-queries-title">Saved queries</h1><p class="ts-meta">Project queries available to everyone with access to this project.</p></div>
+					if d.CanWrite {
+						<a class="ts-btn ts-btn-primary" href="/data?view=queries&amp;create=1">Save query</a>
+					}
+				</div>
+				if len(d.Queries) > 0 {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<thead>
+								<tr>
+									<th>Name</th>
+									<th>Query</th>
+									if d.CanWrite {
+										<th>Actions</th>
+									}
+								</tr>
+							</thead>
+							<tbody>
+								for _, query := range d.Queries {
+									<tr>
+										<td class="ts-table-strong">{ query.Name }</td>
+										<td><code class="ts-query-cell">{ query.SQL }</code></td>
+										if d.CanWrite {
+											<td><form method="post" action="/api/v1/dashboard/data/saved-queries/delete"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="id" value={ query.ID }/><button class="ts-btn ts-btn-secondary" type="submit">Delete</button></form></td>
+										}
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<div class="ts-empty"><p>No saved queries match this filter.</p><p>Save a project query to make it available to collaborators.</p></div>
+				}
+			</section>
+			if d.Create && d.CanWrite {
+				<dialog id="save-query-dialog" class="ts-dialog" data-autoopen aria-labelledby="save-query-dialog-title">
+					<div class="ts-dialog-content">
+						<div class="ts-dialog-header"><h2 id="save-query-dialog-title" class="ts-dialog-title">Save query</h2><p class="ts-dialog-description">Saved queries are available to everyone with access to this project.</p></div>@saveQueryForm(page, "dialog")
+					</div>
+				</dialog>
+				<noscript>
+					<section class="ts-card ts-section" aria-labelledby="save-query-noscript-title">
+						<h2 id="save-query-noscript-title">Save query</h2>
+						<p>Saved queries are available to everyone with access to this project.</p>@saveQueryForm(page, "noscript")
+					</section>
+				</noscript>
+			}
+		} else if d.Mode == "table" {
+			<section class="ts-section">
+				<div class="ts-section-head">
+					<div><h1>Collection documents</h1><p class="ts-meta">Read rows from the selected database and collection.</p></div>
+					if d.CanWrite && d.DatabaseID != "" {
+						<a class="ts-btn ts-btn-primary" href={ dataViewPath("editor", d) }>Add document</a>
+					}
+				</div>
+				<p class="ts-alert ts-alert-info" role="status">Collection listing is unavailable in the published SDK. Enter a collection name explicitly.</p>
+				if len(d.Documents) > 0 {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<thead>
+								<tr>
+									<th>ID</th>
+									<th>JSON</th>
+									<th>History</th>
+									if d.CanWrite {
+										<th>Actions</th>
+									}
+								</tr>
+							</thead>
+							<tbody>
+								for _, doc := range d.Documents {
+									<tr>
+										<td>{ doc.ID }</td>
+										<td><details class="ts-json-details"><summary>View</summary><pre class="ts-snippet-body">{ doc.Value.String() }</pre></details></td>
+										<td><a href={ dataPath("/history", d, doc.ID) }>View history</a></td>
+										if d.CanWrite {
+											<td><div class="ts-row-actions"><a class="ts-btn ts-btn-ghost ts-btn-sm" href={ dataViewPath("editor", d) + "&edit=" + url.QueryEscape(doc.ID) }>Edit</a><form method="post" action="/api/v1/dashboard/data/documents"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><input type="hidden" name="collection" value={ d.Collection }/><input type="hidden" name="operation" value="delete"/><input type="hidden" name="id" value={ doc.ID }/><button class="ts-btn ts-btn-destructive ts-btn-sm" type="submit">Delete</button></form></div></td>
+										}
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<div class="ts-empty"><p>No documents match this collection and filter.</p></div>
+				}
+			</section>
+		} else if d.Mode == "editor" {
+			<section class="ts-section">
+				<h1>Document editor</h1>
+				<p class="ts-meta">Create, replace, merge, or delete a document in the selected collection.</p>
+				@databaseSelection(d, "editor")
+				if d.CanWrite && d.DatabaseID != "" {
+					<form method="post" action="/api/v1/dashboard/data/documents" class="ts-form ts-data-form">
+						<input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><input type="hidden" name="collection" value={ d.Collection }/><label class="ts-label" for="operation">Operation</label><select class="ts-input" id="operation" name="operation"><option value="create">Create</option><option value="replace">Replace</option><option value="patch">Patch</option><option value="delete">Delete</option></select><label class="ts-label" for="document-id">Document ID</label><input class="ts-input" id="document-id" name="id" value={ d.DocumentID } maxlength="256" placeholder="Generated for a new document"/><label class="ts-label" for="document-json">JSON document or patch</label>
+						<textarea class="ts-input" id="document-json" name="document" rows="8">
+							if d.EditorJSON != "" {
+								{ d.EditorJSON }
+							} else {
+								{ "{}" }
+							}
+						</textarea><button class="ts-btn ts-btn-primary" type="submit">Apply document operation</button>
+					</form>
+				} else {
+					<p class="ts-alert ts-alert-info">Viewer access is read-only.</p>
+				}
+			</section>
+		} else if d.Mode == "sql" {
+			<section class="ts-section">
+				<h1>SQL console</h1>
+				<p class="ts-meta">Run a read-only query against the selected database.</p>
+				@databaseSelection(d, "sql")
+				<form method="get" action="/data">
+					<input type="hidden" name="view" value="sql"/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><input type="hidden" name="collection" value={ d.Collection }/><label class="ts-label" for="saved-query">Load a saved query</label>
+					<select class="ts-input" id="saved-query" name="savedQueryId">
+						<option value="">Choose a saved query...</option>
+						for _, query := range d.Queries {
+							<option value={ query.ID }>{ query.Name }</option>
+						}
+					</select><button class="ts-btn ts-btn-secondary" type="submit">Load</button>
+				</form>
+				if d.DatabaseID != "" {
+					<form method="post" action="/api/v1/dashboard/data/sql" class="ts-form ts-data-form"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><label class="ts-label" for="sql">SQL</label><textarea class="ts-input" id="sql" name="sql" rows="6">{ d.SQL }</textarea><button class="ts-btn ts-btn-primary" type="submit">Run query</button></form>
+				}
+				if d.SQLResult != "" {
+					<section class="ts-card ts-section" aria-labelledby="sql-result-title"><h2 id="sql-result-title">Query result</h2><pre class="ts-snippet-body">{ d.SQLResult }</pre></section>
+				}
+			</section>
+		} else if d.Mode == "schema" {
+			@databaseSelection(d, "schema")
+			if d.SchemaTab == "viewer" {
+				<section class="ts-card ts-section">
+					<h2>Collection schema</h2>
+					<form method="post" action="/api/v1/dashboard/schema" class="ts-stack-12">
+						<input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><input type="hidden" name="collection" value={ d.Collection }/><label class="ts-label" for="schema-json">Schema JSON</label><textarea class="ts-input" id="schema-json" name="schema" rows="14" required>{ d.Schema }</textarea>
+						if d.CanWrite && d.DatabaseID != "" {
+							<button class="ts-btn ts-btn-primary" type="submit">Apply schema</button>
+						}
+					</form>
+				</section>
+			} else {
+				<section class="ts-card ts-section"><h2>Schema diff</h2><p role="status">A schema revision history is unavailable in the current provider contract, so no diff can be calculated.</p></section>
+			}
+		} else if d.Mode == "indexes" {
+			@databaseSelection(d, "indexes")
+			if d.IndexTab == "overview" {
+				<section class="ts-card ts-section">
+					<h2>Collection indexes</h2>
+					if len(d.Indexes) > 0 {
+						<ul>
+							for _, field := range d.Indexes {
+								<li>{ field }</li>
+							}
+						</ul>
+					} else {
+						<p>No indexes yet.</p>
+					}
+					if d.CanWrite && d.DatabaseID != "" {
+						<form method="post" action="/api/v1/dashboard/indexes" class="ts-stack-12"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><input type="hidden" name="collection" value={ d.Collection }/><label class="ts-label" for="index-field">Field</label><input class="ts-input" id="index-field" name="field" required/><button class="ts-btn ts-btn-primary" type="submit">Create index</button></form>
+					}
+				</section>
+			} else {
+				<section class="ts-card ts-section"><h2>{ indexTabTitle(d.IndexTab) }</h2><p role="status">{ indexUnavailable(d.IndexTab) }</p></section>
+			}
+		} else {
+			@databaseSelection(d, "history")
+			<section class="ts-card ts-section">
+				<h2>
+					History
+					if d.DocumentID != "" {
+						{ "for " }{ d.DocumentID }
+					}
+				</h2>
+				if len(d.History) > 0 {
+					<ol>
+						for _, revision := range d.History {
+							<li>
+								Revision { revision.Number }
+								if revision.Deleted {
+									— deleted
+								} else if revision.Body != "" {
+									<pre>{ revision.Body }</pre>
+								}
+							</li>
+						}
+					</ol>
+				} else {
+					<p>Choose a document from the data browser to inspect its revisions.</p>
+				}
+			</section>
+		}
+	</main>
+}
+
+templ saveQueryForm(page core.Page, prefix string) {
+	<form method="post" action="/api/v1/dashboard/data/saved-queries" class="ts-form">
+		<input type="hidden" name="_csrf" value={ page.CSRFToken }/><label class="ts-label" for={ prefix + "-query-name" }>Name</label><input class="ts-input" id={ prefix + "-query-name" } name="name" required autofocus?={ prefix == "dialog" }/><label class="ts-label" for={ prefix + "-saved-sql" }>SQL query</label><textarea class="ts-input" id={ prefix + "-saved-sql" } name="sql" rows="6" required></textarea>
+		<div class="ts-form-actions">
+			if prefix == "dialog" {
+				<button class="ts-btn ts-btn-secondary" type="button" data-close-dialog>Cancel</button>
+			} else {
+				<a class="ts-btn ts-btn-secondary" href="/data?view=queries">Cancel</a>
+			}
+			<button class="ts-btn ts-btn-primary" type="submit">Save query</button>
+		</div>
+	</form>
+}
+
+templ databaseSelection(d pageData, mode string) {
+	if len(d.Databases) > 0 {
+		<section class="ts-card ts-section">
+			<h2>Choose data</h2>
+			<form method="get" class="ts-stack-12">
+				if mode == "editor" || mode == "sql" {
+					<input type="hidden" name="view" value={ mode }/>
+				} else if mode == "schema" {
+					<input type="hidden" name="tab" value={ d.SchemaTab }/>
+				} else if mode == "indexes" {
+					<input type="hidden" name="tab" value={ d.IndexTab }/>
+				}
+				<label class="ts-label" for="database">Database</label>
+				<select class="ts-input" id="database" name="databaseId">
+					for _, db := range d.Databases {
+						<option value={ db.ID } selected?={ db.ID == d.DatabaseID }>{ db.Name }</option>
+					}
+				</select><label class="ts-label" for="collection">Collection</label><input class="ts-input" id="collection" name="collection" value={ d.Collection } required/><button class="ts-btn ts-btn-secondary" type="submit">Open</button>
+			</form>
+		</section>
+	} else {
+		<section class="ts-card ts-section"><p>Create a database to browse data. <a href="/databases">Go to databases</a>.</p></section>
+	}
+}
+
+func currentPage(active bool) string {
+	if active {
+		return "page"
+	}
+	return ""
+}
+
+func indexTabTitle(tab string) string {
+	switch tab {
+	case "templates":
+		return "Index templates"
+	case "recommendations":
+		return "Recommendations"
+	default:
+		return "Index migration"
+	}
+}
+
+func indexUnavailable(tab string) string {
+	switch tab {
+	case "templates":
+		return "No provider index templates are published for this database."
+	case "recommendations":
+		return "Query workload recommendations are unavailable without provider analysis data."
+	default:
+		return "Index migration state is unavailable in the current provider contract."
+	}
+}

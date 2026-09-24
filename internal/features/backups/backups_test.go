@@ -2,7 +2,6 @@ package backups
 
 import (
 	json "encoding/json/v2"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -29,7 +28,6 @@ func (testCSRF) Protect(h http.Handler) http.Handler             { return h }
 
 type testRenderer struct{}
 
-func (testRenderer) Register(string, fs.FS, ...string) error { return nil }
 func (testRenderer) Page(http.ResponseWriter, *http.Request, core.Page) error {
 	return nil
 }

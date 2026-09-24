@@ -2,6 +2,10 @@
    Used by shell controls and filter menus. Keep page-specific rules in Features/. */
 
 /* Popover / dropdown menu via <details> (no JS required to open). */
+/* The Rocket enhancer is a transparent wrapper: native disclosure semantics,
+   styling, and operation without JavaScript all stay on <details>. */
+ts-menu { display: contents; }
+
 details.ts-menu {
   position: relative;
 }

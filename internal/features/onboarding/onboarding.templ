@@ -1,0 +1,155 @@
+package onboarding
+
+templ onboardingView(data pageData, csrfToken string) {
+	<main class={ onboardingRootClass(data.Step) }>
+		<div class={ onboardingContainerClass(data.Step) }>
+			<header class="ts-onboarding-header">
+				<img class="ts-brand-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async"/>
+				<h1 class="ts-sr-only">Activate your TerraScale account</h1>
+			</header>
+			<div class="ts-onboarding-progress">
+				<div class="ts-onboarding-progress-meta">
+					<span>ACTIVATION STEP { onboardingProgressValue(data.CurrentStep) } OF { onboardingProgressValue(data.TotalSteps) }</span>
+					<span>{ onboardingProgressValue(data.Progress) }%</span>
+				</div>
+				<div class="ts-onboarding-progress-frame">
+					<div class="ts-progress" role="progressbar" aria-label="Account setup progress" aria-valuenow={ onboardingProgressValue(data.Progress) } aria-valuemin="0" aria-valuemax="100">
+						<div class="ts-progress-bar" data-progress={ onboardingProgressValue(data.Progress) }></div>
+					</div>
+				</div>
+			</div>
+			<nav aria-label="Onboarding progress">
+				<ol class="ts-onboarding-steps ts-onboarding-steps-compact">
+					for _, step := range data.Steps {
+						<li class={ onboardingStepClass(step) } aria-current={ onboardingStepCurrent(step) }>
+							<span class="ts-onboarding-step-icon" aria-hidden="true">{ onboardingStepGlyph(step) }</span>
+							<span>{ step.Label }</span>
+							<span class="ts-onboarding-step-state">{ step.State }</span>
+						</li>
+					}
+				</ol>
+			</nav>
+			if data.Error != "" {
+				<div role="alert" class="ts-alert ts-alert-danger">{ data.Error }</div>
+			}
+			if data.Registration {
+				<section class="ts-onboarding-card" aria-labelledby="create-account-title">
+					<h2 class="ts-sr-only" id="create-account-title">Create your account</h2>
+					<form class="ts-onboarding-form" method="post" action="/onboarding/register" novalidate>
+						<input type="hidden" name="_csrf" value={ csrfToken }/>
+						<div class="ts-field">
+							<label class="ts-label" for="displayName">Full name</label>
+							<input class="ts-input" id="displayName" name="displayName" autocomplete="name" maxlength="128" required/>
+						</div>
+						<div class="ts-field">
+							<label class="ts-label" for="email">Email</label>
+							<input class="ts-input" id="email" name="email" type="email" autocomplete="email" placeholder="name@company.com" required/>
+						</div>
+						<div class="ts-field">
+							<label class="ts-label" for="password">Password</label>
+							<ts-password-control>
+								<div class="ts-input-group">
+									<input class="ts-input" id="password" name="password" type="password" autocomplete="new-password" placeholder="Enter your password" required/>
+									<button class="ts-input-adornment" type="button" data-password-toggle aria-controls="password" aria-pressed="false" aria-label="Show password" hidden>
+										<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+									</button>
+								</div>
+							</ts-password-control>
+						</div>
+						<div class="ts-field">
+							<label class="ts-label" for="confirmPassword">Confirm password</label>
+							<ts-password-control>
+								<div class="ts-input-group">
+									<input class="ts-input" id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" placeholder="Confirm your password" required/>
+									<button class="ts-input-adornment" type="button" data-password-toggle aria-controls="confirmPassword" aria-pressed="false" aria-label="Show password" hidden>
+										<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+									</button>
+								</div>
+							</ts-password-control>
+						</div>
+						<div class="ts-onboarding-terms">
+							<label class="ts-onboarding-terms-label">
+								<input class="ts-checkbox" type="checkbox" name="terms" value="true" required/>
+								<span>I accept the Terms of Service</span>
+							</label>
+						</div>
+						<div class="ts-onboarding-form-footer">
+							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save</button>
+							<p class="ts-onboarding-secondary">Already have an account? <a class="ts-link" href="/login">Sign in</a></p>
+						</div>
+					</form>
+				</section>
+			} else if data.Step == "account-information" {
+				<section class="ts-onboarding-card" aria-labelledby="account-information-title">
+					<header class="ts-onboarding-step-header">
+						<h2 class="ts-onboarding-step-title" id="account-information-title">Review your account information</h2>
+						<p class="ts-onboarding-step-subtitle">Signed in as { data.Email }</p>
+					</header>
+					<form class="ts-onboarding-content" method="post" action="/onboarding/step">
+						<input type="hidden" name="_csrf" value={ csrfToken }/>
+						<input type="hidden" name="step" value="account-information"/>
+						<div class="ts-onboarding-field-list">
+							<div class="ts-field">
+								<label class="ts-label" for="displayName">Full name</label>
+								<input class="ts-input" id="displayName" name="displayName" value={ data.DisplayName } maxlength="128" autocomplete="name" required/>
+							</div>
+							<div class="ts-field">
+								<label class="ts-label" for="accountEmail">Email</label>
+								<input class="ts-input" id="accountEmail" type="email" value={ data.Email } readonly/>
+								<span class="ts-hint">Your sign-in email cannot be changed during account setup.</span>
+							</div>
+						</div>
+						<div class="ts-onboarding-form-footer">
+							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save and continue</button>
+						</div>
+					</form>
+				</section>
+			} else if data.Step == "payment-method" {
+				<section class="ts-onboarding-card" aria-labelledby="payment-method-title">
+					<header class="ts-onboarding-step-header">
+						<h2 class="ts-onboarding-step-title" id="payment-method-title">Payment setup</h2>
+						<p class="ts-onboarding-step-subtitle">Your Personal workspace is ready. Payment setup is optional in this in-memory demo.</p>
+					</header>
+					<div class="ts-onboarding-content">
+						<p class="ts-onboarding-step-subtitle">No payment method is collected here. Continue on the demo allowance and add billing in a configured deployment.</p>
+						<form method="post" action="/onboarding/step">
+							<input type="hidden" name="_csrf" value={ csrfToken }/>
+							<input type="hidden" name="step" value="payment-method"/>
+							<input type="hidden" name="bypass" value="1"/>
+							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Continue without adding a payment method</button>
+						</form>
+					</div>
+				</section>
+			} else {
+				<section class="ts-onboarding-card" aria-labelledby="project-title">
+					<header class="ts-onboarding-step-header">
+						<h2 class="ts-onboarding-step-title" id="project-title">Create your first project</h2>
+						<p class="ts-onboarding-step-subtitle">Your Personal workspace is ready for a project.</p>
+					</header>
+					<form class="ts-onboarding-content" method="post" action="/onboarding/step">
+						<input type="hidden" name="_csrf" value={ csrfToken }/>
+						<input type="hidden" name="step" value="project"/>
+						<div class="ts-onboarding-field-list">
+							<div class="ts-field">
+								<label class="ts-label" for="projectName">Project name</label>
+								<input class="ts-input" id="projectName" name="name" maxlength="100" value="Personal" autocomplete="organization" required/>
+							</div>
+							<div class="ts-field">
+								<label class="ts-label" for="region">Region</label>
+								<ts-region-map data-src="/brand/region-map.svg" data-select-id="region" aria-hidden="true"></ts-region-map>
+								<select class="ts-select" id="region" name="region" required>
+									<option value="GRU" selected>GRU · São Paulo</option>
+									<option value="SFO">SFO · San Francisco</option>
+									<option value="FRA">FRA · Frankfurt</option>
+								</select>
+							</div>
+						</div>
+						<div class="ts-onboarding-form-footer">
+							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create project</button>
+						</div>
+					</form>
+				</section>
+			}
+		</div>
+	</main>
+}

@@ -3,6 +3,7 @@ package core
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"maps"
 	"reflect"
 	"strings"
 	"sync"
@@ -67,8 +68,9 @@ func (s *Store) CreateAccount(user User) (Account, error) {
 		ID: NewID("prj"), OrganizationID: org.ID, Name: "Personal", Region: "GRU",
 		Regions: []string{"GRU"}, Status: "active", IsDefault: true,
 		Databases: make(map[string]Database), APIKeys: make(map[string]APIKey),
-		SavedQueries: make(map[string]SavedQuery), BackupPolicies: make(map[string]BackupPolicy),
-		CreatedAt: time.Now().UTC(),
+		SavedQueries: make(map[string]SavedQuery), SharedResultConfigs: make(map[string]SharedResultConfig),
+		BackupPolicies: make(map[string]BackupPolicy),
+		CreatedAt:      time.Now().UTC(),
 	}
 	org.Projects[project.ID] = project
 	a := Account{
@@ -378,6 +380,7 @@ func cloneOrganization(org Organization) Organization {
 		for queryID, query := range project.SavedQueries {
 			p.SavedQueries[queryID] = query
 		}
+		p.SharedResultConfigs = maps.Clone(project.SharedResultConfigs)
 		p.BackupPolicies = make(map[string]BackupPolicy, len(project.BackupPolicies))
 		for databaseID, policy := range project.BackupPolicies {
 			p.BackupPolicies[databaseID] = policy

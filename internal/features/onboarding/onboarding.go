@@ -1,15 +1,15 @@
 package onboarding
 
 import (
-	"embed"
 	"errors"
-	"io/fs"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/auth"
 )
@@ -21,27 +21,21 @@ type pageData struct {
 	Error        string
 	Step         string
 	Steps        []stepView
+	CurrentStep  int
+	TotalSteps   int
+	Progress     int
 }
 
 type stepView struct {
 	Key       string
 	Label     string
+	Number    string
+	State     string
 	Completed bool
 	Current   bool
 }
 
-//go:embed templates/*.html
-var featureTemplates embed.FS
-
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("onboarding", templates, "onboarding.html"); err != nil {
-		panic(err)
-	}
-
 	mux.HandleFunc("GET /onboarding", getOnboarding(deps))
 	mux.HandleFunc("POST /onboarding/register", register(deps))
 	mux.HandleFunc("POST /onboarding/step", saveStep(deps))
@@ -235,10 +229,10 @@ func normalizedRegion(region string) string {
 }
 
 func steps(current string) []stepView {
-	definitions := []struct{ key, label string }{
-		{key: "account-information", label: "Account"},
-		{key: "payment-method", label: "Payment"},
-		{key: "project", label: "Project"},
+	definitions := []struct{ key, label, number string }{
+		{key: "account-information", label: "Account", number: "1"},
+		{key: "payment-method", label: "Payment", number: "2"},
+		{key: "project", label: "Project", number: "3"},
 	}
 	result := make([]stepView, 0, len(definitions))
 	currentIndex := -1
@@ -248,23 +242,89 @@ func steps(current string) []stepView {
 		}
 	}
 	for i, definition := range definitions {
+		completed := currentIndex < 0 || i < currentIndex
+		state := "NOT STARTED"
+		if completed {
+			state = "COMPLETED"
+		} else if i == currentIndex {
+			state = "CURRENT"
+		}
 		result = append(result, stepView{
-			Key: definition.key, Label: definition.label,
-			Completed: currentIndex < 0 || i < currentIndex,
-			Current:   i == currentIndex,
+			Key: definition.key, Label: definition.label, Number: definition.number,
+			State: state, Completed: completed, Current: i == currentIndex,
 		})
 	}
 	return result
 }
 
 func render(w http.ResponseWriter, r *http.Request, deps core.Deps, data pageData) {
+	if data.Registration {
+		data.Step = "account-information"
+	}
+	data.Steps = steps(data.Step)
+	data.TotalSteps = len(data.Steps)
+	data.CurrentStep = 1
+	for i, step := range data.Steps {
+		if step.Current {
+			data.CurrentStep = i + 1
+			break
+		}
+	}
+	if data.TotalSteps > 0 {
+		data.Progress = data.CurrentStep * 100 / data.TotalSteps
+	}
 	page := core.Page{
-		Template: "onboarding",
-		Layout:   "auth",
-		Title:    "Activate your TerraScale account",
-		Data:     data,
+		Layout: "auth",
+		Title:  "Activate your TerraScale account",
+		View: func(p core.Page) templ.Component {
+			return onboardingView(data, p.CSRFToken)
+		},
 	}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render onboarding page", http.StatusInternalServerError)
 	}
+}
+
+func onboardingStepClass(step stepView) string {
+	class := "ts-onboarding-step"
+	switch {
+	case step.Current:
+		return class + " ts-onboarding-step-current"
+	case step.Completed:
+		return class + " ts-onboarding-step-complete"
+	default:
+		return class
+	}
+}
+
+func onboardingStepCurrent(step stepView) string {
+	if step.Current {
+		return "step"
+	}
+	return ""
+}
+
+func onboardingStepGlyph(step stepView) string {
+	if step.Completed {
+		return "✓"
+	}
+	return step.Number
+}
+
+func onboardingProgressValue(value int) string {
+	return strconv.Itoa(value)
+}
+
+func onboardingRootClass(step string) string {
+	if step == "project" {
+		return "ts-onboarding-root ts-onboarding-root-wide"
+	}
+	return "ts-onboarding-root"
+}
+
+func onboardingContainerClass(step string) string {
+	if step == "project" {
+		return "ts-onboarding-container ts-onboarding-container-wide"
+	}
+	return "ts-onboarding-container"
 }

@@ -1,10 +1,8 @@
 package backups
 
 import (
-	"embed"
 	json "encoding/json/v2"
 	"errors"
-	"io/fs"
 	"net/http"
 	"net/url"
 	"slices"
@@ -12,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	sdk "terrascale.tech/sdk"
 )
@@ -23,17 +22,7 @@ type backupView struct {
 	SizeBytes int64     `json:"sizeBytes"`
 }
 
-//go:embed templates/*.html
-var featureTemplates embed.FS
-
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("backups", templates, "backups.html"); err != nil {
-		panic(err)
-	}
 	mux.HandleFunc("GET /backups", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps) })
 	mux.HandleFunc("GET /api/v1/dashboard/backups", func(w http.ResponseWriter, r *http.Request) {
 		p, project, db, err := selected(deps, r, r.URL.Query().Get("databaseId"))
@@ -363,7 +352,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps) {
 		}
 	}
 	org := a.Organizations[p.OrganizationID]
-	page := core.Page{Template: "backups", Layout: "shell", Title: "Backups · TerraScale", Principal: p, Data: data, CSRFToken: deps.CSRF.Token(w, r), Shell: core.Shell{UserName: a.User.Name, UserEmail: a.User.Email, OrganizationName: org.Name, ProjectName: project.Name}}
+	page := core.Page{Layout: "shell", Title: "Backups · TerraScale", Principal: p, View: func(page core.Page) templ.Component { return backupsContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r), Shell: core.Shell{UserName: a.User.Name, UserEmail: a.User.Email, OrganizationName: org.Name, ProjectName: project.Name}}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render backups", http.StatusInternalServerError)
 	}

@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"io"
-	"io/fs"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +21,6 @@ import (
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
-	"terrascale.tech/dashboard/internal/ui"
 )
 
 type journey struct {
@@ -35,14 +34,7 @@ func newJourney(t *testing.T) journey {
 	store := core.NewStore()
 	sessions := session.New(store, session.Options{CookieName: "ts_session", Lifetime: time.Hour})
 	guard := csrf.New(sessions, csrf.Options{CookieName: "ts_csrf"})
-	layouts, err := fs.Sub(ui.Assets, "layouts")
-	if err != nil {
-		t.Fatalf("fs.Sub(ui.Assets) error = %v", err)
-	}
-	renderer, err := render.New(layouts, store, guard)
-	if err != nil {
-		t.Fatalf("render.New() error = %v", err)
-	}
+	renderer := render.New(store, guard)
 	deps := core.Deps{Store: store, Sessions: sessions, CSRF: guard, Render: renderer, Demo: true}
 	mux := http.NewServeMux()
 	auth.Mount(mux, deps)
@@ -157,6 +149,29 @@ func registerAccount(t *testing.T, client *http.Client, server *httptest.Server,
 	}
 }
 
+func assertOnboardingProgress(t *testing.T, client *http.Client, server *httptest.Server, currentStep, percent int) {
+	t.Helper()
+	response, err := client.Get(server.URL + "/onboarding")
+	if err != nil {
+		t.Fatalf("GET /onboarding error = %v", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read onboarding page: %v", err)
+	}
+	content := string(body)
+	stepLabel := "ACTIVATION STEP " + strconv.Itoa(currentStep) + " OF 3"
+	progress := strconv.Itoa(percent) + "%"
+	ariaValue := `aria-valuenow="` + strconv.Itoa(percent) + `"`
+	progressData := `data-progress="` + strconv.Itoa(percent) + `"`
+	if response.StatusCode != http.StatusOK || !strings.Contains(content, stepLabel) ||
+		!strings.Contains(content, progress) || !strings.Contains(content, ariaValue) ||
+		!strings.Contains(content, progressData) || strings.Contains(content, `style="width:`) {
+		t.Fatalf("onboarding progress is %d/%s at status %d: %s", currentStep, progress, response.StatusCode, content)
+	}
+}
+
 type meResponse struct {
 	User struct {
 		ID                  string `json:"id"`
@@ -189,7 +204,9 @@ func TestRegistrationOnboardingLoginAndProfileStayAccountScoped(t *testing.T) {
 	secondClient := newClient(t, app.server)
 	const firstPassword = "First-account-password-123!"
 	const secondPassword = "Second-account-password-456!"
+	assertOnboardingProgress(t, firstClient, app.server, 1, 33)
 	registerAccount(t, firstClient, app.server, "First User", "First@example.test", firstPassword)
+	assertOnboardingProgress(t, firstClient, app.server, 2, 66)
 	firstAccount, found := app.store.FindByEmail(" FIRST@example.test ")
 	if !found {
 		t.Fatal("new registration was not stored under normalized email")
@@ -201,7 +218,7 @@ func TestRegistrationOnboardingLoginAndProfileStayAccountScoped(t *testing.T) {
 		t.Fatal("registration did not create an active Personal workspace and project")
 	}
 
-	for _, step := range []url.Values{
+	for index, step := range []url.Values{
 		{"step": {"payment-method"}, "bypass": {"1"}},
 		{"step": {"project"}, "name": {"First Project"}, "region": {"GRU"}},
 	} {
@@ -209,6 +226,9 @@ func TestRegistrationOnboardingLoginAndProfileStayAccountScoped(t *testing.T) {
 		response.Body.Close()
 		if response.StatusCode != http.StatusSeeOther {
 			t.Fatalf("onboarding step status = %d, want redirect", response.StatusCode)
+		}
+		if index == 0 {
+			assertOnboardingProgress(t, firstClient, app.server, 3, 100)
 		}
 	}
 	firstAccount, _ = app.store.FindByEmail("first@example.test")

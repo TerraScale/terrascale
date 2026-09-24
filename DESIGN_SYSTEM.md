@@ -1,12 +1,12 @@
 # TerraScale Dashboard Design System
 
-The Usage page (`internal/features/usage/templates/usage.html`) is the design reference. Readable CSS sources live under `web/assets/css/` and `web/assets/Features/`; `npm run build:css` bundles them into the single stylesheet at `web/static/css/terrascale.css`.
+The Usage page (`internal/features/usage/usage.templ`) is the design reference. Feature pages use server-rendered [templ](https://templ.guide/) components; their generated Go files are checked in, regenerated with `make generate`, and verified with `make check-generated`. Readable CSS sources live under `web/assets/css/` and `web/assets/Features/`; `npm run build:css` bundles them with Lightning CSS into the single stylesheet at `web/static/css/terrascale.css`.
 
 ## Principles
 
 1. **Flat, not boxed.** No cards or panels around sections. Separate sections with 1px `--ts-line` hairlines and whitespace.
 2. **One screen first.** The main view of a page fits 1440×900 without scrolling. Put secondary content behind tabs, dialogs or pagination.
-3. **Server-rendered state.** Tabs, filters and pages are GET query params (`?tab=`, `?status=`, `?page=`) and every state is linkable. JS only enhances.
+3. **Server-rendered state.** Pages and controls are rendered by templ. Tabs, filters and pages use linkable GET query params (`?tab=`, `?status=`, `?page=`) where applicable. Native links and forms remain the canonical navigation and submission behavior; JavaScript enhances them without replacing the server-rendered content.
 4. **Reuse before adding.** Use an existing class or helper. A new pattern goes into the CSS once and is shared.
 5. **Dark only.** Use tokens and never raw hex. Validate chart colors against `--ts-canvas`.
 
@@ -39,6 +39,7 @@ ts-page
 
 - **Top spacing:** signed-in pages start 16px below the desktop inset edge. Mobile pages keep enough clearance for the fixed navigation button. Content must start at the same y on every tab, so check it with a bounding-box measurement.
 - **Navigation:** use a 14rem (224px) sidebar with 40px rows and 24px icon frames. The same width applies to the mobile drawer and Admin menu. Keep project and account popovers within the drawer, with names and actions readable at 390px.
+- **Shared shell:** use `ui.Auth`, `ui.Shell` or `ui.Admin` from `internal/ui/layouts.templ` around feature components. The shell renders primary and secondary navigation, project and organization switching, account actions, and the mobile drawer. Menus use native `<details>/<summary>` and remain usable without JavaScript; the pinned Datastar Rocket runtime adds outside-click and Escape handling and manages the mobile drawer interaction.
 - **Tabs:** use them to switch between a small number of distinct tasks or views. A page with one view uses a title in the toolbar; large feature areas group related routes and keep each route linkable.
 - **Two columns:** main content on the left and a narrow aside on the right (limits, breakdowns). The grid starts at 64rem, and the aside has a left hairline.
 - **Home overview exception:** the root overview has no page tabs. Use `.ts-home-overview` with workspace KPIs at the top of the left column, activity below them, and Getting started as a full-height right rail. Activity range is a compact menu inside the Activity section; `?range=` remains linkable.
@@ -86,3 +87,10 @@ Class names below are the Usage-page ones (`ts-usage-*`). **When a second page a
 6. Promote any `ts-usage-*` class you reuse to its generic name. Don't copy it.
 7. Verify with screenshots at 1440×900 and 390×844, and check that the tabs and content sit at the same y on every tab.
 8. Run `make lint`, `make test-fast`, `make test-slow`, and `make build`. The slow target builds the pinned TypeScript SDK snapshot before running Playwright. Add screenshots to the PR and don't commit them.
+
+## Templates, interactions, and CSS
+
+- Keep page markup in feature-owned `*.templ` components under `internal/features/`; put shared document and signed-in shell markup in `internal/ui/layouts.templ`. Regenerate checked-in `*_templ.go` files with `make generate`; do not hand-edit generated output.
+- The shared page wrapper loads `/js/rocket-components.js` once. That module imports the pinned Datastar Rocket v1.0.4 bundle and `dashboard.js`; feature pages should not add another Datastar runtime. Rocket components use light-DOM hosts so server-rendered children remain visible and native controls provide the no-script behavior.
+- Keep interactions accessible in their HTML first: use links for navigation, forms for writes, `<details>/<summary>` for menus, and labeled native inputs for selection. Add Rocket or Datastar behavior as an enhancement, including explicit keyboard and ARIA behavior for custom interactions.
+- Author CSS in `web/assets/css/` and `web/assets/Features/`. Run `make css` (or `npm run build:css`) to generate the only public stylesheet, `web/static/css/terrascale.css`; do not add a second CSS bundle or edit the minified output by hand.

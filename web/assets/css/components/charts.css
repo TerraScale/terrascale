@@ -114,11 +114,18 @@
 }
 
 .ts-progress-bar {
+  width: 0;
   height: 100%;
   border-radius: var(--ts-radius-pill);
   background-color: var(--ts-accent);
   transition: width var(--ts-t-slow) var(--ts-ease);
 }
+
+/* Onboarding emits this finite set of progress values as data attributes so
+   the strict style-src 'self' policy never needs an inline style attribute. */
+.ts-progress-bar[data-progress="33"] { width: 33%; }
+.ts-progress-bar[data-progress="66"] { width: 66%; }
+.ts-progress-bar[data-progress="100"] { width: 100%; }
 
 .ts-progress-bar-warning { background-color: var(--ts-warning); }
 .ts-progress-bar-danger { background-color: var(--ts-danger); }

@@ -1,15 +1,14 @@
 package profile
 
 import (
-	"embed"
 	"errors"
-	"io/fs"
 	"net/http"
 	"net/url"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/auth"
 )
@@ -24,18 +23,7 @@ type pageData struct {
 	Error     string
 }
 
-//go:embed templates/*.html
-var featureTemplates embed.FS
-
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("profile", templates, "profile.html"); err != nil {
-		panic(err)
-	}
-
 	mux.HandleFunc("GET /profile", getProfile(deps))
 	mux.HandleFunc("POST /api/v1/dashboard/profile", updateProfile(deps))
 	mux.HandleFunc("POST /api/v1/dashboard/profile/password", changePassword(deps))
@@ -57,19 +45,21 @@ func getProfile(deps core.Deps) http.HandlerFunc {
 		if tab != "security" {
 			tab = "profile"
 		}
+		data := pageData{
+			AccountID: account.ID,
+			Name:      account.User.Name,
+			Email:     account.User.Email,
+			Phone:     account.User.Phone,
+			Locale:    account.User.Locale,
+			Tab:       tab,
+			Error:     r.URL.Query().Get("error"),
+		}
 		page := core.Page{
-			Template:  "profile",
 			Layout:    "shell",
 			Title:     "Profile",
 			Principal: principal,
-			Data: pageData{
-				AccountID: account.ID,
-				Name:      account.User.Name,
-				Email:     account.User.Email,
-				Phone:     account.User.Phone,
-				Locale:    account.User.Locale,
-				Tab:       tab,
-				Error:     r.URL.Query().Get("error"),
+			View: func(p core.Page) templ.Component {
+				return profileView(data, p.CSRFToken)
 			},
 		}
 		if err := deps.Render.Page(w, r, page); err != nil {

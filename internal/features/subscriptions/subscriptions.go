@@ -1,20 +1,16 @@
 package subscriptions
 
 import (
-	"embed"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/payments"
 )
-
-//go:embed templates
-var templates embed.FS
 
 type planView struct {
 	ID              string
@@ -58,17 +54,8 @@ type portalPage struct {
 }
 
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	for _, name := range []string{"subscriptions", "checkout", "portal"} {
-		pageTemplates, err := fs.Sub(templates, "templates/"+name)
-		if err != nil {
-			panic(fmt.Errorf("find %s templates: %w", name, err))
-		}
-		if err := deps.Render.Register(name, pageTemplates, "*.html"); err != nil {
-			panic(fmt.Errorf("register %s templates: %w", name, err))
-		}
-	}
 	service := NewBillingService(deps.Store)
-	mux.HandleFunc("GET /subscriptions", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /billing", func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := requestPrincipal(deps, w, r)
 		if !ok {
 			return
@@ -100,10 +87,12 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			})
 		}
 		if err := deps.Render.Page(w, r, core.Page{
-			Template: "subscriptions", Layout: "shell", Title: "Subscriptions | TerraScale",
-			Principal: principal, Data: data, CSRFToken: deps.CSRF.Token(w, r),
+			Layout: "shell", Title: "Billing | TerraScale", Principal: principal,
+			View: func(page core.Page) templ.Component {
+				return subscriptionsContent(page.CSRFToken, data)
+			},
 		}); err != nil {
-			http.Error(w, "Could not render subscriptions.", http.StatusInternalServerError)
+			http.Error(w, "Could not render billing.", http.StatusInternalServerError)
 		}
 	})
 
@@ -126,12 +115,15 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 			return
 		}
+		data := checkoutPage{
+			SessionID: session.ID, PlanName: plan.Name, Interval: session.Interval,
+			ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
+		}
 		if err := deps.Render.Page(w, r, core.Page{
-			Template: "checkout", Layout: "auth", Title: "Local payment setup | TerraScale",
-			Principal: principal, Data: checkoutPage{
-				SessionID: session.ID, PlanName: plan.Name, Interval: session.Interval,
-				ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
-			}, CSRFToken: deps.CSRF.Token(w, r),
+			Layout: "auth", Title: "Local payment setup | TerraScale", Principal: principal,
+			View: func(page core.Page) templ.Component {
+				return checkoutContent(page.CSRFToken, data)
+			},
 		}); err != nil {
 			http.Error(w, "Could not render checkout.", http.StatusInternalServerError)
 		}
@@ -158,12 +150,15 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
+		data := portalPage{
+			OrganizationName: view.Organization.Name, PlanName: view.Plan.Name,
+			BillingStatus: billingLabel(view.Organization), Renewal: formatRenewal(view.Organization.BillingRenewal), Demo: true,
+		}
 		if err := deps.Render.Page(w, r, core.Page{
-			Template: "portal", Layout: "auth", Title: "Local billing portal | TerraScale",
-			Principal: principal, Data: portalPage{
-				OrganizationName: view.Organization.Name, PlanName: view.Plan.Name,
-				BillingStatus: billingLabel(view.Organization), Renewal: formatRenewal(view.Organization.BillingRenewal), Demo: true,
-			}, CSRFToken: deps.CSRF.Token(w, r),
+			Layout: "auth", Title: "Local billing portal | TerraScale", Principal: principal,
+			View: func(core.Page) templ.Component {
+				return portalContent(data)
+			},
 		}); err != nil {
 			http.Error(w, "Could not render billing portal.", http.StatusInternalServerError)
 		}
@@ -210,7 +205,7 @@ func requestPrincipal(deps core.Deps, w http.ResponseWriter, r *http.Request) (c
 		return principal, true
 	}
 	target := r.URL.RequestURI()
-	http.Redirect(w, r, "/login?return="+url.QueryEscape(target), http.StatusSeeOther)
+	http.Redirect(w, r, "/login?returnTo="+url.QueryEscape(target), http.StatusSeeOther)
 	return core.Principal{}, false
 }
 

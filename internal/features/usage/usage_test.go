@@ -2,7 +2,6 @@ package usage
 
 import (
 	"errors"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,6 +9,7 @@ import (
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/platform/render"
 )
 
 func TestParseCentsAndCapFormsRejectAmbiguousOrOverflowingValues(t *testing.T) {
@@ -141,6 +141,67 @@ func TestAddUsageDoesNotOverflow(t *testing.T) {
 	}
 }
 
+func TestUsageOverviewShowsConfiguredAllowanceAndUnavailableWorkloadHonestly(t *testing.T) {
+	store := core.NewStore()
+	account, err := store.CreateAccount(core.User{
+		ID: "usage-overview-owner", Name: "Usage Owner", Email: "usage-overview@example.test", PasswordHash: "unused", PlatformAdmin: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := account.Principal()
+	plan := core.Plan{
+		ID: "plan_growth_test", Key: "growth-test", Name: "Growth test", Visible: true,
+		StorageMiB: 2048, MonthlyRequests: 120000,
+	}
+	if err := store.UpsertPlanAs(p, plan); err != nil {
+		t.Fatalf("configure plan allowance: %v", err)
+	}
+	if err := store.Update(account.ID, func(current *core.Account) error {
+		org := current.Organizations[p.OrganizationID]
+		org.PlanID = plan.ID
+		project := org.Projects[p.ProjectID]
+		project.Region = "GRU"
+		project.Databases["db-one"] = core.Database{ID: "db-one", ProjectID: project.ID, Name: "primary", Region: "GRU"}
+		org.Projects[project.ID] = project
+		org.Projects["project-other"] = core.Project{
+			ID: "project-other", OrganizationID: org.ID, Name: "Other project", Region: "EWR",
+			Databases: map[string]core.Database{
+				"db-two":   {ID: "db-two", ProjectID: "project-other", Name: "secondary", Region: "EWR"},
+				"db-three": {ID: "db-three", ProjectID: "project-other", Name: "archive", Region: "EWR"},
+			},
+		}
+		current.Organizations[org.ID] = org
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	csrf := usageTestCSRF{}
+	mux := http.NewServeMux()
+	Mount(mux, core.Deps{
+		Store: store, Sessions: usageTestSessions{p}, CSRF: csrf, Render: render.New(store, csrf),
+	})
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/usage", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("usage page returned %d: %s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	for _, expected := range []string{
+		"Plan allowance", "Growth test", "2048 MiB", "120000 requests/month",
+		"Workload history", "Workload history is unavailable.", "no timestamped workload source",
+		"By project", "Other project", "2 databases", "Region: EWR", "Live usage provider is not configured.",
+	} {
+		if !strings.Contains(strings.ToLower(body), strings.ToLower(expected)) {
+			t.Errorf("usage page is missing %q", expected)
+		}
+	}
+	if strings.Contains(body, "<dt>Read operations</dt>") || strings.Contains(body, "Sample dashboard data") {
+		t.Fatal("usage page presented unconfigured provider totals as measured usage")
+	}
+}
+
 type usageTestSessions struct{ principal core.Principal }
 
 func (s usageTestSessions) Start(http.ResponseWriter, *http.Request, core.Principal) error {
@@ -161,7 +222,6 @@ func (usageTestCSRF) Protect(next http.Handler) http.Handler          { return n
 
 type usageTestRenderer struct{}
 
-func (usageTestRenderer) Register(string, fs.FS, ...string) error                  { return nil }
 func (usageTestRenderer) Page(http.ResponseWriter, *http.Request, core.Page) error { return nil }
 func (usageTestRenderer) Fragment(http.ResponseWriter, *http.Request, core.Fragment) error {
 	return nil

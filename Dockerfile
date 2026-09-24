@@ -17,6 +17,7 @@ COPY cmd ./cmd
 COPY internal ./internal
 COPY web ./web
 COPY --from=css /src/web/static/css/terrascale.css ./web/static/css/terrascale.css
+RUN GOTOOLCHAIN=local go tool templ generate -path internal -include-version=false -include-timestamp=false
 RUN go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/dashboard ./cmd/dashboard
 
 FROM gcr.io/distroless/static-debian12:nonroot

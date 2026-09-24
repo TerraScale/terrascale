@@ -1,0 +1,122 @@
+package auth
+
+templ loginView(data loginPageData, csrfToken string) {
+	<main class="ts-login">
+		<div class="ts-login-map" aria-hidden="true">
+			<div class="ts-login-map-glow"></div>
+			<div class="ts-login-map-frame">
+				<ts-region-map data-src="/brand/region-map.svg" data-highlights="SFO,GRU,FRA" aria-hidden="true"></ts-region-map>
+			</div>
+		</div>
+		<div class="ts-login-column">
+			<div class="ts-auth-card">
+				<div class="ts-auth-brand">
+					<img class="ts-brand-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async"/>
+				</div>
+				<div class="ts-auth-heading">
+					<h1 class="ts-auth-title" id="login-title">Sign in</h1>
+					<p class="ts-auth-subtitle">Access your databases and cloud operations.</p>
+				</div>
+				if data.Error != "" {
+					<div role="alert" class="ts-auth-feedback ts-auth-feedback-error">
+						<span>{ data.Error }</span>
+					</div>
+				}
+				<form class="ts-auth-form" method="post" action="/api/v1/auth/password/login" novalidate>
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					<input type="hidden" name="redirectTo" value={ data.RedirectTo }/>
+					<div class="ts-field">
+						<div class="ts-field-head">
+							<label class="ts-label" for="email">Email</label>
+						</div>
+						<input class="ts-input" type="email" id="email" name="email" autocomplete="email" placeholder="name@company.com" required/>
+					</div>
+					<div class="ts-field">
+						<div class="ts-field-head">
+							<label class="ts-label" for="password">Password</label>
+							<a class="ts-inline-link" href="/reset-password">Forgot password</a>
+						</div>
+						<ts-password-control>
+							<div class="ts-input-group">
+								<input class="ts-input" type="password" id="password" name="password" autocomplete="current-password" placeholder="Enter your password" required/>
+								<button class="ts-input-adornment" type="button" data-password-toggle aria-controls="password" aria-pressed="false" aria-label="Show password" hidden>
+									<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+								</button>
+							</div>
+						</ts-password-control>
+					</div>
+					<button class="ts-btn ts-btn-primary ts-btn-lg ts-auth-submit" type="submit">Sign in</button>
+				</form>
+				<div class="ts-auth-divider" aria-hidden="true"><span></span><span class="ts-auth-divider-label">Other sign-in options</span><span></span></div>
+				<div class="ts-auth-providers">
+					<button class="ts-btn ts-btn-outline ts-auth-provider" type="button" disabled aria-label="Passkey sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo">Passkey</button>
+					<button class="ts-btn ts-btn-outline ts-auth-provider" type="button" disabled aria-label="Google sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src="/brand/google.svg" alt="" aria-hidden="true"/></button>
+					<button class="ts-btn ts-btn-outline ts-auth-provider" type="button" disabled aria-label="GitHub sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src="/brand/github.svg" alt="" aria-hidden="true"/></button>
+				</div>
+				<p class="ts-auth-footer">New to TerraScale? <a class="ts-inline-link" href="/onboarding">Create account</a></p>
+			</div>
+			<div class="ts-auth-locale-footer">
+				<label class="ts-sr-only" for="auth-locale">Language</label>
+				<select id="auth-locale" class="ts-auth-locale" aria-label="Language">
+					<option value="en" selected>English</option>
+					<option value="pt-BR">Português</option>
+				</select>
+			</div>
+		</div>
+	</main>
+}
+
+templ authStatusView(data authStatusPageData, csrfToken string) {
+	if data.Flow {
+		<main class="ts-flow-root">
+			<section class="ts-flow-panel">
+				<header class="ts-flow-header">
+					<div class="ts-flow-header-content">
+						<h1 class="ts-flow-title">{ data.Title }</h1>
+						<p class="ts-flow-subtitle">{ data.Description }</p>
+					</div>
+				</header>
+				<div class="ts-alert ts-alert-warning" role="status">
+					<span class="ts-alert-title">Request unavailable</span>
+					<span class="ts-alert-body">{ data.Message }</span>
+				</div>
+				<p class="ts-flow-note"><a class="ts-link" href="/login">Back to sign in</a></p>
+			</section>
+		</main>
+	} else {
+		<main class="ts-auth">
+			<div class="ts-auth-panel">
+				<div class="ts-auth-card">
+					<div class="ts-auth-brand">
+						<img class="ts-brand-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async"/>
+					</div>
+					<div class="ts-auth-heading">
+						<h1 class="ts-auth-title">{ data.Title }</h1>
+						<p class="ts-auth-subtitle">{ data.Description }</p>
+					</div>
+					<div class="ts-auth-feedback ts-auth-feedback-error" role="status">
+						<span>{ data.Message }</span>
+					</div>
+					if data.ShowEmailForm {
+						<form class="ts-form" method="post" action="/reset-password">
+							<input type="hidden" name="_csrf" value={ csrfToken }/>
+							<div class="ts-field">
+								<label class="ts-label" for="resetEmail">Email</label>
+								<input class="ts-input" type="email" id="resetEmail" name="email" autocomplete="email" placeholder="name@company.com" required/>
+							</div>
+							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Request reset instructions</button>
+						</form>
+					}
+					<p class="ts-auth-footer"><a class="ts-auth-back-link" href="/login">Back to sign in</a></p>
+				</div>
+				<div class="ts-auth-locale-footer">
+					<label class="ts-sr-only" for="auth-locale">Language</label>
+					<select id="auth-locale" class="ts-auth-locale" aria-label="Language">
+						<option value="en" selected>English</option>
+						<option value="pt-BR">Português</option>
+					</select>
+				</div>
+			</div>
+		</main>
+	}
+}

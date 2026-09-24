@@ -8,7 +8,7 @@ import (
 )
 
 // Events emits official Datastar SSE events. HTML should be produced through
-// the shared html/template renderer before calling PatchElements.
+// a templ component before calling PatchElements.
 type Events struct{}
 
 func (Events) PatchElements(w http.ResponseWriter, r *http.Request, html string) error {

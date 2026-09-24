@@ -1,22 +1,18 @@
 package organization
 
 import (
-	"embed"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	sdk "terrascale.tech/sdk"
 )
-
-//go:embed templates/*.html
-var featureTemplates embed.FS
 
 type organizationView struct {
 	ID                string
@@ -72,9 +68,12 @@ type organizationPageData struct {
 	Organizations       []organizationView
 	Projects            []projectView
 	Members             []memberView
+	InvitationCount     int
+	SignedInEmail       string
 	Regions             []string
 	Plans               []planView
 	CurrentProjectID    string
+	OpenCreateProject   bool
 	CanManage           bool
 	CanProvision        bool
 	CanLeave            bool
@@ -87,14 +86,6 @@ type organizationPageData struct {
 
 // Mount registers organization, project, and organization-scope routes.
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("organization", templates, "organization.html"); err != nil {
-		panic(err)
-	}
-
 	service := NewService(deps.Store)
 	mux.HandleFunc("GET /organization", organizationPage(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/new-organization", newOrganization(deps, service))
@@ -125,6 +116,7 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 		}
 		data := makeOrganizationPage(account, org, p, r.URL.Query().Get("newOrganization"), r.URL.Query().Get("error"))
 		data.NewOrganizationID = org.ID
+		data.OpenCreateProject = r.URL.Query().Get("newProject") == "1"
 		for _, plan := range deps.Store.Plans() {
 			if plan.Visible && plan.PriceCents > 0 {
 				data.Plans = append(data.Plans, planView{
@@ -136,8 +128,11 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 		}
 		slices.SortFunc(data.Plans, func(a, b planView) int { return strings.Compare(a.Key, b.Key) })
 		page := core.Page{
-			Template: "organization", Layout: "shell", Title: "Organization · TerraScale",
-			Principal: p, CSRFToken: deps.CSRF.Token(w, r), Data: data,
+			Layout: "shell", Title: "Organization · TerraScale",
+			Principal: p, CSRFToken: deps.CSRF.Token(w, r),
+			View: core.View(func(page core.Page) templ.Component {
+				return organizationPageView(page, data)
+			}),
 		}
 		if err := deps.Render.Page(w, r, page); err != nil {
 			http.Error(w, "could not render organization page", http.StatusInternalServerError)
@@ -148,16 +143,20 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 func makeOrganizationPage(account core.Account, active core.Organization, p core.Principal, step, pageError string) organizationPageData {
 	data := organizationPageData{
 		Organization:        activeOrganizationView(active),
+		InvitationCount:     len(active.Invitations),
 		CurrentProjectID:    account.ActiveProjectID,
 		CanManage:           active.OwnerUserID == p.UserID,
 		CanProvision:        canProvision(active, p.UserID),
 		CanLeave:            active.Kind != kindPersonal && active.OwnerUserID != p.UserID,
 		NewOrganizationID:   active.ID,
-		NewOrganization:     normalizeWizardStep(step, active),
+		SignedInEmail:       account.User.Email,
 		Error:               pageError,
 		Regions:             supportedRegions(),
 		OwnershipRequested:  active.PendingOwnerUserID != "",
 		CanConfirmOwnership: active.PendingOwnerUserID == p.UserID && active.PendingOwnerExpiresAt.After(time.Now()),
+	}
+	if strings.TrimSpace(step) != "" {
+		data.NewOrganization = normalizeWizardStep(step, active)
 	}
 	for _, org := range account.Organizations {
 		if _, err := account.OrganizationFor(p, org.ID); err == nil && strings.EqualFold(org.Status, statusActive) {

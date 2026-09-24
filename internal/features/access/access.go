@@ -2,10 +2,8 @@ package access
 
 import (
 	"bytes"
-	"embed"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"net/url"
 	"slices"
@@ -13,12 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/organization"
 )
-
-//go:embed templates/*.html
-var featureTemplates embed.FS
 
 type memberView struct {
 	ID       string
@@ -49,24 +45,27 @@ type invitationView struct {
 }
 
 type pageData struct {
-	OrganizationName string
-	CurrentUserID    string
-	CanManage        bool
-	Members          []memberView
-	Projects         []projectView
-	Invitations      []invitationView
-	Tab              string
-	Query            string
-	RoleFilter       string
-	Page             int
-	PageCount        int
-	Total            int
-	First            int
-	Last             int
-	PreviousURL      string
-	NextURL          string
-	Error            string
-	InviteURL        string
+	OrganizationName   string
+	CurrentUserID      string
+	CanManage          bool
+	MemberCount        int
+	ProjectCount       int
+	PendingInviteCount int
+	Members            []memberView
+	Projects           []projectView
+	Invitations        []invitationView
+	Tab                string
+	Query              string
+	RoleFilter         string
+	Page               int
+	PageCount          int
+	Total              int
+	First              int
+	Last               int
+	PreviousURL        string
+	NextURL            string
+	Error              string
+	InviteURL          string
 }
 
 type invitationPageData struct {
@@ -81,17 +80,6 @@ type invitationPageData struct {
 }
 
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("access", templates, "access.html"); err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("invitation", templates, "invitation.html"); err != nil {
-		panic(err)
-	}
-
 	organizationService := organization.NewService(deps.Store)
 	service := NewService(deps.Store)
 	mux.HandleFunc("GET /access", accessPage(deps, organizationService))
@@ -129,7 +117,12 @@ func renderAccessPage(w http.ResponseWriter, r *http.Request, deps core.Deps, se
 			return
 		}
 		buffer := &fragmentResponseWriter{header: make(http.Header)}
-		if err := deps.Render.Fragment(buffer, r, core.Fragment{Template: "access", Data: data, CSRFToken: csrfToken}); err != nil {
+		if err := deps.Render.Fragment(buffer, r, core.Fragment{
+			CSRFToken: csrfToken,
+			View: func(page core.Page) templ.Component {
+				return accessPageView(page, data)
+			},
+		}); err != nil {
 			http.Error(w, "could not render team page", http.StatusInternalServerError)
 			return
 		}
@@ -139,8 +132,10 @@ func renderAccessPage(w http.ResponseWriter, r *http.Request, deps core.Deps, se
 		return
 	}
 	page := core.Page{
-		Template: "access", Layout: "shell", Title: "Team · TerraScale",
-		Principal: p, CSRFToken: csrfToken, Data: data,
+		Layout: "shell", Title: "Team · TerraScale", Principal: p, CSRFToken: csrfToken,
+		View: core.View(func(page core.Page) templ.Component {
+			return accessPageView(page, data)
+		}),
 	}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render team page", http.StatusInternalServerError)
@@ -254,10 +249,16 @@ func buildPageData(account core.Account, org core.Organization, p core.Principal
 	start := (page - 1) * pageSize
 	data := pageData{
 		OrganizationName: org.Name, CurrentUserID: p.UserID,
-		CanManage: org.OwnerUserID == p.UserID,
-		Tab:       tab, Query: search, RoleFilter: roleFilter,
+		CanManage:   org.OwnerUserID == p.UserID,
+		MemberCount: len(allMembers), ProjectCount: len(allProjects),
+		Tab: tab, Query: search, RoleFilter: roleFilter,
 		Page: page, PageCount: pageCount, Total: filtered,
 		Error: message, InviteURL: inviteURL,
+	}
+	for _, invitation := range allInvitations {
+		if strings.EqualFold(invitation.Status, "Pending") {
+			data.PendingInviteCount++
+		}
 	}
 	switch tab {
 	case "members":
@@ -446,13 +447,15 @@ func invitationPage(deps core.Deps) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		page := core.Page{
-			Template: "invitation", Layout: "auth", Title: "Organization invitation · TerraScale",
+			Layout: "auth", Title: "Organization invitation · TerraScale",
 			Principal: p, CSRFToken: deps.CSRF.Token(w, r),
-			Data: invitationPageData{
-				OrganizationName: org.Name, Email: invitation.Email, Role: invitation.Role,
-				ExpiresAt: invitation.ExpiresAt.UTC().Format(time.RFC3339),
-				Token:     token, CurrentEmail: currentEmail, HasSession: signedIn, CanRespond: canRespond,
-			},
+			View: core.View(func(page core.Page) templ.Component {
+				return invitationPageView(page, invitationPageData{
+					OrganizationName: org.Name, Email: invitation.Email, Role: invitation.Role,
+					ExpiresAt: invitation.ExpiresAt.UTC().Format(time.RFC3339),
+					Token:     token, CurrentEmail: currentEmail, HasSession: signedIn, CanRespond: canRespond,
+				})
+			}),
 		}
 		if err := deps.Render.Page(w, r, page); err != nil {
 			http.Error(w, "could not render invitation page", http.StatusInternalServerError)

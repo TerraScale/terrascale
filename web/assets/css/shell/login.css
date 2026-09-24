@@ -52,8 +52,23 @@
   mask-image: radial-gradient(ellipse 98% 94% at 50% 50%, #000 0%, #000 76%, rgba(0, 0, 0, 0.5) 92%, transparent 100%);
 }
 
-/* Region map visuals enhance routes that choose to render them. Labeled,
-   non-map form controls remain the canonical region-selection inputs. */
+/* The Rocket map host is decorative; native labeled selects beside it remain
+   the canonical controls. Login fills the map side, while project forms get a
+   compact responsive frame. */
+ts-region-map[data-select-id] {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 504px;
+  aspect-ratio: 136 / 80;
+  margin-inline: auto;
+  overflow: hidden;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface-muted);
+}
+
+.ts-region-map-image,
 .ts-region-surface {
   position: absolute;
   inset: 0;
@@ -62,6 +77,23 @@
   opacity: 0.78;
   filter: saturate(0.9);
   pointer-events: none;
+}
+
+.ts-region-map-selection {
+  position: absolute;
+  inset-inline-start: var(--ts-sm);
+  inset-block-end: var(--ts-sm);
+  z-index: 1;
+  max-width: calc(100% - 2 * var(--ts-sm));
+  padding: var(--ts-xs) var(--ts-sm);
+  overflow: hidden;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background: var(--ts-glass-strong);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ts-region-frame {

@@ -1,16 +1,43 @@
 package databases
 
 import (
+	"bytes"
+	"context"
 	json "encoding/json/v2"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
 )
+
+func TestDatabaseContentPreservesValidNamePattern(t *testing.T) {
+	var out bytes.Buffer
+	d := pageData{ProjectID: "project-1", Region: "GRU", CanProvision: true}
+	if err := databasesContent(core.Page{CSRFToken: "test-csrf"}, d).Render(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `pattern="[a-z0-9][a-z0-9\-]*"`) {
+		t.Fatalf("database name pattern missing from rendered form: %s", out.String())
+	}
+}
+
+func TestDatabaseContentHidesUnauthorizedMutations(t *testing.T) {
+	d := pageData{ProjectID: "project-1", Region: "GRU", Detail: &databaseView{ID: "db-1", Name: "primary", Status: "ready"}}
+	var out bytes.Buffer
+	if err := databasesContent(core.Page{CSRFToken: "test-csrf"}, d).Render(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "Create branch") || strings.Contains(out.String(), "Delete database") || !strings.Contains(out.String(), "Data browser") {
+		t.Fatalf("read-only database detail shows mutation controls or hides navigation: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "/data?view=table&amp;databaseId=db-1") {
+		t.Fatalf("data browser does not open table view: %s", out.String())
+	}
+}
 
 type testSessions struct{ p core.Principal }
 
@@ -29,12 +56,73 @@ func (testCSRF) Protect(h http.Handler) http.Handler             { return h }
 
 type testRenderer struct{}
 
-func (testRenderer) Register(string, fs.FS, ...string) error { return nil }
 func (testRenderer) Page(http.ResponseWriter, *http.Request, core.Page) error {
 	return nil
 }
 func (testRenderer) Fragment(http.ResponseWriter, *http.Request, core.Fragment) error {
 	return nil
+}
+
+type renderingRenderer struct{ testRenderer }
+
+func (renderingRenderer) Page(w http.ResponseWriter, r *http.Request, page core.Page) error {
+	return page.View(page).Render(r.Context(), w)
+}
+
+func TestDatabaseListSearchKeepsDetailAccessible(t *testing.T) {
+	deps, p := databaseFixture(t, "owner")
+	if err := deps.Store.UpdateAs(p, func(a *core.Account) error {
+		org := a.Organizations[p.OrganizationID]
+		project := org.Projects[p.ProjectID]
+		project.Databases["db-1"] = core.Database{ID: "db-1", ProjectID: p.ProjectID, Name: "orders"}
+		project.Databases["db-2"] = core.Database{ID: "db-2", ProjectID: p.ProjectID, Name: "customers"}
+		org.Projects[p.ProjectID] = project
+		a.Organizations[p.OrganizationID] = org
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deps.Render = renderingRenderer{}
+	mux := http.NewServeMux()
+	Mount(mux, deps)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/databases?q=ORD", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), ">orders<") || strings.Contains(w.Body.String(), ">customers<") {
+		t.Fatalf("database filter status %d: %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/databases/db-2?q=ORD", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), ">customers<") {
+		t.Fatalf("filtered detail status %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDatabaseCreateDisclosureStartsClosedAndOpensFromQuery(t *testing.T) {
+	for _, tc := range []struct {
+		role, path string
+		wantOpen   bool
+		wantForm   bool
+	}{
+		{"owner", "/databases", false, true},
+		{"owner", "/databases?create=1", true, true},
+		{"member", "/databases?create=1", false, false},
+	} {
+		t.Run(tc.role+tc.path, func(t *testing.T) {
+			deps, _ := databaseFixture(t, tc.role)
+			deps.Render = renderingRenderer{}
+			mux := http.NewServeMux()
+			Mount(mux, deps)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			opening := regexp.MustCompile(`<details[^>]*id="create-database"[^>]*>`).FindString(w.Body.String())
+			if w.Code != http.StatusOK || (opening != "") != tc.wantForm || strings.Contains(opening, " open") != tc.wantOpen {
+				t.Fatalf("database creation disclosure status %d, opening %q", w.Code, opening)
+			}
+			if tc.wantForm && (!strings.Contains(w.Body.String(), `action="/api/v1/dashboard/databases"`) || !strings.Contains(w.Body.String(), `name="_csrf" value="test-token"`) || !strings.Contains(w.Body.String(), "No databases yet.")) {
+				t.Fatalf("creation form lost native POST, CSRF, or visible list: %s", w.Body.String())
+			}
+		})
+	}
 }
 
 func databaseFixture(t *testing.T, role string) (core.Deps, core.Principal) {

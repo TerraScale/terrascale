@@ -26,7 +26,11 @@ func (s Service) page(principal core.Principal, section, rawQuery string) (pageD
 		return pageData{}, err
 	}
 	query := truncateQuery(rawQuery)
-	data := pageData{Section: section, Query: query}
+	data := pageData{Section: section, Query: query, Inventory: summarizeInventory(accounts)}
+	accountIDsByUser := make(map[string]string, len(accounts))
+	for _, account := range accounts {
+		accountIDsByUser[account.User.ID] = account.ID
+	}
 	switch section {
 	case "users":
 		data.Title = "Users"
@@ -51,10 +55,19 @@ func (s Service) page(principal core.Principal, section, rawQuery string) (pageD
 		for _, account := range accounts {
 			ownerEmails[account.User.ID] = account.User.Email
 		}
+		seen := make(map[string]struct{})
 		for _, account := range accounts {
 			for _, org := range account.Organizations {
+				if _, exists := seen[org.ID]; exists {
+					continue
+				}
+				seen[org.ID] = struct{}{}
+				ownerAccountID := accountIDsByUser[org.OwnerUserID]
+				if ownerAccountID == "" {
+					ownerAccountID = account.ID
+				}
 				row := organizationRow{
-					AccountID: account.ID, ID: org.ID, Name: org.Name, Status: org.Status,
+					AccountID: ownerAccountID, ID: org.ID, Name: org.Name, Status: org.Status,
 					OwnerEmail: ownerEmails[org.OwnerUserID], ProjectCount: len(org.Projects), CreatedAt: formatTime(org.CreatedAt),
 				}
 				if matching(query, row.ID, row.Name, row.Status, row.OwnerEmail) {
@@ -64,11 +77,20 @@ func (s Service) page(principal core.Principal, section, rawQuery string) (pageD
 		}
 	case "projects":
 		data.Title = "Projects"
+		seen := make(map[string]struct{})
 		for _, account := range accounts {
 			for _, org := range account.Organizations {
 				for _, project := range org.Projects {
+					if _, exists := seen[project.ID]; exists {
+						continue
+					}
+					seen[project.ID] = struct{}{}
+					ownerAccountID := accountIDsByUser[org.OwnerUserID]
+					if ownerAccountID == "" {
+						ownerAccountID = account.ID
+					}
 					row := projectRow{
-						AccountID: account.ID, OrganizationID: org.ID, Organization: org.Name,
+						AccountID: ownerAccountID, OrganizationID: org.ID, Organization: org.Name,
 						ID: project.ID, Name: project.Name, Region: project.Region, Status: project.Status,
 						DatabaseCount: len(project.Databases), CreatedAt: formatTime(project.CreatedAt),
 					}
@@ -78,6 +100,83 @@ func (s Service) page(principal core.Principal, section, rawQuery string) (pageD
 				}
 			}
 		}
+	case "databases":
+		data.Title = "Databases"
+		seen := make(map[string]struct{})
+		for _, account := range accounts {
+			for _, org := range account.Organizations {
+				for _, project := range org.Projects {
+					for _, database := range project.Databases {
+						if _, exists := seen[database.ID]; exists {
+							continue
+						}
+						seen[database.ID] = struct{}{}
+						ownerAccountID := accountIDsByUser[org.OwnerUserID]
+						if ownerAccountID == "" {
+							ownerAccountID = account.ID
+						}
+						row := databaseRow{
+							AccountID: ownerAccountID, OrganizationID: org.ID, Organization: org.Name,
+							ProjectID: project.ID, Project: project.Name,
+							ID: database.ID, Name: database.Name,
+							Region: adminFallback(database.Region, "Not recorded"),
+							Status: adminFallback(database.Status, "Unknown"), CreatedAt: formatTime(database.CreatedAt),
+						}
+						if matching(query, row.ID, row.Name, row.Region, row.Status, row.Organization, row.Project) {
+							data.Databases = append(data.Databases, row)
+						}
+					}
+				}
+			}
+		}
+	case "estate":
+		data.Title = "Estate"
+		regions := make(map[string]*estateRow)
+		seenProjects := make(map[string]struct{})
+		seenDatabases := make(map[string]struct{})
+		for _, account := range accounts {
+			for _, org := range account.Organizations {
+				for _, project := range org.Projects {
+					if _, exists := seenProjects[project.ID]; exists {
+						continue
+					}
+					seenProjects[project.ID] = struct{}{}
+					projectRegions := make(map[string]struct{})
+					addProjectRegion := func(raw string) {
+						region := normalizedObservedRegion(raw)
+						if region != "" {
+							projectRegions[region] = struct{}{}
+						}
+					}
+					addProjectRegion(project.Region)
+					addProjectRegion(project.BackupRegion)
+					for _, region := range project.Regions {
+						addProjectRegion(region)
+					}
+					for region := range projectRegions {
+						observed := observedRegion(regions, region)
+						observed.ObservedProjects++
+					}
+					for _, database := range project.Databases {
+						if _, exists := seenDatabases[database.ID]; exists {
+							continue
+						}
+						seenDatabases[database.ID] = struct{}{}
+						region := normalizedObservedRegion(database.Region)
+						if region != "" {
+							observedRegion(regions, region).ObservedDatabases++
+						}
+					}
+				}
+			}
+		}
+		for _, region := range regions {
+			if matching(query, region.Region) {
+				data.Regions = append(data.Regions, *region)
+			}
+		}
+	case "usage":
+		data.Title = "Usage"
 	case "plans":
 		data.Title = "Plans"
 		for _, plan := range s.store.Plans() {
@@ -90,6 +189,50 @@ func (s Service) page(principal core.Principal, section, rawQuery string) (pageD
 	}
 	sortRows(&data)
 	return data, nil
+}
+
+func summarizeInventory(accounts []core.Account) inventoryCounts {
+	counts := inventoryCounts{Accounts: len(accounts)}
+	seenOrganizations := make(map[string]struct{})
+	seenProjects := make(map[string]struct{})
+	seenDatabases := make(map[string]struct{})
+	for _, account := range accounts {
+		for _, organization := range account.Organizations {
+			if _, exists := seenOrganizations[organization.ID]; exists {
+				continue
+			}
+			seenOrganizations[organization.ID] = struct{}{}
+			counts.Organizations++
+			for _, project := range organization.Projects {
+				if _, exists := seenProjects[project.ID]; exists {
+					continue
+				}
+				seenProjects[project.ID] = struct{}{}
+				counts.Projects++
+				for _, database := range project.Databases {
+					if _, exists := seenDatabases[database.ID]; exists {
+						continue
+					}
+					seenDatabases[database.ID] = struct{}{}
+					counts.Databases++
+				}
+			}
+		}
+	}
+	return counts
+}
+
+func normalizedObservedRegion(region string) string {
+	return strings.ToUpper(strings.TrimSpace(region))
+}
+
+func observedRegion(regions map[string]*estateRow, code string) *estateRow {
+	region := regions[code]
+	if region == nil {
+		region = &estateRow{Region: code}
+		regions[code] = region
+	}
+	return region
 }
 
 func (s Service) UpdateUser(principal core.Principal, accountID, name string, platformAdmin bool) error {
@@ -280,4 +423,32 @@ func validPlanKey(key string) bool {
 		}
 	}
 	return true
+}
+
+func adminFallback(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func platformAdminLabel(platformAdmin bool) string {
+	if platformAdmin {
+		return "Platform administrator"
+	}
+	return "Standard account"
+}
+
+func planVisibilityValue(visible bool) string {
+	if visible {
+		return "false"
+	}
+	return "true"
+}
+
+func planVisibilityLabel(visible bool) string {
+	if visible {
+		return "Hide plan"
+	}
+	return "Show plan"
 }

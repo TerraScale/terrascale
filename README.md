@@ -1,9 +1,9 @@
 # TerraScale Dashboard
 
 This worktree contains the Go and Datastar dashboard runtime. It uses Go 1.27.1,
-server-rendered HTML templates, the official Datastar Go SDK, and one
-lightningcss stylesheet. The Go commands and workflows below target this
-runtime.
+templ v0.3.1020 for server-rendered Go components, the official Datastar Go
+SDK, and one Lightning CSS stylesheet. The Go commands and workflows below
+target this runtime.
 
 ## Develop
 
@@ -20,15 +20,24 @@ Start the hot-reload development server with:
 make dev PORT=5481
 ```
 
-The server binds `0.0.0.0:5481`, sets `TS_DASHBOARD_PRODUCTION_DEMO=1`, watches
-Go and embedded template/assets through Air, and watches the CSS sources with
-lightningcss. CSS changes are streamed to the browser over the dev-only
-`/__dev/events` endpoint. The default local test administrator is
+The server binds `0.0.0.0:5481`, sets `TS_DASHBOARD_PRODUCTION_DEMO=1`, and uses
+Air to regenerate Go sources from `.templ` components before compiling. The
+generated `*_templ.go` files are kept with their source components; edit the
+`.templ` files and run `make generate` after changes. `make check-generated`
+checks that the generated files are current. A separate watcher bundles CSS
+sources with Lightning CSS; CSS changes are streamed to the browser over the
+dev-only `/__dev/events` endpoint. The default local test administrator is
 `e2e-admin-seed@example.test`; override both
 `DASHBOARD_DEMO_ADMIN_EMAIL` and `DASHBOARD_DEMO_ADMIN_PASSWORD` together when
 needed. `make serve PORT=5481` runs the HTTP server without development
 watchers. See [development commands](docs/development.md) for test and build
 details.
+
+The browser loads the official Datastar v1.0.4 bundle with Rocket beta.2 from
+`web/static/js/datastar-rocket.js`; the shared `rocket-components.js` module
+loads that runtime once. Starbase is a visual design reference for the
+dashboard. The application uses its own Go and Datastar implementation and
+does not include Starbase framework code.
 
 All accounts, sessions, and onboarding data in this demo mode live in memory.
 They reset when the process restarts. Production therefore keeps one warm Fly

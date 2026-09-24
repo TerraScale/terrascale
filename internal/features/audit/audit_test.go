@@ -1,10 +1,10 @@
 package audit
 
 import (
-	"html/template"
-	"io/fs"
+	"context"
+	"net/http/httptest"
+	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
@@ -31,13 +31,47 @@ func TestAuditFilteringHonorsRangeRetentionSeverityAndSearch(t *testing.T) {
 	}
 }
 
-func TestAuditTemplateParses(t *testing.T) {
-	data, err := fs.ReadFile(featureTemplates, "templates/audit.html")
-	if err != nil {
-		t.Fatal(err)
+func TestAuditViewEscapesUntrustedContent(t *testing.T) {
+	attack := `<script>alert("x")</script>`
+	data := pageData{
+		Rows: []row{{
+			Event:       core.AuditEvent{Actor: attack, Action: attack, Target: attack, Source: attack, OccurredAt: time.Date(2026, time.September, 24, 12, 0, 0, 0, time.UTC)},
+			ActionLabel: attack, ActorType: "user", Severity: "info", Outcome: "success",
+		}},
+		Search: attack, Action: "all", Severity: "all", Range: "7d", ActionOptions: []string{"all", attack},
+		Filtered: 1, Page: 1, PageCount: 1, Retention: 90,
 	}
-	files := fstest.MapFS{"audit.html": {Data: data}}
-	if _, err := template.ParseFS(files, "*.html"); err != nil {
-		t.Fatalf("parse feature template: %v", err)
+	response := httptest.NewRecorder()
+	if err := auditView(data).Render(context.Background(), response); err != nil {
+		t.Fatalf("render audit view: %v", err)
+	}
+	body := response.Body.String()
+	if strings.Contains(body, attack) || !strings.Contains(body, "&lt;script&gt;") {
+		t.Fatalf("audit content was not safely escaped: %s", body)
+	}
+}
+
+func TestAuditExportActionsUseRocketEnhancedNativeMenu(t *testing.T) {
+	data := pageData{Action: "api_key.created", Severity: "critical", Range: "30d", Search: "user@example.test"}
+	response := httptest.NewRecorder()
+	if err := auditView(data).Render(context.Background(), response); err != nil {
+		t.Fatalf("render audit view: %v", err)
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, `<ts-menu><details class="ts-menu ts-menu-end">`) {
+		t.Fatalf("audit export is not wrapped in the Rocket-enhanced native menu: %s", body)
+	}
+	for _, expected := range []string{
+		`<main class="ts-page ts-audit-page">`, `<header class="ts-toolbar">`,
+		`class="ts-filters ts-audit-filters"`, `class="ts-filter-field ts-audit-search-field"`,
+		`class="ts-input"`, `class="ts-select"`, `class="ts-btn ts-btn-primary"`,
+		`aria-label="Export audit events"`,
+		`href="/audit/export?format=csv&amp;range=30d&amp;severity=critical&amp;action=api_key.created&amp;search=user%40example.test"`,
+		`href="/audit/export?format=json&amp;range=30d&amp;severity=critical&amp;action=api_key.created&amp;search=user%40example.test"`,
+		"Export CSV", "Export JSON",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("audit export menu is missing %q", expected)
+		}
 	}
 }

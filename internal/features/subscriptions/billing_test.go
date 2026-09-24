@@ -56,7 +56,7 @@ func TestDemoCheckoutActivatesChosenPlanAndConsumesSession(t *testing.T) {
 func TestDemoCheckoutCancelLeavesBillingUnchangedAndConsumesSession(t *testing.T) {
 	store, principal := newBusinessAccount(t)
 	service := NewBillingService(store)
-	session, err := service.BeginDemoCheckout(principal, "starter", intervalMonthly, "/subscriptions")
+	session, err := service.BeginDemoCheckout(principal, "starter", intervalMonthly, "/billing")
 	if err != nil {
 		t.Fatalf("BeginDemoCheckout() error = %v", err)
 	}
@@ -64,7 +64,7 @@ func TestDemoCheckoutCancelLeavesBillingUnchangedAndConsumesSession(t *testing.T
 	if err != nil {
 		t.Fatalf("cancel checkout error = %v", err)
 	}
-	if returnTo != "/subscriptions?payment=canceled" {
+	if returnTo != "/billing?payment=canceled" {
 		t.Fatalf("cancel return path = %q", returnTo)
 	}
 	account, _ := store.Snapshot(principal.AccountID)
@@ -93,7 +93,7 @@ func TestDemoCheckoutUpgradeCancelPreservesActivePlanAndReplacedSession(t *testi
 		t.Fatalf("prepare active billing: %v", err)
 	}
 	service := NewBillingService(store)
-	first, err := service.BeginDemoCheckout(principal, "business", intervalAnnual, "/subscriptions")
+	first, err := service.BeginDemoCheckout(principal, "business", intervalAnnual, "/billing")
 	if err != nil {
 		t.Fatalf("BeginDemoCheckout(first) error = %v", err)
 	}
@@ -102,7 +102,7 @@ func TestDemoCheckoutUpgradeCancelPreservesActivePlanAndReplacedSession(t *testi
 	if organization.PlanID != "plan_pro" || organization.Billing.PlanKey != "pro" {
 		t.Fatalf("pending checkout changed current plan before completion: %#v", organization.Billing)
 	}
-	second, err := service.BeginDemoCheckout(principal, "starter", intervalMonthly, "/subscriptions")
+	second, err := service.BeginDemoCheckout(principal, "starter", intervalMonthly, "/billing")
 	if err != nil {
 		t.Fatalf("BeginDemoCheckout(replacement) error = %v", err)
 	}
@@ -122,7 +122,7 @@ func TestDemoCheckoutUpgradeCancelPreservesActivePlanAndReplacedSession(t *testi
 func TestDemoCheckoutProtectsItsPlanUntilTheSessionIsConsumed(t *testing.T) {
 	store, principal := newBusinessAccount(t)
 	service := NewBillingService(store)
-	session, err := service.BeginDemoCheckout(principal, "business", intervalMonthly, "/subscriptions")
+	session, err := service.BeginDemoCheckout(principal, "business", intervalMonthly, "/billing")
 	if err != nil {
 		t.Fatalf("BeginDemoCheckout() error = %v", err)
 	}
@@ -148,7 +148,7 @@ func TestDemoCheckoutProtectsItsPlanUntilTheSessionIsConsumed(t *testing.T) {
 func TestDemoCheckoutCanCompleteAfterPlanIsHidden(t *testing.T) {
 	store, principal := newBusinessAccount(t)
 	service := NewBillingService(store)
-	session, err := service.BeginDemoCheckout(principal, "pro", intervalMonthly, "/subscriptions")
+	session, err := service.BeginDemoCheckout(principal, "pro", intervalMonthly, "/billing")
 	if err != nil {
 		t.Fatalf("BeginDemoCheckout() error = %v", err)
 	}
@@ -166,7 +166,7 @@ func TestDemoCheckoutCanCompleteAfterPlanIsHidden(t *testing.T) {
 	if err := store.UpsertPlanAs(admin.Principal(), plan); err != nil {
 		t.Fatalf("hide checkout plan: %v", err)
 	}
-	if _, err := service.BeginDemoCheckout(principal, "pro", intervalMonthly, "/subscriptions"); !errors.Is(err, ErrPlanUnavailable) {
+	if _, err := service.BeginDemoCheckout(principal, "pro", intervalMonthly, "/billing"); !errors.Is(err, ErrPlanUnavailable) {
 		t.Fatalf("new hidden-plan checkout error = %v", err)
 	}
 	if _, err := service.CompleteDemoCheckout(principal, session.ID, false); err != nil {
@@ -182,7 +182,7 @@ func TestDemoCheckoutCanCompleteAfterPlanIsHidden(t *testing.T) {
 func TestDemoCheckoutDoesNotRetargetAfterOrganizationSwitch(t *testing.T) {
 	store, principal := newBusinessAccount(t)
 	service := NewBillingService(store)
-	session, err := service.BeginDemoCheckout(principal, "starter", intervalMonthly, "/subscriptions")
+	session, err := service.BeginDemoCheckout(principal, "starter", intervalMonthly, "/billing")
 	if err != nil {
 		t.Fatalf("BeginDemoCheckout() error = %v", err)
 	}
@@ -210,7 +210,7 @@ func TestDemoCheckoutDoesNotRetargetAfterOrganizationSwitch(t *testing.T) {
 func TestDemoCheckoutRejectsWrongOwnerAndExpiredSession(t *testing.T) {
 	store, principal := newBusinessAccount(t)
 	service := NewBillingService(store)
-	session, err := service.BeginDemoCheckout(principal, "business", intervalMonthly, "/subscriptions")
+	session, err := service.BeginDemoCheckout(principal, "business", intervalMonthly, "/billing")
 	if err != nil {
 		t.Fatalf("BeginDemoCheckout() error = %v", err)
 	}
@@ -233,15 +233,15 @@ func TestNormalizeReturnPathRejectsExternalAndProtocolRelativeTargets(t *testing
 		"//attacker.example/path",
 		"/%2f%2fattacker.example/path",
 		`/\\attacker.example/path`,
-		"/subscriptions\r\nLocation: https://attacker.example",
+		"/billing\r\nLocation: https://attacker.example",
 	} {
 		t.Run(value, func(t *testing.T) {
-			if _, err := NormalizeReturnPath(value, "/subscriptions"); !errors.Is(err, ErrInvalidReturnPath) {
+			if _, err := NormalizeReturnPath(value, "/billing"); !errors.Is(err, ErrInvalidReturnPath) {
 				t.Fatalf("NormalizeReturnPath(%q) error = %v", value, err)
 			}
 		})
 	}
-	if path, err := NormalizeReturnPath("/organization?newOrganization=project", "/subscriptions"); err != nil || path != "/organization?newOrganization=project" {
+	if path, err := NormalizeReturnPath("/organization?newOrganization=project", "/billing"); err != nil || path != "/organization?newOrganization=project" {
 		t.Fatalf("valid app path = %q, error = %v", path, err)
 	}
 }
@@ -250,11 +250,11 @@ func TestBeginDemoCheckoutRejectsHiddenFreeOrUnknownPlan(t *testing.T) {
 	store, principal := newBusinessAccount(t)
 	service := NewBillingService(store)
 	for _, plan := range []string{"free", "enterprise", "unknown"} {
-		if _, err := service.BeginDemoCheckout(principal, plan, intervalMonthly, "/subscriptions"); !errors.Is(err, ErrPlanUnavailable) {
+		if _, err := service.BeginDemoCheckout(principal, plan, intervalMonthly, "/billing"); !errors.Is(err, ErrPlanUnavailable) {
 			t.Errorf("BeginDemoCheckout(%q) error = %v", plan, err)
 		}
 	}
-	if _, err := service.BeginDemoCheckout(principal, "pro", "weekly", "/subscriptions"); !errors.Is(err, core.ErrInvalid) {
+	if _, err := service.BeginDemoCheckout(principal, "pro", "weekly", "/billing"); !errors.Is(err, core.ErrInvalid) {
 		t.Fatalf("unsupported interval error = %v", err)
 	}
 }
@@ -282,10 +282,10 @@ func TestDemoCheckoutSupportsAnyValidVisibleCatalogPlan(t *testing.T) {
 	if slices.IndexFunc(snapshot.Plans, func(candidate core.Plan) bool { return candidate.ID == plan.ID }) < 0 {
 		t.Fatalf("monthly-only catalog plan missing from available plans: %#v", snapshot.Plans)
 	}
-	if _, err := service.BeginDemoCheckout(principal, plan.Key, intervalAnnual, "/subscriptions"); !errors.Is(err, ErrPlanUnavailable) {
+	if _, err := service.BeginDemoCheckout(principal, plan.Key, intervalAnnual, "/billing"); !errors.Is(err, ErrPlanUnavailable) {
 		t.Fatalf("monthly-only annual checkout error = %v", err)
 	}
-	session, err := service.BeginDemoCheckout(principal, plan.Key, intervalMonthly, "/subscriptions")
+	session, err := service.BeginDemoCheckout(principal, plan.Key, intervalMonthly, "/billing")
 	if err != nil {
 		t.Fatalf("BeginDemoCheckout(team) error = %v", err)
 	}
@@ -309,14 +309,14 @@ func TestStripeCheckoutReturnNeverActivatesBilling(t *testing.T) {
 		ID: "cs_return", CustomerID: "cus_return", ClientReferenceID: principal.OrganizationID,
 		Status: "complete", PaymentStatus: "paid",
 	}
-	if err := service.RecordExternalCheckout(principal, "pro", intervalMonthly, "/subscriptions", remote); err != nil {
+	if err := service.RecordExternalCheckout(principal, "pro", intervalMonthly, "/billing", remote); err != nil {
 		t.Fatalf("RecordExternalCheckout() error = %v", err)
 	}
 	returnTo, status, err := service.ReconcileCheckoutReturn(principal, remote.ID, remote)
 	if err != nil {
 		t.Fatalf("ReconcileCheckoutReturn() error = %v", err)
 	}
-	if returnTo != "/subscriptions" || status != "processing" {
+	if returnTo != "/billing" || status != "processing" {
 		t.Fatalf("checkout return = (%q, %q)", returnTo, status)
 	}
 	account, _ := store.Snapshot(principal.AccountID)
@@ -357,7 +357,7 @@ func TestStripeWebhookActivatesOnlyPaidBoundCheckoutAndDeduplicates(t *testing.T
 		t.Fatalf("return lookup after webhook consumption: %v", err)
 	}
 	returnTo, status, err := service.ReconcileCheckoutReturn(principal, pending.ID, remote)
-	if err != nil || returnTo != "/subscriptions" || status != "success" {
+	if err != nil || returnTo != "/billing" || status != "success" {
 		t.Fatalf("return after webhook = (%q, %q, %v)", returnTo, status, err)
 	}
 }
@@ -377,7 +377,7 @@ func TestExternalCheckoutCannotReplaceAnOpenSession(t *testing.T) {
 	second := payments.CheckoutSession{
 		ID: "cs_second", CustomerID: "cus_external", ClientReferenceID: principal.OrganizationID,
 	}
-	if err := service.RecordExternalCheckout(principal, "starter", intervalMonthly, "/subscriptions", second); !errors.Is(err, core.ErrConflict) {
+	if err := service.RecordExternalCheckout(principal, "starter", intervalMonthly, "/billing", second); !errors.Is(err, core.ErrConflict) {
 		t.Fatalf("RecordExternalCheckout(second) error = %v, want conflict", err)
 	}
 	account, _ := store.Snapshot(principal.AccountID)
@@ -388,7 +388,7 @@ func TestExternalCheckoutCannotReplaceAnOpenSession(t *testing.T) {
 	if err := service.ExpireExternalCheckout(principal, pending.ID); err != nil {
 		t.Fatalf("expire provider-confirmed checkout: %v", err)
 	}
-	if err := service.RecordExternalCheckout(principal, "starter", intervalMonthly, "/subscriptions", second); err != nil {
+	if err := service.RecordExternalCheckout(principal, "starter", intervalMonthly, "/billing", second); err != nil {
 		t.Fatalf("RecordExternalCheckout(after expiration) error = %v", err)
 	}
 }
@@ -632,7 +632,7 @@ func newExternalCheckout(t *testing.T) (*core.Store, core.Principal, BillingServ
 		t.Fatalf("RecordCustomer() error = %v", err)
 	}
 	remote := payments.CheckoutSession{ID: "cs_external", CustomerID: "cus_external", ClientReferenceID: principal.OrganizationID}
-	if err := service.RecordExternalCheckout(principal, "pro", intervalAnnual, "/subscriptions", remote); err != nil {
+	if err := service.RecordExternalCheckout(principal, "pro", intervalAnnual, "/billing", remote); err != nil {
 		t.Fatalf("RecordExternalCheckout() error = %v", err)
 	}
 	session, err := service.Checkout(principal, remote.ID)

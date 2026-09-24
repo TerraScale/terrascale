@@ -3,10 +3,8 @@ package usage
 
 import (
 	"context"
-	"embed"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -15,12 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a-h/templ"
+
 	"terrascale.tech/dashboard/internal/core"
 	sdk "terrascale.tech/sdk"
 )
-
-//go:embed templates/*.html
-var featureTemplates embed.FS
 
 var amountPattern = regexp.MustCompile(`^\d+(?:\.\d{1,2})?$`)
 
@@ -41,6 +38,7 @@ type projectRow struct {
 	DatabaseCount int
 	SpendCap      string
 	Effective     string
+	Selected      bool
 }
 
 type invoiceRow struct {
@@ -51,41 +49,37 @@ type invoiceRow struct {
 }
 
 type pageData struct {
-	Tab                string
-	Projects           []projectRow
-	Databases          []databaseRow
-	SelectedProject    string
-	SelectedDatabase   string
-	OrganizationCap    string
-	PaidExcess         bool
-	EffectiveCap       string
-	PlanName           string
-	BillingStatus      string
-	BillingRenewal     time.Time
-	Invoices           []invoiceRow
-	Requests           int64
-	Reads              int64
-	Writes             int64
-	StorageByteSeconds int64
-	UsageSource        string
-	UsageError         string
-	Saved              string
-	CanManage          bool
-	InvoiceCount       int
-	ActiveDatabases    int
-	RegionCount        int
+	Tab                  string
+	Projects             []projectRow
+	Databases            []databaseRow
+	SelectedProject      string
+	SelectedDatabase     string
+	OrganizationCap      string
+	PaidExcess           bool
+	EffectiveCap         string
+	PlanName             string
+	PlanStorageAllowance string
+	PlanRequestAllowance string
+	PlanUsageNote        string
+	BillingStatus        string
+	BillingRenewal       time.Time
+	Invoices             []invoiceRow
+	Requests             int64
+	Reads                int64
+	Writes               int64
+	StorageByteSeconds   int64
+	UsageSource          string
+	UsageError           string
+	UsageAvailable       bool
+	Saved                string
+	CanManage            bool
+	InvoiceCount         int
+	ActiveDatabases      int
+	RegionCount          int
 }
 
 // Mount registers the usage page and spending controls.
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("usage", templates, "*.html"); err != nil {
-		panic(err)
-	}
-
 	mux.HandleFunc("GET /usage", func(w http.ResponseWriter, r *http.Request) {
 		p, account, ok := signedIn(deps, w, r)
 		if !ok {
@@ -116,9 +110,11 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 		data := buildPage(r.Context(), deps, p, org, project, tab, databaseFilter)
 		data.Saved = r.URL.Query().Get("saved")
-		page := core.Page{Template: "usage", Layout: "shell", Title: "Usage", Principal: p, Data: data}
-		if deps.CSRF != nil {
-			page.CSRFToken = deps.CSRF.Token(w, r)
+		page := core.Page{
+			Layout: "shell", Title: "Usage", Principal: p,
+			View: func(view core.Page) templ.Component {
+				return usageView(data, view.Shell.ProjectName, view.CSRFToken)
+			},
 		}
 		if err := deps.Render.Page(w, r, page); err != nil {
 			http.Error(w, "could not render usage", http.StatusInternalServerError)
@@ -218,7 +214,11 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 	selectedDatabases := make([]databaseRow, 0, len(project.Databases))
 	regions := make(map[string]struct{})
 	for _, item := range org.Projects {
-		row := projectRow{ID: item.ID, Name: item.Name, Region: item.Region, DatabaseCount: len(item.Databases), SpendCap: dollars(item.SpendCapCents)}
+		region := item.Region
+		if strings.TrimSpace(region) == "" {
+			region = "Not configured"
+		}
+		row := projectRow{ID: item.ID, Name: item.Name, Region: region, DatabaseCount: len(item.Databases), SpendCap: dollars(item.SpendCapCents), Selected: item.ID == project.ID}
 		row.Effective = effectiveCap(org.Billing.SpendCapCents, item.SpendCapCents)
 		projects = append(projects, row)
 	}
@@ -237,9 +237,15 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 	}
 	slices.SortFunc(projects, func(a, b projectRow) int { return strings.Compare(a.Name, b.Name) })
 	slices.SortFunc(selectedDatabases, func(a, b databaseRow) int { return strings.Compare(a.Name, b.Name) })
-	planName := "No billing plan"
+	planName, storageAllowance, requestAllowance := "No billing plan", "Not configured", "Not configured"
 	if plan, ok := deps.Store.Plan(org.PlanID); ok {
 		planName = plan.Name
+		if plan.StorageMiB > 0 {
+			storageAllowance = fmt.Sprintf("%d MiB", plan.StorageMiB)
+		}
+		if plan.MonthlyRequests > 0 {
+			requestAllowance = fmt.Sprintf("%d requests/month", plan.MonthlyRequests)
+		}
 	}
 	invoices := make([]invoiceRow, 0, len(org.Billing.Invoices))
 	for _, invoice := range org.Billing.Invoices {
@@ -254,27 +260,34 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 		Tab: tab, Projects: projects, Databases: selectedDatabases, SelectedProject: project.ID,
 		SelectedDatabase: databaseFilter, OrganizationCap: dollars(org.Billing.SpendCapCents),
 		PaidExcess: org.Billing.PaidExcessEnabled, EffectiveCap: effectiveCap(org.Billing.SpendCapCents, project.SpendCapCents),
-		PlanName: planName, BillingStatus: org.BillingStatus, BillingRenewal: org.BillingRenewal,
+		PlanName: planName, PlanStorageAllowance: storageAllowance, PlanRequestAllowance: requestAllowance,
+		PlanUsageNote: "Provider totals have no billing-period attribution, so allowance utilization is unavailable.",
+		BillingStatus: org.BillingStatus, BillingRenewal: org.BillingRenewal,
 		Invoices: invoices, InvoiceCount: len(invoices),
 		ActiveDatabases: len(project.Databases), RegionCount: len(regions), CanManage: canManage(org, p.UserID),
 	}
 	if deps.Demo {
 		data.UsageSource = "Sample dashboard data; these values are not provider-metered usage."
+		data.PlanUsageNote = "Demo mode has no measured usage feed, so allowance utilization is unavailable."
 		data.Writes = int64(localDocuments(project))
+		data.UsageAvailable = true
 		return data
 	}
 	if deps.SDK == nil {
 		data.UsageSource = "Live usage provider is not configured."
 		data.UsageError = "Usage totals are unavailable until the ts-go provider is connected."
+		data.PlanUsageNote = "The usage provider is not configured, so allowance utilization is unavailable."
 		return data
 	}
 	client, err := deps.SDK.ForScope(p.OrganizationID, project.ID)
 	if err != nil {
 		data.UsageSource = "Live usage provider could not be reached."
 		data.UsageError = "Usage totals are unavailable for this project."
+		data.PlanUsageNote = "The usage provider could not be reached, so allowance utilization is unavailable."
 		return data
 	}
 	data.UsageSource = "Live usage facts from TerraScale."
+	usageFetched := len(project.Databases) == 0
 	for _, database := range project.Databases {
 		if databaseFilter != "" && database.ID != databaseFilter {
 			continue
@@ -284,6 +297,7 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 			data.UsageError = "Some database usage could not be loaded."
 			continue
 		}
+		usageFetched = true
 		for _, meter := range usage.Meters {
 			value, err := strconv.ParseInt(meter.Units, 10, 64)
 			if err != nil || value < 0 {
@@ -312,6 +326,7 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 		data.Requests = int64(^uint64(0) >> 1)
 		data.UsageError = "The provider reported more operations than this page can display."
 	}
+	data.UsageAvailable = usageFetched
 	return data
 }
 

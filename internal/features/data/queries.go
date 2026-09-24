@@ -1,6 +1,7 @@
 package data
 
 import (
+	json "encoding/json/v2"
 	"net/http"
 	"slices"
 	"strconv"
@@ -43,7 +44,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 				http.Error(w, "SQL query failed: "+err.Error(), http.StatusBadGateway)
 				return
 			}
-			writeJSON(w, http.StatusOK, result)
+			writeSQLResponse(w, r, deps, db.ID, statement, result)
 			return
 		}
 		matches := selectPattern.FindStringSubmatch(statement)
@@ -67,7 +68,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 		if len(rows) > limit {
 			rows = rows[:limit]
 		}
-		writeJSON(w, http.StatusOK, struct {
+		writeSQLResponse(w, r, deps, db.ID, statement, struct {
 			Rows []documentView `json:"rows"`
 		}{Rows: rows})
 	})
@@ -129,6 +130,10 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
+		if wantsHTML(r) {
+			http.Redirect(w, r, "/data?view=queries", http.StatusSeeOther)
+			return
+		}
 		writeJSON(w, http.StatusCreated, query)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/data/saved-queries/delete", func(w http.ResponseWriter, r *http.Request) {
@@ -171,8 +176,25 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
+		if wantsHTML(r) {
+			http.Redirect(w, r, "/data?view=queries", http.StatusSeeOther)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+func writeSQLResponse(w http.ResponseWriter, r *http.Request, deps core.Deps, databaseID, statement string, result any) {
+	if !wantsHTML(r) {
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		http.Error(w, "encode response failed", http.StatusInternalServerError)
+		return
+	}
+	renderPageWithSQLResult(w, r, deps, "sql", &sqlPageResult{DatabaseID: databaseID, Statement: statement, JSON: string(encoded)})
 }
 
 func selectedProject(deps core.Deps, r *http.Request) (core.Principal, core.Project, error) {

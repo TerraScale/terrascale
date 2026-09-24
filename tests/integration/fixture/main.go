@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,7 +30,6 @@ import (
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
-	"terrascale.tech/dashboard/internal/ui"
 	sdk "terrascale.tech/sdk"
 )
 
@@ -275,14 +273,7 @@ func run(ctx context.Context) error {
 	store := core.NewStore()
 	sessions := session.New(store, session.Options{})
 	guard := csrf.New(sessions, csrf.Options{})
-	layouts, err := fs.Sub(ui.Assets, "layouts")
-	if err != nil {
-		return err
-	}
-	renderer, err := render.New(layouts, store, guard)
-	if err != nil {
-		return err
-	}
+	renderer := render.New(store, guard)
 	producer := newProducer()
 	publicServer := httptest.NewServer(producer.handler())
 	defer publicServer.Close()

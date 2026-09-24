@@ -146,6 +146,9 @@ test("account-created database works through issued credentials and the TypeScri
 
 async function createDatabase(page: Page, name: string): Promise<Database> {
   await page.goto("/databases");
+  const databaseDisclosure = page.locator("#create-database");
+  await databaseDisclosure.locator(":scope > summary").click();
+  await expect(databaseDisclosure).toHaveAttribute("open", "");
   const form = page.locator('form[action="/api/v1/dashboard/databases"]');
   await form.locator('[name="name"]').fill(name);
   await form.locator('[name="region"]').selectOption("GRU");

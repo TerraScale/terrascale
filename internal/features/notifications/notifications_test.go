@@ -1,12 +1,11 @@
 package notifications
 
 import (
-	"html/template"
-	"io/fs"
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
@@ -79,14 +78,23 @@ func TestMarkReadRejectsNotificationOutsideSelectedScope(t *testing.T) {
 	}
 }
 
-func TestNotificationTemplateParses(t *testing.T) {
-	data, err := fs.ReadFile(featureTemplates, "templates/notifications.html")
-	if err != nil {
-		t.Fatal(err)
+func TestNotificationsViewEscapesUntrustedContentAndCSRF(t *testing.T) {
+	attack := `<img src=x onerror=alert(1)>`
+	csrfToken := `"><script>alert(1)</script>`
+	data := pageData{
+		Notifications: []core.Notification{{
+			ID: "notification-1", Title: attack, Body: attack, Severity: attack, Status: "Unread",
+			CreatedAt: time.Date(2026, time.September, 24, 12, 0, 0, 0, time.UTC),
+		}},
+		Status: "all", Unread: 1, Total: 1, FilteredCount: 1, Page: 1, PageCount: 1,
 	}
-	files := fstest.MapFS{"notifications.html": {Data: data}}
-	if _, err := template.ParseFS(files, "*.html"); err != nil {
-		t.Fatalf("parse feature template: %v", err)
+	response := httptest.NewRecorder()
+	if err := notificationsView(data, csrfToken).Render(context.Background(), response); err != nil {
+		t.Fatalf("render notifications view: %v", err)
+	}
+	body := response.Body.String()
+	if strings.Contains(body, attack) || strings.Contains(body, `value=""><script>`) || !strings.Contains(body, "&lt;img") {
+		t.Fatalf("notification content or CSRF token was not safely escaped: %s", body)
 	}
 }
 
@@ -109,7 +117,6 @@ func (acceptCSRF) Protect(next http.Handler) http.Handler          { return next
 
 type testRenderer struct{}
 
-func (testRenderer) Register(string, fs.FS, ...string) error                          { return nil }
 func (testRenderer) Page(http.ResponseWriter, *http.Request, core.Page) error         { return nil }
 func (testRenderer) Fragment(http.ResponseWriter, *http.Request, core.Fragment) error { return nil }
 

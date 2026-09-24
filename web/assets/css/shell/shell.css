@@ -2,9 +2,26 @@
    Used by authenticated dashboard pages. Keep page-specific rules in Features/. */
 
 .ts-shell {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-height: 100svh;
   width: 100%;
+}
+
+/* Light-DOM Rocket hosts keep the native drawer markup and fallback layout. */
+ts-mobile-nav {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+ts-tabs { display: contents; }
+ts-region-map { display: block; }
+
+.ts-login-map-frame > ts-region-map {
+  position: absolute;
+  inset: 0;
+  display: block;
 }
 
 /* --- Sidebar ------------------------------------------------------- */
@@ -274,8 +291,12 @@
 /* v1 keeps an in-flow spacer (desktopGap) beside its fixed sidebar; the
    gap keeps page content clear of the sidebar at desktop widths. */
 @media (min-width: 48rem) {
+  .ts-shell {
+    grid-template-columns: var(--ts-sidebar-width) minmax(0, 1fr);
+  }
+
   .ts-inset {
-    margin-left: var(--ts-sidebar-width);
+    grid-column: 2;
   }
 }
 

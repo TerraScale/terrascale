@@ -2,9 +2,7 @@
 package settings
 
 import (
-	"embed"
 	"errors"
-	"io/fs"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -13,11 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a-h/templ"
+
 	"terrascale.tech/dashboard/internal/core"
 )
-
-//go:embed templates/*.html
-var featureTemplates embed.FS
 
 var cronPattern = regexp.MustCompile(`^[0-9*/,-]+(?:\s+[0-9*/,-]+){4}$`)
 
@@ -28,12 +25,23 @@ type databaseRow struct {
 	Backups []core.Backup
 }
 
+type identityProviderRow struct {
+	Name     string
+	Protocol string
+	Issuer   string
+	Status   string
+}
+
 type pageData struct {
 	ProjectName          string
 	ProjectID            string
 	Tab                  string
 	Authentication       bool
 	UpdatedAt            string
+	IdentityProviders    []identityProviderRow
+	ActiveCredentials    int
+	ActiveM2MClients     int
+	ConfiguredBackups    int
 	AuditRetention       int
 	Databases            []databaseRow
 	SelectedDatabaseID   string
@@ -51,14 +59,6 @@ type pageData struct {
 
 // Mount registers settings pages and their project-scoped mutations.
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("settings", templates, "*.html"); err != nil {
-		panic(err)
-	}
-
 	mux.HandleFunc("GET /settings", func(w http.ResponseWriter, r *http.Request) {
 		p, account, project, ok := selected(deps, w, r)
 		if !ok {
@@ -91,10 +91,42 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			credentials = append(credentials, key)
 		}
 		slices.SortFunc(credentials, func(a, b core.APIKey) int { return strings.Compare(a.Name, b.Name) })
+		now := time.Now().UTC()
+		activeCredentials, activeM2MClients := 0, 0
+		for _, key := range project.APIKeys {
+			if !key.RevokedAt.IsZero() || (!key.ExpiresAt.IsZero() && !key.ExpiresAt.After(now)) {
+				continue
+			}
+			activeCredentials++
+			if key.Kind == "m2m" {
+				activeM2MClients++
+			}
+		}
+		identityProviders := make([]identityProviderRow, 0)
+		for _, resource := range project.AuthInstance.Resources {
+			if resource.Section != "connections" {
+				continue
+			}
+			name := strings.TrimSpace(resource.Values["name"])
+			if name == "" {
+				name = "Unnamed provider configuration"
+			}
+			status := strings.TrimSpace(resource.Status)
+			if status == "" {
+				status = "Status not reported"
+			}
+			identityProviders = append(identityProviders, identityProviderRow{
+				Name: name, Protocol: strings.TrimSpace(resource.Values["protocol"]),
+				Issuer: strings.TrimSpace(resource.Values["issuer"]), Status: status,
+			})
+		}
+		slices.SortFunc(identityProviders, func(a, b identityProviderRow) int { return strings.Compare(a.Name, b.Name) })
 		data := pageData{
 			ProjectName: project.Name, ProjectID: project.ID, Tab: tab,
 			Authentication: project.AuthenticationEnabled, UpdatedAt: project.SecuritySettingsUpdatedAt.Format(time.RFC3339),
-			AuditRetention: normalizeRetention(org.AuditRetentionDays), Databases: databases, SelectedDatabaseID: selectedID, SelectedBackups: selectedBackups,
+			IdentityProviders: identityProviders, ActiveCredentials: activeCredentials, ActiveM2MClients: activeM2MClients,
+			ConfiguredBackups: len(project.BackupPolicies), AuditRetention: normalizeRetention(org.AuditRetentionDays),
+			Databases: databases, SelectedDatabaseID: selectedID, SelectedBackups: selectedBackups,
 			Policy: policy, PolicySaved: policySaved, Credentials: credentials,
 			Toast: r.URL.Query().Get("toast"), Error: r.URL.Query().Get("error"), Demo: deps.Demo,
 			CanManage:           canManage(account, p),
@@ -463,9 +495,9 @@ func selected(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 }
 
 func render(w http.ResponseWriter, r *http.Request, deps core.Deps, p core.Principal, data pageData) {
-	page := core.Page{Template: "settings", Layout: "shell", Title: "Settings", Principal: p, Data: data}
-	if deps.CSRF != nil {
-		page.CSRFToken = deps.CSRF.Token(w, r)
+	page := core.Page{
+		Layout: "shell", Title: "Settings", Principal: p,
+		View: func(view core.Page) templ.Component { return settingsView(data, view.CSRFToken) },
 	}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render settings", http.StatusInternalServerError)

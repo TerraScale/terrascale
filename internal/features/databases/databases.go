@@ -1,24 +1,20 @@
 package databases
 
 import (
-	"embed"
 	"encoding/json/v2"
 	"errors"
-	"io/fs"
 	"net/http"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	sdk "terrascale.tech/sdk"
 )
 
 var namePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
-
-//go:embed templates/*.html
-var featureTemplates embed.FS
 
 type databaseView struct {
 	ID        string    `json:"id"`
@@ -35,13 +31,6 @@ func view(db core.Database) databaseView {
 // Mount owns the database lifecycle routes for the selected project.
 func Mount(mux *http.ServeMux, deps core.Deps) {
 	mountBranch(mux, deps)
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("databases", templates, "databases.html"); err != nil {
-		panic(err)
-	}
 	mux.HandleFunc("GET /databases", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, "") })
 	mux.HandleFunc("GET /databases/{databaseID}", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, r.PathValue("databaseID")) })
 	mux.HandleFunc("GET /api/v1/dashboard/databases", func(w http.ResponseWriter, r *http.Request) {
@@ -229,11 +218,15 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 }
 
 type pageData struct {
-	ProjectID string
-	Databases []databaseView
-	Detail    *databaseView
-	Region    string
-	Error     string
+	ProjectID    string
+	Databases    []databaseView
+	Detail       *databaseView
+	Region       string
+	Error        string
+	Search       string
+	OpenCreate   bool
+	CanProvision bool
+	CanManage    bool
 }
 
 func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, detailID string) {
@@ -243,12 +236,20 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, detailID
 		return
 	}
 	a, _ := deps.Store.SnapshotAs(p)
-	data := pageData{ProjectID: project.ID, Region: project.Region, Error: r.URL.Query().Get("error")}
+	data := pageData{ProjectID: project.ID, Region: project.Region, Error: r.URL.Query().Get("error"), Search: strings.TrimSpace(r.URL.Query().Get("q")), OpenCreate: r.URL.Query().Get("create") == "1"}
+	if len(data.Search) > 256 {
+		data.Search = data.Search[:256]
+	}
+	org := a.Organizations[p.OrganizationID]
+	data.CanProvision = org.CanProvisionResources(p.UserID)
+	data.CanManage = org.CanManage(p.UserID)
 	if data.Region == "" {
 		data.Region = "GRU"
 	}
 	for _, db := range project.Databases {
-		data.Databases = append(data.Databases, view(db))
+		if data.Search == "" || strings.Contains(strings.ToLower(db.Name), strings.ToLower(data.Search)) {
+			data.Databases = append(data.Databases, view(db))
+		}
 		if db.ID == detailID {
 			v := view(db)
 			data.Detail = &v
@@ -259,8 +260,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, detailID
 		return
 	}
 	slices.SortFunc(data.Databases, func(a, b databaseView) int { return strings.Compare(a.Name, b.Name) })
-	org := a.Organizations[p.OrganizationID]
-	page := core.Page{Template: "databases", Layout: "shell", Title: "Databases · TerraScale", Principal: p, Data: data, CSRFToken: deps.CSRF.Token(w, r), Shell: core.Shell{UserName: a.User.Name, UserEmail: a.User.Email, OrganizationName: org.Name, ProjectName: project.Name}}
+	page := core.Page{Layout: "shell", Title: "Databases · TerraScale", Principal: p, View: func(page core.Page) templ.Component { return databasesContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r), Shell: core.Shell{UserName: a.User.Name, UserEmail: a.User.Email, OrganizationName: org.Name, ProjectName: project.Name}}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render databases", http.StatusInternalServerError)
 	}

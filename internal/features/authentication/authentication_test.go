@@ -2,7 +2,6 @@ package authentication
 
 import (
 	"errors"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,7 +10,6 @@ import (
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/platform/render"
-	"terrascale.tech/dashboard/internal/ui"
 )
 
 func TestAuthenticationStateIsSharedByProjectMembersAndIsolatedAcrossProjects(t *testing.T) {
@@ -73,7 +71,10 @@ func TestAuthenticationStateIsSharedByProjectMembersAndIsolatedAcrossProjects(t 
 	}
 	adminAuditPage := httptest.NewRecorder()
 	adminMux.ServeHTTP(adminAuditPage, httptest.NewRequest(http.MethodGet, "/auth/audit", nil))
-	for _, expected := range []string{"auth.connections.created", "owner@example.test", "auth.connections.updated", "admin@example.test"} {
+	for _, expected := range []string{
+		"Audit log", "Changes made in this dashboard simulation.",
+		"auth.connections.created", "owner@example.test", "auth.connections.updated", "admin@example.test",
+	} {
 		if adminAuditPage.Code != http.StatusOK || !strings.Contains(adminAuditPage.Body.String(), expected) {
 			t.Fatalf("admin audit page missing shared event %q: status=%d body=%s", expected, adminAuditPage.Code, adminAuditPage.Body.String())
 		}
@@ -159,15 +160,8 @@ func TestAuthenticationTemplateRendersDemoBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	layouts, err := fs.Sub(ui.Assets, "layouts")
-	if err != nil {
-		t.Fatal(err)
-	}
 	csrf := authTestCSRF{}
-	renderer, err := render.New(layouts, store, csrf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	renderer := render.New(store, csrf)
 	mux := http.NewServeMux()
 	Mount(mux, core.Deps{Store: store, Sessions: authTestSessions{account.Principal()}, CSRF: csrf, Render: renderer, Demo: true})
 	response := httptest.NewRecorder()
@@ -238,15 +232,8 @@ func sharedPrincipal(account core.Account, organizationID, projectID, role strin
 
 func authTestMux(t *testing.T, store *core.Store, principal core.Principal) *http.ServeMux {
 	t.Helper()
-	layouts, err := fs.Sub(ui.Assets, "layouts")
-	if err != nil {
-		t.Fatal(err)
-	}
 	csrf := authTestCSRF{}
-	renderer, err := render.New(layouts, store, csrf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	renderer := render.New(store, csrf)
 	mux := http.NewServeMux()
 	Mount(mux, core.Deps{Store: store, Sessions: authTestSessions{principal}, CSRF: csrf, Render: renderer, Demo: true})
 	return mux

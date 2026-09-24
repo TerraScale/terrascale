@@ -2,10 +2,8 @@
 package authentication
 
 import (
-	"embed"
 	"encoding/json/v2"
 	"errors"
-	"io/fs"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -16,13 +14,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/a-h/templ"
+
 	"terrascale.tech/dashboard/internal/core"
 )
 
 const pageSize = 10
-
-//go:embed templates/*.html
-var featureTemplates embed.FS
 
 var themeColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
@@ -109,14 +106,6 @@ type pageData struct {
 
 // Mount registers the local authentication console and its simulation-only mutations.
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("authentication", templates, "*.html"); err != nil {
-		panic(err)
-	}
-
 	mux.HandleFunc("GET /auth", page(deps, "overview"))
 	mux.HandleFunc("GET /auth/{section}", pageByPath(deps))
 	mux.HandleFunc("POST /api/v1/auth-management/{section}", saveResource(deps))
@@ -227,9 +216,11 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, key stri
 		data.HasPrevious, data.HasNext = data.Page > 1, data.Page < data.PageCount
 	}
 
-	page := core.Page{Template: "authentication", Layout: "shell", Title: "Authentication · " + current.Title, Principal: p, Data: data}
-	if deps.CSRF != nil {
-		page.CSRFToken = deps.CSRF.Token(w, r)
+	page := core.Page{
+		Layout: "shell", Title: "Authentication · " + current.Title, Principal: p,
+		View: func(view core.Page) templ.Component {
+			return authenticationView(data, view.Shell.ProjectName, view.CSRFToken)
+		},
 	}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render authentication console", http.StatusInternalServerError)

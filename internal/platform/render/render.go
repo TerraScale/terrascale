@@ -4,68 +4,30 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
-	"html/template"
-	"io/fs"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"unicode/utf8"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/ui"
 )
 
 type Engine struct {
-	base  *template.Template
 	store *core.Store
 	csrf  core.CSRF
-	mu    sync.RWMutex
-	pages map[string]*template.Template
 }
 
-// New parses common layout definitions once. Register clones them for each
-// feature page so every page may define its own content template safely.
-func New(layouts fs.FS, store *core.Store, csrf core.CSRF) (*Engine, error) {
-	base, err := template.New("layouts").ParseFS(layouts, "*.html")
-	if err != nil {
-		return nil, err
-	}
-	return &Engine{base: base, store: store, csrf: csrf, pages: make(map[string]*template.Template)}, nil
-}
-
-func (e *Engine) Register(name string, files fs.FS, patterns ...string) error {
-	if name == "" || len(patterns) == 0 {
-		return core.ErrInvalid
-	}
-	parsed, err := e.base.Clone()
-	if err != nil {
-		return err
-	}
-	if _, err := parsed.ParseFS(files, patterns...); err != nil {
-		return err
-	}
-	if parsed.Lookup("content") == nil {
-		return errors.New("feature template missing content definition")
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if _, exists := e.pages[name]; exists {
-		return core.ErrConflict
-	}
-	e.pages[name] = parsed
-	return nil
+func New(store *core.Store, csrf core.CSRF) *Engine {
+	return &Engine{store: store, csrf: csrf}
 }
 
 func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) error {
-	if page.Layout != "shell" && page.Layout != "auth" && page.Layout != "admin" {
+	if (page.Layout != "shell" && page.Layout != "auth" && page.Layout != "admin") || page.View == nil {
 		return core.ErrInvalid
 	}
 	page.Title = documentTitle(page.Title)
-	parsed := e.lookup(page.Template)
-	if parsed == nil || parsed.Lookup(page.Layout) == nil {
-		return core.ErrNotFound
-	}
 	if page.CSRFToken == "" && e.csrf != nil {
 		page.CSRFToken = e.csrf.Token(w, r)
 	}
@@ -91,7 +53,20 @@ func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) er
 		page.Shell = shellFor(account, page.Principal, page.Layout, r)
 	}
 	var output bytes.Buffer
-	if err := parsed.ExecuteTemplate(&output, page.Layout, page); err != nil {
+	body := page.View(page)
+	if body == nil {
+		return core.ErrInvalid
+	}
+	var document templ.Component
+	switch page.Layout {
+	case "auth":
+		document = ui.Auth(page, body)
+	case "shell":
+		document = ui.Shell(page, body)
+	case "admin":
+		document = ui.Admin(page, body)
+	}
+	if err := document.Render(templ.WithNonce(r.Context(), page.Nonce), &output); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -122,27 +97,24 @@ func documentTitle(title string) string {
 }
 
 func (e *Engine) Fragment(w http.ResponseWriter, r *http.Request, fragment core.Fragment) error {
-	parsed := e.lookup(fragment.Template)
-	if parsed == nil {
-		return core.ErrNotFound
+	if fragment.View == nil {
+		return core.ErrInvalid
 	}
 	if fragment.CSRFToken == "" && e.csrf != nil {
 		fragment.CSRFToken = e.csrf.Token(w, r)
 	}
 	var output bytes.Buffer
-	if err := parsed.ExecuteTemplate(&output, "content", core.Page{Data: fragment.Data, CSRFToken: fragment.CSRFToken}); err != nil {
+	body := fragment.View(core.Page{CSRFToken: fragment.CSRFToken})
+	if body == nil {
+		return core.ErrInvalid
+	}
+	if err := body.Render(r.Context(), &output); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-store")
 	_, err := w.Write(output.Bytes())
 	return err
-}
-
-func (e *Engine) lookup(name string) *template.Template {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.pages[name]
 }
 
 func shellFor(account core.Account, p core.Principal, layout string, r *http.Request) core.Shell {
@@ -186,16 +158,24 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 	} else {
 		shell.Navigation = []core.NavItem{
 			{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
-			{Label: "Data", URL: "/data"}, {Label: "API keys", URL: "/api-keys"},
-			{Label: "Backups", URL: "/backups"}, {Label: "Authentication", URL: "/auth"},
-			{Label: "Access", URL: "/access"}, {Label: "Usage", URL: "/usage"},
-			{Label: "Engine", URL: "/engine"}, {Label: "Audit", URL: "/audit"},
-			{Label: "Billing", URL: "/subscriptions"}, {Label: "Settings", URL: "/settings"},
+			{Label: "Tables", URL: "/data"}, {Label: "API keys", URL: "/api-keys"},
+			{Label: "Team", URL: "/access"}, {Label: "Authentication", URL: "/auth"},
+			{Label: "Usage", URL: "/usage"}, {Label: "Audit", URL: "/audit"},
+			{Label: "Organization", URL: "/organization", BadgeCount: len(shell.Organizations)},
+		}
+		shell.SecondaryNavigation = []core.NavItem{
+			{Label: "Backups", URL: "/backups"}, {Label: "Engine", URL: "/engine"},
+			{Label: "Subscriptions", URL: "/subscriptions"},
+			{Label: "Billing", URL: "/billing"}, {Label: "Settings", URL: "/settings"},
 		}
 	}
 	for i := range shell.Navigation {
 		url := shell.Navigation[i].URL
 		shell.Navigation[i].Active = r.URL.Path == url || (url != "/" && strings.HasPrefix(r.URL.Path, url+"/"))
+	}
+	for i := range shell.SecondaryNavigation {
+		url := shell.SecondaryNavigation[i].URL
+		shell.SecondaryNavigation[i].Active = r.URL.Path == url || strings.HasPrefix(r.URL.Path, url+"/")
 	}
 	return shell
 }

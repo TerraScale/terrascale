@@ -1,0 +1,185 @@
+package authentication
+
+import "fmt"
+
+templ authenticationView(data pageData, projectName, csrfToken string) {
+	<main class="ts-page ts-auth-console">
+		<header class="ts-page-header"><div><p class="ts-eyebrow">{ projectName }</p><h1>Authentication</h1><p>Project-scoped ts-auth configuration.</p></div></header>
+		<div class="ts-alert ts-alert-warning" role="status"><strong>Demo simulation.</strong> Changes on this page are stored in the dashboard's in-memory account and are not sent to ts-auth. Keys and connections created here are not usable external credentials.</div>
+		if data.Saved {
+			<p class="ts-alert ts-alert-success" role="status">The demo configuration was saved.</p>
+		}
+		if data.Error != "" {
+			<p class="ts-alert ts-alert-danger" role="alert">{ data.Error }</p>
+		}
+		<ts-tabs>
+			<nav class="ts-tabs" aria-label="Authentication areas">
+				for _, item := range data.Sections {
+					<a class="ts-tab" href={ "/auth/" + item.Key } aria-current={ templ.KV("page", item.Key == data.Section) }>{ item.Title }</a>
+				}
+			</nav>
+		</ts-tabs>
+		if data.Section == "overview" {
+			<section class="ts-section" aria-labelledby="auth-overview-title">
+				<h2 id="auth-overview-title">Identity workspace</h2>
+				<p>{ data.Description }</p>
+				<dl class="ts-kpis"><div><dt>Users</dt><dd>{ fmt.Sprint(data.ActiveUsers) }</dd></div><div><dt>Organizations</dt><dd>{ fmt.Sprint(data.Organizations) }</dd></div><div><dt>Connections</dt><dd>{ fmt.Sprint(data.Connections) }</dd></div><div><dt>OAuth clients</dt><dd>{ fmt.Sprint(data.Clients) }</dd></div><div><dt>Webhooks</dt><dd>{ fmt.Sprint(data.Webhooks) }</dd></div></dl>
+				<p>
+					Workspace:
+					if data.Instance.Name != "" {
+						{ data.Instance.Name }
+					} else {
+						{ projectName }
+					}
+				</p>
+				<p>Signed in as { data.ProfileName } ({ data.ProfileEmail }). Dashboard permissions remain enforced by the dashboard account.</p>
+			</section>
+		} else if data.Section == "settings" {
+			<section class="ts-section" aria-labelledby="auth-settings-title">
+				<h2 id="auth-settings-title">Hosted UI branding</h2>
+				<p>{ data.Description }</p>
+				if data.CanManage {
+					<form class="ts-form" method="post" action="/api/v1/auth-management/instance">
+						<input type="hidden" name="_csrf" value={ csrfToken }/>
+						<div class="ts-field">
+							<label class="ts-label" for="auth-instance-name">Instance name</label>
+							if data.Instance.Name != "" {
+								<input class="ts-input" id="auth-instance-name" name="name" required maxlength="128" value={ data.Instance.Name }/>
+							} else {
+								<input class="ts-input" id="auth-instance-name" name="name" required maxlength="128" value={ projectName }/>
+							}
+						</div>
+						<div class="ts-field">
+							<label class="ts-label" for="auth-logo-url">Logo URL</label>
+							<input class="ts-input" id="auth-logo-url" type="url" name="logo_url" value={ data.Instance.LogoURL } placeholder="https://assets.example.com/logo.svg"/>
+						</div>
+						<div class="ts-field">
+							<label class="ts-label" for="auth-theme-color">Theme color</label>
+							<input class="ts-input" id="auth-theme-color" name="theme_color" value={ data.Instance.ThemeColor } placeholder="#3B82F6"/>
+						</div>
+						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save demo branding</button>
+					</form>
+				} else {
+					<p>Only organization owners and admins can change this setting.</p>
+				}
+			</section>
+		} else if data.Section == "quickstart" {
+			<section class="ts-section" aria-labelledby="auth-quickstart-title"><h2 id="auth-quickstart-title">Connect in minutes</h2><p>Live discovery, credential issuance, and hosted sign-in are unavailable until a ts-auth provider contract is connected. Demo records on this page do not create a working issuer.</p></section>
+		} else if data.Section == "audit" {
+			<section class="ts-section" aria-labelledby="auth-audit-title">
+				<h2 id="auth-audit-title">Audit log</h2>
+				<p>{ data.Description }</p>
+				if len(data.Events) > 0 {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<thead><tr><th>Action</th><th>Target</th><th>Actor</th><th>Time</th></tr></thead>
+							<tbody>
+								for _, event := range data.Events {
+									<tr><td>{ event.Action }</td><td>{ event.Target }</td><td>{ event.Actor }</td><td>{ event.At.UTC().Format("Jan 2, 2006 15:04 UTC") }</td></tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<p>No authentication console changes are recorded for this project.</p>
+				}
+			</section>
+		} else {
+			<section class="ts-section" aria-labelledby="auth-resource-title">
+				<div class="ts-section-head"><div><h2 id="auth-resource-title">{ data.Title }</h2><p>{ data.Description }</p></div></div>
+				if data.CanManage {
+					if len(data.Fields) > 0 {
+						<details>
+							<summary>Add { data.Title }</summary>
+							<form method="post" action={ "/api/v1/auth-management/" + data.Section }>
+								<input type="hidden" name="_csrf" value={ csrfToken }/>
+								for _, item := range data.Fields {
+									<label>
+										{ item.Label }
+										if item.Type == "textarea" {
+											<textarea name={ item.Key } required?={ item.Required }></textarea>
+										} else {
+											<input type={ item.Type } name={ item.Key } required?={ item.Required }/>
+										}
+									</label>
+								}
+								<button type="submit">Save demo { data.Title }</button>
+							</form>
+						</details>
+					}
+				} else if len(data.Fields) > 0 {
+					<p>Only organization owners and admins can change authentication configuration.</p>
+				}
+				if data.Search != "" {
+					<p>Search results for “{ data.Search }”</p>
+				}
+				if len(data.Resources) > 0 {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<thead><tr><th>Name</th><th>Details</th><th>Status</th><th>Actions</th></tr></thead>
+							<tbody>
+								for _, resource := range data.Resources {
+									<tr>
+										<td><strong>{ resource.Name }</strong><br/><small>{ resource.ID }</small></td>
+										<td>
+											for _, detail := range resource.Details {
+												<div>{ detail }</div>
+											}
+										</td>
+										<td>{ resource.Status }</td>
+										<td>
+											if resource.Editable {
+												<details>
+													<summary>Edit</summary>
+													<form method="post" action={ "/api/v1/auth-management/" + data.Section }>
+														<input type="hidden" name="_csrf" value={ csrfToken }/><input type="hidden" name="id" value={ resource.ID }/>
+														for _, field := range resource.Fields {
+															<label>
+																{ field.Field.Label }
+																if field.Field.Type == "textarea" {
+																	<textarea name={ field.Field.Key } required?={ field.Field.Required }>{ field.Value }</textarea>
+																} else {
+																	<input type={ field.Field.Type } name={ field.Field.Key } value={ field.Value } required?={ field.Field.Required }/>
+																}
+															</label>
+														}
+														<button type="submit">Save demo changes</button>
+													</form>
+												</details>
+											}
+											if data.CanManage {
+												<form method="post" action={ fmt.Sprintf("/api/v1/auth-management/%s/%s/delete", data.Section, resource.ID) }>
+													<input type="hidden" name="_csrf" value={ csrfToken }/>
+													<button type="submit">
+														if data.Section == "keys" || data.Section == "sessions" {
+															Revoke
+														} else {
+															Delete
+														}
+													</button>
+												</form>
+											}
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+					if data.PageCount > 1 {
+						<nav class="ts-pager" aria-label="Authentication resource pages">
+							<span>Page { fmt.Sprint(data.Page) } of { fmt.Sprint(data.PageCount) } · { fmt.Sprint(data.Total) } total</span>
+							if data.HasPrevious {
+								<a href={ fmt.Sprintf("/auth/%s?page=%d", data.Section, data.Previous) } rel="prev">Previous</a>
+							}
+							if data.HasNext {
+								<a href={ fmt.Sprintf("/auth/%s?page=%d", data.Section, data.Next) } rel="next">Next</a>
+							}
+						</nav>
+					}
+				} else {
+					<p>No { data.Title } are configured for this project.</p>
+				}
+			</section>
+		}
+	</main>
+}

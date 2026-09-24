@@ -2,11 +2,11 @@ package core
 
 import (
 	"errors"
-	"io/fs"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/a-h/templ"
 	sdk "terrascale.tech/sdk"
 )
 
@@ -115,6 +115,7 @@ type Project struct {
 	Databases                 map[string]Database
 	APIKeys                   map[string]APIKey
 	SavedQueries              map[string]SavedQuery
+	SharedResultConfigs       map[string]SharedResultConfig
 	AuthInstance              AuthInstance
 	AuthenticationEnabled     bool
 	SecuritySettingsUpdatedAt time.Time
@@ -146,6 +147,18 @@ type SavedQuery struct {
 	Name      string
 	SQL       string
 	CreatedAt time.Time
+}
+
+// SharedResultConfig is a project-owned saved shared-result configuration.
+// Provider-managed runtime state is not represented in the demo store.
+type SharedResultConfig struct {
+	ID         string
+	DatabaseID string
+	Name       string
+	Query      string
+	Transport  string
+	Status     string
+	CreatedAt  time.Time
 }
 
 type BackupPolicy struct {
@@ -275,21 +288,23 @@ type CredentialSessions interface {
 }
 
 type NavItem struct {
-	Label  string
-	URL    string
-	Active bool
+	Label      string
+	URL        string
+	Active     bool
+	BadgeCount int
 }
 
 type Shell struct {
-	UserName         string
-	UserInitials     string
-	UserEmail        string
-	OrganizationName string
-	ProjectName      string
-	Organizations    []OrganizationOption
-	Projects         []ProjectOption
-	Navigation       []NavItem
-	ReturnURL        string
+	UserName            string
+	UserInitials        string
+	UserEmail           string
+	OrganizationName    string
+	ProjectName         string
+	Organizations       []OrganizationOption
+	Projects            []ProjectOption
+	Navigation          []NavItem
+	SecondaryNavigation []NavItem
+	ReturnURL           string
 }
 
 type OrganizationOption struct {
@@ -311,11 +326,10 @@ type CSRF interface {
 }
 
 type Page struct {
-	Template  string
 	Layout    string
 	Title     string
 	Principal Principal
-	Data      any
+	View      View
 	CSRFToken string
 	Shell     Shell
 	Nonce     string
@@ -323,15 +337,17 @@ type Page struct {
 }
 
 type Fragment struct {
-	Template  string
-	Data      any
+	View      View
 	CSRFToken string
 }
 
-// Renderer registers one isolated feature template set under a unique name.
-// Layout and page templates are parsed by html/template for autoescaping.
+// View constructs a feature component after the renderer has populated the
+// request's CSRF token and, for full pages, the nonce and canonical shell.
+// Feature packages close over their own typed page data in this callback.
+type View func(Page) templ.Component
+
+// Renderer renders feature components inside the shared document layouts.
 type Renderer interface {
-	Register(name string, files fs.FS, patterns ...string) error
 	Page(http.ResponseWriter, *http.Request, Page) error
 	Fragment(http.ResponseWriter, *http.Request, Fragment) error
 }

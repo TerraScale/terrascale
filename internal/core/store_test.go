@@ -30,6 +30,10 @@ func TestCreateAccountIsolatedAndAtomic(t *testing.T) {
 	if err := store.UpdateAs(p, func(a *Account) error {
 		org := a.Organizations[p.OrganizationID]
 		project := org.Projects[p.ProjectID]
+		if project.SharedResultConfigs == nil {
+			t.Fatal("default project has no shared-result configuration map")
+		}
+		project.SharedResultConfigs["shared"] = SharedResultConfig{ID: "shared", DatabaseID: "db", Name: "Summary", Query: "SELECT 1", Transport: "http", Status: "saved"}
 		project.Databases = map[string]Database{"db": {
 			ID: "db", ProjectID: project.ID,
 			Documents: map[string]map[string][]byte{"coll": {"doc": []byte(`{"ok":true}`)}},
@@ -48,15 +52,18 @@ func TestCreateAccountIsolatedAndAtomic(t *testing.T) {
 	db := snapshot.Organizations[p.OrganizationID].Projects[p.ProjectID].Databases["db"]
 	db.Documents["coll"]["doc"][0] = 'x'
 	db.Backups[0].Documents["coll"]["doc"][0] = 'x'
+	delete(snapshot.Organizations[p.OrganizationID].Projects[p.ProjectID].SharedResultConfigs, "shared")
 	unchanged, _ := store.SnapshotAs(p)
-	stored := unchanged.Organizations[p.OrganizationID].Projects[p.ProjectID].Databases["db"]
-	if stored.Documents["coll"]["doc"][0] == 'x' || stored.Backups[0].Documents["coll"]["doc"][0] == 'x' {
+	storedProject := unchanged.Organizations[p.OrganizationID].Projects[p.ProjectID]
+	stored := storedProject.Databases["db"]
+	if stored.Documents["coll"]["doc"][0] == 'x' || stored.Backups[0].Documents["coll"]["doc"][0] == 'x' || storedProject.SharedResultConfigs["shared"].ID != "shared" {
 		t.Fatal("snapshot aliases nested state")
 	}
 	abort := errors.New("abort")
 	if err := store.UpdateAs(p, func(a *Account) error {
 		org := a.Organizations[p.OrganizationID]
 		project := org.Projects[p.ProjectID]
+		delete(project.SharedResultConfigs, "shared")
 		db := project.Databases["db"]
 		db.Documents["coll"]["doc"][0] = 'x'
 		project.Databases["db"] = db
@@ -67,7 +74,8 @@ func TestCreateAccountIsolatedAndAtomic(t *testing.T) {
 		t.Fatalf("failed mutation error: %v", err)
 	}
 	unchanged, _ = store.SnapshotAs(p)
-	if unchanged.Organizations[p.OrganizationID].Projects[p.ProjectID].Databases["db"].Documents["coll"]["doc"][0] == 'x' {
+	unchangedProject := unchanged.Organizations[p.OrganizationID].Projects[p.ProjectID]
+	if unchangedProject.Databases["db"].Documents["coll"]["doc"][0] == 'x' || unchangedProject.SharedResultConfigs["shared"].ID != "shared" {
 		t.Fatal("failed mutation leaked state")
 	}
 }

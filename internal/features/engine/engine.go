@@ -2,21 +2,17 @@
 package engine
 
 import (
-	"embed"
 	"errors"
-	"io/fs"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 )
 
 const pageSize = 10
-
-//go:embed templates/*.html
-var featureTemplates embed.FS
 
 type healthView struct {
 	Region  string
@@ -52,14 +48,6 @@ type pageData struct {
 
 // Mount registers the authenticated engine overview.
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("engine", templates, "*.html"); err != nil {
-		panic(err)
-	}
-
 	mux.HandleFunc("GET /engine", func(w http.ResponseWriter, r *http.Request) {
 		p, ok := principal(deps, w, r)
 		if !ok {
@@ -70,7 +58,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		data := load(r, deps, p)
-		page := core.Page{Template: "engine", Layout: "shell", Title: "Engine", Principal: p, Data: data}
+		page := core.Page{Layout: "shell", Title: "Engine", Principal: p, View: func(page core.Page) templ.Component { return engineContent(data) }}
 		if deps.CSRF != nil {
 			page.CSRFToken = deps.CSRF.Token(w, r)
 		}

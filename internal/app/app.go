@@ -2,7 +2,6 @@ package app
 
 import (
 	"errors"
-	"io/fs"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -24,6 +23,7 @@ import (
 	"terrascale.tech/dashboard/internal/features/onboarding"
 	"terrascale.tech/dashboard/internal/features/organization"
 	"terrascale.tech/dashboard/internal/features/profile"
+	"terrascale.tech/dashboard/internal/features/querysubscriptions"
 	"terrascale.tech/dashboard/internal/features/settings"
 	"terrascale.tech/dashboard/internal/features/status"
 	"terrascale.tech/dashboard/internal/features/subscriptions"
@@ -34,7 +34,6 @@ import (
 	"terrascale.tech/dashboard/internal/platform/datastar"
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
-	"terrascale.tech/dashboard/internal/ui"
 )
 
 type Application struct {
@@ -53,14 +52,7 @@ func New(cfg config.Config) (*Application, error) {
 	}
 	sessions := session.New(store, session.Options{Secure: cfg.SecureCookies})
 	guard := csrf.New(sessions, csrf.Options{Secure: cfg.SecureCookies})
-	layouts, err := fs.Sub(ui.Assets, "layouts")
-	if err != nil {
-		return nil, err
-	}
-	renderer, err := render.New(layouts, store, guard)
-	if err != nil {
-		return nil, err
-	}
+	renderer := render.New(store, guard)
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo,
@@ -86,6 +78,7 @@ func New(cfg config.Config) (*Application, error) {
 	data.Mount(mux, deps)
 	backups.Mount(mux, deps)
 	subscriptions.Mount(mux, deps)
+	querysubscriptions.Mount(mux, deps)
 	usage.Mount(mux, deps)
 	notifications.Mount(mux, deps)
 	audit.Mount(mux, deps)

@@ -1,7 +1,6 @@
 package settings
 
 import (
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
+	platformrender "terrascale.tech/dashboard/internal/platform/render"
 )
 
 func TestViewerCannotChangeProjectAuthentication(t *testing.T) {
@@ -108,6 +108,59 @@ func TestBackupPolicyCannotTargetAnotherProject(t *testing.T) {
 	}
 }
 
+func TestIdentitySettingsRenderPersistedSecuritySummaryAndProviderRecords(t *testing.T) {
+	store, account := settingsStore("owner")
+	p := account.Principal()
+	if err := store.Update(account.ID, func(current *core.Account) error {
+		org := current.Organizations[p.OrganizationID]
+		org.AuditRetentionDays = 30
+		project := org.Projects[p.ProjectID]
+		project.AuthenticationEnabled = true
+		project.SecuritySettingsUpdatedAt = time.Date(2026, time.September, 24, 12, 0, 0, 0, time.UTC)
+		project.APIKeys["active-key"] = core.APIKey{ID: "active-key", Kind: "api-key", ProjectID: project.ID, Name: "Active key"}
+		project.APIKeys["active-m2m"] = core.APIKey{ID: "active-m2m", Kind: "m2m", ProjectID: project.ID, Name: "Automation client"}
+		project.APIKeys["expired-key"] = core.APIKey{ID: "expired-key", Kind: "api-key", ProjectID: project.ID, Name: "Expired key", ExpiresAt: time.Now().Add(-time.Hour)}
+		project.BackupPolicies["db-one"] = core.BackupPolicy{FullBackupCron: "0 2 * * *", RetentionDays: 7}
+		project.AuthInstance.Resources = []core.AuthResource{{
+			ID: "connection-one", Section: "connections", Status: "Active",
+			Values: map[string]string{
+				"name": "Workforce SSO", "protocol": "OIDC", "issuer": "https://identity.example.test",
+				"client_secret": "must-not-render",
+			},
+		}}
+		org.Projects[project.ID] = project
+		current.Organizations[org.ID] = org
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	csrf := settingsCSRF{}
+	mux := http.NewServeMux()
+	Mount(mux, core.Deps{
+		Store: store, Sessions: settingsSessions{p}, CSRF: csrf, Render: platformrender.New(store, csrf),
+	})
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/settings?tab=identity", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("settings page returned %d: %s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	for _, expected := range []string{
+		"Security summary", "Authentication integration", "Enabled",
+		"Saved identity provider configurations", "Active project credentials", "Active M2M clients",
+		"Saved backup policies", "30 days", "Identity providers", "Workforce SSO", "OIDC",
+		"https://identity.example.test", "Record status", "Saved connection records are dashboard configuration only",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("settings page is missing %q", expected)
+		}
+	}
+	if strings.Contains(body, "must-not-render") || strings.Contains(body, "Expired key") {
+		t.Fatal("settings summary or provider table exposed a secret or inactive credential")
+	}
+}
+
 func settingsStore(role string) (*core.Store, core.Account) {
 	store := core.NewStore()
 	user := core.User{ID: "usr-one", Email: "owner@example.test", Name: "Account user", PasswordHash: "test-password-hash", Role: "owner"}
@@ -155,7 +208,6 @@ func (settingsCSRF) Protect(next http.Handler) http.Handler          { return ne
 
 type settingsRenderer struct{}
 
-func (settingsRenderer) Register(string, fs.FS, ...string) error                  { return nil }
 func (settingsRenderer) Page(http.ResponseWriter, *http.Request, core.Page) error { return nil }
 func (settingsRenderer) Fragment(http.ResponseWriter, *http.Request, core.Fragment) error {
 	return nil

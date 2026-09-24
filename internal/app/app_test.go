@@ -16,7 +16,7 @@ func TestMountedCallerAndAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"/health/ready", "/login", "/onboarding", "/css/terrascale.css", "/js/datastar.js", "/brand/logo-terrascale-auth.svg"} {
+	for _, target := range []string{"/health/ready", "/login", "/onboarding", "/css/terrascale.css", "/js/rocket-components.js", "/brand/logo-terrascale-auth.svg"} {
 		request := httptest.NewRequest(http.MethodGet, "http://dashboard.test"+target, nil)
 		response := httptest.NewRecorder()
 		application.Handler.ServeHTTP(response, request)
@@ -28,6 +28,28 @@ func TestMountedCallerAndAssets(t *testing.T) {
 				t.Error("login page missing matching CSP nonce contract")
 			}
 		}
+	}
+}
+
+func TestUnauthenticatedBillingDeepLinkSurvivesLoginPage(t *testing.T) {
+	application, err := New(config.Config{Demo: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	billing := httptest.NewRecorder()
+	application.Handler.ServeHTTP(billing, httptest.NewRequest(http.MethodGet, "http://dashboard.test/billing?payment=pending", nil))
+	if billing.Code != http.StatusSeeOther {
+		t.Fatalf("billing redirect status = %d, want 303", billing.Code)
+	}
+	location := billing.Header().Get("Location")
+	parsed, err := url.Parse(location)
+	if err != nil || parsed.Path != "/login" || parsed.Query().Get("returnTo") != "/billing?payment=pending" {
+		t.Fatalf("billing login location = %q, parse error = %v", location, err)
+	}
+	login := httptest.NewRecorder()
+	application.Handler.ServeHTTP(login, httptest.NewRequest(http.MethodGet, "http://dashboard.test"+location, nil))
+	if login.Code != http.StatusOK || !strings.Contains(login.Body.String(), `name="redirectTo" value="/billing?payment=pending"`) {
+		t.Fatalf("login lost billing return destination: status %d, body %q", login.Code, login.Body.String())
 	}
 }
 
@@ -95,6 +117,21 @@ func TestRegistrationToOverviewThroughMountedApp(t *testing.T) {
 	application.Handler.ServeHTTP(overviewResponse, overviewRequest)
 	if overviewResponse.Code != http.StatusOK {
 		t.Fatalf("overview: %d %s", overviewResponse.Code, overviewResponse.Body.String())
+	}
+	for _, route := range []struct {
+		path string
+		want string
+	}{
+		{path: "/billing", want: "Plans and billing"},
+		{path: "/subscriptions", want: "Shared result configuration"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "http://dashboard.test"+route.path, nil)
+		request.AddCookie(sessionCookie)
+		response := httptest.NewRecorder()
+		application.Handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), route.want) {
+			t.Fatalf("GET %s: status %d, missing %q, body %q", route.path, response.Code, route.want, response.Body.String())
+		}
 	}
 }
 

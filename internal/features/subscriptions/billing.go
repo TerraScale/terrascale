@@ -78,7 +78,7 @@ func (service BillingService) BeginDemoCheckout(principal core.Principal, planKe
 	if err != nil {
 		return core.CheckoutSession{}, err
 	}
-	returnPath, err = NormalizeReturnPath(returnPath, "/subscriptions")
+	returnPath, err = NormalizeReturnPath(returnPath, "/billing")
 	if err != nil {
 		return core.CheckoutSession{}, err
 	}
@@ -192,7 +192,7 @@ func (service BillingService) CompleteDemoCheckout(principal core.Principal, ses
 		if !ok || session.ID != sessionID || session.OrganizationID != organization.ID || session.OwnerUserID != principal.UserID || session.Status != checkoutOpen || !session.ExpiresAt.After(service.now()) || organization.Billing.CheckoutID != sessionID {
 			return ErrCheckoutUnavailable
 		}
-		path, err := NormalizeReturnPath(session.ReturnPath, "/subscriptions")
+		path, err := NormalizeReturnPath(session.ReturnPath, "/billing")
 		if err != nil {
 			return err
 		}
@@ -271,7 +271,7 @@ func (service BillingService) RecordExternalCheckout(principal core.Principal, p
 	if err != nil {
 		return err
 	}
-	returnPath, err = NormalizeReturnPath(returnPath, "/subscriptions")
+	returnPath, err = NormalizeReturnPath(returnPath, "/billing")
 	if err != nil {
 		return err
 	}

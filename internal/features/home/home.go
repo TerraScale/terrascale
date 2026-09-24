@@ -2,40 +2,33 @@
 package home
 
 import (
-	"embed"
 	"errors"
-	"io/fs"
 	"net/http"
 	"slices"
 	"strings"
 
+	"github.com/a-h/templ"
+
 	"terrascale.tech/dashboard/internal/core"
 )
 
-//go:embed templates/*.html
-var featureTemplates embed.FS
-
 type pageData struct {
-	ProjectName         string
-	DatabaseCount       int
-	MemberCount         int
-	ActiveCredentials   int
-	UnreadNotifications int
-	RecentEvents        []core.AuditEvent
-	MCPConfigured       bool
-	MonitoringStale     bool
+	Tab                       string
+	ProjectName               string
+	ActivityRange             string
+	DatabaseDetail            string
+	OrganizationMembersDetail string
+	NotificationsDetail       string
+	DatabaseCount             int
+	OrganizationMembers       int
+	UnreadNotifications       int
+	TotalNotifications        int
+	ActiveCredentials         int
+	ActivityEvents            int
 }
 
 // Mount registers the dashboard overview.
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("home", templates, "*.html"); err != nil {
-		panic(err)
-	}
-
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -61,23 +54,52 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 				credentials++
 			}
 		}
-		unread := 0
-		for _, notification := range account.Notifications {
-			if notificationVisible(p, notification) && strings.EqualFold(notification.Status, "unread") {
-				unread++
+		organizationMembers, ownerIncluded := 0, false
+		for userID, member := range org.Members {
+			if member.Status == "" || strings.EqualFold(member.Status, "active") {
+				organizationMembers++
+				if userID == org.OwnerUserID {
+					ownerIncluded = true
+				}
 			}
 		}
-		events := scopedEvents(account.AuditEvents, p)
-		slices.SortFunc(events, func(a, b core.AuditEvent) int { return b.OccurredAt.Compare(a.OccurredAt) })
-		events = events[:min(5, len(events))]
+		if !ownerIncluded && org.OwnerUserID != "" {
+			organizationMembers++
+		}
+		notificationCount, unread := 0, 0
+		for _, notification := range account.Notifications {
+			if notificationVisible(p, notification) {
+				notificationCount++
+				if strings.EqualFold(notification.Status, "unread") {
+					unread++
+				}
+			}
+		}
+		tab := "overview"
+		if r.URL.Query().Get("tab") == "connect" {
+			tab = "connect"
+		}
+		activityRange := r.URL.Query().Get("range")
+		if !slices.Contains([]string{"24h", "7d", "30d"}, activityRange) {
+			activityRange = "7d"
+		}
 		data := pageData{
-			ProjectName: project.Name, DatabaseCount: len(project.Databases), MemberCount: len(org.Members),
-			ActiveCredentials: credentials, UnreadNotifications: unread, RecentEvents: events,
-			MCPConfigured: false,
+			Tab: tab, ProjectName: project.Name, ActivityRange: activityRange,
+			DatabaseCount: len(project.Databases), OrganizationMembers: organizationMembers,
+			UnreadNotifications: unread, TotalNotifications: notificationCount,
+			ActiveCredentials: credentials, ActivityEvents: len(scopedEvents(account.AuditEvents, p)),
+			DatabaseDetail: "saved project databases", OrganizationMembersDetail: "active organization members",
+			NotificationsDetail: "notifications loaded",
+		}
+		if data.DatabaseCount == 0 {
+			data.DatabaseDetail = "none saved"
+		}
+		if data.OrganizationMembers == 1 {
+			data.OrganizationMembersDetail = "active organization member"
 		}
 		page := core.Page{
-			Template: "home", Layout: "shell", Title: "Overview", Principal: p,
-			Data: data, CSRFToken: deps.CSRF.Token(w, r),
+			Layout: "shell", Title: "Overview", Principal: p,
+			View: func(core.Page) templ.Component { return homeView(data) },
 		}
 		if err := deps.Render.Page(w, r, page); err != nil {
 			http.Error(w, "could not render overview", http.StatusInternalServerError)

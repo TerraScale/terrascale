@@ -2,7 +2,6 @@ package engine
 
 import (
 	"errors"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,7 +9,6 @@ import (
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/platform/render"
-	"terrascale.tech/dashboard/internal/ui"
 	sdk "terrascale.tech/sdk"
 )
 
@@ -35,15 +33,8 @@ func TestEngineRendersScopedHealthAndRegionCatalogIndependently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	layouts, err := fs.Sub(ui.Assets, "layouts")
-	if err != nil {
-		t.Fatal(err)
-	}
 	csrf := engineTestCSRF{}
-	renderer, err := render.New(layouts, store, csrf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	renderer := render.New(store, csrf)
 	factory := engineTestSDK{baseURL: provider.URL, httpClient: provider.Client()}
 	deps := core.Deps{Store: store, Sessions: engineTestSessions{account.Principal()}, CSRF: csrf, Render: renderer, SDK: factory}
 	mux := http.NewServeMux()

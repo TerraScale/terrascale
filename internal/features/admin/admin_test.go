@@ -2,7 +2,6 @@ package admin
 
 import (
 	"errors"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,7 +10,6 @@ import (
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/platform/render"
-	"terrascale.tech/dashboard/internal/ui"
 )
 
 func TestAdminRoutesAndActionsUsePersistedAdminAuthorization(t *testing.T) {
@@ -19,6 +17,7 @@ func TestAdminRoutesAndActionsUsePersistedAdminAuthorization(t *testing.T) {
 	adminAccount := newAdminAccount(t, store, "admin@example.test", true)
 	member := newAdminAccount(t, store, "member@example.test", false)
 	intruder := newAdminAccount(t, store, "intruder@example.test", false)
+	seedAdminDatabase(t, store, member, "Tenant database", "GRU")
 
 	principal := adminAccount.Principal()
 	principal.PlatformAdmin = false // The store remains the source of authority.
@@ -54,6 +53,23 @@ func TestAdminRoutesAndActionsUsePersistedAdminAuthorization(t *testing.T) {
 				t.Fatal("existing plan key is not read-only and submitted")
 			}
 		}
+	}
+	for path, expected := range map[string]string{
+		"/admin/databases": "Tenant database",
+		"/admin/estate":    "GRU",
+		"/admin/usage":     "Provider-metered usage is unavailable.",
+	} {
+		page := httptest.NewRecorder()
+		mux.ServeHTTP(page, httptest.NewRequest(http.MethodGet, path, nil))
+		if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), expected) {
+			t.Fatalf("GET %s = %d, want 200 with %q; body=%s", path, page.Code, expected, page.Body.String())
+		}
+	}
+	databaseSearch := httptest.NewRecorder()
+	mux.ServeHTTP(databaseSearch, httptest.NewRequest(http.MethodGet, "/admin/databases?q=Tenant", nil))
+	if databaseSearch.Code != http.StatusOK || !strings.Contains(databaseSearch.Body.String(), "Tenant database") ||
+		!strings.Contains(databaseSearch.Body.String(), "Not available") {
+		t.Fatalf("database inventory search did not show unavailable version details: status=%d body=%s", databaseSearch.Code, databaseSearch.Body.String())
 	}
 
 	org := member.Organizations[member.ActiveOrganizationID]
@@ -132,6 +148,13 @@ func TestAdminRouteRejectsForgedPrincipalAndInvalidCSRF(t *testing.T) {
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("forged admin page status = %d, want 403", response.Code)
 	}
+	for _, path := range []string{"/admin/databases", "/admin/estate", "/admin/usage"} {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("forged admin route %s status = %d, want 403", path, response.Code)
+		}
+	}
 	if err := NewService(store).RenameOrganization(forged, adminAccount.ID, adminAccount.ActiveOrganizationID, "Nope"); !errors.Is(err, core.ErrForbidden) {
 		t.Fatalf("direct service mutation error = %v, want forbidden", err)
 	}
@@ -145,6 +168,49 @@ func TestAdminRouteRejectsForgedPrincipalAndInvalidCSRF(t *testing.T) {
 	updated, _ := store.Snapshot(member.ID)
 	if updated.Organizations[org.ID].Name != org.Name {
 		t.Fatal("organization changed after invalid CSRF")
+	}
+}
+
+func seedAdminDatabase(t *testing.T, store *core.Store, account core.Account, name, region string) {
+	t.Helper()
+	err := store.Update(account.ID, func(current *core.Account) error {
+		org, ok := current.Organizations[current.ActiveOrganizationID]
+		if !ok {
+			return core.ErrNotFound
+		}
+		project, ok := org.Projects[current.ActiveProjectID]
+		if !ok {
+			return core.ErrNotFound
+		}
+		project.Databases["db-admin-fixture"] = core.Database{
+			ID: "db-admin-fixture", ProjectID: project.ID, Name: name, Status: "ready", Region: region,
+		}
+		org.Projects[project.ID] = project
+		current.Organizations[org.ID] = org
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUsageInventoryCountsCanonicalRecordsOnce(t *testing.T) {
+	database := core.Database{ID: "database-1"}
+	project := core.Project{
+		ID: "project-1", Databases: map[string]core.Database{database.ID: database},
+	}
+	organization := core.Organization{
+		ID: "organization-1", Projects: map[string]core.Project{project.ID: project},
+	}
+	accounts := []core.Account{
+		{ID: "account-1", Organizations: map[string]core.Organization{organization.ID: organization}},
+		{ID: "account-2", Organizations: map[string]core.Organization{organization.ID: organization}},
+	}
+
+	got := summarizeInventory(accounts)
+	want := inventoryCounts{Accounts: 2, Organizations: 1, Projects: 1, Databases: 1}
+	if got != want {
+		t.Fatalf("canonical inventory = %+v, want %+v", got, want)
 	}
 }
 
@@ -177,14 +243,7 @@ func newAdminAccount(t *testing.T, store *core.Store, email string, platformAdmi
 
 func adminTestMux(t *testing.T, store *core.Store, principal core.Principal, csrf adminTestCSRF) *http.ServeMux {
 	t.Helper()
-	layouts, err := fs.Sub(ui.Assets, "layouts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	renderer, err := render.New(layouts, store, csrf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	renderer := render.New(store, csrf)
 	mux := http.NewServeMux()
 	Mount(mux, core.Deps{
 		Store: store, Sessions: adminTestSessions{principal: principal},

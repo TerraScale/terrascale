@@ -2,21 +2,18 @@
 package notifications
 
 import (
-	"embed"
 	"errors"
-	"io/fs"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/a-h/templ"
+
 	"terrascale.tech/dashboard/internal/core"
 )
 
 const pageSize = 10
-
-//go:embed templates/*.html
-var featureTemplates embed.FS
 
 type pageData struct {
 	Notifications []core.Notification
@@ -35,14 +32,6 @@ type pageData struct {
 
 // Mount registers the notification inbox and its read mutations.
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("notifications", templates, "*.html"); err != nil {
-		panic(err)
-	}
-
 	mux.HandleFunc("GET /notifications", func(w http.ResponseWriter, r *http.Request) {
 		p, account, ok := signedIn(deps, w, r)
 		if !ok {
@@ -162,8 +151,8 @@ func verifyCSRF(deps core.Deps, w http.ResponseWriter, r *http.Request) bool {
 
 func render(w http.ResponseWriter, r *http.Request, deps core.Deps, p core.Principal, data pageData) {
 	page := core.Page{
-		Template: "notifications", Layout: "shell", Title: "Notifications", Principal: p,
-		Data: data, CSRFToken: deps.CSRF.Token(w, r),
+		Layout: "shell", Title: "Notifications", Principal: p,
+		View: func(view core.Page) templ.Component { return notificationsView(data, view.CSRFToken) },
 	}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render notifications", http.StatusInternalServerError)

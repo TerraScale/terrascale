@@ -3,25 +3,22 @@ package audit
 
 import (
 	"bytes"
-	"embed"
 	"encoding/csv"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/a-h/templ"
+
 	"terrascale.tech/dashboard/internal/core"
 )
 
 const pageSize = 10
-
-//go:embed templates/*.html
-var featureTemplates embed.FS
 
 type row struct {
 	Event       core.AuditEvent
@@ -60,14 +57,6 @@ type filters struct {
 
 // Mount registers audit history and export routes.
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("audit", templates, "*.html"); err != nil {
-		panic(err)
-	}
-
 	mux.HandleFunc("GET /audit", func(w http.ResponseWriter, r *http.Request) {
 		p, account, ok := signedIn(deps, w, r)
 		if !ok {
@@ -147,9 +136,9 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 }
 
 func page(w http.ResponseWriter, r *http.Request, deps core.Deps, p core.Principal, data pageData) {
-	page := core.Page{Template: "audit", Layout: "shell", Title: "Audit", Principal: p, Data: data}
-	if deps.CSRF != nil {
-		page.CSRFToken = deps.CSRF.Token(w, r)
+	page := core.Page{
+		Layout: "shell", Title: "Audit", Principal: p,
+		View: func(core.Page) templ.Component { return auditView(data) },
 	}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render audit history", http.StatusInternalServerError)

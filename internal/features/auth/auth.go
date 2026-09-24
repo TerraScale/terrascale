@@ -1,11 +1,9 @@
 package auth
 
 import (
-	"embed"
 	"encoding/json/v2"
 	"errors"
 	"io"
-	"io/fs"
 	"mime"
 	"net/http"
 	"net/mail"
@@ -15,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 )
 
@@ -30,6 +29,19 @@ type RegistrationInput struct {
 
 type apiError struct {
 	Error string `json:"error"`
+}
+
+type loginPageData struct {
+	Error      string
+	RedirectTo string
+}
+
+type authStatusPageData struct {
+	Title         string
+	Description   string
+	Message       string
+	ShowEmailForm bool
+	Flow          bool
 }
 
 type loginUser struct {
@@ -60,9 +72,6 @@ type InputError string
 
 func (e InputError) Error() string { return string(e) }
 
-//go:embed templates/*.html
-var featureTemplates embed.FS
-
 var dummyPasswordHash = sync.OnceValue(func() string {
 	hash, err := HashPassword("dashboard-invalid-login-dummy-password")
 	if err != nil {
@@ -73,13 +82,6 @@ var dummyPasswordHash = sync.OnceValue(func() string {
 
 func Mount(mux *http.ServeMux, deps core.Deps) {
 	_ = dummyPasswordHash()
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("login", templates, "login.html"); err != nil {
-		panic(err)
-	}
 
 	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
 		if principal, ok := currentPrincipal(deps.Sessions, r); ok {
@@ -88,19 +90,127 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 				return
 			}
 		}
+		returnTo := r.URL.Query().Get("returnTo")
+		if returnTo == "" {
+			returnTo = r.URL.Query().Get("next")
+		}
+		data := loginPageData{Error: r.URL.Query().Get("error"), RedirectTo: safeRedirectTarget(returnTo)}
 		page := core.Page{
-			Template: "login",
-			Layout:   "auth",
-			Title:    "Sign in",
-			Data:     struct{ Error string }{Error: r.URL.Query().Get("error")},
+			Layout: "auth",
+			Title:  "Sign in",
+			View: func(p core.Page) templ.Component {
+				return loginView(data, p.CSRFToken)
+			},
 		}
 		if err := deps.Render.Page(w, r, page); err != nil {
 			http.Error(w, "could not render login page", http.StatusInternalServerError)
 		}
 	})
+	mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) {
+		renderAuthStatus(w, r, deps, authStatusPageData{
+			Title:         "Reset password",
+			Description:   "Password recovery is unavailable in the in-memory demo.",
+			Message:       "This demo does not send recovery emails or accept password reset tokens. Submitting this form will not send an email.",
+			ShowEmailForm: true,
+		})
+	})
+	mux.HandleFunc("POST /reset-password", func(w http.ResponseWriter, r *http.Request) {
+		renderAuthStatus(w, r, deps, authStatusPageData{
+			Title:         "Reset password",
+			Description:   "Password recovery is unavailable in the in-memory demo.",
+			Message:       "No recovery request was processed. This demo does not send recovery emails or accept password reset tokens; no password was changed.",
+			ShowEmailForm: true,
+		})
+	})
+	mux.HandleFunc("GET /agent/approve", func(w http.ResponseWriter, r *http.Request) {
+		renderAuthStatus(w, r, deps, authStatusPageData{
+			Title:       "Approve agent access",
+			Description: "This in-memory demo cannot verify agent approval requests.",
+			Message:     "No verifiable agent request is available, and no access was granted.",
+			Flow:        true,
+		})
+	})
+	mux.HandleFunc("POST /agent/approve/submit", func(w http.ResponseWriter, r *http.Request) {
+		renderAuthStatus(w, r, deps, authStatusPageData{
+			Title:       "Approve agent access",
+			Description: "This in-memory demo cannot verify agent approval requests.",
+			Message:     "The approval was rejected because no verifiable agent request is available. No access was granted.",
+			Flow:        true,
+		})
+	})
+	mux.HandleFunc("GET /cli/approve", func(w http.ResponseWriter, r *http.Request) {
+		renderAuthStatus(w, r, deps, authStatusPageData{
+			Title:       "Approve CLI access",
+			Description: "This in-memory demo cannot verify CLI device requests.",
+			Message:     "No verifiable CLI request is available, and no access was granted.",
+			Flow:        true,
+		})
+	})
+	mux.HandleFunc("POST /cli/approve/submit", func(w http.ResponseWriter, r *http.Request) {
+		renderAuthStatus(w, r, deps, authStatusPageData{
+			Title:       "Approve CLI access",
+			Description: "This in-memory demo cannot verify CLI device requests.",
+			Message:     "The approval was rejected because no verifiable CLI request is available. No access was granted.",
+			Flow:        true,
+		})
+	})
+	mux.HandleFunc("GET /oauth/consent", oauthConsent(deps))
+	mux.HandleFunc("POST /oauth/consent/submit", func(w http.ResponseWriter, r *http.Request) {
+		renderAuthStatus(w, r, deps, authStatusPageData{
+			Title:       "Authorize application",
+			Description: "This in-memory demo cannot verify OAuth authorization requests.",
+			Message:     "The authorization request was rejected. No access was granted.",
+			Flow:        true,
+		})
+	})
 	mux.HandleFunc("POST /api/v1/auth/password/login", login(deps))
 	mux.HandleFunc("POST /api/v1/auth/logout", logout(deps))
 	mux.HandleFunc("GET /api/v1/auth/me", currentUser(deps))
+}
+
+func oauthConsent(deps core.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.Sessions == nil {
+			redirectToLogin(w, r)
+			return
+		}
+		principal, authenticated := currentPrincipal(deps.Sessions, r)
+		if !authenticated || deps.Store == nil {
+			redirectToLogin(w, r)
+			return
+		}
+		if _, err := deps.Store.SnapshotAs(principal); err != nil {
+			redirectToLogin(w, r)
+			return
+		}
+		renderAuthStatus(w, r, deps, authStatusPageData{
+			Title:       "Authorize application",
+			Description: "This in-memory demo cannot verify OAuth authorization requests.",
+			Message:     "The authorization request is missing or cannot be verified. No access was granted.",
+			Flow:        true,
+		})
+	}
+}
+
+func redirectToLogin(w http.ResponseWriter, r *http.Request) {
+	returnTo := safeRedirectTarget(r.URL.RequestURI())
+	if returnTo == "/" {
+		returnTo = "/oauth/consent"
+	}
+	http.Redirect(w, r, "/login?returnTo="+url.QueryEscape(returnTo), http.StatusSeeOther)
+}
+
+func renderAuthStatus(w http.ResponseWriter, r *http.Request, deps core.Deps, data authStatusPageData) {
+	page := core.Page{
+		Layout: "auth",
+		Title:  data.Title,
+		View: func(p core.Page) templ.Component {
+			return authStatusView(data, p.CSRFToken)
+		},
+	}
+	if err := deps.Render.Page(w, r, page); err != nil {
+		http.Error(w, "could not render authentication status page", http.StatusInternalServerError)
+	}
 }
 
 // RegisterAccount validates and creates one independently authenticated account.
@@ -216,7 +326,7 @@ func login(deps core.Deps) http.HandlerFunc {
 		passwordMatches := VerifyPassword(passwordHash, input.Password)
 		if !exists || !passwordMatches {
 			if isForm {
-				http.Redirect(w, r, "/login?error="+url.QueryEscape("Incorrect email or password."), http.StatusSeeOther)
+				redirectToLoginAfterFormFailure(w, r, input.RedirectTo)
 				return
 			}
 			writeJSON(w, http.StatusUnauthorized, apiError{Error: "invalid_credentials"})
@@ -235,7 +345,7 @@ func login(deps core.Deps) http.HandlerFunc {
 				return
 			}
 			if isForm {
-				http.Redirect(w, r, "/login?error="+url.QueryEscape("Incorrect email or password."), http.StatusSeeOther)
+				redirectToLoginAfterFormFailure(w, r, input.RedirectTo)
 				return
 			}
 			writeJSON(w, http.StatusUnauthorized, apiError{Error: "invalid_credentials"})
@@ -287,7 +397,7 @@ func currentPrincipal(sessions core.Sessions, r *http.Request) (core.Principal, 
 }
 
 func safeRedirectTarget(raw string) string {
-	if raw == "" {
+	if raw == "" || len(raw) > 2048 {
 		return "/"
 	}
 	target, err := url.Parse(raw)
@@ -295,6 +405,12 @@ func safeRedirectTarget(raw string) string {
 		return "/"
 	}
 	return target.RequestURI()
+}
+
+func redirectToLoginAfterFormFailure(w http.ResponseWriter, r *http.Request, returnTo string) {
+	location := "/login?error=" + url.QueryEscape("Incorrect email or password.") +
+		"&returnTo=" + url.QueryEscape(safeRedirectTarget(returnTo))
+	http.Redirect(w, r, location, http.StatusSeeOther)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

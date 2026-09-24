@@ -1,17 +1,30 @@
 package apikeys
 
 import (
+	"bytes"
 	"context"
 	json "encoding/json/v2"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"terrascale.tech/dashboard/internal/core"
 	sdk "terrascale.tech/sdk"
 )
+
+func TestAPIKeyContentEscapesOneTimeSecret(t *testing.T) {
+	var out bytes.Buffer
+	secret := `secret<script>alert(1)</script>`
+	if err := apiKeysContent(core.Page{CSRFToken: "test-csrf"}, pageData{CreatedSecret: secret}).Render(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "<script>") || !strings.Contains(out.String(), "&lt;script&gt;") {
+		t.Fatalf("secret was not HTML escaped: %s", out.String())
+	}
+}
 
 type testSessions struct{ p core.Principal }
 
@@ -32,12 +45,124 @@ func (testCSRF) Protect(h http.Handler) http.Handler             { return h }
 
 type testRenderer struct{}
 
-func (testRenderer) Register(string, fs.FS, ...string) error { return nil }
 func (testRenderer) Page(http.ResponseWriter, *http.Request, core.Page) error {
 	return nil
 }
 func (testRenderer) Fragment(http.ResponseWriter, *http.Request, core.Fragment) error {
 	return nil
+}
+
+type renderingRenderer struct{ testRenderer }
+
+func (renderingRenderer) Page(w http.ResponseWriter, r *http.Request, page core.Page) error {
+	return page.View(page).Render(r.Context(), w)
+}
+
+func TestCredentialPageFiltersProjectKeys(t *testing.T) {
+	deps, p := fixture(t, "owner")
+	if err := deps.Store.UpdateAs(p, func(a *core.Account) error {
+		org := a.Organizations[p.OrganizationID]
+		project := org.Projects[p.ProjectID]
+		project.APIKeys["m2m-1"] = core.APIKey{ID: "m2m-1", Kind: "m2m", ProjectID: p.ProjectID, DatabaseID: "db-2", Name: "worker", Scopes: []string{"database:read"}}
+		project.APIKeys["old-1"] = core.APIKey{ID: "old-1", Kind: "api-key", ProjectID: p.ProjectID, Name: "revoked", RevokedAt: time.Now().UTC(), Scopes: []string{"database:read"}}
+		org.Projects[p.ProjectID] = project
+		a.Organizations[p.OrganizationID] = org
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deps.Render = renderingRenderer{}
+	mux := http.NewServeMux()
+	Mount(mux, deps)
+	for _, tc := range []struct{ path, want, absent string }{
+		{"/api-keys?kind=m2m&status=active&databaseId=db-2&q=work", "worker", "Existing"},
+		{"/api-keys?kind=key&status=inactive", "revoked", "worker"},
+		{"/api-keys?kind=key&q=Existing", "Existing", "revoked"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), ">"+tc.want+"<") || strings.Contains(w.Body.String(), ">"+tc.absent+"<") {
+				t.Fatalf("credential filter status %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestCredentialCreationDisclosuresStartClosedAndOpenSelectedForm(t *testing.T) {
+	deps, _ := fixture(t, "owner")
+	deps.Render = renderingRenderer{}
+	mux := http.NewServeMux()
+	Mount(mux, deps)
+	for _, tc := range []struct {
+		path    string
+		openKey bool
+		openM2M bool
+	}{
+		{path: "/api-keys"},
+		{path: "/api-keys?create=key", openKey: true},
+		{path: "/api-keys?create=m2m", openM2M: true},
+		{path: "/api-keys?create=unknown"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), ">Existing<") {
+				t.Fatalf("credential list status %d: %s", w.Code, w.Body.String())
+			}
+			openings := regexp.MustCompile(`<details[^>]*>`).FindAllString(w.Body.String(), -1)
+			if len(openings) != 2 || strings.Contains(openings[0], " open") != tc.openKey || strings.Contains(openings[1], " open") != tc.openM2M {
+				t.Fatalf("creation disclosure state = %v, want key=%t m2m=%t", openings, tc.openKey, tc.openM2M)
+			}
+			if !strings.Contains(w.Body.String(), `action="/api/v1/dashboard/credentials/key"`) || !strings.Contains(w.Body.String(), `action="/api/v1/dashboard/credentials/m2m"`) || !strings.Contains(w.Body.String(), `name="_csrf" value="test-token"`) {
+				t.Fatal("creation forms lost their endpoint or CSRF token")
+			}
+		})
+	}
+	viewer, _ := fixture(t, "viewer")
+	viewer.Render = renderingRenderer{}
+	viewerMux := http.NewServeMux()
+	Mount(viewerMux, viewer)
+	w := httptest.NewRecorder()
+	viewerMux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api-keys?create=key", nil))
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), `action="/api/v1/dashboard/credentials/key"`) {
+		t.Fatalf("viewer saw creation form: status %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCredentialSummaryCountsScopedInventoryBeforeFilters(t *testing.T) {
+	deps, p := fixture(t, "owner")
+	if err := deps.Store.UpdateAs(p, func(a *core.Account) error {
+		org := a.Organizations[p.OrganizationID]
+		project := org.Projects[p.ProjectID]
+		project.APIKeys["soon"] = core.APIKey{ID: "soon", Kind: "api-key", ProjectID: p.ProjectID, Name: "soon", ExpiresAt: time.Now().Add(7 * 24 * time.Hour)}
+		project.APIKeys["expired"] = core.APIKey{ID: "expired", Kind: "api-key", ProjectID: p.ProjectID, Name: "expired", ExpiresAt: time.Now().Add(-time.Hour)}
+		project.APIKeys["revoked"] = core.APIKey{ID: "revoked", Kind: "api-key", ProjectID: p.ProjectID, Name: "revoked", RevokedAt: time.Now()}
+		project.APIKeys["machine"] = core.APIKey{ID: "machine", Kind: "m2m", ProjectID: p.ProjectID, Name: "machine"}
+		org.Projects[p.ProjectID] = project
+		a.Organizations[p.OrganizationID] = org
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deps.Render = renderingRenderer{}
+	mux := http.NewServeMux()
+	Mount(mux, deps)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api-keys?kind=m2m", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("credential summary status = %d: %s", w.Code, w.Body.String())
+	}
+	for label, want := range map[string]string{"Active keys": "2", "Expiring keys": "1", "M2M clients": "1"} {
+		pattern := regexp.MustCompile(`(?s)<dt>` + regexp.QuoteMeta(label) + `</dt>\s*<dd><span class="ts-kpi-value">(\d+)</span>`)
+		match := pattern.FindStringSubmatch(w.Body.String())
+		if len(match) != 2 || match[1] != want {
+			t.Fatalf("%s count = %v, want %s: %s", label, match, want, w.Body.String())
+		}
+	}
+	if strings.Contains(w.Body.String(), ">Existing<") || !strings.Contains(w.Body.String(), ">machine<") {
+		t.Fatalf("credential filter did not apply to rows: %s", w.Body.String())
+	}
 }
 
 type countingIssuer struct{ calls int }

@@ -1,0 +1,99 @@
+package audit
+
+import (
+	"fmt"
+	"net/url"
+)
+
+templ auditView(data pageData) {
+	<main class="ts-page ts-audit-page">
+		<header class="ts-toolbar">
+			<div class="ts-audit-toolbar-title"><div><p class="ts-eyebrow">Security and access</p><h1>Audit</h1><p class="ts-meta">Recent activity for the selected organization and project.</p></div></div>
+			<ts-menu>
+				<details class="ts-menu ts-menu-end">
+					<summary class="ts-btn ts-btn-secondary" aria-label="Export audit events">Export</summary>
+					<div class="ts-menu-panel" aria-label="Export formats">
+						<a class="ts-menu-item" href={ fmt.Sprintf("/audit/export?format=csv&range=%s&severity=%s&action=%s&search=%s", url.QueryEscape(data.Range), url.QueryEscape(data.Severity), url.QueryEscape(data.Action), url.QueryEscape(data.Search)) }>Export CSV</a>
+						<a class="ts-menu-item" href={ fmt.Sprintf("/audit/export?format=json&range=%s&severity=%s&action=%s&search=%s", url.QueryEscape(data.Range), url.QueryEscape(data.Severity), url.QueryEscape(data.Action), url.QueryEscape(data.Search)) }>Export JSON</a>
+					</div>
+				</details>
+			</ts-menu>
+		</header>
+		<section class="ts-audit-breakdown" aria-label="Severity breakdown">
+			<h2>Severity breakdown</h2>
+			<p>{ fmt.Sprintf("%d critical · %d warnings · %d informational", data.Critical, data.Warn, data.Info) }</p>
+			<p>Retention: { fmt.Sprint(data.Retention) } days</p>
+		</section>
+		<form method="get" action="/audit" class="ts-filters ts-audit-filters">
+			<label class="ts-filter-field ts-audit-search-field">Search <input class="ts-input" type="search" name="search" value={ data.Search }/></label>
+			<label class="ts-filter-field">
+				Action
+				<select class="ts-select" name="action">
+					for _, option := range data.ActionOptions {
+						<option value={ option } selected?={ option == data.Action }>
+							if option == "all" {
+								All actions
+							} else {
+								{ option }
+							}
+						</option>
+					}
+				</select>
+			</label>
+			<label class="ts-filter-field">
+				Severity
+				<select class="ts-select" name="severity">
+					<option value="all" selected?={ data.Severity == "all" }>All severities</option>
+					<option value="info" selected?={ data.Severity == "info" }>Info</option>
+					<option value="warn" selected?={ data.Severity == "warn" }>Warning</option>
+					<option value="critical" selected?={ data.Severity == "critical" }>Critical</option>
+				</select>
+			</label>
+			<label class="ts-filter-field">
+				Range
+				<select class="ts-select" name="range">
+					<option value="24h" selected?={ data.Range == "24h" }>Last 24 hours</option>
+					<option value="7d" selected?={ data.Range == "7d" }>Last 7 days</option>
+					<option value="30d" selected?={ data.Range == "30d" }>Last 30 days</option>
+					<option value="90d" selected?={ data.Range == "90d" }>Last 90 days</option>
+				</select>
+			</label>
+			<button class="ts-btn ts-btn-primary" type="submit">Apply filters</button>
+		</form>
+		<section aria-labelledby="recent-activity">
+			<h2 id="recent-activity">Recent activity</h2>
+			if len(data.Rows) > 0 {
+				<p>Showing { fmt.Sprint(len(data.Rows)) } of { fmt.Sprint(data.Filtered) } events</p>
+				<table>
+					<thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Source</th><th>Severity</th><th>Outcome</th></tr></thead>
+					<tbody>
+						for _, item := range data.Rows {
+							<tr>
+								<td><time datetime={ item.Event.OccurredAt.Format("2006-01-02T15:04:05Z07:00") }>{ item.Event.OccurredAt.UTC().Format("Jan 2, 2006 15:04 UTC") }</time></td>
+								<td>{ item.Event.Actor } <small>({ item.ActorType })</small></td>
+								<td>{ item.ActionLabel } <small>{ item.Event.Action }</small></td>
+								<td>{ item.Event.Target }</td>
+								<td>{ item.Event.Source }</td>
+								<td>{ item.Severity }</td>
+								<td>{ item.Outcome }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+				if data.PageCount > 1 {
+					<nav aria-label="Audit pages">
+						<span>Page { fmt.Sprint(data.Page) } of { fmt.Sprint(data.PageCount) }</span>
+						if data.HasPrevious {
+							<a href={ fmt.Sprintf("/audit?page=%d&range=%s&severity=%s&action=%s&search=%s", data.Previous, url.QueryEscape(data.Range), url.QueryEscape(data.Severity), url.QueryEscape(data.Action), url.QueryEscape(data.Search)) }>Previous</a>
+						}
+						if data.HasNext {
+							<a href={ fmt.Sprintf("/audit?page=%d&range=%s&severity=%s&action=%s&search=%s", data.Next, url.QueryEscape(data.Range), url.QueryEscape(data.Severity), url.QueryEscape(data.Action), url.QueryEscape(data.Search)) }>Next</a>
+						}
+					</nav>
+				}
+			} else {
+				<section class="ts-empty-state"><h3>No audit events match these filters</h3><p>{ fmt.Sprint(data.Filtered) } events are retained under the current policy. Try a wider time range or clear the search.</p></section>
+			}
+		</section>
+	</main>
+}

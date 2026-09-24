@@ -190,7 +190,8 @@ func (s Service) CreateProject(p core.Principal, name, region, backupRegion stri
 		result = core.Project{
 			ID: core.NewID("prj"), OrganizationID: org.ID, Name: name, Region: primary,
 			BackupRegion: backup, Regions: validatedRegions, Slug: projectSlug, Status: statusActive,
-			Databases: make(map[string]core.Database), APIKeys: make(map[string]core.APIKey), CreatedAt: now,
+			Databases: make(map[string]core.Database), APIKeys: make(map[string]core.APIKey),
+			SharedResultConfigs: make(map[string]core.SharedResultConfig), CreatedAt: now,
 		}
 		org.Projects[result.ID] = result
 		a.Organizations[org.ID] = org

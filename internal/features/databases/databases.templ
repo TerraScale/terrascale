@@ -1,0 +1,70 @@
+package databases
+
+import "terrascale.tech/dashboard/internal/core"
+
+templ databasesContent(page core.Page, d pageData) {
+	<main class="ts-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
+		<header class="ts-section"><h1>Databases</h1><p>Create and manage databases in the selected project.</p></header>
+		if d.Error != "" {
+			<p class="ts-alert ts-alert-danger" role="alert">{ d.Error }</p>
+		}
+		if d.Detail != nil {
+			<section class="ts-card ts-section" aria-labelledby="database-title">
+				<p><a href="/databases">← All databases</a></p>
+				<h2 id="database-title">{ d.Detail.Name }</h2>
+				<dl><dt>Status</dt><dd>{ d.Detail.Status }</dd><dt>Region</dt><dd>{ d.Detail.Region }</dd></dl>
+				<nav aria-label="Database tools"><a href={ "/data?view=table&databaseId=" + d.Detail.ID }>Data browser</a> · <a href={ "/schema?databaseId=" + d.Detail.ID }>Schema</a> · <a href={ "/indexes?databaseId=" + d.Detail.ID }>Indexes</a> · <a href={ "/backups?databaseId=" + d.Detail.ID }>Backups</a></nav>
+			</section>
+			if d.Detail.Status == "ready" && d.CanProvision {
+				<section class="ts-card ts-section"><h2>Create branch</h2><form method="post" action="/api/v1/dashboard/databases/branch" class="ts-stack-12"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.Detail.ID }/><label class="ts-label" for="branch-name">New database name</label><input class="ts-input" id="branch-name" name="name" pattern="[a-z0-9][a-z0-9\-]*" maxlength="63" required/><button class="ts-btn ts-btn-primary" type="submit">Create branch</button></form></section>
+			}
+			if d.CanManage {
+				<section class="ts-card ts-section">
+					<h2>Delete database</h2>
+					<p>Type <strong>{ d.Detail.Name }</strong> to confirm.</p>
+					<form method="post" action="/api/v1/dashboard/databases/delete" class="ts-stack-12"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.Detail.ID }/><label class="ts-label" for="confirm-name">Database name</label><input class="ts-input" id="confirm-name" name="confirmName" required autocomplete="off"/><button class="ts-btn ts-btn-secondary" type="submit">Delete database</button></form>
+				</section>
+			}
+		} else {
+			<form class="ts-filters" method="get" action="/databases" role="search" aria-label="Filter databases">
+				<input class="ts-input" type="search" name="q" value={ d.Search } placeholder="Search databases..." aria-label="Search databases"/><button class="ts-btn ts-btn-secondary" type="submit">Filter</button>
+				if d.Search != "" {
+					<a class="ts-btn ts-btn-ghost" href="/databases">Clear</a>
+				}
+			</form>
+			if d.CanProvision {
+				<details id="create-database" class="ts-card ts-section ts-disclosure" open?={ d.OpenCreate }>
+					<summary class="ts-btn ts-btn-primary">Create database</summary>
+					<form method="post" action="/api/v1/dashboard/databases" class="ts-stack-12">
+						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+						<label class="ts-label" for="database-name">Name</label><input class="ts-input" id="database-name" name="name" pattern="[a-z0-9][a-z0-9\-]*" maxlength="63" required/>
+						<label class="ts-label" for="database-region">Region</label><select class="ts-input" id="database-region" name="region"><option value="GRU" selected?={ d.Region == "GRU" }>São Paulo (GRU)</option><option value="SFO" selected?={ d.Region == "SFO" }>San Francisco (SFO)</option><option value="FRA" selected?={ d.Region == "FRA" }>Frankfurt (FRA)</option></select>
+						<ts-region-map data-src="/brand/region-map.svg" data-select-id="database-region" aria-hidden="true"></ts-region-map>
+						<button class="ts-btn ts-btn-primary" type="submit">Create database</button>
+					</form>
+				</details>
+			}
+			<section class="ts-section">
+				<h2>Project databases</h2>
+				if len(d.Databases) > 0 {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<thead><tr><th>Name</th><th>Status</th><th>Region</th></tr></thead>
+							<tbody>
+								for _, db := range d.Databases {
+									<tr><td><a href={ "/databases/" + db.ID }>{ db.Name }</a></td><td>{ db.Status }</td><td>{ db.Region }</td></tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					if d.Search != "" {
+						<p>No databases match this filter.</p>
+					} else {
+						<p>No databases yet.</p>
+					}
+				}
+			</section>
+		}
+	</main>
+}

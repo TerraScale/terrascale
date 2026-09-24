@@ -3,7 +3,6 @@ package access_test
 import (
 	"errors"
 	"io"
-	"io/fs"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -20,7 +19,6 @@ import (
 	"terrascale.tech/dashboard/internal/platform/datastar"
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
-	"terrascale.tech/dashboard/internal/ui"
 )
 
 type lifecycleApp struct {
@@ -75,14 +73,7 @@ func newLifecycleApp(t *testing.T) lifecycleApp {
 
 	sessions := session.New(store, session.Options{CookieName: "ts_session", Lifetime: time.Hour})
 	guard := csrf.New(sessions, csrf.Options{CookieName: "ts_csrf"})
-	layouts, err := fs.Sub(ui.Assets, "layouts")
-	if err != nil {
-		t.Fatalf("fs.Sub(ui.Assets): %v", err)
-	}
-	renderer, err := render.New(layouts, store, guard)
-	if err != nil {
-		t.Fatalf("render.New(): %v", err)
-	}
+	renderer := render.New(store, guard)
 	capturedRenderer := &rendererErrors{Renderer: renderer}
 	deps := core.Deps{Store: store, Sessions: sessions, CSRF: guard, Render: capturedRenderer, Events: datastar.Events{}, Demo: true}
 	mux := http.NewServeMux()
@@ -153,6 +144,99 @@ func postForm(t *testing.T, client *http.Client, baseURL, page, path string, val
 	return response
 }
 
+func TestAccessOverviewRendersSummaryAndKeepsDatastarMemberFilters(t *testing.T) {
+	app := newLifecycleApp(t)
+	owner, ok := app.store.Snapshot(app.owner.ID)
+	if !ok {
+		t.Fatal("owner account disappeared")
+	}
+	if _, _, err := app.organizations.CreateInvitation(owner.Principal(), "pending@example.test", "viewer"); err != nil {
+		t.Fatalf("CreateInvitation(): %v", err)
+	}
+	owner, _ = app.store.Snapshot(app.owner.ID)
+	client := app.client(t, owner)
+
+	status, body := getBody(t, client, app.server.URL, "/access")
+	if status != http.StatusOK {
+		t.Fatalf("GET /access: status = %d", status)
+	}
+	for _, expected := range []string{
+		"Team overview", `aria-label="Team totals"`, "Organization members",
+		`aria-label="Organization member summary"`, "member@example.test",
+		"Invitations and role changes", `aria-label="Invitation summary"`,
+		"pending@example.test", `action="/api/v1/access/invitations"`,
+		`name="_csrf"`, "1 pending invitation and 2 organization access records.",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("access overview is missing %q", expected)
+		}
+	}
+
+	status, body = getBody(t, client, app.server.URL, "/access?tab=members")
+	if status != http.StatusOK {
+		t.Fatalf("GET /access?tab=members: status = %d", status)
+	}
+	for _, expected := range []string{
+		`data-on:submit="@get('/access', {contentType:'form'})"`,
+		`<ts-menu>`, `data-filter-value="viewer"`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("members filter is missing %q", expected)
+		}
+	}
+}
+
+func TestOrganizationOverviewAndProjectDisclosureIntent(t *testing.T) {
+	app := newLifecycleApp(t)
+	owner, ok := app.store.Snapshot(app.owner.ID)
+	if !ok {
+		t.Fatal("owner account disappeared")
+	}
+	if err := app.store.UpdateAs(owner.Principal(), func(account *core.Account) error {
+		org := account.Organizations[account.ActiveOrganizationID]
+		org.BillingStatus = "active"
+		account.Organizations[org.ID] = org
+		return nil
+	}); err != nil {
+		t.Fatalf("activate organization billing: %v", err)
+	}
+	owner, _ = app.store.Snapshot(app.owner.ID)
+	client := app.client(t, owner)
+
+	status, body := getBody(t, client, app.server.URL, "/organization")
+	if status != http.StatusOK {
+		t.Fatalf("GET /organization: status = %d", status)
+	}
+	for _, expected := range []string{
+		`id="organization-overview-title"`, `class="ts-kpis ts-org-kpis"`,
+		`id="activeOrganization"`, `id="projects"`, "Organization details",
+		"Signed-in user", `aria-label="Team summary"`, "Manage team",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("organization overview is missing %q", expected)
+		}
+	}
+	if strings.Contains(body, `id="new-organization-name"`) || strings.Contains(body, "STEP 1 OF 3") {
+		t.Fatal("new organization wizard appeared on the default organization route")
+	}
+	projectDisclosure := regexp.MustCompile(`(?s)<details[^>]*id="create-project"[^>]*>`).FindString(body)
+	if projectDisclosure == "" {
+		t.Fatal("project create disclosure is missing")
+	}
+	if strings.Contains(projectDisclosure, " open") {
+		t.Fatalf("project create disclosure unexpectedly open by default: %s", projectDisclosure)
+	}
+
+	status, body = getBody(t, client, app.server.URL, "/organization?newProject=1")
+	if status != http.StatusOK {
+		t.Fatalf("GET /organization?newProject=1: status = %d", status)
+	}
+	projectDisclosure = regexp.MustCompile(`(?s)<details[^>]*id="create-project"[^>]*>`).FindString(body)
+	if !strings.Contains(projectDisclosure, " open") {
+		t.Fatalf("project create disclosure did not open for intent query: %s", projectDisclosure)
+	}
+}
+
 func TestLeaveOrganizationRevokesScopeAndAllowsReinvitation(t *testing.T) {
 	app := newLifecycleApp(t)
 	ownerClient := app.client(t, app.owner)
@@ -212,6 +296,66 @@ func TestLeaveOrganizationRevokesScopeAndAllowsReinvitation(t *testing.T) {
 	}
 	if status, _ := getBody(t, memberClient, app.server.URL, "/access"); status != http.StatusOK {
 		t.Fatalf("rejoined member access page status = %d, want 200", status)
+	}
+}
+
+func TestOrganizationProjectRegionControlsKeepNativeSelectsAndRenderMaps(t *testing.T) {
+	app := newLifecycleApp(t)
+	owner, ok := app.store.Snapshot(app.owner.ID)
+	if !ok {
+		t.Fatal("owner account disappeared")
+	}
+	if err := app.store.UpdateAs(owner.Principal(), func(account *core.Account) error {
+		org := account.Organizations[account.ActiveOrganizationID]
+		org.BillingStatus = "active"
+		account.Organizations[org.ID] = org
+		return nil
+	}); err != nil {
+		t.Fatalf("activate organization billing: %v", err)
+	}
+	owner, _ = app.store.Snapshot(app.owner.ID)
+	project, err := app.organizations.CreateProject(owner.Principal(), "Example Project", "GRU", "FRA", []string{"GRU", "SFO", "FRA"})
+	if err != nil {
+		t.Fatalf("CreateProject(): %v", err)
+	}
+	owner, _ = app.store.Snapshot(app.owner.ID)
+	client := app.client(t, owner)
+
+	status, body := getBody(t, client, app.server.URL, "/organization")
+	if status != http.StatusOK {
+		t.Fatalf("GET /organization: status = %d", status)
+	}
+	projectControlIDs := []string{
+		"project-regions", "project-region", "project-backup",
+		"project-regions-" + project.ID, "project-region-" + project.ID, "project-backup-" + project.ID,
+	}
+	for _, id := range projectControlIDs {
+		if !strings.Contains(body, `id="`+id+`"`) || !strings.Contains(body, `for="`+id+`"`) {
+			t.Errorf("region select %q is missing or has no associated label", id)
+		}
+		if !strings.Contains(body, `data-select-id="`+id+`" aria-hidden="true"`) {
+			t.Errorf("region map for select %q is missing or exposed to assistive technology", id)
+		}
+	}
+	if got := strings.Count(body, "<ts-region-map "); got != len(projectControlIDs) {
+		t.Errorf("region map count = %d, want %d", got, len(projectControlIDs))
+	}
+
+	status, body = getBody(t, client, app.server.URL, "/organization?newOrganization=project")
+	if status != http.StatusOK {
+		t.Fatalf("GET /organization project wizard: status = %d", status)
+	}
+	wizardControlIDs := []string{"wizard-project-regions", "wizard-project-region", "wizard-project-backup"}
+	for _, id := range wizardControlIDs {
+		if !strings.Contains(body, `id="`+id+`"`) || !strings.Contains(body, `for="`+id+`"`) {
+			t.Errorf("wizard region select %q is missing or has no associated label", id)
+		}
+		if !strings.Contains(body, `data-select-id="`+id+`" aria-hidden="true"`) {
+			t.Errorf("wizard region map for select %q is missing or exposed to assistive technology", id)
+		}
+	}
+	if got, want := strings.Count(body, "<ts-region-map "), len(projectControlIDs)+len(wizardControlIDs); got != want {
+		t.Errorf("wizard region map count = %d, want %d", got, want)
 	}
 }
 
@@ -302,6 +446,9 @@ func TestDatastarMemberFilterStreamsSafeFragmentAndKeepsNativeGet(t *testing.T) 
 	if !strings.Contains(string(regularBody), "<!doctype html") || !strings.Contains(string(regularBody), `value="onerror"`) {
 		t.Fatal("ordinary filter GET did not return the full page with the submitted search value")
 	}
+	if strings.Contains(string(regularBody), `<img src=x`) || !strings.Contains(string(regularBody), `&lt;img src=x onerror=alert(1)&gt;`) {
+		t.Fatal("ordinary page did not HTML-escape member data")
+	}
 	csrfMatch := lifecycleCSRFPattern.FindSubmatch(regularBody)
 	if len(csrfMatch) != 2 {
 		t.Fatal("ordinary filter GET did not render a CSRF token")
@@ -330,6 +477,9 @@ func TestDatastarMemberFilterStreamsSafeFragmentAndKeepsNativeGet(t *testing.T) 
 	}
 	if strings.Contains(stream, `<img src=x`) || !strings.Contains(stream, `&lt;img src=x onerror=alert(1)&gt;`) {
 		t.Fatalf("member name was not HTML escaped in the fragment: %q", stream)
+	}
+	if strings.Contains(strings.ToLower(stream), "<script") {
+		t.Fatal("Datastar fragment must not contain inline scripts")
 	}
 	if !strings.Contains(stream, `value="onerror"`) || !strings.Contains(stream, string(csrfMatch[1])) {
 		t.Fatal("Datastar fragment did not preserve filter input and CSRF form fields")

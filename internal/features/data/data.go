@@ -189,7 +189,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if wantsHTML(r) {
-			http.Redirect(w, r, "/data?databaseId="+url.QueryEscape(db.ID)+"&collection="+url.QueryEscape(collection), http.StatusSeeOther)
+			http.Redirect(w, r, "/data?view=table&databaseId="+url.QueryEscape(db.ID)+"&collection="+url.QueryEscape(collection), http.StatusSeeOther)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"id": id, "operation": operation})

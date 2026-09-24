@@ -2,32 +2,22 @@ package ui
 
 import (
 	"bytes"
-	"html/template"
 	"io/fs"
 	"strings"
 	"testing"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	static "terrascale.tech/dashboard/web/static"
 )
 
-func TestSignedInLayoutsRenderAccessibleShellAndEscapeData(t *testing.T) {
-	layouts, err := template.ParseFS(Assets, "layouts/*.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := layouts.New("content").Parse(`<main class="test-content"><h1>Overview</h1>{{.Data.Message}}</main>`); err != nil {
-		t.Fatal(err)
-	}
-
+func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 	page := core.Page{
-		Template: "home", Layout: "shell", Title: "Overview", Nonce: "nonce_test_123",
-		CSRFToken: "csrf_test_123", DevMode: true,
-		Principal: core.Principal{PlatformAdmin: true},
-		Data:      struct{ Message string }{Message: `<script>alert("x")</script>`},
+		Title: "Overview", Nonce: "nonce_test_123", DevMode: true,
+		CSRFToken: "csrf_test_123", Principal: core.Principal{PlatformAdmin: true},
 		Shell: core.Shell{
-			UserName: "Avery Example", UserEmail: "avery@example.test", UserInitials: "AE",
-			OrganizationName: "Org <script>", ProjectName: "Production",
+			UserName: "Avery <script>alert(1)</script>", UserEmail: "avery@example.test",
+			UserInitials: "AE", OrganizationName: "Org <script>", ProjectName: "Production",
 			Organizations: []core.OrganizationOption{
 				{ID: "org-1", Name: "Org <script>", Selected: true},
 				{ID: "org-2", Name: "North \"blue\""},
@@ -44,16 +34,20 @@ func TestSignedInLayoutsRenderAccessibleShellAndEscapeData(t *testing.T) {
 				{ID: "project-5", Name: "Project 5"},
 				{ID: "project-6", Name: "Project 6"},
 			},
-			Navigation: []core.NavItem{{Label: "Overview", URL: "/", Active: true}},
-			ReturnURL:  "/?tab=overview&sort=name",
+			Navigation: []core.NavItem{
+				{Label: "Overview", URL: "/", Active: true},
+				{Label: "Organization", URL: "/organization", BadgeCount: 6},
+			},
+			SecondaryNavigation: []core.NavItem{
+				{Label: "Backups", URL: "/backups"},
+				{Label: "Engine", URL: "/engine"},
+				{Label: "Billing", URL: "/billing"},
+				{Label: "Settings", URL: "/settings"},
+			},
+			ReturnURL: "/?tab=overview&sort=name",
 		},
 	}
-
-	var rendered bytes.Buffer
-	if err := layouts.ExecuteTemplate(&rendered, "shell", page); err != nil {
-		t.Fatal(err)
-	}
-	html := rendered.String()
+	html := renderTempl(t, Shell(page, templ.Raw(`<main class="test-content"><h1>Overview</h1></main>`)))
 	for _, want := range []string{
 		`<html lang="en" data-theme="dark" data-nonce="nonce_test_123" data-dev-reload>`,
 		`aria-label="Open navigation"`,
@@ -61,11 +55,22 @@ func TestSignedInLayoutsRenderAccessibleShellAndEscapeData(t *testing.T) {
 		`aria-label="Primary navigation"`,
 		`aria-label="Account menu"`,
 		`aria-current="page"`,
+		`class="ts-sidebar-group-label">Workspace</div>`,
+		`class="ts-sidebar-group-label">More</div>`,
+		`href="/organization"`,
+		`class="ts-nav-count ts-nav-count-neutral" aria-hidden="true">6</span>`,
+		`href="/billing"`,
 		`data-active-project-id="project-1"`,
 		`data-active-organization-id="org-1"`,
 		`id="organizationSearch"`,
 		`id="projectSearch"`,
-		`data-show=`,
+		`data-show="$organizationSearch === '' || el.dataset.organizationName.toLowerCase().includes($organizationSearch.toLowerCase())"`,
+		`data-show="$projectSearch === '' || el.dataset.projectName.toLowerCase().includes($projectSearch.toLowerCase())"`,
+		`data-organization-name="Org &lt;script&gt;"`,
+		`data-project-name="Production"`,
+		`href="/organization?newProject=1#projects">Create new project</a>`,
+		`href="/settings?tab=identity">Project settings</a>`,
+		`href="/organization">All workspaces</a>`,
 		`action="/api/v1/dashboard/switch-project"`,
 		`name="returnUrl" value="/?tab=overview&amp;sort=name"`,
 		`action="/api/v1/dashboard/switch-organization"`,
@@ -74,21 +79,29 @@ func TestSignedInLayoutsRenderAccessibleShellAndEscapeData(t *testing.T) {
 		`src="/brand/logo-terrascale-blue.svg"`,
 		`<span class="ts-account-avatar" aria-hidden="true">AE</span>`,
 		`nonce="nonce_test_123"`,
-		`<script type="module" src="/js/datastar.js" defer nonce="nonce_test_123"></script>`,
+		`<script type="module" src="/js/rocket-components.js" defer nonce="nonce_test_123"></script>`,
+		`<ts-mobile-nav class="ts-shell" data-signals="{navOpen:false}" data-class:nav-open="$navOpen">`,
+		`<ts-menu><details class="ts-menu ts-project-menu ts-organization-menu">`,
 		`<div id="ts-main" class="ts-main" tabindex="-1">`,
 		`<h1>Overview</h1>`,
-		`&lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;`,
 		`Org &lt;script&gt;`,
+		`Avery &lt;script&gt;alert(1)&lt;/script&gt;`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered shell is missing %q", want)
 		}
 	}
-	if strings.Contains(html, `<script>alert("x")</script>`) || strings.Contains(html, `Org <script>`) {
-		t.Fatal("untrusted page data was rendered without HTML escaping")
+	if strings.Contains(html, `<script>alert(1)</script>`) || strings.Contains(html, `Org <script>`) {
+		t.Fatal("untrusted shell data was rendered without HTML escaping")
 	}
 	if strings.Count(html, `data-dashboard-css`) != 1 {
 		t.Fatalf("want one stylesheet link, got %d", strings.Count(html, `data-dashboard-css`))
+	}
+	if strings.Count(html, `src="/js/rocket-components.js"`) != 1 || strings.Contains(html, `src="/js/datastar-rocket.js"`) {
+		t.Fatal("shared shell must load the component module once without loading a second Datastar runtime")
+	}
+	if count := strings.Count(html, "<ts-menu>"); count != 3 {
+		t.Fatalf("want three progressive menu hosts, got %d", count)
 	}
 	if count := strings.Count(html, "<main"); count != 1 {
 		t.Fatalf("want one main landmark with a feature page main, got %d", count)
@@ -98,23 +111,12 @@ func TestSignedInLayoutsRenderAccessibleShellAndEscapeData(t *testing.T) {
 	}
 }
 
-func TestAdminLayoutUsesAdminNavigationSemantics(t *testing.T) {
-	layouts, err := template.ParseFS(Assets, "layouts/*.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := layouts.New("content").Parse(`<section>Admin page</section>`); err != nil {
-		t.Fatal(err)
-	}
+func TestAdminTemplLayoutUsesAdminNavigationSemantics(t *testing.T) {
 	page := core.Page{
-		Layout: "admin", Title: "Users",
+		Title: "Users", Nonce: "admin_nonce_123",
 		Shell: core.Shell{Navigation: []core.NavItem{{Label: "Users", URL: "/admin/users", Active: true}}},
 	}
-	var rendered bytes.Buffer
-	if err := layouts.ExecuteTemplate(&rendered, "admin", page); err != nil {
-		t.Fatal(err)
-	}
-	html := rendered.String()
+	html := renderTempl(t, Admin(page, templ.Raw(`<section>Admin page</section>`)))
 	for _, want := range []string{
 		`class="ts-sidebar ts-admin-sidebar"`,
 		`aria-label="Admin navigation"`,
@@ -132,27 +134,16 @@ func TestAdminLayoutUsesAdminNavigationSemantics(t *testing.T) {
 	}
 }
 
-func TestAuthLayoutUsesCSPNonceAndFileBackedAssets(t *testing.T) {
-	layouts, err := template.ParseFS(Assets, "layouts/*.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := layouts.New("content").Parse(`<main>Sign in</main>`); err != nil {
-		t.Fatal(err)
-	}
-	page := core.Page{Layout: "auth", Title: "Sign in", Nonce: "auth_nonce_456"}
-	var rendered bytes.Buffer
-	if err := layouts.ExecuteTemplate(&rendered, "auth", page); err != nil {
-		t.Fatal(err)
-	}
-	html := rendered.String()
+func TestAuthTemplLayoutUsesCSPNonceAndFileBackedAssets(t *testing.T) {
+	page := core.Page{Title: "Sign in", Nonce: "auth_nonce_456"}
+	html := renderTempl(t, Auth(page, templ.Raw(`<main>Sign in</main>`)))
 	for _, want := range []string{
 		`data-nonce="auth_nonce_456"`,
 		`href="/brand/logo-icon-blue.svg"`,
 		`href="/css/terrascale.css"`,
-		`type="module" src="/js/datastar.js" defer nonce="auth_nonce_456"`,
-		`src="/js/dashboard.js" defer nonce="auth_nonce_456"`,
+		`type="module" src="/js/rocket-components.js" defer nonce="auth_nonce_456"`,
 		`href="#ts-auth-main"`,
+		`<title>Sign in · TerraScale</title>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered auth layout is missing %q", want)
@@ -175,6 +166,21 @@ func TestEmbeddedStaticAssetsContainOneBundledStylesheetAndBrand(t *testing.T) {
 	if bytes.Contains(css, []byte("@import")) {
 		t.Fatal("public CSS bundle still contains unbundled imports")
 	}
+	for _, selector := range [][]byte{
+		[]byte("ts-mobile-nav"),
+		[]byte("ts-menu"),
+		[]byte("ts-tabs"),
+		[]byte("ts-region-map"),
+		[]byte("ts-region-map-image"),
+		[]byte("ts-region-overlay"),
+		[]byte("ts-region-arc"),
+		[]byte("ts-region-node-ring"),
+		[]byte("ts-region-node-core"),
+	} {
+		if !bytes.Contains(css, selector) {
+			t.Errorf("public CSS bundle is missing custom-element host style %q", selector)
+		}
+	}
 	for _, path := range []string{
 		"brand/logo-terrascale-blue.svg",
 		"brand/logo-terrascale-auth.svg",
@@ -182,19 +188,30 @@ func TestEmbeddedStaticAssetsContainOneBundledStylesheetAndBrand(t *testing.T) {
 		"brand/region-map.svg",
 		"fonts/oxanium-latin-wght-normal.woff2",
 		"fonts/jetbrains-mono-latin-wght-normal.woff2",
-		"js/datastar.js",
+		"js/datastar-rocket.js",
+		"js/rocket-components.js",
 		"js/dashboard.js",
 	} {
 		if _, err := fs.Stat(static.Assets, path); err != nil {
 			t.Errorf("public asset %q is missing: %v", path, err)
 		}
 	}
-	datastar, err := fs.ReadFile(static.Assets, "js/datastar.js")
+	datastar, err := fs.ReadFile(static.Assets, "js/datastar-rocket.js")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(datastar, []byte("Datastar v1.0.4")) {
-		t.Fatal("vendored browser bundle is not Datastar v1.0.4")
+		t.Fatal("vendored Datastar + Rocket browser bundle is not v1.0.4")
+	}
+	components, err := fs.ReadFile(static.Assets, "js/rocket-components.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(components, []byte(`from "./datastar-rocket.js"`)) {
+		t.Fatal("Rocket component module does not import the shared Datastar + Rocket runtime")
+	}
+	if !bytes.Contains(components, []byte(`import "./dashboard.js"`)) {
+		t.Fatal("Rocket component module does not load the existing dashboard behavior module")
 	}
 	regionMap, err := fs.ReadFile(static.Assets, "brand/region-map.svg")
 	if err != nil {
@@ -211,4 +228,13 @@ func TestEmbeddedStaticAssetsContainOneBundledStylesheetAndBrand(t *testing.T) {
 			t.Errorf("region map SVG is missing %q", want)
 		}
 	}
+}
+
+func renderTempl(t *testing.T, component templ.Component) string {
+	t.Helper()
+	var rendered strings.Builder
+	if err := component.Render(t.Context(), &rendered); err != nil {
+		t.Fatal(err)
+	}
+	return rendered.String()
 }

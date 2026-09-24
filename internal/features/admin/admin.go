@@ -2,9 +2,7 @@
 package admin
 
 import (
-	"embed"
 	"errors"
-	"io/fs"
 	"net/http"
 	"net/url"
 	"slices"
@@ -13,11 +11,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 )
-
-//go:embed templates/*.html
-var featureTemplates embed.FS
 
 type userRow struct {
 	AccountID         string
@@ -52,6 +48,32 @@ type projectRow struct {
 	CreatedAt      string
 }
 
+type databaseRow struct {
+	AccountID      string
+	OrganizationID string
+	Organization   string
+	ProjectID      string
+	Project        string
+	ID             string
+	Name           string
+	Region         string
+	Status         string
+	CreatedAt      string
+}
+
+type estateRow struct {
+	Region            string
+	ObservedProjects  int
+	ObservedDatabases int
+}
+
+type inventoryCounts struct {
+	Accounts      int
+	Organizations int
+	Projects      int
+	Databases     int
+}
+
 type pageData struct {
 	Section       string
 	Title         string
@@ -61,24 +83,22 @@ type pageData struct {
 	Users         []userRow
 	Organizations []organizationRow
 	Projects      []projectRow
+	Databases     []databaseRow
+	Regions       []estateRow
 	Plans         []core.Plan
+	Inventory     inventoryCounts
 }
 
 // Mount registers the in-memory platform administration pages and actions.
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	templates, err := fs.Sub(featureTemplates, "templates")
-	if err != nil {
-		panic(err)
-	}
-	if err := deps.Render.Register("admin", templates, "admin.html"); err != nil {
-		panic(err)
-	}
-
 	service := NewService(deps.Store)
 	mux.HandleFunc("GET /admin", adminRoot(deps, service))
 	mux.HandleFunc("GET /admin/users", adminPage(deps, service, "users"))
 	mux.HandleFunc("GET /admin/organizations", adminPage(deps, service, "organizations"))
 	mux.HandleFunc("GET /admin/projects", adminPage(deps, service, "projects"))
+	mux.HandleFunc("GET /admin/databases", adminPage(deps, service, "databases"))
+	mux.HandleFunc("GET /admin/estate", adminPage(deps, service, "estate"))
+	mux.HandleFunc("GET /admin/usage", adminPage(deps, service, "usage"))
 	mux.HandleFunc("GET /admin/plans", adminPage(deps, service, "plans"))
 	mux.HandleFunc("GET /admin/pricing", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requireAdminRoute(deps, w, r); !ok {
@@ -118,8 +138,11 @@ func adminPage(deps core.Deps, service Service, section string) http.HandlerFunc
 		data.Notice = r.URL.Query().Get("notice")
 		data.Error = r.URL.Query().Get("error")
 		page := core.Page{
-			Template: "admin", Layout: "admin", Title: data.Title,
-			Principal: principal, Data: data,
+			Layout: "admin", Title: data.Title,
+			Principal: principal,
+			View: func(p core.Page) templ.Component {
+				return adminView(data, p.CSRFToken)
+			},
 		}
 		if deps.CSRF != nil {
 			page.CSRFToken = deps.CSRF.Token(w, r)
@@ -371,5 +394,7 @@ func sortRows(data *pageData) {
 		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
 	})
 	slices.SortFunc(data.Projects, func(a, b projectRow) int { return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
+	slices.SortFunc(data.Databases, func(a, b databaseRow) int { return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
+	slices.SortFunc(data.Regions, func(a, b estateRow) int { return strings.Compare(strings.ToLower(a.Region), strings.ToLower(b.Region)) })
 	slices.SortFunc(data.Plans, func(a, b core.Plan) int { return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
 }

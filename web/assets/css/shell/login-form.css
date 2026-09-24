@@ -49,6 +49,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  min-height: 100svh;
   padding: 40px var(--ts-lg);
   min-width: 0;
 }
@@ -130,6 +131,12 @@
   color: var(--ts-ink-muted);
   cursor: pointer;
   transition: background-color 200ms ease-out, color 200ms ease-out;
+}
+
+/* Author display rules override the browser's built-in [hidden] styling. Keep
+   password reveal controls out of the tab order until Rocket enhances them. */
+.ts-input-adornment[hidden] {
+  display: none;
 }
 
 .ts-input-adornment:hover {

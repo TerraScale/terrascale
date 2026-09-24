@@ -23,7 +23,7 @@ func TestDemoCheckoutRouteNeverCallsStripeProvider(t *testing.T) {
 	deps := core.Deps{Demo: true, Sessions: testSessions{principal: principal}}
 	mount(mux, deps, flow, StripeConfig{Production: true, Mode: "live", SecretKey: "sk_live_ignored"}, provider, nil)
 
-	form := url.Values{"plan": {"pro"}, "interval": {"annual"}, "return": {"/subscriptions"}}
+	form := url.Values{"plan": {"pro"}, "interval": {"annual"}, "return": {"/billing"}}
 	request := httptest.NewRequest(http.MethodPost, "/billing/checkout", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -34,6 +34,34 @@ func TestDemoCheckoutRouteNeverCallsStripeProvider(t *testing.T) {
 	}
 	if flow.demoCheckoutCalls != 1 || provider.customerCalls != 0 || provider.checkoutCalls != 0 {
 		t.Fatalf("demo checkout reached Stripe: flow=%d customer=%d checkout=%d", flow.demoCheckoutCalls, provider.customerCalls, provider.checkoutCalls)
+	}
+}
+
+func TestBillingReturnPathDefaultsAndPreservesExplicitWizardPath(t *testing.T) {
+	if got, err := normalizeReturnPath(""); err != nil || got != "/billing" {
+		t.Fatalf("empty billing return path = %q, %v", got, err)
+	}
+	if got := withPaymentOutcome("invalid-url%", "success"); got != "/billing" {
+		t.Fatalf("invalid billing return path = %q", got)
+	}
+	if got, err := normalizeReturnPath("/organization?newOrganization=project"); err != nil || got != "/organization?newOrganization=project" {
+		t.Fatalf("explicit wizard return path = %q, %v", got, err)
+	}
+}
+
+func TestUnauthenticatedPaymentRoutesPreserveLoginReturnTarget(t *testing.T) {
+	mux := http.NewServeMux()
+	mount(mux, core.Deps{Sessions: testSessions{}}, &testBillingFlow{}, StripeConfig{Demo: true}, nil, nil)
+	for _, target := range []string{
+		"/billing/checkout/return?session_id=cs_test_123&source=email",
+		"/billing/portal?tab=invoices",
+	} {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
+		location, err := url.Parse(response.Header().Get("Location"))
+		if response.Code != http.StatusSeeOther || err != nil || location.Path != "/login" || location.Query().Get("returnTo") != target || location.Query().Get("return") != "" {
+			t.Fatalf("GET %s login redirect = %d %q, parse error = %v", target, response.Code, response.Header().Get("Location"), err)
+		}
 	}
 }
 
@@ -137,7 +165,7 @@ func TestExistingStripeSubscriptionUsesPortalInsteadOfCreatingDuplicate(t *testi
 			Production: true, Mode: "test", PublicOrigin: "https://dashboard.example",
 			PriceIDs: map[PriceKey]string{{PlanKey: PlanPro, Interval: IntervalMonthly}: "price_pro_monthly"},
 		}, provider, nil)
-	form := url.Values{"plan": {"starter"}, "interval": {"monthly"}, "return": {"/subscriptions"}}
+	form := url.Values{"plan": {"starter"}, "interval": {"monthly"}, "return": {"/billing"}}
 	request := httptest.NewRequest(http.MethodPost, "/billing/checkout", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -147,6 +175,11 @@ func TestExistingStripeSubscriptionUsesPortalInsteadOfCreatingDuplicate(t *testi
 	}
 	if provider.customerCalls != 0 || provider.checkoutCalls != 0 || flow.externalCheckoutCalls != 0 {
 		t.Fatalf("existing subscription started a duplicate checkout: customer=%d checkout=%d recorded=%d", provider.customerCalls, provider.checkoutCalls, flow.externalCheckoutCalls)
+	}
+	portalResponse := httptest.NewRecorder()
+	mux.ServeHTTP(portalResponse, httptest.NewRequest(http.MethodGet, "/billing/portal", nil))
+	if portalResponse.Code != http.StatusSeeOther || provider.portalReturnURL != "https://dashboard.example/billing" {
+		t.Fatalf("billing portal response = %d, return URL = %q", portalResponse.Code, provider.portalReturnURL)
 	}
 }
 
@@ -184,7 +217,7 @@ func TestStripeCheckoutRejectsUnpricedCatalogPlansBeforeCustomerCreation(t *test
 					Production: true, Mode: "test", PublicOrigin: "https://dashboard.example",
 					PriceIDs: map[PriceKey]string{{PlanKey: PlanBusiness, Interval: IntervalMonthly}: "price_business_monthly"},
 				}, provider, nil)
-			form := url.Values{"plan": {planKey}, "interval": {IntervalMonthly}, "return": {"/subscriptions"}}
+			form := url.Values{"plan": {planKey}, "interval": {IntervalMonthly}, "return": {"/billing"}}
 			request := httptest.NewRequest(http.MethodPost, "/billing/checkout", strings.NewReader(form.Encode()))
 			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			response := httptest.NewRecorder()
@@ -254,7 +287,7 @@ func TestOpenStripeCheckoutRemainsAvailableAfterPlanIsHidden(t *testing.T) {
 			Production: true, Mode: "test", PublicOrigin: "https://dashboard.example",
 			PriceIDs: map[PriceKey]string{{PlanKey: PlanPro, Interval: IntervalMonthly}: "price_pro_monthly"},
 		}, provider, nil)
-	form := url.Values{"plan": {"pro"}, "interval": {"monthly"}, "return": {"/subscriptions"}}
+	form := url.Values{"plan": {"pro"}, "interval": {"monthly"}, "return": {"/billing"}}
 	request := httptest.NewRequest(http.MethodPost, "/billing/checkout", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -298,7 +331,7 @@ func TestStripeCheckoutExpiresProviderSessionWhenLocalBindingFails(t *testing.T)
 			Production: true, Mode: "test", PublicOrigin: "https://dashboard.example",
 			PriceIDs: map[PriceKey]string{{PlanKey: PlanPro, Interval: IntervalMonthly}: "price_pro_monthly"},
 		}, provider, nil)
-	form := url.Values{"plan": {"pro"}, "interval": {"monthly"}, "return": {"/subscriptions"}}
+	form := url.Values{"plan": {"pro"}, "interval": {"monthly"}, "return": {"/billing"}}
 	request := httptest.NewRequest(http.MethodPost, "/billing/checkout", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -332,7 +365,7 @@ func (*testBillingFlow) CheckoutForReturn(_ core.Principal, sessionID string) (c
 }
 
 func (*testBillingFlow) CompleteDemoCheckout(_ core.Principal, _ string, _ bool) (string, error) {
-	return "/subscriptions", nil
+	return "/billing", nil
 }
 
 func (*testBillingFlow) RecordCustomer(_ core.Principal, customerID string) (string, error) {
@@ -349,7 +382,7 @@ func (*testBillingFlow) ExpireExternalCheckout(core.Principal, string) error {
 }
 
 func (*testBillingFlow) ReconcileCheckoutReturn(_ core.Principal, _ string, _ CheckoutSession) (string, string, error) {
-	return "/subscriptions", "pending", nil
+	return "/billing", "pending", nil
 }
 
 func (flow *testBillingFlow) ApplyStripeEvent(event BillingEvent) error {
@@ -379,6 +412,7 @@ type testProvider struct {
 	expireCheckoutCalls int
 	expiredCheckoutID   string
 	checkoutSession     CheckoutSession
+	portalReturnURL     string
 	organizationID      string
 	customerID          string
 	subscription        SubscriptionSnapshot
@@ -423,6 +457,7 @@ func (provider *testProvider) RetrieveSubscription(_ context.Context, id string)
 	}
 	return snapshot, nil
 }
-func (*testProvider) CreatePortalSession(context.Context, string, string, string) (PortalSession, error) {
+func (provider *testProvider) CreatePortalSession(_ context.Context, _, returnURL, _ string) (PortalSession, error) {
+	provider.portalReturnURL = returnURL
 	return PortalSession{ID: "bps_test", URL: "https://billing.stripe.com/test"}, nil
 }

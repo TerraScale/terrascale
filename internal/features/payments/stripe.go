@@ -706,7 +706,7 @@ func mount(mux *http.ServeMux, deps core.Deps, flow BillingFlow, config StripeCo
 			http.Error(w, "No billing account is available for this organization.", http.StatusConflict)
 			return
 		}
-		portal, err := provider.CreatePortalSession(r.Context(), organization.Billing.CustomerID, config.PublicOrigin+"/subscriptions", core.NewID("portal"))
+		portal, err := provider.CreatePortalSession(r.Context(), organization.Billing.CustomerID, config.PublicOrigin+"/billing", core.NewID("portal"))
 		if err != nil {
 			slog.Error("create Stripe billing portal", "error", err)
 			http.Error(w, "Could not open the billing portal.", http.StatusBadGateway)
@@ -870,7 +870,7 @@ func requestPrincipal(deps core.Deps, w http.ResponseWriter, r *http.Request) (c
 		return principal, true
 	}
 	returnPath := r.URL.RequestURI()
-	http.Redirect(w, r, "/login?return="+url.QueryEscape(returnPath), http.StatusSeeOther)
+	http.Redirect(w, r, "/login?returnTo="+url.QueryEscape(returnPath), http.StatusSeeOther)
 	return core.Principal{}, false
 }
 
@@ -894,7 +894,7 @@ func selectedPlan(store *core.Store, key, interval string) (core.Plan, error) {
 
 func normalizeReturnPath(value string) (string, error) {
 	if strings.TrimSpace(value) == "" {
-		value = "/subscriptions"
+		value = "/billing"
 	}
 	if strings.ContainsAny(value, "\\\r\n") {
 		return "", errors.New("invalid return path")
@@ -913,7 +913,7 @@ func normalizeReturnPath(value string) (string, error) {
 func withPaymentOutcome(returnPath, outcome string) string {
 	parsed, err := url.Parse(returnPath)
 	if err != nil {
-		return "/subscriptions"
+		return "/billing"
 	}
 	query := parsed.Query()
 	query.Set("payment", outcome)

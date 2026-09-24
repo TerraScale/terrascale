@@ -17,7 +17,7 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Install Chromium
         run: npx playwright install chromium
-      - name: Lint, bundle, and run fast Go tests
+      - name: Check generated Templ, lint, bundle, and run fast Go tests
         run: make lint css test-fast build
       - name: Run slow browser and SDK contract tests
         env:

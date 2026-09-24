@@ -1,0 +1,105 @@
+package subscriptions
+
+templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
+	<main class="ts-page">
+		<header class="ts-page-header">
+			<div>
+				<h1 class="ts-title-22">Plans and billing</h1>
+				<p class="ts-sub-desc">Billing for { data.OrganizationName }.</p>
+			</div>
+			if data.Demo {
+				<span class="ts-badge ts-badge-info">Demo billing</span>
+			}
+		</header>
+		if data.PaymentNotice != "" {
+			<p class="ts-alert ts-alert-info" role="status">{ data.PaymentNotice }</p>
+		}
+		<section class="ts-panel" aria-labelledby="billing-summary-title">
+			<div class="ts-panel-header">
+				<div>
+					<h2 id="billing-summary-title" class="ts-panel-title">Current plan</h2>
+					<p class="ts-panel-subtitle">Your plan and billing status for this organization.</p>
+				</div>
+			</div>
+			<dl class="ts-kv">
+				<div>
+					<dt>Plan</dt>
+					<dd>
+						if data.PlanName != "" {
+							{ data.PlanName }
+						} else {
+							Free
+						}
+					</dd>
+				</div>
+				<div><dt>Status</dt><dd>{ data.BillingStatus }</dd></div>
+				if data.BillingInterval != "" {
+					<div><dt>Interval</dt><dd>{ data.BillingInterval }</dd></div>
+				}
+				<div><dt>Renewal</dt><dd>{ data.Renewal }</dd></div>
+				<div>
+					<dt>Payment method</dt>
+					<dd>
+						if data.PaymentValidated {
+							On file
+						} else {
+							Not set
+						}
+					</dd>
+				</div>
+			</dl>
+			<div class="ts-row ts-gap-8">
+				<a class="ts-btn ts-btn-secondary" href="/billing/portal">Manage billing</a>
+			</div>
+		</section>
+		<section class="ts-panel" aria-labelledby="available-plans-title">
+			<div class="ts-panel-header">
+				<div>
+					<h2 id="available-plans-title" class="ts-panel-title">Available plans</h2>
+					<p class="ts-panel-subtitle">Choose a billing interval to continue.</p>
+				</div>
+			</div>
+			<div class="ts-grid ts-grid-3">
+				if len(data.Plans) == 0 {
+					<p class="ts-empty-state">No paid plans are available right now.</p>
+				} else {
+					for _, plan := range data.Plans {
+						<article class="ts-card" aria-labelledby={ "plan-" + plan.Key }>
+							<div class="ts-stack-12">
+								<h3 id={ "plan-" + plan.Key } class="ts-title-18">{ plan.Name }</h3>
+								<p class="ts-title-22">{ plan.MonthlyPrice } <small>/ month</small></p>
+								if plan.AnnualAvailable {
+									<p class="ts-meta">{ plan.AnnualPrice } billed annually</p>
+								}
+								if plan.TrialDays > 0 {
+									<p class="ts-meta">{ plan.TrialDays } day trial</p>
+								}
+								if plan.ShowLimits {
+									<p class="ts-meta">{ plan.StorageMiB } MiB storage · { plan.MonthlyRequests } requests per month</p>
+								}
+								<div class="ts-stack-8">
+									<form method="post" action="/billing/checkout">
+										<input type="hidden" name="_csrf" value={ csrfToken }/>
+										<input type="hidden" name="plan" value={ plan.Key }/>
+										<input type="hidden" name="interval" value="monthly"/>
+										<input type="hidden" name="return" value="/billing"/>
+										<button class="ts-btn ts-btn-primary" type="submit">Choose monthly</button>
+									</form>
+									if plan.AnnualAvailable {
+										<form method="post" action="/billing/checkout">
+											<input type="hidden" name="_csrf" value={ csrfToken }/>
+											<input type="hidden" name="plan" value={ plan.Key }/>
+											<input type="hidden" name="interval" value="annual"/>
+											<input type="hidden" name="return" value="/billing"/>
+											<button class="ts-btn ts-btn-secondary" type="submit">Choose annual</button>
+										</form>
+									}
+								</div>
+							</div>
+						</article>
+					}
+				}
+			</div>
+		</section>
+	</main>
+}
