@@ -3,11 +3,11 @@
     var activeState = Model.Steps.FirstOrDefault(s => s.Key == Model.ActiveStep)?.State ?? "pending";
     var stepDone = activeState == "completed";
     var rejected = activeState == "rejected";
-    var wide = Model.ActiveStep is "project";
+    var wide = !Model.Registration && Model.ActiveStep is "payment-method" or "project";
     var defaultRegion = OnboardingCatalog.DefaultRegion(Model.Regions);
 }
 @FlowHtml.Document("Activate your TerraScale account | TerraScale")
-<main class="ts-onboarding-root @(wide ? "ts-onboarding-root-wide" : null)">
+<main class="ts-onboarding-root">
     <div class="ts-onboarding-container @(wide ? "ts-onboarding-container-wide" : null)">
         @* Every onboarding step (registration included) keeps only the TerraScale
            wordmark in the header; the title stays as an sr-only h1 so the
@@ -23,7 +23,6 @@
             TotalSteps: Model.TotalSteps,
             ProgressPercent: Model.ProgressPercent,
             Label: "ACTIVATION STEP",
-            Compact: !wide,
             AriaLabel: "Onboarding progress",
             BarAriaLabel: "Account setup progress")))
         @if (Model.PaymentCanceled)
@@ -38,7 +37,13 @@
         }
         @if (Model.Registration)
         {
-            <div class="ts-onboarding-card">
+            <section class="ts-onboarding-section" aria-labelledby="onboarding-register-title">
+                <header class="ts-section-head">
+                    <div>
+                        <h2 class="ts-panel-title" id="onboarding-register-title">Create your account</h2>
+                        <p class="ts-meta">Your Personal workspace is ready as soon as you save.</p>
+                    </div>
+                </header>
                 <form class="ts-onboarding-form" method="post" action="/onboarding/register" novalidate data-signals="{ passwordVisible: false, confirmPasswordVisible: false }">
                     @if (Model.RegistrationError is { } registrationError)
                     {
@@ -86,20 +91,19 @@
                         </label>
                     </div>
                     <div class="ts-onboarding-form-footer">
-                        <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.ArrowRight(20) Save</button>
                         <p class="ts-onboarding-secondary">Already have an account? <a class="ts-link" href="/login">Sign in</a></p>
+                        <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save @Icons.ArrowRight(16)</button>
                     </div>
                 </form>
-            </div>
+            </section>
         }
         else if (Model.ActiveStep == "account-information")
         {
-            <div class="ts-onboarding-card">
-                <header class="ts-onboarding-step-header">
-                    <h2 class="ts-onboarding-step-title">Review your account information</h2>
-                    <p class="ts-onboarding-step-subtitle">Signed in as @Model.Email</p>
-                    <div class="ts-onboarding-step-actions">
-                        <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.UserRound(20)</span>
+            <section class="ts-onboarding-section" aria-labelledby="onboarding-account-title">
+                <header class="ts-section-head">
+                    <div>
+                        <h2 class="ts-panel-title" id="onboarding-account-title">Review your account information</h2>
+                        <p class="ts-meta">Signed in as @Model.Email</p>
                     </div>
                 </header>
                 <form class="ts-onboarding-form" method="post" action="/onboarding/step">
@@ -117,7 +121,7 @@
                         <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save and continue</button>
                     </div>
                 </form>
-            </div>
+            </section>
         }
         else if (Model.ActiveStep == "payment-method")
         {

@@ -39,7 +39,7 @@ public sealed class NewOrganizationWizardTests
         await Assert.That(page.Contains("data-open-dialog=\"create-organization\"")).IsTrue();
         await Assert.That(page.Contains("id=\"create-organization\"")).IsTrue();
         await Assert.That(page.Contains("STEP 1 OF 3")).IsTrue();
-        await Assert.That(page.Contains("ts-onboarding-card")).IsTrue();
+        await Assert.That(page.Contains("ts-onboarding-section")).IsTrue();
         await Assert.That(page.Contains("ts-onboarding-step")).IsTrue();
         await Assert.That(page.Contains("Organization name")).IsTrue();
     }

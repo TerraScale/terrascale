@@ -1,19 +1,18 @@
 @inherits RazorSlice<OnboardingProjectCardView>
-<div class="ts-onboarding-card">
-    <header class="ts-onboarding-step-header">
-        <h2 class="ts-onboarding-step-title">Create your first project</h2>
-        <p class="ts-onboarding-step-subtitle">Products inherit these primary regions.</p>
-        <div class="ts-onboarding-step-actions">
-            <span class="ts-onboarding-step-icon" aria-hidden="true">@Icons.Database(20)</span>
+<section class="ts-onboarding-section" aria-labelledby="onboarding-project-title">
+    <header class="ts-section-head">
+        <div>
+            <h2 class="ts-panel-title" id="onboarding-project-title">Create your first project</h2>
+            <p class="ts-meta">Products inherit these primary regions.</p>
         </div>
     </header>
-    <form class="ts-onboarding-content ts-onboarding-content-wide" method="post" action="@Model.Action">
+    <form class="ts-onboarding-form" method="post" action="@Model.Action">
         <input type="hidden" name="step" value="@Model.StepValue" />
-        <div class="ts-field">
+        <div class="ts-field ts-onboarding-form-full">
             <label class="ts-label" for="projectName">Project name</label>
             <input class="ts-input" id="projectName" name="name" placeholder="Production" maxlength="128" required />
         </div>
-        <div class="ts-field">
+        <div class="ts-field ts-onboarding-form-full">
             <span class="ts-label" id="regionLabel">Primary regions</span>
             @RegionMap.Picker(
                 [.. Model.Regions.Select(region => region.ToMapPin(region.Code == Model.DefaultRegion))],
@@ -25,4 +24,4 @@
             <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create project and open Dashboard</button>
         </div>
     </form>
-</div>
+</section>

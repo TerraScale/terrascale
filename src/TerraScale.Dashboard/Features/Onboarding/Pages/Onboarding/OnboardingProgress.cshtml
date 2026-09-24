@@ -2,30 +2,25 @@
 @{
     var stateLabels = new Dictionary<string, string>
     {
-        ["pending"] = "PENDING",
-        ["current"] = "CURRENT",
-        ["completed"] = "COMPLETED",
-        ["blocked"] = "BLOCKED",
-        ["not-started"] = "NOT STARTED",
-        ["in-progress"] = "IN PROGRESS",
-        ["awaiting-validation"] = "AWAITING VALIDATION",
-        ["unavailable"] = "UNAVAILABLE",
-        ["expired"] = "EXPIRED",
-        ["ready-for-project"] = "READY FOR PROJECT",
+        ["pending"] = "Pending",
+        ["current"] = "Current",
+        ["completed"] = "Completed",
+        ["blocked"] = "Blocked",
+        ["not-started"] = "Not started",
+        ["in-progress"] = "In progress",
+        ["awaiting-validation"] = "Awaiting validation",
+        ["unavailable"] = "Unavailable",
+        ["expired"] = "Expired",
+        ["ready-for-project"] = "Ready for project",
     };
 }
-<div class="ts-onboarding-progress">
-    <div class="ts-onboarding-progress-meta">
-        <span>@Model.Label @Model.CurrentStep OF @Model.TotalSteps</span>
-        <span>@Model.ProgressPercent%</span>
-    </div>
-    <div class="ts-onboarding-progress-frame">
-        <div class="ts-progress" role="progressbar" aria-label="@Model.BarAriaLabel" aria-valuenow="@Model.ProgressPercent" aria-valuemin="0" aria-valuemax="100">
-            <div class="ts-progress-bar" style="width:@(Model.ProgressPercent)%"></div>
-        </div>
-    </div>
+@* Each step's top rule is a progress segment, so the list doubles as the bar;
+   the meta line carries the progressbar semantics. *@
+<div class="ts-onboarding-progress" role="progressbar" aria-label="@Model.BarAriaLabel" aria-valuenow="@Model.ProgressPercent" aria-valuemin="0" aria-valuemax="100">
+    <span>@Model.Label @Model.CurrentStep OF @Model.TotalSteps</span>
+    <span class="ts-tabular">@Model.ProgressPercent%</span>
 </div>
-<ol class="ts-onboarding-steps @(Model.Compact ? "ts-onboarding-steps-compact" : null)" aria-label="@Model.AriaLabel">
+<ol class="ts-onboarding-steps" aria-label="@Model.AriaLabel">
     @foreach (var step in Model.Steps)
     {
         var current = step.Key == Model.ActiveStep;
@@ -38,14 +33,14 @@
         <li class="@classes" aria-current="@(current ? "step" : null)">
             @if (complete)
             {
-                @Icons.Check(18)
+                @Icons.CircleCheck(14)
             }
             else
             {
-                @(typeof(Icons).GetMethod(step.Icon)?.Invoke(null, [18]) as Microsoft.AspNetCore.Html.HtmlString ?? Icons.Circle(18))
+                @(typeof(Icons).GetMethod(step.Icon)?.Invoke(null, [14]) as Microsoft.AspNetCore.Html.HtmlString ?? Icons.Circle(14))
             }
             <span>@step.Label</span>
-            <span class="ts-onboarding-step-state">@(stateLabels.TryGetValue(step.State, out var label) ? label : step.State)</span>
+            <span class="ts-sr-only">@(stateLabels.TryGetValue(step.State, out var label) ? label : step.State)</span>
         </li>
     }
 </ol>

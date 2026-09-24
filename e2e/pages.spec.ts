@@ -133,7 +133,7 @@ test("onboarding payment step keeps monthly and annual pricing separate", async 
 
   await expect.poll(visiblePrices).toEqual([["$5 / month"], ["$50 / month"], ["$99 / month"]]);
 
-  // Exactly one segmented control is visible (the other is breakpoint-hidden).
+  // The payment section head holds the only billing interval control.
   const interval = page.locator(".ts-onboarding-interval:visible");
   await expect(interval).toHaveCount(1);
   const monthly = interval.getByRole("button", { name: "Monthly" });
