@@ -31,6 +31,11 @@ jobs:
           volumes_json=$(mktemp)
           trap 'rm -f "$machines_json" "$volumes_json"' EXIT
           fly machine list -a ts-dashboard --json > "$machines_json"
+          machine_id=$(node -e '
+            const machines = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            if (machines.length !== 1) process.exit(1);
+            process.stdout.write(machines[0].id);
+          ' "$machines_json")
           machine_to_update=$(node -e '
             const machines = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
             if (machines.length !== 1) process.exit(1);
@@ -38,7 +43,8 @@ jobs:
           ' "$machines_json")
           if [[ -n "$machine_to_update" ]]; then
             fly machine update "$machine_to_update" -a ts-dashboard -c fly.toml --swap-size 900 --yes
-            fly machine list -a ts-dashboard --json > "$machines_json"
           fi
+          fly machine wait "$machine_id" -a ts-dashboard --state started --wait-timeout 2m
+          fly machine list -a ts-dashboard --json > "$machines_json"
           fly volumes list -a ts-dashboard --json > "$volumes_json"
           node scripts/check-fly-deployment.mjs production "$machines_json" "$volumes_json"
