@@ -25,10 +25,10 @@ jobs:
           fly config validate --strict -c fly.toml
           fly deploy -c fly.toml --strategy immediate --ha=false
           # The in-memory demo has process-local account and session state.
-          fly scale count 1 -a ts-dashboard-2 -c fly.toml --yes
+          fly scale count 1 -a ts-dashboard -c fly.toml --yes
           machines_json=$(mktemp)
           volumes_json=$(mktemp)
           trap 'rm -f "$machines_json" "$volumes_json"' EXIT
-          fly machine list -a ts-dashboard-2 --json > "$machines_json"
-          fly volumes list -a ts-dashboard-2 --json > "$volumes_json"
+          fly machine list -a ts-dashboard --json > "$machines_json"
+          fly volumes list -a ts-dashboard --json > "$volumes_json"
           node scripts/check-fly-deployment.mjs production "$machines_json" "$volumes_json"

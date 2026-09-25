@@ -1,4 +1,4 @@
-app = "ts-dashboard-2"
+app = "ts-dashboard"
 primary_region = "gru"
 swap_size_mb = 900
 
