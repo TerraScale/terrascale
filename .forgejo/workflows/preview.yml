@@ -1,0 +1,90 @@
+name: preview
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+concurrency:
+  group: preview-${{ github.event.number }}
+  cancel-in-progress: true
+jobs:
+  preview:
+    if: github.event.action != 'closed'
+    runs-on: terrascale-builder
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy PR preview
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
+        run: |
+          set -euo pipefail
+          node scripts/check-fly-deployment.mjs preview-config fly.preview.toml
+          fly config validate --strict -c fly.preview.toml -a "$PR_APP"
+          # One ephemeral single-machine app per PR; provision idempotently so a
+          # partially-created app (cancelled run, transient API error) self-heals.
+          # NB: match table rows, not fly's "shared and dedicated" footer line.
+          fly apps create "$PR_APP" -o personal 2>/dev/null || true
+          fly ips list -a "$PR_APP" | grep -q " v6 " || fly ips allocate-v6 -a "$PR_APP"
+          fly ips list -a "$PR_APP" | grep -q "(shared)" || fly ips allocate-v4 -a "$PR_APP" --shared
+          # Seed the disposable in-memory preview with a fresh admin for this
+          # run. Keep the password in stdin and the runner env file, never argv.
+          ADMIN_EMAIL="e2e-admin-${GITHUB_RUN_ID}@example.test"
+          ADMIN_PASSWORD="$(node -p 'require("node:crypto").randomBytes(32).toString("hex")')"
+          printf '::add-mask::%s\n' "$ADMIN_PASSWORD"
+          {
+            printf 'DASHBOARD_E2E_ADMIN_EMAIL=%s\n' "$ADMIN_EMAIL"
+            printf 'DASHBOARD_E2E_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"
+          } >> "$GITHUB_ENV"
+          {
+            printf 'DASHBOARD_DEMO_ADMIN_EMAIL=%s\n' "$ADMIN_EMAIL"
+            printf 'DASHBOARD_DEMO_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"
+          } | fly secrets import --stage -a "$PR_APP"
+          # The in-memory demo backend is process-local: two machines would
+          # split accounts and sessions, so account creation would appear to
+          # vanish between steps. --ha=false skips the spare machine and the
+          # scale is mandatory (no best-effort fallback) so a preview can never
+          # silently run two stores. Fly Proxy can start existing Machines but
+          # does not create them; the post-deploy check enforces this workflow's
+          # one-Machine cap (manual/API changes outside this workflow remain possible).
+          fly deploy -a "$PR_APP" --config fly.preview.toml --strategy immediate --ha=false
+          fly scale count 1 -a "$PR_APP" --yes
+          machines_json=$(mktemp)
+          volumes_json=$(mktemp)
+          trap 'rm -f "$machines_json" "$volumes_json"' EXIT
+          fly machine list -a "$PR_APP" --json > "$machines_json"
+          fly volumes list -a "$PR_APP" --json > "$volumes_json"
+          node scripts/check-fly-deployment.mjs preview "$machines_json" "$volumes_json"
+          curl -fsS --retry 6 --retry-delay 2 --retry-connrefused \
+            "https://${PR_APP}.fly.dev/health/ready"
+      - name: Comment preview URL
+        if: success()
+        env:
+          FORGEJO_TOKEN: ${{ github.token }}
+          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
+        run: |
+          # One comment per PR: the URL never changes, so skip if it's already posted.
+          COMMENTS_URL="$GITHUB_API_URL/repos/${GITHUB_REPOSITORY}/issues/${{ github.event.number }}/comments"
+          COMMENTS_FILE="$(mktemp)"
+          trap 'rm -f "$COMMENTS_FILE"' EXIT
+          # Do not pipe curl into grep -q: with pipefail, grep can close the
+          # pipe after its match and make curl report a false failure. That
+          # would issue a duplicate comment and fail the preview with curl 22.
+          curl -sf -H "Authorization: token $FORGEJO_TOKEN" "$COMMENTS_URL" > "$COMMENTS_FILE"
+          if ! grep -Fq "PR preview:" "$COMMENTS_FILE"; then
+            curl -sf -X POST \
+              -H "Authorization: token $FORGEJO_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"body": "🚀 PR preview: https://'"$PR_APP"'.fly.dev"}' \
+              "$COMMENTS_URL"
+          fi
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: terrascale-builder
+    steps:
+      - name: Destroy PR preview
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
+        run: |
+          # Succeed iff the app is gone afterwards; a failed destroy must fail the job.
+          fly apps destroy "$PR_APP" --yes || ! fly status -a "$PR_APP" >/dev/null 2>&1

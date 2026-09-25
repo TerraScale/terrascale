@@ -19,13 +19,6 @@ swap_size_mb = 900
   size = "shared-cpu-2x"
   memory = "512mb"
 
-# Fly Volumes are local to individual Machines. A second or third Machine
-# requires its own 1 GB volume; these volumes do not share demo state.
-[[mounts]]
-  source = "dashboard_data"
-  destination = "/data"
-  initial_size = "1GB"
-
 [[http_service.checks]]
   grace_period = "10s"
   interval = "30s"

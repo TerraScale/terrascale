@@ -6,7 +6,7 @@ concurrency:
   group: dashboard-production-deploy
   cancel-in-progress: false
 jobs:
-  verify:
+  deploy:
     runs-on: terrascale-builder
     timeout-minutes: 20
     steps:
@@ -17,11 +17,6 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Check generated Templ, lint, bundle, and run fast Go tests
         run: make lint test-fast build
-  deploy:
-    needs: verify
-    runs-on: terrascale-builder
-    steps:
-      - uses: actions/checkout@v4
       - name: Deploy production (one warm demo machine)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -33,19 +28,7 @@ jobs:
           fly scale count 1 -a ts-dashboard-2 -c fly.toml --yes
           machines_json=$(mktemp)
           volumes_json=$(mktemp)
-          trap 'rm -f "$machines_json" "$volumes_json" "$machines_json.spares"' EXIT
+          trap 'rm -f "$machines_json" "$volumes_json"' EXIT
           fly machine list -a ts-dashboard-2 --json > "$machines_json"
           fly volumes list -a ts-dashboard-2 --json > "$volumes_json"
           node scripts/check-fly-deployment.mjs production "$machines_json" "$volumes_json"
-
-          # FUTURE, after account/session state is shared across Machines:
-          # Replace the active scale/count check block above with these steps.
-          # Fly Proxy can start existing stopped Machines on demand, but it
-          # cannot create Machines and auto_stop_machines="off" never scales down.
-          # fly scale count 3 -a ts-dashboard-2 -c fly.toml --yes
-          # fly machine list -a ts-dashboard-2 --json > "$machines_json"
-          # node scripts/check-fly-deployment.mjs production-spares "$machines_json" > "$machines_json.spares"
-          # while IFS= read -r machine_id; do fly machine stop "$machine_id" -a ts-dashboard-2; done < "$machines_json.spares"
-          # fly machine list -a ts-dashboard-2 --json > "$machines_json"
-          # fly volumes list -a ts-dashboard-2 --json > "$volumes_json"
-          # node scripts/check-fly-deployment.mjs production-three "$machines_json" "$volumes_json"
