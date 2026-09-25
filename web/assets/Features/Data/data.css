@@ -1,70 +1,194 @@
-/* Data views (saved queries, documents, editor, SQL, schema, indexes,
-   history) and query subscriptions. */
-
-.ts-data-filter {
-  flex: 1 1 140px;
-  width: auto;
-  min-width: 0;
-}
-
-.ts-data .ts-toolbar > .ts-filters {
-  flex: 1 1 320px;
-  justify-content: flex-end;
-}
+/* Database data tabs: documents, history, SQL console, schema, and indexes. */
 
 .ts-data-grow {
   flex: 1 1 200px;
 }
 
-/* Database + collection scope bar. */
-.ts-data-scope {
-  flex-direction: row;
-  align-items: flex-end;
-  padding: var(--ts-s4) var(--ts-s5);
-}
-
-.ts-data-scope-icon {
+/* Tab head: the toolbar and its hint, kept tight above the section. */
+.ts-data-head {
   display: grid;
-  flex: none;
-  place-items: center;
-  width: var(--ts-control-h);
-  height: var(--ts-control-h);
-  border-radius: var(--ts-radius);
-  background: color-mix(in oklab, var(--tone) 16%, transparent);
+  gap: var(--ts-s2);
+  min-width: 0;
+}
+
+/* Tab toolbar: collection scope and view switches, actions on the right. */
+.ts-data-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s3) var(--ts-s6);
+}
+
+.ts-data-bar > .ts-data-scope {
+  flex: 1 1 420px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.ts-data-collection {
+  position: relative;
+  display: flex;
+  flex: 0 1 220px;
+  min-width: 140px;
+}
+
+.ts-data-collection > .ts-input {
+  width: 100%;
+  padding-left: calc(var(--ts-s3) + 22px);
+}
+
+.ts-data-collection-icon {
+  position: absolute;
+  top: 50%;
+  left: var(--ts-s3);
+  display: flex;
   color: var(--tone);
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
-.ts-data-scope .ts-filter-field .ts-input,
-.ts-data-scope .ts-filter-field .ts-select {
-  height: var(--ts-control-h);
+.ts-data-scope > .ts-data-search {
+  flex: 1 1 200px;
+  max-width: 320px;
 }
 
-.ts-data-scope > .ts-btn {
-  height: var(--ts-control-h);
+/* View switches scroll sideways instead of widening the page. */
+.ts-data-bar > .ts-segmented {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.ts-data-query {
-  display: inline-block;
-  max-width: 48ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: bottom;
+/* A text link back to the parent list, flush with the content edge. */
+.ts-data-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
+}
+
+.ts-data-back:hover {
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+@media (max-width: 47.99rem) {
+  .ts-data-bar > .ts-data-scope {
+    flex-wrap: wrap;
+  }
+
+  .ts-data-collection,
+  .ts-data-scope > .ts-data-search {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+}
+
+/* Documents: IDs stay on one line; the JSON preview takes the remaining
+   width and never widens the table. */
+.ts-data-documents td:first-child {
   white-space: nowrap;
 }
 
-.ts-data-json > summary {
-  width: fit-content;
-  cursor: pointer;
+.ts-data-documents td:nth-child(2) {
+  width: 100%;
+  max-width: 0;
+}
+
+.ts-data-doc-id {
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+  font-weight: 600;
+}
+
+.ts-data-doc-id:hover {
+  color: var(--tone);
+  text-decoration: none;
+}
+
+.ts-data-json {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  background: none;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* SQL console: editor and results beside the saved queries. */
+.ts-data-sql {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  align-items: start;
+  gap: var(--ts-s10);
+}
+
+/* The narrow saved-queries column keeps its action beside the heading. */
+.ts-data-sql > .ts-card .ts-card-heading {
+  flex-basis: 0;
+}
+
+.ts-data-sql-input {
+  min-height: 180px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.ts-data-queries {
+  display: grid;
   list-style: none;
 }
 
-.ts-data-json > summary::-webkit-details-marker {
-  display: none;
+.ts-data-queries > li {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  padding: var(--ts-s3) 0;
+  border-top: 1px solid var(--ts-line);
 }
 
-.ts-data-json[open] > .ts-code {
-  max-width: 56ch;
-  margin-top: var(--ts-s2);
+.ts-data-query {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  color: var(--ts-ink);
+}
+
+.ts-data-query:hover {
+  text-decoration: none;
+}
+
+.ts-data-query:hover > .ts-strong {
+  color: var(--tone);
+}
+
+.ts-data-query > code {
+  overflow: hidden;
+  padding: 0;
+  background: none;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 79.99rem) {
+  .ts-data-sql {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s6);
+  }
+
+  .ts-data-sql > .ts-card {
+    padding-top: var(--ts-s6);
+    border-top: 1px solid var(--ts-line);
+  }
 }
 
 /* SQL check results. */
@@ -88,6 +212,11 @@
 
 .ts-data-checks > .ts-data-check-warn > svg {
   color: var(--ts-warning);
+}
+
+/* Create-index form: a field sized for a name, not the whole row. */
+.ts-data-index-form {
+  max-width: 560px;
 }
 
 /* Index fields. */

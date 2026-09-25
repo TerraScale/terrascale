@@ -23,19 +23,10 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		_, _, _, err := selectedProject(deps, r)
+		_, db, err := selectedDB(deps, r, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
-		}
-		databaseID := r.FormValue("databaseId")
-		if databaseID != "" {
-			_, db, err := selectedDB(deps, r, databaseID)
-			if err != nil {
-				writeError(w, err)
-				return
-			}
-			databaseID = db.ID
 		}
 		statement := r.FormValue("sql")
 		if len(statement) > maxSQLCheckBytes {
@@ -47,8 +38,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "invalid collection", http.StatusBadRequest)
 			return
 		}
-		renderPageWithSQLResult(w, r, deps, "sql", &sqlPageResult{
-			DatabaseID: databaseID,
+		renderSection(w, r, deps, db.ID, "sql", &sqlPageResult{
 			Collection: collection,
 			Statement:  statement,
 			CheckOnly:  true,
@@ -167,7 +157,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if core.WantsHTML(r) {
-			http.Redirect(w, r, "/data?view=queries", http.StatusSeeOther)
+			http.Redirect(w, r, savedQueriesReturn(r), http.StatusSeeOther)
 			return
 		}
 		core.WriteJSON(w, http.StatusCreated, query)
@@ -212,7 +202,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if core.WantsHTML(r) {
-			http.Redirect(w, r, "/data?view=queries", http.StatusSeeOther)
+			http.Redirect(w, r, savedQueriesReturn(r), http.StatusSeeOther)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -229,7 +219,16 @@ func writeSQLResponse(w http.ResponseWriter, r *http.Request, deps core.Deps, da
 		http.Error(w, "encode response failed", http.StatusInternalServerError)
 		return
 	}
-	renderPageWithSQLResult(w, r, deps, "sql", &sqlPageResult{DatabaseID: databaseID, Statement: statement, JSON: string(encoded)})
+	renderSection(w, r, deps, databaseID, "sql", &sqlPageResult{Statement: statement, JSON: string(encoded)})
+}
+
+// savedQueriesReturn sends a saved-query form back to the SQL console of the
+// database it was submitted from.
+func savedQueriesReturn(r *http.Request) string {
+	if id := r.FormValue("databaseId"); id != "" {
+		return sectionPath(id, "sql", nil)
+	}
+	return "/databases"
 }
 
 func selectedProject(deps core.Deps, r *http.Request) (core.Principal, core.Account, core.Project, error) {

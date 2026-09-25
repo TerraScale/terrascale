@@ -150,119 +150,113 @@ templ shellSidebar(page core.Page, admin bool) {
 // contextSwitcher is one menu for choosing the organization and the project.
 templ contextSwitcher(page core.Page) {
 	if len(page.Shell.Organizations) > 0 {
-		<details { MenuBehavior... } class="ts-menu ts-context-menu" data-signals="{organizationSearch: '', projectSearch: ''}">
-			<summary class="ts-context-trigger" aria-label={ contextTriggerLabel(page.Shell) }>
-				<span class="ts-context-icon" data-tone={ initialTone(page.Shell.OrganizationName) } aria-hidden="true">{ initial(page.Shell.OrganizationName) }</span>
-				<span class="ts-context-text">
-					<span class="ts-context-kind">{ displayName(page.Shell.OrganizationName, "Choose organization") }</span>
-					<span class="ts-context-name">
-						<span class="ts-context-dot" data-tone={ initialTone(page.Shell.ProjectName) } aria-hidden="true"></span>
-						<span class="ts-truncate">{ displayName(page.Shell.ProjectName, "Choose project") }</span>
-					</span>
-				</span>
-				<span class="ts-context-chevron" aria-hidden="true">@icons.ArrowUpDown(14)</span>
+		@Dropdown(DropdownProps{
+			Class:        "ts-context-menu",
+			Label:        contextTriggerLabel(page.Shell),
+			Trigger:      contextTrigger(page.Shell),
+			TriggerClass: "ts-context-trigger",
+			PanelClass:   "ts-context-panel",
+			Attrs:        templ.Attributes{"data-signals": "{organizationSearch: '', projectSearch: ''}"},
+		}) {
+			@MenuHeading("Organizations")
+			if len(page.Shell.Organizations) > 5 {
+				<input class="ts-input ts-input-sm" id="organizationSearch" type="search" placeholder="Search organizations" aria-label="Search organizations" data-bind="organizationSearch"/>
+			}
+			<div class="ts-context-list">
 				for _, organization := range page.Shell.Organizations {
-					if organization.Selected {
-						<span class="ts-sr-only" data-active-organization-id={ organization.ID }>Current organization: { organization.Name }</span>
-					}
+					<form method="post" action="/api/v1/dashboard/switch-organization" data-show="$organizationSearch === '' || el.dataset.organizationName.toLowerCase().includes($organizationSearch.toLowerCase())" data-organization-name={ organization.Name }>
+						@formToken(page.CSRFToken)
+						<input type="hidden" name="organizationId" value={ organization.ID }/>
+						@contextOption(organization.Name, organization.Selected, "data-organization-option", organization.ID)
+					</form>
 				}
-				for _, project := range page.Shell.Projects {
-					if project.Selected {
-						<span class="ts-sr-only" data-active-project-id={ project.ID }>Current project: { project.Name }</span>
-					}
-				}
-			</summary>
-			<div class="ts-menu-panel ts-context-panel">
-				<div class="ts-menu-heading">Organizations</div>
-				if len(page.Shell.Organizations) > 5 {
-					<label class="ts-sr-only" for="organizationSearch">Search organizations</label>
-					<input class="ts-input ts-input-sm" id="organizationSearch" type="search" placeholder="Search organizations" aria-label="Search organizations" data-bind="organizationSearch"/>
+			</div>
+			if len(page.Shell.Projects) > 0 {
+				@MenuSeparator()
+				@MenuHeading("Projects in " + page.Shell.OrganizationName)
+				if len(page.Shell.Projects) > 5 {
+					<input class="ts-input ts-input-sm" id="projectSearch" type="search" placeholder="Search projects" aria-label="Search projects" data-bind="projectSearch"/>
 				}
 				<div class="ts-context-list">
-					for _, organization := range page.Shell.Organizations {
-						<form method="post" action="/api/v1/dashboard/switch-organization" data-show="$organizationSearch === '' || el.dataset.organizationName.toLowerCase().includes($organizationSearch.toLowerCase())" data-organization-name={ organization.Name }>
+					for _, project := range page.Shell.Projects {
+						<form method="post" action="/api/v1/dashboard/switch-project" data-show="$projectSearch === '' || el.dataset.projectName.toLowerCase().includes($projectSearch.toLowerCase())" data-project-name={ project.Name }>
 							@formToken(page.CSRFToken)
-							<input type="hidden" name="organizationId" value={ organization.ID }/>
-							@contextOption(organization.Name, organization.Selected, "data-organization-option", organization.ID)
+							<input type="hidden" name="projectId" value={ project.ID }/>
+							<input type="hidden" name="returnUrl" value={ page.Shell.ReturnURL }/>
+							@contextOption(project.Name, project.Selected, "data-project-option", project.ID)
 						</form>
 					}
 				</div>
-				if len(page.Shell.Projects) > 0 {
-					<hr class="ts-menu-separator"/>
-					<div class="ts-menu-heading">Projects in { page.Shell.OrganizationName }</div>
-					if len(page.Shell.Projects) > 5 {
-						<label class="ts-sr-only" for="projectSearch">Search projects</label>
-						<input class="ts-input ts-input-sm" id="projectSearch" type="search" placeholder="Search projects" aria-label="Search projects" data-bind="projectSearch"/>
-					}
-					<div class="ts-context-list">
-						for _, project := range page.Shell.Projects {
-							<form method="post" action="/api/v1/dashboard/switch-project" data-show="$projectSearch === '' || el.dataset.projectName.toLowerCase().includes($projectSearch.toLowerCase())" data-project-name={ project.Name }>
-								@formToken(page.CSRFToken)
-								<input type="hidden" name="projectId" value={ project.ID }/>
-								<input type="hidden" name="returnUrl" value={ page.Shell.ReturnURL }/>
-								@contextOption(project.Name, project.Selected, "data-project-option", project.ID)
-							</form>
-						}
-					</div>
-				}
-				<hr class="ts-menu-separator"/>
-				<a class="ts-menu-item" href="/organization?newProject=1#projects" data-tone="emerald">@icons.Plus(15)<span>Create new project</span></a>
-				<a class="ts-menu-item" href="/settings?tab=identity" data-tone="slate">@icons.Settings(15)<span>Project settings</span></a>
-				<a class="ts-menu-item" href="/organization" data-tone="indigo">@icons.Boxes(15)<span>All workspaces</span></a>
-			</div>
-		</details>
+			}
+			@MenuSeparator()
+			@MenuItem(MenuItemProps{Href: "/organization?newProject=1#projects", Tone: "emerald", Icon: icons.Plus(15), Label: "Create new project"})
+			@MenuItem(MenuItemProps{Href: "/settings?tab=identity", Tone: "slate", Icon: icons.Settings(15), Label: "Project settings"})
+			@MenuItem(MenuItemProps{Href: "/organization", Tone: "indigo", Icon: icons.Boxes(15), Label: "All workspaces"})
+		}
+	}
+}
+
+templ contextTrigger(shell core.Shell) {
+	<span class="ts-context-icon" data-tone={ initialTone(shell.OrganizationName) } aria-hidden="true">{ initial(shell.OrganizationName) }</span>
+	<span class="ts-context-text">
+		<span class="ts-context-kind">{ displayName(shell.OrganizationName, "Choose organization") }</span>
+		<span class="ts-context-name">
+			<span class="ts-context-dot" data-tone={ initialTone(shell.ProjectName) } aria-hidden="true"></span>
+			<span class="ts-truncate">{ displayName(shell.ProjectName, "Choose project") }</span>
+		</span>
+	</span>
+	<span class="ts-context-chevron" aria-hidden="true">@icons.ArrowUpDown(14)</span>
+	for _, organization := range shell.Organizations {
+		if organization.Selected {
+			<span class="ts-sr-only" data-active-organization-id={ organization.ID }>Current organization: { organization.Name }</span>
+		}
+	}
+	for _, project := range shell.Projects {
+		if project.Selected {
+			<span class="ts-sr-only" data-active-project-id={ project.ID }>Current project: { project.Name }</span>
+		}
 	}
 }
 
 templ contextOption(name string, selected bool, attr, id string) {
-	<button
-		type="submit"
-		class="ts-menu-item"
-		{ templ.Attributes{attr: id}... }
-		if selected {
-			aria-current="true"
-		}
-	>
-		<span class="ts-menu-tile" data-tone={ initialTone(name) } aria-hidden="true">{ initial(name) }</span>
-		<span class="ts-menu-label">{ name }</span>
-		if selected {
-			@icons.Check(15)
-		}
-	</button>
+	@MenuItem(MenuItemProps{Type: "submit", Icon: menuTile(name), Label: name, Current: selected, Attrs: templ.Attributes{attr: id}})
+}
+
+templ menuTile(name string) {
+	<span class="ts-menu-tile" data-tone={ initialTone(name) } aria-hidden="true">{ initial(name) }</span>
 }
 
 templ accountMenu(page core.Page) {
-		<details { MenuBehavior... } class="ts-menu ts-menu-up ts-account">
-			<summary class="ts-account-trigger" aria-label="Account menu">
-				<span class="ts-account-avatar" aria-hidden="true">{ displayName(page.Shell.UserInitials, "TS") }</span>
-				<span class="ts-account-meta">
-					<span class="ts-account-name">{ displayName(page.Shell.UserName, "TerraScale user") }</span>
-					<span class="ts-account-email">{ page.Shell.UserEmail }</span>
-				</span>
-				<span class="ts-account-chevron" aria-hidden="true">@icons.ChevronUp(15)</span>
-			</summary>
-			<div class="ts-menu-panel">
-				<div class="ts-account-card">
-					<span class="ts-account-avatar ts-account-avatar-lg" aria-hidden="true">{ displayName(page.Shell.UserInitials, "TS") }</span>
-					<span class="ts-account-meta">
-						<span class="ts-account-name">{ displayName(page.Shell.UserName, "TerraScale user") }</span>
-						<span class="ts-account-email">{ page.Shell.UserEmail }</span>
-					</span>
-				</div>
-				<hr class="ts-menu-separator"/>
-				<a class="ts-menu-item" href="/profile" data-tone="pink">@icons.UserRound(15)<span>Profile</span></a>
-				<a class="ts-menu-item" href="/notifications" data-tone="amber">@icons.Bell(15)<span>Notifications</span></a>
-				<a class="ts-menu-item" href="/settings" data-tone="slate">@icons.Settings(15)<span>Settings</span></a>
-				if page.Principal.PlatformAdmin {
-					<a class="ts-menu-item" href="/admin" data-tone="violet">@icons.ShieldCheck(15)<span>Administration</span></a>
-				}
-				<hr class="ts-menu-separator"/>
-				<form method="post" action="/api/v1/auth/logout">
-					@formToken(page.CSRFToken)
-					<button type="submit" class="ts-menu-item ts-menu-item-danger">@icons.LogOut(15)<span>Sign out</span></button>
-				</form>
-			</div>
-		</details>
+	@Dropdown(DropdownProps{Class: "ts-account", Up: true, Label: "Account menu", Trigger: accountTrigger(page.Shell), TriggerClass: "ts-account-trigger"}) {
+		<div class="ts-account-card">
+			<span class="ts-account-avatar ts-account-avatar-lg" aria-hidden="true">{ displayName(page.Shell.UserInitials, "TS") }</span>
+			<span class="ts-account-meta">
+				<span class="ts-account-name">{ displayName(page.Shell.UserName, "TerraScale user") }</span>
+				<span class="ts-account-email">{ page.Shell.UserEmail }</span>
+			</span>
+		</div>
+		@MenuSeparator()
+		@MenuItem(MenuItemProps{Href: "/profile", Tone: "pink", Icon: icons.UserRound(15), Label: "Profile"})
+		@MenuItem(MenuItemProps{Href: "/notifications", Tone: "amber", Icon: icons.Bell(15), Label: "Notifications"})
+		@MenuItem(MenuItemProps{Href: "/settings", Tone: "slate", Icon: icons.Settings(15), Label: "Settings"})
+		if page.Principal.PlatformAdmin {
+			@MenuItem(MenuItemProps{Href: "/admin", Tone: "violet", Icon: icons.ShieldCheck(15), Label: "Administration"})
+		}
+		@MenuSeparator()
+		<form method="post" action="/api/v1/auth/logout">
+			@formToken(page.CSRFToken)
+			@MenuItem(MenuItemProps{Type: "submit", Icon: icons.LogOut(15), Label: "Sign out", Danger: true})
+		</form>
+	}
+}
+
+templ accountTrigger(shell core.Shell) {
+	<span class="ts-account-avatar" aria-hidden="true">{ displayName(shell.UserInitials, "TS") }</span>
+	<span class="ts-account-meta">
+		<span class="ts-account-name">{ displayName(shell.UserName, "TerraScale user") }</span>
+		<span class="ts-account-email">{ shell.UserEmail }</span>
+	</span>
+	<span class="ts-account-chevron" aria-hidden="true">@icons.ChevronUp(15)</span>
 }
 
 templ formToken(token string) {

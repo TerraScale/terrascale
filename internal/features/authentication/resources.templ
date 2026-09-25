@@ -144,35 +144,21 @@ templ resourceRowView(data pageData, row resourceRow, csrfToken string) {
 
 templ rowMenu(data pageData, row resourceRow, csrfToken string) {
 	if len(row.Fields) > 0 || len(row.Actions) > 0 || removable(data.Section, row) {
-		<details { ui.MenuBehavior... } class="ts-menu ts-menu-end">
-			<summary class="ts-icon-btn" aria-label={ "Actions for " + row.Name }>
-				@icons.MoreHorizontal(16)
-			</summary>
-			<div class="ts-menu-panel">
-				if len(row.Fields) > 0 {
-					<button class="ts-menu-item" type="button" command="show-modal" commandfor={ "edit-" + row.ID }>
-						@icons.Pencil(15)
-						<span>Edit</span>
-					</button>
-				}
-				for _, action := range row.Actions {
-					<form method="post" action={ templ.SafeURL(fmt.Sprintf("/api/v1/auth-management/%s/%s/actions/%s", data.Section.Key, row.ID, action.Key)) }>
-						<input type="hidden" name="_csrf" value={ csrfToken }/>
-						<button class="ts-menu-item" type="submit">
-							@action.Icon(15)
-							<span>{ action.Label }</span>
-						</button>
-					</form>
-				}
-				if removable(data.Section, row) {
-					<div class="ts-menu-separator"></div>
-					<button class="ts-menu-item ts-menu-item-danger" type="button" command="show-modal" commandfor={ "remove-" + row.ID }>
-						@icons.Trash2(15)
-						<span>{ removeVerb(data.Section) }</span>
-					</button>
-				}
-			</div>
-		</details>
+		@ui.Dropdown(ui.DropdownProps{End: true, Label: "Actions for " + row.Name, Trigger: icons.MoreHorizontal(16), TriggerClass: "ts-icon-btn"}) {
+			if len(row.Fields) > 0 {
+				@ui.MenuItem(ui.MenuItemProps{Icon: icons.Pencil(15), Label: "Edit", Attrs: showModal("edit-" + row.ID)})
+			}
+			for _, action := range row.Actions {
+				<form method="post" action={ templ.SafeURL(fmt.Sprintf("/api/v1/auth-management/%s/%s/actions/%s", data.Section.Key, row.ID, action.Key)) }>
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					@ui.MenuItem(ui.MenuItemProps{Type: "submit", Icon: action.Icon(15), Label: action.Label})
+				</form>
+			}
+			if removable(data.Section, row) {
+				@ui.MenuSeparator()
+				@ui.MenuItem(ui.MenuItemProps{Icon: icons.Trash2(15), Label: removeVerb(data.Section), Danger: true, Attrs: showModal("remove-" + row.ID)})
+			}
+		}
 	}
 }
 
@@ -427,4 +413,9 @@ func avatarTone(name string) string {
 		sum += int(r)
 	}
 	return tones[sum%len(tones)]
+}
+
+// showModal makes a menu item open the dialog with the given ID.
+func showModal(dialog string) templ.Attributes {
+	return templ.Attributes{"command": "show-modal", "commandfor": dialog}
 }

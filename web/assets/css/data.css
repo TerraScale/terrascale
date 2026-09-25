@@ -6,6 +6,11 @@
   overflow-x: auto;
 }
 
+/* An open row menu must not be clipped by the scroll container. */
+.ts-table-wrap:has(details.ts-menu[open]) {
+  overflow: visible;
+}
+
 .ts-table {
   width: 100%;
   border-collapse: collapse;
@@ -61,6 +66,11 @@
 .ts-table-actions {
   text-align: right;
   white-space: nowrap;
+}
+
+.ts-table-actions > .ts-row {
+  flex-wrap: nowrap;
+  gap: var(--ts-s1);
 }
 
 /* Tables align with the section edge: no outer cell padding. */
@@ -202,41 +212,6 @@ code:not(pre code) {
   padding: 1px 6px;
   border-radius: var(--ts-radius-sm);
   background: var(--ts-surface-3);
-}
-
-/* Disclosure: a <details> whose summary is a button (ui.Disclosure). */
-.ts-disclosure {
-  min-width: 0;
-}
-
-.ts-disclosure > summary {
-  width: fit-content;
-  list-style: none;
-}
-
-.ts-disclosure > summary::-webkit-details-marker {
-  display: none;
-}
-
-.ts-disclosure-chevron {
-  display: inline-flex;
-  opacity: 0.7;
-  transition: transform var(--ts-fast) var(--ts-ease);
-}
-
-.ts-disclosure[open] .ts-disclosure-chevron {
-  transform: rotate(180deg);
-}
-
-.ts-disclosure[open] > summary {
-  margin-bottom: var(--ts-s4);
-}
-
-.ts-disclosure-body {
-  display: grid;
-  gap: var(--ts-s4);
-  padding: var(--ts-s5) 0 var(--ts-s2) var(--ts-s5);
-  border-left: 2px solid var(--ts-accent);
 }
 
 /* Charts rendered by internal/ui/charts. */

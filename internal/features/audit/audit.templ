@@ -13,13 +13,10 @@ import (
 templ auditView(data pageData) {
 	<main class="ts-page ts-audit-page">
 		@ui.PageHeader("Audit") {
-				<details { ui.MenuBehavior... } class="ts-menu ts-menu-end">
-					<summary class="ts-btn ts-btn-secondary" aria-label="Export audit events">@icons.Download(16)<span>Export</span></summary>
-					<div class="ts-menu-panel" aria-label="Export formats">
-						<a class="ts-menu-item" href={ auditExportHref(data, "csv") }>@icons.FileText(15)<span>Export CSV</span></a>
-						<a class="ts-menu-item" href={ auditExportHref(data, "json") }>@icons.FileJson(15)<span>Export JSON</span></a>
-					</div>
-				</details>
+			@ui.Dropdown(ui.DropdownProps{End: true, Label: "Export audit events", Trigger: exportTrigger(), PanelLabel: "Export formats"}) {
+				@ui.MenuItem(ui.MenuItemProps{Href: auditExportHref(data, "csv"), Icon: icons.FileText(15), Label: "Export CSV"})
+				@ui.MenuItem(ui.MenuItemProps{Href: auditExportHref(data, "json"), Icon: icons.FileJson(15), Label: "Export JSON"})
+			}
 		}
 		@ui.Stats("Audit totals") {
 			@ui.Stat("Matching events", fmt.Sprint(data.Filtered), "Current filtered view")
@@ -160,8 +157,13 @@ func auditOutcomeTone(outcome string) string {
 	return "success"
 }
 
-func auditExportHref(data pageData, format string) templ.SafeURL {
-	return templ.SafeURL(fmt.Sprintf("/audit/export?format=%s&range=%s&severity=%s&action=%s&search=%s", format, url.QueryEscape(data.Range), url.QueryEscape(data.Severity), url.QueryEscape(data.Action), url.QueryEscape(data.Search)))
+templ exportTrigger() {
+	@icons.Download(16)
+	<span>Export</span>
+}
+
+func auditExportHref(data pageData, format string) string {
+	return fmt.Sprintf("/audit/export?format=%s&range=%s&severity=%s&action=%s&search=%s", format, url.QueryEscape(data.Range), url.QueryEscape(data.Severity), url.QueryEscape(data.Action), url.QueryEscape(data.Search))
 }
 
 func auditPageHref(data pageData, page int) string {

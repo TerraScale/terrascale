@@ -53,20 +53,10 @@ var parityRouteStates = []routeState{
 	{key: "auth-templates", path: "/auth/templates", heading: "JWT templates"},
 	{key: "auth-users", path: "/auth/users", heading: "Users"},
 	{key: "auth-webhooks", path: "/auth/webhooks", heading: "Webhooks"},
-	{key: "data", path: "/data", heading: "Saved queries"},
-	{key: "data-create", path: "/data?create=1", heading: "Save query", mobileHeight: 900},
-	{key: "data-editor", path: "/data?view=editor", heading: "Document editor", mobileHeight: 900},
-	{key: "data-queries", path: "/data?view=queries", heading: "Saved queries", mobileHeight: 900},
-	{key: "data-queries-create", path: "/data?view=queries&create=1", heading: "Save query", mobileHeight: 900},
-	{key: "data-sql", path: "/data?view=sql", heading: "SQL console", mobileHeight: 900},
-	{key: "data-table", path: "/data?view=table", heading: "Collection documents", mobileHeight: 900},
 	{key: "databases", path: "/databases", heading: "Databases"},
-	{key: "history", path: "/history", heading: "Document history"},
-	{key: "indexes", path: "/indexes", heading: "Indexes"},
 	{key: "notifications", path: "/notifications", heading: "Notifications"},
 	{key: "organization", path: "/organization", heading: "Organization"},
 	{key: "profile", path: "/profile", heading: "Profile"},
-	{key: "schema", path: "/schema", heading: "Schema"},
 	{key: "settings", path: "/settings", heading: "Settings"},
 	{key: "subscriptions", path: "/subscriptions", heading: "Shared result configuration"},
 	{key: "usage", path: "/usage", heading: "Usage"},
@@ -95,7 +85,7 @@ func TestPagesMemberNavigationKeyboardAndMobile(t *testing.T) {
 
 	navigation := pageByRole(page, *playwright.AriaRoleNavigation, "Dashboard sections")
 	visible(t, byRole(navigation, *playwright.AriaRoleLink, "Overview"))
-	for _, label := range []string{"Tables", "Team", "Usage", "Billing", "Settings"} {
+	for _, label := range []string{"Databases", "Team", "Usage", "Billing", "Settings"} {
 		visible(t, byRole(navigation, *playwright.AriaRoleLink, label, true))
 	}
 	viewportScreenshot(t, page, "member-desktop-navigation")
@@ -209,15 +199,6 @@ func TestPagesRouteStatesRenderAtDesktopAndMobile(t *testing.T) {
 			})
 		}
 	})
-
-	page := deniedAwarePage(t, context, "")
-	must(t, page.SetViewportSize(390, 900))
-	response := goTo(t, page, "/data")
-	if response.Status() != http.StatusOK || currentPath(t, page) != "/data" {
-		t.Fatalf("GET /data = %d at %s", response.Status(), page.URL())
-	}
-	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Saved queries").First())
-	viewportScreenshot(t, page, "parity/data-base-mobile-390x900")
 }
 
 func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
@@ -240,7 +221,7 @@ func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 	}
 
 	goTo(t, mapPage, "/organization")
-	click(t, mapPage.Locator("#create-project > summary"))
+	click(t, mapPage.Locator(`button[command="show-modal"][commandfor="create-project"]`))
 	regionMap := mapPage.Locator(`.ts-region-map[data-select-id="project-region"]`)
 	must(t, expect.Locator(regionMap).ToHaveAttribute("aria-hidden", "true"))
 	mapImage := regionMap.Locator("img")
@@ -251,7 +232,7 @@ func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 
 	nativePage := watchedPage(t, cloneSession(t, page.Context(), false))
 	goTo(t, nativePage, "/organization")
-	click(t, nativePage.Locator("#create-project > summary"))
+	click(t, nativePage.Locator(`button[command="show-modal"][commandfor="create-project"]`))
 	projectForm := nativePage.Locator(`form[action="/api/v1/dashboard/organization/projects"]`)
 	region := projectForm.GetByLabel("Primary region")
 	visible(t, region)
@@ -285,7 +266,7 @@ func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 	waitForPath(t, nativePage, func(u *url.URL) bool { return u.Path == "/organization" })
 	createdProject := nativePage.Locator("tbody tr").Filter(playwright.LocatorFilterOptions{HasText: projectName})
 	visible(t, createdProject)
-	click(t, createdProject.Locator("details.ts-rename > summary"))
+	click(t, byRole(createdProject, *playwright.AriaRoleButton, "Rename"))
 	must(t, expect.Locator(createdProject.GetByLabel("Primary region")).ToHaveValue(selectedRegion))
 }
 

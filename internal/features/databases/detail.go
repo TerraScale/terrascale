@@ -1,15 +1,62 @@
 package databases
 
 import (
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/notfound"
 )
 
+// detailTabs are the database detail tabs this slice renders; the data tabs
+// (documents, SQL, schema, indexes) belong to the data slice.
+var detailTabs = map[string]string{"overview": "Overview", "backups": "Backups", "branches": "Branches", "import": "Import and export"}
+
+func mountDetail(mux *http.ServeMux, deps core.Deps) {
+	mux.HandleFunc("GET /databases/{databaseID}", func(w http.ResponseWriter, r *http.Request) { renderDetail(w, r, deps, "overview") })
+	for _, tab := range []string{"backups", "branches", "import"} {
+		mux.HandleFunc("GET /databases/{databaseID}/"+tab, func(w http.ResponseWriter, r *http.Request) { renderDetail(w, r, deps, tab) })
+	}
+}
+
+type detailData struct {
+	Database  core.Database
+	Tab       string
+	Info      detailInfo
+	Error     string
+	CanManage bool
+}
+
+func renderDetail(w http.ResponseWriter, r *http.Request, deps core.Deps, tab string) {
+	p, a, project, err := selected(deps, r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	db, ok := project.Databases[r.PathValue("databaseID")]
+	if !ok {
+		notfound.Render(w, r)
+		return
+	}
+	org := a.Organizations[p.OrganizationID]
+	canManage := org.CanManage(p.UserID)
+	data := detailData{
+		Database:  db,
+		Tab:       tab,
+		Info:      makeDetailInfo(deps.Demo, p, a, project, db, canManage, canManage && org.CanProvisionResources(p.UserID)),
+		Error:     r.URL.Query().Get("error"),
+		CanManage: canManage,
+	}
+	page := core.Page{Layout: "shell", Title: db.Name + " · " + detailTabs[tab], Principal: p, View: func(page core.Page) templ.Component { return detailContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r)}
+	if err := deps.Render.Page(w, r, page); err != nil {
+		http.Error(w, "could not render database", http.StatusInternalServerError)
+	}
+}
+
 type detailInfo struct {
-	Tab               string
 	Regions           []detailRegion
 	BackupPolicy      core.BackupPolicy
 	HasBackupSchedule bool
@@ -22,6 +69,8 @@ type detailInfo struct {
 	CanRestoreBackups   bool
 	CanBranch           bool
 	Demo                bool
+	Collections         int
+	Documents           int
 }
 
 type detailRegion struct {
@@ -30,11 +79,10 @@ type detailRegion struct {
 	Sample   bool
 }
 
-func makeDetailInfo(demo bool, principal core.Principal, account core.Account, project core.Project, db core.Database, tab string, canManage, canMutate bool) detailInfo {
+func makeDetailInfo(demo bool, principal core.Principal, account core.Account, project core.Project, db core.Database, canManage, canMutate bool) detailInfo {
 	policy := project.BackupPolicies[db.ID]
 	hasSchedule := policy.FullBackupCron != "" || policy.IncrementalBackupCron != ""
 	info := detailInfo{
-		Tab:                 detailTab(tab),
 		BackupPolicy:        policy,
 		HasBackupSchedule:   hasSchedule,
 		BackupsEnabled:      hasSchedule && !policy.Disabled,
@@ -45,6 +93,10 @@ func makeDetailInfo(demo bool, principal core.Principal, account core.Account, p
 		CanRestoreBackups:   canMutate,
 		CanBranch:           canMutate && db.Status == "ready",
 		Demo:                demo,
+		Collections:         len(db.Documents),
+	}
+	for _, documents := range db.Documents {
+		info.Documents += len(documents)
 	}
 
 	// The source dashboard's nearest-region 0 ms is illustrative fixture data,
@@ -67,15 +119,6 @@ func makeDetailInfo(demo bool, principal core.Principal, account core.Account, p
 		info.Regions = append(info.Regions, detailRegion{Name: regionDisplay(backupRegion) + " · backup region", Estimate: "Not measured"})
 	}
 	return info
-}
-
-func detailTab(tab string) string {
-	switch tab {
-	case "placement", "backups", "branches", "import":
-		return tab
-	default:
-		return "overview"
-	}
 }
 
 func regionDisplay(code string) string {

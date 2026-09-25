@@ -234,14 +234,6 @@ templ PasswordInput(p PasswordProps) {
 	</div>
 }
 
-// MenuBehavior makes a <details class="ts-menu"> popover close on outside
-// clicks and on Escape (returning focus to its summary). Spread it onto the
-// element: <details class="ts-menu" { ui.MenuBehavior... }>.
-var MenuBehavior = templ.Attributes{
-	"data-on:click__outside":  "el.open = false",
-	"data-on:keydown__window": "evt.key === 'Escape' && el.open && (el.open = false, el.querySelector('summary').focus())",
-}
-
 type regionPin struct {
 	code string
 	x, y float64
@@ -279,37 +271,4 @@ templ RegionMap(selectID string) {
 			</span>
 		}
 	</div>
-}
-
-// DisclosureProps configures an inline expanding form. Variant is a button
-// style: primary, secondary, or danger.
-type DisclosureProps struct {
-	ID      string
-	Label   string
-	Icon    templ.Component
-	Variant string
-	Open    bool
-}
-
-// Disclosure is a button that expands its children inline, used for create
-// and destructive forms instead of boxing them in a card.
-templ Disclosure(p DisclosureProps) {
-	<details
-		class="ts-disclosure"
-		if p.ID != "" {
-			id={ p.ID }
-		}
-		open?={ p.Open }
-	>
-		<summary class={ "ts-btn", "ts-btn-" + displayName(p.Variant, "secondary") }>
-			if p.Icon != nil {
-				@p.Icon
-			}
-			<span>{ p.Label }</span>
-			<span class="ts-disclosure-chevron" aria-hidden="true">@icons.ChevronDown(15)</span>
-		</summary>
-		<div class="ts-disclosure-body">
-			{ children... }
-		</div>
-	</details>
 }

@@ -188,7 +188,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if core.WantsHTML(r) {
-			http.Redirect(w, r, "/data?view=table&databaseId="+url.QueryEscape(db.ID)+"&collection="+url.QueryEscape(collection), http.StatusSeeOther)
+			http.Redirect(w, r, sectionPath(db.ID, "documents", url.Values{"collection": {collection}}), http.StatusSeeOther)
 			return
 		}
 		core.WriteJSON(w, http.StatusOK, map[string]string{"id": id, "operation": operation})
@@ -293,7 +293,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if core.WantsHTML(r) {
-			http.Redirect(w, r, "/schema?databaseId="+url.QueryEscape(db.ID)+"&collection="+url.QueryEscape(collection), http.StatusSeeOther)
+			http.Redirect(w, r, sectionPath(db.ID, "schema", url.Values{"collection": {collection}}), http.StatusSeeOther)
 			return
 		}
 		core.WriteJSON(w, http.StatusOK, map[string]string{"collection": collection, "status": "applied"})
@@ -423,8 +423,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if core.WantsHTML(r) {
-			query := url.Values{"tab": {"recommendations"}, "databaseId": {resolvedDatabaseID}, "collection": {resolvedCollection}}
-			http.Redirect(w, r, "/indexes?"+query.Encode(), http.StatusSeeOther)
+			http.Redirect(w, r, sectionPath(resolvedDatabaseID, "indexes", url.Values{"view": {"recommendations"}, "collection": {resolvedCollection}}), http.StatusSeeOther)
 			return
 		}
 		core.WriteJSON(w, http.StatusOK, map[string]string{"recommendationId": recommendationID, "status": status})
@@ -492,7 +491,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if core.WantsHTML(r) {
-			http.Redirect(w, r, "/indexes?databaseId="+url.QueryEscape(db.ID)+"&collection="+url.QueryEscape(collection), http.StatusSeeOther)
+			http.Redirect(w, r, sectionPath(db.ID, "indexes", url.Values{"collection": {collection}}), http.StatusSeeOther)
 			return
 		}
 		core.WriteJSON(w, http.StatusOK, map[string]string{"field": field, "status": "created"})

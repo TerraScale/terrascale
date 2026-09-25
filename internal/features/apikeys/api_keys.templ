@@ -1,8 +1,6 @@
 package apikeys
 
 import (
-	"strconv"
-
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/ui"
 	"terrascale.tech/dashboard/internal/ui/icons"
@@ -10,7 +8,12 @@ import (
 
 templ apiKeysContent(page core.Page, d pageData) {
 	<main class="ts-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
-		@ui.PageHeader("API keys")
+		@ui.PageHeader("API keys") {
+			if d.CanManage {
+				@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-m2m", Label: "Create machine credential", Icon: credentialIcon("m2m")})
+				@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-key", Label: "Create key", Icon: credentialIcon("key"), Variant: "primary"})
+			}
+		}
 		if d.Error != "" {
 			@ui.Alert("danger", "", d.Error)
 		}
@@ -27,12 +30,9 @@ templ apiKeysContent(page core.Page, d pageData) {
 				</div>
 			</section>
 		}
-		@credentialSummary(d.Summary)
 		if d.CanManage {
-			<div class="ts-row ts-apikeys-create">
-				@createCredential(page, d, "key", "Create key", "New project key", "database:read,database:write")
-				@createCredential(page, d, "m2m", "Create machine credential", "New machine credential", "database:read")
-			</div>
+			@createCredential(page, d, "key", "Create key", "New project key", "Project keys authenticate application requests to this project's databases.", "database:read,database:write")
+			@createCredential(page, d, "m2m", "Create machine credential", "New machine credential", "Machine clients authenticate services that call TerraScale without a user.", "database:read")
 		}
 		<div class="ts-toolbar">
 			@ui.Tabs("Credential types", []ui.Tab{
@@ -91,31 +91,10 @@ templ apiKeysContent(page core.Page, d pageData) {
 	</main>
 }
 
-// credentialSummary is a row of compact counts: status figures carry a dot,
-// type figures the same icon as the credential rows.
-templ credentialSummary(figures []summaryFigure) {
-	<dl class="ts-apikeys-summary" aria-label="Credential summary">
-		for _, figure := range figures {
-			<div class="ts-apikeys-figure" data-tone={ figure.Tone }>
-				<dt>
-					if figure.Icon != nil {
-						@figure.Icon(14)
-					} else {
-						<span class="ts-dot" aria-hidden="true"></span>
-					}
-					{ figure.Label }
-				</dt>
-				<dd>{ strconv.Itoa(figure.Value) }</dd>
-			</div>
-		}
-	</dl>
-}
-
-templ createCredential(page core.Page, d pageData, kind, action, title, scopes string) {
-	@ui.Disclosure(ui.DisclosureProps{Label: action, Icon: credentialIcon(kind), Variant: credentialVariant(kind), Open: d.Create == kind}) {
-		<form method="post" action={ "/api/v1/dashboard/credentials/" + kind } class="ts-form ts-apikeys-create-form">
+templ createCredential(page core.Page, d pageData, kind, action, title, description, scopes string) {
+	@ui.Dialog(ui.DialogProps{ID: "create-" + kind, Title: title, Description: description, Open: d.Create == kind}) {
+		<form method="post" action={ "/api/v1/dashboard/credentials/" + kind } class="ts-form">
 			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-			<h2 class="ts-section-title">{ title }</h2>
 			@ui.Field(ui.FieldProps{ID: kind + "-name", Label: "Name"}) {
 				<input class="ts-input" id={ kind + "-name" } name="name" required/>
 			}
@@ -130,9 +109,9 @@ templ createCredential(page core.Page, d pageData, kind, action, title, scopes s
 					}
 				</select>
 			}
-			<div class="ts-form-actions">
+			@ui.DialogActions("create-" + kind) {
 				<button class="ts-btn ts-btn-primary" type="submit">{ action }</button>
-			</div>
+			}
 		</form>
 	}
 }
@@ -142,13 +121,6 @@ func credentialIcon(kind string) templ.Component {
 		return readWriteKey.Icon(16)
 	}
 	return machineClient.Icon(16)
-}
-
-func credentialVariant(kind string) string {
-	if kind == "key" {
-		return "primary"
-	}
-	return "secondary"
 }
 
 templ credentialRow(page core.Page, canManage bool, key keyView) {

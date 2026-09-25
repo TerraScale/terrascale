@@ -11,50 +11,52 @@ import (
 
 templ databasesContent(page core.Page, d pageData) {
 	<main class="ts-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
-		if d.Detail != nil {
-			@databaseDetailContent(page, d)
-		} else {
-			@ui.PageHeader("Databases")
-			if d.Error != "" {
-				@ui.Alert("danger", "", d.Error)
-			}
-			if d.Summary.Total > 0 {
-				@databaseStats(d.Summary)
-			}
+		@ui.PageHeader("Databases") {
 			if d.CanProvision {
-				@createDatabase(page, d)
+				@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-database", Label: "New database", Icon: icons.Plus(16), Variant: "primary"})
 			}
-			@ui.Card(ui.CardProps{ID: "project-databases", Title: "Project databases", Description: databaseCount(d), Actions: databaseSearch(d), Flush: true}) {
-				if len(d.Databases) > 0 {
-					<div class="ts-table-wrap">
-						<table class="ts-table">
-							<thead><tr><th>Name</th><th>Status</th><th>Region</th></tr></thead>
-							<tbody>
-								for _, db := range d.Databases {
-									<tr>
-										<td>
-											<a class="ts-db-name" href={ templ.SafeURL("/databases/" + db.ID) }>
-												<span class="ts-db-icon" aria-hidden="true">@icons.Database(15)
-</span>
-												<span class="ts-strong">{ db.Name }</span>
-											</a>
-										</td>
-										<td>@statusBadge(db.Status)
-</td>
-										<td class="ts-mono">{ db.Region }</td>
-									</tr>
-								}
-							</tbody>
-						</table>
-					</div>
-				} else if d.Search != "" {
-					@ui.Empty("No databases match this filter.", "Try another name or clear the search.") {
-						<a class="ts-btn ts-btn-secondary ts-btn-sm" href="/databases">Clear search</a>
+		}
+		if d.Error != "" {
+			@ui.Alert("danger", "", d.Error)
+		}
+		if d.Summary.Total > 0 {
+			@databaseStats(d.Summary)
+		}
+		@ui.Card(ui.CardProps{ID: "project-databases", Title: "Project databases", Description: databaseCount(d), Actions: databaseSearch(d), Flush: true}) {
+			if len(d.Databases) > 0 {
+				<div class="ts-table-wrap">
+					<table class="ts-table">
+						<thead><tr><th>Name</th><th>Status</th><th>Region</th></tr></thead>
+						<tbody>
+							for _, db := range d.Databases {
+								<tr>
+									<td>
+										<a class="ts-db-name" href={ templ.SafeURL(TabPath(db.ID, "overview", nil)) }>
+											<span class="ts-db-icon" aria-hidden="true">@icons.Database(15)</span>
+											<span class="ts-strong">{ db.Name }</span>
+										</a>
+									</td>
+									<td>@statusBadge(db.Status)</td>
+									<td class="ts-muted">{ regionDisplay(db.Region) }</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			} else if d.Search != "" {
+				@ui.Empty("No databases match this filter.", "Try another name or clear the search.") {
+					<a class="ts-btn ts-btn-secondary ts-btn-sm" href="/databases">Clear search</a>
+				}
+			} else {
+				@ui.Empty("No databases yet.", "Create your first database in the region closest to your users.") {
+					if d.CanProvision {
+						@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-database", Label: "New database", Icon: icons.Plus(16), Small: true})
 					}
-				} else {
-					@ui.Empty("No databases yet.", "Create your first database in the region closest to your users.")
 				}
 			}
+		}
+		if d.CanProvision {
+			@createDatabase(page, d)
 		}
 	</main>
 }
@@ -73,25 +75,25 @@ templ databaseStats(s databaseSummary) {
 }
 
 templ createDatabase(page core.Page, d pageData) {
-	@ui.Disclosure(ui.DisclosureProps{ID: "create-database", Label: "New database", Icon: icons.Plus(16), Variant: "primary", Open: d.OpenCreate}) {
+	@ui.Dialog(ui.DialogProps{ID: "create-database", Title: "New database", Description: "Choose a name and the region closest to your users.", Open: d.OpenCreate, Wide: true}) {
 		<form method="post" action="/api/v1/dashboard/databases" class="ts-db-create-form">
 			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 			<div class="ts-form">
 				@ui.Field(ui.FieldProps{ID: "database-name", Label: "Name", Hint: "Lowercase letters, digits, and hyphens."}) {
-					<input class="ts-input" id="database-name" name="name" pattern="[a-z0-9][a-z0-9\-]*" maxlength="63" required/>
+					<input class="ts-input" id="database-name" name="name" pattern="[a-z0-9][a-z0-9\-]*" maxlength="63" required autofocus/>
 				}
 				@ui.Field(ui.FieldProps{ID: "database-region", Label: "Region"}) {
-					<select class="ts-input" id="database-region" name="region">
+					<select class="ts-select" id="database-region" name="region">
 						<option value="GRU" selected?={ d.Region == "GRU" }>São Paulo (GRU)</option>
 						<option value="SFO" selected?={ d.Region == "SFO" }>San Francisco (SFO)</option>
 						<option value="FRA" selected?={ d.Region == "FRA" }>Frankfurt (FRA)</option>
 					</select>
 				}
-				<div class="ts-form-actions">
-					<button class="ts-btn ts-btn-primary" type="submit">Create database</button>
-				</div>
 			</div>
 			@ui.RegionMap("database-region")
+			@ui.DialogActions("create-database") {
+				<button class="ts-btn ts-btn-primary" type="submit">Create database</button>
+			}
 		</form>
 	}
 }
