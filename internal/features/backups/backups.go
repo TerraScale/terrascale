@@ -1,7 +1,6 @@
 package backups
 
 import (
-	json "encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/url"
@@ -41,21 +40,20 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 				http.Error(w, "backup readiness failed: "+err.Error(), http.StatusBadGateway)
 				return
 			}
-			writeJSON(w, http.StatusOK, readiness)
+			core.WriteJSON(w, http.StatusOK, readiness)
 			return
 		}
 		backups := make([]backupView, 0, len(db.Backups))
 		for _, backup := range db.Backups {
 			backups = append(backups, backupView{ID: backup.ID, Status: backup.Status, CreatedAt: backup.CreatedAt, SizeBytes: backup.SizeBytes})
 		}
-		writeJSON(w, http.StatusOK, struct {
+		core.WriteJSON(w, http.StatusOK, struct {
 			Policy  core.BackupPolicy `json:"policy"`
 			Backups []backupView      `json:"backups"`
 		}{Policy: project.BackupPolicies[db.ID], Backups: backups})
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/backups", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -67,7 +65,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -88,7 +86,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			if !ok {
 				return core.ErrNotFound
 			}
-			created = core.Backup{ID: core.NewID("bkp"), DatabaseID: db.ID, Status: "ready", CreatedAt: time.Now().UTC(), Documents: cloneDocuments(current.Documents), Schemas: cloneSchemas(current.Schemas), Indexes: cloneIndexes(current.Indexes)}
+			created = core.Backup{ID: core.NewID("bkp"), DatabaseID: db.ID, Status: "ready", CreatedAt: time.Now().UTC(), Documents: core.CloneDocuments(current.Documents), Schemas: core.CloneSchemas(current.Schemas), Indexes: core.CloneIndexes(current.Indexes)}
 			for _, docs := range current.Documents {
 				for _, body := range docs {
 					created.SizeBytes += int64(len(body))
@@ -105,15 +103,14 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if wantsHTML(r) {
+		if core.WantsHTML(r) {
 			http.Redirect(w, r, "/backups?databaseId="+url.QueryEscape(db.ID), http.StatusSeeOther)
 			return
 		}
-		writeJSON(w, http.StatusCreated, backupView{ID: created.ID, Status: created.Status, CreatedAt: created.CreatedAt, SizeBytes: created.SizeBytes})
+		core.WriteJSON(w, http.StatusCreated, backupView{ID: created.ID, Status: created.Status, CreatedAt: created.CreatedAt, SizeBytes: created.SizeBytes})
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/backups/policy", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -125,7 +122,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -163,7 +160,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if wantsHTML(r) {
+		if core.WantsHTML(r) {
 			if r.FormValue("returnTo") == "databaseDetail" {
 				http.Redirect(w, r, "/databases/"+url.PathEscape(db.ID)+"?tab=backups", http.StatusSeeOther)
 				return
@@ -171,11 +168,10 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			http.Redirect(w, r, "/backups?databaseId="+url.QueryEscape(db.ID), http.StatusSeeOther)
 			return
 		}
-		writeJSON(w, http.StatusOK, policy)
+		core.WriteJSON(w, http.StatusOK, policy)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/backups/restore", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -187,7 +183,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -197,7 +193,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if !deps.Demo {
-			if !canProvision(deps, p) {
+			if !deps.Store.Can(p, core.Organization.CanProvisionResources) {
 				writeError(w, core.ErrForbidden)
 				return
 			}
@@ -254,7 +250,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 				writeError(w, err)
 				return
 			}
-			writeJSON(w, http.StatusAccepted, struct {
+			core.WriteJSON(w, http.StatusAccepted, struct {
 				DatabaseID string                     `json:"dashboardDatabaseId"`
 				Operation  *sdk.ProvisioningOperation `json:"operation"`
 			}{DatabaseID: target.ID, Operation: result})
@@ -287,7 +283,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 				return core.ErrNotFound
 			}
 			backup := current.Backups[index]
-			restored = core.Database{ID: core.NewID("db"), ProjectID: project.ID, Name: name, Region: current.Region, Status: "ready", CreatedAt: time.Now().UTC(), Documents: cloneDocuments(backup.Documents), Schemas: cloneSchemas(backup.Schemas), Indexes: cloneIndexes(backup.Indexes)}
+			restored = core.Database{ID: core.NewID("db"), ProjectID: project.ID, Name: name, Region: current.Region, Status: "ready", CreatedAt: time.Now().UTC(), Documents: core.CloneDocuments(backup.Documents), Schemas: core.CloneSchemas(backup.Schemas), Indexes: core.CloneIndexes(backup.Indexes)}
 			project.Databases[restored.ID] = restored
 			org := a.Organizations[p.OrganizationID]
 			org.Projects[p.ProjectID] = project
@@ -298,11 +294,11 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if wantsHTML(r) {
+		if core.WantsHTML(r) {
 			http.Redirect(w, r, "/databases/"+url.PathEscape(restored.ID), http.StatusSeeOther)
 			return
 		}
-		writeJSON(w, http.StatusCreated, struct {
+		core.WriteJSON(w, http.StatusCreated, struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		}{ID: restored.ID, Name: restored.Name})
@@ -355,14 +351,11 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps) {
 			data.Backups = append(data.Backups, backupView{ID: backup.ID, Status: backup.Status, CreatedAt: backup.CreatedAt, SizeBytes: backup.SizeBytes})
 		}
 	}
-	org := a.Organizations[p.OrganizationID]
-	page := core.Page{Layout: "shell", Title: "Backups · TerraScale", Principal: p, View: func(page core.Page) templ.Component { return backupsContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r), Shell: core.Shell{UserName: a.User.Name, UserEmail: a.User.Email, OrganizationName: org.Name, ProjectName: project.Name}}
+	page := core.Page{Layout: "shell", Title: "Backups · TerraScale", Principal: p, View: func(page core.Page) templ.Component { return backupsContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r)}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render backups", http.StatusInternalServerError)
 	}
 }
-
-func wantsHTML(r *http.Request) bool { return strings.Contains(r.Header.Get("Accept"), "text/html") }
 
 func selected(deps core.Deps, r *http.Request, databaseID string) (core.Principal, core.Project, core.Database, error) {
 	p, ok := deps.Sessions.Principal(r)
@@ -391,16 +384,6 @@ func liveClient(deps core.Deps, p core.Principal) (*sdk.Client, error) {
 	return deps.SDK.ForScope(p.OrganizationID, p.ProjectID)
 }
 
-func canManage(deps core.Deps, p core.Principal) bool {
-	a, err := deps.Store.SnapshotAs(p)
-	return err == nil && a.Organizations[p.OrganizationID].CanManage(p.UserID)
-}
-
-func canProvision(deps core.Deps, p core.Principal) bool {
-	a, err := deps.Store.SnapshotAs(p)
-	return err == nil && a.Organizations[p.OrganizationID].CanProvisionResources(p.UserID)
-}
-
 func setStatus(deps core.Deps, p core.Principal, databaseID, status string) error {
 	return deps.Store.UpdateAs(p, func(a *core.Account) error {
 		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
@@ -420,55 +403,12 @@ func setStatus(deps core.Deps, p core.Principal, databaseID, status string) erro
 	})
 }
 
-func cloneDocuments(input map[string]map[string][]byte) map[string]map[string][]byte {
-	out := make(map[string]map[string][]byte, len(input))
-	for collection, docs := range input {
-		out[collection] = make(map[string][]byte, len(docs))
-		for id, body := range docs {
-			out[collection][id] = slices.Clone(body)
-		}
-	}
-	return out
-}
-
-func cloneSchemas(input map[string][]byte) map[string][]byte {
-	out := make(map[string][]byte, len(input))
-	for collection, body := range input {
-		out[collection] = slices.Clone(body)
-	}
-	return out
-}
-
-func cloneIndexes(input map[string][]string) map[string][]string {
-	out := make(map[string][]string, len(input))
-	for collection, fields := range input {
-		out[collection] = slices.Clone(fields)
-	}
-	return out
-}
-
 func writeError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, core.ErrUnauthorized):
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
+	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)
 	default:
 		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, data any) {
-	encoded, err := json.Marshal(data)
-	if err != nil {
-		http.Error(w, "encode response failed", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(encoded)
 }

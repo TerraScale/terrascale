@@ -4,7 +4,7 @@ PORT ?= 5481
 GOFLAGS ?= -mod=vendor
 export GOFLAGS
 
-.PHONY: build check-generated css dev generate serve lint test-fast test-slow
+.PHONY: build check-generated css dev generate serve lint perf test-fast test-slow
 
 TEMPL_GENERATE_ARGS = -path internal -include-version=false -include-timestamp=false
 
@@ -28,11 +28,16 @@ serve:
 	TS_DASHBOARD_PRODUCTION_DEMO=1 DASHBOARD_ADDR=0.0.0.0:$(PORT) $(GO) run ./cmd/dashboard
 
 lint: check-generated
-	@test -z "$$(find cmd internal tests/integration -type f -name '*.go' -print0 | xargs -0 gofmt -l)"
+	@test -z "$$(find cmd internal tests web -type f -name '*.go' -print0 | xargs -0 gofmt -l)"
 	$(GO) vet ./...
 
+# Browser suites drive Chromium through playwright-go against an in-process
+# dashboard, or DASHBOARD_E2E_BASE_URL when set.
 test-fast:
-	$(GO) test -race -count=1 ./...
+	$(GO) test -race -short -count=1 -parallel 8 ./tests/...
 
 test-slow:
-	scripts/test-slow.sh
+	$(GO) test -race -count=1 -parallel 8 ./tests/...
+
+perf:
+	DASHBOARD_E2E_PERF=1 $(GO) test -count=1 -run TestPerformance -v ./tests/e2e

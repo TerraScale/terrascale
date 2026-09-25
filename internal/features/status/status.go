@@ -2,15 +2,16 @@
 package status
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"terrascale.tech/dashboard/internal/core"
 )
 
-type response struct {
-	Status string `json:"status"`
-}
+// Probe bodies never change, so they are written as prebuilt JSON.
+var (
+	okBody          = []byte(`{"status":"ok"}` + "\n")
+	unavailableBody = []byte(`{"status":"unavailable"}` + "\n")
+)
 
 // Mount registers the liveness and readiness probes used by the platform.
 func Mount(mux *http.ServeMux, deps core.Deps) {
@@ -21,21 +22,21 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 }
 
 func live(w http.ResponseWriter, _ *http.Request) {
-	writeStatus(w, http.StatusOK, "ok")
+	writeStatus(w, http.StatusOK, okBody)
 }
 
 func ready(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		if deps.Store == nil {
-			writeStatus(w, http.StatusServiceUnavailable, "unavailable")
+			writeStatus(w, http.StatusServiceUnavailable, unavailableBody)
 			return
 		}
-		writeStatus(w, http.StatusOK, "ok")
+		writeStatus(w, http.StatusOK, okBody)
 	}
 }
 
-func writeStatus(w http.ResponseWriter, status int, value string) {
+func writeStatus(w http.ResponseWriter, status int, body []byte) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(response{Status: value})
+	_, _ = w.Write(body)
 }

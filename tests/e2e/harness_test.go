@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"crypto/rand"
-	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,19 +18,28 @@ type credentials struct {
 	Email, Password, DisplayName string
 }
 
+// sampleAccount is the populated demo account seeded by internal/app.
+var sampleAccount = credentials{Email: "mario@terrascale.tech", Password: "terrascale", DisplayName: "Mario Kraus"}
+
 // newAccount returns unique credentials so parallel tests never share state.
 func newAccount(label string) credentials {
 	return credentials{
-		Email:       fmt.Sprintf("e2e-%s-%s@example.test", label, strings.ToLower(rand.Text()[:12])),
+		Email:       uniqueName("e2e-"+label) + "@example.test",
 		Password:    "E2e-journey-123!",
 		DisplayName: "E2E " + label,
 	}
 }
 
+// uniqueName appends a random lowercase suffix so parallel tests and repeated
+// runs against a shared server never collide.
+func uniqueName(prefix string) string {
+	return prefix + "-" + strings.ToLower(rand.Text()[:12])
+}
+
 // newContext opens an isolated browser context that is closed with the test.
 func newContext(t *testing.T, base string) playwright.BrowserContext {
 	t.Helper()
-	context, err := browser.NewContext(playwright.BrowserNewContextOptions{BaseURL: playwright.String(base)})
+	context, err := browser.NewContext(playwright.BrowserNewContextOptions{BaseURL: new(base)})
 	must(t, err)
 	t.Cleanup(func() { _ = context.Close() })
 	return context
@@ -107,7 +115,7 @@ func byRole(scope interface {
 }, role playwright.AriaRole, name string, exact ...bool) playwright.Locator {
 	options := playwright.LocatorGetByRoleOptions{Name: name}
 	if len(exact) > 0 {
-		options.Exact = playwright.Bool(exact[0])
+		options.Exact = new(exact[0])
 	}
 	return scope.GetByRole(role, options)
 }
@@ -115,7 +123,7 @@ func byRole(scope interface {
 func pageByRole(page playwright.Page, role playwright.AriaRole, name string, exact ...bool) playwright.Locator {
 	options := playwright.PageGetByRoleOptions{Name: name}
 	if len(exact) > 0 {
-		options.Exact = playwright.Bool(exact[0])
+		options.Exact = new(exact[0])
 	}
 	return page.GetByRole(role, options)
 }
@@ -170,7 +178,7 @@ func screenshot(t *testing.T, page playwright.Page, name string) {
 	}{{"desktop", 1440, 900}, {"mobile", 390, 844}} {
 		must(t, page.SetViewportSize(size.width, size.height))
 		_, err := page.Screenshot(playwright.PageScreenshotOptions{
-			Path: playwright.String(filepath.Join(dir, name+"-"+size.label+".png")), FullPage: playwright.Bool(true),
+			Path: new(filepath.Join(dir, name+"-"+size.label+".png")), FullPage: new(true),
 		})
 		must(t, err)
 	}

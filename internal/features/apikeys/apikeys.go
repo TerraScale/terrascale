@@ -3,10 +3,8 @@ package apikeys
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	json "encoding/json/v2"
-	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -44,7 +42,7 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 			keys = append(keys, publicKey(key, account.User.Email))
 		}
 		slices.SortFunc(keys, func(a, b sdk.ProjectAPIKey) int { return strings.Compare(a.Name, b.Name) })
-		writeJSON(w, http.StatusOK, sdk.ProjectAPIKeyPage{APIKeys: keys})
+		core.WriteJSON(w, http.StatusOK, sdk.ProjectAPIKeyPage{APIKeys: keys})
 	})
 	mux.HandleFunc("POST "+root, func(w http.ResponseWriter, r *http.Request) {
 		p, project, account, err := selected(deps, r)
@@ -52,7 +50,7 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -76,7 +74,7 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 				http.Error(w, "credential issuance failed", http.StatusBadGateway)
 				return
 			}
-			writeJSON(w, http.StatusCreated, issued)
+			core.WriteJSON(w, http.StatusCreated, issued)
 			return
 		}
 		key, secret, err := createDemoKey(deps, p, input)
@@ -84,7 +82,7 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, sdk.ProjectAPIKeySecret{APIKey: publicKey(key, account.User.Email), Secret: secret})
+		core.WriteJSON(w, http.StatusCreated, sdk.ProjectAPIKeySecret{APIKey: publicKey(key, account.User.Email), Secret: secret})
 	})
 	mux.HandleFunc("POST "+root+"/{keyID}/rotate", func(w http.ResponseWriter, r *http.Request) {
 		p, project, account, err := selected(deps, r)
@@ -92,7 +90,7 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -111,7 +109,7 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 				http.Error(w, "credential rotation failed", http.StatusBadGateway)
 				return
 			}
-			writeJSON(w, http.StatusOK, issued)
+			core.WriteJSON(w, http.StatusOK, issued)
 			return
 		}
 		key, secret, err := rotateDemoKey(deps, p, keyID)
@@ -119,7 +117,7 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, sdk.ProjectAPIKeySecret{APIKey: publicKey(key, account.User.Email), Secret: secret})
+		core.WriteJSON(w, http.StatusOK, sdk.ProjectAPIKeySecret{APIKey: publicKey(key, account.User.Email), Secret: secret})
 	})
 	mux.HandleFunc("DELETE "+root+"/{keyID}", func(w http.ResponseWriter, r *http.Request) {
 		p, project, _, err := selected(deps, r)
@@ -127,7 +125,7 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -146,7 +144,7 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 				http.Error(w, "credential revocation failed", http.StatusBadGateway)
 				return
 			}
-			writeJSON(w, http.StatusOK, result)
+			core.WriteJSON(w, http.StatusOK, result)
 			return
 		}
 		err = revokeDemoKey(deps, p, keyID)
@@ -154,7 +152,7 @@ func MountWithIssuer(mux *http.ServeMux, deps core.Deps, issuer CredentialIssuer
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, sdk.ProjectAPIKeyRevocation{KeyID: keyID, Revoked: true})
+		core.WriteJSON(w, http.StatusOK, sdk.ProjectAPIKeyRevocation{KeyID: keyID, Revoked: true})
 	})
 }
 
@@ -244,38 +242,6 @@ func revokeDemoKey(deps core.Deps, p core.Principal, keyID string) error {
 	})
 }
 
-// AuthorizeDemoKey checks a demo secret against its exact account, project,
-// optional database, and capability. It is intentionally separate from the
-// public producer API; demo keys cannot be used as live SDK credentials.
-func AuthorizeDemoKey(store *core.Store, accountID, projectID, databaseID, secret, capability string) bool {
-	if !(strings.HasPrefix(secret, "tsk_demo_") || strings.HasPrefix(secret, "tsm_demo_")) || capability == "" {
-		return false
-	}
-	a, ok := store.Snapshot(accountID)
-	if !ok {
-		return false
-	}
-	digest := hash(secret)
-	for _, org := range a.Organizations {
-		project, ok := org.Projects[projectID]
-		if !ok {
-			continue
-		}
-		if _, ok := project.Databases[databaseID]; !ok {
-			return false
-		}
-		for _, key := range project.APIKeys {
-			if key.DatabaseID != "" && key.DatabaseID != databaseID || !key.RevokedAt.IsZero() || !key.ExpiresAt.IsZero() && time.Now().After(key.ExpiresAt) || !slices.Contains(key.Scopes, capability) {
-				continue
-			}
-			if subtle.ConstantTimeCompare([]byte(key.SecretHash), []byte(digest)) == 1 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func selected(deps core.Deps, r *http.Request) (core.Principal, core.Project, core.Account, error) {
 	p, ok := deps.Sessions.BearerPrincipal(r)
 	if !ok || p.ProjectID == "" {
@@ -290,11 +256,6 @@ func selected(deps core.Deps, r *http.Request) (core.Principal, core.Project, co
 	}
 	project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 	return p, project, a, err
-}
-
-func canManage(deps core.Deps, p core.Principal) bool {
-	a, err := deps.Store.SnapshotAs(p)
-	return err == nil && a.Organizations[p.OrganizationID].CanManage(p.UserID)
 }
 
 func validateInput(project core.Project, input sdk.CreateProjectAPIKeyRequest) error {
@@ -331,25 +292,7 @@ func formatTime(t time.Time) string {
 }
 
 func writeError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, core.ErrUnauthorized):
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
-	default:
+	if !core.WriteAccessError(w, err) {
 		http.Error(w, "invalid input", http.StatusBadRequest)
 	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, data any) {
-	encoded, err := json.Marshal(data)
-	if err != nil {
-		http.Error(w, "encode response failed", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(encoded)
 }

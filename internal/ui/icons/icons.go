@@ -10,12 +10,23 @@ import (
 	"github.com/a-h/templ"
 )
 
+const (
+	svgOpen   = `<svg xmlns="http://www.w3.org/2000/svg" width="`
+	svgHeight = `" height="`
+	svgAttrs  = `" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`
+	svgClose  = `</svg>`
+)
+
+// svg writes the icon piecewise so rendering never builds the whole element
+// as an intermediate string.
 func svg(paths string, size int) templ.Component {
 	return templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
 		s := strconv.Itoa(size)
-		_, err := io.WriteString(w, `<svg xmlns="http://www.w3.org/2000/svg" width="`+s+`" height="`+s+
-			`" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`+
-			paths+`</svg>`)
-		return err
+		for _, part := range [...]string{svgOpen, s, svgHeight, s, svgAttrs, paths, svgClose} {
+			if _, err := io.WriteString(w, part); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }

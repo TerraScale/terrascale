@@ -3,7 +3,6 @@ package auth
 import (
 	"encoding/json/v2"
 	"errors"
-	"io"
 	"mime"
 	"net/http"
 	"net/mail"
@@ -183,7 +182,7 @@ func oauthConsent(deps core.Deps) http.HandlerFunc {
 			redirectToLogin(w, r)
 			return
 		}
-		if _, err := deps.Store.SnapshotAs(principal); err != nil {
+		if err := deps.Store.Authorize(principal); err != nil {
 			redirectToLogin(w, r)
 			return
 		}
@@ -225,7 +224,7 @@ func RegisterAccount(deps core.Deps, input RegistrationInput) (core.Account, err
 	if name == "" {
 		return core.Account{}, InputError("This field is required.")
 	}
-	if !utf8.ValidString(name) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+	if !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
 		return core.Account{}, InputError("Enter a valid name.")
 	}
 	if utf8.RuneCountInString(name) > 128 {
@@ -233,7 +232,7 @@ func RegisterAccount(deps core.Deps, input RegistrationInput) (core.Account, err
 	}
 
 	email := core.NormalizeEmail(input.Email)
-	if len(email) > 254 || !utf8.ValidString(email) || strings.IndexFunc(email, unicode.IsControl) >= 0 || !validEmail(email) {
+	if len(email) > 254 || !utf8.ValidString(email) || strings.ContainsFunc(email, unicode.IsControl) || !validEmail(email) {
 		return core.Account{}, InputError("Enter a valid email address.")
 	}
 	if input.Password == "" {
@@ -308,12 +307,7 @@ func login(deps core.Deps) http.HandlerFunc {
 			input.Password = r.PostForm.Get("password")
 			input.RedirectTo = r.PostForm.Get("redirectTo")
 		} else if mediaType == "application/json" {
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, "invalid login request", http.StatusBadRequest)
-				return
-			}
-			if err := json.Unmarshal(body, &input); err != nil {
+			if err := json.UnmarshalRead(r.Body, &input); err != nil {
 				http.Error(w, "invalid login request", http.StatusBadRequest)
 				return
 			}

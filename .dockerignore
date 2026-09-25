@@ -1,15 +1,10 @@
 .git
 **/.git
 **/bin
-**/obj
 **/node_modules
 **/.env
 **/.env.*
 .forgejo
 /tests/
-/e2e/
-playwright.config.ts
-playwright.sdk.config.ts
 docs/screenshots
 test-results
-playwright-report

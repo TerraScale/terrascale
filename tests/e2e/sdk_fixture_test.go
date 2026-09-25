@@ -1,23 +1,19 @@
-// The fixture runs real dashboard account/database/key handlers against a
-// contract-shaped in-process public API. It is test-only and is not wired into
-// cmd/dashboard or deployed runtime configuration.
-package main
+package e2e
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/signal"
+	"slices"
 	"strings"
 	"sync"
-	"syscall"
+	"testing"
 	"time"
 
 	"terrascale.tech/dashboard/internal/adapters/tsgo"
@@ -33,16 +29,51 @@ import (
 	sdk "terrascale.tech/sdk"
 )
 
-type scope struct{ tenant, project string }
+// sdkFixture runs the real dashboard account, database, and key handlers
+// against a contract-shaped in-process public API. Accounts and onboarding
+// stay in demo mode; databases and API keys go through the ts-go adapter.
+type sdkFixture struct {
+	dashboardURL string
+	publicAPIURL string
+}
 
-type database struct {
-	scope     scope
-	name      string
+// startSDKFixture starts both loopback servers; they close with the test.
+func startSDKFixture(t *testing.T) sdkFixture {
+	t.Helper()
+	store := core.NewStore()
+	sessions := session.New(store, session.Options{})
+	guard := csrf.New(sessions, csrf.Options{})
+	producer := newFixtureProducer()
+	public := httptest.NewServer(producer.handler())
+	t.Cleanup(public.Close)
+
+	demo := core.Deps{Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard), Demo: true}
+	live := demo
+	live.Demo = false
+	live.SDK = tsgo.Factory{APIBaseURL: public.URL, AccessToken: producer.managementToken}
+
+	mux := http.NewServeMux()
+	must(t, assets.Mount(mux, false))
+	auth.Mount(mux, demo)
+	onboarding.Mount(mux, demo)
+	databases.Mount(mux, live)
+	apikeys.MountWithIssuer(mux, live, fixtureIssuer{store: store, producer: producer})
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/onboarding", http.StatusTemporaryRedirect)
+	})
+	dashboard := httptest.NewServer(guard.Protect(mux))
+	t.Cleanup(dashboard.Close)
+	return sdkFixture{dashboardURL: dashboard.URL, publicAPIURL: public.URL}
+}
+
+type fixtureScope struct{ tenant, project string }
+
+type fixtureDatabase struct {
 	documents map[string]map[string][]byte
 	revision  uint64
 }
 
-type credential struct {
+type fixtureKey struct {
 	id, secret, tenant, project, database, dashboardDatabaseID string
 	name                                                       string
 	scopes                                                     []string
@@ -50,33 +81,39 @@ type credential struct {
 	revoked                                                    bool
 }
 
-type producer struct {
+type fixtureProducer struct {
 	mu              sync.Mutex
 	managementToken string
-	databases       map[scope]map[string]*database
-	keys            map[string]*credential
-	keysByID        map[string]*credential
+	databases       map[fixtureScope]map[string]*fixtureDatabase
+	keys            map[string]*fixtureKey
+	keysByID        map[string]*fixtureKey
 }
 
-func newProducer() *producer {
-	return &producer{managementToken: "mgmt_fixture_" + core.NewID(""), databases: make(map[scope]map[string]*database), keys: make(map[string]*credential), keysByID: make(map[string]*credential)}
+func newFixtureProducer() *fixtureProducer {
+	return &fixtureProducer{
+		managementToken: "mgmt_fixture_" + core.NewID(""),
+		databases:       make(map[fixtureScope]map[string]*fixtureDatabase),
+		keys:            make(map[string]*fixtureKey),
+		keysByID:        make(map[string]*fixtureKey),
+	}
 }
 
-func (p *producer) handler() http.Handler {
+func (p *fixtureProducer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/databases", p.createDatabase)
-	mux.HandleFunc("GET /api/v1/databases/{database}/collections/{collection}/documents/{id}", p.document)
-	mux.HandleFunc("PUT /api/v1/databases/{database}/collections/{collection}/documents/{id}", p.document)
-	mux.HandleFunc("DELETE /api/v1/databases/{database}/collections/{collection}/documents/{id}", p.document)
+	const document = "/api/v1/databases/{database}/collections/{collection}/documents/{id}"
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		mux.HandleFunc(method+" "+document, p.document)
+	}
 	return mux
 }
 
-func (p *producer) createDatabase(w http.ResponseWriter, r *http.Request) {
+func (p *fixtureProducer) createDatabase(w http.ResponseWriter, r *http.Request) {
 	if !bearerEqual(r, p.managementToken) {
 		http.Error(w, "unknown management credential", http.StatusUnauthorized)
 		return
 	}
-	s := scope{tenant: r.Header.Get("X-TerraScale-Tenant-ID"), project: r.Header.Get("X-TerraScale-Project-ID")}
+	s := fixtureScope{tenant: r.Header.Get("X-TerraScale-Tenant-ID"), project: r.Header.Get("X-TerraScale-Project-ID")}
 	if s.tenant == "" || s.project == "" {
 		http.Error(w, "tenant and project scope required", http.StatusBadRequest)
 		return
@@ -90,19 +127,19 @@ func (p *producer) createDatabase(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.databases[s] == nil {
-		p.databases[s] = make(map[string]*database)
+		p.databases[s] = make(map[string]*fixtureDatabase)
 	}
 	if _, exists := p.databases[s][input.Name]; exists {
 		http.Error(w, "database already exists", http.StatusConflict)
 		return
 	}
-	p.databases[s][input.Name] = &database{scope: s, name: input.Name, documents: make(map[string]map[string][]byte)}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_, _ = w.Write(mustJSON(sdk.DatabaseRecord{Name: input.Name, Placement: string(input.Placement[0]), CreatedAt: time.Now().UnixMilli()}))
+	p.databases[s][input.Name] = &fixtureDatabase{documents: make(map[string]map[string][]byte)}
+	writeFixtureJSON(w, http.StatusCreated, sdk.DatabaseRecord{
+		Name: input.Name, Placement: string(input.Placement[0]), CreatedAt: time.Now().UnixMilli(),
+	})
 }
 
-func (p *producer) document(w http.ResponseWriter, r *http.Request) {
+func (p *fixtureProducer) document(w http.ResponseWriter, r *http.Request) {
 	token := bearerToken(r)
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -124,18 +161,11 @@ func (p *producer) document(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		capability = "database:write"
 	}
-	allowed := false
-	for _, scope := range key.scopes {
-		if scope == capability {
-			allowed = true
-			break
-		}
-	}
-	if !allowed {
+	if !slices.Contains(key.scopes, capability) {
 		http.Error(w, "capability denied", http.StatusForbidden)
 		return
 	}
-	db := p.databases[scope{tenant: key.tenant, project: key.project}][name]
+	db := p.databases[fixtureScope{tenant: key.tenant, project: key.project}][name]
 	if db == nil {
 		http.Error(w, "database unknown", http.StatusForbidden)
 		return
@@ -144,7 +174,6 @@ func (p *producer) document(w http.ResponseWriter, r *http.Request) {
 	if db.documents[collection] == nil {
 		db.documents[collection] = make(map[string][]byte)
 	}
-	w.Header().Set("Content-Type", "application/json")
 	switch r.Method {
 	case http.MethodGet:
 		body, ok := db.documents[collection][id]
@@ -152,6 +181,7 @@ func (p *producer) document(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "document unknown", http.StatusNotFound)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 	case http.MethodPut:
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -160,38 +190,43 @@ func (p *producer) document(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid document", http.StatusBadRequest)
 			return
 		}
-		db.documents[collection][id] = append([]byte(nil), body...)
+		db.documents[collection][id] = bytes.Clone(body)
 		db.revision++
-		w.Header().Set("ETag", fmt.Sprintf("\"%d\"", db.revision))
-		_, _ = w.Write(mustJSON(struct {
+		w.Header().Set("ETag", fmt.Sprintf(`"%d"`, db.revision))
+		writeFixtureJSON(w, http.StatusOK, struct {
 			Revision string `json:"revision"`
-		}{Revision: fmt.Sprint(db.revision)}))
+		}{Revision: fmt.Sprint(db.revision)})
 	case http.MethodDelete:
 		delete(db.documents[collection], id)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
-type issuer struct {
+// fixtureIssuer mints producer credentials for databases the principal can
+// manage in the dashboard store.
+type fixtureIssuer struct {
 	store    *core.Store
-	producer *producer
+	producer *fixtureProducer
 }
 
-func (i issuer) Create(_ context.Context, principal core.Principal, input sdk.CreateProjectAPIKeyRequest) (*sdk.ProjectAPIKeySecret, error) {
+func (i fixtureIssuer) Create(_ context.Context, principal core.Principal, input sdk.CreateProjectAPIKeyRequest) (*sdk.ProjectAPIKeySecret, error) {
 	databaseName, err := i.authorize(principal, input.DatabaseID)
 	if err != nil {
 		return nil, err
 	}
-	secret := "tsk_fixture_" + strings.TrimPrefix(core.NewID(""), "_")
-	key := &credential{id: core.NewID("key"), secret: secret, tenant: principal.OrganizationID, project: principal.ProjectID, database: databaseName, dashboardDatabaseID: input.DatabaseID, name: input.Name, scopes: append([]string(nil), input.Scopes...), createdAt: time.Now().UTC()}
+	key := &fixtureKey{
+		id: core.NewID("key"), secret: newFixtureSecret(), tenant: principal.OrganizationID, project: principal.ProjectID,
+		database: databaseName, dashboardDatabaseID: input.DatabaseID, name: input.Name,
+		scopes: slices.Clone(input.Scopes), createdAt: time.Now().UTC(),
+	}
 	i.producer.mu.Lock()
-	i.producer.keys[secret] = key
+	defer i.producer.mu.Unlock()
+	i.producer.keys[key.secret] = key
 	i.producer.keysByID[key.id] = key
-	i.producer.mu.Unlock()
 	return key.response(), nil
 }
 
-func (i issuer) Rotate(_ context.Context, principal core.Principal, keyID string) (*sdk.ProjectAPIKeySecret, error) {
+func (i fixtureIssuer) Rotate(_ context.Context, principal core.Principal, keyID string) (*sdk.ProjectAPIKeySecret, error) {
 	if _, err := i.authorize(principal, ""); err != nil {
 		return nil, err
 	}
@@ -202,12 +237,12 @@ func (i issuer) Rotate(_ context.Context, principal core.Principal, keyID string
 		return nil, core.ErrNotFound
 	}
 	delete(i.producer.keys, key.secret)
-	key.secret = "tsk_fixture_" + strings.TrimPrefix(core.NewID(""), "_")
+	key.secret = newFixtureSecret()
 	i.producer.keys[key.secret] = key
 	return key.response(), nil
 }
 
-func (i issuer) Revoke(_ context.Context, principal core.Principal, keyID string) (*sdk.ProjectAPIKeyRevocation, error) {
+func (i fixtureIssuer) Revoke(_ context.Context, principal core.Principal, keyID string) (*sdk.ProjectAPIKeyRevocation, error) {
 	if _, err := i.authorize(principal, ""); err != nil {
 		return nil, err
 	}
@@ -222,7 +257,9 @@ func (i issuer) Revoke(_ context.Context, principal core.Principal, keyID string
 	return &sdk.ProjectAPIKeyRevocation{KeyID: keyID, Revoked: true}, nil
 }
 
-func (i issuer) authorize(principal core.Principal, databaseID string) (string, error) {
+// authorize returns the producer database name behind a dashboard database
+// id, or "" when no database is requested.
+func (i fixtureIssuer) authorize(principal core.Principal, databaseID string) (string, error) {
 	account, err := i.store.SnapshotAs(principal)
 	if err != nil {
 		return "", err
@@ -244,8 +281,20 @@ func (i issuer) authorize(principal core.Principal, databaseID string) (string, 
 	return db.Name, nil
 }
 
-func (c *credential) response() *sdk.ProjectAPIKeySecret {
-	return &sdk.ProjectAPIKeySecret{APIKey: sdk.ProjectAPIKey{ID: c.id, ProjectID: c.project, Name: c.name, Prefix: c.secret[:min(len(c.secret), 16)], LastFour: c.secret[len(c.secret)-4:], Scopes: append([]string(nil), c.scopes...), DatabaseID: c.dashboardDatabaseID, CreatedAt: c.createdAt.Format(time.RFC3339), Active: !c.revoked}, Secret: c.secret}
+func (k *fixtureKey) response() *sdk.ProjectAPIKeySecret {
+	return &sdk.ProjectAPIKeySecret{
+		APIKey: sdk.ProjectAPIKey{
+			ID: k.id, ProjectID: k.project, Name: k.name,
+			Prefix: k.secret[:min(len(k.secret), 16)], LastFour: k.secret[len(k.secret)-4:],
+			Scopes: slices.Clone(k.scopes), DatabaseID: k.dashboardDatabaseID,
+			CreatedAt: k.createdAt.Format(time.RFC3339), Active: !k.revoked,
+		},
+		Secret: k.secret,
+	}
+}
+
+func newFixtureSecret() string {
+	return "tsk_fixture_" + strings.TrimPrefix(core.NewID(""), "_")
 }
 
 func bearerToken(r *http.Request) string {
@@ -257,59 +306,11 @@ func bearerToken(r *http.Request) string {
 }
 
 func bearerEqual(r *http.Request, expected string) bool {
-	actual := bearerToken(r)
-	return len(actual) == len(expected) && subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) == 1
+	return subtle.ConstantTimeCompare([]byte(bearerToken(r)), []byte(expected)) == 1
 }
 
-func mustJSON(value any) []byte {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		panic(err)
-	}
-	return encoded
-}
-
-func run(ctx context.Context) error {
-	store := core.NewStore()
-	sessions := session.New(store, session.Options{})
-	guard := csrf.New(sessions, csrf.Options{})
-	renderer := render.New(store, guard)
-	producer := newProducer()
-	publicServer := httptest.NewServer(producer.handler())
-	defer publicServer.Close()
-	demo := core.Deps{Store: store, Sessions: sessions, CSRF: guard, Render: renderer, Demo: true}
-	live := demo
-	live.Demo = false
-	live.SDK = tsgo.Factory{APIBaseURL: publicServer.URL, AccessToken: producer.managementToken}
-	mux := http.NewServeMux()
-	if err := assets.Mount(mux, false); err != nil {
-		return err
-	}
-	auth.Mount(mux, demo)
-	onboarding.Mount(mux, demo)
-	databases.Mount(mux, live)
-	apikeys.MountWithIssuer(mux, live, issuer{store: store, producer: producer})
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/onboarding", http.StatusTemporaryRedirect)
-	})
-	dashboardServer := httptest.NewServer(guard.Protect(mux))
-	defer dashboardServer.Close()
-	line := mustJSON(struct {
-		DashboardURL string `json:"dashboardUrl"`
-		PublicAPIURL string `json:"publicApiUrl"`
-	}{DashboardURL: dashboardServer.URL, PublicAPIURL: publicServer.URL})
-	if _, err := fmt.Fprintln(os.Stdout, string(line)); err != nil {
-		return err
-	}
-	<-ctx.Done()
-	return nil
-}
-
-func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err := run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+func writeFixtureJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.MarshalWrite(w, value)
 }

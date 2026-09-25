@@ -2,10 +2,8 @@
 package notifications
 
 import (
-	"errors"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/a-h/templ"
@@ -38,14 +36,8 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		all := scoped(account.Notifications, p)
-		status := "all"
-		if strings.EqualFold(r.URL.Query().Get("status"), "unread") {
-			status = "unread"
-			all = slices.DeleteFunc(all, func(n core.Notification) bool { return !strings.EqualFold(n.Status, "unread") })
-		}
-		slices.SortFunc(all, func(a, b core.Notification) int { return b.CreatedAt.Compare(a.CreatedAt) })
-		unread, critical := 0, 0
-		for _, item := range scoped(account.Notifications, p) {
+		total, unread, critical := len(all), 0, 0
+		for _, item := range all {
 			if strings.EqualFold(item.Status, "unread") {
 				unread++
 				if strings.EqualFold(item.Severity, "danger") || strings.EqualFold(item.Severity, "critical") {
@@ -53,21 +45,27 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 				}
 			}
 		}
+		status := "all"
+		if strings.EqualFold(r.URL.Query().Get("status"), "unread") {
+			status = "unread"
+			all = slices.DeleteFunc(all, func(n core.Notification) bool { return !strings.EqualFold(n.Status, "unread") })
+		}
+		slices.SortFunc(all, func(a, b core.Notification) int { return b.CreatedAt.Compare(a.CreatedAt) })
 		count := len(all)
 		pages := max(1, (count+pageSize-1)/pageSize)
-		page := clampPage(r.URL.Query().Get("page"), pages)
+		page := core.ClampPage(r.URL.Query().Get("page"), pages)
 		start := (page - 1) * pageSize
 		end := min(start+pageSize, count)
 		data := pageData{
 			Notifications: all[start:end], Status: status, Unread: unread, Critical: critical,
-			Total: len(scoped(account.Notifications, p)), FilteredCount: count, Page: page, PageCount: pages,
+			Total: total, FilteredCount: count, Page: page, PageCount: pages,
 			Previous: max(1, page-1), Next: min(pages, page+1), HasPrevious: page > 1, HasNext: page < pages,
 		}
 		render(w, r, deps, p, data)
 	})
 
 	mux.HandleFunc("POST /api/v1/notifications/{notificationID}/read", func(w http.ResponseWriter, r *http.Request) {
-		if !verifyCSRF(deps, w, r) {
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, ok := principal(deps, w, r)
@@ -92,7 +90,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/v1/notifications/read-all", func(w http.ResponseWriter, r *http.Request) {
-		if !verifyCSRF(deps, w, r) {
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, ok := principal(deps, w, r)
@@ -141,14 +139,6 @@ func principal(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Pri
 	return p, true
 }
 
-func verifyCSRF(deps core.Deps, w http.ResponseWriter, r *http.Request) bool {
-	if deps.CSRF == nil || deps.CSRF.Verify(r) != nil {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
-		return false
-	}
-	return true
-}
-
 func render(w http.ResponseWriter, r *http.Request, deps core.Deps, p core.Principal, data pageData) {
 	page := core.Page{
 		Layout: "shell", Title: "Notifications", Principal: p,
@@ -174,23 +164,8 @@ func visible(p core.Principal, item core.Notification) bool {
 		(item.ProjectID == "" || item.ProjectID == p.ProjectID)
 }
 
-func clampPage(raw string, pages int) int {
-	page, err := strconv.Atoi(raw)
-	if err != nil || page < 1 {
-		return 1
-	}
-	return min(page, pages)
-}
-
 func writeError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, core.ErrUnauthorized):
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
-	default:
+	if !core.WriteAccessError(w, err) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
 }

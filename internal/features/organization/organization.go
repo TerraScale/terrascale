@@ -137,9 +137,9 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 		page := core.Page{
 			Layout: "shell", Title: "Organization · TerraScale",
 			Principal: p, CSRFToken: deps.CSRF.Token(w, r),
-			View: core.View(func(page core.Page) templ.Component {
+			View: func(page core.Page) templ.Component {
 				return organizationPageView(page, data)
-			}),
+			},
 		}
 		if err := deps.Render.Page(w, r, page); err != nil {
 			http.Error(w, "could not render organization page", http.StatusInternalServerError)
@@ -189,11 +189,11 @@ func resumeCheckoutOrganization(deps core.Deps, service Service, w http.Response
 	if err := refreshPrincipal(deps, w, r, p); err != nil {
 		return core.Principal{}, false, err
 	}
-	account, ok := deps.Store.Snapshot(p.AccountID)
-	if !ok || account.User.ID != p.UserID {
+	refreshed, ok := deps.Store.CurrentPrincipal(p.AccountID, p.UserID)
+	if !ok {
 		return core.Principal{}, false, core.ErrForbidden
 	}
-	return account.Principal(), true, nil
+	return refreshed, true, nil
 }
 
 func makeOrganizationPage(account core.Account, active core.Organization, p core.Principal, step, pageError string) organizationPageData {
@@ -207,7 +207,7 @@ func makeOrganizationPage(account core.Account, active core.Organization, p core
 		NewOrganizationID:   active.ID,
 		SignedInEmail:       account.User.Email,
 		Error:               pageError,
-		Regions:             supportedRegions(),
+		Regions:             supportedRegions,
 		OwnershipRequested:  active.PendingOwnerUserID != "",
 		CanConfirmOwnership: active.PendingOwnerUserID == p.UserID && active.PendingOwnerExpiresAt.After(time.Now()),
 	}
@@ -542,8 +542,7 @@ func organizationMutation(deps core.Deps, destination string, operation func(cor
 }
 
 func parseMutation(w http.ResponseWriter, r *http.Request, deps core.Deps) (core.Principal, url.Values, bool) {
-	if err := deps.CSRF.Verify(r); err != nil {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+	if !deps.VerifyCSRF(w, r) {
 		return core.Principal{}, nil, false
 	}
 	p, ok := deps.Sessions.Principal(r)
@@ -560,11 +559,11 @@ func parseMutation(w http.ResponseWriter, r *http.Request, deps core.Deps) (core
 }
 
 func refreshPrincipal(deps core.Deps, w http.ResponseWriter, r *http.Request, p core.Principal) error {
-	account, ok := deps.Store.Snapshot(p.AccountID)
-	if !ok || account.User.ID != p.UserID {
+	refreshed, ok := deps.Store.CurrentPrincipal(p.AccountID, p.UserID)
+	if !ok {
 		return core.ErrForbidden
 	}
-	return deps.Sessions.Start(w, r, account.Principal())
+	return deps.Sessions.Start(w, r, refreshed)
 }
 
 func redirectWithError(w http.ResponseWriter, r *http.Request, path string, err error) {
@@ -618,6 +617,5 @@ func safeReturnURL(candidate, fallback string) string {
 	return parsed.RequestURI()
 }
 
-func supportedRegions() []string {
-	return []string{string(sdk.RegionGRU), string(sdk.RegionSFO), string(sdk.RegionFRA)}
-}
+// supportedRegions lists the placement choices offered in project forms.
+var supportedRegions = []string{string(sdk.RegionGRU), string(sdk.RegionSFO), string(sdk.RegionFRA)}

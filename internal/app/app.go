@@ -39,8 +39,6 @@ import (
 
 type Application struct {
 	Handler http.Handler
-	Store   *core.Store
-	Deps    core.Deps
 }
 
 func New(cfg config.Config) (*Application, error) {
@@ -96,7 +94,7 @@ func New(cfg config.Config) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Application{Handler: compress(invalidatePrefetch(guard.Protect(mux))), Store: store, Deps: deps}, nil
+	return &Application{Handler: compress(invalidatePrefetch(guard.Protect(mux)))}, nil
 }
 
 // invalidatePrefetch drops pages the browser prefetched through the layout's

@@ -8,11 +8,3 @@ func CurrentPage(active bool) string {
 	}
 	return "false"
 }
-
-// Selected marks the active item in a selectable navigation group.
-func Selected(active bool) string {
-	if active {
-		return "true"
-	}
-	return "false"
-}

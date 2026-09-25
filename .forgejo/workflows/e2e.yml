@@ -16,18 +16,12 @@ jobs:
         run: scripts/setup-ci-toolchains.sh
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
+      - name: Check generated Templ and lint
+        run: make lint
       # terrascale-builder already supplies the pinned, library-patched Chromium.
-      - name: Check Chromium navigation in the runner
+      - name: Run Go browser and account-to-ts-go tests
         env:
           CI: "1"
-          DEBUG: "pw:browser"
-        run: |
-          . scripts/prepare-ci-browser.sh || exit 1
-          node scripts/browser-preflight.mjs
-      - name: Run browser and account-to-Go-SDK tests
-        env:
-          CI: "1"
-          DEBUG: "pw:browser"
         run: |
           . scripts/prepare-ci-browser.sh || exit 1
           make test-slow

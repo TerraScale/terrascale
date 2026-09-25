@@ -1,7 +1,7 @@
 FROM node:24-bookworm-slim AS css
 WORKDIR /src
 COPY package.json package-lock.json .browserslistrc ./
-RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts --no-audit --no-fund
+RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY scripts/build-css.mjs ./scripts/build-css.mjs
 COPY web/assets ./web/assets
 RUN npm run build:css
@@ -17,7 +17,6 @@ COPY cmd ./cmd
 COPY internal ./internal
 COPY web ./web
 COPY --from=css /src/web/static/css/terrascale.css ./web/static/css/terrascale.css
-RUN GOTOOLCHAIN=local go tool templ generate -path internal -include-version=false -include-timestamp=false
 RUN go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/dashboard ./cmd/dashboard
 
 FROM gcr.io/distroless/static-debian12:nonroot

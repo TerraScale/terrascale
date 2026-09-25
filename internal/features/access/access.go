@@ -1,7 +1,6 @@
 package access
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
@@ -116,45 +115,23 @@ func renderAccessPage(w http.ResponseWriter, r *http.Request, deps core.Deps, se
 			http.Error(w, "server events are unavailable", http.StatusInternalServerError)
 			return
 		}
-		buffer := &fragmentResponseWriter{header: make(http.Header)}
-		if err := deps.Render.Fragment(buffer, r, core.Fragment{
-			CSRFToken: csrfToken,
-			View: func(page core.Page) templ.Component {
-				return accessPageView(page, data)
-			},
-		}); err != nil {
+		var fragment strings.Builder
+		if err := accessPageView(core.Page{CSRFToken: csrfToken}, data).Render(r.Context(), &fragment); err != nil {
 			http.Error(w, "could not render team page", http.StatusInternalServerError)
 			return
 		}
-		if err := deps.Events.PatchElements(w, r, buffer.body.String()); err != nil {
-			return
-		}
+		_ = deps.Events.PatchElements(w, r, fragment.String())
 		return
 	}
 	page := core.Page{
 		Layout: "shell", Title: "Team · TerraScale", Principal: p, CSRFToken: csrfToken,
-		View: core.View(func(page core.Page) templ.Component {
+		View: func(page core.Page) templ.Component {
 			return accessPageView(page, data)
-		}),
+		},
 	}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render team page", http.StatusInternalServerError)
 	}
-}
-
-type fragmentResponseWriter struct {
-	header http.Header
-	body   bytes.Buffer
-}
-
-func (w *fragmentResponseWriter) Header() http.Header {
-	return w.header
-}
-
-func (w *fragmentResponseWriter) WriteHeader(int) {}
-
-func (w *fragmentResponseWriter) Write(data []byte) (int, error) {
-	return w.body.Write(data)
 }
 
 func buildPageData(account core.Account, org core.Organization, p core.Principal, query url.Values, message, inviteURL string) pageData {
@@ -281,10 +258,10 @@ func buildPageData(account core.Account, org core.Organization, p core.Principal
 		data.Last = min(start+pageSize, filtered)
 	}
 	if page > 1 {
-		data.PreviousURL = accessPageURL(query, tab, search, roleFilter, page-1)
+		data.PreviousURL = accessPageURL(tab, search, roleFilter, page-1)
 	}
 	if page < pageCount {
-		data.NextURL = accessPageURL(query, tab, search, roleFilter, page+1)
+		data.NextURL = accessPageURL(tab, search, roleFilter, page+1)
 	}
 	return data
 }
@@ -309,7 +286,7 @@ func parsePositiveInt(value string) (int, error) {
 	return number, nil
 }
 
-func accessPageURL(query url.Values, tab, search, role string, page int) string {
+func accessPageURL(tab, search, role string, page int) string {
 	values := make(url.Values)
 	values.Set("tab", tab)
 	if search != "" {
@@ -453,13 +430,13 @@ func invitationPage(deps core.Deps) http.HandlerFunc {
 		page := core.Page{
 			Layout: "auth", Title: "Organization invitation · TerraScale",
 			Principal: p, CSRFToken: deps.CSRF.Token(w, r),
-			View: core.View(func(page core.Page) templ.Component {
+			View: func(page core.Page) templ.Component {
 				return invitationPageView(page, invitationPageData{
 					OrganizationName: org.Name, Email: invitation.Email, Role: invitation.Role,
 					ExpiresAt: invitation.ExpiresAt.UTC().Format(time.RFC3339),
 					Token:     token, CurrentEmail: currentEmail, HasSession: signedIn, CanRespond: canRespond,
 				})
-			}),
+			},
 		}
 		if err := deps.Render.Page(w, r, page); err != nil {
 			http.Error(w, "could not render invitation page", http.StatusInternalServerError)
@@ -469,8 +446,7 @@ func invitationPage(deps core.Deps) http.HandlerFunc {
 
 func respondToInvitation(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, ok := deps.Sessions.Principal(r)
@@ -490,12 +466,12 @@ func respondToInvitation(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		if action == "accept" {
-			account, ok := deps.Store.Snapshot(p.AccountID)
-			if !ok || account.User.ID != p.UserID {
+			refreshed, ok := deps.Store.CurrentPrincipal(p.AccountID, p.UserID)
+			if !ok {
 				writeProblem(w, core.ErrForbidden)
 				return
 			}
-			if err := deps.Sessions.Start(w, r, account.Principal()); err != nil {
+			if err := deps.Sessions.Start(w, r, refreshed); err != nil {
 				http.Error(w, "could not refresh session", http.StatusInternalServerError)
 				return
 			}
@@ -507,8 +483,7 @@ func respondToInvitation(deps core.Deps, service Service) http.HandlerFunc {
 }
 
 func parseMutation(w http.ResponseWriter, r *http.Request, deps core.Deps) (core.Principal, url.Values, bool) {
-	if err := deps.CSRF.Verify(r); err != nil {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+	if !deps.VerifyCSRF(w, r) {
 		return core.Principal{}, nil, false
 	}
 	p, ok := deps.Sessions.Principal(r)

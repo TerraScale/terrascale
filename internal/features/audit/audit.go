@@ -5,11 +5,9 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -186,7 +184,7 @@ func buildPage(events []core.AuditEvent, retention int, search, action, rawSever
 	}
 	slices.Sort(options[1:])
 	pageCount := max(1, (len(filtered)+pageSize-1)/pageSize)
-	page := clampPage(rawPage, pageCount)
+	page := core.ClampPage(rawPage, pageCount)
 	start := (page - 1) * pageSize
 	end := min(start+pageSize, len(filtered))
 	rows := make([]row, 0, end-start)
@@ -217,8 +215,8 @@ func buildPage(events []core.AuditEvent, retention int, search, action, rawSever
 }
 
 func filter(events []core.AuditEvent, f filters, now time.Time, retention int) []core.AuditEvent {
-	rangeDays := map[string]int{"24h": 1, "7d": 7, "30d": 30, "90d": 90}[f.Range]
-	cutoff := now.Add(-time.Duration(min(rangeDays, retention)) * 24 * time.Hour)
+	cutoff := now.Add(-time.Duration(min(rangeDays[f.Range], retention)) * 24 * time.Hour)
+	search := strings.ToLower(f.Search)
 	result := make([]core.AuditEvent, 0, len(events))
 	for _, event := range events {
 		if f.Action != "all" && f.Action != "" && event.Action != f.Action {
@@ -232,7 +230,7 @@ func filter(events []core.AuditEvent, f filters, now time.Time, retention int) [
 		}
 		if f.Search != "" {
 			haystack := strings.ToLower(strings.Join([]string{event.Actor, event.Action, event.Target, event.TargetType, event.Source, severity(event.Risk), event.OccurredAt.UTC().Format(time.RFC3339)}, " "))
-			if !strings.Contains(haystack, strings.ToLower(f.Search)) {
+			if !strings.Contains(haystack, search) {
 				continue
 			}
 		}
@@ -286,18 +284,25 @@ func actorType(actor string) string {
 	return "user"
 }
 
-func actionLabel(action string) string {
-	labels := map[string]string{
+var (
+	rangeDays = map[string]int{"24h": 1, "7d": 7, "30d": 30, "90d": 90}
+
+	actionLabels = map[string]string{
 		"api_key.created":          "API key created",
 		"member.role_changed":      "Member role changed",
 		"document.batch_upsert":    "Documents batch upserted",
 		"database.deleted":         "Database deleted",
 		"backup.restore_completed": "Backup restore completed",
 	}
-	if label, ok := labels[action]; ok {
+
+	actionSeparators = strings.NewReplacer(".", " ", "_", " ")
+)
+
+func actionLabel(action string) string {
+	if label, ok := actionLabels[action]; ok {
 		return label
 	}
-	words := strings.Fields(strings.NewReplacer(".", " ", "_", " ").Replace(action))
+	words := strings.Fields(actionSeparators.Replace(action))
 	for i, word := range words {
 		if i == 0 && word != "" {
 			words[i] = strings.ToUpper(word[:1]) + word[1:]
@@ -330,23 +335,8 @@ func filenamePart(value string) string {
 	return result.String()
 }
 
-func clampPage(raw string, pages int) int {
-	page, err := strconv.Atoi(raw)
-	if err != nil || page < 1 {
-		return 1
-	}
-	return min(page, pages)
-}
-
 func writeError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, core.ErrUnauthorized):
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
-	default:
+	if !core.WriteAccessError(w, err) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
 }

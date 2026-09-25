@@ -66,10 +66,6 @@ func wantsPage(r *http.Request) bool {
 	if strings.Contains(accept, "application/json") || strings.Contains(accept, "text/event-stream") {
 		return false
 	}
-	for name := range r.Header {
-		if strings.EqualFold(name, "Datastar-Request") {
-			return false
-		}
-	}
-	return true
+	_, datastar := r.Header["Datastar-Request"]
+	return !datastar
 }

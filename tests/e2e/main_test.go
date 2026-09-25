@@ -78,7 +78,7 @@ func startDashboard() (*httptest.Server, error) {
 // falls back to the newest installed headless shell, such as the one baked
 // into the CI image for a newer Playwright release.
 func launchChromium(pw *playwright.Playwright) (playwright.Browser, error) {
-	options := playwright.BrowserTypeLaunchOptions{Timeout: playwright.Float(30_000)}
+	options := playwright.BrowserTypeLaunchOptions{Timeout: new(30_000.0)}
 	launched, err := pw.Chromium.Launch(options)
 	if err == nil {
 		return launched, nil
@@ -96,7 +96,7 @@ func launchChromium(pw *playwright.Playwright) (playwright.Browser, error) {
 		return nil, err
 	}
 	slices.SortFunc(shells, func(a, b string) int { return cmp.Compare(revision(a), revision(b)) })
-	options.ExecutablePath = playwright.String(shells[len(shells)-1])
+	options.ExecutablePath = new(shells[len(shells)-1])
 	return pw.Chromium.Launch(options)
 }
 

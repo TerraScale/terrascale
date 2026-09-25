@@ -556,21 +556,6 @@ func isEntitledSubscriptionState(status string) bool {
 	return status == "active" || status == "trialing"
 }
 
-func (service BillingService) selectedPlan(planKey, interval string) (core.Plan, error) {
-	planID, planKey, err := service.planCandidate(planKey, interval)
-	if err != nil {
-		return core.Plan{}, err
-	}
-	plan, ok := service.store.Plan(planID)
-	if !ok {
-		return core.Plan{}, ErrPlanUnavailable
-	}
-	if err := validatePlanSelection(plan, planKey, interval); err != nil {
-		return core.Plan{}, err
-	}
-	return plan, nil
-}
-
 func (service BillingService) planCandidate(planKey, interval string) (string, string, error) {
 	planKey = normalizePlanKey(planKey)
 	if planKey == "" {

@@ -6,11 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/mail"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"terrascale.tech/dashboard/internal/core"
 	sdk "terrascale.tech/sdk"
@@ -78,7 +78,7 @@ func (s Service) ForOrganization(p core.Principal, organizationID string) (core.
 // selects it in the account. Checkout and plan changes are owned by billing.
 func (s Service) CreateBusiness(p core.Principal, name string) (core.Organization, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || len([]rune(name)) > 128 || slug(name) == "" {
+	if name == "" || utf8.RuneCountInString(name) > 128 || slug(name) == "" {
 		return core.Organization{}, core.ErrInvalid
 	}
 	var result core.Organization
@@ -136,7 +136,7 @@ func (s Service) SwitchOrganization(p core.Principal, organizationID string) err
 
 func (s Service) RenameOrganization(p core.Principal, name string) error {
 	name = strings.TrimSpace(name)
-	if name == "" || len([]rune(name)) > 128 || slug(name) == "" {
+	if name == "" || utf8.RuneCountInString(name) > 128 || slug(name) == "" {
 		return core.ErrInvalid
 	}
 	return s.store.UpdateAs(p, func(a *core.Account) error {
@@ -153,7 +153,7 @@ func (s Service) RenameOrganization(p core.Principal, name string) error {
 
 func (s Service) CreateProject(p core.Principal, name, region, backupRegion string, regions []string) (core.Project, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || len([]rune(name)) > 128 || slug(name) == "" {
+	if name == "" || utf8.RuneCountInString(name) > 128 || slug(name) == "" {
 		return core.Project{}, core.ErrInvalid
 	}
 	validatedRegions, err := normalizeRegions(regions)
@@ -205,7 +205,7 @@ func (s Service) CreateProject(p core.Principal, name, region, backupRegion stri
 
 func (s Service) RenameProject(p core.Principal, projectID, name, region, backupRegion string, regions []string) error {
 	name = strings.TrimSpace(name)
-	if projectID == "" || name == "" || len([]rune(name)) > 128 || slug(name) == "" {
+	if projectID == "" || name == "" || utf8.RuneCountInString(name) > 128 || slug(name) == "" {
 		return core.ErrInvalid
 	}
 	var validatedRegions []string
@@ -317,10 +317,7 @@ func (s Service) CreateInvitation(p core.Principal, email, role string) (core.In
 	if err != nil || !strings.EqualFold(parsed.Address, email) || (role != roleMember && role != roleViewer) {
 		return core.Invitation{}, "", core.ErrInvalid
 	}
-	token, err := newToken()
-	if err != nil {
-		return core.Invitation{}, "", err
-	}
+	token := newToken()
 	digest := sha256.Sum256([]byte(token))
 	invitation := core.Invitation{
 		ID: core.NewID("inv"), Email: email, Role: role, Status: statusPending,
@@ -360,13 +357,10 @@ func (s Service) ResendInvitation(p core.Principal, invitationID string) (core.I
 	if invitationID == "" {
 		return core.Invitation{}, "", core.ErrInvalid
 	}
-	token, err := newToken()
-	if err != nil {
-		return core.Invitation{}, "", err
-	}
+	token := newToken()
 	digest := sha256.Sum256([]byte(token))
 	var invitation core.Invitation
-	err = s.store.UpdateAs(p, func(a *core.Account) error {
+	err := s.store.UpdateAs(p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
@@ -611,10 +605,8 @@ func slug(value string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-func newToken() (string, error) {
+func newToken() string {
 	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", fmt.Errorf("create invitation token: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+	rand.Read(raw[:])
+	return base64.RawURLEncoding.EncodeToString(raw[:])
 }

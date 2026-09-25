@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,10 @@ import (
 
 // Store is one process's demo state. Updates commit an isolated copy under a
 // lock, so failed callbacks cannot publish partial mutations.
+//
+// Organizations live only in organizations; an entry in accounts records the
+// account's own fields and the IDs of the organizations it belongs to, so
+// shared tenants are stored and copied once.
 type Store struct {
 	mu            sync.RWMutex
 	accounts      map[string]Account
@@ -37,9 +42,7 @@ func NewStore() *Store {
 
 func NewID(prefix string) string {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
-	}
+	rand.Read(b[:])
 	return prefix + "_" + hex.EncodeToString(b[:])
 }
 
@@ -108,22 +111,9 @@ func (s *Store) InsertAccount(a Account) error {
 			return ErrConflict
 		}
 	}
-	s.accounts[a.ID] = cloneAccount(a)
+	s.putLocked(a)
 	s.byEmail[a.User.Email] = a.ID
-	for id, org := range a.Organizations {
-		s.organizations[id] = cloneOrganization(org)
-	}
 	return nil
-}
-
-func (s *Store) Snapshot(accountID string) (Account, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	a, ok := s.accounts[accountID]
-	if !ok {
-		return Account{}, false
-	}
-	return s.materialize(a), true
 }
 
 func (s *Store) FindByEmail(email string) (Account, bool) {
@@ -137,14 +127,79 @@ func (s *Store) FindByEmail(email string) (Account, bool) {
 }
 
 func (s *Store) SnapshotAs(p Principal) (Account, error) {
-	a, ok := s.Snapshot(p.AccountID)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.accounts[p.AccountID]
 	if !ok {
 		return Account{}, ErrNotFound
 	}
-	if err := authorize(a, p); err != nil {
+	if err := authorize(s.viewLocked(a), p); err != nil {
 		return Account{}, err
 	}
-	return a, nil
+	return s.materialize(a), nil
+}
+
+// ViewAs calls read with the principal's authorized account while holding the
+// read lock. The account shares the store's maps and slices, so read must not
+// retain or modify anything reachable from it.
+func (s *Store) ViewAs(p Principal, read func(Account) error) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.accounts[p.AccountID]
+	if !ok {
+		return ErrNotFound
+	}
+	view := s.viewLocked(a)
+	if err := authorize(view, p); err != nil {
+		return err
+	}
+	return read(view)
+}
+
+// Authorize reports whether the principal still matches its account and
+// selected scope.
+func (s *Store) Authorize(p Principal) error {
+	return s.ViewAs(p, func(Account) error { return nil })
+}
+
+// Can reports whether the principal is authorized and its selected
+// organization satisfies allow, such as Organization.CanManage.
+func (s *Store) Can(p Principal, allow func(Organization, string) bool) bool {
+	return s.ViewAs(p, func(a Account) error {
+		if !allow(a.Organizations[p.OrganizationID], p.UserID) {
+			return ErrForbidden
+		}
+		return nil
+	}) == nil
+}
+
+// CurrentPrincipal returns the account's principal for its current selection
+// when the account still belongs to userID.
+func (s *Store) CurrentPrincipal(accountID, userID string) (Principal, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.accounts[accountID]
+	if !ok || a.User.ID != userID {
+		return Principal{}, false
+	}
+	return s.viewLocked(a).Principal(), true
+}
+
+// SessionPrincipal resolves a session's principal for the credential version
+// it was issued with, without copying the account.
+func (s *Store) SessionPrincipal(accountID, userID string, authVersion uint64) (Principal, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.accounts[accountID]
+	if !ok || a.User.ID != userID || a.AuthVersion != authVersion {
+		return Principal{}, false
+	}
+	view := s.viewLocked(a)
+	p := view.Principal()
+	if authorize(view, p) != nil {
+		return Principal{}, false
+	}
+	return p, true
 }
 
 // Update is for authentication and trusted server integration. HTTP feature
@@ -175,10 +230,10 @@ func (s *Store) ChangeEmailAs(p Principal, email, expectedPasswordHash string) e
 	if !ok {
 		return ErrNotFound
 	}
-	next := s.materialize(current)
-	if err := authorize(next, p); err != nil {
+	if err := authorize(s.viewLocked(current), p); err != nil {
 		return err
 	}
+	next := s.materialize(current)
 	if next.User.PasswordHash != expectedPasswordHash {
 		return ErrConflict
 	}
@@ -197,10 +252,7 @@ func (s *Store) ChangeEmailAs(p Principal, email, expectedPasswordHash string) e
 			next.Organizations[id] = org
 		}
 	}
-	s.accounts[next.ID] = cloneAccount(next)
-	for id, org := range next.Organizations {
-		s.organizations[id] = cloneOrganization(org)
-	}
+	s.putLocked(next)
 	delete(s.byEmail, oldEmail)
 	s.byEmail[email] = next.ID
 	return nil
@@ -226,16 +278,23 @@ func (s *Store) updateAsLocked(p Principal, mutate func(*Account) error) error {
 	if !ok {
 		return ErrNotFound
 	}
-	if err := authorize(s.materialize(a), p); err != nil {
+	if err := authorize(s.viewLocked(a), p); err != nil {
 		return err
 	}
+	// The committed organizations are the state mutate started from, so they
+	// serve as the "before" image without copying the account again.
+	existed := func(id string) bool {
+		_, member := a.Organizations[id]
+		_, live := s.organizations[id]
+		return member && live
+	}
 	return s.updateLocked(p.AccountID, func(next *Account) error {
-		before := cloneAccount(*next)
 		if err := mutate(next); err != nil {
 			return err
 		}
-		for id, old := range before.Organizations {
-			if id == p.OrganizationID {
+		for id := range a.Organizations {
+			old, live := s.organizations[id]
+			if id == p.OrganizationID || !live {
 				continue
 			}
 			updated, ok := next.Organizations[id]
@@ -244,7 +303,7 @@ func (s *Store) updateAsLocked(p Principal, mutate func(*Account) error) error {
 			}
 		}
 		for id, added := range next.Organizations {
-			if _, existed := before.Organizations[id]; existed {
+			if existed(id) {
 				continue
 			}
 			member, ok := added.Members[p.UserID]
@@ -281,10 +340,7 @@ func (s *Store) updateLocked(accountID string, mutate func(*Account) error) erro
 			return ErrConflict
 		}
 	}
-	s.accounts[accountID] = cloneAccount(next)
-	for id, org := range next.Organizations {
-		s.organizations[id] = cloneOrganization(org)
-	}
+	s.putLocked(next)
 	s.repairSelectionsLocked()
 	return nil
 }
@@ -320,8 +376,8 @@ func (s *Store) repairSelectionsLocked() {
 		if _, ok := a.Organizations[a.ActiveOrganizationID]; !ok {
 			a.ActiveOrganizationID = ""
 			a.ActiveProjectID = ""
-			for id, org := range a.Organizations {
-				if org.Kind == "personal" {
+			for id := range a.Organizations {
+				if s.organizations[id].Kind == "personal" {
 					a.ActiveOrganizationID = id
 					break
 				}
@@ -341,7 +397,7 @@ func (s *Store) repairSelectionsLocked() {
 			changed = true
 		}
 		if changed {
-			s.accounts[accountID] = cloneAccount(a)
+			s.accounts[accountID] = detachAccount(a)
 		}
 	}
 }
@@ -354,13 +410,35 @@ func memberActive(org Organization, userID string) bool {
 	return member.Status == "" || strings.EqualFold(member.Status, "active")
 }
 
+// putLocked commits a's own fields and memberships to accounts and a copy of
+// each of its organizations to organizations.
+func (s *Store) putLocked(a Account) {
+	s.accounts[a.ID] = detachAccount(a)
+	for id, org := range a.Organizations {
+		s.organizations[id] = cloneOrganization(org)
+	}
+}
+
+// materialize returns an isolated copy of a stored account with its live
+// organizations.
 func (s *Store) materialize(a Account) Account {
-	n := cloneAccount(a)
-	for id := range n.Organizations {
+	n := cloneAccountFields(a)
+	n.Organizations = make(map[string]Organization, len(a.Organizations))
+	for id := range a.Organizations {
 		if org, ok := s.organizations[id]; ok {
 			n.Organizations[id] = cloneOrganization(org)
-		} else {
-			delete(n.Organizations, id)
+		}
+	}
+	return n
+}
+
+// viewLocked is materialize without copies, for read-only use under the lock.
+func (s *Store) viewLocked(a Account) Account {
+	n := a
+	n.Organizations = make(map[string]Organization, len(a.Organizations))
+	for id := range a.Organizations {
+		if org, ok := s.organizations[id]; ok {
+			n.Organizations[id] = org
 		}
 	}
 	return n
@@ -392,11 +470,7 @@ func authorize(a Account, p Principal) error {
 }
 
 func cloneAccount(a Account) Account {
-	n := a
-	n.DemoSecurity.PendingRecoveryCodes = append([]string(nil), a.DemoSecurity.PendingRecoveryCodes...)
-	n.DemoSecurity.Passkeys = append([]DemoPasskey(nil), a.DemoSecurity.Passkeys...)
-	n.Notifications = append([]Notification(nil), a.Notifications...)
-	n.AuditEvents = append([]AuditEvent(nil), a.AuditEvents...)
+	n := cloneAccountFields(a)
 	n.Organizations = make(map[string]Organization, len(a.Organizations))
 	for id, org := range a.Organizations {
 		n.Organizations[id] = cloneOrganization(org)
@@ -404,38 +478,43 @@ func cloneAccount(a Account) Account {
 	return n
 }
 
+// detachAccount copies a's own fields and keeps only its organization IDs.
+func detachAccount(a Account) Account {
+	n := cloneAccountFields(a)
+	n.Organizations = make(map[string]Organization, len(a.Organizations))
+	for id := range a.Organizations {
+		n.Organizations[id] = Organization{ID: id}
+	}
+	return n
+}
+
+func cloneAccountFields(a Account) Account {
+	n := a
+	n.DemoSecurity.PendingRecoveryCodes = slices.Clone(a.DemoSecurity.PendingRecoveryCodes)
+	n.DemoSecurity.Passkeys = slices.Clone(a.DemoSecurity.Passkeys)
+	n.Notifications = slices.Clone(a.Notifications)
+	n.AuditEvents = slices.Clone(a.AuditEvents)
+	n.Organizations = nil
+	return n
+}
+
 func cloneOrganization(org Organization) Organization {
 	o := org
-	o.CheckoutSessions = make(map[string]CheckoutSession, len(org.CheckoutSessions))
-	for k, v := range org.CheckoutSessions {
-		o.CheckoutSessions[k] = v
-	}
-	o.Members = make(map[string]Member, len(org.Members))
-	for k, v := range org.Members {
-		o.Members[k] = v
-	}
-	o.Invitations = make(map[string]Invitation, len(org.Invitations))
-	for k, v := range org.Invitations {
-		o.Invitations[k] = v
-	}
-	o.Billing.Invoices = append([]Invoice(nil), org.Billing.Invoices...)
+	o.CheckoutSessions = cloneMap(org.CheckoutSessions)
+	o.Members = cloneMap(org.Members)
+	o.Invitations = cloneMap(org.Invitations)
+	o.Billing.Invoices = slices.Clone(org.Billing.Invoices)
 	o.Projects = make(map[string]Project, len(org.Projects))
 	for pid, project := range org.Projects {
 		p := project
-		p.Regions = append([]string(nil), project.Regions...)
+		p.Regions = slices.Clone(project.Regions)
 		p.AuthInstance = cloneAuthInstance(project.AuthInstance)
-		p.SavedQueries = make(map[string]SavedQuery, len(project.SavedQueries))
-		for queryID, query := range project.SavedQueries {
-			p.SavedQueries[queryID] = query
-		}
+		p.SavedQueries = cloneMap(project.SavedQueries)
 		p.SharedResultConfigs = maps.Clone(project.SharedResultConfigs)
-		p.BackupPolicies = make(map[string]BackupPolicy, len(project.BackupPolicies))
-		for databaseID, policy := range project.BackupPolicies {
-			p.BackupPolicies[databaseID] = policy
-		}
+		p.BackupPolicies = cloneMap(project.BackupPolicies)
 		p.APIKeys = make(map[string]APIKey, len(project.APIKeys))
 		for keyID, key := range project.APIKeys {
-			key.Scopes = append([]string(nil), key.Scopes...)
+			key.Scopes = slices.Clone(key.Scopes)
 			p.APIKeys[keyID] = key
 		}
 		p.Databases = make(map[string]Database, len(project.Databases))
@@ -443,22 +522,21 @@ func cloneOrganization(org Organization) Organization {
 			db := database
 			db.IndexRecommendations = make([]IndexRecommendation, len(database.IndexRecommendations))
 			for i, recommendation := range database.IndexRecommendations {
-				recommendation.Fields = append([]string(nil), recommendation.Fields...)
+				recommendation.Fields = slices.Clone(recommendation.Fields)
 				db.IndexRecommendations[i] = recommendation
 			}
-			db.IndexBuilds = append([]IndexBuild(nil), database.IndexBuilds...)
+			db.IndexBuilds = slices.Clone(database.IndexBuilds)
 			db.Backups = make([]Backup, len(database.Backups))
 			for i, backup := range database.Backups {
-				copyBackup := backup
-				copyBackup.Documents = cloneDocuments(backup.Documents)
-				copyBackup.Schemas = cloneSchemas(backup.Schemas)
-				copyBackup.Indexes = cloneIndexes(backup.Indexes)
-				db.Backups[i] = copyBackup
+				backup.Documents = CloneDocuments(backup.Documents)
+				backup.Schemas = CloneSchemas(backup.Schemas)
+				backup.Indexes = CloneIndexes(backup.Indexes)
+				db.Backups[i] = backup
 			}
-			db.Schemas = cloneSchemas(database.Schemas)
-			db.Indexes = cloneIndexes(database.Indexes)
-			db.Documents = cloneDocuments(database.Documents)
-			db.DocumentHistory = cloneHistory(database.DocumentHistory)
+			db.Schemas = CloneSchemas(database.Schemas)
+			db.Indexes = CloneIndexes(database.Indexes)
+			db.Documents = CloneDocuments(database.Documents)
+			db.DocumentHistory = CloneHistory(database.DocumentHistory)
 			p.Databases[dbID] = db
 		}
 		o.Projects[pid] = p
@@ -469,38 +547,44 @@ func cloneOrganization(org Organization) Organization {
 func cloneAuthInstance(instance AuthInstance) AuthInstance {
 	copyInstance := instance
 	copyInstance.Resources = make([]AuthResource, len(instance.Resources))
-	copyInstance.AuditEvents = append([]AuditEvent(nil), instance.AuditEvents...)
+	copyInstance.AuditEvents = slices.Clone(instance.AuditEvents)
 	for i, resource := range instance.Resources {
-		copyResource := resource
-		copyResource.Values = make(map[string]string, len(resource.Values))
-		for key, value := range resource.Values {
-			copyResource.Values[key] = value
-		}
-		copyInstance.Resources[i] = copyResource
+		resource.Values = cloneMap(resource.Values)
+		copyInstance.Resources[i] = resource
 	}
 	return copyInstance
 }
 
-func cloneDocuments(documents map[string]map[string][]byte) map[string]map[string][]byte {
+// cloneMap copies m into a map that is never nil, which keeps every stored
+// organization in the same shape for Store.updateAsLocked's comparison.
+func cloneMap[K comparable, V any](m map[K]V) map[K]V {
+	out := make(map[K]V, len(m))
+	maps.Copy(out, m)
+	return out
+}
+
+// CloneDocuments deep-copies a collection -> document ID -> JSON map.
+func CloneDocuments(documents map[string]map[string][]byte) map[string]map[string][]byte {
 	out := make(map[string]map[string][]byte, len(documents))
 	for collection, docs := range documents {
 		copyDocs := make(map[string][]byte, len(docs))
 		for id, body := range docs {
-			copyDocs[id] = append([]byte(nil), body...)
+			copyDocs[id] = slices.Clone(body)
 		}
 		out[collection] = copyDocs
 	}
 	return out
 }
 
-func cloneHistory(history map[string]map[string][][]byte) map[string]map[string][][]byte {
+// CloneHistory deep-copies a collection -> document ID -> revisions map.
+func CloneHistory(history map[string]map[string][][]byte) map[string]map[string][][]byte {
 	out := make(map[string]map[string][][]byte, len(history))
 	for collection, docs := range history {
 		copyDocs := make(map[string][][]byte, len(docs))
 		for id, revisions := range docs {
 			copyRevisions := make([][]byte, len(revisions))
 			for i, body := range revisions {
-				copyRevisions[i] = append([]byte(nil), body...)
+				copyRevisions[i] = slices.Clone(body)
 			}
 			copyDocs[id] = copyRevisions
 		}
@@ -509,18 +593,20 @@ func cloneHistory(history map[string]map[string][][]byte) map[string]map[string]
 	return out
 }
 
-func cloneSchemas(schemas map[string][]byte) map[string][]byte {
+// CloneSchemas deep-copies a collection -> schema JSON map.
+func CloneSchemas(schemas map[string][]byte) map[string][]byte {
 	out := make(map[string][]byte, len(schemas))
 	for collection, schema := range schemas {
-		out[collection] = append([]byte(nil), schema...)
+		out[collection] = slices.Clone(schema)
 	}
 	return out
 }
 
-func cloneIndexes(indexes map[string][]string) map[string][]string {
+// CloneIndexes deep-copies a collection -> indexed fields map.
+func CloneIndexes(indexes map[string][]string) map[string][]string {
 	out := make(map[string][]string, len(indexes))
 	for collection, fields := range indexes {
-		out[collection] = append([]string(nil), fields...)
+		out[collection] = slices.Clone(fields)
 	}
 	return out
 }

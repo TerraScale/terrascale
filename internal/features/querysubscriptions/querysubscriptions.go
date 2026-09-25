@@ -3,6 +3,7 @@ package querysubscriptions
 
 import (
 	"errors"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -46,9 +47,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		for _, db := range project.Databases {
 			data.Databases = append(data.Databases, databaseChoice{ID: db.ID, Name: db.Name})
 		}
-		for _, config := range project.SharedResultConfigs {
-			data.Configs = append(data.Configs, config)
-		}
+		data.Configs = slices.Collect(maps.Values(project.SharedResultConfigs))
 		slices.SortFunc(data.Databases, func(a, b databaseChoice) int { return strings.Compare(a.Name, b.Name) })
 		slices.SortFunc(data.Configs, func(a, b core.SharedResultConfig) int { return strings.Compare(a.Name, b.Name) })
 		page := core.Page{Layout: "shell", Title: "Subscriptions", Principal: p, View: func(page core.Page) templ.Component { return subscriptionsContent(page, data) }}
@@ -154,8 +153,7 @@ func changeConfig(w http.ResponseWriter, r *http.Request, deps core.Deps, detach
 }
 
 func verifyMutation(w http.ResponseWriter, r *http.Request, deps core.Deps) bool {
-	if err := deps.CSRF.Verify(r); err != nil {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+	if !deps.VerifyCSRF(w, r) {
 		return false
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
@@ -185,12 +183,7 @@ func selected(deps core.Deps, r *http.Request) (core.Principal, core.Project, er
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, core.ErrUnauthorized):
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
+	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "view name already exists", http.StatusConflict)
 	default:
