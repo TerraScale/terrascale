@@ -18,9 +18,14 @@ jobs:
       # terrascale-builder already supplies the pinned, library-patched Chromium.
       - name: Check generated Templ, lint, bundle, and run fast Go tests
         run: make lint css test-fast build
+      - name: Check Chromium navigation in the runner
+        env:
+          DEBUG: "pw:browser"
+        run: node scripts/browser-preflight.mjs
       - name: Run slow browser and SDK contract tests
         env:
           CI: "1"
+          DEBUG: "pw:browser"
         run: make test-slow
   deploy:
     needs: verify

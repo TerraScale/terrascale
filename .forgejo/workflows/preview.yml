@@ -61,11 +61,16 @@ jobs:
           fly machine list -a "$PR_APP" --json > "$machines_json"
           fly volumes list -a "$PR_APP" --json > "$volumes_json"
           node scripts/check-fly-deployment.mjs preview "$machines_json" "$volumes_json"
+      - name: Check Chromium navigation in the runner
+        env:
+          DEBUG: "pw:browser"
+        run: node scripts/browser-preflight.mjs
       - name: Run browser E2E suite against the deployed preview
         env:
           PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
           DASHBOARD_E2E_BASE_URL: https://terra-scale-dashboard-pr-${{ github.event.number }}.fly.dev
           CI: "1"
+          DEBUG: "pw:browser"
         run: make test-slow
       - name: Comment preview URL
         if: success()
