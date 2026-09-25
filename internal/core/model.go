@@ -354,13 +354,13 @@ type NavGroup struct {
 }
 
 type Shell struct {
-	UserName            string
-	UserInitials        string
-	UserEmail           string
-	OrganizationName    string
-	ProjectName         string
-	Organizations       []OrganizationOption
-	Projects            []ProjectOption
+	UserName         string
+	UserInitials     string
+	UserEmail        string
+	OrganizationName string
+	ProjectName      string
+	Organizations    []OrganizationOption
+	Projects         []ProjectOption
 	Navigation       []NavGroup
 	ReturnURL        string
 }

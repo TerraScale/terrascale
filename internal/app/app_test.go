@@ -19,7 +19,7 @@ func TestMountedCallerAndAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"/health/ready", "/login", "/onboarding", "/css/terrascale.css", "/js/rocket-components.js", "/brand/logo-terrascale-auth.svg"} {
+	for _, target := range []string{"/health/ready", "/login", "/onboarding", "/css/terrascale.css", "/js/datastar.js", "/brand/logo-terrascale-auth.svg"} {
 		request := httptest.NewRequest(http.MethodGet, "http://dashboard.test"+target, nil)
 		response := httptest.NewRecorder()
 		application.Handler.ServeHTTP(response, request)

@@ -1,190 +1,168 @@
 package organization
 
-import "terrascale.tech/dashboard/internal/core"
+import (
+	"fmt"
+
+	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
+)
 
 // newOrganizationDialog renders the query-driven business-organization wizard.
 // Its forms remain ordinary POST forms so every step works without JavaScript.
 templ newOrganizationDialog(page core.Page, data organizationPageData) {
-	<dialog id="create-organization" class="ts-dialog ts-dialog-wizard" data-autoopen aria-labelledby="create-organization-title" aria-describedby="create-organization-description">
-		<div class="ts-dialog-wizard-head">
-			<div class="ts-dialog-header">
-				<h2 class="ts-dialog-title" id="create-organization-title">Create organization</h2>
-				<p class="ts-dialog-description" id="create-organization-description">Set up a business organization, confirm its billing, then create the first project.</p>
+	<dialog id="create-organization" class="ts-dialog ts-org-wizard" data-init="el.showModal()" aria-labelledby="create-organization-title" aria-describedby="create-organization-description">
+		<div class="ts-dialog-content">
+			<div class="ts-row-between ts-org-wizard-head">
+				<div class="ts-dialog-header">
+					<h2 class="ts-dialog-title" id="create-organization-title">Create organization</h2>
+					<p class="ts-dialog-description" id="create-organization-description">Set up a business organization, confirm its billing, then create the first project.</p>
+				</div>
+				<button class="ts-icon-btn" type="button" aria-label="Close create organization" command="close" commandfor="create-organization">@icons.X(18)</button>
 			</div>
-			<button class="ts-icon-btn" type="button" aria-label="Close create organization" data-close-dialog><span aria-hidden="true">×</span></button>
-		</div>
-		<div class="ts-dialog-content ts-dialog-content-wizard">
 			@newOrganizationWizardContent(page, data, "modal")
 		</div>
 	</dialog>
 	<noscript>
-		<section class="ts-section ts-org-wizard-fallback" aria-labelledby="create-organization-fallback-title">
-			<div class="ts-section-head">
-				<div>
-					<h2 class="ts-panel-title" id="create-organization-fallback-title">Create organization</h2>
-					<p class="ts-meta">Complete the setup steps below. You can return to the organization page at any time.</p>
-				</div>
-				<a class="ts-btn ts-btn-secondary" href="/organization">Close setup</a>
-			</div>
+		@ui.Card(ui.CardProps{ID: "create-organization-fallback", Title: "Create organization", Description: "Complete the setup steps below. You can return to the organization page at any time.", Actions: closeSetupLink()}) {
 			@newOrganizationWizardContent(page, data, "fallback")
-		</section>
+		}
 	</noscript>
 }
 
+templ closeSetupLink() {
+	<a class="ts-btn ts-btn-secondary ts-btn-sm" href="/organization">Close setup</a>
+}
+
+var wizardSteps = []struct{ Key, Label string }{
+	{"organization", "Organization"},
+	{"payment", "Billing"},
+	{"project", "Project"},
+}
+
 templ newOrganizationWizardContent(page core.Page, data organizationPageData, suffix string) {
-	<div class="ts-onboarding-container ts-onboarding-container-wide">
-		<div class="ts-onboarding-progress">
-			<div class="ts-onboarding-progress-meta">
-				<span>SETUP STEP { organizationWizardCurrentStep(data.NewOrganization) } OF 3</span>
-				<span>{ organizationWizardProgress(data.NewOrganization) }%</span>
+	<div class="ts-stack-lg">
+		<div class="ts-stack-sm">
+			<div class="ts-row-between ts-meta">
+				<span>Step { fmt.Sprint(organizationWizardCurrentStep(data.NewOrganization)) } of 3</span>
+				<span>{ fmt.Sprint(organizationWizardProgress(data.NewOrganization)) }%</span>
 			</div>
-			<div class="ts-onboarding-progress-frame">
-				<div class="ts-progress" role="progressbar" aria-label="New organization setup progress" aria-valuenow={ organizationWizardProgress(data.NewOrganization) } aria-valuemin="0" aria-valuemax="100">
-					<div class="ts-progress-bar" data-progress={ organizationWizardProgress(data.NewOrganization) }></div>
-				</div>
+			<div class="ts-progress" role="progressbar" aria-label="New organization setup progress" aria-valuenow={ fmt.Sprint(organizationWizardProgress(data.NewOrganization)) } aria-valuemin="0" aria-valuemax="100">
+				<div class="ts-progress-bar" data-progress={ fmt.Sprint(organizationWizardProgress(data.NewOrganization)) }></div>
 			</div>
+			<nav aria-label="New organization steps">
+				<ol class="ts-org-steps">
+					for i, step := range wizardSteps {
+						<li
+							class={ "ts-org-step", templ.KV("ts-org-step-current", data.NewOrganization == step.Key), templ.KV("ts-org-step-complete", organizationWizardCurrentStep(data.NewOrganization) > i+1) }
+							aria-current={ organizationWizardStepCurrent(data.NewOrganization, step.Key) }
+						>
+							<span class="ts-org-step-icon" aria-hidden="true">
+								if organizationWizardCurrentStep(data.NewOrganization) > i+1 {
+									@icons.Check(14)
+								} else {
+									{ fmt.Sprint(i + 1) }
+								}
+							</span>
+							<span class="ts-org-step-label">{ step.Label }</span>
+							<span class="ts-sr-only">{ organizationWizardStepState(data.NewOrganization, step.Key) }</span>
+						</li>
+					}
+				</ol>
+			</nav>
 		</div>
-		<nav aria-label="New organization steps">
-			<ol class="ts-onboarding-steps ts-onboarding-steps-compact">
-				<li class={ organizationWizardStepClass(data.NewOrganization, "organization") } aria-current={ organizationWizardStepCurrent(data.NewOrganization, "organization") }>
-					<span class="ts-onboarding-step-icon" aria-hidden="true">1</span><span>Organization</span><span class="ts-onboarding-step-state">{ organizationWizardStepState(data.NewOrganization, "organization") }</span>
-				</li>
-				<li class={ organizationWizardStepClass(data.NewOrganization, "payment") } aria-current={ organizationWizardStepCurrent(data.NewOrganization, "payment") }>
-					<span class="ts-onboarding-step-icon" aria-hidden="true">2</span><span>Billing</span><span class="ts-onboarding-step-state">{ organizationWizardStepState(data.NewOrganization, "payment") }</span>
-				</li>
-				<li class={ organizationWizardStepClass(data.NewOrganization, "project") } aria-current={ organizationWizardStepCurrent(data.NewOrganization, "project") }>
-					<span class="ts-onboarding-step-icon" aria-hidden="true">3</span><span>Project</span><span class="ts-onboarding-step-state">{ organizationWizardStepState(data.NewOrganization, "project") }</span>
-				</li>
-			</ol>
-		</nav>
 		if data.PaymentCanceled {
-			<div class="ts-alert ts-alert-warning" role="alert">
-				<span class="ts-onboarding-alert-icon" aria-hidden="true">!</span>
-				<div class="ts-onboarding-alert-stack">
-					<span class="ts-alert-title">Payment setup canceled</span>
-					<span class="ts-alert-body">No payment method was changed. Choose a plan to try checkout again.</span>
-				</div>
-			</div>
+			@ui.Alert("warning", "Payment setup canceled", "No payment method was changed. Choose a plan to try checkout again.")
 		}
 		if data.Error != "" {
-			<div class="ts-alert ts-alert-danger" role="alert">{ data.Error }</div>
+			@ui.Alert("danger", "", data.Error)
 		}
-		if data.NewOrganization == "payment" {
-			<section class="ts-onboarding-section" aria-labelledby={ "organization-payment-title-" + suffix }>
-				<header class="ts-onboarding-section-header">
-					<h3 class="ts-onboarding-step-title" id={ "organization-payment-title-" + suffix }>Set up billing</h3>
-					<p class="ts-onboarding-step-subtitle">This business organization needs its own paid billing before it can create projects. Your Personal allowance stays separate.</p>
-				</header>
-				<form class="ts-onboarding-content ts-org-payment-form" method="post" action="/api/v1/dashboard/organization/new-organization">
-					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-					<input type="hidden" name="step" value="payment-method"/>
-					<input type="hidden" name="organizationID" value={ data.NewOrganizationID }/>
-					if len(data.Plans) == 0 {
-						<p class="ts-alert ts-alert-warning" role="status">No paid plans are available right now. Contact an administrator before continuing.</p>
-					} else {
-						<fieldset class="ts-org-plan-fieldset">
-							<legend class="ts-label">Choose a plan</legend>
-							<div class="ts-onboarding-plans">
-								for _, plan := range data.Plans {
-									<label class="ts-org-plan-choice" for={ "organization-plan-" + plan.Key + "-" + suffix }>
-										<input class="ts-org-plan-radio" type="radio" id={ "organization-plan-" + plan.Key + "-" + suffix } name="plan" value={ plan.Key } checked?={ plan.Key == organizationDefaultPlan(data.Plans) } required/>
-										<span class="ts-org-plan-choice-body">
-											<span class="ts-onboarding-plan-name">{ plan.Name }</span>
-											<span class="ts-onboarding-plan-price-row"><strong>{ plan.MonthlyPrice }</strong><span> / month</span></span>
+		switch data.NewOrganization {
+			case "payment":
+				@wizardStep("organization-payment-title-"+suffix, "Set up billing", "This business organization needs its own paid billing before it can create projects. Your Personal allowance stays separate.") {
+					<form class="ts-form" method="post" action="/api/v1/dashboard/organization/new-organization">
+						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+						<input type="hidden" name="step" value="payment-method"/>
+						<input type="hidden" name="organizationID" value={ data.NewOrganizationID }/>
+						if len(data.Plans) == 0 {
+							@ui.Alert("warning", "", "No paid plans are available right now. Contact an administrator before continuing.")
+						} else {
+							<fieldset>
+								<legend class="ts-label">Choose a plan</legend>
+								<div class="ts-org-plans">
+									for _, plan := range data.Plans {
+										<label class="ts-org-plan" for={ "organization-plan-" + plan.Key + "-" + suffix }>
+											<input type="radio" id={ "organization-plan-" + plan.Key + "-" + suffix } name="plan" value={ plan.Key } checked?={ plan.Key == organizationDefaultPlan(data.Plans) } required/>
+											<span class="ts-strong">{ plan.Name }</span>
+											<span class="ts-org-plan-price"><strong>{ plan.MonthlyPrice }</strong> / month</span>
 											if plan.AnnualPriceCents > 0 {
-												<span class="ts-org-plan-annual-price">{ plan.AnnualPrice } billed annually</span>
+												<span class="ts-meta">{ plan.AnnualPrice } billed annually</span>
 											} else {
-												<span class="ts-org-plan-annual-price">Annual billing unavailable</span>
+												<span class="ts-meta">Annual billing unavailable</span>
 											}
-										</span>
-									</label>
-								}
-							</div>
-						</fieldset>
-						<fieldset class="ts-org-interval-fieldset">
-							<legend class="ts-label">Billing interval</legend>
-							<div class="ts-org-billing-intervals">
-								<label><input type="radio" name="interval" value="monthly" checked required/> Monthly</label>
-								<label><input type="radio" name="interval" value="annual"/> Annual</label>
-							</div>
-						</fieldset>
-						<p class="ts-meta ts-org-billing-note">Continue to the demo checkout to confirm this organization’s billing before project creation.</p>
-					}
-					<div class="ts-onboarding-form-footer">
-						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit" disabled?={ len(data.Plans) == 0 }>Continue to checkout</button>
-					</div>
-				</form>
-			</section>
-		} else if data.NewOrganization == "project" {
-			<section class="ts-onboarding-section" aria-labelledby={ "organization-project-title-" + suffix }>
-				<header class="ts-onboarding-section-header">
-					<h3 class="ts-onboarding-step-title" id={ "organization-project-title-" + suffix }>Create the first project</h3>
-					<p class="ts-onboarding-step-subtitle">Choose a name and deployment placement for this organization’s first project.</p>
-				</header>
-				<form class="ts-onboarding-content ts-org-project-wizard-form" method="post" action="/api/v1/dashboard/organization/new-organization">
-					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-					<input type="hidden" name="step" value="project"/>
-					<input type="hidden" name="organizationID" value={ data.NewOrganizationID }/>
-					<div class="ts-onboarding-field-list">
-						<div class="ts-field">
-							<label class="ts-label" for={ "wizard-project-name-" + suffix }>Project name</label>
+										</label>
+									}
+								</div>
+							</fieldset>
+							<fieldset>
+								<legend class="ts-label">Billing interval</legend>
+								<div class="ts-org-intervals">
+									<label class="ts-org-interval"><input type="radio" name="interval" value="monthly" checked required/> Monthly</label>
+									<label class="ts-org-interval"><input type="radio" name="interval" value="annual"/> Annual</label>
+								</div>
+							</fieldset>
+							<p class="ts-meta">Continue to the demo checkout to confirm this organization’s billing before project creation.</p>
+						}
+						<div class="ts-form-actions">
+							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit" disabled?={ len(data.Plans) == 0 }>Continue to checkout</button>
+						</div>
+					</form>
+				}
+			case "project":
+				@wizardStep("organization-project-title-"+suffix, "Create the first project", "Choose a name and deployment placement for this organization’s first project.") {
+					<form class="ts-form" method="post" action="/api/v1/dashboard/organization/new-organization">
+						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+						<input type="hidden" name="step" value="project"/>
+						<input type="hidden" name="organizationID" value={ data.NewOrganizationID }/>
+						@ui.Field(ui.FieldProps{ID: "wizard-project-name-" + suffix, Label: "Project name"}) {
 							<input class="ts-input" id={ "wizard-project-name-" + suffix } name="name" maxlength="128" placeholder="Production" required/>
+						}
+						@regionPlacement(placement{
+							RegionsID: "wizard-project-regions-" + suffix, PrimaryID: "wizard-project-region-" + suffix, BackupID: "wizard-project-backup-" + suffix,
+							Regions: allSelected(data.Regions), All: data.Regions, RequireRegions: true, RequireSelects: true,
+							Hint: "Use your browser’s native picker to select one or more regions. This control also works without the map.",
+						})
+						<div class="ts-form-actions">
+							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create project</button>
 						</div>
-						<fieldset class="ts-field ts-org-regions-fieldset">
-							<legend class="ts-label">Project regions</legend>
-							<label class="ts-label" for={ "wizard-project-regions-" + suffix }>Choose the regions where project resources may run</label>
-							<select class="ts-select" id={ "wizard-project-regions-" + suffix } name="regions" multiple required aria-describedby={ "wizard-project-regions-hint-" + suffix }>
-								for _, region := range data.Regions {
-									<option value={ region } selected>{ region }</option>
-								}
-							</select>
-							<p class="ts-hint" id={ "wizard-project-regions-hint-" + suffix }>Use your browser’s native picker to select one or more regions. This control also works without the map.</p>
-							<ts-region-map data-src="/brand/region-map.svg" data-select-id={ "wizard-project-regions-" + suffix } aria-hidden="true"></ts-region-map>
-						</fieldset>
-						<div class="ts-field">
-							<label class="ts-label" for={ "wizard-project-region-" + suffix }>Primary region</label>
-							<select class="ts-select" id={ "wizard-project-region-" + suffix } name="region" required>
-								for _, region := range data.Regions {
-									<option value={ region }>{ region }</option>
-								}
-							</select>
-							<ts-region-map data-src="/brand/region-map.svg" data-select-id={ "wizard-project-region-" + suffix } aria-hidden="true"></ts-region-map>
+					</form>
+				}
+			default:
+				@wizardStep("organization-name-title-"+suffix, "Create organization", "A business organization has its own paid billing, members and projects.") {
+					<form class="ts-form" method="post" action="/api/v1/dashboard/organization/new-organization">
+						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+						<input type="hidden" name="step" value="organization"/>
+						@ui.Field(ui.FieldProps{ID: "new-organization-name-" + suffix, Label: "Organization name"}) {
+							<input class="ts-input" id={ "new-organization-name-" + suffix } name="name" maxlength="128" placeholder="Acme Labs" autocomplete="organization" required/>
+						}
+						<div class="ts-form-actions">
+							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create organization</button>
 						</div>
-						<div class="ts-field">
-							<label class="ts-label" for={ "wizard-project-backup-" + suffix }>Backup region</label>
-							<select class="ts-select" id={ "wizard-project-backup-" + suffix } name="backupRegion" required>
-								for _, region := range data.Regions {
-									<option value={ region }>{ region }</option>
-								}
-							</select>
-							<ts-region-map data-src="/brand/region-map.svg" data-select-id={ "wizard-project-backup-" + suffix } aria-hidden="true"></ts-region-map>
-						</div>
-					</div>
-					<div class="ts-onboarding-form-footer">
-						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create project</button>
-					</div>
-				</form>
-			</section>
-		} else {
-			<section class="ts-onboarding-section" aria-labelledby={ "organization-name-title-" + suffix }>
-				<header class="ts-onboarding-section-header">
-					<h3 class="ts-onboarding-step-title" id={ "organization-name-title-" + suffix }>Create organization</h3>
-					<p class="ts-onboarding-step-subtitle">A business organization has its own paid billing, members and projects.</p>
-				</header>
-				<form class="ts-onboarding-content" method="post" action="/api/v1/dashboard/organization/new-organization">
-					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-					<input type="hidden" name="step" value="organization"/>
-					<div class="ts-field">
-						<label class="ts-label" for={ "new-organization-name-" + suffix }>Organization name</label>
-						<input class="ts-input" id={ "new-organization-name-" + suffix } name="name" maxlength="128" placeholder="Acme Labs" autocomplete="organization" required/>
-					</div>
-					<div class="ts-onboarding-form-footer">
-						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create organization</button>
-					</div>
-				</form>
-			</section>
+					</form>
+				}
 		}
 	</div>
+}
+
+// wizardStep titles one wizard step; children are the step's form.
+templ wizardStep(id, title, subtitle string) {
+	<section class="ts-stack" aria-labelledby={ id }>
+		<header class="ts-stack-sm">
+			<h3 class="ts-section-title" id={ id }>{ title }</h3>
+			<p class="ts-muted">{ subtitle }</p>
+		</header>
+		{ children... }
+	</section>
 }
 
 func organizationWizardCurrentStep(step string) int {
@@ -219,16 +197,6 @@ func organizationWizardProgress(step string) int {
 	default:
 		return 33
 	}
-}
-
-func organizationWizardStepClass(step, target string) string {
-	if step == target {
-		return "ts-onboarding-step ts-onboarding-step-current"
-	}
-	if organizationWizardCurrentStep(step) > organizationWizardCurrentStep(target) {
-		return "ts-onboarding-step ts-onboarding-step-complete"
-	}
-	return "ts-onboarding-step"
 }
 
 func organizationWizardStepCurrent(step, target string) string {

@@ -1,0 +1,74 @@
+/* API keys: one-time secret banner and collapsible creation cards. */
+
+.ts-apikeys-secret-value {
+  flex: 1 1 280px;
+  min-width: 0;
+  padding: var(--ts-s2) var(--ts-s3);
+  overflow-wrap: anywhere;
+}
+
+.ts-apikeys-create {
+  align-self: start;
+}
+
+.ts-apikeys-create-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s4) var(--ts-s5);
+  cursor: pointer;
+  list-style: none;
+}
+
+.ts-apikeys-create-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ts-apikeys-create-summary > svg {
+  margin-left: auto;
+  color: var(--ts-ink-3);
+  transition: transform var(--ts-fast) var(--ts-ease);
+}
+
+.ts-apikeys-create[open] > .ts-apikeys-create-summary > svg {
+  transform: rotate(180deg);
+}
+
+.ts-apikeys-create-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ts-radius);
+  background: color-mix(in oklab, var(--tone) 18%, transparent);
+  color: var(--tone);
+}
+
+.ts-apikeys-create-form {
+  padding: var(--ts-s4) var(--ts-s5) var(--ts-s5);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-apikeys-scopes {
+  gap: var(--ts-s1);
+}
+
+/* Credential filters sit on the tab row, right-aligned. */
+.ts-apikeys-filters {
+  flex: 1 1 520px;
+  justify-content: flex-end;
+}
+
+.ts-apikeys-filters > .ts-input {
+  flex: 1 1 180px;
+  max-width: 240px;
+}
+
+.ts-apikeys-filters > .ts-select {
+  flex: 0 1 160px;
+  width: auto;
+}
+
+.ts-apikeys-secret > .ts-alert-title {
+  font-size: var(--ts-fs-md);
+}

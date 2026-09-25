@@ -79,8 +79,8 @@ func TestOverviewRendersScopedCountsAndAnHonestZeroChart(t *testing.T) {
 		}
 	}
 	rangePicker := strings.Index(body, `id="home-range-label"`)
-	if rangePicker < 0 || !strings.Contains(body[rangePicker:], `<ts-menu><details class="ts-menu ts-menu-end">`) {
-		t.Fatal("activity range is not wrapped in the Rocket-enhanced menu")
+	if rangePicker < 0 || !strings.Contains(body[rangePicker:], `data-on:click__outside="el.open = false"`) {
+		t.Fatal("activity range is not a Datastar-enhanced native menu")
 	}
 	if strings.Contains(body, "other-database") || strings.Contains(body, "other-project-event") || strings.Contains(body, "other-project-unread") {
 		t.Fatal("overview exposed records scoped to another project")

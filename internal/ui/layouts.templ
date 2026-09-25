@@ -19,16 +19,13 @@ func Admin(page core.Page, body templ.Component) templ.Component {
 	return signedInDocument(page, body, true)
 }
 
-templ document(page core.Page) {
+templ document(page core.Page, bodyClass string) {
 	<!DOCTYPE html>
 	<html
 		lang="en"
 		data-theme="dark"
 		if page.Nonce != "" {
 			data-nonce={ page.Nonce }
-		}
-		if page.DevMode {
-			data-dev-reload
 		}
 	>
 		<head>
@@ -42,46 +39,67 @@ templ document(page core.Page) {
 			// in a fallback face and then swaps on every navigation.
 			<link rel="preload" href="/fonts/oxanium-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin/>
 			<link rel="preload" href="/fonts/jetbrains-mono-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin/>
-			<link rel="stylesheet" href="/css/terrascale.css" data-dashboard-css/>
-			<script type="module" src="/js/rocket-components.js" defer if page.Nonce != "" {
+			<link id="ts-css" rel="stylesheet" href="/css/terrascale.css" data-dashboard-css/>
+			<script type="module" src="/js/datastar.js" if page.Nonce != "" {
 	nonce={ page.Nonce }
 }></script>
 		</head>
-		{ children... }
+		// The body owns the navigation progress bar: Datastar flags same-origin
+		// link clicks and form submissions that the browser will navigate.
+		<body
+			if bodyClass != "" {
+				class={ bodyClass }
+			}
+			data-signals="{_navPending: false}"
+			data-class:ts-nav-pending="$_navPending"
+			data-on:click__window={ navClickPending }
+			data-on:submit__window={ navSubmitPending }
+			data-on:pageshow__window="$_navPending = false"
+			data-on:keydown__window="evt.key === 'Escape' && ($_navPending = false)"
+		>
+			{ children... }
+			if page.DevMode {
+				// Development only: the Go dev host streams stylesheet patches and a
+				// boot ID that reloads the page after a server restart.
+				<div hidden data-signals="{_devBoot: '', _devFirstBoot: ''}" data-init="@get('/__dev/events', {openWhenHidden: true, retryMaxCount: 1000})" data-effect="$_devBoot && ($_devFirstBoot = $_devFirstBoot || $_devBoot) !== $_devBoot && location.reload()"></div>
+			}
+		</body>
 	</html>
 }
 
 templ authDocument(page core.Page, body templ.Component) {
-	@document(page) {
-		<body class="ts-auth-body">
-			<a class="ts-skip-link" href="#ts-auth-main">Skip to main content</a>
-			<div id="ts-auth-main">
-				@body
-			</div>
-		</body>
+	@document(page, "ts-auth-body") {
+		<a class="ts-skip-link" href="#ts-auth-main">Skip to main content</a>
+		<div id="ts-auth-main">
+			@body
+		</div>
 	}
 }
 
 templ signedInDocument(page core.Page, body templ.Component, admin bool) {
-	@document(page) {
-		<body>
-			<a class="ts-skip-link" href="#ts-main">Skip to main content</a>
-			<ts-mobile-nav class="ts-shell" data-signals="{navOpen:false}" data-class:nav-open="$navOpen">
-				<div class="ts-nav-backdrop" aria-hidden="true" data-on:click="$navOpen=false"></div>
-				@shellSidebar(page, admin)
-				<div class="ts-inset">
-					<header class="ts-topbar">
-						<button type="button" class="ts-icon-btn ts-fab-nav" aria-label="Open navigation" aria-controls="ts-navigation" aria-expanded="false" data-on:click="$navOpen=!$navOpen" data-attr:aria-expanded="$navOpen ? 'true' : 'false'">
-							@icons.PanelLeft(18)
-						</button>
-						<img class="ts-topbar-brand" src="/brand/logo-terrascale-white.svg" alt="TerraScale" decoding="async"/>
-					</header>
-					<div id="ts-main" class="ts-main" tabindex="-1" data-tone={ activeTone(page.Shell.Navigation) }>
-						@body
-					</div>
+	@document(page, "") {
+		<a class="ts-skip-link" href="#ts-main">Skip to main content</a>
+		<div
+			class="ts-shell"
+			data-signals="{navOpen: false}"
+			data-class:nav-open="$navOpen"
+			data-on:keydown__window="evt.key === 'Escape' && $navOpen && ($navOpen = false, setTimeout(() => document.getElementById('ts-nav-toggle').focus()))"
+			data-on:resize__window__debounce.150ms="innerWidth >= 768 && ($navOpen = false)"
+		>
+			<div class="ts-nav-backdrop" aria-hidden="true" data-on:click="$navOpen = false"></div>
+			@shellSidebar(page, admin)
+			<div class="ts-inset" data-attr:inert="$navOpen">
+				<header class="ts-topbar">
+					<button type="button" id="ts-nav-toggle" class="ts-icon-btn ts-fab-nav" aria-label="Open navigation" aria-controls="ts-navigation" aria-expanded="false" data-on:click="$navOpen = true; setTimeout(() => document.getElementById('ts-nav-close').focus())" data-attr:aria-expanded="$navOpen ? 'true' : 'false'">
+						@icons.PanelLeft(18)
+					</button>
+					<img class="ts-topbar-brand" src="/brand/logo-terrascale-white.svg" alt="TerraScale" decoding="async"/>
+				</header>
+				<div id="ts-main" class="ts-main" tabindex="-1" data-tone={ activeTone(page.Shell.Navigation) }>
+					@body
 				</div>
-			</ts-mobile-nav>
-		</body>
+			</div>
+		</div>
 	}
 }
 
@@ -94,7 +112,7 @@ templ shellSidebar(page core.Page, admin bool) {
 			if admin {
 				<span class="ts-badge ts-badge-violet">Admin</span>
 			}
-			<button type="button" class="ts-sidebar-close ts-icon-btn" aria-label="Close navigation" data-on:click="$navOpen=false">
+			<button type="button" id="ts-nav-close" class="ts-sidebar-close ts-icon-btn" aria-label="Close navigation" data-on:click="$navOpen = false; setTimeout(() => document.getElementById('ts-nav-toggle').focus())">
 				@icons.X(18)
 			</button>
 		</div>
@@ -126,8 +144,7 @@ templ shellSidebar(page core.Page, admin bool) {
 templ contextSwitcher(page core.Page) {
 	<div class="ts-context" data-signals="{organizationSearch:'',projectSearch:''}">
 		if len(page.Shell.Organizations) > 0 {
-			<ts-menu>
-				<details class="ts-menu ts-context-menu ts-organization-menu">
+				<details { MenuBehavior... } class="ts-menu ts-context-menu ts-organization-menu">
 					<summary class="ts-context-trigger" aria-label={ projectTriggerLabel("organization", page.Shell.OrganizationName) }>
 						<span class="ts-context-icon" data-tone="indigo" aria-hidden="true">@icons.Building(15)</span>
 						<span class="ts-context-text">
@@ -158,11 +175,9 @@ templ contextSwitcher(page core.Page) {
 						</div>
 					</div>
 				</details>
-			</ts-menu>
 		}
 		if len(page.Shell.Projects) > 0 {
-			<ts-menu>
-				<details class="ts-menu ts-context-menu ts-project-menu">
+				<details { MenuBehavior... } class="ts-menu ts-context-menu ts-project-menu">
 					<summary class="ts-context-trigger" aria-label={ projectTriggerLabel("project", page.Shell.ProjectName) }>
 						<span class="ts-context-icon" data-tone="cyan" aria-hidden="true">@icons.FolderKanban(15)</span>
 						<span class="ts-context-text">
@@ -198,7 +213,6 @@ templ contextSwitcher(page core.Page) {
 						<a class="ts-menu-item" href="/organization">@icons.Boxes(15)<span>All workspaces</span></a>
 					</div>
 				</details>
-			</ts-menu>
 		}
 	</div>
 }
@@ -220,8 +234,7 @@ templ contextOption(name string, selected bool, attr, id string) {
 }
 
 templ accountMenu(page core.Page) {
-	<ts-menu>
-		<details class="ts-menu ts-menu-up ts-account">
+		<details { MenuBehavior... } class="ts-menu ts-menu-up ts-account">
 			<summary class="ts-account-trigger" aria-label="Account menu">
 				<span class="ts-account-avatar" aria-hidden="true">{ displayName(page.Shell.UserInitials, "TS") }</span>
 				<span class="ts-account-meta">
@@ -244,7 +257,6 @@ templ accountMenu(page core.Page) {
 				</form>
 			</div>
 		</details>
-	</ts-menu>
 }
 
 templ formToken(token string) {

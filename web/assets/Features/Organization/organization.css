@@ -1,0 +1,194 @@
+/* Organization page: project placement, project rename popover, and the
+   create-organization wizard. */
+
+.ts-org-project-name {
+  gap: 2px;
+}
+
+.ts-org-create-project {
+  padding: var(--ts-s4) var(--ts-s6) var(--ts-s6);
+  border-top: 1px solid var(--ts-line);
+}
+
+/* Region placement: three map-backed selects side by side. */
+.ts-org-placement {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--ts-s4);
+}
+
+.ts-org-placement > legend {
+  margin-bottom: var(--ts-s3);
+}
+
+.ts-org-placement-hint {
+  grid-column: 1 / -1;
+}
+
+/* Rename opens as a centered panel so it escapes the scrolling table. */
+details.ts-rename > .ts-org-rename-panel {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ts-z-modal);
+  width: min(46rem, calc(100vw - 2 * var(--ts-s4)));
+  max-width: none;
+  height: fit-content;
+  max-height: calc(100dvh - 2 * var(--ts-s6));
+  margin: auto;
+  padding: var(--ts-s6);
+  overflow-y: auto;
+  gap: var(--ts-s4);
+  text-align: left;
+  white-space: normal;
+}
+
+/* Wizard dialog. */
+dialog.ts-org-wizard {
+  width: min(52rem, calc(100vw - 2 * var(--ts-s4)));
+}
+
+.ts-org-wizard-head {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.ts-org-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ts-s2);
+  list-style: none;
+}
+
+.ts-org-step {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  padding: var(--ts-s2) var(--ts-s3);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+  font-weight: 600;
+}
+
+.ts-org-step-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--ts-surface-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-org-step-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-org-step-current {
+  border-color: color-mix(in oklab, var(--tone) 50%, transparent);
+  background: color-mix(in oklab, var(--tone) 10%, transparent);
+  color: var(--ts-ink);
+}
+
+.ts-org-step-current .ts-org-step-icon {
+  background: var(--tone);
+  color: var(--ts-canvas);
+}
+
+.ts-org-step-complete {
+  color: var(--ts-ink-2);
+}
+
+.ts-org-step-complete .ts-org-step-icon {
+  background: color-mix(in oklab, var(--ts-success) 20%, transparent);
+  color: var(--ts-success);
+}
+
+/* Plan and interval choices: radio cards. */
+.ts-org-plans {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: var(--ts-s3);
+}
+
+.ts-org-plan {
+  position: relative;
+  display: grid;
+  gap: var(--ts-s1);
+  padding: var(--ts-s4);
+  padding-right: var(--ts-s10);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface-2);
+  cursor: pointer;
+  transition: border-color var(--ts-fast) var(--ts-ease), background-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-org-plan > input {
+  position: absolute;
+  top: var(--ts-s4);
+  right: var(--ts-s4);
+}
+
+.ts-org-plan:hover {
+  border-color: rgb(148 163 184 / 0.34);
+}
+
+.ts-org-plan:has(input:checked) {
+  border-color: var(--tone);
+  background: color-mix(in oklab, var(--tone) 10%, var(--ts-surface-2));
+}
+
+.ts-org-plan-price {
+  color: var(--ts-ink-2);
+}
+
+.ts-org-plan-price strong {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-xl);
+}
+
+.ts-org-intervals {
+  display: inline-flex;
+  gap: var(--ts-s1);
+  padding: var(--ts-s1);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius);
+  background: var(--ts-canvas);
+}
+
+.ts-org-interval {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  padding: var(--ts-s1) var(--ts-s3);
+  border-radius: var(--ts-radius-sm);
+  color: var(--ts-ink-2);
+  cursor: pointer;
+}
+
+.ts-org-interval:has(input:checked) {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+}
+
+@media (max-width: 47.99rem) {
+  .ts-org-placement {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 30rem) {
+  .ts-org-step:not(.ts-org-step-current) .ts-org-step-label {
+    display: none;
+  }
+
+  .ts-org-step {
+    justify-content: center;
+  }
+}

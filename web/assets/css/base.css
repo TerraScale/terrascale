@@ -156,10 +156,10 @@ hr {
   transform: none;
 }
 
-/* Navigation progress: html[data-nav-pending] is set by dashboard.js while
-   the next document loads. The bar spans the whole viewport width and
-   grows toward the right edge, then shimmers until the page swaps. */
-html[data-nav-pending]::before {
+/* Navigation progress: Datastar sets body.ts-nav-pending while the next
+   document loads (see internal/ui/layouts.templ). The bar spans the whole
+   viewport width, grows to the right edge, then shimmers until the swap. */
+body.ts-nav-pending::before {
   content: "";
   position: fixed;
   inset: 0 0 auto;

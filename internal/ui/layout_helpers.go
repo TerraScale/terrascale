@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"math"
+	"strings"
 
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
@@ -31,10 +33,12 @@ var navDestinations = map[string]navDestination{
 	"/billing":             {icons.CreditCard, "rose"},
 	"/organization":        {icons.Building, "indigo"},
 	"/settings":            {icons.Settings, "slate"},
-	"/admin":               {icons.Home, "violet"},
 	"/admin/users":         {icons.Fingerprint, "pink"},
 	"/admin/organizations": {icons.Building2, "indigo"},
 	"/admin/projects":      {icons.Boxes, "cyan"},
+	"/admin/databases":     {icons.Database, "blue"},
+	"/admin/estate":        {icons.Globe, "teal"},
+	"/admin/usage":         {icons.Gauge, "sky"},
 	"/admin/plans":         {icons.CreditCard, "rose"},
 }
 
@@ -91,3 +95,39 @@ func displayName(value, fallback string) string {
 	}
 	return value
 }
+
+// passwordSignal names a local Datastar signal owned by one password field.
+func passwordSignal(id, name string) string {
+	return "_" + name + "_" + strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '_'
+	}, id)
+}
+
+func passwordSignals(id string) string {
+	return "{" + passwordSignal(id, "reveal") + ": false, " + passwordSignal(id, "filled") + ": false}"
+}
+
+// regionSync copies the codes selected in selectID onto the map's
+// data-selected attribute, which the stylesheet uses to light up hubs.
+func regionSync(selectID string) string {
+	return "el.dataset.selected = [...document.getElementById('" + selectID + "').selectedOptions].map(o => o.value).join(' ')"
+}
+
+// regionArc is a quadratic curve lifted above the straight line between hubs.
+func regionArc(from, to regionPin) string {
+	midX := (from.x + to.x) / 2
+	lift := max(3, math.Hypot(to.x-from.x, to.y-from.y)*0.18)
+	controlY := min(from.y, to.y) - lift - math.Abs(to.x-from.x)*0.04
+	return fmt.Sprintf("M %.2f %.2f Q %.2f %.2f %.2f %.2f", from.x, from.y, midX, controlY, to.x, to.y)
+}
+
+// navClickPending flags a primary-button click on a same-origin link that
+// leaves the current document, after other handlers had a chance to cancel it.
+const navClickPending = "$_navPending = $_navPending || !!(!evt.defaultPrevented && evt.button === 0 && !evt.metaKey && !evt.ctrlKey && !evt.shiftKey && !evt.altKey && evt.target.closest && evt.target.closest('a[href]:not([target]):not([download])') && evt.target.closest('a[href]').origin === location.origin && (evt.target.closest('a[href]').pathname !== location.pathname || evt.target.closest('a[href]').search !== location.search))"
+
+// navSubmitPending flags native form submissions; Datastar-handled forms
+// prevent the default and never show the bar.
+const navSubmitPending = "$_navPending = $_navPending || (!evt.defaultPrevented && evt.target.method !== 'dialog' && !evt.target.target)"

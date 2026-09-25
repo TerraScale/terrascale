@@ -3,189 +3,261 @@ package settings
 import (
 	"fmt"
 
-	"terrascale.tech/dashboard/internal/ui/aria"
+	"terrascale.tech/dashboard/internal/ui"
 )
 
 templ settingsView(data pageData, csrfToken string) {
 	<main class="ts-page">
-		<header class="ts-page-header"><div><p class="ts-eyebrow">{ data.ProjectName }</p><h1>Settings</h1><p>Manage security, data protection, and project controls.</p></div></header>
+		@ui.PageHeader(ui.Header{Eyebrow: data.ProjectName, Title: "Settings", Description: "Manage security, data protection, and project controls."})
 		if data.Toast != "" {
-			<p role="status" class="ts-alert ts-alert-success">{ data.Toast }</p>
+			@ui.Alert("success", "", data.Toast)
 		}
 		if data.Error != "" {
-			<p role="alert" class="ts-alert ts-alert-danger">{ data.Error }</p>
+			@ui.Alert("danger", "", data.Error)
 		}
-		<section class="ts-section" aria-labelledby="security-summary-title">
-			<div class="ts-section-head">
-				<div>
-					<h2 class="ts-panel-title" id="security-summary-title">Security summary</h2>
-					<p class="ts-meta">Persisted authentication, credential, backup, and retention settings for this project</p>
-				</div>
-			</div>
-			<dl class="ts-stats">
-				<div><dt>Authentication integration</dt><dd>
-					if data.Authentication {
-						Enabled
-					} else {
-						Disabled
-					}
-				</dd></div>
-				<div><dt>Saved identity provider configurations</dt><dd>{ fmt.Sprint(len(data.IdentityProviders)) }</dd></div>
-				<div><dt>Active project credentials</dt><dd>{ fmt.Sprint(data.ActiveCredentials) }</dd></div>
-				<div><dt>Active M2M clients</dt><dd>{ fmt.Sprint(data.ActiveM2MClients) }</dd></div>
-				<div><dt>Saved backup policies</dt><dd>{ fmt.Sprint(data.ConfiguredBackups) }</dd></div>
-				<div><dt>Audit retention</dt><dd>{ fmt.Sprint(data.AuditRetention) } days</dd></div>
-			</dl>
-		</section>
-		<nav aria-label="Settings sections">
-			<a href="/settings?tab=identity" aria-current={ aria.CurrentPage(data.Tab == "identity") }>Identity</a>
-			<a href="/settings?tab=credentials" aria-current={ aria.CurrentPage(data.Tab == "credentials") }>Credentials</a>
-			<a href="/settings?tab=webhooks" aria-current={ aria.CurrentPage(data.Tab == "webhooks") }>Webhooks</a>
-			<a href="/settings?tab=backups" aria-current={ aria.CurrentPage(data.Tab == "backups") }>Backups</a>
-			<a href="/settings?tab=audit" aria-current={ aria.CurrentPage(data.Tab == "audit") }>Audit retention</a>
-			<a href="/settings?tab=danger" aria-current={ aria.CurrentPage(data.Tab == "danger") }>Danger zone</a>
-		</nav>
-		if data.Tab == "identity" {
-			<section aria-labelledby="identity-title">
-				<h2 id="identity-title">Authentication product</h2>
-				<p>Controls whether this project uses the TerraScale Authentication integration.</p>
-				if data.CanManage {
-					<form method="post" action="/api/v1/dashboard/settings/authentication">
-						<input type="hidden" name="_csrf" value={ csrfToken }/>
-						<label><input type="checkbox" name="enabled" value="true" checked?={ data.Authentication }/> Enable authentication integration</label>
-						<button type="submit">Save identity settings</button>
-					</form>
-				} else {
-					<p>Only organization owners and admins can change this setting.</p>
+		@ui.Card(ui.CardProps{ID: "security-summary", Title: "Security summary", Description: "Persisted authentication, credential, backup, and retention settings for this project"}) {
+			<div class="ts-settings-summary ts-stats-compact">
+				@ui.Stats("Security summary") {
+					@ui.Stat("Authentication integration", enabledLabel(data.Authentication), "")
+					@ui.Stat("Saved identity provider configurations", fmt.Sprint(len(data.IdentityProviders)), "")
+					@ui.Stat("Active project credentials", fmt.Sprint(data.ActiveCredentials), "")
+					@ui.Stat("Active M2M clients", fmt.Sprint(data.ActiveM2MClients), "")
+					@ui.Stat("Saved backup policies", fmt.Sprint(data.ConfiguredBackups), "")
+					@ui.Stat("Audit retention", fmt.Sprint(data.AuditRetention)+" days", "")
 				}
-				if data.UpdatedAt != "" {
-					<p>Last changed { data.UpdatedAt }</p>
-				}
-			</section>
-			<section class="ts-section" aria-labelledby="identity-providers-title">
-				<div class="ts-section-head">
-					<div>
-					<h2 class="ts-panel-title" id="identity-providers-title">Identity providers</h2>
-					<p class="ts-meta">Saved provider configurations for this project</p>
-				</div>
-				<a class="ts-btn ts-btn-secondary" href="/auth/connections">Open authentication connections</a>
 			</div>
-			if len(data.IdentityProviders) > 0 {
-				<div class="ts-table-wrap">
-					<table class="ts-table">
-						<thead><tr><th>Provider</th><th>Protocol</th><th>Issuer</th><th>Record status</th></tr></thead>
-						<tbody>
-							for _, provider := range data.IdentityProviders {
-								<tr><td>{ provider.Name }</td><td>{ provider.Protocol }</td><td>{ provider.Issuer }</td><td>{ provider.Status }</td></tr>
-							}
-						</tbody>
-					</table>
-				</div>
-			} else {
-				<div class="ts-empty" role="status">
-					<span class="ts-empty-title">No identity providers are saved for this project.</span>
-					<p class="ts-meta">Live provider discovery and connection health are unavailable until a ts-auth provider is connected.</p>
-				</div>
+		}
+		@ui.Tabs("Settings sections", []ui.Tab{
+			{Label: "Identity", URL: "/settings?tab=identity", Active: data.Tab == "identity"},
+			{Label: "Credentials", URL: "/settings?tab=credentials", Active: data.Tab == "credentials"},
+			{Label: "Webhooks", URL: "/settings?tab=webhooks", Active: data.Tab == "webhooks"},
+			{Label: "Backups", URL: "/settings?tab=backups", Active: data.Tab == "backups"},
+			{Label: "Audit retention", URL: "/settings?tab=audit", Active: data.Tab == "audit"},
+			{Label: "Danger zone", URL: "/settings?tab=danger", Active: data.Tab == "danger"},
+		})
+		switch data.Tab {
+			case "identity":
+				@identityTab(data, csrfToken)
+			case "credentials":
+				@credentialsTab(data)
+			case "webhooks":
+				@ui.Card(ui.CardProps{ID: "webhooks", Title: "Project webhooks"}) {
+					@ui.Empty("No webhooks are configured for this project.", "Webhook delivery configuration is unavailable until a provider endpoint is connected.")
+				}
+			case "backups":
+				@backupsTab(data, csrfToken)
+			case "audit":
+				@auditTab(data, csrfToken)
+			default:
+				@dangerTab(data, csrfToken)
+		}
+	</main>
+}
+
+templ identityTab(data pageData, csrfToken string) {
+	@ui.Card(ui.CardProps{ID: "identity", Title: "Authentication product", Description: "Controls whether this project uses the TerraScale Authentication integration."}) {
+		if data.CanManage {
+			<form class="ts-form" method="post" action="/api/v1/dashboard/settings/authentication">
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				<label class="ts-check"><input type="checkbox" name="enabled" value="true" checked?={ data.Authentication }/><span>Enable authentication integration</span></label>
+				<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save identity settings</button></div>
+			</form>
+		} else {
+			<p class="ts-meta">Only organization owners and admins can change this setting.</p>
+		}
+		if data.UpdatedAt != "" {
+			<p class="ts-meta">Last changed { data.UpdatedAt }</p>
+		}
+	}
+	@ui.Card(ui.CardProps{ID: "identity-providers", Title: "Identity providers", Description: "Saved provider configurations for this project", Actions: connectionsLink(), Flush: true}) {
+		if len(data.IdentityProviders) > 0 {
+			<div class="ts-table-wrap">
+				<table class="ts-table">
+					<thead><tr><th>Provider</th><th>Protocol</th><th>Issuer</th><th>Record status</th></tr></thead>
+					<tbody>
+						for _, provider := range data.IdentityProviders {
+							<tr>
+								<td class="ts-table-strong">{ provider.Name }</td>
+								<td>@ui.Badge("neutral", provider.Protocol)
+</td>
+								<td class="ts-table-mono ts-break">{ provider.Issuer }</td>
+								<td>{ provider.Status }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		} else {
+			@ui.Empty("No identity providers are saved for this project.", "Live provider discovery and connection health are unavailable until a ts-auth provider is connected.")
+		}
+		<p class="ts-meta ts-settings-footnote">Saved connection records are dashboard configuration only; they do not verify a live identity provider.</p>
+	}
+}
+
+templ connectionsLink() {
+	<a class="ts-btn ts-btn-secondary" href="/auth/connections">Open authentication connections</a>
+}
+
+templ credentialsTab(data pageData) {
+	@ui.Card(ui.CardProps{ID: "credentials", Title: "Project credentials", Flush: len(data.Credentials) > 0}) {
+		if len(data.Credentials) > 0 {
+			<ul class="ts-list">
+				for _, credential := range data.Credentials {
+					<li class="ts-list-item">
+						<div class="ts-list-main">
+							<strong class="ts-strong">{ credential.Name }</strong>
+							<span class="ts-meta ts-mono">{ credential.Prefix }…{ credential.LastFour }</span>
+						</div>
+						if credential.RevokedAt.IsZero() {
+							@ui.Badge("success", "Active")
+						} else {
+							@ui.Badge("neutral", "Revoked")
+						}
+					</li>
+				}
+			</ul>
+		} else {
+			@ui.Empty("No project credentials.", "Create an API key when your application is ready.") {
+				<a class="ts-btn ts-btn-primary" href="/api-keys">Create an API key</a>
 			}
-			<p class="ts-meta">Saved connection records are dashboard configuration only; they do not verify a live identity provider.</p>
-			</section>
-		} else if data.Tab == "credentials" {
-			<section aria-labelledby="credentials-title">
-				<h2 id="credentials-title">Project credentials</h2>
-				if len(data.Credentials) > 0 {
-					<ul>
-						for _, credential := range data.Credentials {
-							<li>
-								<strong>{ credential.Name }</strong> · { credential.Prefix }…{ credential.LastFour } ·
-								if credential.RevokedAt.IsZero() {
-									Active
-								} else {
-									Revoked
+		}
+	}
+}
+
+templ backupsTab(data pageData, csrfToken string) {
+	@ui.Card(ui.CardProps{ID: "backups", Title: "Backup policy"}) {
+		if len(data.Databases) > 0 {
+			<form class="ts-filters" method="get" action="/settings">
+				<input type="hidden" name="tab" value="backups"/>
+				<label class="ts-filter-field">
+					Database
+					<select class="ts-select" name="database">
+						for _, database := range data.Databases {
+							<option value={ database.ID } selected?={ database.ID == data.SelectedDatabaseID }>{ database.Name } · { database.Region }</option>
+						}
+					</select>
+				</label>
+				<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Select database</button>
+			</form>
+			if data.CanManage {
+				<form class="ts-form ts-card-section" method="post" action="/api/v1/dashboard/settings/backup-policy">
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					<input type="hidden" name="databaseId" value={ data.SelectedDatabaseID }/>
+					<div class="ts-form-grid">
+						@ui.Field(ui.FieldProps{ID: "full-backup-cron", Label: "Full backup schedule"}) {
+							<input class="ts-input ts-mono" id="full-backup-cron" name="fullBackupCron" value={ data.Policy.FullBackupCron } required/>
+						}
+						@ui.Field(ui.FieldProps{ID: "incremental-backup-cron", Label: "Incremental backup schedule"}) {
+							<input class="ts-input ts-mono" id="incremental-backup-cron" name="incrementalBackupCron" value={ data.Policy.IncrementalBackupCron } required/>
+						}
+						@ui.Field(ui.FieldProps{ID: "backup-retention-days", Label: "Retention days"}) {
+							<input class="ts-input" id="backup-retention-days" type="number" min="1" max="35" name="retentionDays" value={ fmt.Sprint(data.Policy.RetentionDays) } required/>
+						}
+					</div>
+					<label class="ts-check"><input type="checkbox" name="disabled" value="true" checked?={ data.Policy.Disabled }/><span>Disable scheduled backups</span></label>
+					<div class="ts-form-actions">
+						<button class="ts-btn ts-btn-secondary" type="submit" form="backup-now">Start backup now</button>
+						<button class="ts-btn ts-btn-primary" type="submit">Save backup policy</button>
+					</div>
+				</form>
+				<form id="backup-now" method="post" action="/api/v1/dashboard/settings/backup-now">
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					<input type="hidden" name="databaseId" value={ data.SelectedDatabaseID }/>
+				</form>
+			}
+			<div class="ts-card-section">
+				<h3 class="ts-section-title">Backup history</h3>
+				if len(data.SelectedBackups) > 0 {
+					<ol class="ts-list">
+						for _, backup := range data.SelectedBackups {
+							<li class="ts-list-item">
+								<div class="ts-list-main">
+									<span class="ts-strong">{ backup.CreatedAt.UTC().Format("Jan 2, 2006 15:04 UTC") }</span>
+								</div>
+								@ui.Badge(backupTone(backup.Status), backup.Status)
+								if backup.Status == "Succeeded" {
+									<form method="post" action="/api/v1/dashboard/settings/restore">
+										<input type="hidden" name="_csrf" value={ csrfToken }/>
+										<input type="hidden" name="generation" value={ backup.ID }/>
+										<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Restore side by side</button>
+									</form>
 								}
 							</li>
 						}
-					</ul>
+					</ol>
 				} else {
-					<p>No project credentials. <a href="/api-keys">Create an API key</a> when your application is ready.</p>
+					@ui.Empty("No restore points are available for this database.", "")
 				}
-			</section>
-		} else if data.Tab == "webhooks" {
-			<section aria-labelledby="webhooks-title"><h2 id="webhooks-title">Project webhooks</h2><p>No webhooks are configured for this project.</p><p>Webhook delivery configuration is unavailable until a provider endpoint is connected.</p></section>
-		} else if data.Tab == "backups" {
-			<section aria-labelledby="backups-title">
-				<h2 id="backups-title">Backup policy</h2>
-				if len(data.Databases) > 0 {
-					<form method="get" action="/settings">
-						<input type="hidden" name="tab" value="backups"/>
-						<label>
-							Database 
-							<select name="database">
-								for _, database := range data.Databases {
-									<option value={ database.ID } selected?={ database.ID == data.SelectedDatabaseID }>{ database.Name } · { database.Region }</option>
-								}
-							</select>
-						</label>
-						<button type="submit">Select database</button>
-					</form>
-					if data.CanManage {
-						<form method="post" action="/api/v1/dashboard/settings/backup-policy">
-							<input type="hidden" name="_csrf" value={ csrfToken }/><input type="hidden" name="databaseId" value={ data.SelectedDatabaseID }/>
-							<label>Full backup schedule <input name="fullBackupCron" value={ data.Policy.FullBackupCron } required/></label>
-							<label>Incremental backup schedule <input name="incrementalBackupCron" value={ data.Policy.IncrementalBackupCron } required/></label>
-							<label>Retention days <input type="number" min="1" max="35" name="retentionDays" value={ fmt.Sprint(data.Policy.RetentionDays) } required/></label>
-							<label><input type="checkbox" name="disabled" value="true" checked?={ data.Policy.Disabled }/> Disable scheduled backups</label>
-							<button type="submit">Save backup policy</button>
-						</form>
-						<form method="post" action="/api/v1/dashboard/settings/backup-now">
-							<input type="hidden" name="_csrf" value={ csrfToken }/><input type="hidden" name="databaseId" value={ data.SelectedDatabaseID }/>
-							<button type="submit">Start backup now</button>
-						</form>
-					}
-					<h3>Backup history</h3>
-					if len(data.SelectedBackups) > 0 {
-						<ol>
-							for _, backup := range data.SelectedBackups {
-								<li>
-									{ backup.Status } · { backup.CreatedAt.UTC().Format("Jan 2, 2006 15:04 UTC") }
-									if backup.Status == "Succeeded" {
-										<form method="post" action="/api/v1/dashboard/settings/restore"><input type="hidden" name="_csrf" value={ csrfToken }/><input type="hidden" name="generation" value={ backup.ID }/><button type="submit">Restore side by side</button></form>
-									}
-								</li>
-							}
-						</ol>
-					} else {
-						<p>No restore points are available for this database.</p>
-					}
-					if data.Demo {
-						<p>Demo mode: backup and restore actions update only this in-memory dashboard account.</p>
-					}
-				} else {
-					<p>No databases are available in this project.</p><a href="/databases">Create a database</a>
-				}
-			</section>
-		} else if data.Tab == "audit" {
-			<section aria-labelledby="audit-retention-title">
-				<h2 id="audit-retention-title">Audit retention</h2>
-				<p>Choose how long project and organization activity remains available.</p>
-				if data.CanManage {
-					<form method="post" action="/api/v1/dashboard/settings/audit-retention"><input type="hidden" name="_csrf" value={ csrfToken }/><label>Retention days <input type="number" name="retentionDays" min="1" max="90" value={ fmt.Sprint(data.AuditRetention) } required/></label><button type="submit">Save retention</button></form>
-				} else {
-					<p>Only organization owners and admins can change audit retention.</p>
-				}
-				<a href="/audit">Review audit events</a>
-			</section>
+			</div>
+			if data.Demo {
+				@ui.Alert("info", "", "Demo mode: backup and restore actions update only this in-memory dashboard account.")
+			}
 		} else {
-			<section aria-labelledby="danger-title">
-				<h2 id="danger-title">Danger zone</h2>
-				<p>Delete the selected project and its dashboard configuration.</p>
-				if data.ProjectCanBeDeleted {
-					if data.CanManage {
-						<form method="post" action="/api/v1/dashboard/settings/delete-project"><input type="hidden" name="_csrf" value={ csrfToken }/><input type="hidden" name="projectId" value={ data.ProjectID }/><label>Type { data.ProjectName } to confirm <input name="confirmName" required/></label><button type="submit">Delete project</button></form>
-					}
-				} else {
-					<p>The default or only project cannot be deleted.</p>
-				}
-			</section>
+			@ui.Empty("No databases are available in this project.", "") {
+				<a class="ts-btn ts-btn-primary" href="/databases">Create a database</a>
+			}
 		}
-	</main>
+	}
+}
+
+templ auditTab(data pageData, csrfToken string) {
+	@ui.Card(ui.CardProps{ID: "audit-retention", Title: "Audit retention", Description: "Choose how long project and organization activity remains available.", Actions: auditLink()}) {
+		if data.CanManage {
+			<form class="ts-form" method="post" action="/api/v1/dashboard/settings/audit-retention">
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				<div class="ts-form-grid ts-settings-narrow">
+					@ui.Field(ui.FieldProps{ID: "audit-retention-days", Label: "Retention days", Hint: "Between 1 and 90 days."}) {
+						<input class="ts-input" id="audit-retention-days" type="number" name="retentionDays" min="1" max="90" value={ fmt.Sprint(data.AuditRetention) } required/>
+					}
+				</div>
+				<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save retention</button></div>
+			</form>
+		} else {
+			<p class="ts-meta">Only organization owners and admins can change audit retention.</p>
+		}
+	}
+}
+
+templ auditLink() {
+	<a class="ts-btn ts-btn-secondary" href="/audit">Review audit events</a>
+}
+
+templ dangerTab(data pageData, csrfToken string) {
+	<div class="ts-settings-danger">
+		@ui.Card(ui.CardProps{ID: "danger", Title: "Danger zone", Description: "Delete the selected project and its dashboard configuration."}) {
+			if data.ProjectCanBeDeleted {
+				if data.CanManage {
+					<form class="ts-form" method="post" action="/api/v1/dashboard/settings/delete-project">
+						<input type="hidden" name="_csrf" value={ csrfToken }/>
+						<input type="hidden" name="projectId" value={ data.ProjectID }/>
+						<div class="ts-form-grid ts-settings-narrow">
+							@ui.Field(ui.FieldProps{ID: "confirm-project-name", Label: "Type " + data.ProjectName + " to confirm"}) {
+								<input class="ts-input" id="confirm-project-name" name="confirmName" required/>
+							}
+						</div>
+						<div class="ts-form-actions"><button class="ts-btn ts-btn-danger" type="submit">Delete project</button></div>
+					</form>
+				}
+			} else {
+				@ui.Alert("info", "", "The default or only project cannot be deleted.")
+			}
+		}
+	</div>
+}
+
+func enabledLabel(enabled bool) string {
+	if enabled {
+		return "Enabled"
+	}
+	return "Disabled"
+}
+
+func backupTone(status string) string {
+	switch status {
+	case "Succeeded":
+		return "success"
+	case "Failed":
+		return "danger"
+	}
+	return "info"
 }

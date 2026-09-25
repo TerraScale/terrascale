@@ -100,6 +100,21 @@
   opacity: 0.8;
 }
 
+@media (max-width: 47.99rem) {
+  .ts-stats {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+    gap: var(--ts-s3);
+  }
+
+  .ts-stat {
+    padding: var(--ts-s3) var(--ts-s4);
+  }
+
+  .ts-stat-value {
+    font-size: var(--ts-fs-xl);
+  }
+}
+
 .ts-stat-label {
   color: var(--ts-ink-3);
   font-size: var(--ts-fs-xs);
@@ -114,6 +129,11 @@
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
+}
+
+/* For stats whose values are words ("Not recorded") rather than numbers. */
+.ts-stats-compact .ts-stat-value {
+  font-size: var(--ts-fs-xl);
 }
 
 .ts-stat-detail {
@@ -168,6 +188,7 @@
 .ts-alert-danger { --alert: var(--ts-danger); }
 
 .ts-alert-title {
+  font-size: inherit;
   font-weight: 600;
 }
 
@@ -213,17 +234,16 @@
 }
 
 /* Tabs. */
-ts-tabs {
-  display: block;
-  min-width: 0;
-}
-
 .ts-tabs {
   display: flex;
   gap: var(--ts-s1);
   overflow-x: auto;
   border-bottom: 1px solid var(--ts-line);
   scrollbar-width: none;
+}
+
+.ts-toolbar .ts-tabs {
+  border-bottom: 0;
 }
 
 .ts-tab {
@@ -268,4 +288,8 @@ ts-tabs {
   font-size: 11px;
   line-height: 18px;
   text-align: center;
+}
+
+.ts-card-actions > .ts-filters {
+  flex-wrap: nowrap;
 }

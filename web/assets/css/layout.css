@@ -3,6 +3,7 @@
 
 .ts-page {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: var(--ts-s6);
   width: 100%;
@@ -67,11 +68,6 @@
 .ts-toolbar > .ts-filters,
 .ts-toolbar > form {
   padding-bottom: var(--ts-s2);
-}
-
-.ts-toolbar ts-tabs .ts-tabs,
-.ts-toolbar > .ts-tabs {
-  border-bottom: 0;
 }
 
 /* Grids. */

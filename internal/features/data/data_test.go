@@ -214,14 +214,14 @@ func TestSavedQueryCreateRendersModalAndNoScriptForm(t *testing.T) {
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 			body := w.Body.String()
-			if w.Code != http.StatusOK || strings.Count(body, "<h1") != 1 || !strings.Contains(body, `<dialog id="save-query-dialog" class="ts-dialog" data-autoopen aria-labelledby="save-query-dialog-title">`) {
+			if w.Code != http.StatusOK || strings.Count(body, "<h1") != 1 || !strings.Contains(body, `<dialog id="save-query-dialog" class="ts-dialog" data-init="el.showModal()" aria-labelledby="save-query-dialog-title">`) {
 				t.Fatalf("modal route status %d: %s", w.Code, body)
 			}
 			noscript := regexp.MustCompile(`(?s)<noscript>(.*?)</noscript>`).FindStringSubmatch(body)
 			if len(noscript) != 2 || !strings.Contains(noscript[1], `id="noscript-query-name"`) || !strings.Contains(noscript[1], `id="noscript-saved-sql"`) || !strings.Contains(noscript[1], `href="/data?view=queries"`) {
 				t.Fatalf("no-JS fallback missing labels, form or cancel link: %s", body)
 			}
-			if !strings.Contains(body, `id="dialog-query-name"`) || !strings.Contains(body, `id="dialog-saved-sql"`) || !strings.Contains(body, `data-close-dialog`) || strings.Count(body, `action="/api/v1/dashboard/data/saved-queries"`) != 2 || strings.Count(body, `name="_csrf" value="test-token"`) != 2 {
+			if !strings.Contains(body, `id="dialog-query-name"`) || !strings.Contains(body, `id="dialog-saved-sql"`) || !strings.Contains(body, `command="close" commandfor="save-query-dialog"`) || strings.Count(body, `action="/api/v1/dashboard/data/saved-queries"`) != 2 || strings.Count(body, `name="_csrf" value="test-token"`) != 2 {
 				t.Fatalf("modal and fallback form contract missing: %s", body)
 			}
 		})

@@ -7,6 +7,8 @@ package auth
 import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
+import "terrascale.tech/dashboard/internal/ui"
+
 func loginView(data loginPageData, csrfToken string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -28,56 +30,122 @@ func loginView(data loginPageData, csrfToken string) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<main class=\"ts-login\"><div class=\"ts-login-map\" aria-hidden=\"true\"><div class=\"ts-login-map-glow\"></div><div class=\"ts-login-map-frame\"><ts-region-map data-src=\"/brand/region-map.svg\" data-highlights=\"SFO,GRU,FRA\" aria-hidden=\"true\"></ts-region-map></div></div><div class=\"ts-login-column\"><div class=\"ts-auth-card\"><div class=\"ts-auth-brand\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-blue.svg\" alt=\"TerraScale\" decoding=\"async\"></div><div class=\"ts-auth-heading\"><h1 class=\"ts-auth-title\" id=\"login-title\">Sign in</h1><p class=\"ts-auth-subtitle\">Access your databases and cloud operations.</p></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<main class=\"ts-login\"><section class=\"ts-login-hero\" aria-hidden=\"true\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-white.svg\" alt=\"\" decoding=\"async\"><div class=\"ts-login-pitch\"><p class=\"ts-eyebrow\">Globally distributed data</p><p class=\"ts-login-headline\">One control plane for every region your users are in.</p></div>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = ui.RegionMap("").Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<ul class=\"ts-login-regions\"><li data-tone=\"sky\"><span class=\"ts-dot\"></span>San Francisco</li><li data-tone=\"emerald\"><span class=\"ts-dot\"></span>São Paulo</li><li data-tone=\"violet\"><span class=\"ts-dot\"></span>Frankfurt</li></ul></section><div class=\"ts-login-column\"><div class=\"ts-auth-card\"><img class=\"ts-brand-logo ts-login-mobile-logo\" src=\"/brand/logo-terrascale-white.svg\" alt=\"TerraScale\" decoding=\"async\"><div class=\"ts-auth-heading\"><h1 class=\"ts-auth-title\" id=\"login-title\">Sign in</h1><p class=\"ts-auth-subtitle\">Access your databases and cloud operations.</p></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if data.Error != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div role=\"alert\" class=\"ts-auth-feedback ts-auth-feedback-error\"><span>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var2 string
-			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.Error)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 22, Col: 24}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</span></div>")
+			templ_7745c5c3_Err = ui.Alert("danger", "", data.Error).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<form class=\"ts-auth-form\" method=\"post\" action=\"/api/v1/auth/password/login\" novalidate><input type=\"hidden\" name=\"_csrf\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<form class=\"ts-form\" method=\"post\" action=\"/api/v1/auth/password/login\" novalidate><input type=\"hidden\" name=\"_csrf\" value=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var2 string
+		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 31, Col: 56}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var2)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\"> <input type=\"hidden\" name=\"redirectTo\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var3 string
-		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
+		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.ResolveAttributeValue(data.RedirectTo)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 26, Col: 56}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 32, Col: 67}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var3)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\"> <input type=\"hidden\" name=\"redirectTo\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var4 string
-		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.ResolveAttributeValue(data.RedirectTo)
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 27, Col: 67}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var4)
+		templ_7745c5c3_Var4 := templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+			templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+			templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+			if !templ_7745c5c3_IsBuffer {
+				defer func() {
+					templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+					if templ_7745c5c3_Err == nil {
+						templ_7745c5c3_Err = templ_7745c5c3_BufErr
+					}
+				}()
+			}
+			ctx = templ.InitializeContext(ctx)
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<input class=\"ts-input\" type=\"email\" id=\"email\" name=\"email\" autocomplete=\"email\" placeholder=\"name@company.com\" required>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			return nil
+		})
+		templ_7745c5c3_Err = ui.Field(ui.FieldProps{ID: "email", Label: "Email"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var4), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "\"><div class=\"ts-field\"><div class=\"ts-field-head\"><label class=\"ts-label\" for=\"email\">Email</label></div><input class=\"ts-input\" type=\"email\" id=\"email\" name=\"email\" autocomplete=\"email\" placeholder=\"name@company.com\" required></div><div class=\"ts-field\"><div class=\"ts-field-head\"><label class=\"ts-label\" for=\"password\">Password</label> <a class=\"ts-inline-link\" href=\"/reset-password\">Forgot password</a></div><ts-password-control><div class=\"ts-input-group\"><input class=\"ts-input\" type=\"password\" id=\"password\" name=\"password\" autocomplete=\"current-password\" placeholder=\"Enter your password\" required> <button class=\"ts-input-adornment\" type=\"button\" data-password-toggle aria-controls=\"password\" aria-pressed=\"false\" aria-label=\"Show password\" hidden><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><path d=\"M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z\"></path><circle cx=\"12\" cy=\"12\" r=\"3\"></circle></svg></button></div></ts-password-control></div><button class=\"ts-btn ts-btn-primary ts-btn-lg ts-auth-submit\" type=\"submit\">Sign in</button></form><div class=\"ts-auth-divider\" aria-hidden=\"true\"><span></span><span class=\"ts-auth-divider-label\">Other sign-in options</span><span></span></div><div class=\"ts-auth-providers\"><button class=\"ts-btn ts-btn-outline ts-auth-provider\" type=\"button\" disabled aria-label=\"Passkey sign-in unavailable in the in-memory demo\" title=\"Unavailable in the in-memory demo\">Passkey</button> <button class=\"ts-btn ts-btn-outline ts-auth-provider\" type=\"button\" disabled aria-label=\"Google sign-in unavailable in the in-memory demo\" title=\"Unavailable in the in-memory demo\"><img src=\"/brand/google.svg\" alt=\"\" aria-hidden=\"true\"></button> <button class=\"ts-btn ts-btn-outline ts-auth-provider\" type=\"button\" disabled aria-label=\"GitHub sign-in unavailable in the in-memory demo\" title=\"Unavailable in the in-memory demo\"><img src=\"/brand/github.svg\" alt=\"\" aria-hidden=\"true\"></button></div><p class=\"ts-auth-footer\">New to TerraScale? <a class=\"ts-inline-link\" href=\"/onboarding\">Create account</a></p></div><div class=\"ts-auth-locale-footer\"><label class=\"ts-sr-only\" for=\"auth-locale\">Language</label> <select id=\"auth-locale\" class=\"ts-auth-locale\" aria-label=\"Language\"><option value=\"en\" selected>English</option> <option value=\"pt-BR\">Português</option></select></div></div></main>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"ts-field\"><div class=\"ts-row-between\"><label class=\"ts-label\" for=\"password\">Password</label> <a class=\"ts-link ts-meta\" href=\"/reset-password\">Forgot password</a></div>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = ui.PasswordInput(ui.PasswordProps{ID: "password", Autocomplete: "current-password", Placeholder: "Enter your password"}).Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</div><button class=\"ts-btn ts-btn-primary ts-btn-lg ts-btn-block\" type=\"submit\">Sign in</button></form><div class=\"ts-auth-divider\" aria-hidden=\"true\">Other sign-in options</div><div class=\"ts-auth-providers\"><button class=\"ts-btn ts-btn-secondary\" type=\"button\" disabled aria-label=\"Passkey sign-in unavailable in the in-memory demo\" title=\"Unavailable in the in-memory demo\">Passkey</button> <button class=\"ts-btn ts-btn-secondary\" type=\"button\" disabled aria-label=\"Google sign-in unavailable in the in-memory demo\" title=\"Unavailable in the in-memory demo\"><img src=\"/brand/google.svg\" alt=\"\" aria-hidden=\"true\" width=\"18\" height=\"18\"></button> <button class=\"ts-btn ts-btn-secondary\" type=\"button\" disabled aria-label=\"GitHub sign-in unavailable in the in-memory demo\" title=\"Unavailable in the in-memory demo\"><img src=\"/brand/github.svg\" alt=\"\" aria-hidden=\"true\" width=\"18\" height=\"18\"></button></div><p class=\"ts-auth-footer\">New to TerraScale? <a class=\"ts-link\" href=\"/onboarding\">Create account</a></p></div>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = localeSelect().Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</div></main>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		return nil
+	})
+}
+
+func localeSelect() templ.Component {
+	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
+			return templ_7745c5c3_CtxErr
+		}
+		templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+		if !templ_7745c5c3_IsBuffer {
+			defer func() {
+				templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+				if templ_7745c5c3_Err == nil {
+					templ_7745c5c3_Err = templ_7745c5c3_BufErr
+				}
+			}()
+		}
+		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Var5 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var5 == nil {
+			templ_7745c5c3_Var5 = templ.NopComponent
+		}
+		ctx = templ.ClearChildren(ctx)
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<div class=\"ts-auth-locale\"><label class=\"ts-sr-only\" for=\"auth-locale\">Language</label> <select id=\"auth-locale\" class=\"ts-select ts-input-sm\" aria-label=\"Language\"><option value=\"en\" selected>English</option> <option value=\"pt-BR\">Português</option></select></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -101,119 +169,148 @@ func authStatusView(data authStatusPageData, csrfToken string) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var5 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var5 == nil {
-			templ_7745c5c3_Var5 = templ.NopComponent
+		templ_7745c5c3_Var6 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var6 == nil {
+			templ_7745c5c3_Var6 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
 		if data.Flow {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<main class=\"ts-flow-root\"><section class=\"ts-flow-panel\"><header class=\"ts-flow-header\"><div class=\"ts-flow-header-content\"><h1 class=\"ts-flow-title\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var6 string
-			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(data.Title)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 75, Col: 44}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</h1><p class=\"ts-flow-subtitle\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "<main class=\"ts-flow-root\"><section class=\"ts-flow-panel\" data-tone=\"amber\"><header class=\"ts-flow-header\"><span class=\"ts-flow-icon\" aria-hidden=\"true\">!</span><div class=\"ts-flow-header-content\"><h1 class=\"ts-flow-title\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var7 string
-			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(data.Description)
+			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(data.Title)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 76, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 75, Col: 44}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</p></div></header><div class=\"ts-alert ts-alert-warning\" role=\"status\"><span class=\"ts-alert-title\">Request unavailable</span> <span class=\"ts-alert-body\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</h1><p class=\"ts-flow-subtitle\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var8 string
-			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(data.Message)
+			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(data.Description)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 81, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 76, Col: 52}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</span></div><p class=\"ts-flow-note\"><a class=\"ts-link\" href=\"/login\">Back to sign in</a></p></section></main>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</p></div></header>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = ui.Alert("warning", "Request unavailable", data.Message).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "<p class=\"ts-flow-note\"><a class=\"ts-link\" href=\"/login\">← Back to sign in</a></p></section></main>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "<main class=\"ts-auth\"><div class=\"ts-auth-panel\"><div class=\"ts-auth-card\"><div class=\"ts-auth-brand\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-blue.svg\" alt=\"TerraScale\" decoding=\"async\"></div><div class=\"ts-auth-heading\"><h1 class=\"ts-auth-title\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<main class=\"ts-auth\"><div class=\"ts-auth-card\"><div class=\"ts-auth-brand\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-white.svg\" alt=\"TerraScale\" decoding=\"async\"></div><div class=\"ts-auth-heading\"><h1 class=\"ts-auth-title\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(data.Title)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 94, Col: 44}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 90, Col: 43}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</h1><p class=\"ts-auth-subtitle\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "</h1><p class=\"ts-auth-subtitle\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(data.Description)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 95, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 91, Col: 51}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</p></div><div class=\"ts-auth-feedback ts-auth-feedback-error\" role=\"status\"><span>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</p></div><div class=\"ts-alert ts-alert-warning\" role=\"status\"><p class=\"ts-alert-body\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(data.Message)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 98, Col: 26}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 94, Col: 44}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</span></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</p></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			if data.ShowEmailForm {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<form class=\"ts-form\" method=\"post\" action=\"/reset-password\"><input type=\"hidden\" name=\"_csrf\" value=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "<form class=\"ts-form\" method=\"post\" action=\"/reset-password\"><input type=\"hidden\" name=\"_csrf\" value=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var12 string
 				templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 102, Col: 58}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 98, Col: 57}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var12)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\"><div class=\"ts-field\"><label class=\"ts-label\" for=\"resetEmail\">Email</label> <input class=\"ts-input\" type=\"email\" id=\"resetEmail\" name=\"email\" autocomplete=\"email\" placeholder=\"name@company.com\" required></div><button class=\"ts-btn ts-btn-primary ts-btn-lg\" type=\"submit\">Request reset instructions</button></form>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Var13 := templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+					templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+					templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+					if !templ_7745c5c3_IsBuffer {
+						defer func() {
+							templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+							if templ_7745c5c3_Err == nil {
+								templ_7745c5c3_Err = templ_7745c5c3_BufErr
+							}
+						}()
+					}
+					ctx = templ.InitializeContext(ctx)
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<input class=\"ts-input\" type=\"email\" id=\"resetEmail\" name=\"email\" autocomplete=\"email\" placeholder=\"name@company.com\" required>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					return nil
+				})
+				templ_7745c5c3_Err = ui.Field(ui.FieldProps{ID: "resetEmail", Label: "Email"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var13), templ_7745c5c3_Buffer)
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<button class=\"ts-btn ts-btn-primary ts-btn-lg ts-btn-block\" type=\"submit\">Request reset instructions</button></form>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "<p class=\"ts-auth-footer\"><a class=\"ts-auth-back-link\" href=\"/login\">Back to sign in</a></p></div><div class=\"ts-auth-locale-footer\"><label class=\"ts-sr-only\" for=\"auth-locale\">Language</label> <select id=\"auth-locale\" class=\"ts-auth-locale\" aria-label=\"Language\"><option value=\"en\" selected>English</option> <option value=\"pt-BR\">Português</option></select></div></div></main>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "<p class=\"ts-auth-footer\"><a class=\"ts-link\" href=\"/login\">← Back to sign in</a></p></div>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = localeSelect().Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "</main>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

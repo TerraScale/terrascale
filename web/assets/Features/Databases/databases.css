@@ -1,0 +1,209 @@
+/* Databases list and detail: create disclosure, name cell, facts grid,
+   tool links, backup switch, and the danger zone. */
+
+.ts-db-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  color: var(--ts-ink);
+}
+
+.ts-db-icon,
+.ts-db-create-icon,
+.ts-db-danger-icon,
+.ts-db-tool-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--ts-radius);
+  background: color-mix(in oklab, var(--tone) 16%, transparent);
+  color: var(--tone);
+}
+
+.ts-db-name:hover .ts-strong {
+  color: var(--tone);
+}
+
+/* Create / delete disclosures reuse the card surface with a clickable head. */
+.ts-db-create-summary,
+.ts-db-danger-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s4);
+  padding: var(--ts-s5) var(--ts-s6);
+  cursor: pointer;
+  list-style: none;
+}
+
+.ts-db-create-summary::-webkit-details-marker,
+.ts-db-danger-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ts-db-create-icon {
+  width: 36px;
+  height: 36px;
+  background: linear-gradient(135deg, var(--tone), var(--ts-accent));
+  color: #0a0b10;
+}
+
+.ts-db-create-chevron {
+  color: var(--ts-ink-3);
+  transition: transform var(--ts-base) var(--ts-ease);
+}
+
+details[open] > summary .ts-db-create-chevron {
+  transform: rotate(180deg);
+}
+
+.ts-db-create-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  align-items: start;
+  gap: var(--ts-s6);
+  padding: var(--ts-s5) var(--ts-s6) var(--ts-s6);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-db-danger {
+  border-color: color-mix(in oklab, var(--ts-danger) 25%, var(--ts-line));
+}
+
+.ts-db-danger-icon {
+  background: color-mix(in oklab, var(--ts-danger) 16%, transparent);
+  color: var(--ts-danger);
+}
+
+.ts-db-danger > .ts-card-body {
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-db-inline-form {
+  max-width: 28rem;
+}
+
+/* Label/value tiles. */
+.ts-db-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: var(--ts-s3);
+}
+
+.ts-db-facts > div {
+  display: grid;
+  gap: 2px;
+  padding: var(--ts-s3) var(--ts-s4);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  background: rgb(255 255 255 / 0.02);
+}
+
+.ts-db-facts dt {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-db-facts dd {
+  font-weight: 600;
+}
+
+.ts-db-tools {
+  display: grid;
+  gap: var(--ts-s2);
+}
+
+.ts-db-tool {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s2) var(--ts-s3);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-3);
+  transition: background-color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-db-tool > .ts-strong {
+  flex: 1;
+}
+
+.ts-db-tool:hover {
+  border-color: color-mix(in oklab, var(--tone) 40%, transparent);
+  background: color-mix(in oklab, var(--tone) 8%, transparent);
+  text-decoration: none;
+}
+
+.ts-db-setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s4);
+  padding: var(--ts-s4);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+}
+
+/* Toggle switch rendered as a submit button with role="switch". */
+.ts-switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-surface-3);
+  cursor: pointer;
+  transition: background-color var(--ts-base) var(--ts-ease);
+}
+
+.ts-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--ts-ink);
+  transition: transform var(--ts-base) var(--ts-ease);
+}
+
+.ts-switch[aria-checked="true"] {
+  background: var(--ts-success);
+}
+
+.ts-switch[aria-checked="true"]::after {
+  transform: translateX(18px);
+}
+
+.ts-switch:focus-visible {
+  outline: none;
+  box-shadow: var(--ts-focus-ring);
+}
+
+@media (max-width: 47.99rem) {
+  .ts-db-create-form {
+    grid-template-columns: minmax(0, 1fr);
+    padding-inline: var(--ts-s4);
+  }
+
+  .ts-db-create-summary,
+  .ts-db-danger-summary {
+    padding-inline: var(--ts-s4);
+  }
+}
+
+.ts-db-search {
+  flex-wrap: nowrap;
+}
+
+.ts-db-search > .ts-input {
+  flex-basis: 240px;
+}
+
+.ts-db-setting > .ts-list-main {
+  flex: 1 1 240px;
+}

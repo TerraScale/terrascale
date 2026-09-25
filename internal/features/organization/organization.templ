@@ -3,97 +3,39 @@ package organization
 import (
 	"fmt"
 	"strings"
-	"terrascale.tech/dashboard/internal/core"
 	"time"
+
+	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
 )
 
 templ organizationPageView(page core.Page, data organizationPageData) {
-	<main class="ts-page ts-org">
-		if data.Error != "" {
-			<div class="ts-alert ts-alert-danger" role="alert">{ data.Error }</div>
+	<main class="ts-page">
+		@ui.PageHeader(ui.Header{
+			Eyebrow:     organizationKindLabel(data.Organization.Kind),
+			Title:       data.Organization.Name,
+			Description: organizationStatusLabel(data.Organization.Status) + " · Projects, placement, and ownership for this organization.",
+		}) {
+			<a class="ts-btn ts-btn-secondary" href="/access">@icons.Users(16)<span>Manage team</span></a>
+			<a class="ts-btn ts-btn-primary" href="/organization?newOrganization=organization">@icons.Plus(16)<span>Create organization</span></a>
 		}
-		<section class="ts-section ts-org-overview" aria-labelledby="organization-overview-title">
-			<div class="ts-section-head">
-				<div class="ts-org-identity">
-					<span class="ts-avatar ts-avatar-org" aria-hidden="true">▣</span>
-					<div>
-						<h1 class="ts-panel-title" id="organization-overview-title">{ data.Organization.Name }</h1>
-						<p class="ts-meta">{ organizationStatusLabel(data.Organization.Status) } · { organizationKindLabel(data.Organization.Kind) }</p>
-					</div>
-				</div>
-				<a class="ts-btn ts-btn-primary" href="/organization?newOrganization=organization">Create organization</a>
-			</div>
-			<dl class="ts-kpis ts-org-kpis" aria-label="Organization summary">
-				<div><dt>Projects</dt><dd><span class="ts-kpi-value">{ fmt.Sprint(len(data.Projects)) }</span></dd><small class="ts-meta">Projects in this workspace</small></div>
-				<div><dt>Members</dt><dd><span class="ts-kpi-value">{ fmt.Sprint(len(data.Members)) }</span></dd><small class="ts-meta">People with organization access</small></div>
-				<div><dt>Current project</dt><dd><span class="ts-kpi-value ts-org-kpi-text">{ displayProjectID(data.CurrentProjectID) }</span></dd><small class="ts-meta">Project used by the dashboard</small></div>
-				<div><dt>Created</dt><dd><span class="ts-kpi-value ts-org-kpi-text">{ organizationDate(data.Organization.CreatedAt) }</span></dd><small class="ts-meta">Organization record</small></div>
-			</dl>
-			<form method="post" action="/api/v1/dashboard/switch-organization" class="ts-org-switch-form">
-				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-				<div class="ts-field">
-					<label class="ts-label" for="activeOrganization">Active organization</label>
-					<select class="ts-select" id="activeOrganization" name="organizationId">
-						for _, organization := range data.Organizations {
-							<option value={ organization.ID } selected?={ organization.ID == data.Organization.ID }>{ organization.Name } ({ organizationKindShortLabel(organization.Kind) })</option>
-						}
-					</select>
-				</div>
-				<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit">Switch organization</button></div>
-			</form>
-		</section>
-		<section id="projects" class="ts-section ts-org-projects" aria-labelledby="organization-projects-title">
-			<div class="ts-section-head">
-				<div>
-					<h2 class="ts-panel-title" id="organization-projects-title">Projects</h2>
-					<p class="ts-meta">{ organizationKindLabel(data.Organization.Kind) } · Projects returned by the TerraScale Dashboard API</p>
-				</div>
-				if data.CanProvision {
-					<details id="create-project" class="ts-disclosure ts-org-create-project" open?={ data.OpenCreateProject }>
-						<summary class="ts-btn ts-btn-primary">Create project</summary>
-						<form method="post" action="/api/v1/dashboard/organization/projects" class="ts-form ts-org-project-form">
-							<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-							<div class="ts-field"><label class="ts-label" for="project-name">New project</label><input class="ts-input" id="project-name" name="name" placeholder="Analytics" maxlength="128" required/></div>
-							<fieldset class="ts-field ts-project-regions">
-								<legend class="ts-label">Project regions</legend>
-								<label class="ts-sr-only" for="project-regions">Project regions</label>
-								<select class="ts-select" id="project-regions" name="regions" multiple required>
-									for _, region := range data.Regions {
-										<option value={ region } selected>{ region }</option>
-									}
-								</select>
-								<ts-region-map data-src="/brand/region-map.svg" data-select-id="project-regions" aria-hidden="true"></ts-region-map>
-								<div class="ts-field">
-									<label class="ts-label" for="project-region">Primary region</label>
-									<select class="ts-select" id="project-region" name="region">
-										for _, region := range data.Regions {
-											<option value={ region }>{ region }</option>
-										}
-									</select>
-									<ts-region-map data-src="/brand/region-map.svg" data-select-id="project-region" aria-hidden="true"></ts-region-map>
-								</div>
-								<div class="ts-field">
-									<label class="ts-label" for="project-backup">Backup region</label>
-									<select class="ts-select" id="project-backup" name="backupRegion">
-										for _, region := range data.Regions {
-											<option value={ region }>{ region }</option>
-										}
-									</select>
-									<ts-region-map data-src="/brand/region-map.svg" data-select-id="project-backup" aria-hidden="true"></ts-region-map>
-								</div>
-								<span class="ts-hint">Databases and authentication inherit this placement.</span>
-							</fieldset>
-							<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Create project</button></div>
-						</form>
-					</details>
-				}
-			</div>
+		if data.Error != "" {
+			@ui.Alert("danger", "", data.Error)
+		}
+		@ui.Stats("Organization summary") {
+			@ui.Stat("Projects", fmt.Sprint(len(data.Projects)), "Projects in this workspace")
+			@ui.Stat("Members", fmt.Sprint(len(data.Members)), "People with organization access")
+			@ui.Stat("Invitations", fmt.Sprint(data.InvitationCount), "Current and historical invitations")
+			@ui.Stat("Created", organizationDay(data.Organization.CreatedAt), "Organization record")
+		}
+		@ui.Card(ui.CardProps{ID: "projects", Title: "Projects", Description: organizationKindLabel(data.Organization.Kind) + " · Projects returned by the TerraScale Dashboard API", Flush: true}) {
 			if len(data.Projects) == 0 {
-				<div class="ts-empty"><span class="ts-empty-title">No projects returned</span><span class="ts-meta">The API did not return projects for this organization.</span></div>
+				@ui.Empty("No projects returned", "The API did not return projects for this organization.")
 			} else {
 				<div class="ts-table-wrap">
 					<table class="ts-table">
-						<thead><tr><th>Project</th><th>Slug</th><th>Status</th><th>Backup region</th><th>Created</th><th>Actions</th></tr></thead>
+						<thead><tr><th>Project</th><th>Slug</th><th>Status</th><th>Backup region</th><th>Created</th><th class="ts-table-actions">Actions</th></tr></thead>
 						<tbody>
 							for _, project := range data.Projects {
 								@organizationProjectRow(page, data, project)
@@ -102,79 +44,238 @@ templ organizationPageView(page core.Page, data organizationPageData) {
 					</table>
 				</div>
 			}
-		</section>
-		<div class="ts-org-layout">
-			<section class="ts-section" aria-labelledby="organization-details-title">
-				<div class="ts-section-head">
-					<div><h2 class="ts-panel-title" id="organization-details-title">Organization details</h2><p class="ts-meta">Current tenant context</p></div>
-					if data.CanManage {
-						<details class="ts-disclosure">
-							<summary class="ts-btn ts-btn-secondary ts-btn-sm">Edit name</summary>
-							<form method="post" action="/api/v1/dashboard/organization/rename" class="ts-form ts-org-name-form">
-								<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-								<div class="ts-field"><label class="ts-label" for="organizationName">Organization name</label><input class="ts-input" id="organizationName" name="name" value={ data.Organization.Name } required/></div>
-								<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Save name</button></div>
-							</form>
-						</details>
-					}
-				</div>
-				<dl class="ts-settings-list ts-org-details">
-					<div><dt>Name</dt><dd>{ data.Organization.Name }</dd></div>
-					<div><dt>Status</dt><dd><span class="ts-badge ts-badge-success">{ organizationStatusLabel(data.Organization.Status) }</span></dd></div>
-					<div><dt>Organization ID</dt><dd class="ts-mono">{ data.Organization.ID }</dd></div>
-					<div><dt>Created</dt><dd>{ organizationDate(data.Organization.CreatedAt) }</dd></div>
-					<div><dt>Signed-in user</dt><dd class="ts-break-words">{ data.SignedInEmail }</dd></div>
+			if data.CanProvision {
+				<details id="create-project" class="ts-disclosure ts-org-create-project" open?={ data.OpenCreateProject }>
+					<summary class="ts-btn ts-btn-primary">@icons.Plus(16)<span>Create project</span></summary>
+					<form method="post" action="/api/v1/dashboard/organization/projects" class="ts-form">
+						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+						@ui.Field(ui.FieldProps{ID: "project-name", Label: "New project"}) {
+							<input class="ts-input" id="project-name" name="name" placeholder="Analytics" maxlength="128" required/>
+						}
+						@regionPlacement(placement{
+							RegionsID: "project-regions", PrimaryID: "project-region", BackupID: "project-backup",
+							Regions: allSelected(data.Regions), All: data.Regions, RequireRegions: true,
+							Hint: "Databases and authentication inherit this placement.",
+						})
+						<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Create project</button></div>
+					</form>
+				</details>
+			}
+		}
+		<div class="ts-split">
+			@ui.Card(ui.CardProps{ID: "organization-details", Title: "Organization details", Description: "Current tenant context"}) {
+				<dl class="ts-kv">
+					<dt>Name</dt>
+					<dd>{ data.Organization.Name }</dd>
+					<dt>Status</dt>
+					<dd>
+						@ui.Badge("success", organizationStatusLabel(data.Organization.Status))
+					</dd>
+					<dt>Organization ID</dt>
+					<dd class="ts-mono">{ data.Organization.ID }</dd>
+					<dt>Current project</dt>
+					<dd class="ts-mono">{ displayProjectID(data.CurrentProjectID) }</dd>
+					<dt>Created</dt>
+					<dd>{ organizationDate(data.Organization.CreatedAt) }</dd>
+					<dt>Signed-in user</dt>
+					<dd>{ data.SignedInEmail }</dd>
 				</dl>
-				<div class="ts-status-success"><span aria-hidden="true">✓</span><span>Organization access is enforced by the API session and project context.</span></div>
-				<div class="ts-org-management">
-					if data.CanLeave {
-						<form method="post" action="/api/v1/dashboard/organization/leave"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><button class="ts-btn ts-btn-ghost ts-btn-sm" type="submit">Leave organization</button></form>
-					}
-					if data.CanManage {
-						<form method="post" action="/api/v1/dashboard/organization/members/ownership">
+				@ui.Alert("success", "", "Organization access is enforced by the API session and project context.")
+				if data.CanManage {
+					<details class="ts-disclosure">
+						<summary class="ts-btn ts-btn-secondary ts-btn-sm">@icons.Pencil(14)<span>Edit name</span></summary>
+						<form method="post" action="/api/v1/dashboard/organization/rename" class="ts-form">
 							<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-							<label class="ts-label" for="new-owner">Transfer ownership to</label>
-							<select class="ts-select" id="new-owner" name="userID" required>
-								for _, member := range data.Members {
-									if !member.IsOwner {
-										<option value={ member.ID }>{ member.Name } · { member.Email }</option>
-									}
+							@ui.Field(ui.FieldProps{ID: "organizationName", Label: "Organization name"}) {
+								<input class="ts-input" id="organizationName" name="name" value={ data.Organization.Name } required/>
+							}
+							<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Save name</button></div>
+						</form>
+					</details>
+				}
+			}
+			<div class="ts-stack">
+				@ui.Card(ui.CardProps{ID: "organization-switch", Title: "Active organization", Description: "Switch the organization used by the dashboard."}) {
+					<form method="post" action="/api/v1/dashboard/switch-organization" class="ts-form">
+						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+						@ui.Field(ui.FieldProps{ID: "activeOrganization", Label: "Active organization"}) {
+							<select class="ts-select" id="activeOrganization" name="organizationId">
+								for _, organization := range data.Organizations {
+									<option value={ organization.ID } selected?={ organization.ID == data.Organization.ID }>{ organization.Name } ({ organizationKindShortLabel(organization.Kind) })</option>
 								}
 							</select>
-							<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Request transfer</button>
-						</form>
-						if data.Organization.Kind != "personal" {
-							<details class="ts-disclosure ts-danger-disclosure">
-								<summary class="ts-btn ts-btn-ghost ts-btn-sm">Organization deletion</summary>
-								<p class="ts-meta">Deletion preserves linked projects and data until the operation completes.</p>
-								<form method="post" action="/api/v1/dashboard/organization/deletion" class="ts-org-deletion-form">
-									<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-									<div class="ts-field"><label class="ts-label" for="deletion-confirmation">Enter “{ data.Organization.Name }” to confirm</label><input class="ts-input" id="deletion-confirmation" name="confirmation" autocomplete="off" required disabled?={ data.Organization.DeletionRequested }/></div>
-									<div class="ts-form-actions"><button class="ts-btn ts-btn-destructive ts-btn-sm" type="submit" disabled?={ data.Organization.DeletionRequested }>{ deletionActionLabel(data.Organization.DeletionRequested) }</button></div>
-								</form>
-							</details>
 						}
-					} else if data.CanConfirmOwnership {
-						<h3 class="ts-panel-title">Confirm ownership transfer</h3>
-						<form method="post" action="/api/v1/dashboard/organization/members/ownership/confirm"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><button class="ts-btn ts-btn-primary" type="submit">Accept ownership</button></form>
+						<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit">Switch organization</button></div>
+					</form>
+				}
+				if data.CanLeave || data.CanManage || data.CanConfirmOwnership {
+					@ui.Card(ui.CardProps{ID: "organization-ownership", Title: "Ownership", Description: "Leave, transfer, or delete this organization."}) {
+						@organizationOwnership(page, data)
 					}
-				</div>
-			</section>
+				}
+			</div>
 		</div>
 		if data.NewOrganization != "" {
 			@newOrganizationDialog(page, data)
 		}
-		<section class="ts-section ts-org-team-summary" aria-labelledby="organization-team-title">
-			<div class="ts-section-head">
-				<div><h2 class="ts-panel-title" id="organization-team-title">Team</h2><p class="ts-meta">Members, invitations and role changes are managed on the Team page.</p></div>
-				<a class="ts-btn ts-btn-secondary" href="/access">Manage team</a>
-			</div>
-			<dl class="ts-stats" aria-label="Team summary">
-				<div><dt>Members</dt><dd>{ fmt.Sprint(len(data.Members)) }</dd><small class="ts-meta">People with organization access</small></div>
-				<div><dt>Invitations</dt><dd>{ fmt.Sprint(data.InvitationCount) }</dd><small class="ts-meta">Current and historical invitations</small></div>
-			</dl>
-		</section>
 	</main>
+}
+
+templ organizationOwnership(page core.Page, data organizationPageData) {
+	if data.CanLeave {
+		<form method="post" action="/api/v1/dashboard/organization/leave">
+			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+			<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">@icons.LogOut(14)<span>Leave organization</span></button>
+		</form>
+	}
+	if data.CanManage {
+		if hasTransferCandidate(data.Members) {
+			<form method="post" action="/api/v1/dashboard/organization/members/ownership" class="ts-form">
+				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+				@ui.Field(ui.FieldProps{ID: "new-owner", Label: "Transfer ownership to"}) {
+					<select class="ts-select" id="new-owner" name="userID" required>
+						for _, member := range data.Members {
+							if !member.IsOwner {
+								<option value={ member.ID }>{ member.Name } · { member.Email }</option>
+							}
+						}
+					</select>
+				}
+				<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Request transfer</button></div>
+			</form>
+		} else {
+			<p class="ts-meta">Invite another member before transferring ownership.</p>
+		}
+		if data.Organization.Kind != "personal" {
+			<details class="ts-disclosure ts-card-section">
+				<summary class="ts-btn ts-btn-danger ts-btn-sm">@icons.Trash2(14)<span>Organization deletion</span></summary>
+				<form method="post" action="/api/v1/dashboard/organization/deletion" class="ts-form">
+					<p class="ts-meta">Deletion preserves linked projects and data until the operation completes.</p>
+					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+					@ui.Field(ui.FieldProps{ID: "deletion-confirmation", Label: "Enter “" + data.Organization.Name + "” to confirm"}) {
+						<input class="ts-input" id="deletion-confirmation" name="confirmation" autocomplete="off" required disabled?={ data.Organization.DeletionRequested }/>
+					}
+					<div class="ts-form-actions"><button class="ts-btn ts-btn-danger ts-btn-sm" type="submit" disabled?={ data.Organization.DeletionRequested }>{ deletionActionLabel(data.Organization.DeletionRequested) }</button></div>
+				</form>
+			</details>
+		}
+	} else if data.CanConfirmOwnership {
+		<h3 class="ts-section-title">Confirm ownership transfer</h3>
+		<form method="post" action="/api/v1/dashboard/organization/members/ownership/confirm">
+			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+			<button class="ts-btn ts-btn-primary" type="submit">Accept ownership</button>
+		</form>
+	}
+}
+
+templ organizationProjectRow(page core.Page, data organizationPageData, project projectView) {
+	<tr>
+		<td><div class="ts-stack-sm ts-org-project-name"><span class="ts-table-strong">{ project.Name }</span><span class="ts-meta ts-mono">{ project.ID }</span></div></td>
+		<td class="ts-muted">{ displayProjectSlug(project.Slug) }</td>
+		<td>
+			if project.Selected {
+				@ui.Badge("success", "Current")
+			} else {
+				@ui.Badge("neutral", "Available")
+			}
+		</td>
+		<td>
+			if project.BackupRegion != "" {
+				@ui.Badge("info", strings.ToUpper(project.BackupRegion))
+			} else {
+				<span class="ts-meta">None</span>
+			}
+		</td>
+		<td class="ts-muted">{ organizationDate(project.CreatedAt) }</td>
+		<td class="ts-table-actions">
+			<div class="ts-row ts-row-end">
+				if !project.Selected {
+					<form method="post" action="/api/v1/dashboard/switch-project">
+						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+						<input type="hidden" name="projectId" value={ project.ID }/>
+						<input type="hidden" name="returnUrl" value="/organization"/>
+						<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Select</button>
+					</form>
+				}
+				if data.CanManage {
+						<details { ui.MenuBehavior... } class="ts-menu ts-rename">
+							<summary class="ts-btn ts-btn-ghost ts-btn-sm">@icons.Pencil(14)<span>Rename</span></summary>
+							<form method="post" action={ "/api/v1/dashboard/organization/projects/" + project.ID + "/rename" } class="ts-menu-panel ts-form ts-org-rename-panel">
+								<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+								@ui.Field(ui.FieldProps{ID: "rename-" + project.ID, Label: "Rename project"}) {
+									<input class="ts-input" id={ "rename-" + project.ID } name="name" value={ project.Name } required/>
+								}
+								@regionPlacement(placement{
+									RegionsID: "project-regions-" + project.ID, PrimaryID: "project-region-" + project.ID, BackupID: "project-backup-" + project.ID,
+									Regions: project.RegionOptions, All: data.Regions, Primary: project.Region, Backup: project.BackupRegion,
+									Hint: "Placement changes are applied asynchronously to every project resource.",
+								})
+								<div class="ts-form-actions"><button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Save project</button></div>
+							</form>
+						</details>
+				}
+			</div>
+		</td>
+	</tr>
+}
+
+// placement configures the shared project-region fieldset used by project
+// creation, project rename, and the new-organization wizard.
+type placement struct {
+	RegionsID, PrimaryID, BackupID string
+	Regions                        []regionView
+	All                            []string
+	Primary, Backup                string
+	RequireRegions                 bool
+	RequireSelects                 bool
+	Hint                           string
+}
+
+templ regionPlacement(p placement) {
+	<fieldset class="ts-org-placement">
+		<legend class="ts-label">Project regions</legend>
+		<div class="ts-field">
+			<label class="ts-label" for={ p.RegionsID }>Allowed regions</label>
+			@ui.RegionMap(p.RegionsID)
+			<select class="ts-select" id={ p.RegionsID } name="regions" multiple size={ fmt.Sprint(len(p.Regions)) } required?={ p.RequireRegions } aria-describedby={ p.RegionsID + "-hint" }>
+				for _, region := range p.Regions {
+					<option value={ region.Code } selected?={ region.Selected }>{ region.Code }</option>
+				}
+			</select>
+		</div>
+		@regionSelect(p.PrimaryID, "Primary region", "region", p.All, p.Primary, p.RequireSelects)
+		@regionSelect(p.BackupID, "Backup region", "backupRegion", p.All, p.Backup, p.RequireSelects)
+		<p class="ts-hint ts-org-placement-hint" id={ p.RegionsID + "-hint" }>{ p.Hint }</p>
+	</fieldset>
+}
+
+templ regionSelect(id, label, name string, regions []string, selected string, required bool) {
+	<div class="ts-field">
+		<label class="ts-label" for={ id }>{ label }</label>
+		@ui.RegionMap(id)
+		<select class="ts-select" id={ id } name={ name } required?={ required }>
+			for _, region := range regions {
+				<option value={ region } selected?={ region == selected }>{ region }</option>
+			}
+		</select>
+	</div>
+}
+
+func hasTransferCandidate(members []memberView) bool {
+	for _, member := range members {
+		if !member.IsOwner {
+			return true
+		}
+	}
+	return false
+}
+
+func allSelected(regions []string) []regionView {
+	views := make([]regionView, len(regions))
+	for i, region := range regions {
+		views[i] = regionView{Code: region, Selected: true}
+	}
+	return views
 }
 
 func organizationKindLabel(kind string) string {
@@ -205,6 +306,13 @@ func displayProjectID(projectID string) string {
 	return projectID
 }
 
+func displayProjectSlug(slug string) string {
+	if slug == "" {
+		return "None"
+	}
+	return slug
+}
+
 func organizationDate(value string) string {
 	createdAt, err := time.Parse(time.RFC3339, value)
 	if err != nil {
@@ -213,117 +321,17 @@ func organizationDate(value string) string {
 	return createdAt.UTC().Format("Jan 2, 2006 15:04 UTC")
 }
 
+func organizationDay(value string) string {
+	createdAt, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return value
+	}
+	return createdAt.UTC().Format("Jan 2, 2006")
+}
+
 func deletionActionLabel(requested bool) string {
 	if requested {
 		return "Deletion pending"
 	}
 	return "Request deletion"
-}
-
-templ organizationProjectRow(page core.Page, data organizationPageData, project projectView) {
-	<tr>
-		<td><div class="ts-min-width"><p class="ts-table-strong">{ project.Name }</p><p class="ts-meta">{ project.ID }</p></div></td>
-		<td class="ts-muted ts-ui">{ displayProjectSlug(project.Slug) }</td>
-		<td><span class={ organizationProjectBadgeClass(project.Selected) }>{ organizationProjectStatus(project.Selected) }</span></td>
-		<td><span class="ts-badge ts-badge-info">{ strings.ToUpper(project.BackupRegion) }</span></td>
-		<td class="ts-muted ts-ui">{ organizationDate(project.CreatedAt) }</td>
-		<td>
-			if !project.Selected {
-				<form method="post" action="/api/v1/dashboard/switch-project">
-					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-					<input type="hidden" name="projectId" value={ project.ID }/>
-					<input type="hidden" name="returnUrl" value="/organization"/>
-					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Select</button>
-				</form>
-			}
-			if data.CanManage {
-				<details class="ts-disclosure ts-rename">
-					<summary class="ts-btn ts-btn-ghost ts-btn-sm">Rename</summary>
-					<form method="post" action={ "/api/v1/dashboard/organization/projects/" + project.ID + "/rename" } class="ts-rename-form">
-						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-						<div class="ts-field"><label class="ts-label" for={ "rename-" + project.ID }>Rename project</label><input class="ts-input" id={ "rename-" + project.ID } name="name" value={ project.Name } required/></div>
-						<fieldset class="ts-field ts-project-regions">
-							<legend class="ts-label">Project regions</legend>
-							<label class="ts-sr-only" for={ "project-regions-" + project.ID }>Project regions</label>
-							<select class="ts-select" id={ "project-regions-" + project.ID } name="regions" multiple>
-								for _, region := range project.RegionOptions {
-									<option value={ region.Code } selected?={ region.Selected }>{ region.Code }</option>
-								}
-							</select>
-							<ts-region-map data-src="/brand/region-map.svg" data-select-id={ "project-regions-" + project.ID } aria-hidden="true"></ts-region-map>
-							<div class="ts-field">
-								<label class="ts-label" for={ "project-region-" + project.ID }>Primary region</label>
-								<select class="ts-select" id={ "project-region-" + project.ID } name="region">
-									for _, region := range data.Regions {
-										<option value={ region } selected?={ region == project.Region }>{ region }</option>
-									}
-								</select>
-								<ts-region-map data-src="/brand/region-map.svg" data-select-id={ "project-region-" + project.ID } aria-hidden="true"></ts-region-map>
-							</div>
-							<div class="ts-field">
-								<label class="ts-label" for={ "project-backup-" + project.ID }>Backup region</label>
-								<select class="ts-select" id={ "project-backup-" + project.ID } name="backupRegion">
-									for _, region := range data.Regions {
-										<option value={ region } selected?={ region == project.BackupRegion }>{ region }</option>
-									}
-								</select>
-								<ts-region-map data-src="/brand/region-map.svg" data-select-id={ "project-backup-" + project.ID } aria-hidden="true"></ts-region-map>
-							</div>
-							<span class="ts-hint">Placement changes are applied asynchronously to every project resource.</span>
-						</fieldset>
-						<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Save project</button>
-					</form>
-				</details>
-			}
-		</td>
-	</tr>
-}
-
-func displayProjectSlug(slug string) string {
-	if slug == "" {
-		return "None"
-	}
-	return slug
-}
-
-func organizationProjectBadgeClass(selected bool) string {
-	if selected {
-		return "ts-badge ts-badge-success"
-	}
-	return "ts-badge ts-badge-neutral"
-}
-
-func organizationProjectStatus(selected bool) string {
-	if selected {
-		return "Current"
-	}
-	return "Available"
-}
-
-templ organizationMemberRow(page core.Page, member memberView) {
-	<tr>
-		<td>{ member.Name }<br/><span class="ts-meta">{ member.Email }</span></td>
-		<td>{ member.Role }</td>
-		<td>{ member.JoinedAt }</td>
-		<td>
-			if member.CanEdit {
-				<form method="post" action={ "/api/v1/dashboard/organization/members/" + member.ID + "/role" }>
-					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-					<select name="role">
-						<option value="member" selected?={ member.Role == "member" }>Member</option>
-						<option value="viewer" selected?={ member.Role == "viewer" }>Viewer</option>
-					</select>
-					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Save role</button>
-				</form>
-				<form method="post" action={ "/api/v1/dashboard/organization/members/" + member.ID + "/remove" }>
-					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-					<button class="ts-btn ts-btn-destructive ts-btn-sm" type="submit">Remove</button>
-				</form>
-			} else if member.IsSelf {
-				You
-			} else {
-				Owner
-			}
-		</td>
-	</tr>
 }

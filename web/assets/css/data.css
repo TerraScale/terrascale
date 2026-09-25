@@ -1,6 +1,7 @@
 /* Tables, lists, key-value definitions, pagination, progress, code, and charts. */
 
 .ts-table-wrap {
+  position: relative;
   min-width: 0;
   overflow-x: auto;
 }
@@ -109,6 +110,10 @@
   flex: 1;
   gap: 2px;
   min-width: 0;
+}
+
+.ts-list-main > * {
+  justify-self: start;
 }
 
 /* Key-value definitions. Accepts dt/dd pairs directly or wrapped in divs. */

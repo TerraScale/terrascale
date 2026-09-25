@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -117,6 +118,10 @@ func (e *Engine) Fragment(w http.ResponseWriter, r *http.Request, fragment core.
 	return err
 }
 
+// navAliases lists routes that belong to a navigation section without being
+// nested under its URL.
+var navAliases = map[string][]string{"/data": {"/schema", "/indexes", "/history"}}
+
 func shellFor(account core.Account, p core.Principal, layout string, r *http.Request) core.Shell {
 	shell := core.Shell{UserName: account.User.Name, UserEmail: account.User.Email}
 	nameParts := strings.Fields(account.User.Name)
@@ -150,11 +155,16 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 		}
 	}
 	if layout == "admin" {
-		shell.Navigation = []core.NavGroup{{Items: []core.NavItem{
-			{Label: "Overview", URL: "/admin"}, {Label: "Users", URL: "/admin/users"},
-			{Label: "Organizations", URL: "/admin/organizations"}, {Label: "Projects", URL: "/admin/projects"},
-			{Label: "Plans", URL: "/admin/plans"},
-		}}}
+		shell.Navigation = []core.NavGroup{
+			{Label: "Accounts", Items: []core.NavItem{
+				{Label: "Users", URL: "/admin/users"}, {Label: "Organizations", URL: "/admin/organizations"},
+				{Label: "Projects", URL: "/admin/projects"},
+			}},
+			{Label: "Platform", Items: []core.NavItem{
+				{Label: "Databases", URL: "/admin/databases"}, {Label: "Estate", URL: "/admin/estate"},
+				{Label: "Usage", URL: "/admin/usage"}, {Label: "Plans", URL: "/admin/plans"},
+			}},
+		}
 	} else {
 		shell.Navigation = []core.NavGroup{
 			{Label: "Build", Items: []core.NavItem{
@@ -176,9 +186,9 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 	}
 	for _, group := range shell.Navigation {
 		for i := range group.Items {
-			url := group.Items[i].URL
-			root := url == "/" || url == "/admin"
-			group.Items[i].Active = r.URL.Path == url || (!root && strings.HasPrefix(r.URL.Path, url+"/"))
+			group.Items[i].Active = slices.ContainsFunc(append([]string{group.Items[i].URL}, navAliases[group.Items[i].URL]...), func(url string) bool {
+				return r.URL.Path == url || (url != "/" && strings.HasPrefix(r.URL.Path, url+"/"))
+			})
 		}
 	}
 	return shell

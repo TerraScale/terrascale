@@ -1,0 +1,5 @@
+/* Engine: padding for alerts inside the flush region catalog card. */
+
+.ts-engine-inset {
+  padding: 0 var(--ts-s6) var(--ts-s6);
+}

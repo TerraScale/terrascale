@@ -1,0 +1,98 @@
+/* Usage: sample capacity gauges, history totals, and storage share list. */
+
+.ts-usage-sample-gauges {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: var(--ts-s4);
+}
+
+.ts-usage-gauge {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s4);
+  padding: var(--ts-s4);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-usage-ring {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+}
+
+.ts-usage-ring-value {
+  position: absolute;
+  display: grid;
+  justify-items: center;
+  line-height: 1.1;
+}
+
+.ts-usage-ring-value strong {
+  font-size: var(--ts-fs-lg);
+}
+
+.ts-usage-ring-value small,
+.ts-usage-gauge-value small {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-usage-gauge-value {
+  font-size: var(--ts-fs-lg);
+  font-weight: 600;
+}
+
+.ts-usage-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2) var(--ts-s4);
+}
+
+.ts-usage-figures > div {
+  display: grid;
+  gap: 2px;
+}
+
+.ts-usage-figures dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-usage-figures dd {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-usage-share {
+  display: grid;
+  gap: var(--ts-s4);
+  list-style: none;
+}
+
+.ts-usage-share > li {
+  display: grid;
+  gap: 6px;
+}
+
+.ts-usage-share a[aria-current="page"] {
+  color: var(--tone);
+}
+
+.ts-usage-billing-kpis .ts-svg-sharebar {
+  margin-block: var(--ts-s1);
+}
+
+.ts-usage-page[aria-current="page"] {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+}
+
+.ts-usage-caps {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+}

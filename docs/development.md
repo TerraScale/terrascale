@@ -25,18 +25,19 @@ files change.
 
 The independent `npm run watch:css` process bundles CSS sources with
 Lightning CSS into the single stylesheet at
-`web/static/css/terrascale.css`. In development it rebuilds that asset and the
-app sends stylesheet-change events on `/__dev/events`; the browser reload
-script listens only when `DASHBOARD_DEV=1` is set. When Air is not installed,
+`web/static/css/terrascale.css`. With `DASHBOARD_DEV=1` every page opens a
+Datastar stream on `/__dev/events`: the Go host patches the stylesheet link
+when the bundle changes and sends a boot ID, so pages reload after Air
+restarts the server. When Air is not installed,
 the script installs pinned Air v1.67.4 with `go install`; that development-tool
 bootstrap needs access to the Go module proxy. The dashboard and templ
 generator build from vendored modules. Stopping the foreground `make dev`
 process with Ctrl+C terminates Air, its app child, and the CSS watcher.
 
-The application uses the official Datastar v1.0.4 browser bundle that includes
-Rocket beta.2, checked in at `web/static/js/datastar-rocket.js`. The shared
-`/js/rocket-components.js` module imports that single runtime and registers
-dashboard components. Starbase informs the dashboard's visual direction; it is
+The only script is the official Datastar v1.0.4 browser bundle, checked in at
+`web/static/js/datastar.js`. There is no custom JavaScript: behavior lives in
+Go handlers, templ components, native HTML (`<details>`, `<dialog>` with
+`command`/`commandfor`) and Datastar attributes. Starbase informs the dashboard's visual direction; it is
 a design reference, and no Starbase framework code is copied into the app.
 
 `DASHBOARD_DEMO_ADMIN_EMAIL` and `DASHBOARD_DEMO_ADMIN_PASSWORD` seed the local

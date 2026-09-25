@@ -1,9 +1,5 @@
 /* Menus (<details> popovers), dialogs, tooltips, and the region map. */
 
-ts-menu {
-  display: contents;
-}
-
 details.ts-menu {
   position: relative;
 }
@@ -110,7 +106,7 @@ details.ts-menu-up > .ts-menu-panel {
   margin: var(--ts-s1) 0;
 }
 
-/* Dialogs: native <dialog> opened by dashboard.js. */
+/* Dialogs: native <dialog>, opened with command="show-modal" or data-init. */
 dialog.ts-dialog {
   width: min(34rem, calc(100vw - 2 * var(--ts-s4)));
   max-height: calc(100dvh - 2 * var(--ts-s6));
@@ -188,8 +184,9 @@ dialog.ts-dialog::backdrop {
   opacity: 1;
 }
 
-/* Region map (web/static/js/region-map.js). */
-ts-region-map {
+/* Region map (ui.RegionMap). Hub nodes are HTML so they stay 8px at any
+   map size; they sit at the hub coordinates of the 136×80 map viewBox. */
+.ts-region-map {
   position: relative;
   display: block;
   width: 100%;
@@ -210,22 +207,7 @@ ts-region-map {
 }
 
 .ts-region-map-image {
-  opacity: 0.8;
-}
-
-.ts-region-map-selection {
-  position: absolute;
-  inset: auto auto var(--ts-s2) var(--ts-s2);
-  z-index: 1;
-  max-width: calc(100% - 2 * var(--ts-s2));
-  padding: var(--ts-s1) var(--ts-s2);
-  overflow: hidden;
-  border: 1px solid var(--ts-line-strong);
-  border-radius: var(--ts-radius-sm);
-  background: rgb(10 11 16 / 0.85);
-  font-size: var(--ts-fs-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  filter: brightness(1.35) saturate(1.1);
 }
 
 .ts-region-arc {
@@ -237,11 +219,19 @@ ts-region-map {
   animation: ts-line-flow 6s linear infinite;
 }
 
+.ts-region-arc:nth-child(2) { animation-delay: 0.45s; }
+.ts-region-arc:nth-child(3) { animation-delay: 0.9s; }
+
 .ts-region-node {
   position: absolute;
   width: 0;
   height: 0;
+  transition: opacity var(--ts-base) var(--ts-ease);
 }
+
+.ts-region-node[data-region="SFO"] { top: 35.73%; left: 15.44%; }
+.ts-region-node[data-region="GRU"] { top: 74.7%; left: 36.76%; }
+.ts-region-node[data-region="FRA"] { top: 25.98%; left: 52.57%; }
 
 .ts-region-node-core,
 .ts-region-node-ring {
@@ -261,6 +251,31 @@ ts-region-map {
 
 .ts-region-node-ring {
   border: 1.5px solid rgb(106 145 255 / 0.8);
+  animation: ts-pin-pulse 2.6s var(--ts-ease) infinite;
+}
+
+.ts-region-node:nth-of-type(2) .ts-region-node-ring { animation-delay: 0.3s; }
+.ts-region-node:nth-of-type(3) .ts-region-node-ring { animation-delay: 0.6s; }
+
+/* Select-driven maps light up only the chosen hubs. */
+.ts-region-map[data-select-id] .ts-region-node {
+  opacity: 0.3;
+}
+
+.ts-region-map[data-select-id] .ts-region-node-ring {
+  animation: none;
+  opacity: 0;
+}
+
+.ts-region-map[data-selected~="SFO"] .ts-region-node[data-region="SFO"],
+.ts-region-map[data-selected~="GRU"] .ts-region-node[data-region="GRU"],
+.ts-region-map[data-selected~="FRA"] .ts-region-node[data-region="FRA"] {
+  opacity: 1;
+}
+
+.ts-region-map[data-selected~="SFO"] [data-region="SFO"] .ts-region-node-ring,
+.ts-region-map[data-selected~="GRU"] [data-region="GRU"] .ts-region-node-ring,
+.ts-region-map[data-selected~="FRA"] [data-region="FRA"] .ts-region-node-ring {
   animation: ts-pin-pulse 2.6s var(--ts-ease) infinite;
 }
 

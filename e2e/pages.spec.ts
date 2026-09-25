@@ -65,18 +65,6 @@ test("member navigation works with native keyboard controls and on mobile", asyn
   const accountTrigger = page.locator('details.ts-account > summary[aria-label="Account menu"]');
   await accountTrigger.focus();
 
-  await page.evaluate(() => {
-    const host = document.querySelector("ts-mobile-nav");
-    if (!host?.parentNode) throw new Error("mobile navigation host is missing");
-    const focused = host.contains(document.activeElement) && document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-    const parent = host.parentNode;
-    const next = host.nextSibling;
-    host.remove();
-    parent.insertBefore(host, next);
-    focused?.focus();
-  });
   await expect(accountTrigger).toBeFocused();
 
   const navigation = page.getByRole("navigation", { name: "Dashboard sections" });
@@ -88,7 +76,7 @@ test("member navigation works with native keyboard controls and on mobile", asyn
   await page.screenshot({ path: "/tmp/dsh-198-after/member-desktop-navigation.png", fullPage: true });
 
   const projectMenu = page.locator("details.ts-project-menu:not(.ts-organization-menu)");
-  const projectTrigger = page.locator('details.ts-project-menu:not(.ts-organization-menu) > summary.ts-project-trigger[aria-label="Choose project, current: Personal"]');
+  const projectTrigger = page.locator('details.ts-project-menu:not(.ts-organization-menu) > summary.ts-context-trigger[aria-label="Choose project, current: Personal"]');
   await projectTrigger.focus();
   await page.keyboard.press("Enter");
   await expect(projectMenu).toHaveAttribute("open", "");
@@ -120,7 +108,7 @@ test("member navigation works with native keyboard controls and on mobile", asyn
 
   const drawer = page.getByRole("complementary", { name: "Primary navigation" });
   await page.keyboard.press("Tab");
-  await expect(drawer).toContainText("Workspace");
+  await expect(drawer).toContainText("Build");
   await page.keyboard.press("Escape");
   await expect(page.locator(".ts-shell")).not.toHaveClass(/nav-open/);
   await expect(navigationToggle).toHaveAttribute("aria-label", "Open navigation");
@@ -227,23 +215,20 @@ test("region map code is route-lazy and native project region controls work with
 
     const mapPage = await mapContext.newPage();
     const mapErrors = observeBrowserErrors(mapPage);
-    const mapModuleRequests: string[] = [];
     const mapImageRequests: string[] = [];
     mapPage.on("request", (request) => {
       const path = new URL(request.url()).pathname;
-      if (path === "/js/region-map.js") mapModuleRequests.push(path);
       if (path === "/brand/region-map.svg") mapImageRequests.push(path);
     });
 
     await mapPage.goto("/");
     await expect(mapPage.getByRole("heading", { name: "Overview" })).toBeVisible();
-    expect(mapModuleRequests).toEqual([]);
+    expect(mapImageRequests).toEqual([]);
 
     await mapPage.goto("/organization");
     const createProjectDisclosure = mapPage.locator("#create-project > summary");
     await createProjectDisclosure.click();
-    await expect.poll(() => mapModuleRequests.length).toBeGreaterThan(0);
-    const map = mapPage.locator('ts-region-map[data-select-id="project-region"]');
+    const map = mapPage.locator('.ts-region-map[data-select-id="project-region"]');
     await expect(map).toHaveAttribute("aria-hidden", "true");
     const mapImage = map.locator("img");
     await expect(mapImage).toHaveAttribute("src", "/brand/region-map.svg");

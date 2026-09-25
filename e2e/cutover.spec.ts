@@ -60,7 +60,7 @@ test("business organization retries canceled annual checkout as monthly and crea
   );
   await page.waitForURL(/\/checkout\/cs_local_/);
   await expect(page.getByRole("heading", { name: "Local payment setup" })).toBeVisible();
-  await expect(page.locator(".ts-flow-subtitle")).toContainText("billed annual");
+  await expect(page.locator(".ts-auth-subtitle")).toContainText("billed annual");
   await expect(page.getByRole("status")).toContainText("No card details are collected");
   await page.getByRole("button", { name: "Cancel checkout" }).click();
 
@@ -72,7 +72,7 @@ test("business organization retries canceled annual checkout as monthly and crea
     payment.getByRole("button", { name: "Continue to checkout" }).click(),
   );
   await page.waitForURL(/\/checkout\/cs_local_/);
-  await expect(page.locator(".ts-flow-subtitle")).toContainText("billed monthly");
+  await expect(page.locator(".ts-auth-subtitle")).toContainText("billed monthly");
   await page.getByRole("button", { name: "Confirm local demo setup" }).click();
 
   await page.waitForURL((url) => url.pathname === "/organization" && url.searchParams.get("payment") === "success");
@@ -139,7 +139,7 @@ test("profile email and language persist, password change ends the session, and 
     email.getByRole("button", { name: "Change email" }).click(),
   );
   await expect(page.getByRole("status")).toContainText("Email changed in this demo");
-  await expect(page.locator(".ts-profile-heading-group")).toContainText(newEmail);
+  await expect(page.locator(".ts-page-header")).toContainText(newEmail);
 
   const language = page.locator('form[action="/api/v1/dashboard/profile/language"]');
   await language.locator('[name="locale"]').selectOption("pt-BR");
@@ -197,7 +197,7 @@ test("SQL check explains a read-only query and a collection index can be created
   await submitAndExpect(page, "/api/v1/dashboard/indexes", 303, () =>
     createIndex.getByRole("button", { name: "Create index" }).click(),
   );
-  await expect(page.getByRole("heading", { name: "Collection indexes" }).locator("..").locator("ul")).toContainText("customer_id");
+  await expect(page.locator("#collection-indexes ul")).toContainText("customer_id");
 });
 
 test("sample index recommendation records a demo build", async ({ page }) => {
@@ -218,7 +218,7 @@ test("sample index recommendation records a demo build", async ({ page }) => {
   }
   await expect(page.getByRole("heading", { name: "Demo index builds" }).locator("xpath=following-sibling::ul[1]")).toContainText("total: building");
   expect((await page.goto(`/indexes?databaseId=${encodeURIComponent(databaseID)}&collection=orders`))?.status()).toBe(200);
-  await expect(page.getByRole("heading", { name: "Collection indexes" }).locator("..").locator("ul")).toContainText("total");
+  await expect(page.locator("#collection-indexes ul")).toContainText("total");
 });
 
 test("sample payment history filters and paginates invoices", async ({ page }) => {
@@ -246,7 +246,7 @@ test("sample payment history filters and paginates invoices", async ({ page }) =
 
 test("fresh account charts show a zero baseline without inventing usage", async ({ page }) => {
   await registerAndOnboard(page, account("empty-charts"));
-  const activity = page.locator(".ts-home-chart-shell svg.ts-chart");
+  const activity = page.locator("#home-activity svg.ts-chart");
   await expect(activity).toBeVisible();
   await expect(activity).toHaveAttribute("aria-label", /Illustrative zero baseline/);
   await expect(page.locator(".ts-home-activity-total")).toContainText("Plotted operations");
@@ -265,15 +265,15 @@ test("fresh account charts show a zero baseline without inventing usage", async 
 
 test("seeded demo charts render labelled samples and respond to the selected range", async ({ page, browser, baseURL }) => {
   await login(page, sampleAccount.email, sampleAccount.password);
-  const activity7d = page.locator(".ts-home-chart-shell svg.ts-chart");
+  const activity7d = page.locator("#home-activity svg.ts-chart");
   await expect(activity7d).toBeVisible();
   await expect(activity7d).toHaveAttribute("aria-label", /Sample organization activity/);
   const sevenDayPath = await activity7d.locator("path.ts-chart-line").getAttribute("d");
   expect(sevenDayPath).toBeTruthy();
   await expect(page.locator(".ts-home-activity-total")).toContainText("Sample operations");
   expect((await page.goto("/?range=24h"))?.status()).toBe(200);
-  await expect(page.locator(".ts-home-chart-shell svg.ts-chart")).toHaveAttribute("aria-label", /Last 24 hours/);
-  expect(await page.locator(".ts-home-chart-shell path.ts-chart-line").getAttribute("d")).not.toBe(sevenDayPath);
+  await expect(page.locator("#home-activity svg.ts-chart")).toHaveAttribute("aria-label", /Last 24 hours/);
+  expect(await page.locator("#home-activity path.ts-chart-line").getAttribute("d")).not.toBe(sevenDayPath);
 
   expect((await page.goto("/usage?tab=overview&range=7d"))?.status()).toBe(200);
   const rings = page.locator(".ts-usage-sample-gauges .ts-usage-ring svg[role='img']");

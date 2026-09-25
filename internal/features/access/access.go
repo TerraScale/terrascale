@@ -169,7 +169,11 @@ func buildPageData(account core.Account, org core.Organization, p core.Principal
 		}
 	}
 	search := strings.TrimSpace(query.Get("q"))
-	roleFilter := query.Get("role")
+	// The filter form sends the current role first and a chosen option last.
+	roleFilter := ""
+	if roles := query["role"]; len(roles) > 0 {
+		roleFilter = roles[len(roles)-1]
+	}
 	if roleFilter != "owner" && roleFilter != "member" && roleFilter != "viewer" {
 		roleFilter = "all"
 	}

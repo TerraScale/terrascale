@@ -1,0 +1,42 @@
+/* Team page: invite forms, member search, and inline role editing. */
+
+.ts-access-invite {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ts-s3);
+}
+
+.ts-access-invite > .ts-field {
+  flex: 1 1 220px;
+}
+
+.ts-access-member {
+  flex-wrap: nowrap;
+  min-width: 220px;
+}
+
+.ts-access-role {
+  width: auto;
+  min-width: 112px;
+}
+
+/* Member filters sit on the tab row, right-aligned. */
+.ts-access-filters {
+  flex: 1 1 360px;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.ts-access-filters .ts-filter-field {
+  min-width: 0;
+}
+
+.ts-access-search {
+  flex: 1 1 220px;
+  max-width: 280px;
+}
+
+.ts-access-filters .ts-filter-field:has(ts-menu) {
+  flex: 0 0 170px;
+}

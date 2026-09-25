@@ -1,0 +1,168 @@
+/* Data views (saved queries, documents, editor, SQL, schema, indexes,
+   history) and query subscriptions. */
+
+.ts-data-filter {
+  flex: 1 1 140px;
+  width: auto;
+  min-width: 0;
+}
+
+.ts-data .ts-toolbar > .ts-filters {
+  flex: 1 1 320px;
+  justify-content: flex-end;
+}
+
+.ts-data-grow {
+  flex: 1 1 200px;
+}
+
+/* Database + collection scope bar. */
+.ts-data-scope {
+  flex-direction: row;
+  align-items: flex-end;
+  padding: var(--ts-s4) var(--ts-s5);
+}
+
+.ts-data-scope-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--ts-control-h);
+  height: var(--ts-control-h);
+  border-radius: var(--ts-radius);
+  background: color-mix(in oklab, var(--tone) 16%, transparent);
+  color: var(--tone);
+}
+
+.ts-data-scope .ts-filter-field .ts-input,
+.ts-data-scope .ts-filter-field .ts-select {
+  height: var(--ts-control-h);
+}
+
+.ts-data-scope > .ts-btn {
+  height: var(--ts-control-h);
+}
+
+.ts-data-query {
+  display: inline-block;
+  max-width: 48ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.ts-data-json > summary {
+  width: fit-content;
+  cursor: pointer;
+  list-style: none;
+}
+
+.ts-data-json > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ts-data-json[open] > .ts-code {
+  max-width: 56ch;
+  margin-top: var(--ts-s2);
+}
+
+/* SQL check results. */
+.ts-data-checks {
+  display: grid;
+  gap: var(--ts-s2);
+  list-style: none;
+}
+
+.ts-data-checks > li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ts-s2);
+}
+
+.ts-data-checks > li > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ts-success);
+}
+
+.ts-data-checks > .ts-data-check-warn > svg {
+  color: var(--ts-warning);
+}
+
+/* Index fields. */
+.ts-data-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+  list-style: none;
+}
+
+.ts-data-chips > li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--ts-s1) var(--ts-s3);
+  border: 1px solid color-mix(in oklab, var(--tone) 30%, transparent);
+  border-radius: var(--ts-radius-pill);
+  background: color-mix(in oklab, var(--tone) 10%, transparent);
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-data-chips > li > svg {
+  color: var(--tone);
+}
+
+/* Native progress styled to match .ts-progress. */
+.ts-data-progress {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-surface-3);
+  appearance: none;
+}
+
+.ts-data-progress::-webkit-progress-bar {
+  background: var(--ts-surface-3);
+}
+
+.ts-data-progress::-webkit-progress-value {
+  border-radius: var(--ts-radius-pill);
+  background: linear-gradient(90deg, var(--tone), var(--ts-accent));
+}
+
+.ts-data-progress::-moz-progress-bar {
+  border-radius: var(--ts-radius-pill);
+  background: linear-gradient(90deg, var(--tone), var(--ts-accent));
+}
+
+/* Document revisions as a timeline. */
+.ts-data-history {
+  display: grid;
+  gap: var(--ts-s4);
+  padding-left: var(--ts-s5);
+  border-left: 2px solid var(--ts-line-strong);
+  list-style: none;
+}
+
+.ts-data-history > li {
+  position: relative;
+  display: grid;
+  gap: var(--ts-s2);
+}
+
+.ts-data-history > li::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: calc(-1 * var(--ts-s5) - 6px);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--tone);
+  box-shadow: 0 0 0 3px var(--ts-surface);
+}

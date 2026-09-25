@@ -1,192 +1,155 @@
 package onboarding
 
-import "fmt"
+import (
+	"fmt"
+
+	"terrascale.tech/dashboard/internal/ui"
+)
 
 templ onboardingView(data pageData, csrfToken string) {
-	<main class={ onboardingRootClass(data.Step) }>
-		<div class={ onboardingContainerClass(data.Step) }>
-			<header class="ts-onboarding-header">
-				<img class="ts-brand-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async"/>
-				<h1 class="ts-sr-only">Activate your TerraScale account</h1>
-			</header>
-			<div class="ts-onboarding-progress" role="progressbar" aria-label="Account setup progress" aria-valuenow={ onboardingProgressValue(data.Progress) } aria-valuemin="0" aria-valuemax="100" data-progress={ onboardingProgressValue(data.Progress) }>
-				<span>ACTIVATION STEP { onboardingProgressValue(data.CurrentStep) } OF { onboardingProgressValue(data.TotalSteps) }</span>
-				<span class="ts-tabular">{ onboardingProgressValue(data.Progress) }%</span>
+	<main class={ "ts-onboarding", templ.KV("ts-onboarding-wide", data.Step == "payment-method") }>
+		<header class="ts-onboarding-header">
+			<img class="ts-brand-logo" src="/brand/logo-terrascale-white.svg" alt="TerraScale" decoding="async"/>
+			<h1 class="ts-sr-only">Activate your TerraScale account</h1>
+		</header>
+		<div class="ts-onboarding-progress">
+			<div class="ts-row-between ts-meta">
+				<span class="ts-eyebrow">Step { onboardingProgressValue(data.CurrentStep) } of { onboardingProgressValue(data.TotalSteps) }</span>
+				<span>{ onboardingProgressValue(data.Progress) }%</span>
+			</div>
+			<div class="ts-progress" role="progressbar" aria-label="Account setup progress" aria-valuenow={ onboardingProgressValue(data.Progress) } aria-valuemin="0" aria-valuemax="100">
+				<div class="ts-progress-bar" data-progress={ onboardingProgressValue(data.Progress) }></div>
 			</div>
 			<ol class="ts-onboarding-steps" aria-label="Onboarding progress">
 				for _, step := range data.Steps {
-					<li class={ onboardingStepClass(step) } aria-current={ onboardingStepCurrent(step) }>
+					<li class={ "ts-onboarding-step", templ.KV("ts-onboarding-step-current", step.Current), templ.KV("ts-onboarding-step-complete", step.Completed) } aria-current={ onboardingStepCurrent(step) }>
 						<span class="ts-onboarding-step-icon" aria-hidden="true">{ onboardingStepGlyph(step) }</span>
 						<span>{ step.Label }</span>
 						<span class="ts-sr-only">{ step.State }</span>
 					</li>
 				}
 			</ol>
+		</div>
+		<div class="ts-onboarding-card">
 			if data.Step == "payment-method" && data.PaymentCanceled {
-				<div class="ts-alert ts-alert-warning ts-onboarding-feedback" role="alert">
-					<span class="ts-onboarding-alert-icon" aria-hidden="true">!</span>
-					<div class="ts-onboarding-alert-stack">
-						<span class="ts-alert-title">Payment setup canceled</span>
-						<span class="ts-alert-body">Your earlier account progress is still saved. No payment method was changed; you can continue on the Free plan or try the demo checkout again.</span>
-					</div>
-				</div>
+				@ui.Alert("warning", "Payment setup canceled", "Your earlier account progress is still saved. No payment method was changed; you can continue on the Free plan or try the demo checkout again.")
 			}
 			if data.Error != "" {
-				<div role="alert" class="ts-alert ts-alert-danger ts-onboarding-feedback">{ data.Error }</div>
+				@ui.Alert("danger", "", data.Error)
 			}
 			if data.Registration {
-				<section class="ts-onboarding-section" aria-labelledby="create-account-title">
-					<header class="ts-section-head">
-						<div>
-						<h2 class="ts-panel-title" id="create-account-title">Create your account</h2>
-						<p class="ts-meta">Your Personal workspace is ready as soon as you save.</p>
+				@stepHeading("create-account-title", "Create your account", "Your Personal workspace is ready as soon as you save.")
+				<form class="ts-form" method="post" action="/onboarding/register" aria-labelledby="create-account-title">
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					@ui.Field(ui.FieldProps{ID: "displayName", Label: "Full name"}) {
+						<input class="ts-input" id="displayName" name="displayName" autocomplete="name" maxlength="128" required/>
+					}
+					@ui.Field(ui.FieldProps{ID: "email", Label: "Email"}) {
+						<input class="ts-input" id="email" name="email" type="email" autocomplete="email" placeholder="name@company.com" required/>
+					}
+					<div class="ts-form-grid">
+						@ui.Field(ui.FieldProps{ID: "password", Label: "Password"}) {
+							@ui.PasswordInput(ui.PasswordProps{ID: "password", Autocomplete: "new-password", Placeholder: "Enter your password"})
+						}
+						@ui.Field(ui.FieldProps{ID: "confirmPassword", Label: "Confirm password"}) {
+							@ui.PasswordInput(ui.PasswordProps{ID: "confirmPassword", Autocomplete: "new-password"})
+						}
 					</div>
-					</header>
-					<form class="ts-onboarding-form" method="post" action="/onboarding/register">
-						<input type="hidden" name="_csrf" value={ csrfToken }/>
-						<div class="ts-field">
-							<label class="ts-label" for="displayName">Full name</label>
-							<input class="ts-input" id="displayName" name="displayName" autocomplete="name" maxlength="128" required/>
-						</div>
-						<div class="ts-field">
-							<label class="ts-label" for="email">Email</label>
-							<input class="ts-input" id="email" name="email" type="email" autocomplete="email" placeholder="name@company.com" required/>
-						</div>
-						<div class="ts-field">
-							<label class="ts-label" for="password">Password</label>
-							<ts-password-control>
-								<div class="ts-input-group">
-									<input class="ts-input" id="password" name="password" type="password" autocomplete="new-password" placeholder="Enter your password" required/>
-									<button class="ts-input-adornment" type="button" data-password-toggle aria-controls="password" aria-pressed="false" aria-label="Show password" hidden>
-										<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-									</button>
-								</div>
-							</ts-password-control>
-						</div>
-						<div class="ts-field">
-							<label class="ts-label" for="confirmPassword">Confirm password</label>
-							<ts-password-control>
-								<div class="ts-input-group">
-									<input class="ts-input" id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" required/>
-									<button class="ts-input-adornment" type="button" data-password-toggle aria-controls="confirmPassword" aria-pressed="false" aria-label="Show password" hidden>
-										<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-									</button>
-								</div>
-							</ts-password-control>
-						</div>
-						<div class="ts-onboarding-terms">
-							<label class="ts-onboarding-terms-label">
-								<input class="ts-checkbox" type="checkbox" name="terms" value="true" required/>
-								<span>I accept the Terms of Service</span>
-							</label>
-						</div>
-						<div class="ts-onboarding-form-footer">
-							<p class="ts-onboarding-secondary">Already have an account? <a class="ts-link" href="/login">Sign in</a></p>
-							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save <span aria-hidden="true">→</span></button>
-						</div>
-					</form>
-				</section>
+					<label class="ts-check">
+						<input type="checkbox" name="terms" value="true" required/>
+						<span>I accept the Terms of Service</span>
+					</label>
+					<div class="ts-onboarding-footer">
+						<p class="ts-meta">Already have an account? <a class="ts-link" href="/login">Sign in</a></p>
+						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save <span aria-hidden="true">→</span></button>
+					</div>
+				</form>
 			} else if data.Step == "account-information" {
-				<section class="ts-onboarding-section" aria-labelledby="account-information-title">
-					<header class="ts-section-head">
-						<div>
-						<h2 class="ts-panel-title" id="account-information-title">Review your account information</h2>
-						<p class="ts-meta">Signed in as { data.Email }</p>
+				@stepHeading("account-information-title", "Review your account information", "Signed in as "+data.Email)
+				<form class="ts-form" method="post" action="/onboarding/step" aria-labelledby="account-information-title">
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					<input type="hidden" name="step" value="account-information"/>
+					@ui.Field(ui.FieldProps{ID: "displayName", Label: "Full name"}) {
+						<input class="ts-input" id="displayName" name="displayName" value={ data.DisplayName } maxlength="128" autocomplete="name" required/>
+					}
+					@ui.Field(ui.FieldProps{ID: "accountEmail", Label: "Email", Hint: "Your sign-in email cannot be changed during account setup."}) {
+						<input class="ts-input" id="accountEmail" type="email" value={ data.Email } readonly/>
+					}
+					<div class="ts-onboarding-footer">
+						<span></span>
+						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save and continue <span aria-hidden="true">→</span></button>
 					</div>
-					</header>
-					<form class="ts-onboarding-form" method="post" action="/onboarding/step">
-						<input type="hidden" name="_csrf" value={ csrfToken }/>
-						<input type="hidden" name="step" value="account-information"/>
-						<div class="ts-field">
-							<label class="ts-label" for="displayName">Full name</label>
-							<input class="ts-input" id="displayName" name="displayName" value={ data.DisplayName } maxlength="128" autocomplete="name" required/>
-						</div>
-						<div class="ts-field ts-onboarding-form-full">
-							<label class="ts-label" for="accountEmail">Email</label>
-							<input class="ts-input" id="accountEmail" type="email" value={ data.Email } readonly/>
-							<span class="ts-hint">Your sign-in email cannot be changed during account setup.</span>
-						</div>
-						<div class="ts-onboarding-form-footer">
-							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save and continue <span aria-hidden="true">→</span></button>
-						</div>
-					</form>
-				</section>
+				</form>
 			} else if data.Step == "payment-method" {
-				<section class="ts-onboarding-section ts-onboarding-section-payment" aria-labelledby="payment-method-title">
-					<form class="ts-onboarding-form ts-onboarding-payment-form" method="post" action="/onboarding/step">
-						<input type="hidden" name="_csrf" value={ csrfToken }/>
-						<input type="hidden" name="step" value="payment-method"/>
-						<header class="ts-section-head ts-onboarding-payment-head">
-							<div>
-								<h2 class="ts-panel-title" id="payment-method-title">Choose your plan</h2>
-								<p class="ts-meta">Payment setup is optional for your Personal workspace. No real payment details or charges are used in this demo.</p>
-							</div>
-							<fieldset class="ts-onboarding-interval" aria-label="Billing interval">
-								<legend class="ts-sr-only">Billing interval</legend>
-								<label class="ts-onboarding-interval-option">
-									<input type="radio" name="interval" value="monthly" checked required/>
-									<span>Monthly</span>
-								</label>
-								<label class="ts-onboarding-interval-option">
-									<input type="radio" name="interval" value="annual"/>
-									<span>Annual</span>
-									<span class="ts-onboarding-interval-badge">2 months free</span>
-								</label>
-							</fieldset>
-						</header>
-						<fieldset class="ts-onboarding-plans ts-onboarding-form-full">
-							<legend class="ts-label">Select a plan</legend>
-							for i, plan := range data.Plans {
-								<label class={ "ts-onboarding-plan ts-onboarding-plan-" + plan.Key }>
-									<input class="ts-onboarding-plan-radio" type="radio" name="plan" value={ plan.Key } checked?={ i == 0 } required/>
-									<span class="ts-onboarding-plan-header">
-										<span class="ts-onboarding-plan-name">{ plan.Name }</span>
-										<span class="ts-onboarding-plan-check" aria-hidden="true">✓</span>
-									</span>
-									<span class="ts-onboarding-plan-price-row"><span>{ fmt.Sprintf("$%.2f", float64(plan.PriceCents)/100) }</span><span> / month</span></span>
-									<span class="ts-onboarding-plan-price-row"><span>{ fmt.Sprintf("$%.2f", float64(plan.AnnualPriceCents)/100) }</span><span> / year</span></span>
-									<span class="ts-onboarding-plan-trial">{ fmt.Sprintf("%d-day trial", plan.TrialDays) }</span>
-								</label>
-							}
+				<form class="ts-form" method="post" action="/onboarding/step" aria-labelledby="payment-method-title">
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					<input type="hidden" name="step" value="payment-method"/>
+					<div class="ts-row-between ts-onboarding-payment-head">
+						@stepHeading("payment-method-title", "Choose your plan", "Payment setup is optional for your Personal workspace. No real payment details or charges are used in this demo.")
+						<fieldset class="ts-segmented" aria-label="Billing interval">
+							<legend class="ts-sr-only">Billing interval</legend>
+							<label>
+								<input type="radio" name="interval" value="monthly" checked required/>
+								<span>Monthly</span>
+							</label>
+							<label>
+								<input type="radio" name="interval" value="annual"/>
+								<span>Annual</span>
+								@ui.Badge("success", "2 months free")
+							</label>
 						</fieldset>
-						<p class="ts-meta ts-onboarding-demo-note">Continue to a local checkout simulation to test the flow. You can also continue on the Free plan without payment.</p>
-						<div class="ts-onboarding-form-footer">
-							<button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit" name="bypass" value="1" formnovalidate>Continue on Free</button>
-							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Continue to demo checkout <span aria-hidden="true">→</span></button>
-						</div>
-					</form>
-				</section>
-			} else {
-				<section class="ts-onboarding-section" aria-labelledby="project-title">
-					<header class="ts-section-head">
-						<div>
-						<h2 class="ts-panel-title" id="project-title">Create your first project</h2>
-						<p class="ts-meta">Choose where your project's data will live.</p>
 					</div>
-					</header>
-					<form class="ts-onboarding-form" method="post" action="/onboarding/step">
-						<input type="hidden" name="_csrf" value={ csrfToken }/>
-						<input type="hidden" name="step" value="project"/>
-						<div class="ts-field ts-onboarding-form-full">
-							<label class="ts-label" for="projectName">Project name</label>
-							<input class="ts-input" id="projectName" name="name" maxlength="100" value="Personal" autocomplete="organization" required/>
-						</div>
-						<div class="ts-field ts-onboarding-form-full">
-							<label class="ts-label" for="region">Primary region</label>
-							<ts-region-map data-src="/brand/region-map.svg" data-select-id="region" aria-hidden="true"></ts-region-map>
-							<select class="ts-select" id="region" name="region" required>
-								<option value="GRU" selected>GRU · São Paulo</option>
-								<option value="SFO">SFO · San Francisco</option>
-								<option value="FRA">FRA · Frankfurt</option>
-							</select>
-							<span class="ts-hint">You can add regions to your project later.</span>
-						</div>
-						<div class="ts-onboarding-form-footer">
-							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create project and open Dashboard <span aria-hidden="true">→</span></button>
-						</div>
-					</form>
-				</section>
+					<fieldset class="ts-onboarding-plans">
+						<legend class="ts-sr-only">Select a plan</legend>
+						for i, plan := range data.Plans {
+							<label class="ts-onboarding-plan" data-tone={ planTone(i) }>
+								<input class="ts-onboarding-plan-radio" type="radio" name="plan" value={ plan.Key } checked?={ i == 0 } required/>
+								<span class="ts-row-between">
+									<span class="ts-onboarding-plan-name">{ plan.Name }</span>
+									<span class="ts-onboarding-plan-check" aria-hidden="true">✓</span>
+								</span>
+								<span class="ts-onboarding-plan-price">{ fmt.Sprintf("$%.2f", float64(plan.PriceCents)/100) }<span class="ts-meta"> / month</span></span>
+								<span class="ts-meta">{ fmt.Sprintf("$%.2f", float64(plan.AnnualPriceCents)/100) } / year</span>
+								@ui.Badge("tone", fmt.Sprintf("%d-day trial", plan.TrialDays))
+							</label>
+						}
+					</fieldset>
+					<p class="ts-meta">Continue to a local checkout simulation to test the flow. You can also continue on the Free plan without payment.</p>
+					<div class="ts-onboarding-footer">
+						<button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit" name="bypass" value="1" formnovalidate>Continue on Free</button>
+						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Continue to demo checkout <span aria-hidden="true">→</span></button>
+					</div>
+				</form>
+			} else {
+				@stepHeading("project-title", "Create your first project", "Choose where your project's data will live.")
+				<form class="ts-form" method="post" action="/onboarding/step" aria-labelledby="project-title">
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					<input type="hidden" name="step" value="project"/>
+					@ui.Field(ui.FieldProps{ID: "projectName", Label: "Project name"}) {
+						<input class="ts-input" id="projectName" name="name" maxlength="100" value="Personal" autocomplete="organization" required/>
+					}
+					@ui.Field(ui.FieldProps{ID: "region", Label: "Primary region", Hint: "You can add regions to your project later."}) {
+						@ui.RegionMap("region")
+						<select class="ts-select" id="region" name="region" required>
+							<option value="GRU" selected>GRU · São Paulo</option>
+							<option value="SFO">SFO · San Francisco</option>
+							<option value="FRA">FRA · Frankfurt</option>
+						</select>
+					}
+					<div class="ts-onboarding-footer">
+						<span></span>
+						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create project and open Dashboard <span aria-hidden="true">→</span></button>
+					</div>
+				</form>
 			}
 		</div>
 	</main>
 }
+
+templ stepHeading(id, title, description string) {
+	<div class="ts-onboarding-heading">
+		<h2 class="ts-section-title" id={ id }>{ title }</h2>
+		<p class="ts-meta">{ description }</p>
+	</div>
+}
+

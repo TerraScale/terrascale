@@ -1,10 +1,6 @@
 /* Signed-in shell: sidebar, context switchers, colorful navigation, account
    menu, and the mobile drawer. */
 
-ts-mobile-nav {
-  display: block;
-}
-
 .ts-shell {
   display: grid;
   grid-template-columns: var(--ts-sidebar-width) minmax(0, 1fr);
@@ -317,7 +313,8 @@ details[open] > .ts-account-trigger {
   background: radial-gradient(420px 300px at 0 0, rgb(232 121 249 / 0.12), transparent 70%);
 }
 
-/* Mobile drawer (ts-mobile-nav switches at 48rem). */
+/* Mobile drawer below 48rem. A closed drawer is hidden from focus and
+   assistive technology; the open one locks page scrolling. */
 @media (max-width: 47.99rem) {
   .ts-shell {
     grid-template-columns: minmax(0, 1fr);
@@ -339,11 +336,19 @@ details[open] > .ts-account-trigger {
     width: min(86vw, 300px);
     box-shadow: var(--ts-shadow-overlay);
     transform: translateX(-102%);
-    transition: transform var(--ts-base) var(--ts-ease);
+    visibility: hidden;
   }
 
+  html:has(.ts-shell.nav-open) {
+    overflow: hidden;
+  }
+
+  /* Animate only the opening slide, so resizing from desktop never shows
+     the drawer sweeping off screen. */
   .ts-shell.nav-open .ts-sidebar {
     transform: none;
+    visibility: visible;
+    transition: transform var(--ts-base) var(--ts-ease);
   }
 
   .ts-sidebar .ts-sidebar-close {

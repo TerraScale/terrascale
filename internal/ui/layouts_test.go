@@ -51,7 +51,10 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 	}
 	html := renderTempl(t, Shell(page, templ.Raw(`<main class="test-content"><h1>Overview</h1></main>`)))
 	for _, want := range []string{
-		`<html lang="en" data-theme="dark" data-nonce="nonce_test_123" data-dev-reload>`,
+		`<html lang="en" data-theme="dark" data-nonce="nonce_test_123">`,
+		`data-init="@get('/__dev/events'`,
+		`data-class:ts-nav-pending="$_navPending"`,
+		`data-attr:inert="$navOpen"`,
 		`aria-label="Open navigation"`,
 		`aria-label="Close navigation"`,
 		`aria-label="Primary navigation"`,
@@ -85,9 +88,9 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 		`src="/brand/logo-terrascale-white.svg"`,
 		`<span class="ts-account-avatar" aria-hidden="true">AE</span>`,
 		`nonce="nonce_test_123"`,
-		`<script type="module" src="/js/rocket-components.js" defer nonce="nonce_test_123"></script>`,
-		`<ts-mobile-nav class="ts-shell" data-signals="{navOpen:false}" data-class:nav-open="$navOpen">`,
-		`<ts-menu><details class="ts-menu ts-context-menu ts-organization-menu">`,
+		`<script type="module" src="/js/datastar.js" nonce="nonce_test_123"></script>`,
+		`class="ts-shell" data-signals="{navOpen: false}" data-class:nav-open="$navOpen"`,
+		`class="ts-menu ts-context-menu ts-organization-menu"`,
 		`<div id="ts-main" class="ts-main" tabindex="-1" data-tone="violet">`,
 		`<h1>Overview</h1>`,
 		`Org &lt;script&gt;`,
@@ -103,11 +106,11 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 	if strings.Count(html, `data-dashboard-css`) != 1 {
 		t.Fatalf("want one stylesheet link, got %d", strings.Count(html, `data-dashboard-css`))
 	}
-	if strings.Count(html, `src="/js/rocket-components.js"`) != 1 || strings.Contains(html, `src="/js/datastar-rocket.js"`) {
-		t.Fatal("shared shell must load the component module once without loading a second Datastar runtime")
+	if strings.Count(html, "<script") != 1 || strings.Count(html, `src="/js/datastar.js"`) != 1 {
+		t.Fatal("the shell must load Datastar as its only script")
 	}
-	if count := strings.Count(html, "<ts-menu>"); count != 3 {
-		t.Fatalf("want three progressive menu hosts, got %d", count)
+	if count := strings.Count(html, `data-on:click__outside="el.open = false"`); count != 3 {
+		t.Fatalf("want three Datastar-enhanced menus, got %d", count)
 	}
 	if count := strings.Count(html, "<main"); count != 1 {
 		t.Fatalf("want one main landmark with a feature page main, got %d", count)
@@ -144,11 +147,14 @@ func TestAdminTemplLayoutUsesAdminNavigationSemantics(t *testing.T) {
 func TestAuthTemplLayoutUsesCSPNonceAndFileBackedAssets(t *testing.T) {
 	page := core.Page{Title: "Sign in", Nonce: "auth_nonce_456"}
 	html := renderTempl(t, Auth(page, templ.Raw(`<main>Sign in</main>`)))
+	if strings.Contains(html, "__dev/events") {
+		t.Error("production pages must not open the development event stream")
+	}
 	for _, want := range []string{
 		`data-nonce="auth_nonce_456"`,
 		`href="/brand/logo-icon-blue.svg"`,
 		`href="/css/terrascale.css"`,
-		`type="module" src="/js/rocket-components.js" defer nonce="auth_nonce_456"`,
+		`type="module" src="/js/datastar.js" nonce="auth_nonce_456"`,
 		`href="#ts-auth-main"`,
 		`<title>Sign in · TerraScale</title>`,
 	} {
@@ -174,7 +180,7 @@ func TestEmbeddedStaticAssetsContainOneBundledStylesheetAndBrand(t *testing.T) {
 		t.Fatal("public CSS bundle still contains unbundled imports")
 	}
 	for _, selector := range [][]byte{
-		[]byte("ts-mobile-nav"),
+		[]byte("ts-nav-pending"),
 		[]byte("ts-menu"),
 		[]byte("ts-tabs"),
 		[]byte("ts-region-map"),
@@ -185,7 +191,7 @@ func TestEmbeddedStaticAssetsContainOneBundledStylesheetAndBrand(t *testing.T) {
 		[]byte("ts-region-node-core"),
 	} {
 		if !bytes.Contains(css, selector) {
-			t.Errorf("public CSS bundle is missing custom-element host style %q", selector)
+			t.Errorf("public CSS bundle is missing style %q", selector)
 		}
 	}
 	for _, path := range []string{
@@ -195,30 +201,25 @@ func TestEmbeddedStaticAssetsContainOneBundledStylesheetAndBrand(t *testing.T) {
 		"brand/region-map.svg",
 		"fonts/oxanium-latin-wght-normal.woff2",
 		"fonts/jetbrains-mono-latin-wght-normal.woff2",
-		"js/datastar-rocket.js",
-		"js/rocket-components.js",
-		"js/dashboard.js",
+		"js/datastar.js",
 	} {
 		if _, err := fs.Stat(static.Assets, path); err != nil {
 			t.Errorf("public asset %q is missing: %v", path, err)
 		}
 	}
-	datastar, err := fs.ReadFile(static.Assets, "js/datastar-rocket.js")
+	scripts, err := fs.Glob(static.Assets, "js/*.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scripts) != 1 || scripts[0] != "js/datastar.js" {
+		t.Fatalf("the vendored Datastar bundle must be the only script, got %v", scripts)
+	}
+	datastar, err := fs.ReadFile(static.Assets, "js/datastar.js")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(datastar, []byte("Datastar v1.0.4")) {
-		t.Fatal("vendored Datastar + Rocket browser bundle is not v1.0.4")
-	}
-	components, err := fs.ReadFile(static.Assets, "js/rocket-components.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(components, []byte(`from "./datastar-rocket.js"`)) {
-		t.Fatal("Rocket component module does not import the shared Datastar + Rocket runtime")
-	}
-	if !bytes.Contains(components, []byte(`import "./dashboard.js"`)) {
-		t.Fatal("Rocket component module does not load the existing dashboard behavior module")
+		t.Fatal("vendored Datastar browser bundle is not v1.0.4")
 	}
 	regionMap, err := fs.ReadFile(static.Assets, "brand/region-map.svg")
 	if err != nil {

@@ -21,7 +21,7 @@ test("fresh account registration, demo onboarding, session, and sign-in work end
   const account = credentials("journey");
   mkdirSync("/tmp/dsh-198-after", { recursive: true });
   await page.goto("/login");
-  const highlightedMap = page.locator('ts-region-map[data-highlights="SFO,GRU,FRA"]');
+  const highlightedMap = page.locator('.ts-region-map[data-highlights="SFO,GRU,FRA"]');
   await expect(highlightedMap).toHaveAttribute("aria-hidden", "true");
   await expect(highlightedMap.locator(".ts-region-node")).toHaveCount(3);
   const mapImage = highlightedMap.locator("img.ts-region-map-image");
@@ -31,7 +31,7 @@ test("fresh account registration, demo onboarding, session, and sign-in work end
   const loginPassword = page.locator("#password");
   const passwordToggle = page.locator('button[data-password-toggle][aria-controls="password"]');
   await expect(passwordToggle).toBeHidden();
-  await loginPassword.fill("rocket-control-check");
+  await loginPassword.fill("reveal-control-check");
   await expect(passwordToggle).toBeVisible();
   await expect(passwordToggle).toHaveAccessibleName("Show password");
   await passwordToggle.click();

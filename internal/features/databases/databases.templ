@@ -1,55 +1,119 @@
 package databases
 
-import "terrascale.tech/dashboard/internal/core"
+import (
+	"fmt"
+
+	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
+)
 
 templ databasesContent(page core.Page, d pageData) {
 	<main class="ts-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
-		if d.Error != "" {
-			<p class="ts-alert ts-alert-danger" role="alert">{ d.Error }</p>
-		}
 		if d.Detail != nil {
 			@databaseDetailContent(page, d)
 		} else {
-			<header class="ts-section"><h1>Databases</h1><p>Create and manage databases in the selected project.</p></header>
-			<form class="ts-filters" method="get" action="/databases" role="search" aria-label="Filter databases">
-				<input class="ts-input" type="search" name="q" value={ d.Search } placeholder="Search databases..." aria-label="Search databases"/><button class="ts-btn ts-btn-secondary" type="submit">Filter</button>
-				if d.Search != "" {
-					<a class="ts-btn ts-btn-ghost" href="/databases">Clear</a>
-				}
-			</form>
-			if d.CanProvision {
-				<details id="create-database" class="ts-card ts-section ts-disclosure" open?={ d.OpenCreate }>
-					<summary class="ts-btn ts-btn-primary">Create database</summary>
-					<form method="post" action="/api/v1/dashboard/databases" class="ts-stack-12">
-						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-						<label class="ts-label" for="database-name">Name</label><input class="ts-input" id="database-name" name="name" pattern="[a-z0-9][a-z0-9\-]*" maxlength="63" required/>
-						<label class="ts-label" for="database-region">Region</label><select class="ts-input" id="database-region" name="region"><option value="GRU" selected?={ d.Region == "GRU" }>São Paulo (GRU)</option><option value="SFO" selected?={ d.Region == "SFO" }>San Francisco (SFO)</option><option value="FRA" selected?={ d.Region == "FRA" }>Frankfurt (FRA)</option></select>
-						<ts-region-map data-src="/brand/region-map.svg" data-select-id="database-region" aria-hidden="true"></ts-region-map>
-						<button class="ts-btn ts-btn-primary" type="submit">Create database</button>
-					</form>
-				</details>
+			@ui.PageHeader(ui.Header{Title: "Databases", Description: "Create and manage databases in the selected project."})
+			if d.Error != "" {
+				@ui.Alert("danger", "", d.Error)
 			}
-			<section class="ts-section">
-				<h2>Project databases</h2>
+			if d.CanProvision {
+				@createDatabase(page, d)
+			}
+			@ui.Card(ui.CardProps{ID: "project-databases", Title: "Project databases", Description: databaseCount(d), Actions: databaseSearch(d), Flush: true}) {
 				if len(d.Databases) > 0 {
 					<div class="ts-table-wrap">
 						<table class="ts-table">
 							<thead><tr><th>Name</th><th>Status</th><th>Region</th></tr></thead>
 							<tbody>
 								for _, db := range d.Databases {
-									<tr><td><a href={ "/databases/" + db.ID }>{ db.Name }</a></td><td>{ db.Status }</td><td>{ db.Region }</td></tr>
+									<tr>
+										<td>
+											<a class="ts-db-name" href={ templ.SafeURL("/databases/" + db.ID) }>
+												<span class="ts-db-icon" aria-hidden="true">@icons.Database(15)
+</span>
+												<span class="ts-strong">{ db.Name }</span>
+											</a>
+										</td>
+										<td>@statusBadge(db.Status)
+</td>
+										<td class="ts-mono">{ db.Region }</td>
+									</tr>
 								}
 							</tbody>
 						</table>
 					</div>
-				} else {
-					if d.Search != "" {
-						<p>No databases match this filter.</p>
-					} else {
-						<p>No databases yet.</p>
+				} else if d.Search != "" {
+					@ui.Empty("No databases match this filter.", "Try another name or clear the search.") {
+						<a class="ts-btn ts-btn-secondary ts-btn-sm" href="/databases">Clear search</a>
 					}
+				} else {
+					@ui.Empty("No databases yet.", "Create your first database in the region closest to your users.")
 				}
-			</section>
+			}
 		}
 	</main>
+}
+
+templ createDatabase(page core.Page, d pageData) {
+	<details id="create-database" class="ts-card ts-db-create" open?={ d.OpenCreate }>
+		<summary class="ts-db-create-summary">
+			<span class="ts-db-create-icon" aria-hidden="true">@icons.Plus(18)
+</span>
+			<span class="ts-card-heading">
+				<span class="ts-card-title">Create database</span>
+				<span class="ts-card-description">Pick a name and the region closest to your users.</span>
+			</span>
+			<span class="ts-db-create-chevron" aria-hidden="true">@icons.ChevronDown(18)
+</span>
+		</summary>
+		<form method="post" action="/api/v1/dashboard/databases" class="ts-db-create-form">
+			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+			<div class="ts-form">
+				@ui.Field(ui.FieldProps{ID: "database-name", Label: "Name", Hint: "Lowercase letters, digits, and hyphens."}) {
+					<input class="ts-input" id="database-name" name="name" pattern="[a-z0-9][a-z0-9\-]*" maxlength="63" required/>
+				}
+				@ui.Field(ui.FieldProps{ID: "database-region", Label: "Region"}) {
+					<select class="ts-input" id="database-region" name="region">
+						<option value="GRU" selected?={ d.Region == "GRU" }>São Paulo (GRU)</option>
+						<option value="SFO" selected?={ d.Region == "SFO" }>San Francisco (SFO)</option>
+						<option value="FRA" selected?={ d.Region == "FRA" }>Frankfurt (FRA)</option>
+					</select>
+				}
+				<div class="ts-form-actions">
+					<button class="ts-btn ts-btn-primary" type="submit">Create database</button>
+				</div>
+			</div>
+			@ui.RegionMap("database-region")
+		</form>
+	</details>
+}
+
+templ databaseSearch(d pageData) {
+	<form class="ts-filters ts-db-search" method="get" action="/databases" role="search" aria-label="Filter databases">
+		<input class="ts-input ts-input-sm" type="search" name="q" value={ d.Search } placeholder="Search databases..." aria-label="Search databases"/>
+		<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Filter</button>
+		if d.Search != "" {
+			<a class="ts-btn ts-btn-ghost ts-btn-sm" href="/databases">Clear</a>
+		}
+	</form>
+}
+
+templ statusBadge(status string) {
+	if status == "ready" {
+		@ui.Badge("success", status)
+	} else {
+		@ui.Badge("neutral", status)
+	}
+}
+
+func databaseCount(d pageData) string {
+	noun := "databases"
+	if len(d.Databases) == 1 {
+		noun = "database"
+	}
+	if d.Search != "" {
+		return fmt.Sprintf("%d %s matching %q", len(d.Databases), noun, d.Search)
+	}
+	return fmt.Sprintf("%d %s in this project", len(d.Databases), noun)
 }

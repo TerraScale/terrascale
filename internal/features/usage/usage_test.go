@@ -376,7 +376,7 @@ func TestUsageOverviewShowsConfiguredAllowanceAndUnavailableWorkloadHonestly(t *
 			t.Errorf("usage page is missing %q", expected)
 		}
 	}
-	if strings.Contains(body, "<dt>Read operations</dt>") || strings.Contains(body, "Sample dashboard data") {
+	if strings.Contains(body, ">Read operations</dt>") || strings.Contains(body, "Sample dashboard data") {
 		t.Fatal("usage page presented unconfigured provider totals as measured usage")
 	}
 
@@ -566,15 +566,16 @@ func assertUsageDatabaseFilter(t *testing.T, body, selectedID, selectedRow, othe
 }
 
 func usageMetricValue(body, label string) string {
-	labelStart := strings.Index(body, "<dt>"+label+"</dt>")
+	labelStart := strings.Index(body, ">"+label+"</dt>")
 	if labelStart < 0 {
 		return ""
 	}
-	valueStart := strings.Index(body[labelStart:], "<dd>")
+	const valueTag = `<dd class="ts-stat-value">`
+	valueStart := strings.Index(body[labelStart:], valueTag)
 	if valueStart < 0 {
 		return ""
 	}
-	valueStart += labelStart + len("<dd>")
+	valueStart += labelStart + len(valueTag)
 	valueEnd := strings.Index(body[valueStart:], "</dd>")
 	if valueEnd < 0 {
 		return ""

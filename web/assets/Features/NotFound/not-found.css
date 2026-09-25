@@ -1,0 +1,49 @@
+/* 404 page: copy beside the illustration. */
+
+.ts-notfound {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s8);
+  width: min(72rem, 100%);
+  min-height: 100dvh;
+  margin-inline: auto;
+  padding: var(--ts-s8) var(--ts-s6);
+}
+
+.ts-notfound-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ts-s8);
+}
+
+.ts-notfound-copy {
+  display: grid;
+  justify-items: start;
+  gap: var(--ts-s4);
+}
+
+.ts-notfound-copy .ts-eyebrow {
+  color: #a78bfa;
+}
+
+.ts-notfound-number {
+  width: min(100%, 320px);
+  height: auto;
+}
+
+.ts-notfound-art {
+  width: 100%;
+  height: auto;
+}
+
+@media (max-width: 47.99rem) {
+  .ts-notfound-inner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-notfound-art {
+    max-width: 22rem;
+    justify-self: center;
+  }
+}

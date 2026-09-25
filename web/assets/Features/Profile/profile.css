@@ -1,0 +1,15 @@
+/* Profile page: capability badges and the one-time code input. */
+
+.ts-profile-claims {
+  gap: var(--ts-s2);
+}
+
+.ts-profile-posture {
+  align-items: center;
+}
+
+.ts-profile-code {
+  max-width: 12rem;
+  font-family: var(--ts-font-mono);
+  letter-spacing: 0.2em;
+}

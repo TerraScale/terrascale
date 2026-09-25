@@ -154,7 +154,7 @@ func TestCredentialSummaryCountsScopedInventoryBeforeFilters(t *testing.T) {
 		t.Fatalf("credential summary status = %d: %s", w.Code, w.Body.String())
 	}
 	for label, want := range map[string]string{"Active keys": "2", "Expiring keys": "1", "M2M clients": "1"} {
-		pattern := regexp.MustCompile(`(?s)<dt>` + regexp.QuoteMeta(label) + `</dt>\s*<dd><span class="ts-kpi-value">(\d+)</span>`)
+		pattern := regexp.MustCompile(`(?s)<dt class="ts-stat-label">` + regexp.QuoteMeta(label) + `</dt>\s*<dd class="ts-stat-value">(\d+)</dd>`)
 		match := pattern.FindStringSubmatch(w.Body.String())
 		if len(match) != 2 || match[1] != want {
 			t.Fatalf("%s count = %v, want %s: %s", label, match, want, w.Body.String())

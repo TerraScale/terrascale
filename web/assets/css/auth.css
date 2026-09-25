@@ -1,30 +1,41 @@
 /* Standalone pages outside the signed-in shell: sign-in, onboarding,
-   approvals, and error pages. */
+   approvals, invitations, checkout simulators, and error pages. */
 
-.ts-auth-body {
+/* Painted on the root so the glow also covers the scrollbar gutter. */
+html:has(> body.ts-auth-body) {
   background:
-    radial-gradient(900px 520px at 15% -10%, rgb(167 139 250 / 0.16), transparent 65%),
-    radial-gradient(800px 520px at 100% 10%, rgb(34 211 238 / 0.1), transparent 60%),
-    var(--ts-canvas);
+    radial-gradient(circle at 12% -8%, rgb(167 139 250 / 0.16), transparent 42rem),
+    radial-gradient(circle at 92% 4%, rgb(34 211 238 / 0.08), transparent 36rem),
+    var(--ts-canvas) fixed;
 }
 
-.ts-auth {
+/* Centered single-card pages. */
+.ts-auth,
+.ts-flow-root,
+.ts-inv-root {
   display: grid;
-  place-items: center;
+  place-content: center;
+  justify-items: center;
+  gap: var(--ts-s5);
   min-height: 100dvh;
   padding: var(--ts-s10) var(--ts-s4);
 }
 
-.ts-auth-card {
+.ts-auth-card,
+.ts-flow-panel {
   display: grid;
-  gap: var(--ts-s6);
-  width: min(28rem, 100%);
+  gap: var(--ts-s5);
+  width: min(28rem, calc(100vw - 2 * var(--ts-s4)));
   padding: var(--ts-s8);
   border: 1px solid var(--ts-line);
   border-radius: 18px;
   background: rgb(18 21 29 / 0.82);
   box-shadow: var(--ts-shadow-overlay);
   backdrop-filter: blur(16px);
+}
+
+.ts-flow-panel {
+  width: min(34rem, calc(100vw - 2 * var(--ts-s4)));
 }
 
 .ts-auth-brand {
@@ -43,23 +54,101 @@
   text-align: center;
 }
 
-.ts-auth-title {
+.ts-auth-title,
+.ts-flow-title {
   font-size: var(--ts-fs-2xl);
   font-weight: 700;
 }
 
-.ts-auth-subtitle {
+.ts-auth-subtitle,
+.ts-flow-subtitle {
   color: var(--ts-ink-2);
 }
 
-.ts-auth-footer {
+.ts-auth-footer,
+.ts-flow-note {
   color: var(--ts-ink-3);
   font-size: var(--ts-fs-sm);
   text-align: center;
 }
 
+/* "Other options" separator with hairlines on both sides. */
+.ts-auth-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  white-space: nowrap;
+}
+
+.ts-auth-divider::before,
+.ts-auth-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-auth-providers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ts-s2);
+}
+
+.ts-auth-locale .ts-select {
+  width: auto;
+  background-color: transparent;
+}
+
+/* Flow cards (approvals, checkout and billing simulators, invitations). */
+.ts-flow-section,
+.ts-flow-form {
+  display: grid;
+  gap: var(--ts-s5);
+}
+
+.ts-flow-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ts-s4);
+}
+
+.ts-flow-header-content {
+  display: grid;
+  gap: var(--ts-s1);
+  min-width: 0;
+}
+
+.ts-flow-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--ts-radius);
+  background: color-mix(in oklab, var(--tone) 18%, transparent);
+  color: var(--tone);
+  font-size: var(--ts-fs-xl);
+  font-weight: 700;
+}
+
+.ts-flow-actions,
+.ts-flow-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+}
+
+.ts-flow-panel .ts-kv {
+  padding: var(--ts-s4);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  background: var(--ts-canvas);
+}
+
 @media (max-width: 30rem) {
-  .ts-auth-card {
+  .ts-auth-card,
+  .ts-flow-panel {
     padding: var(--ts-s6) var(--ts-s5);
   }
 }

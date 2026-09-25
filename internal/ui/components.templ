@@ -1,5 +1,7 @@
 package ui
 
+import "terrascale.tech/dashboard/internal/ui/icons"
+
 // Shared page building blocks. Feature pages compose these instead of
 // hand-writing header, card, stat, and empty-state markup; the matching
 // styles live in web/assets/css/components.css.
@@ -135,8 +137,7 @@ type Tab struct {
 
 // Tabs renders underline tabs that switch page sections via links.
 templ Tabs(label string, tabs []Tab) {
-	<ts-tabs>
-		<nav class="ts-tabs" aria-label={ label }>
+	<nav class="ts-tabs" aria-label={ label }>
 			for _, tab := range tabs {
 				<a
 					class="ts-tab"
@@ -151,8 +152,7 @@ templ Tabs(label string, tabs []Tab) {
 					}
 				</a>
 			}
-		</nav>
-	</ts-tabs>
+	</nav>
 }
 
 // FieldProps labels one form control; children are the control itself.
@@ -177,4 +177,99 @@ func alertRole(tone string) string {
 		return "alert"
 	}
 	return "status"
+}
+
+// PasswordProps configures a password control. Name defaults to ID.
+type PasswordProps struct {
+	ID           string
+	Name         string
+	Autocomplete string
+	Placeholder  string
+	MinLength    int
+}
+
+// PasswordInput is a required password field whose reveal toggle appears once
+// the field has a value. Datastar keeps the state in local (_-prefixed)
+// signals, so nothing is sent to the server.
+templ PasswordInput(p PasswordProps) {
+	<div class="ts-input-group" data-signals={ passwordSignals(p.ID) }>
+		<input
+			class="ts-input"
+			type="password"
+			id={ p.ID }
+			name={ displayName(p.Name, p.ID) }
+			autocomplete={ p.Autocomplete }
+			if p.Placeholder != "" {
+				placeholder={ p.Placeholder }
+			}
+			if p.MinLength > 0 {
+				minlength={ p.MinLength }
+			}
+			required
+			data-attr:type={ "$" + passwordSignal(p.ID, "reveal") + " ? 'text' : 'password'" }
+			data-on:input={ "$" + passwordSignal(p.ID, "filled") + " = el.value !== ''; $" + passwordSignal(p.ID, "filled") + " || ($" + passwordSignal(p.ID, "reveal") + " = false)" }
+		/>
+		<button
+			class="ts-input-adornment"
+			type="button"
+			data-password-toggle
+			aria-controls={ p.ID }
+			aria-pressed="false"
+			aria-label="Show password"
+			hidden
+			data-attr:hidden={ "!$" + passwordSignal(p.ID, "filled") }
+			data-attr:aria-pressed={ "String($" + passwordSignal(p.ID, "reveal") + ")" }
+			data-attr:aria-label={ "$" + passwordSignal(p.ID, "reveal") + " ? 'Hide password' : 'Show password'" }
+			data-on:click={ "$" + passwordSignal(p.ID, "reveal") + " = !$" + passwordSignal(p.ID, "reveal") }
+		>
+			@icons.Eye(18)
+		</button>
+	</div>
+}
+
+// MenuBehavior makes a <details class="ts-menu"> popover close on outside
+// clicks and on Escape (returning focus to its summary). Spread it onto the
+// element: <details class="ts-menu" { ui.MenuBehavior... }>.
+var MenuBehavior = templ.Attributes{
+	"data-on:click__outside":  "el.open = false",
+	"data-on:keydown__window": "evt.key === 'Escape' && el.open && (el.open = false, el.querySelector('summary').focus())",
+}
+
+type regionPin struct {
+	code string
+	x, y float64
+}
+
+// regionPins are the hub positions in the 136×80 viewBox of brand/region-map.svg.
+var regionPins = []regionPin{{"SFO", 21, 28.58}, {"GRU", 50, 59.76}, {"FRA", 71.5, 20.78}}
+
+// RegionMap renders the decorative region map. With a selectID it highlights
+// the hubs chosen in that <select>; without one it shows the animated network.
+templ RegionMap(selectID string) {
+	<div
+		class="ts-region-map"
+		aria-hidden="true"
+		if selectID != "" {
+			data-select-id={ selectID }
+			data-init={ regionSync(selectID) }
+			data-on:change__window={ "evt.target.id === '" + selectID + "' && (" + regionSync(selectID) + ")" }
+		} else {
+			data-highlights="SFO,GRU,FRA"
+		}
+	>
+		<img class="ts-region-map-image" src="/brand/region-map.svg" alt="" loading="lazy" decoding="async"/>
+		if selectID == "" {
+			<svg class="ts-region-overlay" viewBox="0 0 136 80" preserveAspectRatio="xMidYMid meet">
+				for i := range regionPins {
+					<path class="ts-region-arc" d={ regionArc(regionPins[i], regionPins[(i+1)%len(regionPins)]) }></path>
+				}
+			</svg>
+		}
+		for _, pin := range regionPins {
+			<span class="ts-region-node" data-region={ pin.code }>
+				<span class="ts-region-node-ring"></span>
+				<span class="ts-region-node-core"></span>
+			</span>
+		}
+	</div>
 }

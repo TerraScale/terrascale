@@ -1,0 +1,23 @@
+/* Plans and billing: plan cards. */
+
+.ts-plan {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: var(--ts-s5);
+  padding: var(--ts-s5);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: linear-gradient(160deg, color-mix(in oklab, var(--tone) 10%, var(--ts-surface)), var(--ts-surface) 60%);
+}
+
+.ts-plan-price {
+  font-size: var(--ts-fs-2xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-plan-price small {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
+}

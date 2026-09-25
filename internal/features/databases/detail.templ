@@ -2,105 +2,223 @@ package databases
 
 import (
 	"terrascale.tech/dashboard/internal/core"
-	"terrascale.tech/dashboard/internal/ui/aria"
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
 )
 
+type fact struct {
+	Label string
+	Value string
+	Mono  bool
+}
+
 templ databaseDetailContent(page core.Page, d pageData) {
-	<div class="ts-db-detail-page">
-		<div class="ts-toolbar">
-			<nav class="ts-tabs" aria-label="Database detail sections">
-				<a class="ts-tab" href={ "/databases/" + d.Detail.ID + "?tab=overview" } aria-current={ aria.CurrentPage(d.DetailInfo.Tab == "overview" || d.DetailInfo.Tab == "") } aria-selected={ aria.Selected(d.DetailInfo.Tab == "overview" || d.DetailInfo.Tab == "") }>Overview</a>
-				<a class="ts-tab" href={ "/databases/" + d.Detail.ID + "?tab=placement" } aria-current={ aria.CurrentPage(d.DetailInfo.Tab == "placement") } aria-selected={ aria.Selected(d.DetailInfo.Tab == "placement") }>Placement</a>
-				<a class="ts-tab" href={ "/databases/" + d.Detail.ID + "?tab=backups" } aria-current={ aria.CurrentPage(d.DetailInfo.Tab == "backups") } aria-selected={ aria.Selected(d.DetailInfo.Tab == "backups") }>Backups</a>
-				<a class="ts-tab" href={ "/databases/" + d.Detail.ID + "?tab=branches" } aria-current={ aria.CurrentPage(d.DetailInfo.Tab == "branches") } aria-selected={ aria.Selected(d.DetailInfo.Tab == "branches") }>Branches</a>
-				<a class="ts-tab" href={ "/databases/" + d.Detail.ID + "?tab=import" } aria-current={ aria.CurrentPage(d.DetailInfo.Tab == "import") } aria-selected={ aria.Selected(d.DetailInfo.Tab == "import") }>Import and export</a>
-			</nav>
-		</div>
-		<section class="ts-section ts-db-detail-identity" aria-labelledby="database-title">
-			<div class="ts-section-head">
-				<div><h1 class="ts-panel-title" id="database-title">{ d.Detail.Name }</h1><p class="ts-meta">Database lifecycle and configured region</p></div>
-				<a class="ts-btn ts-btn-ghost" href="/databases">← Back to databases</a>
-			</div>
-			<p class="ts-db-id-line"><span class="ts-mono">{ d.Detail.ID }</span></p>
-			<nav class="ts-db-detail-tools" aria-label="Database tools"><a href={ "/data?view=table&databaseId=" + d.Detail.ID }>Data browser</a><a href={ "/schema?databaseId=" + d.Detail.ID }>Schema</a><a href={ "/indexes?databaseId=" + d.Detail.ID }>Indexes</a><a href={ "/backups?databaseId=" + d.Detail.ID }>Manage backups</a></nav>
-		</section>
-		if d.DetailInfo.Tab == "overview" || d.DetailInfo.Tab == "placement" || d.DetailInfo.Tab == "" {
-			<section class="ts-section ts-db-detail-section" aria-labelledby="placement-title">
-				<div class="ts-section-head"><div><h2 class="ts-panel-title" id="placement-title">Placement and latency</h2><p class="ts-meta">Configured region for this database</p></div></div>
-				<div class="ts-db-detail-body">
-					<div class="ts-db-summary-grid">
-						<div class="ts-summary-field"><span class="ts-summary-label">Database status</span><span class="ts-summary-value">{ d.Detail.Status }</span></div>
-						<div class="ts-summary-field"><span class="ts-summary-label">Placement lock</span><span class="ts-summary-value ts-mono">{ regionDisplay(d.Detail.Region) }</span></div>
-						<div class="ts-summary-field"><span class="ts-summary-label">Placement status</span><span class="ts-summary-value">Not reported</span></div>
-						<div class="ts-summary-field"><span class="ts-summary-label">Generation</span><span class="ts-summary-value">Not reported</span></div>
-						<div class="ts-summary-field"><span class="ts-summary-label">Replication</span><span class="ts-summary-value">Not reported</span></div>
-					</div>
-					<div class="ts-alert ts-alert-info" role="note"><div class="ts-stack-xs"><span class="ts-alert-title">Configured region</span><span class="ts-alert-body">The dashboard records the database region. Provider placement status, generation, and replication are not available in this dashboard.</span></div></div>
-					<div class="ts-table-wrap ts-db-detail-table-wrap"><table class="ts-table"><thead><tr><th>Region</th><th>Estimated round trip</th></tr></thead><tbody>
-						for _, region := range d.DetailInfo.Regions {
-							<tr><td>{ region.Name }</td><td>{ region.Estimate }</td></tr>
-						}
-					</tbody></table></div>
-					if len(d.DetailInfo.Regions) == 0 {
-						<p class="ts-meta">No provider latency measurements are available.</p>
-					} else if d.DetailInfo.Regions[0].Sample {
-						<p class="ts-meta">Illustrative 0 ms estimate from the original Mario demo fixture; no provider measurement was taken.</p>
-					} else {
-						<p class="ts-meta">No provider latency measurements are available.</p>
-					}
-				</div>
-			</section>
-		}
-		if d.DetailInfo.Tab == "backups" {
-			<section class="ts-section ts-db-detail-section" aria-labelledby="backups-title">
-				<div class="ts-section-head"><div><h2 class="ts-panel-title" id="backups-title">Backups</h2><p class="ts-meta">Scheduled backup policy for this database</p></div></div>
-				<div class="ts-db-detail-body">
-					if d.DetailInfo.CanToggleBackups {
-						<form class="ts-row-between ts-db-detail-setting" method="post" action="/api/v1/dashboard/backups/policy">
-							<input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.Detail.ID }/><input type="hidden" name="fullBackupCron" value={ d.DetailInfo.BackupPolicy.FullBackupCron }/><input type="hidden" name="incrementalBackupCron" value={ d.DetailInfo.BackupPolicy.IncrementalBackupCron }/><input type="hidden" name="retentionDays" value={ backupRetentionDays(d.DetailInfo.BackupPolicy.RetentionDays) }/><input type="hidden" name="disabled" value={ backupToggleDisabled(d.DetailInfo.BackupsEnabled) }/><input type="hidden" name="returnTo" value="databaseDetail"/>
-							<span class="ts-stack-xs"><span class="ts-summary-value">Scheduled backups</span><span class="ts-meta">{ backupStatusDescription(d.DetailInfo) }</span></span>
-							<button type="submit" class="ts-switch" role="switch" aria-checked={ backupChecked(d.DetailInfo.BackupsEnabled) } aria-label="Scheduled backups"></button>
-						</form>
-					} else {
-						<div class="ts-row-between ts-db-detail-setting"><span class="ts-stack-xs"><span class="ts-summary-value">Scheduled backups</span><span class="ts-meta">{ backupStatusDescription(d.DetailInfo) }</span></span><span class="ts-meta">{ backupAvailability(d.DetailInfo) }</span></div>
-					}
-					if d.DetailInfo.HasBackupSchedule {
-						<p class="ts-meta">Schedule: <span class="ts-mono">{ d.DetailInfo.BackupPolicy.FullBackupCron }</span> · Retention: { backupRetentionDays(d.DetailInfo.BackupPolicy.RetentionDays) } days</p>
-					} else {
-						<p class="ts-meta">No scheduled backup policy is configured.</p>
-					}
-					if d.DetailInfo.Demo {
-						<p class="ts-meta">The demo saves this policy, but does not run scheduled backups automatically.</p>
-					}
-					<a class="ts-btn ts-btn-secondary" href={ "/backups?databaseId=" + d.Detail.ID }>Manage backups and restore points</a>
-				</div>
-			</section>
-		}
-		if d.DetailInfo.Tab == "branches" {
-			<section class="ts-section ts-db-detail-section" aria-labelledby="branches-title">
-				<div class="ts-section-head"><div><h2 class="ts-panel-title" id="branches-title">Branches</h2><p class="ts-meta">Create a database branch in the selected project</p></div></div>
-				<div class="ts-db-detail-body">
-					<div class="ts-db-summary-grid"><div class="ts-summary-field"><span class="ts-summary-label">Branch creation</span><span class="ts-summary-value">{ branchCapability(d.DetailInfo.Demo) }</span></div><div class="ts-summary-field"><span class="ts-summary-label">Physical clone</span><span class="ts-summary-value">Not reported</span></div><div class="ts-summary-field"><span class="ts-summary-label">Promotion</span><span class="ts-summary-value">Unavailable</span></div><div class="ts-summary-field"><span class="ts-summary-label">Merge</span><span class="ts-summary-value">Unavailable</span></div></div>
-				if d.DetailInfo.Demo {
-					<p class="ts-meta">Demo branches copy the source database snapshot in memory.</p>
-				}
+	@ui.PageHeader(ui.Header{Eyebrow: "Database", Title: d.Detail.Name, Description: d.Detail.ID}) {
+		<a class="ts-btn ts-btn-ghost" href="/databases">@icons.ArrowLeft(16)
+<span>All databases</span></a>
+		<a class="ts-btn ts-btn-secondary" href={ templ.SafeURL("/data?view=table&databaseId=" + d.Detail.ID) }>@icons.Table(16)
+<span>Data browser</span></a>
+	}
+	if d.Error != "" {
+		@ui.Alert("danger", "", d.Error)
+	}
+	@ui.Tabs("Database detail sections", detailTabs(d))
+	switch d.DetailInfo.Tab {
+		case "backups":
+			@detailBackups(page, d)
+		case "branches":
+			@detailBranches(page, d)
+		case "import":
+			@ui.Card(ui.CardProps{ID: "import", Title: "Import and export", Description: "Lossless JSONL and CSV controls will appear when the SDK contract is published"}) {
+				@ui.Alert("info", "No local import or export", "The published TerraScale SDK does not expose database import or lossless export operations.")
 				<div class="ts-row">
-					if d.DetailInfo.CanBranch {
-						<form method="post" action="/api/v1/dashboard/databases/branch"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.Detail.ID }/><button type="submit" class="ts-btn ts-btn-secondary ts-btn-lg">Create preview branch</button></form>
-					}
-					<button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" disabled>View diff (contract unavailable)</button>
+					<button type="button" class="ts-btn ts-btn-secondary" disabled>@icons.Upload(16)
+<span>Import JSONL / CSV</span></button>
+					<button type="button" class="ts-btn ts-btn-secondary" disabled>@icons.Download(16)
+<span>Export lossless JSONL</span></button>
 				</div>
-				if d.DetailInfo.CanBranch {
-					<details class="ts-db-branch-custom"><summary>Choose a branch name</summary><form method="post" action="/api/v1/dashboard/databases/branch" class="ts-stack-12"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.Detail.ID }/><label class="ts-label" for="branch-name">New database name</label><input class="ts-input" id="branch-name" name="name" pattern="[a-z0-9][a-z0-9\-]*" maxlength="63" required/><button class="ts-btn ts-btn-primary" type="submit">Create branch</button></form></details>
+			}
+		default:
+			<div class="ts-split">
+				@detailPlacement(d)
+				@ui.Card(ui.CardProps{ID: "tools", Title: "Database tools", Description: "Work with this database's data and structure."}) {
+					<nav class="ts-db-tools" aria-label="Database tools">
+						@toolLink("/data?view=table&databaseId="+d.Detail.ID, "cyan", icons.Table(16), "Data browser")
+						@toolLink("/schema?databaseId="+d.Detail.ID, "violet", icons.FileJson(16), "Schema")
+						@toolLink("/indexes?databaseId="+d.Detail.ID, "amber", icons.ListChecks(16), "Indexes")
+						@toolLink("/backups?databaseId="+d.Detail.ID, "teal", icons.Archive(16), "Manage backups")
+					</nav>
 				}
 			</div>
-			</section>
+			if d.DetailInfo.Tab == "overview" && d.CanManage {
+				@detailDelete(page, d)
+			}
+	}
+}
+
+templ toolLink(href, tone string, icon templ.Component, label string) {
+	<a class="ts-db-tool" href={ templ.SafeURL(href) } data-tone={ tone }>
+		<span class="ts-db-tool-icon" aria-hidden="true">
+			@icon
+		</span>
+		<span class="ts-strong">{ label }</span>
+		@icons.ChevronRight(16)
+	</a>
+}
+
+templ facts(items []fact) {
+	<dl class="ts-db-facts">
+		for _, item := range items {
+			<div>
+				<dt>{ item.Label }</dt>
+				<dd class={ templ.KV("ts-mono", item.Mono) }>{ item.Value }</dd>
+			</div>
 		}
-		if d.DetailInfo.Tab == "import" {
-			<section class="ts-section ts-db-detail-section" aria-labelledby="import-title"><div class="ts-section-head"><div><h2 class="ts-panel-title" id="import-title">Import and export</h2><p class="ts-meta">Lossless JSONL and CSV controls will appear when the SDK contract is published</p></div></div><div class="ts-db-detail-body"><div class="ts-alert ts-alert-info" role="note"><div class="ts-stack-xs"><span class="ts-alert-title">No local import or export</span><span class="ts-alert-body">The published TerraScale SDK does not expose database import or lossless export operations.</span></div></div><div class="ts-row"><button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" disabled>Import JSONL / CSV</button><button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" disabled>Export lossless JSONL</button></div></div></section>
+	</dl>
+}
+
+templ detailPlacement(d pageData) {
+	@ui.Card(ui.CardProps{ID: "placement", Title: "Placement and latency", Description: "Configured region for this database"}) {
+		@facts([]fact{
+			{Label: "Database status", Value: d.Detail.Status},
+			{Label: "Placement lock", Value: regionDisplay(d.Detail.Region), Mono: true},
+			{Label: "Placement status", Value: "Not reported"},
+			{Label: "Generation", Value: "Not reported"},
+			{Label: "Replication", Value: "Not reported"},
+		})
+		@ui.Alert("info", "Configured region", "The dashboard records the database region. Provider placement status, generation, and replication are not available in this dashboard.")
+		if len(d.DetailInfo.Regions) > 0 {
+			<div class="ts-table-wrap">
+				<table class="ts-table">
+					<thead><tr><th>Region</th><th class="ts-num">Estimated round trip</th></tr></thead>
+					<tbody>
+						for _, region := range d.DetailInfo.Regions {
+							<tr><td>{ region.Name }</td><td class="ts-num">{ region.Estimate }</td></tr>
+						}
+					</tbody>
+				</table>
+			</div>
 		}
-		if (d.DetailInfo.Tab == "overview" || d.DetailInfo.Tab == "") && d.CanManage {
-			<details class="ts-db-detail-danger"><summary>Delete database</summary><p>Type <strong>{ d.Detail.Name }</strong> to confirm.</p><form method="post" action="/api/v1/dashboard/databases/delete" class="ts-stack-12"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.Detail.ID }/><label class="ts-label" for="confirm-name">Database name</label><input class="ts-input" id="confirm-name" name="confirmName" required autocomplete="off"/><button class="ts-btn ts-btn-secondary" type="submit">Delete database</button></form></details>
+		if len(d.DetailInfo.Regions) > 0 && d.DetailInfo.Regions[0].Sample {
+			<p class="ts-meta">Illustrative 0 ms estimate from the original Mario demo fixture; no provider measurement was taken.</p>
+		} else {
+			<p class="ts-meta">No provider latency measurements are available.</p>
 		}
-	</div>
+	}
+}
+
+templ detailBackups(page core.Page, d pageData) {
+	@ui.Card(ui.CardProps{ID: "backups", Title: "Backups", Description: "Scheduled backup policy for this database"}) {
+		<div class="ts-db-setting">
+			<div class="ts-list-main">
+				<span class="ts-strong">Scheduled backups</span>
+				<span class="ts-meta">{ backupStatusDescription(d.DetailInfo) }</span>
+			</div>
+			if d.DetailInfo.CanToggleBackups {
+				<form method="post" action="/api/v1/dashboard/backups/policy">
+					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+					<input type="hidden" name="databaseId" value={ d.Detail.ID }/>
+					<input type="hidden" name="fullBackupCron" value={ d.DetailInfo.BackupPolicy.FullBackupCron }/>
+					<input type="hidden" name="incrementalBackupCron" value={ d.DetailInfo.BackupPolicy.IncrementalBackupCron }/>
+					<input type="hidden" name="retentionDays" value={ backupRetentionDays(d.DetailInfo.BackupPolicy.RetentionDays) }/>
+					<input type="hidden" name="disabled" value={ backupToggleDisabled(d.DetailInfo.BackupsEnabled) }/>
+					<input type="hidden" name="returnTo" value="databaseDetail"/>
+					<button type="submit" class="ts-switch" role="switch" aria-checked={ backupChecked(d.DetailInfo.BackupsEnabled) } aria-label="Scheduled backups"></button>
+				</form>
+			} else {
+				<span class="ts-meta">{ backupAvailability(d.DetailInfo) }</span>
+			}
+		</div>
+		if d.DetailInfo.HasBackupSchedule {
+			<p class="ts-meta">Schedule: <span class="ts-mono">{ d.DetailInfo.BackupPolicy.FullBackupCron }</span> · Retention: { backupRetentionDays(d.DetailInfo.BackupPolicy.RetentionDays) } days</p>
+		} else {
+			<p class="ts-meta">No scheduled backup policy is configured.</p>
+		}
+		if d.DetailInfo.Demo {
+			<p class="ts-meta">The demo saves this policy, but does not run scheduled backups automatically.</p>
+		}
+		<div class="ts-row">
+			<a class="ts-btn ts-btn-secondary" href={ templ.SafeURL("/backups?databaseId=" + d.Detail.ID) }>Manage backups and restore points</a>
+		</div>
+	}
+}
+
+templ detailBranches(page core.Page, d pageData) {
+	@ui.Card(ui.CardProps{ID: "branches", Title: "Branches", Description: "Create a database branch in the selected project"}) {
+		@facts([]fact{
+			{Label: "Branch creation", Value: branchCapability(d.DetailInfo.Demo)},
+			{Label: "Physical clone", Value: "Not reported"},
+			{Label: "Promotion", Value: "Unavailable"},
+			{Label: "Merge", Value: "Unavailable"},
+		})
+		if d.DetailInfo.Demo {
+			<p class="ts-meta">Demo branches copy the source database snapshot in memory.</p>
+		}
+		<div class="ts-row">
+			if d.DetailInfo.CanBranch {
+				<form method="post" action="/api/v1/dashboard/databases/branch">
+					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+					<input type="hidden" name="databaseId" value={ d.Detail.ID }/>
+					<button type="submit" class="ts-btn ts-btn-primary">@icons.GitBranch(16)
+<span>Create preview branch</span></button>
+				</form>
+			}
+			<button type="button" class="ts-btn ts-btn-secondary" disabled>View diff (contract unavailable)</button>
+		</div>
+		if d.DetailInfo.CanBranch {
+			<details class="ts-disclosure ts-card-section">
+				<summary class="ts-link">Choose a branch name</summary>
+				<form method="post" action="/api/v1/dashboard/databases/branch" class="ts-form ts-db-inline-form">
+					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+					<input type="hidden" name="databaseId" value={ d.Detail.ID }/>
+					@ui.Field(ui.FieldProps{ID: "branch-name", Label: "New database name"}) {
+						<input class="ts-input" id="branch-name" name="name" pattern="[a-z0-9][a-z0-9\-]*" maxlength="63" required/>
+					}
+					<div class="ts-form-actions">
+						<button class="ts-btn ts-btn-primary" type="submit">Create branch</button>
+					</div>
+				</form>
+			</details>
+		}
+	}
+}
+
+templ detailDelete(page core.Page, d pageData) {
+	<details class="ts-card ts-db-danger">
+		<summary class="ts-db-danger-summary">
+			<span class="ts-db-danger-icon" aria-hidden="true">@icons.Trash2(16)
+</span>
+			<span class="ts-card-heading">
+				<span class="ts-card-title">Delete database</span>
+				<span class="ts-card-description">Permanently remove this database and its data.</span>
+			</span>
+			<span class="ts-db-create-chevron" aria-hidden="true">@icons.ChevronDown(18)
+</span>
+		</summary>
+		<div class="ts-card-body">
+			<p class="ts-muted">Type <strong>{ d.Detail.Name }</strong> to confirm.</p>
+			<form method="post" action="/api/v1/dashboard/databases/delete" class="ts-form ts-db-inline-form">
+				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+				<input type="hidden" name="databaseId" value={ d.Detail.ID }/>
+				@ui.Field(ui.FieldProps{ID: "confirm-name", Label: "Database name"}) {
+					<input class="ts-input" id="confirm-name" name="confirmName" required autocomplete="off"/>
+				}
+				<div class="ts-form-actions">
+					<button class="ts-btn ts-btn-danger" type="submit">Delete database</button>
+				</div>
+			</form>
+		</div>
+	</details>
+}
+
+func detailTabs(d pageData) []ui.Tab {
+	base := "/databases/" + d.Detail.ID + "?tab="
+	tab := d.DetailInfo.Tab
+	return []ui.Tab{
+		{Label: "Overview", URL: base + "overview", Active: tab == "overview" || tab == ""},
+		{Label: "Placement", URL: base + "placement", Active: tab == "placement"},
+		{Label: "Backups", URL: base + "backups", Active: tab == "backups"},
+		{Label: "Branches", URL: base + "branches", Active: tab == "branches"},
+		{Label: "Import and export", URL: base + "import", Active: tab == "import"},
+	}
 }

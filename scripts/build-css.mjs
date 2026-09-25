@@ -10,7 +10,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import browserslist from 'browserslist';
-import { browserslistToTargets, bundle } from 'lightningcss';
+import { browserslistToTargets, bundleAsync } from 'lightningcss';
 
 const repository = fileURLToPath(new URL('../', import.meta.url));
 const source = resolve(repository, 'web/assets');
@@ -26,11 +26,14 @@ const output = resolve(args.find(arg => !arg.startsWith('--')) ?? resolve(reposi
 const targets = browserslistToTargets(browserslist(undefined, { path: repository }));
 
 async function build() {
-  const { code, warnings } = bundle({
+  // bundle() caches file contents inside the process, so a watcher would keep
+  // emitting the first build; a resolver that always reads from disk avoids it.
+  const { code, warnings } = await bundleAsync({
     filename: entry,
     minify,
     targets,
     errorRecovery: false,
+    resolver: { read: file => readFile(file, 'utf8') },
   });
   if (warnings.length > 0) {
     throw new Error(warnings.map(w => `${w.loc.filename}:${w.loc.line}:${w.loc.column} ${w.message}`).join('\n'));

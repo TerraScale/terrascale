@@ -195,3 +195,17 @@ func TestAdminNavigationActivatesOnlyTheCurrentSection(t *testing.T) {
 		}
 	}
 }
+
+func TestDataToolRoutesHighlightTables(t *testing.T) {
+	store := core.NewStore()
+	account, err := store.CreateAccount(core.User{Name: "Avery Example", Email: "avery@example.test", PasswordHash: "hash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/data", "/schema", "/indexes", "/history"} {
+		shell := shellFor(account, account.Principal(), "shell", httptest.NewRequest(http.MethodGet, path, nil))
+		if tables := shell.Navigation[0].Items[2]; tables.URL != "/data" || !tables.Active {
+			t.Fatalf("%s: Tables item = %+v, want active", path, tables)
+		}
+	}
+}

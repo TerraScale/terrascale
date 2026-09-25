@@ -2,68 +2,66 @@ package apikeys
 
 import (
 	"strconv"
+
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
 )
 
 templ apiKeysContent(page core.Page, d pageData) {
 	<main class="ts-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
-		<header class="ts-section"><h1>API keys</h1><p>Manage project credentials and their database scope.</p></header>
+		@ui.PageHeader(ui.Header{Title: "API keys", Description: "Manage project credentials and their database scope."})
+		if d.Error != "" {
+			@ui.Alert("danger", "", d.Error)
+		}
+		if d.CreatedSecret != "" {
+			<section class="ts-alert ts-alert-success ts-apikeys-secret" role="status">
+				<h2 class="ts-alert-title">Copy this secret now</h2>
+				<p class="ts-alert-body">It is shown only in this response.</p>
+				<div class="ts-row">
+					<code class="ts-apikeys-secret-value">{ d.CreatedSecret }</code>
+					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-signals="{_copied: false}" data-on:click="navigator.clipboard.writeText(el.previousElementSibling.textContent).then(() => $_copied = true)">@icons.Copy(14)<span data-text="$_copied ? 'Copied' : 'Copy'">Copy</span></button>
+				</div>
+			</section>
+		}
+		@ui.Stats("Credential counts") {
+			@ui.Stat("Active keys", strconv.Itoa(d.ActiveKeys), "Available for project access")
+			@ui.Stat("Expiring keys", strconv.Itoa(d.ExpiringKeys), "Dated keys expiring within 14 days")
+			@ui.Stat("M2M clients", strconv.Itoa(d.M2MClients), "Active machine credentials")
+		}
+		if d.CanManage {
+			<div class="ts-grid-2">
+				@createCredential(page, d, "key", "Create key", "New project key", "database:read,database:write")
+				@createCredential(page, d, "m2m", "Create machine credential", "New machine credential", "database:read")
+			</div>
+		}
 		<div class="ts-toolbar">
-			<nav class="ts-tabs" aria-label="Credential types"><a class="ts-tab" href="/api-keys" aria-current={ currentCredentialTab(d.Kind == "") }>All credentials</a><a class="ts-tab" href="/api-keys?kind=key" aria-current={ currentCredentialTab(d.Kind == "key") }>API keys</a><a class="ts-tab" href="/api-keys?kind=m2m" aria-current={ currentCredentialTab(d.Kind == "m2m") }>M2M clients</a></nav>
-			<form class="ts-filters" method="get" action="/api-keys" role="search" aria-label="Filter credentials">
-				<input type="hidden" name="kind" value={ d.Kind }/><input class="ts-input" type="search" name="q" value={ d.Search } placeholder="Search credentials" aria-label="Search credentials"/><select class="ts-select" name="status" aria-label="Status"><option value="">All statuses</option><option value="active" selected?={ d.Status == "active" }>Active</option><option value="inactive" selected?={ d.Status == "inactive" }>Inactive</option></select>
-				<select class="ts-select" name="databaseId" aria-label="Database">
+			@ui.Tabs("Credential types", []ui.Tab{
+				{Label: "All credentials", URL: "/api-keys", Active: d.Kind == ""},
+				{Label: "API keys", URL: "/api-keys?kind=key", Active: d.Kind == "key"},
+				{Label: "M2M clients", URL: "/api-keys?kind=m2m", Active: d.Kind == "m2m"},
+			})
+			<form class="ts-filters ts-apikeys-filters" method="get" action="/api-keys" role="search" aria-label="Filter credentials">
+				<input type="hidden" name="kind" value={ d.Kind }/>
+				<input class="ts-input ts-input-sm" type="search" name="q" value={ d.Search } placeholder="Search credentials" aria-label="Search credentials"/>
+				<select class="ts-select ts-input-sm" name="status" aria-label="Status">
+					<option value="">All statuses</option>
+					<option value="active" selected?={ d.Status == "active" }>Active</option>
+					<option value="inactive" selected?={ d.Status == "inactive" }>Inactive</option>
+				</select>
+				<select class="ts-select ts-input-sm" name="databaseId" aria-label="Database">
 					<option value="">All databases</option>
 					for _, db := range d.Databases {
 						<option value={ db.ID } selected?={ d.DatabaseID == db.ID }>{ db.Name }</option>
 					}
-				</select><button class="ts-btn ts-btn-secondary" type="submit">Filter</button>
+				</select>
+				<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Filter</button>
 				if d.Search != "" || d.Status != "" || d.DatabaseID != "" {
-					<a class="ts-btn ts-btn-ghost" href="/api-keys">Clear</a>
+					<a class="ts-btn ts-btn-ghost ts-btn-sm" href="/api-keys">Clear</a>
 				}
 			</form>
 		</div>
-		if d.Error != "" {
-			<p class="ts-alert ts-alert-danger" role="alert">{ d.Error }</p>
-		}
-		if d.CreatedSecret != "" {
-			<section class="ts-card ts-section" role="status"><h2>Copy this secret now</h2><p>It is shown only in this response.</p><code>{ d.CreatedSecret }</code></section>
-		}
-		if d.CanManage {
-			<details class="ts-card ts-section" open?={ d.Create == "key" }>
-				<summary class="ts-btn ts-btn-primary">Create key</summary>
-				<h2>New project key</h2>
-				<form method="post" action="/api/v1/dashboard/credentials/key" class="ts-stack-12">
-					<input type="hidden" name="_csrf" value={ page.CSRFToken }/><label class="ts-label" for="key-name">Name</label><input class="ts-input" id="key-name" name="name" required/>
-					<label class="ts-label" for="key-scopes">Scopes</label><input class="ts-input" id="key-scopes" name="scopes" value="database:read,database:write" required/>
-					<label class="ts-label" for="key-database">Database</label>
-					<select class="ts-input" id="key-database" name="databaseId">
-						<option value="">All project databases</option>
-						for _, db := range d.Databases {
-							<option value={ db.ID }>{ db.Name }</option>
-						}
-					</select><button class="ts-btn ts-btn-primary" type="submit">Create key</button>
-				</form>
-			</details>
-			<details class="ts-card ts-section" open?={ d.Create == "m2m" }>
-				<summary class="ts-btn ts-btn-secondary">Create machine credential</summary>
-				<h2>New machine credential</h2>
-				<form method="post" action="/api/v1/dashboard/credentials/m2m" class="ts-stack-12">
-					<input type="hidden" name="_csrf" value={ page.CSRFToken }/><label class="ts-label" for="m2m-name">Name</label><input class="ts-input" id="m2m-name" name="name" required/>
-					<label class="ts-label" for="m2m-scopes">Scopes</label><input class="ts-input" id="m2m-scopes" name="scopes" value="database:read" required/>
-					<label class="ts-label" for="m2m-database">Database</label>
-					<select class="ts-input" id="m2m-database" name="databaseId">
-						<option value="">All project databases</option>
-						for _, db := range d.Databases {
-							<option value={ db.ID }>{ db.Name }</option>
-						}
-					</select><button class="ts-btn ts-btn-primary" type="submit">Create machine credential</button>
-				</form>
-			</details>
-		}
-		<section class="ts-section">
-			<h2>Credentials</h2>
-			<dl class="ts-kpis" aria-label="Credential counts"><div><dt>Active keys</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(d.ActiveKeys) }</span></dd><small class="ts-meta">Available for project access</small></div><div><dt>Expiring keys</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(d.ExpiringKeys) }</span></dd><small class="ts-meta">Dated keys expiring within 14 days</small></div><div><dt>M2M clients</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(d.M2MClients) }</span></dd><small class="ts-meta">Active machine credentials</small></div></dl>
+		@ui.Card(ui.CardProps{ID: "credentials", Title: "Credentials", Description: "Keys and machine clients in the selected project.", Flush: len(d.Keys) > 0}) {
 			if len(d.Keys) > 0 {
 				<div class="ts-table-wrap">
 					<table class="ts-table">
@@ -76,58 +74,96 @@ templ apiKeysContent(page core.Page, d pageData) {
 								<th>Database</th>
 								<th>Status</th>
 								if d.CanManage {
-									<th>Actions</th>
+									<th class="ts-table-actions">Actions</th>
 								}
 							</tr>
 						</thead>
 						<tbody>
 							for _, key := range d.Keys {
-								<tr>
-									<td>{ key.Name }</td>
-									<td>{ key.Kind }</td>
-									<td><code>{ key.Prefix }…{ key.LastFour }</code></td>
-									<td>
-										for _, scope := range key.Scopes {
-											{ scope }
-										}
-									</td>
-									<td>
-										if key.DatabaseID != "" {
-											{ key.DatabaseID }
-										} else {
-											All project databases
-										}
-									</td>
-									<td>
-										if key.Active {
-											Active
-										} else {
-											Revoked or expired
-										}
-									</td>
-									if d.CanManage {
-										<td>
-											if key.Active {
-												<form method="post" action="/api/v1/dashboard/credentials/rotate"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="keyId" value={ key.ID }/><button class="ts-btn ts-btn-secondary" type="submit">Rotate</button></form>
-												<form method="post" action="/api/v1/dashboard/credentials/revoke"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="keyId" value={ key.ID }/><button class="ts-btn ts-btn-secondary" type="submit">Revoke</button></form>
-											}
-										</td>
-									}
-								</tr>
+								@credentialRow(page, d.CanManage, key)
 							}
 						</tbody>
 					</table>
 				</div>
 			} else {
-				<p>No credentials match these filters.</p>
+				@ui.Empty("No credentials match these filters.", "Change the filters or create a new credential.")
 			}
-		</section>
+		}
 	</main>
 }
 
-func currentCredentialTab(active bool) string {
-	if active {
-		return "page"
-	}
-	return ""
+templ createCredential(page core.Page, d pageData, kind, action, title, scopes string) {
+	<details class="ts-card ts-apikeys-create" open?={ d.Create == kind }>
+		<summary class="ts-apikeys-create-summary">
+			<span class="ts-apikeys-create-icon" aria-hidden="true">
+				if kind == "key" {
+					@icons.KeyRound(16)
+				} else {
+					@icons.Bot(16)
+				}
+			</span>
+			<span class="ts-strong">{ action }</span>
+			@icons.ChevronDown(16)
+		</summary>
+		<form method="post" action={ "/api/v1/dashboard/credentials/" + kind } class="ts-form ts-apikeys-create-form">
+			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+			<h2 class="ts-section-title">{ title }</h2>
+			@ui.Field(ui.FieldProps{ID: kind + "-name", Label: "Name"}) {
+				<input class="ts-input" id={ kind + "-name" } name="name" required/>
+			}
+			@ui.Field(ui.FieldProps{ID: kind + "-scopes", Label: "Scopes", Hint: "Comma-separated, for example database:read,database:write."}) {
+				<input class="ts-input" id={ kind + "-scopes" } name="scopes" value={ scopes } required/>
+			}
+			@ui.Field(ui.FieldProps{ID: kind + "-database", Label: "Database"}) {
+				<select class="ts-select" id={ kind + "-database" } name="databaseId">
+					<option value="">All project databases</option>
+					for _, db := range d.Databases {
+						<option value={ db.ID }>{ db.Name }</option>
+					}
+				</select>
+			}
+			<div class="ts-form-actions">
+				<button class="ts-btn ts-btn-primary" type="submit">{ action }</button>
+			</div>
+		</form>
+	</details>
+}
+
+templ credentialRow(page core.Page, canManage bool, key keyView) {
+	<tr>
+		<td class="ts-strong">{ key.Name }</td>
+		<td class="ts-meta">{ key.Kind }</td>
+		<td><code>{ key.Prefix }…{ key.LastFour }</code></td>
+		<td>
+			<div class="ts-row ts-apikeys-scopes">
+				for _, scope := range key.Scopes {
+					@ui.Badge("neutral", scope)
+				}
+			</div>
+		</td>
+		<td class="ts-meta">
+			if key.DatabaseID != "" {
+				{ key.DatabaseID }
+			} else {
+				All project databases
+			}
+		</td>
+		<td>
+			if key.Active {
+				@ui.Badge("success", "Active")
+			} else {
+				@ui.Badge("neutral", "Revoked or expired")
+			}
+		</td>
+		if canManage {
+			<td class="ts-table-actions">
+				if key.Active {
+					<div class="ts-row ts-row-end">
+						<form method="post" action="/api/v1/dashboard/credentials/rotate"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="keyId" value={ key.ID }/><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Rotate</button></form>
+						<form method="post" action="/api/v1/dashboard/credentials/revoke"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="keyId" value={ key.ID }/><button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">Revoke</button></form>
+					</div>
+				}
+			</td>
+		}
+	</tr>
 }

@@ -223,6 +223,24 @@ select.ts-input,
   cursor: pointer;
 }
 
+select[multiple].ts-input,
+select[multiple].ts-select {
+  height: auto;
+  min-height: var(--ts-control-h);
+  padding: var(--ts-s1);
+  background-image: none;
+}
+
+select[multiple] option {
+  padding: var(--ts-s1) var(--ts-s2);
+  border-radius: var(--ts-radius-sm);
+}
+
+select[multiple] option:checked {
+  background: linear-gradient(color-mix(in oklab, var(--tone) 28%, transparent), color-mix(in oklab, var(--tone) 28%, transparent));
+  color: var(--ts-ink);
+}
+
 /* Select-shaped menu triggers. */
 summary.ts-select {
   display: flex;
@@ -261,10 +279,6 @@ summary.ts-select::-webkit-details-marker {
 
 .ts-input-adornment:hover {
   color: var(--ts-ink);
-}
-
-ts-password-control {
-  display: block;
 }
 
 .ts-checkbox,
@@ -314,6 +328,21 @@ legend {
 .ts-filters > input[type="search"] {
   flex: 1 1 220px;
   width: auto;
+}
+
+.ts-filters .ts-select,
+.ts-filters select.ts-input {
+  width: auto;
+}
+
+.ts-toolbar > .ts-filters {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+}
+
+.ts-toolbar > .ts-filters > .ts-input,
+.ts-toolbar > .ts-filters > input[type="search"] {
+  flex: 0 1 260px;
 }
 
 .ts-filter-field {

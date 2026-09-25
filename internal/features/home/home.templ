@@ -53,8 +53,7 @@ templ overviewView(data pageData) {
 
 templ activityRange(data pageData) {
 	<span class="ts-sr-only" id="home-range-label">Activity range</span>
-	<ts-menu>
-		<details class="ts-menu ts-menu-end">
+		<details { ui.MenuBehavior... } class="ts-menu ts-menu-end">
 			<summary class="ts-select ts-input-sm" aria-labelledby="home-range-label home-range-value"><span id="home-range-value">{ data.ActivityRange }</span></summary>
 			<div class="ts-menu-panel">
 				for _, r := range []string{"24h", "7d", "30d"} {
@@ -62,7 +61,6 @@ templ activityRange(data pageData) {
 				}
 			</div>
 		</details>
-	</ts-menu>
 }
 
 templ gettingStartedStep(number int, title, description, href, cta string, done bool) {

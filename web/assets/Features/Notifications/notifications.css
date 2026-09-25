@@ -1,0 +1,51 @@
+/* Notification inbox. */
+
+.ts-notifications-summary {
+  padding-bottom: var(--ts-s3);
+}
+
+.ts-notification-list {
+  display: grid;
+  gap: var(--ts-s3);
+  list-style: none;
+}
+
+.ts-notification {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--ts-s4);
+  padding: var(--ts-s4) var(--ts-s5);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-notification-unread {
+  border-color: color-mix(in oklab, var(--tone) 35%, transparent);
+  background: linear-gradient(90deg, color-mix(in oklab, var(--tone) 8%, var(--ts-surface)), var(--ts-surface) 50%);
+}
+
+.ts-notification-marker {
+  width: 10px;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--tone);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--tone) 18%, transparent);
+}
+
+.ts-notification:not(.ts-notification-unread) .ts-notification-marker {
+  background: var(--ts-surface-3);
+  box-shadow: none;
+}
+
+@media (max-width: 47.99rem) {
+  .ts-notification {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .ts-notification > form {
+    grid-column: 2;
+  }
+}
