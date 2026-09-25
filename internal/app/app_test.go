@@ -35,6 +35,27 @@ func TestMountedCallerAndAssets(t *testing.T) {
 	}
 }
 
+func TestLandingRegistrationLinkOpensSignup(t *testing.T) {
+	application, err := New(config.Config{Demo: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registration := httptest.NewRecorder()
+	application.Handler.ServeHTTP(registration, httptest.NewRequest(http.MethodGet, "http://dashboard.test/register?plan=pro&return=%2Fpricing", nil))
+	if registration.Code != http.StatusSeeOther {
+		t.Fatalf("registration link status = %d, want 303", registration.Code)
+	}
+	location := registration.Header().Get("Location")
+	if location != "/onboarding?plan=pro&return=%2Fpricing" {
+		t.Fatalf("registration link location = %q", location)
+	}
+	signup := httptest.NewRecorder()
+	application.Handler.ServeHTTP(signup, httptest.NewRequest(http.MethodGet, "http://dashboard.test"+location, nil))
+	if signup.Code != http.StatusOK || !strings.Contains(signup.Body.String(), `action="/onboarding/register"`) {
+		t.Fatalf("signup page status = %d, registration form found = %t", signup.Code, strings.Contains(signup.Body.String(), `action="/onboarding/register"`))
+	}
+}
+
 func TestUnauthenticatedBillingDeepLinkSurvivesLoginPage(t *testing.T) {
 	application, err := New(config.Config{Demo: true})
 	if err != nil {
