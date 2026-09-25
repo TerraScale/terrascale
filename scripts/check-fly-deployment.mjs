@@ -41,13 +41,13 @@ for (const machine of machines) {
   if (!service || service.autostart !== true) fail(`${mode} Machine ${machine.id} does not auto-start`);
   if ((config.mounts ?? []).length !== 0) fail(`${mode} Machine ${machine.id} has a volume mount`);
   if (preview) {
-    if (config.swap_size_mb != null && config.swap_size_mb !== 0) fail(`preview Machine ${machine.id} has swap`);
+    if (config.init?.swap_size_mb != null && config.init.swap_size_mb !== 0) fail(`preview Machine ${machine.id} has swap`);
     if (![true, 'stop'].includes(service.autostop) || service.min_machines_running !== 0) {
       fail(`preview Machine ${machine.id} has the wrong idle policy`);
     }
     continue;
   }
-  if (config.swap_size_mb !== 900) fail(`production Machine ${machine.id} does not have 900 MB swap`);
+  if (config.init?.swap_size_mb !== 900) fail(`production Machine ${machine.id} does not have 900 MB swap`);
   if (service.autostop !== false || service.min_machines_running !== 1) {
     fail(`production Machine ${machine.id} has the wrong idle policy`);
   }
