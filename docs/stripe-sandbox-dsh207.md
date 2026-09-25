@@ -69,3 +69,6 @@ required events, and verify successful deliveries. Then run Checkout, card
 failure, upgrades, downgrades, Free, cancellation, renewal, and trial expiry
 with Stripe test clocks against that app. This document records current
 evidence; local demo tests do not satisfy the staging gate.
+
+The operator steps for the dev app are in
+[`fly-stripe-dev-dsh207.md`](fly-stripe-dev-dsh207.md).

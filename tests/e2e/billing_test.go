@@ -41,7 +41,7 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 		must(t, expect.Locator(currentPlan).ToContainText(text))
 	}
 
-	click(t, pageByRole(page, *playwright.AriaRoleLink, "Manage billing"))
+	click(t, pageByRole(page, *playwright.AriaRoleLink, "Manage payment"))
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Local billing portal"))
 	must(t, expect.Locator(status).ToContainText("Demo simulator only"))
 	must(t, expect.Locator(status).ToContainText("does not collect payment details or contact Stripe"))

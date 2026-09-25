@@ -530,7 +530,7 @@ func (service BillingService) ApplyStripeEvent(event payments.BillingEvent) erro
 		return core.ErrInvalid
 	}
 	if event.Invoice != nil {
-		return service.store.ApplyBillingEvent(event.ID, event.CustomerID, event.SubscriptionID, func(organization *core.Organization) error {
+		return service.store.ApplyBillingEventWithPlans(event.ID, event.CustomerID, event.SubscriptionID, func(organization *core.Organization, _ map[string]core.Plan) error {
 			if organization.Billing.CustomerID != event.CustomerID || organization.Billing.SubscriptionID != event.SubscriptionID {
 				return nil
 			}
@@ -735,6 +735,21 @@ func activateSubscription(organization *core.Organization, session core.Checkout
 
 func isEntitledSubscriptionState(status string) bool {
 	return status == "active" || status == "trialing"
+}
+
+func (service BillingService) selectedPlan(planKey, interval string) (core.Plan, error) {
+	planID, planKey, err := service.planCandidate(planKey, interval)
+	if err != nil {
+		return core.Plan{}, err
+	}
+	plan, ok := service.store.Plan(planID)
+	if !ok {
+		return core.Plan{}, ErrPlanUnavailable
+	}
+	if err := validatePlanSelection(plan, planKey, interval); err != nil {
+		return core.Plan{}, err
+	}
+	return plan, nil
 }
 
 func (service BillingService) planCandidate(planKey, interval string) (string, string, error) {

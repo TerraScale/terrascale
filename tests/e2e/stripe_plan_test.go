@@ -22,7 +22,7 @@ func TestPersonalOwnerChangesPlanAndUndoesScheduledChange(t *testing.T) {
 	click(t, pageByRole(page, *playwright.AriaRoleButton, "Change plan"))
 	visible(t, picker)
 	must(t, picker.Locator(`[name="plan"][value="pro"]`).Check())
-	must(t, picker.Locator(`[name="interval"][value="annual"]`).Check())
+	must(t, picker.Locator(`label:has(input[name="interval"][value="annual"])`).Click())
 	click(t, byRole(picker, *playwright.AriaRoleButton, "Review change"))
 	visible(t, review)
 	must(t, expect.Locator(review).ToContainText("US$ 500.00"))

@@ -22,6 +22,7 @@ import (
 	"terrascale.tech/dashboard/internal/features/auth"
 	"terrascale.tech/dashboard/internal/features/databases"
 	"terrascale.tech/dashboard/internal/features/onboarding"
+	"terrascale.tech/dashboard/internal/features/subscriptions"
 	"terrascale.tech/dashboard/internal/platform/assets"
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/render"

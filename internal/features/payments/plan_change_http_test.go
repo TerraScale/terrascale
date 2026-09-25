@@ -11,7 +11,7 @@ import (
 )
 
 type staleUndoFlow struct {
-	*testBillingFlow
+	BillingFlow
 	store *core.Store
 }
 
@@ -32,9 +32,28 @@ func (flow *staleUndoFlow) ClearScheduledChange(principal core.Principal, _ stri
 }
 
 type staleUndoProvider struct {
-	*testProvider
+	BillingProvider
+	subscription SubscriptionSnapshot
 	releaseCalls int
 }
+
+func (provider *staleUndoProvider) RetrieveSubscription(context.Context, string) (SubscriptionSnapshot, error) {
+	return provider.subscription, nil
+}
+
+type staleUndoSessions struct{ principal core.Principal }
+
+func (sessions staleUndoSessions) Start(http.ResponseWriter, *http.Request, core.Principal) error {
+	return nil
+}
+func (sessions staleUndoSessions) Principal(*http.Request) (core.Principal, bool) {
+	return sessions.principal, true
+}
+func (sessions staleUndoSessions) BearerPrincipal(*http.Request) (core.Principal, bool) {
+	return core.Principal{}, false
+}
+func (sessions staleUndoSessions) End(http.ResponseWriter, *http.Request) {}
+func (sessions staleUndoSessions) RevokeUser(string, string)              {}
 
 func (*staleUndoProvider) PreviewPlanChange(context.Context, SubscriptionSnapshot, string) (PlanChangeQuote, error) {
 	return PlanChangeQuote{}, nil
@@ -73,15 +92,15 @@ func TestUndoRecoversWhenStripeReleasedScheduleBeforeLocalWrite(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	provider := &staleUndoProvider{testProvider: &testProvider{customerID: "cus_retry", subscription: SubscriptionSnapshot{
+	provider := &staleUndoProvider{subscription: SubscriptionSnapshot{
 		ID: "sub_retry", CustomerID: "cus_retry", Status: "active", PriceID: "price_pro_monthly",
-	}}}
+	}}
 	mux := http.NewServeMux()
-	mount(mux, core.Deps{Store: store, Sessions: testSessions{principal: principal}}, &staleUndoFlow{testBillingFlow: &testBillingFlow{}, store: store},
+	mount(mux, core.Deps{Store: store, Sessions: staleUndoSessions{principal: principal}}, &staleUndoFlow{store: store},
 		StripeConfig{Production: true, Mode: "test", PriceIDs: map[PriceKey]string{{PlanKey: "pro", Interval: "monthly"}: "price_pro_monthly"}}, provider, nil)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/billing/change/undo", nil))
-	current, _ := store.Snapshot(principal.AccountID)
+	current, _ := store.SnapshotAs(principal)
 	if response.Code != http.StatusSeeOther || provider.releaseCalls != 0 || current.Organizations[principal.OrganizationID].Billing.ScheduledPlanKey != "" {
 		t.Fatalf("retry undo = %d, release calls = %d, billing = %#v", response.Code, provider.releaseCalls, current.Organizations[principal.OrganizationID].Billing)
 	}
