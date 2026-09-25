@@ -156,9 +156,10 @@ hr {
   transform: none;
 }
 
-/* Navigation progress: Datastar sets body.ts-nav-pending while the next
-   document loads (see internal/ui/layouts.templ). The bar spans the whole
-   viewport width, grows to the right edge, then shimmers until the swap. */
+/* Navigation activity: Datastar sets body.ts-nav-pending while the next
+   document loads (see internal/ui/layouts.templ). Wait before revealing the
+   full-width bar so quick navigations never flash it. A gentle shimmer shows
+   an ongoing wait without implying a measured completion percentage. */
 body.ts-nav-pending::before {
   content: "";
   position: fixed;
@@ -166,19 +167,18 @@ body.ts-nav-pending::before {
   z-index: var(--ts-z-progress);
   height: 3px;
   background:
-    linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent) 0 0 / 30% 100% no-repeat,
+    linear-gradient(90deg, transparent, rgb(255 255 255 / 0.3), transparent) 0 0 / 30% 100% no-repeat,
     var(--ts-accent);
-  transform-origin: left center;
+  opacity: 0;
   pointer-events: none;
   animation:
-    ts-progress-grow 1.6s var(--ts-ease) forwards,
-    ts-progress-shine 1.1s linear 0.3s infinite;
+    ts-progress-reveal 120ms ease-out 150ms forwards,
+    ts-progress-shine 1.6s linear 150ms infinite;
 }
 
-@keyframes ts-progress-grow {
-  from { transform: scaleX(0); }
-  60% { transform: scaleX(0.8); }
-  to { transform: scaleX(1); }
+@keyframes ts-progress-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes ts-progress-shine {
@@ -192,6 +192,11 @@ body.ts-nav-pending::before {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  body.ts-nav-pending::before {
+    background: var(--ts-accent);
+    animation-name: ts-progress-reveal;
+  }
+
   *,
   *::before,
   *::after {
