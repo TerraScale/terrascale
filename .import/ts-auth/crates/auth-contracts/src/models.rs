@@ -21,6 +21,9 @@ pub struct Instance {
 pub struct User {
     pub id: String,
     pub instance_id: String,
+    /// Guest identity, converted in place only after proving a new mailbox.
+    #[serde(default)]
+    pub is_anonymous: bool,
     #[serde(default)]
     pub email: Option<String>,
     #[serde(default)]
@@ -133,6 +136,9 @@ pub struct Session {
 pub struct OAuthClient {
     pub id: String,
     pub instance_id: String,
+    /// Explicit opt-in; existing clients cannot create guest accounts.
+    #[serde(default)]
+    pub allow_anonymous: bool,
     pub client_id: String,
     pub client_key: String,
     pub name: String,
@@ -264,6 +270,22 @@ pub struct OrgMembership {
     pub role: String,
     #[serde(default)]
     pub created_at: i64,
+}
+
+/// Application permissions for an organization role, scoped to one instance.
+/// Deleted keys stay reserved so old memberships cannot regain privileges when
+/// a role name is reused.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizationRole {
+    pub id: String,
+    pub instance_id: String,
+    pub key: String,
+    pub name: String,
+    pub permissions: Vec<String>,
+    pub deleted: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

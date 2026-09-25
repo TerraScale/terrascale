@@ -397,6 +397,25 @@ pub async fn create_user(
         false,
         true,
         None,
+        false,
+    )
+    .await
+}
+
+/// Create a quota-accounted guest with no reusable login credential.
+pub async fn create_anonymous_user(state: &AppState, instance_id: &str) -> AppResult<User> {
+    create_user_with_provisioning(
+        state,
+        instance_id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        true,
+        None,
+        true,
     )
     .await
 }
@@ -421,6 +440,7 @@ pub async fn create_unverified_signup_user(
         false,
         false,
         None,
+        false,
     )
     .await
 }
@@ -448,6 +468,7 @@ pub async fn create_provisional_scim_user(
         false,
         true,
         None,
+        false,
     )
     .await
 }
@@ -467,6 +488,7 @@ async fn create_user_with_provisioning(
     email_verified: bool,
     identity_established: bool,
     password_hash_override: Option<String>,
+    is_anonymous: bool,
 ) -> AppResult<User> {
     let email = normalize_optional(email);
     if email.as_deref().is_some_and(|value| !is_valid_email(value)) {
@@ -512,6 +534,7 @@ async fn create_user_with_provisioning(
         .map_err(map_store_error)?;
     let timestamp = now();
     let user = User {
+        is_anonymous,
         id: user_id,
         instance_id: instance_id.to_owned(),
         email: email.as_deref().map(normalize_email),
@@ -1180,6 +1203,30 @@ async fn establish_session_with_expected_email(
     Ok((session, token))
 }
 
+/// Invalidate all currently issued sessions and OAuth credentials before the
+/// session-row cleanup. The epoch transition also fences in-flight grants.
+pub async fn revoke_all_authentication(
+    state: &AppState,
+    instance_id: &str,
+    user_id: &str,
+    expected_epoch: u64,
+) -> AppResult<()> {
+    if state
+        .store
+        .advance_user_auth_epoch_if_current(instance_id, user_id, expected_epoch)
+        .await
+        .map_err(store_error)?
+        .is_none()
+    {
+        return Err(AppError::new(
+            StatusCode::CONFLICT,
+            "authentication_changed",
+            "Authentication changed; sign in or reload before retrying.",
+        ));
+    }
+    revoke_sessions(state, instance_id, user_id, None).await
+}
+
 /// Revoke all active sessions for one user, optionally preserving one current session.
 pub async fn revoke_sessions(
     state: &AppState,
@@ -1393,6 +1440,7 @@ pub async fn claim_verified_mailbox_with_proof(
                     true,
                     true,
                     fresh_password_hash.clone(),
+                    false,
                 )
                 .await
                 {
@@ -1436,6 +1484,7 @@ pub async fn claim_verified_mailbox_with_proof(
             true,
             true,
             fresh_password_hash.clone(),
+            false,
         )
         .await
         {
@@ -2892,7 +2941,9 @@ async fn revoke_all_sessions(
         Ok(None) => return redirect(&format!("/ui/{slug}/sign-in")),
         Err(error) => return error.into_response(),
     };
-    if let Err(error) = revoke_sessions(&state, &brand.id, &user.id, None).await {
+    if let Err(error) =
+        revoke_all_authentication(&state, &brand.id, &user.id, user.auth_epoch).await
+    {
         return error.into_response();
     }
     if let Err(error) = audit(

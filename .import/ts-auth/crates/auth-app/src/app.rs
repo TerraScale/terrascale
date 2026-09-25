@@ -217,6 +217,10 @@ pub fn build_router(state: AppState) -> Router {
             state.clone(),
             features::management::management_gate,
         ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            features::oauth::cors::cors,
+        ))
         .layer(CatchPanicLayer::custom(panic_envelope))
         .layer(middleware::from_fn_with_state(
             state.clone(),

@@ -1,6 +1,7 @@
 //! Feature modules and the HTTP/OpenAPI contract shared by the app assembler.
 
 pub mod admin;
+pub mod authorization;
 pub mod billing;
 pub mod connections;
 pub mod email;
@@ -28,6 +29,7 @@ use crate::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(admin::router())
+        .merge(authorization::router())
         .merge(billing::router())
         .merge(connections::router())
         .merge(instances::router())
@@ -48,6 +50,7 @@ pub fn router() -> Router<AppState> {
 pub fn openapi_documents() -> Vec<OpenApi> {
     vec![
         admin::openapi(),
+        authorization::openapi(),
         billing::openapi(),
         connections::openapi(),
         instances::openapi(),

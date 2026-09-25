@@ -547,6 +547,7 @@ fn user_schema(include_private: bool) -> Schema {
         ("id", string_schema()),
         ("email", nullable_string_schema()),
         ("email_verified", boolean_schema()),
+        ("is_anonymous", boolean_schema()),
         ("username", nullable_string_schema()),
         ("name", nullable_string_schema()),
         ("banned", boolean_schema()),
@@ -1225,7 +1226,7 @@ async fn revoke_all_user_sessions(
         Ok(context) => context,
         Err(response) => return response,
     };
-    match find_live_user(&state, &context.instance.id, &user_id).await {
+    let user = match find_live_user(&state, &context.instance.id, &user_id).await {
         Ok(None) => {
             return api_error(
                 StatusCode::NOT_FOUND,
@@ -1234,9 +1235,11 @@ async fn revoke_all_user_sessions(
             );
         }
         Err(error) => return error.into_response(),
-        Ok(Some(_)) => {}
-    }
-    match users::revoke_sessions(&state, &context.instance.id, &user_id, None).await {
+        Ok(Some(user)) => user,
+    };
+    match users::revoke_all_authentication(&state, &context.instance.id, &user_id, user.auth_epoch)
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => error.into_response(),
     }
@@ -1661,6 +1664,7 @@ fn user_view(user: &User, include_private: bool) -> Value {
         "id": user.id,
         "email": user.email,
         "email_verified": user.email_verified,
+        "is_anonymous": user.is_anonymous,
         "username": user.username,
         "name": user.name,
         "banned": user.banned,

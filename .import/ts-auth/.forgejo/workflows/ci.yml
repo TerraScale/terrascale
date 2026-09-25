@@ -168,6 +168,9 @@ jobs:
           TS_AUTH_PLAYWRIGHT_MODULE="${playwright_module}" \
           TS_AUTH_CHROMIUM_PATH="${chromium_path}" \
             "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo test --locked -p auth-app --test admin_browser -- --ignored --nocapture
+          TS_AUTH_PLAYWRIGHT_MODULE="${playwright_module}" \
+          TS_AUTH_CHROMIUM_PATH="${chromium_path}" \
+            "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo test --locked -p auth-app --test device_authorization -- --ignored --nocapture
 
       - name: Publish immutable container on protected main
         if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'

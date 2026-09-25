@@ -1029,6 +1029,7 @@ async fn ambiguous_admission_cas_and_release_retry_count_once() {
         1
     );
     let second = User {
+        is_anonymous: false,
         id: "user-2".into(),
         email: Some("b@example.com".into()),
         email_key: Some("inst:b@example.com".into()),

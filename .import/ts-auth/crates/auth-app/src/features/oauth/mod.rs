@@ -4,6 +4,11 @@
 //! consumes codes and refresh tokens through store-side conditional writes, and
 //! signs all access and ID tokens with the instance's current ES256 key.
 
+mod anonymous;
+pub(crate) mod cors;
+mod device;
+mod rate_limit;
+
 use std::{
     collections::{HashMap, HashSet},
     time::{SystemTime, UNIX_EPOCH},
@@ -53,10 +58,10 @@ enum AuthorizationPrompt {
 #[openapi(
     paths(
         discovery, jwks, authorize, token, userinfo, introspect, revoke, logout,
-        create_client, list_clients, delete_client
+        create_client, list_clients, update_client, delete_client
     ),
     components(schemas(
-        CreateClientRequest, DiscoveryDocument, JwksDocument, OAuthTokenRequest, OAuthTokenResponse,
+        CreateClientRequest, UpdateClientRequest, DiscoveryDocument, JwksDocument, OAuthTokenRequest, OAuthTokenResponse,
         OAuthErrorResponse, IntrospectionRequest, IntrospectionResponse, RevocationRequest,
         UserInfoResponse, ApiErrorResponse
     )),
@@ -69,6 +74,7 @@ struct DiscoveryDocument {
     issuer: String,
     authorization_endpoint: String,
     token_endpoint: String,
+    device_authorization_endpoint: String,
     userinfo_endpoint: String,
     jwks_uri: String,
     revocation_endpoint: String,
@@ -98,6 +104,7 @@ struct OAuthTokenRequest {
     redirect_uri: Option<String>,
     code_verifier: Option<String>,
     refresh_token: Option<String>,
+    device_code: Option<String>,
     scope: Option<String>,
     client_id: Option<String>,
     client_secret: Option<String>,
@@ -157,6 +164,7 @@ struct RevocationRequest {
 #[derive(Debug, Serialize, ToSchema)]
 struct UserInfoResponse {
     sub: String,
+    is_anonymous: bool,
     email: Option<String>,
     email_verified: Option<bool>,
     name: Option<String>,
@@ -175,6 +183,8 @@ struct ApiErrorBody {
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .merge(device::router())
+        .merge(anonymous::router())
         .route("/{slug}/.well-known/openid-configuration", get(discovery))
         .route("/{slug}/.well-known/jwks.json", get(jwks))
         .route("/{slug}/oauth/authorize", get(authorize))
@@ -187,11 +197,16 @@ pub fn router() -> Router<AppState> {
             "/v1/{slug}/oauth-clients",
             post(create_client).get(list_clients),
         )
-        .route("/v1/{slug}/oauth-clients/{id}", delete(delete_client))
+        .route(
+            "/v1/{slug}/oauth-clients/{id}",
+            delete(delete_client).patch(update_client),
+        )
 }
 
 pub fn openapi() -> utoipa::openapi::OpenApi {
     let mut document = ApiDoc::openapi();
+    document.merge(device::openapi());
+    document.merge(anonymous::openapi());
     document.components.get_or_insert_with(Default::default).add_security_scheme(
         "clientBasic",
         SecurityScheme::Http(
@@ -231,13 +246,14 @@ async fn discovery(State(state): State<AppState>, Path(slug): Path<String>) -> A
         "issuer": issuer,
         "authorization_endpoint": format!("{issuer}/oauth/authorize"),
         "token_endpoint": format!("{issuer}/oauth/token"),
+        "device_authorization_endpoint": format!("{issuer}/oauth/device_authorization"),
         "userinfo_endpoint": format!("{issuer}/oauth/userinfo"),
         "jwks_uri": format!("{issuer}/.well-known/jwks.json"),
         "revocation_endpoint": format!("{issuer}/oauth/revoke"),
         "introspection_endpoint": format!("{issuer}/oauth/introspect"),
         "end_session_endpoint": format!("{issuer}/oauth/logout"),
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials"],
+        "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials", device::GRANT_TYPE],
         "code_challenge_methods_supported": ["S256"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["ES256"],
@@ -605,6 +621,7 @@ async fn token(
         "authorization_code" => grant_authorization_code(&state, &instance, &client, &form).await?,
         "refresh_token" => grant_refresh_token(&state, &instance, &client, &form).await?,
         "client_credentials" => grant_client_credentials(&state, &instance, &client, &form).await?,
+        device::GRANT_TYPE => device::grant(&state, &instance, &client, &form).await?,
         "" => token_error(
             StatusCode::BAD_REQUEST,
             "invalid_request",
@@ -814,10 +831,10 @@ async fn grant_authorization_code(
         ));
     }
     let session_id = record.id.split(':').nth(1).map(str::to_owned);
-    let session = match session_id {
+    let session = match session_id.as_deref() {
         Some(id) => state
             .store
-            .get_session(&id)
+            .get_session(id)
             .await
             .map_err(internal)?
             .filter(|session| {
@@ -825,18 +842,48 @@ async fn grant_authorization_code(
                     && session.user_id == user.id
                     && session.status == "active"
                     && session.expires_at > now()
+                    && session.auth_epoch == user.auth_epoch
             }),
         None => None,
     };
-    let scope = record.scopes.join(" ");
+    if session_id.is_some() && session.is_none() {
+        return Ok(token_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_grant",
+            "the authorizing session is no longer active",
+            false,
+        ));
+    }
+    issue_user_tokens(
+        state,
+        instance,
+        client,
+        &user,
+        session.as_ref(),
+        &record.scopes,
+        record.nonce.as_deref(),
+    )
+    .await
+}
+
+async fn issue_user_tokens(
+    state: &AppState,
+    instance: &auth_contracts::models::Instance,
+    client: &OAuthClient,
+    user: &auth_contracts::models::User,
+    session: Option<&auth_contracts::models::Session>,
+    scopes: &[String],
+    nonce: Option<&str>,
+) -> AppResult<Response> {
+    let scope = scopes.join(" ");
     let access = sign_access_token(
         state,
         instance,
         &user.id,
         &client.client_id,
         &scope,
-        session.as_ref().map(|s| s.id.as_str()),
-        Some(user.auth_epoch),
+        session.map(|s| s.id.as_str()),
+        Some((user.auth_epoch, user.is_anonymous)),
     )
     .await?;
     let (refresh, _) = create_refresh_token(
@@ -844,27 +891,28 @@ async fn grant_authorization_code(
         &instance.id,
         &client.client_id,
         &user.id,
-        &record.scopes,
+        scopes,
         user.auth_epoch,
     )
     .await?;
     let mut response = json!({"access_token": access, "token_type":"Bearer", "expires_in":ACCESS_TOKEN_TTL, "scope":scope, "refresh_token":refresh});
-    if record.scopes.iter().any(|item| item == "openid") {
+    if scopes.iter().any(|item| item == "openid") {
         let mut claims = json!({
             "iss": issuer(state, &instance.slug),
             "sub": user.id,
             "aud": client.client_id,
             "token_use": "id",
+            "is_anonymous": user.is_anonymous,
             "at_hash": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&Sha256::digest(access.as_bytes())[..16]),
         });
         if let Some(session) = &session {
             claims["auth_time"] = json!(session.created_at);
         }
-        if let Some(nonce) = record.nonce {
+        if let Some(nonce) = nonce {
             claims["nonce"] = json!(nonce);
         }
-        if record.scopes.iter().any(|item| item == "email")
-            && let Some(email) = user.email
+        if scopes.iter().any(|item| item == "email")
+            && let Some(email) = &user.email
         {
             claims["email"] = json!(email);
             claims["email_verified"] = json!(user.email_verified);
@@ -1097,7 +1145,7 @@ async fn grant_refresh_token(
                 &client.client_id,
                 &scope,
                 None,
-                Some(rotated.user_auth_epoch),
+                Some((rotated.user_auth_epoch, user.is_anonymous)),
             )
             .await?;
             if state
@@ -1286,7 +1334,7 @@ async fn userinfo(
         .unwrap_or_default()
         .split_ascii_whitespace()
         .collect::<Vec<_>>();
-    let mut body = json!({"sub":user.id});
+    let mut body = json!({"sub":user.id, "is_anonymous":user.is_anonymous});
     if scopes.contains(&"email")
         && let Some(email) = user.email
     {
@@ -1604,6 +1652,10 @@ pub struct CreateClientRequest {
     #[serde(default, rename = "public")]
     pub is_public: bool,
     pub token_endpoint_auth_method: Option<String>,
+    #[serde(default)]
+    pub allow_anonymous: bool,
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
 }
 
 #[utoipa::path(
@@ -1673,9 +1725,22 @@ async fn create_client(
         ));
     }
     let is_public = body.is_public || auth_method == "none";
+    if body.allowed_origins.len() > 20
+        || body
+            .allowed_origins
+            .iter()
+            .any(|origin| !cors::valid_origin(origin))
+    {
+        return Ok(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "allowed_origins must contain at most 20 exact HTTPS origins (HTTP is allowed for loopback)",
+        ));
+    }
     let secret = (!is_public).then(|| tokens::random_token(40));
     let client_id = tokens::random_token(24);
     let client = OAuthClient {
+        allow_anonymous: body.allow_anonymous,
         id: format!("clt_{}", tokens::random_token(20)),
         instance_id: context.instance.id.clone(),
         client_id: client_id.clone(),
@@ -1683,7 +1748,7 @@ async fn create_client(
         name: name.trim().to_owned(),
         client_secret_hash: secret.as_deref().map(tokens::sha256_hex),
         redirect_uris,
-        allowed_origins: Vec::new(),
+        allowed_origins: body.allowed_origins,
         token_endpoint_auth_method: auth_method,
         r#public: is_public,
         created_at: now(),
@@ -1727,6 +1792,93 @@ async fn list_clients(
         Json(json!({"clients":clients.iter().map(client_view).collect::<Vec<_>>()})),
     )
         .into_response())
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct UpdateClientRequest {
+    name: Option<String>,
+    redirect_uris: Option<Vec<String>>,
+    allowed_origins: Option<Vec<String>>,
+    allow_anonymous: Option<bool>,
+}
+
+#[utoipa::path(patch, path = "/v1/{slug}/oauth-clients/{id}", params(("slug" = String, Path), ("id" = String, Path)), request_body = UpdateClientRequest,
+    responses((status = 200, description = "Updated OAuth client without changing credentials"), (status = 400, description = "Invalid origins or redirects"), (status = 409, description = "Concurrent client change; reload and retry")), tag = "OAuth")]
+async fn update_client(
+    State(state): State<AppState>,
+    Path((slug, id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateClientRequest>,
+) -> AppResult<Response> {
+    let context = management::require(&state, &headers, &slug).await?;
+    let Some((mut client, version)) = state
+        .store
+        .get_versioned::<OAuthClient>("oauth_clients", &id)
+        .await
+        .map_err(|e| crate::app::storage_error(&e))?
+        .filter(|(c, _)| c.instance_id == context.instance.id)
+    else {
+        return Ok(api_error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "OAuth client not found",
+        ));
+    };
+    if let Some(name) = body.name {
+        if name.trim().is_empty() || name.len() > 128 {
+            return Ok(api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "name must be 1-128 characters",
+            ));
+        }
+        client.name = name.trim().to_owned();
+    }
+    if let Some(uris) = body.redirect_uris {
+        if uris.is_empty() || uris.len() > 100 || uris.iter().any(|uri| !valid_redirect_uri(uri)) {
+            return Ok(api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "redirect_uris must contain 1-100 valid redirect URIs",
+            ));
+        }
+        client.redirect_uris = uris;
+    }
+    if let Some(origins) = body.allowed_origins {
+        if origins.len() > 20 || origins.iter().any(|origin| !cors::valid_origin(origin)) {
+            return Ok(api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "allowed_origins must contain at most 20 exact HTTPS or loopback HTTP origins",
+            ));
+        }
+        client.allowed_origins = origins;
+    }
+    if let Some(enabled) = body.allow_anonymous {
+        client.allow_anonymous = enabled;
+    }
+    if !state
+        .store
+        .compare_and_put("oauth_clients", &id, &client, &version)
+        .await
+        .map_err(|e| crate::app::storage_error(&e))?
+    {
+        return Ok(api_error(
+            StatusCode::CONFLICT,
+            "client_changed",
+            "The client changed; reload and retry.",
+        ));
+    }
+    audit(
+        &state,
+        &context.instance.id,
+        Some(&context.api_key_id),
+        "oauth.client_updated",
+        json!({"client_id":client.client_id}),
+    )
+    .await?;
+    Ok(Json(client_view(&client)).into_response())
 }
 
 #[utoipa::path(
@@ -1926,7 +2078,7 @@ async fn sign_access_token(
     audience: &str,
     scope: &str,
     session_id: Option<&str>,
-    user_auth_epoch: Option<u64>,
+    user_state: Option<(u64, bool)>,
 ) -> AppResult<String> {
     let mut claims = json!({
         "iss":issuer(state, &instance.slug),
@@ -1938,8 +2090,9 @@ async fn sign_access_token(
     if let Some(session_id) = session_id {
         claims["sid"] = json!(session_id);
     }
-    if let Some(user_auth_epoch) = user_auth_epoch {
-        claims["auth_epoch"] = json!(user_auth_epoch);
+    if let Some((auth_epoch, is_anonymous)) = user_state {
+        claims["auth_epoch"] = json!(auth_epoch);
+        claims["is_anonymous"] = json!(is_anonymous);
     }
     let key = state
         .key_ring
@@ -2000,6 +2153,24 @@ async fn verify_access_token(
         .is_none()
     {
         return Ok(None);
+    }
+    if let Some(session_id) = claims.get("sid").and_then(Value::as_str) {
+        let Some(session) = state
+            .store
+            .get_session(session_id)
+            .await
+            .map_err(internal)?
+        else {
+            return Ok(None);
+        };
+        if session.instance_id != instance.id
+            || Some(session.user_id.as_str()) != claims.get("sub").and_then(Value::as_str)
+            || session.status != "active"
+            || session.expires_at <= now()
+            || Some(session.auth_epoch) != claims.get("auth_epoch").and_then(Value::as_u64)
+        {
+            return Ok(None);
+        }
     }
     Ok(Some(claims))
 }
@@ -2173,7 +2344,7 @@ async fn audit(
 
 fn client_view(client: &OAuthClient) -> Value {
     json!({"id":client.id,"client_id":client.client_id,"name":client.name,"redirect_uris":client.redirect_uris,
-        "token_endpoint_auth_method":client.token_endpoint_auth_method,"public":client.r#public,"created_at":client.created_at})
+        "token_endpoint_auth_method":client.token_endpoint_auth_method,"public":client.r#public,"allowed_origins":client.allowed_origins,"allow_anonymous":client.allow_anonymous,"created_at":client.created_at})
 }
 
 fn api_error(status: StatusCode, code: &str, message: &str) -> Response {

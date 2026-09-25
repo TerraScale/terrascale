@@ -177,6 +177,7 @@ async fn client_authentication_store_outages_are_static_server_errors_on_all_end
         .state
         .store
         .create_oauth_client(&OAuthClient {
+            allow_anonymous: false,
             id: "cli_oauth_outage".to_owned(),
             instance_id: instance_id.to_owned(),
             client_id: client_id.to_owned(),
@@ -242,6 +243,7 @@ async fn stored_client_authentication_method_is_enforced_on_token_introspect_and
             .state
             .store
             .create_oauth_client(&OAuthClient {
+                allow_anonymous: false,
                 id: format!("cli_auth_method_{index}"),
                 instance_id: instance_id.to_owned(),
                 client_id: (*client_id).to_owned(),
@@ -337,6 +339,7 @@ async fn oauth_authorization_prompts_return_explicit_protocol_errors() {
         .state
         .store
         .create_oauth_client(&OAuthClient {
+            allow_anonymous: false,
             id: "cli_oauth_prompt".to_owned(),
             instance_id: instance_id.to_owned(),
             client_id: client_id.to_owned(),
@@ -663,6 +666,7 @@ async fn refresh_token_replay_revokes_the_family_over_http() {
         .state
         .store
         .create_oauth_client(&OAuthClient {
+            allow_anonymous: false,
             id: "cli_refresh_replay".to_owned(),
             instance_id: instance_id.to_owned(),
             client_id: client_id.to_owned(),
@@ -806,6 +810,7 @@ async fn password_reset_invalidates_oauth_refresh_tokens_over_http() {
             "users",
             user_id,
             &User {
+                is_anonymous: false,
                 id: user_id.to_owned(),
                 instance_id: instance_id.to_owned(),
                 email: Some(email.to_owned()),
@@ -838,6 +843,7 @@ async fn password_reset_invalidates_oauth_refresh_tokens_over_http() {
         .state
         .store
         .create_oauth_client(&OAuthClient {
+            allow_anonymous: false,
             id: "cli_password_reset_epoch".to_owned(),
             instance_id: instance_id.to_owned(),
             client_id: client_id.to_owned(),
@@ -1048,6 +1054,7 @@ async fn federated_first_factor_waits_for_local_mfa_and_persists_continuation() 
     let email = "federated-mfa@example.test";
     let timestamp = now();
     let user = User {
+        is_anonymous: false,
         id: user_id.to_owned(),
         instance_id: instance_id.to_owned(),
         email: Some(email.to_owned()),
@@ -1377,6 +1384,7 @@ async fn scim_directory_deactivation_disables_oauth_user_tokens() {
             "users",
             user_id,
             &User {
+                is_anonymous: false,
                 id: user_id.to_owned(),
                 instance_id: instance_id.to_owned(),
                 email: Some("scim-eligible@example.test".to_owned()),
@@ -1435,6 +1443,7 @@ async fn scim_directory_deactivation_disables_oauth_user_tokens() {
         .state
         .store
         .create_oauth_client(&OAuthClient {
+            allow_anonymous: false,
             id: "cli_oauth_scim_eligibility".to_owned(),
             instance_id: instance_id.to_owned(),
             client_id: client_id.to_owned(),
@@ -1454,6 +1463,7 @@ async fn scim_directory_deactivation_disables_oauth_user_tokens() {
         .state
         .store
         .create_oauth_client(&OAuthClient {
+            allow_anonymous: false,
             id: "cli_oauth_scim_other".to_owned(),
             instance_id: instance_id.to_owned(),
             client_id: other_client_id.to_owned(),

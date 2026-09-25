@@ -1118,6 +1118,56 @@ impl AuthStore {
         }
         Err(StoreError::Contention)
     }
+
+    /// Convert a guest only at its proven credential epoch. The User CAS makes
+    /// two competing upgrades mutually exclusive. Retain an email reservation
+    /// on an uncertain/losing write: releasing an owner-shared claim here could
+    /// release a concurrent successful conversion's uniqueness protection.
+    pub async fn upgrade_anonymous_user(
+        &self,
+        id: &str,
+        instance_id: &str,
+        expected_epoch: u64,
+        email: &str,
+        password_hash: Option<String>,
+        now: i64,
+    ) -> StoreResult<Option<User>> {
+        let Some((mut user, version)) = self.get_versioned::<User>("users", id).await? else {
+            return Ok(None);
+        };
+        if user.instance_id != instance_id
+            || user.deleted
+            || user.banned
+            || !user.is_anonymous
+            || user.auth_epoch != expected_epoch
+            || user.email.is_some()
+            || user.email_key.is_some()
+            || user.username.is_some()
+            || user.username_key.is_some()
+            || user.scim_provisioning.is_some()
+            || !user.scim_instance_wide_directory_ids.is_empty()
+        {
+            return Ok(None);
+        }
+        let next_epoch = expected_epoch
+            .checked_add(1)
+            .ok_or(StoreError::Contention)?;
+        let email_key = format!("{instance_id}:{email}");
+        self.claim_unique("user-email", &email_key, id).await?;
+        user.email = Some(email.to_owned());
+        user.email_key = Some(email_key);
+        user.email_verified = true;
+        user.identity_established = true;
+        user.is_anonymous = false;
+        user.password_hash = password_hash;
+        user.auth_epoch = next_epoch;
+        user.updated_at = now;
+        if self.compare_and_put("users", id, &user, &version).await? {
+            Ok(Some(user))
+        } else {
+            Ok(None)
+        }
+    }
     /// Tombstone only the unverified owner of a mailbox being claimed by a
     /// verified identity. The User CAS prevents a stale read from deleting an
     /// account that was verified or rekeyed in the meantime.
