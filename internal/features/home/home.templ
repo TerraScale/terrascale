@@ -1,0 +1,169 @@
+package home
+
+import (
+	"fmt"
+
+	"terrascale.tech/dashboard/internal/ui/aria"
+	"terrascale.tech/dashboard/internal/ui/charts"
+)
+
+templ homeView(data pageData) {
+	<main class="ts-page ts-home">
+		if data.Tab == "connect" {
+			<section class="ts-section ts-home-section ts-home-connect-page" aria-labelledby="connect-title">
+				<div class="ts-section-head">
+					<div>
+						<h1 class="ts-panel-title" id="connect-title">Connect your AI or platform</h1>
+						<p class="ts-meta">Reach this project from your assistant, application, or pipeline. Connection flows are previewed while provisioning finishes.</p>
+					</div>
+				</div>
+				<div class="ts-home-section-body">
+					<ul class="ts-home-connect-grid">
+						<li class="ts-home-connect-item">
+							<span class="ts-connect-icon" aria-hidden="true">◇</span>
+							<span class="ts-getting-started-title">AI assistants</span>
+							<p class="ts-muted ts-ui">Connect Claude, Cursor, and other MCP-compatible assistants to your project.</p>
+							<span class="ts-badge ts-badge-outline ts-badge-preview">Preview</span>
+						</li>
+						<li class="ts-home-connect-item">
+							<span class="ts-connect-icon" aria-hidden="true">⌘</span>
+							<span class="ts-getting-started-title">TypeScript SDK</span>
+							<p class="ts-muted ts-ui">Install the SDK and query your databases directly from your application.</p>
+							<span class="ts-badge ts-badge-outline ts-badge-preview">Preview</span>
+						</li>
+						<li class="ts-home-connect-item">
+							<span class="ts-connect-icon" aria-hidden="true">⌗</span>
+							<span class="ts-getting-started-title">REST API</span>
+							<p class="ts-muted ts-ui">Call the project API from any language with a scoped credential.</p>
+							<span class="ts-badge ts-badge-outline ts-badge-preview">Preview</span>
+						</li>
+						<li class="ts-home-connect-item">
+							<span class="ts-connect-icon" aria-hidden="true">$</span>
+							<span class="ts-getting-started-title">CLI and CI</span>
+							<p class="ts-muted ts-ui">Manage databases and run queries from your terminal or pipeline.</p>
+							<span class="ts-badge ts-badge-outline ts-badge-preview">Preview</span>
+						</li>
+					</ul>
+					<div class="ts-snippet ts-connect-snippet">
+						<div class="ts-snippet-header">MCP client configuration</div>
+						<pre class="ts-snippet-body">
+							<code>
+								{ `{
+  "mcpServers": {
+    "terrascale": {
+				  "url": "https://<your-terrascale-host>/mcp"
+    }
+  }
+}` }
+							</code>
+						</pre>
+					</div>
+				</div>
+				<a href="/">Back to overview</a>
+			</section>
+		} else {
+			<h1 class="ts-sr-only">Overview</h1>
+			<div class="ts-home-overview">
+				<div class="ts-home-primary">
+					<section class="ts-section ts-home-section" aria-labelledby="home-metrics-title">
+						<div class="ts-section-head">
+							<div>
+								<h2 class="ts-panel-title" id="home-metrics-title">Workspace metrics</h2>
+								<p class="ts-meta">Current project totals and recent changes</p>
+							</div>
+						</div>
+						<dl class="ts-kpis ts-home-metrics" aria-label="Workspace metrics">
+							<div>
+								<dt>Databases</dt>
+								<dd><span class="ts-kpi-value">{ fmt.Sprint(data.DatabaseCount) }</span></dd>
+								<small class="ts-meta">{ data.DatabaseDetail }</small>
+							</div>
+							<div>
+								<dt>Organization members</dt>
+								<dd><span class="ts-kpi-value">{ fmt.Sprint(data.OrganizationMembers) }</span></dd>
+								<small class="ts-meta">{ data.OrganizationMembersDetail }</small>
+							</div>
+							<div>
+								<dt>Unread alerts</dt>
+								<dd><span class="ts-kpi-value">{ fmt.Sprint(data.UnreadNotifications) }</span></dd>
+								<small class="ts-meta">{ fmt.Sprint(data.TotalNotifications) } { data.NotificationsDetail }</small>
+							</div>
+						</dl>
+					</section>
+					<section class="ts-section ts-home-section" aria-labelledby="home-activity-title">
+						<div class="ts-section-head">
+							<div>
+								<h2 class="ts-panel-title" id="home-activity-title">Activity</h2>
+								<p class="ts-meta">{ data.ActivityNote }</p>
+							</div>
+							<span class="ts-home-activity-total"><span class="ts-activity-total-dot" aria-hidden="true"></span> { data.ActivityTotalLabel } <strong>{ fmt.Sprint(data.ActivityEvents) }</strong></span>
+						</div>
+						<div class="ts-home-range-picker">
+							<span class="ts-sr-only" id="home-range-label">Activity range</span>
+							<ts-menu>
+								<details class="ts-menu ts-menu-end">
+									<summary class="ts-select" aria-labelledby="home-range-label home-range-value"><span id="home-range-value">{ data.ActivityRange }</span></summary>
+									<div class="ts-menu-panel">
+										<a class="ts-menu-item" aria-current={ aria.CurrentPage(data.ActivityRange == "24h") } href="/?range=24h">24h</a>
+										<a class="ts-menu-item" aria-current={ aria.CurrentPage(data.ActivityRange == "7d") } href="/?range=7d">7d</a>
+										<a class="ts-menu-item" aria-current={ aria.CurrentPage(data.ActivityRange == "30d") } href="/?range=30d">30d</a>
+									</div>
+								</details>
+							</ts-menu>
+						</div>
+						<div class="ts-chart-body">
+							<div class="ts-chart-shell ts-home-chart-shell" role="region" aria-label="Activity chart. Scroll horizontally for the full plot." tabindex="0">
+								@charts.Line(data.ActivityChart)
+							</div>
+							<a class="ts-meta" href="/audit">View persisted audit events</a>
+						</div>
+					</section>
+				</div>
+				<aside class="ts-section ts-home-section ts-home-getting-started" aria-labelledby="getting-started-title">
+					<div class="ts-section-head">
+						<div>
+							<h2 class="ts-panel-title" id="getting-started-title">Getting started</h2>
+							<p class="ts-meta">Provision your project and connect the tools you already use</p>
+						</div>
+					</div>
+					<div class="ts-home-section-body">
+						<p class="ts-muted ts-home-intro">Work through these steps to get a database online and wire it into your stack.</p>
+						<div class="ts-home-steps">
+							<div class="ts-getting-started-item">
+								<span class="ts-getting-started-number">1</span>
+								<div class="ts-getting-started-content">
+									<div class="ts-row-between">
+										<span class="ts-getting-started-title">Create first database</span>
+										if data.DatabaseCount > 0 {
+											<span class="ts-badge ts-badge-success">Done</span>
+										} else {
+											<span class="ts-badge ts-badge-warning">Open</span>
+										}
+									</div>
+									<p class="ts-muted ts-ui">Create a logical database in the region closest to your users.</p>
+									<a class="ts-getting-started-cta" href="/databases">Open databases →</a>
+								</div>
+							</div>
+							<div class="ts-getting-started-item">
+								<span class="ts-getting-started-number">2</span>
+								<div class="ts-getting-started-content">
+									<div class="ts-row-between">
+										<span class="ts-getting-started-title">Create an Application credential</span>
+										if data.ActiveCredentials > 0 {
+											<span class="ts-badge ts-badge-success">Done</span>
+										} else {
+											<span class="ts-badge ts-badge-warning">Open</span>
+										}
+									</div>
+									<p class="ts-muted ts-ui">Generate a scoped API key or M2M client for your application.</p>
+									<a class="ts-getting-started-cta" href="/api-keys">Open API keys →</a>
+								</div>
+							</div>
+						</div>
+						<a href="/?tab=connect">Connect your AI or platform</a>
+					</div>
+				</aside>
+			</div>
+		}
+	</main>
+}

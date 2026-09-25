@@ -1,23 +1,29 @@
-FROM node:24-alpine AS css
+FROM node:24-bookworm-slim AS css
 WORKDIR /src
-COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
-COPY .browserslistrc ./
-COPY scripts/build-css.mjs scripts/
-COPY src/TerraScale.Dashboard/Styles src/TerraScale.Dashboard/Styles
-COPY src/TerraScale.Dashboard/Features src/TerraScale.Dashboard/Features
-RUN npm run build:css -- /assets/terrascale.css
+COPY package.json package-lock.json .browserslistrc ./
+RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts --no-audit --no-fund
+COPY scripts/build-css.mjs ./scripts/build-css.mjs
+COPY web/assets ./web/assets
+RUN npm run build:css
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM golang:1.27.1-bookworm AS build
 WORKDIR /src
-COPY . .
-COPY --from=css /assets/terrascale.css ./src/TerraScale.Dashboard/wwwroot/css/terrascale.css
-RUN dotnet publish src/TerraScale.Dashboard/TerraScale.Dashboard.csproj -c Release -o /app -p:SkipCssBuild=true
+ENV CGO_ENABLED=0 \
+    GOFLAGS=-mod=vendor \
+    GOTOOLCHAIN=local
+COPY go.mod go.sum ./
+COPY vendor ./vendor
+COPY cmd ./cmd
+COPY internal ./internal
+COPY web ./web
+COPY --from=css /src/web/static/css/terrascale.css ./web/static/css/terrascale.css
+RUN GOTOOLCHAIN=local go tool templ generate -path internal -include-version=false -include-timestamp=false
+RUN go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/dashboard ./cmd/dashboard
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
-WORKDIR /app
-COPY --from=build /app .
-ENV ASPNETCORE_URLS=http://+:8080
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /
+ENV DASHBOARD_ADDR=:8080 \
+    TS_DASHBOARD_PRODUCTION_DEMO=1
+COPY --from=build --chown=nonroot:nonroot /out/dashboard /dashboard
 EXPOSE 8080
-USER $APP_UID
-ENTRYPOINT ["dotnet", "TerraScale.Dashboard.dll"]
+ENTRYPOINT ["/dashboard"]

@@ -1,0 +1,215 @@
+package audit
+
+import (
+	"fmt"
+	"math"
+	"net/url"
+)
+
+templ auditView(data pageData) {
+	<main class="ts-page ts-audit-page">
+		<header class="ts-toolbar">
+			<div class="ts-audit-toolbar-title">
+				<div>
+					<p class="ts-eyebrow">Security and access</p>
+					<h1>Audit</h1>
+					<p class="ts-meta">Recent activity for the selected organization and project.</p>
+				</div>
+			</div>
+			<ts-menu>
+				<details class="ts-menu ts-menu-end">
+					<summary class="ts-btn ts-btn-secondary" aria-label="Export audit events">Export</summary>
+					<div class="ts-menu-panel" aria-label="Export formats">
+						<a class="ts-menu-item" href={ fmt.Sprintf("/audit/export?format=csv&range=%s&severity=%s&action=%s&search=%s", url.QueryEscape(data.Range), url.QueryEscape(data.Severity), url.QueryEscape(data.Action), url.QueryEscape(data.Search)) }>Export CSV</a>
+						<a class="ts-menu-item" href={ fmt.Sprintf("/audit/export?format=json&range=%s&severity=%s&action=%s&search=%s", url.QueryEscape(data.Range), url.QueryEscape(data.Severity), url.QueryEscape(data.Action), url.QueryEscape(data.Search)) }>Export JSON</a>
+					</div>
+				</details>
+			</ts-menu>
+		</header>
+		<section class="ts-section ts-audit-section" aria-labelledby="audit-overview-title">
+			<div class="ts-section-head">
+				<div>
+					<h2 class="ts-panel-title" id="audit-overview-title">Audit activity</h2>
+					<p class="ts-meta">Security events matching the current filters · retention is { fmt.Sprint(data.Retention) } days</p>
+				</div>
+			</div>
+			<dl class="ts-kpis" aria-label="Audit totals">
+				<div>
+					<dt>Matching events</dt>
+					<dd><span class="ts-kpi-value">{ fmt.Sprint(data.Filtered) }</span></dd>
+					<small class="ts-meta">Current filtered view</small>
+				</div>
+				<div>
+					<dt>High risk</dt>
+					<dd><span class="ts-kpi-value">{ fmt.Sprint(data.Critical) }</span></dd>
+					<small class="ts-meta">Critical events in this view</small>
+				</div>
+				<div>
+					<dt>Warnings</dt>
+					<dd><span class="ts-kpi-value">{ fmt.Sprint(data.Warn) }</span></dd>
+					<small class="ts-meta">Warning events in this view</small>
+				</div>
+				<div>
+					<dt>Informational</dt>
+					<dd><span class="ts-kpi-value">{ fmt.Sprint(data.Info) }</span></dd>
+					<small class="ts-meta">Informational events in this view</small>
+				</div>
+			</dl>
+		</section>
+		<form method="get" action="/audit" class="ts-filters ts-audit-filters" role="search" aria-label="Filter audit events">
+			<label class="ts-filter-field ts-audit-search-field" for="audit-search">Search
+				<input class="ts-input" id="audit-search" type="search" name="search" value={ data.Search } placeholder="Actor, action, resource, or source"/>
+			</label>
+			<label class="ts-filter-field" for="audit-action">Action
+				<select class="ts-select" id="audit-action" name="action">
+					for _, option := range data.ActionOptions {
+						<option value={ option } selected?={ option == data.Action }>
+							if option == "all" {
+								All actions
+							} else {
+								{ option }
+							}
+						</option>
+					}
+				</select>
+			</label>
+			<label class="ts-filter-field" for="audit-severity">Severity
+				<select class="ts-select" id="audit-severity" name="severity">
+					<option value="all" selected?={ data.Severity == "all" }>All severities</option>
+					<option value="info" selected?={ data.Severity == "info" }>Info</option>
+					<option value="warn" selected?={ data.Severity == "warn" }>Warning</option>
+					<option value="critical" selected?={ data.Severity == "critical" }>Critical</option>
+				</select>
+			</label>
+			<label class="ts-filter-field" for="audit-range">Range
+				<select class="ts-select" id="audit-range" name="range">
+					<option value="24h" selected?={ data.Range == "24h" }>Last 24 hours</option>
+					<option value="7d" selected?={ data.Range == "7d" }>Last 7 days</option>
+					<option value="30d" selected?={ data.Range == "30d" }>Last 30 days</option>
+					<option value="90d" selected?={ data.Range == "90d" }>Last 90 days</option>
+				</select>
+			</label>
+			<button class="ts-btn ts-btn-primary" type="submit">Apply filters</button>
+		</form>
+		<section class="ts-section ts-audit-section" aria-labelledby="recent-activity">
+			<div class="ts-section-head">
+				<div>
+					<h2 class="ts-panel-title" id="recent-activity">Recent activity</h2>
+					<p class="ts-meta">Events matching the current filters</p>
+				</div>
+			</div>
+			if len(data.Rows) > 0 {
+				<p class="ts-meta">Showing { fmt.Sprint(len(data.Rows)) } of { fmt.Sprint(data.Filtered) } events</p>
+				<p class="ts-meta ts-audit-table-hint">Scroll horizontally to see all event fields.</p>
+				<div class="ts-table-wrap ts-audit-table-wrap" tabindex="0" role="region" aria-label="Audit events table. Scroll horizontally to see all columns.">
+					<table class="ts-table ts-audit-table">
+						<caption class="ts-sr-only">Audit events matching the current filters</caption>
+						<thead><tr><th scope="col">Time</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Source</th><th scope="col">Severity</th><th scope="col">Outcome</th></tr></thead>
+						<tbody>
+							for _, item := range data.Rows {
+								<tr>
+									<td class="ts-table-mono ts-nowrap-meta"><time datetime={ item.Event.OccurredAt.Format("2006-01-02T15:04:05Z07:00") }>{ item.Event.OccurredAt.UTC().Format("Jan 2, 2006 15:04 UTC") }</time></td>
+									<td><span class="ts-stack-sm"><span class="ts-table-strong">{ item.Event.Actor }</span><span class="ts-meta">{ auditActorLabel(item.ActorType) }</span></span></td>
+									<td><span class="ts-audit-action"><span class="ts-table-strong">{ item.ActionLabel }</span><code class="ts-meta ts-mono" title="Raw action code">{ item.Event.Action }</code></span></td>
+									<td>{ auditTarget(item.Event.Target) }</td>
+									<td class="ts-table-mono ts-nowrap-meta">{ item.Event.Source }</td>
+									<td><span class={ auditSeverityClass(item.Severity) }>{ item.Severity }</span></td>
+									<td><span class={ auditOutcomeClass(item.Outcome) }>{ item.Outcome }</span></td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+				if data.PageCount > 1 {
+					<nav class="ts-pager" aria-label="Audit pages">
+						<span class="ts-meta">Page { fmt.Sprint(data.Page) } of { fmt.Sprint(data.PageCount) }</span>
+						<div class="ts-row ts-row-tight">
+							if data.HasPrevious {
+								<a class="ts-btn ts-btn-ghost" rel="prev" href={ auditPageHref(data, data.Previous) }>Previous</a>
+							}
+							if data.HasNext {
+								<a class="ts-btn ts-btn-ghost" rel="next" href={ auditPageHref(data, data.Next) }>Next</a>
+							}
+						</div>
+					</nav>
+				}
+			} else {
+				<div class="ts-empty-state">
+					<h3>No audit events match these filters</h3>
+					<p>{ fmt.Sprint(data.Filtered) } events match the current policy and filters. Try a wider time range or clear the search.</p>
+				</div>
+			}
+		</section>
+		<section class="ts-section ts-audit-section" aria-labelledby="audit-breakdown-title">
+			<div class="ts-section-head">
+				<div>
+					<h2 class="ts-panel-title" id="audit-breakdown-title">Severity breakdown</h2>
+					<p class="ts-meta">Events in the current filtered view</p>
+				</div>
+			</div>
+			<dl class="ts-stats ts-audit-breakdown">
+				<div>
+					<dt>Informational</dt>
+					<dd>{ fmt.Sprint(data.Info) }</dd>
+					<small class="ts-meta">{ fmt.Sprint(auditPercent(data.Info, data.Filtered)) }% · { fmt.Sprint(data.Info) } of { fmt.Sprint(data.Filtered) } filtered events</small>
+					<meter class="ts-audit-meter ts-audit-meter-info" min="0" max={ max(data.Filtered, 1) } value={ data.Info } aria-label={ fmt.Sprintf("Informational: %d of %d filtered events", data.Info, data.Filtered) }></meter>
+				</div>
+				<div>
+					<dt>Warning</dt>
+					<dd>{ fmt.Sprint(data.Warn) }</dd>
+					<small class="ts-meta">{ fmt.Sprint(auditPercent(data.Warn, data.Filtered)) }% · { fmt.Sprint(data.Warn) } of { fmt.Sprint(data.Filtered) } filtered events</small>
+					<meter class="ts-audit-meter ts-audit-meter-warning" min="0" max={ max(data.Filtered, 1) } value={ data.Warn } aria-label={ fmt.Sprintf("Warning: %d of %d filtered events", data.Warn, data.Filtered) }></meter>
+				</div>
+				<div>
+					<dt>Critical severity</dt>
+					<dd>{ fmt.Sprint(data.Critical) }</dd>
+					<small class="ts-meta">{ fmt.Sprint(auditPercent(data.Critical, data.Filtered)) }% · { fmt.Sprint(data.Critical) } of { fmt.Sprint(data.Filtered) } filtered events</small>
+					<meter class="ts-audit-meter ts-audit-meter-danger" min="0" max={ max(data.Filtered, 1) } value={ data.Critical } aria-label={ fmt.Sprintf("Critical: %d of %d filtered events", data.Critical, data.Filtered) }></meter>
+				</div>
+			</dl>
+		</section>
+	</main>
+}
+
+func auditPercent(count, total int) int {
+	if total <= 0 {
+		return 0
+	}
+	return int(math.Round(float64(count) * 100 / float64(total)))
+}
+
+func auditActorLabel(actorType string) string {
+	if actorType == "service" {
+		return "Service"
+	}
+	return "User"
+}
+
+func auditTarget(target string) string {
+	if target == "" {
+		return "Not reported"
+	}
+	return target
+}
+
+func auditSeverityClass(level string) string {
+	switch level {
+	case "critical":
+		return "ts-badge ts-badge-danger"
+	case "warn":
+		return "ts-badge ts-badge-warning"
+	default:
+		return "ts-badge ts-badge-info"
+	}
+}
+
+func auditOutcomeClass(outcome string) string {
+	if outcome == "failure" {
+		return "ts-badge ts-badge-danger"
+	}
+	return "ts-badge ts-badge-success"
+}
+
+func auditPageHref(data pageData, page int) string {
+	return fmt.Sprintf("/audit?page=%d&range=%s&severity=%s&action=%s&search=%s", page, url.QueryEscape(data.Range), url.QueryEscape(data.Severity), url.QueryEscape(data.Action), url.QueryEscape(data.Search))
+}

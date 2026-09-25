@@ -1,60 +1,37 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./support/test";
 import { registerAndOnboard } from "./support/journey";
 
-test("member creates another organization through the modal's three onboarding steps", async ({ page }) => {
-  // A cold preview plus the Stripe API round-trip needs more than the default.
-  test.setTimeout(120_000);
+test("demo billing upgrades a plan through the local simulator without contacting Stripe", async ({ page }) => {
   await registerAndOnboard(page, {
-    email: `e2e-neworg-${Date.now()}@example.test`,
-    password: "E2e-neworg-123!",
-    displayName: "E2E New Org",
+    email: `e2e-billing-${Date.now()}@example.test`,
+    password: "E2e-billing-123!",
+    displayName: "E2E Billing",
   });
 
-  // The organization page opens the guided flow in a modal instead of navigating.
-  await page.goto("/organization");
-  await page.locator('[data-open-dialog="create-organization"]').click();
-  const dialog = page.getByRole("dialog", { name: "Create organization" });
-  await expect(dialog).toBeVisible();
+  const billingPage = await page.goto("/billing");
+  expect(billingPage?.status()).toBe(200);
+  expect(new URL(page.url()).pathname).toBe("/billing");
+  await expect(page.getByRole("heading", { name: "Plans and billing" })).toBeVisible();
+  await expect(page.getByText("Demo billing")).toBeVisible();
 
-  // Step 1 — the onboarding organization screen. A new tenant is a paid
-  // Business organization, separate from the Personal allowance.
-  await expect(dialog.getByText("STEP 1 OF 3")).toBeVisible();
-  await dialog.locator("#newOrganizationName").fill("Nova Labs");
-  await dialog.getByRole("button", { name: "Create organization" }).click();
-  await page.waitForURL("**/organization?newOrganization=payment**");
+  const proPlan = page.locator("article").filter({ has: page.getByRole("heading", { name: "Pro", exact: true }) });
+  await proPlan.getByRole("button", { name: "Choose monthly" }).click();
+  await page.waitForURL(/\/checkout\/cs_local_/);
 
-  // Step 2 — the onboarding payment screen (plan cards) with no bypass.
-  await expect(dialog.getByText("STEP 2 OF 3")).toBeVisible();
-  await expect(dialog.getByText("Register a payment method")).toBeVisible();
-  // Picking a plan card updates the posted plan: billing follows the card.
-  await dialog.locator(".ts-onboarding-plan-business").click();
-  await expect(dialog.locator('input[name="plan"]')).toHaveValue("business");
-  await dialog.getByRole("button", { name: "Continue to secure payment setup" }).click();
+  await expect(page.getByRole("heading", { name: "Local payment setup" })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Demo simulator only");
+  await expect(page.getByRole("status")).toContainText("No card details are collected");
+  await expect(page.getByRole("button", { name: "Confirm local demo setup" })).toBeVisible();
 
-  // The provider differs per target: the CI webServer runs the local payment
-  // provider page this suite can complete, while PR previews run the Stripe
-  // sandbox and hand off to Stripe's hosted card form, which an automated test
-  // cannot drive. Assert the sandbox hand-off there and stop: the
-  // local-provider run covers the rest of the wizard.
-  await page.waitForURL(
-    url => url.pathname.startsWith("/checkout/") || url.hostname.endsWith("stripe.com") || url.pathname === "/organization",
-    { timeout: 60_000 },
-  );
-  if (new URL(page.url()).hostname.endsWith("stripe.com")) {
-    test.skip(true, "Stripe sandbox hands off to Stripe's hosted card form; the local-provider run covers the wizard.");
-  }
-  expect(new URL(page.url()).pathname, "Stripe sandbox checkout did not start").not.toBe("/organization");
+  await page.getByRole("button", { name: "Confirm local demo setup" }).click();
+  await page.waitForURL((url) => url.pathname === "/billing" && url.searchParams.get("payment") === "success");
+  const currentPlan = page.locator('section[aria-labelledby="billing-summary-title"]');
+  await expect(currentPlan).toContainText("Pro");
+  await expect(currentPlan).toContainText("Active");
+  await expect(currentPlan).toContainText("On file");
 
-  // Secure payment setup lands on the local provider's checkout page.
-  await page.getByRole("button", { name: /Use local test payment method/ }).click();
-  await page.waitForURL("**/organization?newOrganization=project&payment=success**");
-
-  // Step 3 — the onboarding project screen, naming the new tenant's first project.
-  await expect(dialog.getByText("STEP 3 OF 3")).toBeVisible();
-  await dialog.locator("#projectName").fill("nova-prod");
-  await dialog.getByRole("button", { name: "Create project and open Dashboard" }).click();
-  await page.waitForURL((url) => url.pathname === "/organization" && url.search === "");
-
-  await expect(page.locator("#activeOrganization option:checked")).toHaveText("Nova Labs (Business)");
-  await expect(page.getByRole("cell", { name: /nova-prod/ }).first()).toBeVisible();
+  await page.getByRole("link", { name: "Manage billing" }).click();
+  await expect(page.getByRole("heading", { name: "Local billing portal" })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Demo simulator only");
+  await expect(page.getByRole("status")).toContainText("does not collect payment details or contact Stripe");
 });

@@ -1,0 +1,566 @@
+package admin
+
+import "net/url"
+import "strconv"
+
+import "terrascale.tech/dashboard/internal/core"
+
+func adminPlatformAdminCount(rows []userRow) int {
+	count := 0
+	for _, row := range rows {
+		if row.PlatformAdmin {
+			count++
+		}
+	}
+	return count
+}
+
+func adminOrganizationOwnerCount(rows []organizationRow) int {
+	count := 0
+	for _, row := range rows {
+		if row.OwnerEmail != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func adminProjectDatabaseCount(rows []projectRow) int {
+	count := 0
+	for _, row := range rows {
+		count += row.DatabaseCount
+	}
+	return count
+}
+
+func adminDatabaseRegionCount(rows []databaseRow) int {
+	count := 0
+	for _, row := range rows {
+		if row.Region != "Not recorded" {
+			count++
+		}
+	}
+	return count
+}
+
+func adminObservedProjectCount(rows []estateRow) int {
+	count := 0
+	for _, row := range rows {
+		count += row.ObservedProjects
+	}
+	return count
+}
+
+func adminObservedDatabaseCount(rows []estateRow) int {
+	count := 0
+	for _, row := range rows {
+		count += row.ObservedDatabases
+	}
+	return count
+}
+
+func adminVisiblePlanCount(plans []core.Plan) int {
+	count := 0
+	for _, plan := range plans {
+		if plan.Visible {
+			count++
+		}
+	}
+	return count
+}
+
+templ adminView(data pageData, csrfToken string) {
+	<main class="ts-page ts-admin-root">
+		<header class="ts-admin-page-head">
+			<h1 class="ts-admin-title">{ data.Title }</h1>
+			<p class="ts-admin-subtitle">
+				if data.Section == "users" {
+					Review registered accounts and platform administrator access in the demo store.
+				} else if data.Section == "organizations" {
+					View organizations and their owner and project relationships.
+				} else if data.Section == "projects" {
+					Review projects, their recorded regions, and linked databases.
+				} else if data.Section == "databases" {
+					Review database inventory from the demo store. Version details are unavailable here.
+				} else if data.Section == "estate" {
+					Review region placement recorded on projects and databases. Provider availability is not reported.
+				} else if data.Section == "usage" {
+					View in-memory inventory totals. Provider-metered usage is unavailable.
+				} else {
+					Create and manage pricing plans stored in the dashboard demo.
+				}
+			</p>
+		</header>
+		if data.Notice != "" {
+			<p role="status" class="ts-alert ts-alert-success">{ data.Notice }</p>
+		}
+		if data.Error != "" {
+			<p role="alert" class="ts-alert ts-alert-danger">{ data.Error }</p>
+		}
+		<div class="ts-toolbar ts-admin-tabs-toolbar">
+			<nav class="ts-tabs" aria-label="Administration sections">
+				if data.Section == "users" {
+					<a class="ts-tab" href="/admin/users" aria-current="page">Users</a>
+				} else {
+					<a class="ts-tab" href="/admin/users">Users</a>
+				}
+				if data.Section == "organizations" {
+					<a class="ts-tab" href="/admin/organizations" aria-current="page">Organizations</a>
+				} else {
+					<a class="ts-tab" href="/admin/organizations">Organizations</a>
+				}
+				if data.Section == "projects" {
+					<a class="ts-tab" href="/admin/projects" aria-current="page">Projects</a>
+				} else {
+					<a class="ts-tab" href="/admin/projects">Projects</a>
+				}
+				if data.Section == "databases" {
+					<a class="ts-tab" href="/admin/databases" aria-current="page">Databases</a>
+				} else {
+					<a class="ts-tab" href="/admin/databases">Databases</a>
+				}
+				if data.Section == "estate" {
+					<a class="ts-tab" href="/admin/estate" aria-current="page">Estate</a>
+				} else {
+					<a class="ts-tab" href="/admin/estate">Estate</a>
+				}
+				if data.Section == "usage" {
+					<a class="ts-tab" href="/admin/usage" aria-current="page">Usage</a>
+				} else {
+					<a class="ts-tab" href="/admin/usage">Usage</a>
+				}
+				if data.Section == "plans" {
+					<a class="ts-tab" href="/admin/plans" aria-current="page">Plans</a>
+				} else {
+					<a class="ts-tab" href="/admin/plans">Plans</a>
+				}
+			</nav>
+		</div>
+		if data.Section != "usage" && data.Section != "estate" {
+			<div class="ts-toolbar ts-admin-toolbar">
+				<form class="ts-filters ts-admin-filter-form" method="get" action={ "/admin/" + data.Section } role="search">
+					<label class="ts-sr-only" for="admin-query">Filter { data.Title }</label>
+					<input class="ts-input ts-admin-filter-input" id="admin-query" name="q" type="search" maxlength="200" value={ data.Query } placeholder={ "Filter " + data.Title }/>
+					<button class="ts-btn ts-btn-secondary" type="submit">Filter</button>
+					if data.Query != "" {
+						<a class="ts-btn ts-btn-ghost" href={ "/admin/" + data.Section }>Clear</a>
+					}
+				</form>
+			</div>
+		}
+		if data.Section == "users" {
+			<dl class="ts-kpis ts-admin-kpis" aria-label="Matching user summary">
+				<div><dt>Matching accounts</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(len(data.Users)) }</span></dd><small class="ts-meta">Accounts shown for this filter</small></div>
+				<div><dt>Platform administrators</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(adminPlatformAdminCount(data.Users)) }</span></dd><small class="ts-meta">Among the matching accounts</small></div>
+			</dl>
+			<section class="ts-admin-section" aria-labelledby="admin-users-title">
+				<div class="ts-section-head">
+					<div><h2 class="ts-panel-title" id="admin-users-title">Registered accounts</h2><p class="ts-meta">Account details and platform access in the in-memory demo.</p></div>
+				</div>
+				if len(data.Users) > 0 {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<caption class="ts-sr-only">Registered accounts matching the current filter</caption>
+							<thead><tr><th scope="col">User</th><th scope="col">Account</th><th scope="col">Organizations</th><th scope="col">Projects</th><th scope="col">Created</th><th scope="col">Management</th></tr></thead>
+							<tbody>
+								for _, row := range data.Users {
+									<tr>
+										<td><strong class="ts-table-strong">{ row.Name }</strong><br/>{ row.Email }<br/>
+											if row.PlatformAdmin {
+											<span class="ts-badge ts-badge-warning">Platform administrator</span>
+										} else {
+											<span class="ts-badge ts-badge-neutral">Standard account</span>
+										}
+										</td>
+										<td><code class="ts-admin-cell-id">{ row.AccountID }</code><br/><span class="ts-meta">User ID</span><br/><code class="ts-admin-cell-id">{ row.UserID }</code></td>
+										<td>{ strconv.Itoa(row.OrganizationCount) }</td><td>{ strconv.Itoa(row.ProjectCount) }</td><td>{ row.CreatedAt }</td>
+										<td>
+											<form class="ts-admin-action-form" method="post" action={ "/api/v1/admin/users/" + row.AccountID }>
+												<input type="hidden" name="_csrf" value={ csrfToken }/>
+												<label><span>Name</span><input class="ts-input" name="name" maxlength="128" value={ row.Name } required/></label>
+												<label><span>Access</span><select class="ts-input" name="platformAdmin">
+													<option value="false" selected?={ !row.PlatformAdmin }>Standard account</option>
+													<option value="true" selected?={ row.PlatformAdmin }>Platform administrator</option>
+												</select></label>
+												<button class="ts-btn ts-btn-primary" type="submit">Save user</button>
+											</form>
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<div class="ts-empty" role="status"><span class="ts-empty-title">No matching accounts</span><span class="ts-meta">Try another name, email address, or user ID.</span></div>
+				}
+			</section>
+		} else if data.Section == "organizations" {
+			<dl class="ts-kpis ts-admin-kpis" aria-label="Matching organization summary">
+				<div><dt>Matching organizations</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(len(data.Organizations)) }</span></dd><small class="ts-meta">Organization records shown</small></div>
+				<div><dt>With owner accounts</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(adminOrganizationOwnerCount(data.Organizations)) }</span></dd><small class="ts-meta">Owner email is recorded</small></div>
+			</dl>
+			<section class="ts-admin-section" aria-labelledby="admin-organizations-title">
+				<div class="ts-section-head">
+					<div><h2 class="ts-panel-title" id="admin-organizations-title">Organizations</h2><p class="ts-meta">Owner, project, status, and creation details for matching organizations.</p></div>
+				</div>
+				if len(data.Organizations) > 0 {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<caption class="ts-sr-only">Organizations matching the current filter</caption>
+							<thead><tr><th scope="col">Organization</th><th scope="col">Owner</th><th scope="col">Status</th><th scope="col">Projects</th><th scope="col">Created</th><th scope="col">Management</th></tr></thead>
+							<tbody>
+								for _, row := range data.Organizations {
+									<tr>
+										<td><strong class="ts-table-strong">{ row.Name }</strong><br/><code class="ts-admin-cell-id">{ row.ID }</code></td>
+										<td>{ adminFallback(row.OwnerEmail, "Owner account unavailable") }</td>
+										<td><span class="ts-badge ts-badge-neutral">{ adminFallback(row.Status, "Unknown") }</span></td>
+										<td>{ strconv.Itoa(row.ProjectCount) }</td><td>{ row.CreatedAt }</td>
+										<td>
+											<form class="ts-admin-action-form" method="post" action={ "/api/v1/admin/organizations/" + row.AccountID + "/" + row.ID }>
+												<input type="hidden" name="_csrf" value={ csrfToken }/>
+												<label><span>Name</span><input class="ts-input" name="name" maxlength="128" value={ row.Name } required/></label>
+												<button class="ts-btn ts-btn-primary" type="submit">Save organization</button>
+											</form>
+											<a class="ts-btn ts-btn-ghost" href={ "/admin/projects?q=" + url.QueryEscape(row.ID) }>View projects</a>
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<div class="ts-empty" role="status"><span class="ts-empty-title">No matching organizations</span><span class="ts-meta">Try another organization, owner email, or status.</span></div>
+				}
+			</section>
+		} else if data.Section == "projects" {
+			<dl class="ts-kpis ts-admin-kpis" aria-label="Matching project summary">
+				<div><dt>Matching projects</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(len(data.Projects)) }</span></dd><small class="ts-meta">Project records shown</small></div>
+				<div><dt>Databases in matching projects</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(adminProjectDatabaseCount(data.Projects)) }</span></dd><small class="ts-meta">Linked database records</small></div>
+			</dl>
+			<section class="ts-admin-section" aria-labelledby="admin-projects-title">
+				<div class="ts-section-head">
+					<div><h2 class="ts-panel-title" id="admin-projects-title">Projects</h2><p class="ts-meta">Organization, placement, status, and database counts for matching projects.</p></div>
+				</div>
+				if len(data.Projects) > 0 {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<caption class="ts-sr-only">Projects matching the current filter</caption>
+							<thead><tr><th scope="col">Project</th><th scope="col">Organization</th><th scope="col">Region</th><th scope="col">Status</th><th scope="col">Databases</th><th scope="col">Created</th><th scope="col">Management</th></tr></thead>
+							<tbody>
+								for _, row := range data.Projects {
+									<tr>
+										<td><strong class="ts-table-strong">{ row.Name }</strong><br/><code class="ts-admin-cell-id">{ row.ID }</code></td>
+										<td>{ row.Organization }</td><td>{ adminFallback(row.Region, "Not recorded") }</td>
+										<td><span class="ts-badge ts-badge-neutral">{ adminFallback(row.Status, "Unknown") }</span></td>
+										<td>{ strconv.Itoa(row.DatabaseCount) }</td><td>{ row.CreatedAt }</td>
+										<td>
+											<form class="ts-admin-action-form" method="post" action={ "/api/v1/admin/projects/" + row.AccountID + "/" + row.OrganizationID + "/" + row.ID }>
+												<input type="hidden" name="_csrf" value={ csrfToken }/>
+												<label><span>Name</span><input class="ts-input" name="name" maxlength="128" value={ row.Name } required/></label>
+												<button class="ts-btn ts-btn-primary" type="submit">Save project</button>
+											</form>
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<div class="ts-empty" role="status"><span class="ts-empty-title">No matching projects</span><span class="ts-meta">Try another project, organization, region, or status.</span></div>
+				}
+			</section>
+		} else if data.Section == "databases" {
+			<dl class="ts-kpis ts-admin-kpis" aria-label="Matching database summary">
+				<div><dt>Matching databases</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(len(data.Databases)) }</span></dd><small class="ts-meta">Database records shown</small></div>
+				<div><dt>With recorded region</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(adminDatabaseRegionCount(data.Databases)) }</span></dd><small class="ts-meta">Region value is present in the store</small></div>
+			</dl>
+			<section class="ts-admin-section" aria-labelledby="admin-databases-title">
+				<div class="ts-section-head">
+					<div><h2 class="ts-panel-title" id="admin-databases-title">Database inventory</h2><p class="ts-meta">Region and status are recorded values. Version details are not represented by this demo.</p></div>
+				</div>
+				if len(data.Databases) > 0 {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<caption class="ts-sr-only">Databases matching the current filter</caption>
+							<thead><tr><th scope="col">Database</th><th scope="col">Organization</th><th scope="col">Project</th><th scope="col">Region</th><th scope="col">Status</th><th scope="col">Created</th></tr></thead>
+							<tbody>
+								for _, row := range data.Databases {
+									<tr>
+										<td><strong class="ts-table-strong">{ row.Name }</strong><br/><code class="ts-admin-cell-id">{ row.ID }</code></td>
+										<td>{ row.Organization }</td><td>{ row.Project }</td><td>{ row.Region }</td>
+										<td><span class="ts-badge ts-badge-neutral">{ row.Status }</span></td><td>{ row.CreatedAt }</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<div class="ts-empty" role="status"><span class="ts-empty-title">No matching databases</span><span class="ts-meta">Try another database, project, organization, region, or status.</span></div>
+				}
+			</section>
+		} else if data.Section == "estate" {
+			<dl class="ts-kpis ts-admin-kpis" aria-label="Estate inventory summary">
+				<div><dt>Demo region codes</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(data.EstateRegionCount) }</span></dd><small class="ts-meta">Supported local codes; availability is not reported</small></div>
+				<div><dt>Database records</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(data.EstateDatabaseCount) }</span></dd><small class="ts-meta">Unique databases in the dashboard store</small></div>
+				<div><dt>Recorded requests</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(data.EstateActionCount) }</span></dd><small class="ts-meta">Product-action audit entries in this process</small></div>
+			</dl>
+			<div class="ts-toolbar ts-admin-tabs-toolbar">
+				<nav class="ts-tabs" aria-label="Estate sections">
+					if data.EstateTab == "regions" {
+						<a class="ts-tab" href="/admin/estate?tab=regions" aria-current="page">Regions</a>
+					} else {
+						<a class="ts-tab" href="/admin/estate?tab=regions">Regions</a>
+					}
+					if data.EstateTab == "hosts" {
+						<a class="ts-tab" href="/admin/estate?tab=hosts" aria-current="page">Hosts</a>
+					} else {
+						<a class="ts-tab" href="/admin/estate?tab=hosts">Hosts</a>
+					}
+					if data.EstateTab == "operations" {
+						<a class="ts-tab" href="/admin/estate?tab=operations" aria-current="page">Operations</a>
+					} else {
+						<a class="ts-tab" href="/admin/estate?tab=operations">Operations</a>
+					}
+				</nav>
+			</div>
+			if data.EstateTab == "regions" {
+				<section class="ts-admin-section" aria-labelledby="admin-estate-regions-title">
+					<div class="ts-section-head">
+						<div><h2 class="ts-panel-title" id="admin-estate-regions-title">Regions</h2><p class="ts-meta">Recorded database and project placements across the three supported demo region codes. Provider availability is not reported by this local store.</p></div>
+					</div>
+					if len(data.Regions) > 0 {
+						<div class="ts-table-wrap">
+							<table class="ts-table">
+								<caption class="ts-sr-only">Database and project placements recorded for demo region codes</caption>
+								<thead><tr><th scope="col">Region</th><th scope="col">Project placements</th><th scope="col">Database records</th><th scope="col">Provider availability</th></tr></thead>
+								<tbody>
+									for _, row := range data.Regions {
+										<tr>
+											<td><strong class="ts-table-strong">{ adminFallback(row.Location, row.Region) }</strong><br/><code class="ts-admin-cell-id">{ row.Region }</code></td>
+											<td>{ strconv.Itoa(row.ObservedProjects) }</td><td>{ strconv.Itoa(row.ObservedDatabases) }</td>
+											<td><span class="ts-badge ts-badge-neutral">Not reported</span></td>
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					} else {
+						<div class="ts-empty" role="status"><span class="ts-empty-title">No recorded region matches this filter</span><span class="ts-meta">Clear the filter to see all supported demo codes.</span></div>
+					}
+				</section>
+			} else if data.EstateTab == "hosts" {
+				<section class="ts-admin-section" aria-labelledby="admin-estate-hosts-title">
+					<div class="ts-section-head">
+						<div><h2 class="ts-panel-title" id="admin-estate-hosts-title">Hosts</h2><p class="ts-meta">Provider host inventory and host health are unavailable from this local dashboard store.</p></div>
+					</div>
+					<p role="status" class="ts-alert ts-alert-warning">The rows below are recorded database records and placement values. They are not provider hosts or host telemetry.</p>
+					<form class="ts-filters ts-admin-filter-form" method="get" action="/admin/estate" role="search">
+						<input type="hidden" name="tab" value="hosts"/>
+						<label class="ts-sr-only" for="admin-estate-host-query">Filter recorded database records</label>
+						<input class="ts-input ts-admin-filter-input" id="admin-estate-host-query" name="q" type="search" maxlength="200" value={ data.Query } placeholder="Filter database records"/>
+						<button class="ts-btn ts-btn-secondary" type="submit">Filter</button>
+						if data.Query != "" {
+							<a class="ts-btn ts-btn-ghost" href="/admin/estate?tab=hosts">Clear</a>
+						}
+					</form>
+					if len(data.EstateDatabases) > 0 {
+						<div class="ts-table-wrap">
+							<table class="ts-table">
+								<caption class="ts-sr-only">Dashboard database records and recorded placements</caption>
+								<thead><tr><th scope="col">Database record</th><th scope="col">Recorded region</th><th scope="col">Recorded status</th><th scope="col">Created</th></tr></thead>
+								<tbody>
+									for _, row := range data.EstateDatabases {
+										<tr>
+											<td><strong class="ts-table-strong">{ row.Name }</strong><br/><code class="ts-admin-cell-id">{ row.ID }</code></td>
+											<td>{ row.Region }</td><td><span class="ts-badge ts-badge-neutral">{ row.Status }</span></td><td>{ row.CreatedAt }</td>
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					} else {
+						<div class="ts-empty" role="status"><span class="ts-empty-title">No matching database records</span><span class="ts-meta">Try another database, project, organization, region, or status.</span></div>
+					}
+				</section>
+			} else {
+				<div class="ts-admin-dashboard-root">
+					<header class="ts-admin-dashboard-intro">
+						<div class="ts-section-head">
+							<div><h2 class="ts-panel-title" id="estate-operations-title">Operations</h2><p class="ts-meta">Demo product-action requests are recorded for review. This page has no provider operation or live estate telemetry contract.</p></div>
+						</div>
+					</header>
+					<section class="ts-admin-section" aria-labelledby="admin-estate-actions-title">
+						<div class="ts-section-head">
+							<div><h3 class="ts-panel-title" id="admin-estate-actions-title">Product actions</h3><p class="ts-meta">Each request records the administrator, action, target, reason, and time.</p></div>
+						</div>
+						<p role="status" class="ts-alert ts-alert-warning">Record only: this demo does not change infrastructure, billing, tenant state, or access.</p>
+						<form class="ts-admin-action-form ts-admin-estate-action-form" method="post" action="/api/v1/admin/estate/action">
+							<input type="hidden" name="_csrf" value={ csrfToken }/>
+							<label for="admin-estate-action">Action</label>
+							<select class="ts-input" id="admin-estate-action" name="action" required>
+								<option value="pause">Pause database</option>
+								<option value="resume">Resume database</option>
+								<option value="guard">Set guard</option>
+								<option value="spendCap">Set spend cap</option>
+								<option value="trial">Adjust trial</option>
+								<option value="refund">Issue refund</option>
+								<option value="reaperExemption">Set reaper exemption</option>
+								<option value="flag">Set feature flag</option>
+								<option value="viewAs">View as tenant</option>
+							</select>
+							<label for="admin-estate-target">Target</label>
+							<input class="ts-input" id="admin-estate-target" name="targetId" placeholder="Tenant, database, or organization ID" required/>
+							<label for="admin-estate-reason">Reason</label>
+							<textarea class="ts-input" id="admin-estate-reason" name="reason" rows="3" minlength="3" maxlength="1000" required></textarea>
+							<button type="submit" class="ts-btn ts-btn-primary">Record action</button>
+						</form>
+						<p class="ts-meta" aria-live="polite">Accepted requests appear in this demo's in-memory audit log.</p>
+					</section>
+					<section class="ts-admin-section" aria-labelledby="admin-estate-action-log-title">
+						<div class="ts-section-head">
+							<div><h3 class="ts-panel-title" id="admin-estate-action-log-title">Recorded actions</h3><p class="ts-meta">Platform-wide entries for this in-memory demo.</p></div>
+						</div>
+						if len(data.EstateActions) > 0 {
+							<div class="ts-table-wrap">
+								<table class="ts-table">
+									<caption class="ts-sr-only">Recorded platform administrator estate actions, newest first</caption>
+									<thead><tr><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Reason</th><th scope="col">Actor user ID</th><th scope="col">Recorded</th></tr></thead>
+									<tbody>
+										for _, row := range data.EstateActions {
+											<tr>
+												<td>{ row.Action }</td>
+												<td><code class="ts-admin-cell-id">{ row.Target }</code></td>
+												<td>{ row.Reason }</td>
+												<td><code class="ts-admin-cell-id">{ row.ActorUserID }</code></td>
+												<td><time datetime={ row.RecordedAt.Format("2006-01-02T15:04:05Z07:00") }>{ formatTime(row.RecordedAt) }</time></td>
+											</tr>
+										}
+									</tbody>
+								</table>
+							</div>
+						} else {
+							<div class="ts-empty" role="status"><span class="ts-empty-title">No actions recorded</span><span class="ts-meta">Submitted product actions will appear here with their audit details.</span></div>
+						}
+					</section>
+				</div>
+			}
+		} else if data.Section == "usage" {
+			<dl class="ts-kpis ts-admin-kpis" aria-label="In-memory inventory totals">
+				<div><dt>Accounts</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(data.Inventory.Accounts) }</span></dd><small class="ts-meta">Registered demo accounts</small></div>
+				<div><dt>Organizations</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(data.Inventory.Organizations) }</span></dd><small class="ts-meta">Unique organization records</small></div>
+				<div><dt>Projects</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(data.Inventory.Projects) }</span></dd><small class="ts-meta">Unique project records</small></div>
+				<div><dt>Databases</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(data.Inventory.Databases) }</span></dd><small class="ts-meta">Unique database records</small></div>
+			</dl>
+			<section class="ts-admin-section" aria-labelledby="admin-usage-title">
+				<div class="ts-section-head">
+					<div><h2 class="ts-panel-title" id="admin-usage-title">Demo inventory</h2><p class="ts-meta">These totals describe records in the dashboard's in-memory store.</p></div>
+				</div>
+				<p role="status" class="ts-alert ts-alert-warning">Live request, storage, and provider usage metrics are not available in this demo.</p>
+			</section>
+		} else {
+			<dl class="ts-kpis ts-admin-kpis" aria-label="Matching plan summary">
+				<div><dt>Matching plans</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(len(data.Plans)) }</span></dd><small class="ts-meta">Plan records shown</small></div>
+				<div><dt>Visible plans shown</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(adminVisiblePlanCount(data.Plans)) }</span></dd><small class="ts-meta">Among the matching plans</small></div>
+			</dl>
+			<section class="ts-admin-section" aria-labelledby="admin-plans-title">
+				<div class="ts-section-head">
+					<div><h2 class="ts-panel-title" id="admin-plans-title">Plan catalog</h2><p class="ts-meta">Current pricing plan values from the demo store. Amounts are displayed in cents.</p></div>
+				</div>
+				if len(data.Plans) > 0 {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<caption class="ts-sr-only">Pricing plans matching the current filter</caption>
+							<thead><tr><th scope="col">Plan</th><th scope="col">Monthly price</th><th scope="col">Annual price</th><th scope="col">Trial</th><th scope="col">Storage</th><th scope="col">Monthly requests</th><th scope="col">Visibility</th><th scope="col">Actions</th></tr></thead>
+							<tbody>
+								for _, plan := range data.Plans {
+									<tr>
+										<td><strong class="ts-table-strong">{ plan.Name }</strong><br/><code class="ts-admin-cell-id">{ plan.Key }</code><br/><span class="ts-meta">Plan ID</span> <code class="ts-admin-cell-id">{ plan.ID }</code></td>
+										<td>{ strconv.FormatInt(plan.PriceCents, 10) } cents</td><td>{ strconv.FormatInt(plan.AnnualPriceCents, 10) } cents</td>
+										<td>{ strconv.Itoa(plan.TrialDays) } days</td><td>{ strconv.FormatInt(plan.StorageMiB, 10) } MiB</td><td>{ strconv.FormatInt(plan.MonthlyRequests, 10) }</td>
+										<td>
+											if plan.Visible {
+												<span class="ts-badge ts-badge-success">Visible</span>
+											} else {
+												<span class="ts-badge ts-badge-neutral">Hidden</span>
+											}
+										</td>
+										<td>
+											<div class="ts-row">
+												<form method="post" action={ "/api/v1/admin/plans/" + plan.ID + "/visibility" }>
+													<input type="hidden" name="_csrf" value={ csrfToken }/><input type="hidden" name="visible" value={ planVisibilityValue(plan.Visible) }/>
+													<button class="ts-btn ts-btn-secondary" type="submit">{ planVisibilityLabel(plan.Visible) }</button>
+												</form>
+												<form method="post" action={ "/api/v1/admin/plans/" + plan.ID + "/delete" }>
+													<input type="hidden" name="_csrf" value={ csrfToken }/>
+													<button class="ts-btn ts-btn-danger" type="submit">Delete plan</button>
+												</form>
+											</div>
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<div class="ts-empty" role="status"><span class="ts-empty-title">No matching plans</span><span class="ts-meta">Try another plan name, key, or ID.</span></div>
+				}
+				<details class="ts-admin-plan-edit" aria-label="Create a pricing plan">
+					<summary>
+						<div><h3 class="ts-admin-edit-heading">Create a plan</h3><p class="ts-meta">Add a plan to the in-memory demo catalog.</p></div>
+						<span class="ts-admin-facts-chevron" aria-hidden="true">⌄</span>
+					</summary>
+					<div class="ts-admin-edit-list">
+						<form class="ts-admin-plan-form" method="post" action="/api/v1/admin/plans">
+							<input type="hidden" name="_csrf" value={ csrfToken }/>
+							<fieldset class="ts-admin-fieldset">
+								<legend class="ts-admin-legend">Plan details</legend>
+								<div class="ts-admin-plan-fields">
+									<div class="ts-field"><label class="ts-label" for="admin-plan-create-key">Key</label><input class="ts-input" id="admin-plan-create-key" name="key" maxlength="64" pattern="[a-z0-9][a-z0-9_-]*" required/></div>
+									<div class="ts-field"><label class="ts-label" for="admin-plan-create-name">Name</label><input class="ts-input" id="admin-plan-create-name" name="name" maxlength="128" required/></div>
+									<div class="ts-field"><label class="ts-label" for="admin-plan-create-price">Monthly price (cents)</label><input class="ts-input" id="admin-plan-create-price" name="priceCents" type="number" min="0" value="0" required/></div>
+									<div class="ts-field"><label class="ts-label" for="admin-plan-create-annual">Annual price (cents)</label><input class="ts-input" id="admin-plan-create-annual" name="annualPriceCents" type="number" min="0" value="0" required/></div>
+									<div class="ts-field"><label class="ts-label" for="admin-plan-create-trial">Trial days</label><input class="ts-input" id="admin-plan-create-trial" name="trialDays" type="number" min="0" value="0" required/></div>
+									<div class="ts-field"><label class="ts-label" for="admin-plan-create-storage">Storage (MiB)</label><input class="ts-input" id="admin-plan-create-storage" name="storageMiB" type="number" min="0" value="0" required/></div>
+									<div class="ts-field"><label class="ts-label" for="admin-plan-create-requests">Monthly requests</label><input class="ts-input" id="admin-plan-create-requests" name="monthlyRequests" type="number" min="0" value="0" required/></div>
+									<div class="ts-field"><label class="ts-label" for="admin-plan-create-visible">Visibility</label><select class="ts-input" id="admin-plan-create-visible" name="visible"><option value="true">Visible</option><option value="false">Hidden</option></select></div>
+								</div>
+							</fieldset>
+							<div class="ts-admin-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Create plan</button></div>
+						</form>
+					</div>
+				</details>
+				if len(data.Plans) > 0 {
+					<details class="ts-admin-plan-edit" aria-label="Edit pricing plans">
+						<summary>
+							<div><h3 class="ts-admin-edit-heading">Edit plans</h3><p class="ts-meta">Open a plan to update its limits, prices, or visibility.</p></div>
+							<span class="ts-admin-facts-chevron" aria-hidden="true">⌄</span>
+						</summary>
+						<div class="ts-admin-edit-list">
+							for _, plan := range data.Plans {
+								<form class="ts-admin-plan-form" method="post" action="/api/v1/admin/plans">
+									<input type="hidden" name="_csrf" value={ csrfToken }/><input type="hidden" name="planID" value={ plan.ID }/>
+									<fieldset class="ts-admin-fieldset">
+										<legend class="ts-admin-legend">Edit { plan.Name }</legend>
+										<div class="ts-admin-plan-fields">
+											<div class="ts-field"><label class="ts-label" for={ "admin-plan-" + plan.ID + "-key" }>Key</label><input class="ts-input" id={ "admin-plan-" + plan.ID + "-key" } name="key" maxlength="64" value={ plan.Key } pattern="[a-z0-9][a-z0-9_-]*" required readonly/></div>
+											<div class="ts-field"><label class="ts-label" for={ "admin-plan-" + plan.ID + "-name" }>Name</label><input class="ts-input" id={ "admin-plan-" + plan.ID + "-name" } name="name" maxlength="128" value={ plan.Name } required/></div>
+											<div class="ts-field"><label class="ts-label" for={ "admin-plan-" + plan.ID + "-price" }>Monthly price (cents)</label><input class="ts-input" id={ "admin-plan-" + plan.ID + "-price" } name="priceCents" type="number" min="0" value={ strconv.FormatInt(plan.PriceCents, 10) } required/></div>
+											<div class="ts-field"><label class="ts-label" for={ "admin-plan-" + plan.ID + "-annual" }>Annual price (cents)</label><input class="ts-input" id={ "admin-plan-" + plan.ID + "-annual" } name="annualPriceCents" type="number" min="0" value={ strconv.FormatInt(plan.AnnualPriceCents, 10) } required/></div>
+											<div class="ts-field"><label class="ts-label" for={ "admin-plan-" + plan.ID + "-trial" }>Trial days</label><input class="ts-input" id={ "admin-plan-" + plan.ID + "-trial" } name="trialDays" type="number" min="0" value={ strconv.Itoa(plan.TrialDays) } required/></div>
+											<div class="ts-field"><label class="ts-label" for={ "admin-plan-" + plan.ID + "-storage" }>Storage (MiB)</label><input class="ts-input" id={ "admin-plan-" + plan.ID + "-storage" } name="storageMiB" type="number" min="0" value={ strconv.FormatInt(plan.StorageMiB, 10) } required/></div>
+											<div class="ts-field"><label class="ts-label" for={ "admin-plan-" + plan.ID + "-requests" }>Monthly requests</label><input class="ts-input" id={ "admin-plan-" + plan.ID + "-requests" } name="monthlyRequests" type="number" min="0" value={ strconv.FormatInt(plan.MonthlyRequests, 10) } required/></div>
+											<div class="ts-field"><label class="ts-label" for={ "admin-plan-" + plan.ID + "-visible" }>Visibility</label><select class="ts-input" id={ "admin-plan-" + plan.ID + "-visible" } name="visible">
+												<option value="true" selected?={ plan.Visible }>Visible</option><option value="false" selected?={ !plan.Visible }>Hidden</option>
+											</select></div>
+										</div>
+									</fieldset>
+									<div class="ts-admin-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save plan</button></div>
+								</form>
+							}
+						</div>
+					</details>
+				}
+			</section>
+		}
+	</main>
+}

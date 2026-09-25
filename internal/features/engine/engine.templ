@@ -1,0 +1,93 @@
+package engine
+
+import (
+	"fmt"
+	"strconv"
+)
+
+templ engineContent(d pageData) {
+	<main class="ts-page">
+		<header class="ts-page-header">
+			<div><p class="ts-eyebrow">TerraBase</p><h1>Engine</h1><p>Live member health and the provider's available region catalog.</p></div>
+			if d.Configured {
+				<a class="ts-btn ts-btn-ghost" href="/engine">Refresh</a>
+			}
+		</header>
+		if !d.Configured {
+			<section class="ts-section" aria-labelledby="engine-config-title">
+				<h2 id="engine-config-title">Engine provider unavailable</h2>
+				<p role="status" class="ts-alert ts-alert-warning">{ d.ConfigMessage }</p>
+				<p>Connect the dashboard to the scoped ts-go provider before viewing live engine status.</p>
+			</section>
+		} else {
+			<section class="ts-section" aria-labelledby="engine-health-title">
+				<h2 id="engine-health-title">Member health</h2>
+				if d.Health != nil {
+					<dl>
+						<div><dt>Serving region</dt><dd>{ d.Health.Region }</dd></div>
+						<div><dt>Version</dt><dd>{ d.Health.Version }</dd></div>
+						<div>
+							<dt>Readiness</dt>
+							<dd>
+								if d.Health.Healthy {
+									Healthy
+								} else {
+									Unhealthy
+								}
+							</dd>
+						</div>
+					</dl>
+				} else {
+					<p role="status" class="ts-alert ts-alert-warning">{ d.HealthError }</p>
+				}
+			</section>
+			<section class="ts-section" aria-labelledby="engine-regions-title">
+				<div class="ts-section-head">
+					<div><h2 id="engine-regions-title">Region catalog</h2><p>Provider-advertised regions and member hosts.</p></div>
+					if d.CatalogError == "" {
+						<span class="ts-badge ts-badge-neutral">{ strconv.Itoa(d.RegionCount) } regions · { strconv.Itoa(d.HostCount) } hosts</span>
+					}
+				</div>
+				if d.CatalogError != "" {
+					<p role="status" class="ts-alert ts-alert-warning">{ d.CatalogError }</p>
+				} else if len(d.Regions) > 0 {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<thead><tr><th>Code</th><th>Name</th><th>Country</th><th>Coordinates</th><th>Availability</th></tr></thead>
+							<tbody>
+								for _, region := range d.Regions {
+									<tr>
+										<td><code>{ region.Code }</code></td>
+										<td>{ region.Name }</td>
+										<td>{ region.Country }</td>
+										<td>{ fmt.Sprintf("%.2f, %.2f", region.Latitude, region.Longitude) }</td>
+										<td>
+											if region.Available {
+												Available
+											} else {
+												Unavailable
+											}
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+					if d.PageCount > 1 {
+						<nav class="ts-pager" aria-label="Region catalog pages">
+							<span>Page { strconv.Itoa(d.Page) } of { strconv.Itoa(d.PageCount) }</span>
+							if d.HasPrevious {
+								<a href={ "/engine?page=" + strconv.Itoa(d.Previous) } rel="prev">Previous</a>
+							}
+							if d.HasNext {
+								<a href={ "/engine?page=" + strconv.Itoa(d.Next) } rel="next">Next</a>
+							}
+						</nav>
+					}
+				} else {
+					<p>The provider returned no available regions.</p>
+				}
+			</section>
+		}
+	</main>
+}

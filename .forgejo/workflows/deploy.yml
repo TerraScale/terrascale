@@ -2,22 +2,65 @@ name: deploy
 on:
   push:
     branches: [main]
+concurrency:
+  group: dashboard-production-deploy
+  cancel-in-progress: false
 jobs:
+  verify:
+    runs-on: terrascale-builder
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up pinned Go and Node.js toolchains
+        run: scripts/setup-ci-toolchains.sh
+      - name: Install dashboard JS dependencies
+        run: npm ci --no-audit --no-fund
+      # terrascale-builder already supplies the pinned, library-patched Chromium.
+      - name: Check generated Templ, lint, bundle, and run fast Go tests
+        run: make lint css test-fast build
+      - name: Check Chromium navigation in the runner
+        env:
+          CI: "1"
+          DEBUG: "pw:browser"
+        run: |
+          . scripts/prepare-ci-browser.sh || exit 1
+          node scripts/browser-preflight.mjs
+      - name: Run slow browser and SDK contract tests
+        env:
+          CI: "1"
+          DEBUG: "pw:browser"
+        run: |
+          . scripts/prepare-ci-browser.sh || exit 1
+          make test-slow
   deploy:
+    needs: verify
     runs-on: terrascale-builder
     steps:
       - uses: actions/checkout@v4
-      - name: Build CSS bundle
-        run: npm ci --no-audit --no-fund && npm run build:css
-      - name: Deploy production (single machine)
+      - name: Deploy production (one warm demo machine)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          # The in-memory demo backend must live in exactly one process:
-          # two machines each hold their own accounts and sessions, so a
-          # registration on one is invisible on the other (sign-in then fails
-          # with "Incorrect email or password" and onboarding bounces to
-          # /login). --ha=false skips spare machines and the explicit scale
-          # pins the app to one warm machine.
-          fly deploy --strategy immediate --ha=false
-          fly scale count 1 --yes
+          set -euo pipefail
+          fly config validate --strict -c fly.toml
+          fly deploy -c fly.toml --strategy immediate --ha=false
+          # The in-memory demo has process-local account and session state.
+          fly scale count 1 -a ts-dashboard-2 -c fly.toml --yes
+          machines_json=$(mktemp)
+          volumes_json=$(mktemp)
+          trap 'rm -f "$machines_json" "$volumes_json" "$machines_json.spares"' EXIT
+          fly machine list -a ts-dashboard-2 --json > "$machines_json"
+          fly volumes list -a ts-dashboard-2 --json > "$volumes_json"
+          node scripts/check-fly-deployment.mjs production "$machines_json" "$volumes_json"
+
+          # FUTURE, after account/session state is shared across Machines:
+          # Replace the active scale/count check block above with these steps.
+          # Fly Proxy can start existing stopped Machines on demand, but it
+          # cannot create Machines and auto_stop_machines="off" never scales down.
+          # fly scale count 3 -a ts-dashboard-2 -c fly.toml --yes
+          # fly machine list -a ts-dashboard-2 --json > "$machines_json"
+          # node scripts/check-fly-deployment.mjs production-spares "$machines_json" > "$machines_json.spares"
+          # while IFS= read -r machine_id; do fly machine stop "$machine_id" -a ts-dashboard-2; done < "$machines_json.spares"
+          # fly machine list -a ts-dashboard-2 --json > "$machines_json"
+          # fly volumes list -a ts-dashboard-2 --json > "$volumes_json"
+          # node scripts/check-fly-deployment.mjs production-three "$machines_json" "$volumes_json"

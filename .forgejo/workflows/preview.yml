@@ -9,81 +9,74 @@ jobs:
   preview:
     if: github.event.action != 'closed'
     runs-on: terrascale-builder
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: Build CSS bundle
-        run: npm ci --no-audit --no-fund && npm run build:css
+      - name: Set up pinned Go and Node.js toolchains
+        run: scripts/setup-ci-toolchains.sh
+      - name: Install dashboard JS dependencies
+        run: npm ci --no-audit --no-fund
+      # terrascale-builder already supplies the pinned, library-patched Chromium.
+      - name: Check generated Templ, lint, bundle, and run fast Go tests
+        run: make lint css test-fast build
       - name: Deploy PR preview
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
         run: |
+          set -euo pipefail
+          node scripts/check-fly-deployment.mjs preview-config fly.preview.toml
+          fly config validate --strict -c fly.preview.toml -a "$PR_APP"
           # One ephemeral single-machine app per PR; provision idempotently so a
           # partially-created app (cancelled run, transient API error) self-heals.
           # NB: match table rows, not fly's "shared and dedicated" footer line.
           fly apps create "$PR_APP" -o personal 2>/dev/null || true
           fly ips list -a "$PR_APP" | grep -q " v6 " || fly ips allocate-v6 -a "$PR_APP"
           fly ips list -a "$PR_APP" | grep -q "(shared)" || fly ips allocate-v4 -a "$PR_APP" --shared
+          # Seed the disposable in-memory preview with a fresh admin for this
+          # run. Keep the password in stdin and the runner env file, never argv.
+          ADMIN_EMAIL="e2e-admin-${GITHUB_RUN_ID}@example.test"
+          ADMIN_PASSWORD="$(node -p 'require("node:crypto").randomBytes(32).toString("hex")')"
+          printf '::add-mask::%s\n' "$ADMIN_PASSWORD"
+          {
+            printf 'DASHBOARD_E2E_ADMIN_EMAIL=%s\n' "$ADMIN_EMAIL"
+            printf 'DASHBOARD_E2E_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"
+          } >> "$GITHUB_ENV"
+          {
+            printf 'DASHBOARD_DEMO_ADMIN_EMAIL=%s\n' "$ADMIN_EMAIL"
+            printf 'DASHBOARD_DEMO_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"
+          } | fly secrets import --stage -a "$PR_APP"
           # The in-memory demo backend is process-local: two machines would
           # split accounts and sessions, so account creation would appear to
           # vanish between steps. --ha=false skips the spare machine and the
           # scale is mandatory (no best-effort fallback) so a preview can never
-          # silently run two stores.
+          # silently run two stores. Fly Proxy can start existing Machines but
+          # does not create them; the post-deploy check enforces this workflow's
+          # one-Machine cap (manual/API changes outside this workflow remain possible).
           fly deploy -a "$PR_APP" --config fly.preview.toml --strategy immediate --ha=false
           fly scale count 1 -a "$PR_APP" --yes
-      - name: Configure Stripe sandbox
+          machines_json=$(mktemp)
+          volumes_json=$(mktemp)
+          trap 'rm -f "$machines_json" "$volumes_json"' EXIT
+          fly machine list -a "$PR_APP" --json > "$machines_json"
+          fly volumes list -a "$PR_APP" --json > "$volumes_json"
+          node scripts/check-fly-deployment.mjs preview "$machines_json" "$volumes_json"
+      - name: Check Chromium navigation in the runner
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
-          STRIPE_SANDBOX_ENV: ${{ secrets.STRIPE_SANDBOX_ENV }}
+          CI: "1"
+          DEBUG: "pw:browser"
         run: |
-          # Optional: without the repo secret the preview deploys without
-          # Stripe and keeps the in-memory payment flow.
-          [ -n "$STRIPE_SANDBOX_ENV" ] || { echo 'STRIPE_SANDBOX_ENV not set — skipping Stripe setup.'; exit 0; }
-          ENV_FILE="$(mktemp)"
-          trap 'rm -f "$ENV_FILE"' EXIT
-          printf '%s\n' "$STRIPE_SANDBOX_ENV" > "$ENV_FILE"
-          set -a; . "$ENV_FILE"; set +a
-          : "${Payments__Stripe__SecretKey:?STRIPE_SANDBOX_ENV must define Payments__Stripe__SecretKey}"
-          # fly rejects empty secret values, so every id must be present.
-          for VAR in StarterMonthlyPriceId StarterAnnualPriceId ProMonthlyPriceId ProAnnualPriceId BusinessMonthlyPriceId BusinessAnnualPriceId; do
-            eval "VAL=\${Payments__Stripe__$VAR:-}"
-            [ -n "$VAL" ] || { echo "STRIPE_SANDBOX_ENV must define Payments__Stripe__$VAR" >&2; exit 1; }
-          done
-          HOOK_URL="https://$PR_APP.fly.dev/api/auth/stripe/webhook"
-          # The signing secret is write-only in Stripe's API — an endpoint
-          # created on an earlier push cannot be re-read — so drop every
-          # endpoint bound to this URL and mint a fresh one each run. That
-          # keeps the step idempotent and leaves no orphans behind.
-          for EP in $(curl -sS -u "$Payments__Stripe__SecretKey:" 'https://api.stripe.com/v1/webhook_endpoints?limit=100' \
-            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const r=JSON.parse(d);if(r.error)throw Error(r.error.message);for(const e of r.data)if(e.url===process.argv[1])console.log(e.id)})' "$HOOK_URL"); do
-            curl -sf -X DELETE -u "$Payments__Stripe__SecretKey:" "https://api.stripe.com/v1/webhook_endpoints/$EP" >/dev/null
-          done
-          WHSEC="$(curl -sf -u "$Payments__Stripe__SecretKey:" https://api.stripe.com/v1/webhook_endpoints \
-            -d "url=$HOOK_URL" \
-            -d 'enabled_events[]=checkout.session.completed' \
-            -d 'enabled_events[]=customer.subscription.created' \
-            -d 'enabled_events[]=customer.subscription.updated' \
-            -d 'enabled_events[]=customer.subscription.deleted' \
-            -d 'enabled_events[]=customer.subscription.trial_will_end' \
-            -d 'enabled_events[]=invoice.paid' \
-            -d 'enabled_events[]=invoice.payment_failed' \
-            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const s=JSON.parse(d).secret;if(!s){console.error("Stripe returned no signing secret");process.exit(1)}console.log(s)})')"
-          fly secrets set -a "$PR_APP" \
-            Payments__Stripe__Mode=test \
-            Payments__Stripe__SecretKey="$Payments__Stripe__SecretKey" \
-            Payments__Stripe__WebhookSecret="$WHSEC" \
-            Payments__Stripe__PublicOrigin="https://$PR_APP.fly.dev" \
-            Payments__Stripe__StarterMonthlyPriceId="$Payments__Stripe__StarterMonthlyPriceId" \
-            Payments__Stripe__StarterAnnualPriceId="$Payments__Stripe__StarterAnnualPriceId" \
-            Payments__Stripe__ProMonthlyPriceId="$Payments__Stripe__ProMonthlyPriceId" \
-            Payments__Stripe__ProAnnualPriceId="$Payments__Stripe__ProAnnualPriceId" \
-            Payments__Stripe__BusinessMonthlyPriceId="$Payments__Stripe__BusinessMonthlyPriceId" \
-            Payments__Stripe__BusinessAnnualPriceId="$Payments__Stripe__BusinessAnnualPriceId"
+          . scripts/prepare-ci-browser.sh || exit 1
+          node scripts/browser-preflight.mjs
       - name: Run browser E2E suite against the deployed preview
         env:
           PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
-        run: DASHBOARD_E2E_BASE_URL="https://$PR_APP.fly.dev" npx playwright test
+          DASHBOARD_E2E_BASE_URL: https://terra-scale-dashboard-pr-${{ github.event.number }}.fly.dev
+          CI: "1"
+          DEBUG: "pw:browser"
+        run: |
+          . scripts/prepare-ci-browser.sh || exit 1
+          make test-slow
       - name: Comment preview URL
         if: success()
         env:
@@ -116,18 +109,3 @@ jobs:
         run: |
           # Succeed iff the app is gone afterwards; a failed destroy must fail the job.
           fly apps destroy "$PR_APP" --yes || ! fly status -a "$PR_APP" >/dev/null 2>&1
-      - name: Delete PR Stripe webhook endpoint
-        env:
-          STRIPE_SANDBOX_ENV: ${{ secrets.STRIPE_SANDBOX_ENV }}
-          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
-        run: |
-          [ -n "$STRIPE_SANDBOX_ENV" ] || exit 0
-          ENV_FILE="$(mktemp)"
-          trap 'rm -f "$ENV_FILE"' EXIT
-          printf '%s\n' "$STRIPE_SANDBOX_ENV" > "$ENV_FILE"
-          set -a; . "$ENV_FILE"; set +a
-          HOOK_URL="https://$PR_APP.fly.dev/api/auth/stripe/webhook"
-          for EP in $(curl -sf -u "$Payments__Stripe__SecretKey:" 'https://api.stripe.com/v1/webhook_endpoints?limit=100' \
-            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{for(const e of JSON.parse(d).data)if(e.url===process.argv[1])console.log(e.id)})' "$HOOK_URL"); do
-            curl -sf -X DELETE -u "$Payments__Stripe__SecretKey:" "https://api.stripe.com/v1/webhook_endpoints/$EP" >/dev/null
-          done

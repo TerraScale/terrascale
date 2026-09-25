@@ -1,0 +1,112 @@
+/* Standalone account onboarding frame and progress rail. */
+
+.ts-onboarding-root {
+  min-height: 100vh;
+  min-height: 100svh;
+  padding: var(--ts-xl) var(--ts-lg);
+  background-color: var(--ts-canvas);
+  color: var(--ts-ink);
+}
+
+@media (min-width: 48rem) {
+  .ts-onboarding-root { padding: var(--ts-xxl) var(--ts-xl); }
+}
+
+.ts-onboarding-container {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ts-xl);
+  width: 100%;
+  max-width: 44rem;
+  margin-inline: auto;
+}
+
+.ts-onboarding-container-wide { max-width: 64rem; }
+
+.ts-onboarding-header {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+}
+
+.ts-onboarding-header .ts-brand-logo {
+  display: block;
+  width: auto;
+  height: 28px;
+}
+
+/* Progressbar values live on the accessible meta row; each segment's top
+   rule shows which steps are complete without relying on color alone. */
+.ts-onboarding-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-sm);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  letter-spacing: 0.08em;
+}
+
+.ts-onboarding-progress > span:last-child {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-onboarding-steps {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: var(--ts-sm);
+  margin: calc(-1 * var(--ts-lg)) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts-onboarding-step {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  min-width: 0;
+  padding-top: var(--ts-sm);
+  border-top: 2px solid var(--ts-line);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+}
+
+.ts-onboarding-step-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  font-size: var(--ts-fs-meta);
+  line-height: 1;
+}
+
+.ts-onboarding-step > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-onboarding-step-current {
+  border-color: var(--ts-accent);
+  color: var(--ts-ink);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-onboarding-step-complete { border-color: var(--ts-success); }
+.ts-onboarding-step-complete .ts-onboarding-step-icon { color: var(--ts-success); }
+
+.ts-onboarding-step-blocked {
+  border-color: var(--ts-danger);
+  color: var(--ts-danger);
+}
+
+.ts-onboarding-feedback { width: 100%; }
+
+@media (max-width: 24rem) {
+  .ts-onboarding-root { padding-inline: var(--ts-md); }
+  .ts-onboarding-steps { gap: var(--ts-xs); }
+  .ts-onboarding-step { gap: var(--ts-xs); font-size: var(--ts-fs-meta); }
+}

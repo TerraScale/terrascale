@@ -1,10 +1,10 @@
-// Bundles src/TerraScale.Dashboard/Styles/terrascale.css (and every partial it
-// @imports) into the single stylesheet the dashboard serves.
+// Bundles the dashboard's shared and feature styles into the one stylesheet
+// served from web/static/css/terrascale.css.
 //
-//   node scripts/build-css.mjs [output]   minified, default wwwroot/css/terrascale.css
-//   node scripts/build-css.mjs --dev      readable (no source map: dotnet watch reloads the
-//                                         whole page when a non-CSS asset such as a .map changes)
-//   node scripts/build-css.mjs --watch    --dev, rebuilt on every Styles/ or Features/ .css change
+//   node scripts/build-css.mjs [output]   minified, default web/static/css/terrascale.css
+//   node scripts/build-css.mjs --dev      readable development bundle
+//   node scripts/build-css.mjs --watch    readable, rebuilt on every source CSS change
+//   node scripts/build-css.mjs --watch --minify  minified output with CSS watching
 import { watch } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -12,13 +12,14 @@ import { fileURLToPath } from 'node:url';
 import browserslist from 'browserslist';
 import { browserslistToTargets, bundle } from 'lightningcss';
 
-const project = fileURLToPath(new URL('../src/TerraScale.Dashboard/', import.meta.url));
-const entry = resolve(project, 'Styles/terrascale.css');
-const repository = resolve(project, '../..');
+const repository = fileURLToPath(new URL('../', import.meta.url));
+const source = resolve(repository, 'web/assets');
+const entry = resolve(source, 'css/terrascale.css');
 const args = process.argv.slice(2);
 const watchMode = args.includes('--watch');
-const dev = watchMode || args.includes('--dev');
-const output = resolve(args.find(arg => !arg.startsWith('--')) ?? resolve(project, 'wwwroot/css/terrascale.css'));
+const devMode = watchMode || args.includes('--dev');
+const minify = args.includes('--minify') || !devMode;
+const output = resolve(args.find(arg => !arg.startsWith('--')) ?? resolve(repository, 'web/static/css/terrascale.css'));
 
 // Resolve the checked-in Browserslist query through the locked caniuse-lite
 // database, then convert its browser/version pairs for lightningcss.
@@ -27,7 +28,7 @@ const targets = browserslistToTargets(browserslist(undefined, { path: repository
 async function build() {
   const { code, warnings } = bundle({
     filename: entry,
-    minify: !dev,
+    minify,
     targets,
     errorRecovery: false,
   });
@@ -35,18 +36,11 @@ async function build() {
     throw new Error(warnings.map(w => `${w.loc.filename}:${w.loc.line}:${w.loc.column} ${w.message}`).join('\n'));
   }
 
-  // An unchanged file is left alone so dotnet watch has nothing to push.
-  // Whitespace after a transition-list comma is optional; compacting it keeps
-  // the reorganized bundle at or below the pre-split output size.
-  const bundled = dev
-    ? code
-    : Buffer.from(code.toString().replace(/var\(--ts-t-control\) var\(--ts-ease\), /g, 'var(--ts-t-control) var(--ts-ease),'));
+  const bundled = code;
   const current = await readFile(output).catch(() => null);
   if (!current?.equals(bundled)) {
     await mkdir(dirname(output), { recursive: true });
-    // Keep the served asset valid while dotnet watch rebuilds its static
-    // asset manifest. A direct write briefly truncates the file; the watch
-    // host can observe that window and cache an empty compressed variant.
+    // Keep the served asset valid while the development watcher rebuilds it.
     const temporary = `${output}.${process.pid}.tmp`;
     await writeFile(temporary, bundled);
     await rename(temporary, output);
@@ -55,7 +49,7 @@ async function build() {
 }
 
 const bytes = await build();
-console.log(`CSS: ${bytes} bytes${dev ? ' (dev)' : ''} → ${output}`);
+console.log(`CSS: ${bytes} bytes${minify ? '' : ' (dev)'} → ${output}`);
 
 if (watchMode) {
   let timer;
@@ -70,8 +64,8 @@ if (watchMode) {
       }
     }, 30);
   };
-  for (const dir of ['Styles', 'Features']) {
-    watch(resolve(project, dir), { recursive: true }, (_, file) => file?.endsWith('.css') && rebuild());
+  for (const dir of ['css', 'Features']) {
+    watch(resolve(source, dir), { recursive: true }, (_, file) => file?.endsWith('.css') && rebuild());
   }
-  console.log('CSS: watching Styles/ and Features/');
+  console.log('CSS: watching web/assets/css/ and web/assets/Features/');
 }

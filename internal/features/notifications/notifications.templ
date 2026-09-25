@@ -1,0 +1,81 @@
+package notifications
+
+import (
+	"fmt"
+
+	"terrascale.tech/dashboard/internal/ui/aria"
+)
+
+templ notificationsView(data pageData, csrfToken string) {
+	<main class="ts-page">
+		<header class="ts-page-header">
+			<div><p class="ts-eyebrow">Account activity</p><h1>Notifications</h1><p>Review updates for your selected organization and project.</p></div>
+			<form method="post" action="/api/v1/notifications/read-all">
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				<button type="submit" disabled?={ data.Unread == 0 }>Mark all read</button>
+			</form>
+		</header>
+		<section aria-label="Inbox summary">
+			<p>
+				{ fmt.Sprint(data.Unread) } unread
+				if data.Critical > 0 {
+					<span>· { fmt.Sprint(data.Critical) } critical</span>
+				}
+				· { fmt.Sprint(data.Total) } total
+			</p>
+			<nav aria-label="Notification filter">
+				<a href="/notifications" aria-current={ aria.CurrentPage(data.Status == "all") }>All</a>
+				<a href="/notifications?status=unread" aria-current={ aria.CurrentPage(data.Status == "unread") }>Unread</a>
+			</nav>
+		</section>
+		if len(data.Notifications) > 0 {
+			<ol class="ts-notification-list">
+				for _, item := range data.Notifications {
+					<li>
+						<article aria-label={ item.Severity + " notification" }>
+							<p><strong>{ item.Title }</strong> <span>{ item.Severity }</span></p>
+							<p>{ item.Body }</p>
+							<p><time datetime={ item.CreatedAt.Format("2006-01-02T15:04:05Z07:00") }>{ item.CreatedAt.UTC().Format("Jan 2, 2006 15:04 UTC") }</time> · { item.Status }</p>
+							if item.Status == "Unread" {
+								<form method="post" action={ "/api/v1/notifications/" + item.ID + "/read" }>
+									<input type="hidden" name="_csrf" value={ csrfToken }/>
+									<button type="submit">Mark read</button>
+								</form>
+							}
+						</article>
+					</li>
+				}
+			</ol>
+		} else {
+			<section class="ts-empty-state">
+				<h2>You're all caught up</h2>
+				<p>
+					No
+					if data.Status == "unread" {
+						<span>unread </span>
+					}
+					notifications in this scope.
+				</p>
+			</section>
+		}
+		if data.PageCount > 1 {
+			<nav aria-label="Notification pages">
+				<span>Page { fmt.Sprint(data.Page) } of { fmt.Sprint(data.PageCount) }</span>
+				if data.HasPrevious {
+					if data.Status == "unread" {
+						<a href={ fmt.Sprintf("/notifications?page=%d&status=unread", data.Previous) }>Previous</a>
+					} else {
+						<a href={ fmt.Sprintf("/notifications?page=%d", data.Previous) }>Previous</a>
+					}
+				}
+				if data.HasNext {
+					if data.Status == "unread" {
+						<a href={ fmt.Sprintf("/notifications?page=%d&status=unread", data.Next) }>Next</a>
+					} else {
+						<a href={ fmt.Sprintf("/notifications?page=%d", data.Next) }>Next</a>
+					}
+				}
+			</nav>
+		}
+	</main>
+}

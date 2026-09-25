@@ -1,23 +1,35 @@
 app = "ts-dashboard-2"
 primary_region = "gru"
+swap_size_mb = 900
 
 [env]
-  ASPNETCORE_ENVIRONMENT = "Production"
+  DASHBOARD_ADDR = ":8080"
   TS_DASHBOARD_PRODUCTION_DEMO = "1"
 
 [http_service]
   internal_port = 8080
   force_https = true
-  # The demo backend keeps accounts, sessions, and the onboarding wizard in
-  # process memory (TS_DASHBOARD_PRODUCTION_DEMO=1). A machine that stops on
-  # idle wakes with an empty store, so any account created before the stop is
-  # gone: onboarding's final step lands on the protected "/" route, bounces to
-  # /login, and the freshly created credentials are rejected. Keep the single
-  # machine warm so in-memory account creation stays valid.
+  # Keep the in-memory demo warm. Auto-start can wake stopped Machines if
+  # operators provision them; Fly Proxy does not create Machines on requests.
   auto_stop_machines = "off"
   auto_start_machines = true
   min_machines_running = 1
 
 [[vm]]
-  size = "shared-cpu-1x"
+  size = "shared-cpu-2x"
   memory = "512mb"
+
+# Fly Volumes are local to individual Machines. A second or third Machine
+# requires its own 1 GB volume; these volumes do not share demo state.
+[[mounts]]
+  source = "dashboard_data"
+  destination = "/data"
+  initial_size = "1GB"
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  path = "/health/ready"
+  protocol = "http"
+  timeout = "5s"

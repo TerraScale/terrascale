@@ -1,0 +1,160 @@
+# github.com/CAFxX/httpcompression v0.0.9
+## explicit; go 1.11
+github.com/CAFxX/httpcompression
+github.com/CAFxX/httpcompression/contrib/andybalholm/brotli
+github.com/CAFxX/httpcompression/contrib/compress/gzip
+github.com/CAFxX/httpcompression/contrib/compress/zlib
+github.com/CAFxX/httpcompression/contrib/internal/utils
+github.com/CAFxX/httpcompression/contrib/klauspost/zstd
+# github.com/a-h/parse v0.0.0-20250122154542-74294addb73e
+## explicit; go 1.18
+github.com/a-h/parse
+# github.com/a-h/templ v0.3.1020
+## explicit; go 1.25.0
+github.com/a-h/templ
+github.com/a-h/templ/cmd/templ
+github.com/a-h/templ/cmd/templ/fmtcmd
+github.com/a-h/templ/cmd/templ/generatecmd
+github.com/a-h/templ/cmd/templ/generatecmd/modcheck
+github.com/a-h/templ/cmd/templ/generatecmd/proxy
+github.com/a-h/templ/cmd/templ/generatecmd/run
+github.com/a-h/templ/cmd/templ/generatecmd/sse
+github.com/a-h/templ/cmd/templ/generatecmd/watcher
+github.com/a-h/templ/cmd/templ/infocmd
+github.com/a-h/templ/cmd/templ/lspcmd
+github.com/a-h/templ/cmd/templ/lspcmd/httpdebug
+github.com/a-h/templ/cmd/templ/lspcmd/pls
+github.com/a-h/templ/cmd/templ/lspcmd/proxy
+github.com/a-h/templ/cmd/templ/processor
+github.com/a-h/templ/cmd/templ/sloghandler
+github.com/a-h/templ/cmd/templ/visualize
+github.com/a-h/templ/generator
+github.com/a-h/templ/internal/format
+github.com/a-h/templ/internal/htmlfind
+github.com/a-h/templ/internal/imports
+github.com/a-h/templ/internal/lazyloader
+github.com/a-h/templ/internal/prettier
+github.com/a-h/templ/internal/skipdir
+github.com/a-h/templ/internal/syncmap
+github.com/a-h/templ/internal/syncset
+github.com/a-h/templ/lsp/jsonrpc2
+github.com/a-h/templ/lsp/protocol
+github.com/a-h/templ/lsp/uri
+github.com/a-h/templ/lsp/xcontext
+github.com/a-h/templ/parser/v2
+github.com/a-h/templ/parser/v2/goexpression
+github.com/a-h/templ/parser/v2/visitor
+github.com/a-h/templ/runtime
+github.com/a-h/templ/safehtml
+# github.com/andybalholm/brotli v1.2.0
+## explicit; go 1.22
+github.com/andybalholm/brotli
+github.com/andybalholm/brotli/matchfinder
+# github.com/cenkalti/backoff/v4 v4.3.0
+## explicit; go 1.18
+github.com/cenkalti/backoff/v4
+# github.com/cli/browser v1.3.0
+## explicit; go 1.21
+github.com/cli/browser
+# github.com/coder/websocket v1.8.15
+## explicit; go 1.23
+github.com/coder/websocket
+github.com/coder/websocket/internal/bpool
+github.com/coder/websocket/internal/errd
+github.com/coder/websocket/internal/util
+github.com/coder/websocket/internal/wsjs
+# github.com/fatih/color v1.16.0
+## explicit; go 1.17
+github.com/fatih/color
+# github.com/fsnotify/fsnotify v1.7.0
+## explicit; go 1.17
+github.com/fsnotify/fsnotify
+# github.com/klauspost/compress v1.18.0
+## explicit; go 1.22
+github.com/klauspost/compress
+github.com/klauspost/compress/fse
+github.com/klauspost/compress/huff0
+github.com/klauspost/compress/internal/cpuinfo
+github.com/klauspost/compress/internal/le
+github.com/klauspost/compress/internal/snapref
+github.com/klauspost/compress/zstd
+github.com/klauspost/compress/zstd/internal/xxhash
+# github.com/klauspost/cpuid/v2 v2.0.12
+## explicit; go 1.15
+github.com/klauspost/cpuid/v2
+# github.com/mattn/go-colorable v0.1.13
+## explicit; go 1.15
+github.com/mattn/go-colorable
+# github.com/mattn/go-isatty v0.0.20
+## explicit; go 1.15
+github.com/mattn/go-isatty
+# github.com/natefinch/atomic v1.0.1
+## explicit; go 1.12
+github.com/natefinch/atomic
+# github.com/starfederation/datastar-go v1.2.2
+## explicit; go 1.24
+github.com/starfederation/datastar-go/datastar
+# github.com/stripe/stripe-go/v86 v86.4.2
+## explicit; go 1.22
+github.com/stripe/stripe-go/v86
+github.com/stripe/stripe-go/v86/form
+github.com/stripe/stripe-go/v86/webhook
+# github.com/valyala/bytebufferpool v1.0.0
+## explicit
+github.com/valyala/bytebufferpool
+# github.com/zeebo/blake3 v0.2.4
+## explicit; go 1.18
+github.com/zeebo/blake3
+github.com/zeebo/blake3/internal/alg
+github.com/zeebo/blake3/internal/alg/compress
+github.com/zeebo/blake3/internal/alg/compress/compress_pure
+github.com/zeebo/blake3/internal/alg/compress/compress_sse41
+github.com/zeebo/blake3/internal/alg/hash
+github.com/zeebo/blake3/internal/alg/hash/hash_avx2
+github.com/zeebo/blake3/internal/alg/hash/hash_pure
+github.com/zeebo/blake3/internal/consts
+github.com/zeebo/blake3/internal/utils
+# golang.org/x/mod v0.26.0
+## explicit; go 1.23.0
+golang.org/x/mod/internal/lazyregexp
+golang.org/x/mod/modfile
+golang.org/x/mod/module
+golang.org/x/mod/semver
+# golang.org/x/net v0.51.0
+## explicit; go 1.25.0
+golang.org/x/net/html
+golang.org/x/net/html/atom
+# golang.org/x/sync v0.16.0
+## explicit; go 1.23.0
+golang.org/x/sync/errgroup
+# golang.org/x/sys v0.41.0
+## explicit; go 1.24.0
+golang.org/x/sys/unix
+golang.org/x/sys/windows
+# golang.org/x/tools v0.35.0
+## explicit; go 1.23.0
+golang.org/x/tools/go/ast/astutil
+golang.org/x/tools/go/gcexportdata
+golang.org/x/tools/go/packages
+golang.org/x/tools/go/types/objectpath
+golang.org/x/tools/go/types/typeutil
+golang.org/x/tools/imports
+golang.org/x/tools/internal/aliases
+golang.org/x/tools/internal/event
+golang.org/x/tools/internal/event/core
+golang.org/x/tools/internal/event/keys
+golang.org/x/tools/internal/event/label
+golang.org/x/tools/internal/gcimporter
+golang.org/x/tools/internal/gocommand
+golang.org/x/tools/internal/gopathwalk
+golang.org/x/tools/internal/imports
+golang.org/x/tools/internal/modindex
+golang.org/x/tools/internal/packagesinternal
+golang.org/x/tools/internal/pkgbits
+golang.org/x/tools/internal/stdlib
+golang.org/x/tools/internal/typeparams
+golang.org/x/tools/internal/typesinternal
+golang.org/x/tools/internal/versions
+# terrascale.tech/sdk v0.0.0-20260923161729-3088ef2e3bd0
+## explicit; go 1.24.0
+terrascale.tech/sdk

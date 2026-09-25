@@ -1,0 +1,66 @@
+package backups
+
+import (
+	"fmt"
+	"strconv"
+	"terrascale.tech/dashboard/internal/core"
+)
+
+func retentionDays(days int) string {
+	if days == 0 {
+		return "7"
+	}
+	return strconv.Itoa(days)
+}
+
+templ backupsContent(page core.Page, d pageData) {
+	<main class="ts-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
+		<header class="ts-section"><h1>Backups</h1><p>Take a snapshot and restore it to a new database.</p></header>
+		if d.Error != "" {
+			<p class="ts-alert ts-alert-danger" role="alert">{ d.Error }</p>
+		}
+		if len(d.Databases) > 0 {
+			<section class="ts-card ts-section">
+				<h2>Database</h2>
+				<form method="get">
+					<label class="ts-label" for="database">Choose database</label>
+					<select class="ts-input" id="database" name="databaseId">
+						for _, db := range d.Databases {
+							<option value={ db.ID } selected?={ db.ID == d.DatabaseID }>{ db.Name }</option>
+						}
+					</select><button class="ts-btn ts-btn-secondary" type="submit">Open</button>
+				</form>
+			</section>
+			<section class="ts-card ts-section">
+				<h2>Backup policy</h2>
+				<form method="post" action="/api/v1/dashboard/backups/policy" class="ts-stack-12">
+					<input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/>
+					<label class="ts-label" for="full-cron">Full backup schedule</label><input class="ts-input" id="full-cron" name="fullBackupCron" value={ d.Policy.FullBackupCron } placeholder="0 2 * * *"/>
+					<label class="ts-label" for="incremental-cron">Incremental schedule</label><input class="ts-input" id="incremental-cron" name="incrementalBackupCron" value={ d.Policy.IncrementalBackupCron } placeholder="0 * * * *"/>
+					<label class="ts-label" for="retention">Retention days</label><input class="ts-input" id="retention" name="retentionDays" type="number" min="1" max="365" value={ retentionDays(d.Policy.RetentionDays) }/>
+					<button class="ts-btn ts-btn-primary" type="submit">Save policy</button>
+				</form>
+			</section>
+			<section class="ts-card ts-section"><h2>Snapshot now</h2><form method="post" action="/api/v1/dashboard/backups"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><button class="ts-btn ts-btn-primary" type="submit">Create backup</button></form></section>
+			<section class="ts-section">
+				<h2>Restore points</h2>
+				if len(d.Backups) > 0 {
+					<div class="ts-table-wrap">
+						<table class="ts-table">
+							<thead><tr><th>Created</th><th>Status</th><th>Size</th><th>Restore</th></tr></thead>
+							<tbody>
+								for _, backup := range d.Backups {
+									<tr><td>{ fmt.Sprint(backup.CreatedAt) }</td><td>{ backup.Status }</td><td>{ strconv.FormatInt(backup.SizeBytes, 10) } bytes</td><td><form method="post" action="/api/v1/dashboard/backups/restore"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><input type="hidden" name="backupId" value={ backup.ID }/><label class="ts-label" for={ "restore-name-" + backup.ID }>New database name</label><input class="ts-input" id={ "restore-name-" + backup.ID } name="name" required/><button class="ts-btn ts-btn-secondary" type="submit">Restore side by side</button></form></td></tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				} else {
+					<p>No restore points yet.</p>
+				}
+			</section>
+		} else {
+			<section class="ts-card ts-section"><p>Create a database to manage backups. <a href="/databases">Go to databases</a>.</p></section>
+		}
+	</main>
+}
