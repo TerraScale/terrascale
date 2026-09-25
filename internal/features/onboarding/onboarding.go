@@ -41,6 +41,13 @@ type stepView struct {
 }
 
 func Mount(mux *http.ServeMux, deps core.Deps) {
+	mux.HandleFunc("GET /register", func(w http.ResponseWriter, r *http.Request) {
+		target := "/onboarding"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
+	})
 	mux.HandleFunc("GET /onboarding", getOnboarding(deps))
 	mux.HandleFunc("POST /onboarding/register", register(deps))
 	mux.HandleFunc("POST /onboarding/step", saveStep(deps))
