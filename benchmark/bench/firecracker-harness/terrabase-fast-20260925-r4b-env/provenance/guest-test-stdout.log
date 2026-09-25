@@ -1,0 +1,26 @@
+
+running 21 tests
+test document_fast::document_contract::local_value_tombstone_and_reused_causal_context_are_typed_at_the_facade ... ok
+test document_fast::document_contract::multi_collection_group_verifies_exact_wal_and_retries_after_reopen ... ok
+test document_fast::document_contract::stale_schema_generation_and_malformed_typed_input_fail_before_wal_append ... ok
+test document_fast::local_v1_contract::explicit_local_v1_bootstrap_provisions_then_reopens_exact_active_bindings ... ok
+test document_fast::local_v1_contract::local_v1_open_rejects_generation_and_digest_drift_from_active_schema ... ok
+test document_fast::local_v1_contract::local_v1_open_rejects_missing_active_pointer_and_mismatched_generation_or_digest ... ok
+test document_fast::receiver_apply::concurrent_v1_live_and_v2_tombstone_keep_exact_d1_in_both_arrival_orders ... ok
+test document_fast::receiver_apply::origin_gap_is_durable_only_then_exact_replay_and_duplicates_are_checked ... ok
+test document_fast::receiver_apply::pre_reconciliation_receipt_is_durable_only_until_all_inboxes_are_coupled ... ok
+test document_fast::receiver_apply::receiver_final_groups_are_skipped_by_local_source_resend ... ok
+test document_fast::receiver_apply::remote_and_local_dependencies_wait_for_their_applied_frontiers ... ok
+test format_fast::public_encoded_records_recover_and_decode_after_store_reopen ... ok
+test server_fast::client_process::packaged_client_rejects_scope_and_permission_violations_and_rate_limits ... ok
+test server_fast::client_process::packaged_initializer_bootstraps_fresh_local_v1_for_https_document_caller ... ok
+test server_fast::client_process::packaged_local_v1_serves_typed_commits_and_retries_after_restart ... ok
+test server_fast::replication_process::committed_lz4_group_gets_durable_ack_and_frontier_survives_process_restart ... ok
+test server_fast::server_process::invalid_memory_arguments_exit_before_creating_the_data_directory ... ok
+test server_fast::server_process::packaged_cli_help_exits_successfully_without_server_settings ... ok
+test server_fast::server_process::packaged_server_serves_loopback_admin_and_drains_on_sigterm ... ok
+test storage_fast::commit_scan_checkpoint_reopen_and_conflict_are_atomic ... ok
+test storage_fast::scan_limit_and_checked_run_corruption_fail_closed ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.63s
+

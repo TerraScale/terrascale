@@ -1,0 +1,10 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness'
+CC_x86_64_unknown_linux_musl="/run/current-system/sw/bin/x86_64-unknown-linux-musl-gcc" \
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="/run/current-system/sw/bin/x86_64-unknown-linux-musl-gcc" \
+nice -n 19 ionice -c 3 cargo test --locked --no-run \
+	--jobs 2 --target x86_64-unknown-linux-musl -p fc-harness
+   Compiling fc-harness v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/crates/fc-harness)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.29s
+  Executable unittests src/main.rs (target/x86_64-unknown-linux-musl/debug/deps/fc_harness-65b97a48521685cf)
+Compiled guest test executable only; run make test-vm with TEST_BINARY and RUN_ID to execute inside Firecracker.
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness'

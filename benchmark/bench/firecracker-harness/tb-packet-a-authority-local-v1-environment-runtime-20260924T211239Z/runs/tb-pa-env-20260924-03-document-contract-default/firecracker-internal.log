@@ -1,0 +1,35 @@
+2026-09-24T18:34:31.022252410 [tb-pa-env-20260924-03-document-contract-default:main:INFO] Running Firecracker v1.15.1
+2026-09-24T18:34:31.024256036 [tb-pa-env-20260924-03-document-contract-default:main:INFO] Listening on API socket ("/tmp/fch-V3UXjO/api.sock").
+2026-09-24T18:34:31.024681212 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] API server started.
+2026-09-24T18:34:31.132527939 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T18:34:31.132671902 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:34:31.132938049 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T18:34:31.133013495 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T18:34:31.133162588 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/fc-payload-2JgN0i\"}".
+2026-09-24T18:34:31.133262167 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:34:31.133378459 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-packet-a-authority-local-v1-environment-runtime-20260924T211239Z/runs/tb-pa-env-20260924-03-document-contract-default/guest-rootfs.ext4\"}".
+2026-09-24T18:34:31.133526813 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:34:31.133642499 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-V3UXjO/vsock.sock\"}".
+2026-09-24T18:34:31.133942211 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:34:31.134199341 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T18:34:31.173119325 [tb-pa-env-20260924-03-document-contract-default:main:INFO] Artificially kick devices
+2026-09-24T18:34:31.173229584 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T18:34:31.173287506 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T18:34:31.173386562 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T18:34:31.173447435 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T18:34:31.173552420 [tb-pa-env-20260924-03-document-contract-default:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:34:31.240894292 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:31.241060553 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:33.778386019 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:33.778480827 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:33.783823294 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:33.783907828 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:33.785794384 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:33.785872337 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:33.789576286 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:33.789656784 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:33.791798288 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:33.791875662 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:33.796484908 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:33.796606148 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:34:34.686835353 [tb-pa-env-20260924-03-document-contract-default:fc_vcpu 3:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

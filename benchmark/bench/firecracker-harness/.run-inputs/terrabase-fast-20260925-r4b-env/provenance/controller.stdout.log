@@ -1,0 +1,9 @@
+Firecracker 1.15.1: OK
+KVM_GET_API_VERSION: 12
+guest: 4 vCPUs / 8192 MiB / swap disabled
+kernel /tmp/fc-payload-8KksvT sha256=e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2
+rootfs /tmp/vm-inputs/rootfs.ext4 sha256=dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314
+guest agent /tmp/fc-payload-i6ZJWn sha256=3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb
+host CPU affinity candidates: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+guest image upstream provenance: unqualified (checksum-pinned local artifact only)
+run terrabase-fast-20260925-r4b-env completed in 25235 ms; receipt: /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r4b-env/run-manifest.json

@@ -1,0 +1,140 @@
+{
+  "accepted_controller": {
+    "frozen_source_path": "/tmp/fch-runtime-repo-final-20260924/source/firecracker-harness/crates/fc-harness/src/main.rs",
+    "frozen_source_sha256": "f67973c13613a35a91b1a9420df733e7f75d7ae57942187193a5b99f436ae603",
+    "path": "/tmp/fch-runtime-repo-final-20260924/fc-harness",
+    "sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20",
+    "source_behavior_refs": {
+      "benchmark_checkout_validation": "frozen main.rs lines 492-502",
+      "output_behavior": "frozen main.rs lines 770-791",
+      "repository_observation": "frozen main.rs lines 1775-1818",
+      "run_arg_parser": "frozen main.rs lines 389-489",
+      "usage": "frozen main.rs lines 383-386"
+    },
+    "source_usage_contract": "run accepts --benchmark-repo, --subject-repo, --program, --run-id, --output, --kernel, --rootfs, followed by guest args; run_vm refuses an existing output before creating it."
+  },
+  "accepted_guest_agent": {
+    "path": "/tmp/fch-runtime-repo-final-20260924/fc-guest-agent",
+    "sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb"
+  },
+  "authoritative_program_binding": {
+    "corrected_unit_compiled_snapshot_reference": "7753f233",
+    "corrected_unit_elf_map": "pending Foundation release",
+    "program_path": "pending ELF map",
+    "program_sha256": "pending ELF map",
+    "required_rule": "Use only the exact new default/hooks unit ELF paths and SHA-256 values released in the map; do not use a prior accepted queue ELF or infer a binary from the observation worktree HEAD."
+  },
+  "guest_runs_started": 0,
+  "host_builds_started": 0,
+  "observed_at_utc": "2026-09-24T22:20:43Z",
+  "planned_invocation_shape": {
+    "argv": [
+      "nice",
+      "-n",
+      "19",
+      "ionice",
+      "-c",
+      "3",
+      "/tmp/fch-runtime-repo-final-20260924/fc-harness",
+      "run",
+      "--benchmark-repo",
+      "/tmp/tb-packet-a-runtime-observation-checkouts-20260924/benchmark",
+      "--subject-repo",
+      "/tmp/tb-packet-a-runtime-observation-checkouts-20260924/terrabase",
+      "--program",
+      "<ELF path from corrected unit map>",
+      "--run-id",
+      "<unique corrected unit run id>",
+      "--timeout-seconds",
+      "600",
+      "--output",
+      "<live ts-benchmark>/bench/firecracker-harness/<unique-run-id>",
+      "--kernel",
+      "/tmp/vm-inputs/vmlinux",
+      "--rootfs",
+      "/tmp/vm-inputs/rootfs.ext4",
+      "--",
+      "--test-threads=1",
+      "--nocapture"
+    ],
+    "network": "default disabled; do not pass network fixture option",
+    "program_and_run_ids": "not supplied yet; no run started"
+  },
+  "preflight_command": "nice -n 19 ionice -c 3 env FC_BENCHMARK_REPO=/tmp/tb-packet-a-runtime-observation-checkouts-20260924/benchmark FC_GUEST_AGENT_PATH=/tmp/fch-runtime-repo-final-20260924/fc-guest-agent /tmp/fch-runtime-repo-final-20260924/fc-harness preflight",
+  "preflight_exit_code": 0,
+  "preflight_log": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-packet-a-authority-local-v1-environment-runtime-20260924T211239Z/replacement-unit-runtime-preflight.log",
+  "preflight_log_sha256": "9b22cec6858f8bd559729560a342a11c3b5abf4f518a2e25045ca317af908a9e",
+  "runtime_checkout_observations": {
+    "benchmark": {
+      "controller_repository_identity_sha256": "609225bcf16ff7b418a1d095c4b1485a75e7a8c0c923499a2d0cff332de26638",
+      "dirty": false,
+      "head": "5685f163bb7e9339e8eb0c839fe2512aaf562648",
+      "path": "/tmp/tb-packet-a-runtime-observation-checkouts-20260924/benchmark",
+      "status_porcelain_v1_z_byte_count": 0,
+      "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untracked_files_sha256": {}
+    },
+    "candidate_outputs": [
+      {
+        "name": "tb_document_default_corrected",
+        "outside_both_clean_observation_checkouts": true,
+        "planned_output": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-pa-env-20260924-26-tb-document-default-corrected-7753f233",
+        "planned_output_exists": false,
+        "proposed_run_id": "tb-pa-env-20260924-26-tb-document-default-corrected-7753f233",
+        "under_live_ts_benchmark": true
+      },
+      {
+        "name": "tb_document_hooks_corrected",
+        "outside_both_clean_observation_checkouts": true,
+        "planned_output": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-pa-env-20260924-27-tb-document-hooks-corrected-7753f233",
+        "planned_output_exists": false,
+        "proposed_run_id": "tb-pa-env-20260924-27-tb-document-hooks-corrected-7753f233",
+        "under_live_ts_benchmark": true
+      }
+    ],
+    "environment": {
+      "FC_BENCHMARK_REPO": "/tmp/tb-packet-a-runtime-observation-checkouts-20260924/benchmark",
+      "FC_GUEST_AGENT_PATH": "/tmp/fch-runtime-repo-final-20260924/fc-guest-agent"
+    },
+    "meaning": "These are clean runtime repository observations only. They do not identify the corrected test ELF source; the future compiled snapshot and accepted ELF map provide that binding.",
+    "output_parent": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness",
+    "output_parent_exists": true,
+    "terrabase": {
+      "controller_repository_identity_sha256": "e23ef9c0c8f07801a3cb3822cba670492177aec2444ccaa431610890cb52f1f4",
+      "dirty": false,
+      "head": "352d9f61185d1b685e3032519579040d169ad47d",
+      "path": "/tmp/tb-packet-a-runtime-observation-checkouts-20260924/terrabase",
+      "status_porcelain_v1_z_byte_count": 0,
+      "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untracked_files_sha256": {}
+    }
+  },
+  "schema": "terrabase-replacement-unit-runtime-preflight/v1",
+  "status": "RUNTIME_ENVIRONMENT_PREFLIGHT_PASS_PROGRAM_BINDING_PENDING",
+  "vm_inputs": {
+    "firecracker": {
+      "path": "/run/current-system/sw/bin/firecracker",
+      "sha256": "9d9ec5ff68a23ce54a424b15ec097c7204a3f206884c092d570b75529811bd57",
+      "version": "1.15.1"
+    },
+    "historical_source_manifest": {
+      "path": "/tmp/ts-oci-readiness-20260921/vm-inputs-v1/MANIFEST.txt",
+      "sha256": "dba90cbfb44f5612c9b6bbacebc15ace469fac95ca106dcb3a6092d05bbb0c7b"
+    },
+    "kernel": {
+      "path": "/tmp/vm-inputs/vmlinux",
+      "sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2"
+    },
+    "pins_source": {
+      "path": "/tmp/fch-runtime-repo-final-20260924/source/firecracker-harness/pins.toml",
+      "sha256": "123c9e0421f7feb59b30415b59c99b696161cf67e13982aef431cbc9e949b01f"
+    },
+    "provenance_limit": "historical local manifest does not retain upstream download URLs/version metadata.",
+    "rootfs": {
+      "path": "/tmp/vm-inputs/rootfs.ext4",
+      "sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314"
+    },
+    "verification": "accepted controller preflight exited 0; checks image checksums, rootfs fstab for swap, host KVM API and capacity, plus ELF agent. No VM launch."
+  },
+  "vm_started": false
+}

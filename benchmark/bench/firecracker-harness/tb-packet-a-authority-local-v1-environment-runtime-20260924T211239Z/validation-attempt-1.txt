@@ -1,0 +1,2 @@
+Attempt 1: artifact preflight validation only; no build or runtime launched.
+Outcome: validator stopped at gate ledger summary check because the accepted ledger schema reports `gate_count`, `failed`, and `test_binaries_executed`, not the `gate_result_summary` object used in the first validation draft. The coordinator's immutable ledger hash matched. This was a validator schema assumption, not an environment/test failure.

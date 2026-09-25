@@ -1,0 +1,576 @@
+{
+  "schema_version": 1,
+  "receipt_kind": "P04 a2 analyzer runtime evidence seal",
+  "created_at_utc": "2026-09-24T21:05:31+00:00",
+  "status": "valid_provisional",
+  "environment": {
+    "benchmark_repository": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark",
+      "head": "5685f163bb7e9339e8eb0c839fe2512aaf562648"
+    },
+    "subject_repository": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase",
+      "head": "352d9f61185d1b685e3032519579040d169ad47d"
+    },
+    "guest": {
+      "firecracker_version": "1.15.1",
+      "guest_vcpus": 4,
+      "guest_memory_mib": 8192,
+      "guest_swap_disabled": true,
+      "guest_network": "disabled"
+    },
+    "host_observation": {
+      "host_swap_active": true,
+      "host_available_memory_bytes": 20192096256,
+      "host_cpu_affinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "exclusive_cpu_reservation": false
+    },
+    "runtime_binaries": {
+      "controller": {
+        "path": "/tmp/fch-runtime-repo-final-20260924/fc-harness",
+        "sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20"
+      },
+      "guest_agent": {
+        "path": "/tmp/fch-runtime-repo-final-20260924/fc-guest-agent",
+        "sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb"
+      },
+      "firecracker_sha256": "9d9ec5ff68a23ce54a424b15ec097c7204a3f206884c092d570b75529811bd57",
+      "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+      "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+      "kvm_api_version": 12
+    }
+  },
+  "source_identity": {
+    "terra_base_head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "benchmark_head": "5685f163bb7e9339e8eb0c839fe2512aaf562648",
+    "reviewed_analyzer_packet": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-final-20260924T203626Z",
+      "file_count": 85,
+      "manifest_sha256": "c5cf25cc1648edf48a58b605930d9c57a21912d3e7b87fb42428bef8d28a965b",
+      "dependency_lock_sha256": "88a7530d89125a2a79757b18882327fbeac2cbfd821bf9997afd4e3ad2bf6045",
+      "analyzer_source_sha256": "142fc045a7976c9cc8e0798bcad3586a0d4c4949fc1db3ad69589b5702f9868c",
+      "launcher_source_sha256": "c9095c786aecbe07704d986c936f73cfe37bdbba8ec6eeb4032070cacc19249c",
+      "analyzer_main_source_sha256": "879ae9f81f6c34d0408e2295ce3e4f6fe5dd5bf93b502697b2a5626795803366"
+    },
+    "measured_campaign_source": {
+      "inventory_path_in_campaign": "packet-source.sha256",
+      "inventory_sha256": "b5f251d333300086f15bba8df583ad6e267c7012f8975d5f892c459aff07969e",
+      "inventory_entries": 81,
+      "measured_program_sha256": "93e2099f1797033aab0263732bacb551209dad064ccc5847dcd66b3a17cf5ed2",
+      "artifact_map_sha256": "dea3c5407707c42a629c4fc96729bdd166ac90407e4ddad7b10552e736f2c6b0"
+    }
+  },
+  "sealed_campaign_inputs": {
+    "campaign_id": "p04-repeat-20260924-a2",
+    "campaign_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a2/campaign.json",
+      "size_bytes": 19270,
+      "sha256": "35a7cea433b559c993d18185727dee96803e03adb7fd25e8ceb834d69a21ca2f"
+    },
+    "output_path_contract": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a2/output-path-contract.json",
+      "size_bytes": 17736,
+      "sha256": "ff31ef24b82c126044ff627a362a37a5d1a24b3947fc30b54dd30ab05082c060"
+    },
+    "protocol": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a2/protocol.md",
+      "size_bytes": 12377,
+      "sha256": "138abc0c939335103311d8edf97a1a060dd68f0d728351f4d5380bd82bde0a22"
+    },
+    "execution_receipt": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a2-execution-receipt.json",
+      "size_bytes": 107717,
+      "sha256": "feee333a5a09698965d15257ef38b745c48a7b3e5f8163e944c7e9dff85afa64"
+    },
+    "execution_receipt_sidecar": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a2-execution-receipt.json.sha256",
+      "size_bytes": 112,
+      "sha256": "e37d9aae246cd6a7596c2795f1f74f5e5536193759976da61bc4d02dc0298667"
+    },
+    "execution_receipt_status": "completed",
+    "registered_lanes": 18,
+    "passed_lanes": 18,
+    "failed_lanes": 0,
+    "total_guest_operations": 16002,
+    "measured_pair_count": 8,
+    "diagnostic_lane_count": 2,
+    "flat_evidence_bundle": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a2-flat-evidence.tar.gz",
+      "size_bytes": 5406423,
+      "sha256": "9d99340caa58c87a5b21a8caed43b3a35c83a0e8078fe9ec2f023493f1a779f4"
+    },
+    "flat_input_inventory": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a2-flat-input-inventory.json",
+      "size_bytes": 48492,
+      "sha256": "d4ac5aba6ae8a2c43c64003e14455c6c1aa8a1ae3ef5fde0310acd800299d7c5"
+    },
+    "flat_member_count": 241,
+    "flat_uncompressed_bytes": 21650463,
+    "supplemental_payload_size_check": {
+      "analyzer_elf_bytes": 5598312,
+      "flat_bundle_bytes": 5406423,
+      "combined_bytes": 11004735,
+      "limit_bytes": 134217728,
+      "passed": true
+    }
+  },
+  "source_bound_build_gates": {
+    "gate_directory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-gates-final-20260924T203626Z",
+    "artifact_map": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-gates-final-20260924T203626Z/artifact-map.md",
+      "size_bytes": 3322,
+      "sha256": "a6d9eb1214cd8fb69464910560d27bb9183e8ef9889d33f5f6bccf08d56f6574"
+    },
+    "results_file": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-gates-final-20260924T203626Z/results.txt",
+      "size_bytes": 129,
+      "sha256": "49f99ebb86f53ab34bfe885c4648f6862dedc5ff0f9d39bbe6a2e1d5e9989171"
+    },
+    "all_nine_gates_exit_zero": true,
+    "gates": [
+      {
+        "gate": "fmt",
+        "exit_code": 0
+      },
+      {
+        "gate": "check",
+        "exit_code": 0
+      },
+      {
+        "gate": "lint",
+        "exit_code": 0
+      },
+      {
+        "gate": "check-engine",
+        "exit_code": 0
+      },
+      {
+        "gate": "lint-engine",
+        "exit_code": 0
+      },
+      {
+        "gate": "test-build",
+        "exit_code": 0
+      },
+      {
+        "gate": "test-build-launcher",
+        "exit_code": 0
+      },
+      {
+        "gate": "build-guest-engine",
+        "exit_code": 0
+      },
+      {
+        "gate": "build-guest-launcher",
+        "exit_code": 0
+      }
+    ],
+    "build_owner": "benchmark_cleanup",
+    "host_test_executables_ran": false
+  },
+  "guest_runs": [
+    {
+      "role": "engine/analyzer unit tests",
+      "run_id": "p04-analyzer-tests-20260924T204702Z",
+      "status": "passed",
+      "guest_exit_code": 0,
+      "program_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-gates-final-20260924T203626Z/payloads/terrabase-sqlite-baseline-tests-musl",
+      "program_sha256": "9b7a04b3bb868f332d4ef45f9b7bd98b078e8ec23b63ddc530f8d49e9c8f3521",
+      "test_counts": {
+        "passed": 18,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "guest_vcpu_count": 4,
+      "guest_mem_size_mib": 8192,
+      "guest_swap_disabled": true,
+      "guest_elapsed_ms": 5816,
+      "harness_elapsed_ms": 13976,
+      "run_manifest": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-tests-20260924T204702Z/run-manifest.json",
+        "size_bytes": 410781,
+        "sha256": "16a98b58d8e095e93e6f81f19903c1920e7999e6db82498c3bd2822ee36258be"
+      },
+      "guest_output_archive": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-tests-20260924T204702Z/guest-output.tar.gz",
+        "size_bytes": 68077,
+        "sha256": "b2bc89d4a4a6e4551862b375ba150eb6c5eb6f447995723f342cc1ec8475804a"
+      },
+      "guest_stdout_copy": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/outputs/engine-tests-stdout.log",
+        "size_bytes": 1560,
+        "sha256": "d62f62e64254ac0ad770c6bb4116884bc67a0487dd29e8c0f86f05f18b18393c"
+      },
+      "exact_command_log": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/p04-analyzer-tests-20260924T204702Z.command.log",
+        "size_bytes": 780,
+        "sha256": "4e13cdcdc87fbb2e3d5d19fb2d2a8b4cc4f989fdcbc3057a76626ebfd0adac42"
+      },
+      "operator_log": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/p04-analyzer-tests-20260924T204702Z.operator.log",
+        "size_bytes": 891,
+        "sha256": "04f7616970512c417d0f545401c1afa0ad126e5b32691afab9cda65415b1cc11"
+      }
+    },
+    {
+      "role": "P04 launcher unit tests",
+      "run_id": "p04-launcher-tests-20260924T204702Z",
+      "status": "passed",
+      "guest_exit_code": 0,
+      "program_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-gates-final-20260924T203626Z/payloads/p04-analysis-launcher-tests-musl",
+      "program_sha256": "1676e9a478a08bebecf41bba76d1fa9eceb7880684e3ac06f747e59a1d06652e",
+      "test_counts": {
+        "passed": 4,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "guest_vcpu_count": 4,
+      "guest_mem_size_mib": 8192,
+      "guest_swap_disabled": true,
+      "guest_elapsed_ms": 504,
+      "harness_elapsed_ms": 9375,
+      "run_manifest": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-launcher-tests-20260924T204702Z/run-manifest.json",
+        "size_bytes": 411792,
+        "sha256": "2eb63ee0b5df09969bfe352e97a795e436b996aca2e8cdfc55e9761602e0f1d3"
+      },
+      "guest_output_archive": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-launcher-tests-20260924T204702Z/guest-output.tar.gz",
+        "size_bytes": 68051,
+        "sha256": "0d72f8fd3fc7ce674c2dd7de27f5aa2b91098cacef1f11f0e0642bf5a2516a47"
+      },
+      "guest_stdout_copy": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/outputs/launcher-tests-stdout.log",
+        "size_bytes": 381,
+        "sha256": "ce342ec18c2ad41101e02f8ede3607bc245232ad4078ef574585cc8ed0f2fd0f"
+      },
+      "exact_command_log": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/p04-launcher-tests-20260924T204702Z.command.log",
+        "size_bytes": 776,
+        "sha256": "edc879a6e76624035c652541b9a1ca32f89456a58b768fd155b316cd38e49a02"
+      },
+      "operator_log": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/p04-launcher-tests-20260924T204702Z.operator.log",
+        "size_bytes": 890,
+        "sha256": "2ee047c459e52e05561e81636c344d423c707989321983353487ea6262b3c1c3"
+      }
+    }
+  ],
+  "analysis_guest_run": {
+    "run_id": "p04-analyze-a2-20260924T204702Z",
+    "status": "passed",
+    "guest_exit_code": 0,
+    "guest_elapsed_ms": 3141,
+    "harness_elapsed_ms": 12681,
+    "program_sha256": "ff47c791343c19598af4f8517d5d96b02479703cf3c4675dd42a98e2e167e9bf",
+    "supplemental_payloads": [
+      {
+        "host_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-gates-final-20260924T203626Z/payloads/terrabase-sqlite-baseline-musl",
+        "guest_path": "/root/fc-harness-payloads/p04_analyzer",
+        "size_bytes": 5598312,
+        "sha256": "766d89d2917e38ea988fd9e619139040e8c9965c04d749f156b1960d1d0d6257",
+        "guest_mode": "0755"
+      },
+      {
+        "host_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/payloads/p04-repeat-20260924-a2-flat-evidence.tar.gz",
+        "guest_path": "/root/fc-harness-payloads/p04_a2_bundle",
+        "size_bytes": 5406423,
+        "sha256": "9d99340caa58c87a5b21a8caed43b3a35c83a0e8078fe9ec2f023493f1a779f4",
+        "guest_mode": "0755"
+      }
+    ],
+    "run_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyze-a2-20260924T204702Z/run-manifest.json",
+      "size_bytes": 413599,
+      "sha256": "78446a67ca638ed49114ca965cf6e53e1b113af83b74565844dc46255b4650fb"
+    },
+    "guest_output_archive": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyze-a2-20260924T204702Z/guest-output.tar.gz",
+      "size_bytes": 95682,
+      "sha256": "609a6205236e488da1234d7c37d4d31670f546dc584ce7748f3222df0752f259"
+    },
+    "exact_command_log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/p04-analyze-a2-20260924T204702Z.command.log",
+      "size_bytes": 1400,
+      "sha256": "548e017091adb4c866e5b994d08dca4a5251348229b58159edd16e999de78352"
+    },
+    "operator_log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/p04-analyze-a2-20260924T204702Z.operator.log",
+      "size_bytes": 883,
+      "sha256": "3a440d3bffa4ab8481f5104d48c9fcde9c1813593a757a227bb6b52f408da179"
+    },
+    "launcher_receipt": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/outputs/launcher-receipt.json",
+      "size_bytes": 40698,
+      "sha256": "034fa8e88a8646f5a76689068723c3682914c8b0816c3bec07c7d74c3b170612"
+    },
+    "launcher_receipt_status": "passed",
+    "analyzer_exit_code": 0,
+    "analyzer_argv": [
+      "analyze-p04",
+      "--campaign",
+      "/root/fc-bench-data/p04-analyzer-input/p04-repeat-20260924-a2/campaign.json",
+      "--json-out",
+      "bench/p04-campaigns/p04-repeat-20260924-a2/reports/analysis.json",
+      "--markdown-out",
+      "bench/p04-campaigns/p04-repeat-20260924-a2/reports/analysis.md"
+    ],
+    "input_file_count": 241,
+    "input_total_bytes": 21650463
+  },
+  "analysis_outputs": {
+    "json_report": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/outputs/analysis.json",
+      "size_bytes": 103816,
+      "sha256": "d1507d5e56996bb0fb364be2dc4bf50ebe69aba15b62ae07922d409f07f2638e"
+    },
+    "markdown_report": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/outputs/analysis.md",
+      "size_bytes": 4754,
+      "sha256": "71ad4b280797b63b39f3a8ce41875e664fd9c1f4c81c6cbb37a12618c2d15308"
+    },
+    "guest_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/outputs/analysis-guest-manifest.json",
+      "size_bytes": 412375,
+      "sha256": "0997c92e82f983f083e34330520edcae47da0b69bb1c3283ce51db9b5532da4b"
+    },
+    "host_mapping_for_guest_paths": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/outputs/analysis-input-host-map.json",
+      "size_bytes": 112995,
+      "sha256": "efe4822306d93166bd348a4d6c6d0cd4d5b31641d258d74d0fe21188cc0b3961"
+    },
+    "host_mapping_note": "The frozen Markdown keeps absolute /root guest paths. The companion map resolves all 241 guest inputs to same-hash files in the unchanged host campaign directory and names their flat bundle members.",
+    "stdout": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/outputs/analysis-stdout.log",
+      "size_bytes": 65,
+      "sha256": "372e4d916cd0eab3e29e8b45a8fb5d29a61f53fec3a6c1615adcd30e7a5995a8"
+    }
+  },
+  "analysis_result": {
+    "campaign_id": "p04-repeat-20260924-a2",
+    "status": "valid",
+    "acceptance_qualified": false,
+    "failures": [],
+    "qualification_limits": [
+      "host cache reset, exclusive host CPU, upstream image provenance and complete resource gates require independent qualification",
+      "provisional focused P04 timing cannot close the full P04 matrix row",
+      "the hash-pinned build artifact map is an operator assertion, not a cryptographic proof that the measured ELF was compiled from the listed inventory"
+    ],
+    "latency_pairs": 8,
+    "pair_orders": {
+      "sqlite_then_terrabase": 4,
+      "terrabase_then_sqlite": 4
+    },
+    "diagnostic_pair": {
+      "id": "D01",
+      "status": "complete",
+      "order": "sqlite_then_terrabase",
+      "included_in_latency_ci": false
+    },
+    "estimator": "sum(T_i)/sum(S_i)",
+    "bootstrap_replicates_per_metric": 10000,
+    "bootstrap_seed": 2026092404,
+    "metrics": [
+      {
+        "metric": "first_after_fixture_ns",
+        "unit": "ns",
+        "paired_observations": 8,
+        "sqlite_sum_ns": 1284396,
+        "terrabase_sum_ns": 11441072,
+        "sqlite_mean_ns": 160549.5,
+        "terrabase_mean_ns": 1430134.0,
+        "terrabase_over_sqlite_ratio_of_means": 8.907744963391353,
+        "bootstrap_ci95": {
+          "lower": 5.558630407057369,
+          "upper": 12.9395118062455
+        },
+        "classification": "provisional_loss",
+        "bootstrap_seed": 2026092404,
+        "resample_index_sha256": "3f184591749d043f0306322f43908c92af1b1757a7645549de1abca2e0de7a41"
+      },
+      {
+        "metric": "warm_p50_ns",
+        "unit": "ns",
+        "paired_observations": 8,
+        "sqlite_sum_ns": 51154,
+        "terrabase_sum_ns": 6675157,
+        "sqlite_mean_ns": 6394.25,
+        "terrabase_mean_ns": 834394.625,
+        "terrabase_over_sqlite_ratio_of_means": 130.4913985221097,
+        "bootstrap_ci95": {
+          "lower": 99.24948520806483,
+          "upper": 170.80330924597197
+        },
+        "classification": "provisional_loss",
+        "bootstrap_seed": 2026092404,
+        "resample_index_sha256": "5c060fbd9c9fb94de8e90a6de79a936511bf84bd68642ef0b0f98c6fc99fb3c7"
+      },
+      {
+        "metric": "warm_p95_ns",
+        "unit": "ns",
+        "paired_observations": 8,
+        "sqlite_sum_ns": 129899,
+        "terrabase_sum_ns": 12338420,
+        "sqlite_mean_ns": 16237.375,
+        "terrabase_mean_ns": 1542302.5,
+        "terrabase_over_sqlite_ratio_of_means": 94.9847188969892,
+        "bootstrap_ci95": {
+          "lower": 86.69836672789214,
+          "upper": 107.19531356639115
+        },
+        "classification": "provisional_loss",
+        "bootstrap_seed": 2026092404,
+        "resample_index_sha256": "b18016dcd961649b433a4325765aed7f61d240dc1f07b2ef3ab73187fa7d3863"
+      },
+      {
+        "metric": "warm_p99_ns",
+        "unit": "ns",
+        "paired_observations": 8,
+        "sqlite_sum_ns": 626532,
+        "terrabase_sum_ns": 27096249,
+        "sqlite_mean_ns": 78316.5,
+        "terrabase_mean_ns": 3387031.125,
+        "terrabase_over_sqlite_ratio_of_means": 43.24798892953592,
+        "bootstrap_ci95": {
+          "lower": 16.098242968319948,
+          "upper": 105.17832330814878
+        },
+        "classification": "provisional_loss",
+        "bootstrap_seed": 2026092404,
+        "resample_index_sha256": "02b42b13028c94157166d37cc7801cd194e3f4ec1bc4cab47cf3ce13cb541fc3"
+      },
+      {
+        "metric": "warm_p999_ns",
+        "unit": "ns",
+        "paired_observations": 8,
+        "sqlite_sum_ns": 2538010,
+        "terrabase_sum_ns": 52302594,
+        "sqlite_mean_ns": 317251.25,
+        "terrabase_mean_ns": 6537824.25,
+        "terrabase_over_sqlite_ratio_of_means": 20.607717857691657,
+        "bootstrap_ci95": {
+          "lower": 9.70629513209154,
+          "upper": 38.546379465183726
+        },
+        "classification": "provisional_loss",
+        "bootstrap_seed": 2026092404,
+        "resample_index_sha256": "3034cbaad40b5efbec1f9b50f674a36fbe2ca412695e9c68bc96b7f61ca48a9f"
+      }
+    ]
+  },
+  "separate_invalid_a1_case": {
+    "campaign_id": "p04-repeat-20260924-a1",
+    "status": "invalid; excluded from a2 inputs and analysis",
+    "campaign_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a1/campaign.json",
+      "size_bytes": 19270,
+      "sha256": "c9f9cddaa9cdaebe83a15506266814f0a6659f4b628b6fab11967b7631341157"
+    },
+    "output_path_contract": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a1/output-path-contract.json",
+      "size_bytes": 17900,
+      "sha256": "7318a6f8f189d4255271a7af608eb103f0b3f34ef624fce4e238c7a421156b59"
+    },
+    "failed_run_id": "p04a101s",
+    "run_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a1/p04a101s-run-manifest.json",
+      "size_bytes": 218441,
+      "sha256": "b576bcde2a7890f5f52e1785649144654aaa68832c9d48c5cf214a2a921f94e4"
+    },
+    "guest_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a1/p04a101s-guest-manifest.json",
+      "size_bytes": 217199,
+      "sha256": "52821579b8a357c0466ebac47befe8002f9f49479bef7db80ca307436d3059c1"
+    },
+    "guest_output_archive": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a1/p04a101s-guest-output.tar.gz",
+      "size_bytes": 42547,
+      "sha256": "dea65f76003655255f1935619a4426b8042ef39e5e81a0997b5fdcaf187d2b66"
+    },
+    "stderr": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a1/p04a101s-stderr.log",
+      "size_bytes": 82,
+      "sha256": "10c5ae404b7277280b3352ca5e8f0146f7674733c4c08f61423deb8eb3bd9cc2"
+    },
+    "stdout": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a1/p04a101s-stdout.log",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "guest_exit_code": 1,
+    "guest_elapsed_ms": 171,
+    "harness_elapsed_ms": 9402,
+    "error": "Error: read guest manifest; caused by No such file or directory (os error 2). The sealed command requested /root/fc-harness-output/p04a101s-guest-manifest.json, which was not available to the workload.",
+    "workload_receipt_present": false,
+    "samples_present": false,
+    "failure_phase": "The VM started and the workload process exited before reading the guest manifest, creating SQLite/fixture state, or producing timing samples; this was not a pre-VM failure."
+  },
+  "attempts": [
+    {
+      "log": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/nonmutating-cli-probe.log",
+        "size_bytes": 194,
+        "sha256": "a5421fa7a31c18c22f66d40adfe9ad8596c1fa546c87da71844b978105da1289"
+      },
+      "command": "/tmp/fch-runtime-repo-final-20260924/fc-harness run --help",
+      "exit_code": 1,
+      "outcome": "Parser reported missing value for --help; no output directory or VM was created."
+    }
+  ],
+  "quiescence": {
+    "record": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/quiescence.txt",
+      "size_bytes": 590,
+      "sha256": "d68e4d4601314618078a0076a51306276f2b09732173c7db6f59741d14bee7f9"
+    },
+    "checked_at_utc": "2026-09-24T21:01:49Z",
+    "owned_processes": 0,
+    "matching_cgroups": 0,
+    "matching_mounts": 0,
+    "guest_rootfs_copies_remaining": 0,
+    "active_existing_containers": [
+      "wh-searxng",
+      "469fa564fbca-infra",
+      "turso-primary",
+      "turso-replica",
+      "adoring_banach",
+      "admiring_mendel",
+      "optimistic_bassi",
+      "terrabase-rustfs-20260922"
+    ],
+    "existing_containers_untouched": true
+  },
+  "resources_touched": {
+    "created_benchmark_evidence_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z",
+    "created_firecracker_run_paths": [
+      "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-tests-20260924T204702Z",
+      "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-launcher-tests-20260924T204702Z",
+      "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyze-a2-20260924T204702Z"
+    ],
+    "staged_bundle_copy": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/payloads/p04-repeat-20260924-a2-flat-evidence.tar.gz",
+      "sha256": "9d99340caa58c87a5b21a8caed43b3a35c83a0e8078fe9ec2f023493f1a779f4",
+      "mode_octal": "0555",
+      "original_bundle_unchanged": true
+    },
+    "production_paid_or_external_resources_touched": false,
+    "a2_campaign_inputs_modified": false,
+    "measured_lanes_rerun": false
+  },
+  "unresolved_qualification_limits": [
+    "The analyzer report is valid but provisional; acceptance_qualified remains false.",
+    "Host cache reset, exclusive host CPU, upstream guest-image provenance, and complete resource gates need independent qualification.",
+    "This focused repeat does not close the full P04 matrix row.",
+    "The measured artifact map is hash-pinned operator evidence, not cryptographic proof of compilation from every listed source file.",
+    "The host reported swap active while the guest had zero swap entries; host CPUs were not exclusively reserved."
+  ]
+}

@@ -1,0 +1,330 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-lintfix-20260924T201828Z/ts-benchmark/terra-rust'
+nice -n 19 ionice -c 3 cargo clippy --locked --all-targets -j 2 -- -D warnings
+    Checking terrabase-sqlite-baseline v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-lintfix-20260924T201828Z/ts-benchmark/terra-rust)
+error: field name starts with the struct's name
+  --> src/analysis.rs:52:5
+   |
+52 |     campaign_id: String,
+   |     ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#struct_field_names
+   = note: `-D clippy::struct-field-names` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::struct_field_names)]`
+
+error: all fields have the same postfix: `ns`
+   --> src/analysis.rs:127:1
+    |
+127 | / struct Endpoints {
+128 | |     first_after_fixture_ns: u64,
+129 | |     warm_p50_ns: u64,
+130 | |     warm_p95_ns: u64,
+131 | |     warm_p99_ns: u64,
+132 | |     warm_p999_ns: u64,
+133 | | }
+    | |_^
+    |
+    = help: remove the postfixes
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#struct_field_names
+
+error: all fields have the same postfix: `sha256`
+   --> src/analysis.rs:204:1
+    |
+204 | / struct AnalyzerIdentity {
+205 | |     binary_sha256: String,
+206 | |     main_source_sha256: String,
+207 | |     analysis_source_sha256: String,
+...   |
+212 | |     measured_artifact_map_sha256: String,
+213 | | }
+    | |_^
+    |
+    = help: remove the postfixes
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#struct_field_names
+
+error: this function has too many lines (208/100)
+   --> src/analysis.rs:311:1
+    |
+311 | fn evaluate(path: &Path, mut analyzer: AnalyzerIdentity) -> Result<Report> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#too_many_lines
+    = note: `-D clippy::too-many-lines` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::too_many_lines)]`
+
+error: assigning the result of `Clone::clone()` may be inefficient
+   --> src/analysis.rs:397:5
+    |
+397 |     analyzer.measured_program_sha256 = campaign.measured.program_sha256.clone();
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use `clone_from()`: `analyzer.measured_program_sha256.clone_from(&campaign.measured.program_sha256)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#assigning_clones
+    = note: `-D clippy::assigning-clones` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::assigning_clones)]`
+
+error: assigning the result of `Clone::clone()` may be inefficient
+   --> src/analysis.rs:398:5
+    |
+398 |     analyzer.measured_source_inventory_sha256 = campaign.measured.source_inventory.sha256.clone();
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use `clone_from()`: `analyzer.measured_source_inventory_sha256.clone_from(&campaign.measured.source_inventory.sha256)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#assigning_clones
+
+error: assigning the result of `Clone::clone()` may be inefficient
+   --> src/analysis.rs:399:5
+    |
+399 |     analyzer.measured_artifact_map_sha256 = campaign.measured.artifact_map.sha256.clone();
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use `clone_from()`: `analyzer.measured_artifact_map_sha256.clone_from(&campaign.measured.artifact_map.sha256)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#assigning_clones
+
+error: this function has too many lines (134/100)
+    --> src/analysis.rs:1003:1
+     |
+1003 | / fn validate_guest_command(
+1004 | |     binding: &Value,
+1005 | |     receipt: &Value,
+1006 | |     input: &LaneInput,
+...    |
+1010 | |     measured: &Measured,
+1011 | | ) -> Result<GuestOutputNames> {
+     | |_____________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#too_many_lines
+
+error: using `contains()` instead of `iter().any()` is more efficient
+    --> src/analysis.rs:1037:9
+     |
+1037 |         prefix.iter().any(|arg| *arg == "--program"),
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `prefix.contains(&"--program")`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_contains
+     = note: `-D clippy::manual-contains` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::manual_contains)]`
+
+error: this function has too many lines (274/100)
+    --> src/analysis.rs:1300:1
+     |
+1300 | / fn validate_lane(
+1301 | |     base: &Path,
+1302 | |     input: &LaneInput,
+1303 | |     engine: &'static str,
+...    |
+1308 | |     report: &mut LaneReport,
+1309 | | ) -> Result<Option<Endpoints>> {
+     | |______________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#too_many_lines
+
+error: casting `u128` to `f64` may cause a loss of precision (`u128` is 128 bits wide, but `f64`'s mantissa is only 52 bits wide)
+    --> src/analysis.rs:1833:27
+     |
+1833 |         let point_ratio = terrabase_sum as f64 / sqlite_sum as f64;
+     |                           ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#cast_precision_loss
+     = note: `-D clippy::cast-precision-loss` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::cast_precision_loss)]`
+
+error: casting `u128` to `f64` may cause a loss of precision (`u128` is 128 bits wide, but `f64`'s mantissa is only 52 bits wide)
+    --> src/analysis.rs:1833:50
+     |
+1833 |         let point_ratio = terrabase_sum as f64 / sqlite_sum as f64;
+     |                                                  ^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#cast_precision_loss
+
+error: casting `u128` to `f64` may cause a loss of precision (`u128` is 128 bits wide, but `f64`'s mantissa is only 52 bits wide)
+    --> src/analysis.rs:1847:25
+     |
+1847 |             let ratio = terrabase_draw as f64 / sqlite_draw as f64;
+     |                         ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#cast_precision_loss
+
+error: casting `u128` to `f64` may cause a loss of precision (`u128` is 128 bits wide, but `f64`'s mantissa is only 52 bits wide)
+    --> src/analysis.rs:1847:49
+     |
+1847 |             let ratio = terrabase_draw as f64 / sqlite_draw as f64;
+     |                                                 ^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#cast_precision_loss
+
+error: `format!(..)` appended to existing `String`
+    --> src/analysis.rs:1897:9
+     |
+1897 | /         out.push_str(&format!(
+1898 | |             "| {} | {} | {} | {} | {} | {}; {} |\n",
+1899 | |             md(&pair.id),
+1900 | |             order,
+...    |
+1905 | |             receipt_link(&pair.terrabase)
+1906 | |         ));
+     | |__________^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+     = note: `-D clippy::format-push-string` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+     |
+1897 ~         let _ = write!(out, "| {} | {} | {} | {} | {} | {}; {} |\n",
+1898 +             md(&pair.id),
+1899 +             order,
+1900 +             endpoint_cell(pair.sqlite.endpoints),
+1901 +             endpoint_cell(pair.terrabase.endpoints),
+1902 +             if pair.complete { "complete" } else { "failed" },
+1903 +             receipt_link(&pair.sqlite),
+1904 ~             receipt_link(&pair.terrabase));
+     |
+
+error: `format!(..)` appended to existing `String`
+    --> src/analysis.rs:1910:9
+     |
+1910 | /         out.push_str(&format!(
+1911 | |             "| {} | {:.6} | [{:.6}, {:.6}] | {} | `{}` |\n",
+1912 | |             metric.metric,
+1913 | |             metric.point_ratio,
+...    |
+1917 | |             metric.resample_index_sha256
+1918 | |         ));
+     | |__________^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1910 ~         let _ = write!(out, "| {} | {:.6} | [{:.6}, {:.6}] | {} | `{}` |\n",
+1911 +             metric.metric,
+1912 +             metric.point_ratio,
+1913 +             metric.ci95_lower,
+1914 +             metric.ci95_upper,
+1915 +             metric.classification,
+1916 ~             metric.resample_index_sha256);
+     |
+
+error: `format!(..)` appended to existing `String`
+    --> src/analysis.rs:1925:9
+     |
+1925 | /         out.push_str(&format!(
+1926 | |             "D01: **{}**; receipts: {}, {}.\n\n",
+1927 | |             if pair.complete { "complete" } else { "failed" },
+1928 | |             receipt_link(&pair.sqlite),
+1929 | |             receipt_link(&pair.terrabase)
+1930 | |         ));
+     | |__________^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1925 ~         let _ = write!(out, "D01: **{}**; receipts: {}, {}.\n\n",
+1926 +             if pair.complete { "complete" } else { "failed" },
+1927 +             receipt_link(&pair.sqlite),
+1928 ~             receipt_link(&pair.terrabase));
+     |
+
+error: `format!(..)` appended to existing `String`
+    --> src/analysis.rs:1934:9
+     |
+1934 |         out.push_str(&format!("- {}\n", md(failure)));
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1934 -         out.push_str(&format!("- {}\n", md(failure)));
+1934 +         let _ = write!(out, "- {}\n", md(failure));
+     |
+
+error: `format!(..)` appended to existing `String`
+    --> src/analysis.rs:1943:17
+     |
+1943 |                 out.push_str(&format!("- Run `{}`: {}\n", md(&lane.run_id), md(error)));
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1943 -                 out.push_str(&format!("- Run `{}`: {}\n", md(&lane.run_id), md(error)));
+1943 +                 let _ = write!(out, "- Run `{}`: {}\n", md(&lane.run_id), md(error));
+     |
+
+error: `format!(..)` appended to existing `String`
+    --> src/analysis.rs:1946:17
+     |
+1946 | /                 out.push_str(&format!(
+1947 | |                     "- Run `{}` observed host status `{}`, guest exit `{:?}`, measured receipt status `{}`: {}\n",
+1948 | |                     md(&lane.run_id),
+1949 | |                     md(lane.host_run_status.as_deref().unwrap_or("unavailable")),
+...    |
+1952 | |                     md(lane.measured_receipt_error.as_deref().unwrap_or("no receipt error text"))
+1953 | |                 ));
+     | |__________________^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1946 ~                 let _ = write!(out, "- Run `{}` observed host status `{}`, guest exit `{:?}`, measured receipt status `{}`: {}\n",
+1947 +                     md(&lane.run_id),
+1948 +                     md(lane.host_run_status.as_deref().unwrap_or("unavailable")),
+1949 +                     lane.guest_exit_code,
+1950 +                     md(lane.measured_receipt_status.as_deref().unwrap_or("unavailable")),
+1951 ~                     md(lane.measured_receipt_error.as_deref().unwrap_or("no receipt error text")));
+     |
+
+error: `format!(..)` appended to existing `String`
+    --> src/analysis.rs:1958:9
+     |
+1958 |         out.push_str(&format!("- {}\n", md(limit)));
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1958 -         out.push_str(&format!("- {}\n", md(limit)));
+1958 +         let _ = write!(out, "- {}\n", md(limit));
+     |
+
+error: this function has too many lines (118/100)
+    --> src/analysis.rs:2144:5
+     |
+2144 |     fn command_binding_rejects_changed_workload_and_wrong_guest_manifest_path() {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#too_many_lines
+
+error: strict comparison of `f32` or `f64`
+    --> src/analysis.rs:2423:13
+     |
+2423 |             assert_eq!(left.point_ratio, 569.0 / 710.0);
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#float_cmp
+     = note: `-D clippy::float-cmp` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::float_cmp)]`
+
+error: strict comparison of `f32` or `f64`
+    --> src/analysis.rs:2425:13
+     |
+2425 |             assert_eq!(left.ci95_lower, right.ci95_lower);
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#float_cmp
+
+error: strict comparison of `f32` or `f64`
+    --> src/analysis.rs:2426:13
+     |
+2426 |             assert_eq!(left.ci95_upper, right.ci95_upper);
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#float_cmp
+
+error: could not compile `terrabase-sqlite-baseline` (bin "terrabase-sqlite-baseline") due to 21 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `terrabase-sqlite-baseline` (bin "terrabase-sqlite-baseline" test) due to 25 previous errors
+make: *** [Makefile:24: lint] Error 101
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-lintfix-20260924T201828Z/ts-benchmark/terra-rust'

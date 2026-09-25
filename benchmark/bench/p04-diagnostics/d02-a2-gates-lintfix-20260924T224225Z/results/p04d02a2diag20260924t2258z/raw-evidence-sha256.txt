@@ -1,0 +1,4 @@
+d5045335727f49ec9e7a79ffd188d5210dd4e33f21ce01e577d4971e7d1147e7  ../../../../firecracker-harness/p04d02a2diag20260924t2258z/run-manifest.json
+465fa084b7d6e30828c20df67ccaf2efd6c59fd4acff56181802ea8cd7c0f37c  ../../../../firecracker-harness/p04d02a2diag20260924t2258z/guest-output.tar.gz
+5d1630edf1591888cb9e28f21e6ed1379b9f8dbd733c2e45351dd83931ed390c  ../../../../firecracker-harness/p04d02a2diag20260924t2258z.operator.log
+4a3f368c336935a1b0c58311c0fbf05e8569369f03230056ec2fa266d67b309d  ../../../../firecracker-harness/p04d02a2diag20260924t2258z/quiescence.txt

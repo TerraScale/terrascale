@@ -1,0 +1,18 @@
+run_id=p04a205s
+started_at_utc=2026-09-24T19:57:57.952914+00:00
+host_before_snapshot=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a2/p04a205s-host-before.json
+host_argv=["/tmp/fch-runtime-repo-final-20260924/fc-harness", "run", "--benchmark-repo", "/home/mariogk/Projects/TerraScale/ts-benchmark", "--subject-repo", "/home/mariogk/Projects/TerraScale/terrabase", "--program", "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a2/payloads/terrabase-sqlite-baseline", "--run-id", "p04a205s", "--timeout-seconds", "300", "--output", "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04a205s", "--", "run", "--case", "deleted-history", "--rows", "1024", "--operations", "1000", "--body-bytes", "1", "--seed", "1", "--trial", "5", "--checkpoint-fixture", "--database", "/root/fc-bench-data/p04a205s.sqlite", "--samples", "/root/fc-harness-output/p04a205s-samples.jsonl", "--receipt", "/root/fc-harness-output/p04a205s-receipt.json", "--guest-manifest", "/root/fc-harness-output/guest-manifest.json", "--benchmark-revision", "5685f163bb7e9339e8eb0c839fe2512aaf562648", "--engine-revision", "352d9f61185d1b685e3032519579040d169ad47d"]
+runner=Python subprocess; stdout and stderr merged to this host operator log
+
+Firecracker 1.15.1: OK
+KVM_GET_API_VERSION: 12
+guest: 4 vCPUs / 8192 MiB / swap disabled
+kernel /tmp/fc-payload-wXmCox sha256=e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2
+rootfs /tmp/vm-inputs/rootfs.ext4 sha256=dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314
+guest agent /tmp/fc-payload-gjJa1u sha256=3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb
+host CPU affinity candidates: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+guest image upstream provenance: unqualified (checksum-pinned local artifact only)
+run p04a205s completed in 9361 ms; receipt: /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04a205s/run-manifest.json
+
+finished_at_utc=2026-09-24T19:59:10.824426+00:00
+exit_code=0

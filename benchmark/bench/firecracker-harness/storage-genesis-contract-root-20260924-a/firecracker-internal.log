@@ -1,0 +1,35 @@
+2026-09-24T13:02:50.538214562 [storage-genesis-contract-root-20260924-a:main:INFO] Running Firecracker v1.15.1
+2026-09-24T13:02:50.539891226 [storage-genesis-contract-root-20260924-a:main:INFO] Listening on API socket ("/tmp/fch-0vF5ua/api.sock").
+2026-09-24T13:02:50.540290872 [storage-genesis-contract-root-20260924-a:fc_api:INFO] API server started.
+2026-09-24T13:02:50.564710980 [storage-genesis-contract-root-20260924-a:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T13:02:50.564869514 [storage-genesis-contract-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T13:02:50.565073700 [storage-genesis-contract-root-20260924-a:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T13:02:50.565139938 [storage-genesis-contract-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T13:02:50.565585229 [storage-genesis-contract-root-20260924-a:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/fc-payload-nU9oBx\"}".
+2026-09-24T13:02:50.565674467 [storage-genesis-contract-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T13:02:50.565799255 [storage-genesis-contract-root-20260924-a:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-genesis-contract-root-20260924-a/guest-rootfs.ext4\"}".
+2026-09-24T13:02:50.565932061 [storage-genesis-contract-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T13:02:50.566112184 [storage-genesis-contract-root-20260924-a:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-0vF5ua/vsock.sock\"}".
+2026-09-24T13:02:50.566393911 [storage-genesis-contract-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T13:02:50.566508325 [storage-genesis-contract-root-20260924-a:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T13:02:50.604392966 [storage-genesis-contract-root-20260924-a:main:INFO] Artificially kick devices
+2026-09-24T13:02:50.604487814 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T13:02:50.604569795 [storage-genesis-contract-root-20260924-a:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T13:02:50.604652378 [storage-genesis-contract-root-20260924-a:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T13:02:50.604715365 [storage-genesis-contract-root-20260924-a:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T13:02:50.604868589 [storage-genesis-contract-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T13:02:50.663250178 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:50.663380323 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:54.672441092 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:54.672576237 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:54.678788894 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:54.678925103 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:54.681837250 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:54.681950487 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:54.688090815 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:54.688212795 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:54.691256456 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:54.691373177 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:54.697181998 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:54.697299443 [storage-genesis-contract-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:02:55.994771480 [storage-genesis-contract-root-20260924-a:fc_vcpu 1:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

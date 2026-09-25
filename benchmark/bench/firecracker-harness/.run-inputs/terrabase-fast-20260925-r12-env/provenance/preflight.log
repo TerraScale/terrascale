@@ -1,0 +1,15 @@
+launch resource gate generated at 2026-09-25T19:36:13.479152+00:00
+MemAvailable bytes: 17087180800
+output disk free bytes: 82122723328; required bytes: 3220160000
+host allowed CPUs: 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45
+no active Firecracker: True
+no harness or wrapper processes: True
+no cargo/rustc/sccache processes: True
+/dev/kvm writable: True
+subject overlay stable: True
+benchmark runner source stable: True
+staged artifact hashes match: True
+all checks passed: True
+subject manifest check exit: 0
+benchmark runner check exit: 0
+staged artifact check exit: 0

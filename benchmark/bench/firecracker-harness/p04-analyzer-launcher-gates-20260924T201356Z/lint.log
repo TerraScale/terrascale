@@ -1,0 +1,66 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-locked-20260924T201356Z/ts-benchmark/terra-rust'
+nice -n 19 ionice -c 3 cargo clippy --locked --all-targets -j 2 -- -D warnings
+    Checking terrabase-sqlite-baseline v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-locked-20260924T201356Z/ts-benchmark/terra-rust)
+error: binding's name is too similar to existing binding
+   --> src/p04_analysis_launcher.rs:209:9
+    |
+209 |     let argv = analyzer_argv(&campaign, &relative_reports);
+    |         ^^^^
+    |
+note: existing binding defined here
+   --> src/p04_analysis_launcher.rs:134:11
+    |
+134 | fn launch(args: &Args, paths: &Paths, receipt: &mut Receipt) -> Result<ExitStatus> {
+    |           ^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#similar_names
+    = note: `-D clippy::similar-names` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::similar_names)]`
+
+error: binding's name is too similar to existing binding
+   --> src/p04_analysis_launcher.rs:255:9
+    |
+255 |     let decoder = GzDecoder::new(Cursor::new(compressed));
+    |         ^^^^^^^
+    |
+note: existing binding defined here
+   --> src/p04_analysis_launcher.rs:251:13
+    |
+251 |     let mut decoded = OpenOptions::new()
+    |             ^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#similar_names
+
+error: assigning the result of `Clone::clone()` may be inefficient
+   --> src/p04_analysis_launcher.rs:210:5
+    |
+210 |     receipt.analyzer_argv = argv.clone();
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use `clone_from()`: `receipt.analyzer_argv.clone_from(&argv)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#assigning_clones
+    = note: `-D clippy::assigning-clones` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::assigning_clones)]`
+
+error: allocating a local array larger than 16384 bytes
+   --> src/p04_analysis_launcher.rs:323:21
+    |
+323 |     let mut block = [0_u8; 64 * 1024];
+    |                     ^^^^^^^^^^^^^^^^^
+    |
+    = help: consider allocating on the heap with `vec![0_u8; 64 * 1024].into_boxed_slice()`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#large_stack_arrays
+    = note: `-D clippy::large-stack-arrays` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::large_stack_arrays)]`
+
+error: allocating a local array larger than 16384 bytes
+   --> src/p04_analysis_launcher.rs:403:21
+    |
+403 |     let mut block = [0_u8; 64 * 1024];
+    |                     ^^^^^^^^^^^^^^^^^
+    |
+    = help: consider allocating on the heap with `vec![0_u8; 64 * 1024].into_boxed_slice()`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#large_stack_arrays
+
+error: could not compile `terrabase-sqlite-baseline` (bin "p04-analysis-launcher") due to 5 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `terrabase-sqlite-baseline` (bin "p04-analysis-launcher" test) due to 5 previous errors
+make: *** [Makefile:24: lint] Error 101
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-locked-20260924T201356Z/ts-benchmark/terra-rust'

@@ -1,0 +1,37 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness'
+nice -n 19 ionice -c 3 cargo clippy --locked --all-targets --jobs 2 -p fc-harness -p fc-guest-agent -- -D warnings
+    Checking fc-guest-agent v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/crates/fc-guest-agent)
+    Checking fc-harness v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/crates/fc-harness)
+error: comparison to empty slice
+   --> crates/fc-harness/src/image_profile.rs:446:12
+    |
+446 |         || field(value, "/kernel/annotated_tag")? != ""
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: using `!is_empty` is clearer and more explicit: `!field(value, "/kernel/annotated_tag")?.is_empty()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#comparison_to_empty
+    = note: `-D clippy::comparison-to-empty` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::comparison_to_empty)]`
+
+error: comparison to empty slice
+   --> crates/fc-harness/src/image_profile.rs:447:12
+    |
+447 |         || field(value, "/kernel/tag_object")? != ""
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: using `!is_empty` is clearer and more explicit: `!field(value, "/kernel/tag_object")?.is_empty()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#comparison_to_empty
+
+error: casting `u64` to `i64` may wrap around the value
+   --> crates/fc-harness/src/image_profile.rs:508:59
+    |
+508 |         || pin["archive_size_bytes"].as_integer() != Some(FIRECRACKER_ARCHIVE_SIZE as i64)
+    |                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#cast_possible_wrap
+    = note: `-D clippy::cast-possible-wrap` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::cast_possible_wrap)]`
+
+error: could not compile `fc-harness` (bin "fc-harness") due to 3 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `fc-harness` (bin "fc-harness" test) due to 3 previous errors
+make: *** [Makefile:28: lint-controller] Error 101
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness'

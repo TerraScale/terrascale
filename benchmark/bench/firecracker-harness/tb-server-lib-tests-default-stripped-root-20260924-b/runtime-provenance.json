@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "run_id": "tb-server-lib-tests-default-stripped-root-20260924-b",
+  "status": "passed",
+  "test_result": {
+    "passed": 16,
+    "failed": 0,
+    "exit_code": 0,
+    "relevant_cases": [
+      "replication_server::tests::accept_error_classification_preserves_tonics_retry_set",
+      "replication_server::tests::terminal_accept_failure_marks_unready_before_notifying_shutdown",
+      "replication_config::tests::network_memory_profile_has_explicit_minimum_and_headroom"
+    ]
+  },
+  "source_identity": {
+    "terrabase_head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "original_69_entry_closure_sha256": "85c1c7ee5291db4436354201e5a8f0d44849a6303d6ff6a5e9f7f1201d894816",
+    "pre_hook_64_entry_snapshot_manifest_sha256": "65b1cd9ec855c3da4eaace727e15ce30ecbf48965daa856baeeaa5714650de59",
+    "snapshot_verification": "all 64 source entries passed sha256sum -c",
+    "supplemental_artifact_map_sha256": "20fcc2edc1c52046551168e68cb6b11a12158df06164345f708d71d9c043ab5d",
+    "supplemental_transform_receipt_sha256": "35ee95d180a6c3ff1bb981c0907295f8d600f5ed7b6af8dfc8fcf906370510b6",
+    "live_source_difference_record": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-process-default-stripped-root-20260924-b/runtime-provenance.json",
+    "live_source_difference_record_sha256": "ccd065f10478ef135c9c36c7e26eab96b8f4ab3b4bdf1fd4e2977256ac55a1f2"
+  },
+  "payloads": [
+    {
+      "guest_path": "/root/fc-harness-payloads/replication_process",
+      "role": "frozen tb_server library test executable",
+      "original_sha256": "b0892f84d0f7f62f65a4535dda889488c09bacaaa08e101acd942f8e1740db8a",
+      "derived_sha256": "d25962bfb300d58ee84e96069d7a5e4ed8e9705f811dc91831fa13f1aacb9c46",
+      "derived_size_bytes": 10655744
+    },
+    {
+      "guest_path": "/root/fc-harness-payloads/tb-server",
+      "role": "packaged production server required by finite runner",
+      "derived_sha256": "96c5e400fef78de5bf799a1bdc4b8f013abef84da995061b4a6f21d205fa422b",
+      "derived_size_bytes": 27428928
+    }
+  ],
+  "runtime_identity": {
+    "command": "nice -n 19 ionice -c 3 /tmp/fch-runtime-repo-final-20260924/fc-harness run --benchmark-repo /home/mariogk/Projects/TerraScale/ts-benchmark --subject-repo /home/mariogk/Projects/TerraScale/terrabase --program /home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/target/verification/finite-cgroup-runner-25ccdbc762bc/finite_cgroup_runner --run-id tb-server-lib-tests-default-stripped-root-20260924-b --timeout-seconds 300 --payload-file /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-stripped-supplemental/tb_server_lib_tests:replication_process --payload-file /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-stripped/tb-server:tb-server -- --test-threads=1 --nocapture",
+    "finite_runner_sha256": "25ccdbc762bc9759e313f0287a64d5bf86611c1e66da3f26e27f18d7f140cbd6",
+    "controller_sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20",
+    "guest_agent_sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb",
+    "firecracker_version": "1.15.1",
+    "firecracker_sha256": "9d9ec5ff68a23ce54a424b15ec097c7204a3f206884c092d570b75529811bd57",
+    "kvm_api_version": 12,
+    "vcpu_count": 4,
+    "memory_mib": 8192,
+    "guest_swap_disabled": true,
+    "network": "disabled",
+    "finite_cgroup_limit_bytes": 6442450944,
+    "memory_events": "low 0; high 0; max 0; oom 0; oom_kill 0; oom_group_kill 0",
+    "wrapper_returned_to_agent_cgroup": true,
+    "remaining_child_processes": "",
+    "child_removed": true,
+    "hook_cancellation_coverage_claimed": false,
+    "kernel_rootfs_upstream_provenance": "unqualified; local checksums are pinned"
+  },
+  "evidence": {
+    "run_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-server-lib-tests-default-stripped-root-20260924-b/run-manifest.json",
+      "sha256": "f659113355168d348914341879c942728cbb4850e6e2fcfdef4dcdd29d1bf10c"
+    },
+    "guest_output_archive": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-server-lib-tests-default-stripped-root-20260924-b/guest-output.tar.gz",
+      "sha256": "78cf11dc079d199f75bf9e8c710857455a3ffdddf9b5516194bbdb4d488e0f6f"
+    },
+    "embedded_cgroup_receipt_sha256": "3086b8296d9942fecfffdd5385cb8b2f4292334bd8d3d4748fb5b1f2a9f506b4",
+    "firecracker_log_sha256": "3b9d0066f3ed127177a51a38cde1736fd8473b8d762cb8b64f51db418bbaad91",
+    "firecracker_internal_log_sha256": "516366bbf2bd2dc128652ae5b4f6281de9b8dc1c5b5797b29dcb67fe2a675f01"
+  }
+}

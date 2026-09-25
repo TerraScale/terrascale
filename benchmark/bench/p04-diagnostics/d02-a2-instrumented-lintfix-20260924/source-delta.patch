@@ -1,0 +1,938 @@
+--- sealed-a2/terrabase/crates/tb-storage/src/lib.rs
++++ d02/terrabase/crates/tb-storage/src/lib.rs
+@@ -12,9 +12,9 @@
+ mod work;
+ 
+ pub use local::{
+-    BatchFootprint, CommittedBatch, CommittedBatchCursor, PlannedBatch, PreparedBatch,
+-    PreparedBatchOutcome, StageWorkPlan, StageWorkReservation, Storage, StorageConfig,
+-    StorageStats,
++    BatchFootprint, CommittedBatch, CommittedBatchCursor, D02PhaseTimes, PlannedBatch,
++    PreparedBatch, PreparedBatchOutcome, StageWorkPlan, StageWorkReservation, Storage,
++    StorageConfig, StorageStats,
+ };
+ pub use mode::DistributedDocumentMode;
+ pub use work::ScanWork;
+--- sealed-a2/terrabase/crates/tb-storage/src/local.rs
++++ d02/terrabase/crates/tb-storage/src/local.rs
+@@ -5,7 +5,7 @@
+ use std::path::{Path, PathBuf};
+ use std::sync::atomic::{AtomicU64, Ordering};
+ use std::sync::{Arc, Mutex};
+-use std::time::{SystemTime, UNIX_EPOCH};
++use std::time::{Instant, SystemTime, UNIX_EPOCH};
+ 
+ use fs2::FileExt;
+ use sha2::{Digest, Sha256};
+@@ -543,6 +543,27 @@
+     pub scan_work: crate::ScanWork,
+ }
+ 
++/// D02-only wall-time brackets. Block load is nested in advance/merge.
++#[derive(Clone, Copy, Debug, Default)]
++pub struct D02PhaseTimes {
++    /// Inclusive `Storage::scan_d02` wall time, including lock and validation.
++    pub storage_scan_ns: u64,
++    /// Bounds, memory admission, and output/cursor allocation.
++    pub prelude_ns: u64,
++    /// Immutable-run open, metadata, header, footer, and directory checks.
++    pub cursor_open_ns: u64,
++    /// First cursor advance per run, before the merge loop.
++    pub initial_advance_ns: u64,
++    /// Mutable iterator setup and the entire key/version merge loop.
++    pub merge_ns: u64,
++    /// Nested subset of initial advance or merge, never additive.
++    pub block_load_ns: u64,
++}
++
++fn d02_ns(duration: std::time::Duration) -> u64 {
++    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
++}
++
+ /// A single-writer, shard-local durable engine.
+ pub struct Storage {
+     inner: Mutex<Inner>,
+@@ -936,7 +957,27 @@
+         let inner = self.lock();
+         inner.validate_snapshot(snapshot)?;
+         let _scan_guard = inner.scan_work.begin();
+-        inner.scan(snapshot.seq, range, row_limit)
++        inner.scan(snapshot.seq, range, row_limit, None)
++    }
++
++    /// D02-only scan with coarse phase timings; results and counters use the normal scan path.
++    ///
++    /// # Errors
++    /// Returns the same validation, admission, or corruption error as `scan`.
++    pub fn scan_d02(
++        &self,
++        snapshot: ReadSnapshot,
++        range: &KeyRange,
++        row_limit: usize,
++    ) -> Result<(ScanPage, D02PhaseTimes), StorageError> {
++        let started = Instant::now();
++        let inner = self.lock();
++        inner.validate_snapshot(snapshot)?;
++        let _scan_guard = inner.scan_work.begin();
++        let mut phases = D02PhaseTimes::default();
++        let page = inner.scan(snapshot.seq, range, row_limit, Some(&mut phases))?;
++        phases.storage_scan_ns = d02_ns(started.elapsed());
++        Ok((page, phases))
+     }
+ 
+     /// Atomically commit an owned batch after checking its snapshot and retry token.
+@@ -1685,7 +1726,9 @@
+         snapshot: CommitSeq,
+         range: &KeyRange,
+         row_limit: usize,
++        mut d02: Option<&mut D02PhaseTimes>,
+     ) -> Result<ScanPage, StorageError> {
++        let prelude_started = d02.as_ref().map(|_| Instant::now());
+         if row_limit == 0 || row_limit > self.config.max_scan_rows {
+             return Err(StorageError::Capacity("scan row limit"));
+         }
+@@ -1746,14 +1789,24 @@
+         cursors
+             .try_reserve_exact(self.manifest.runs.len())
+             .map_err(|_| StorageError::Capacity("scan cursor allocation"))?;
++        if let (Some(phases), Some(started)) = (d02.as_deref_mut(), prelude_started) {
++            phases.prelude_ns = d02_ns(started.elapsed());
++        }
+         for run in &self.manifest.runs {
+             limit_scan_files(&mut cursors, None);
+-            cursors.push(run::ScanCursor::open(
+-                &self.config.path,
+-                run,
+-                &self.read_context(),
+-            )?);
++            let open_started = d02.as_ref().map(|_| Instant::now());
++            let mut cursor = run::ScanCursor::open(&self.config.path, run, &self.read_context())?;
++            if let (Some(phases), Some(started)) = (d02.as_deref_mut(), open_started) {
++                phases.cursor_open_ns = phases
++                    .cursor_open_ns
++                    .saturating_add(d02_ns(started.elapsed()));
++            }
++            if d02.is_some() {
++                cursor.enable_d02_block_timing();
++            }
++            cursors.push(cursor);
+             let index = cursors.len() - 1;
++            let advance_started = d02.as_ref().map(|_| Instant::now());
+             advance_run_cursor(
+                 &mut cursors,
+                 index,
+@@ -1761,7 +1814,13 @@
+                 &self.read_context(),
+                 &mut scratch,
+             )?;
++            if let (Some(phases), Some(started)) = (d02.as_deref_mut(), advance_started) {
++                phases.initial_advance_ns = phases
++                    .initial_advance_ns
++                    .saturating_add(d02_ns(started.elapsed()));
++            }
+         }
++        let merge_started = d02.as_ref().map(|_| Instant::now());
+         let mut mutable = self
+             .mutable
+             .iter()
+@@ -1893,6 +1952,12 @@
+                 });
+             }
+         }
++        if let (Some(phases), Some(started)) = (d02.as_deref_mut(), merge_started) {
++            phases.merge_ns = d02_ns(started.elapsed());
++            phases.block_load_ns = cursors.iter().fold(0_u64, |total, cursor| {
++                total.saturating_add(cursor.d02_block_load_ns())
++            });
++        }
+         Ok(ScanPage {
+             rows,
+             _permit: permit,
+--- sealed-a2/terrabase/crates/tb-storage/src/run.rs
++++ d02/terrabase/crates/tb-storage/src/run.rs
+@@ -6,6 +6,7 @@
+ use std::io::{Read, Seek, SeekFrom, Write};
+ use std::os::unix::fs::MetadataExt;
+ use std::path::{Path, PathBuf};
++use std::time::Instant;
+ 
+ use sha2::{Digest, Sha256};
+ use tb_core::{Attribution, CommitSeq, Key, KeyBound, KeyRange, MemoryBudget, Reservation};
+@@ -320,6 +321,7 @@
+     position: Option<SegmentBlockPosition>,
+     highest_loaded_descriptor: Option<usize>,
+     pub(crate) current: Option<ScanCandidate>,
++    d02_block_load_ns: Option<u64>,
+ }
+ 
+ #[derive(Clone, Copy, Eq, PartialEq)]
+@@ -393,9 +395,18 @@
+             position: None,
+             highest_loaded_descriptor: None,
+             current: None,
++            d02_block_load_ns: None,
+         })
+     }
+ 
++    pub(crate) fn enable_d02_block_timing(&mut self) {
++        self.d02_block_load_ns = Some(0);
++    }
++
++    pub(crate) fn d02_block_load_ns(&self) -> u64 {
++        self.d02_block_load_ns.unwrap_or(0)
++    }
++
+     pub(crate) fn has_file(&self) -> bool {
+         self.file.is_some()
+     }
+@@ -497,6 +508,7 @@
+     }
+ 
+     fn load_block(&mut self, read: &ReadContext<'_>) -> Result<(), StorageError> {
++        let started = self.d02_block_load_ns.map(|_| Instant::now());
+         self.ensure_file(read)?;
+         let descriptor = self
+             .descriptor
+@@ -524,6 +536,10 @@
+         self.highest_loaded_descriptor = Some(self.descriptor_index);
+         self.block = Some(block);
+         self.block_permit = Some(permit);
++        if let (Some(total), Some(started)) = (&mut self.d02_block_load_ns, started) {
++            *total = total
++                .saturating_add(u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
++        }
+         Ok(())
+     }
+ 
+--- sealed-a2/ts-benchmark/terra-rust/Cargo.toml
++++ d02/ts-benchmark/terra-rust/Cargo.toml
+@@ -4,6 +4,11 @@
+ edition = "2024"
+ rust-version = "1.85"
+ 
++[[bin]]
++name = "p04-d02"
++path = "src/bin/p04_d02.rs"
++required-features = ["terrabase"]
++
+ [features]
+ terrabase = ["dep:tb-core", "dep:tb-storage"]
+ 
+--- sealed-a2/ts-benchmark/terra-rust/Makefile
++++ d02/ts-benchmark/terra-rust/Makefile
+@@ -1,5 +1,5 @@
+ .DEFAULT_GOAL := help
+-.PHONY: help lock check check-engine lint lint-engine build build-guest build-guest-engine test-build test-vm test fmt format
++.PHONY: help lock check check-engine check-d02 lint lint-engine lint-d02 build build-guest build-guest-engine build-guest-d02 test-build test-vm test fmt fmt-d02 format
+ 
+ MUSL_CC ?= x86_64-unknown-linux-musl-gcc
+ SUBJECT_REPO ?= $(abspath ../../terrabase)
+@@ -10,6 +10,7 @@
+ 
+ help:
+ 	@printf '%s\n' 'check/lint/build: SQLite-only driver checks and host build' 'check-engine/lint-engine/build-guest-engine: feature-enabled TerraBase adapter' 'build-guest: static musl SQLite-only binary' 'test-build: compile feature-enabled musl unit tests without running them' 'test-vm (or test): run TEST_BINARY inside Firecracker; set absolute TEST_BINARY and unique RUN_ID' 'lock: explicitly refresh Cargo.lock; fmt/format: check or apply Rust formatting'
++	@printf '%s\n' 'check-d02/lint-d02/build-guest-d02/fmt-d02: isolated instrumented diagnostic binary only'
+ 
+ lock:
+ 	nice -n 19 ionice -c 3 cargo generate-lockfile
+@@ -20,12 +21,18 @@
+ check-engine:
+ 	nice -n 19 ionice -c 3 cargo check --locked --features terrabase -j 2
+ 
++check-d02:
++	nice -n 19 ionice -c 3 cargo check --locked --features terrabase --bin p04-d02 -j 2
++
+ lint:
+ 	nice -n 19 ionice -c 3 cargo clippy --locked --all-targets -j 2 -- -D warnings
+ 
+ lint-engine:
+ 	nice -n 19 ionice -c 3 cargo clippy --locked --all-targets --features terrabase -j 2 -- -D warnings
+ 
++lint-d02:
++	nice -n 19 ionice -c 3 cargo clippy --locked --features terrabase --bin p04-d02 -j 2 -- -D warnings
++
+ build:
+ 	nice -n 19 ionice -c 3 cargo build --release --locked -j 2
+ 
+@@ -35,6 +42,9 @@
+ build-guest-engine:
+ 	CC_x86_64_unknown_linux_musl=$(MUSL_CC) CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=$(MUSL_CC) nice -n 19 ionice -c 3 cargo build --release --locked --features terrabase --target x86_64-unknown-linux-musl -j 2
+ 
++build-guest-d02:
++	CC_x86_64_unknown_linux_musl=$(MUSL_CC) CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=$(MUSL_CC) nice -n 19 ionice -c 3 cargo build --release --locked --features terrabase --bin p04-d02 --target x86_64-unknown-linux-musl -j 2
++
+ test-build:
+ 	@command -v "$(MUSL_CC)" >/dev/null 2>&1 || { echo 'musl C compiler is required' >&2; exit 2; }
+ 	CC_x86_64_unknown_linux_musl=$(MUSL_CC) CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=$(MUSL_CC) nice -n 19 ionice -c 3 cargo test --locked --no-run --bin terrabase-sqlite-baseline --features terrabase --target x86_64-unknown-linux-musl -j 2
+@@ -58,5 +68,8 @@
+ fmt:
+ 	nice -n 19 ionice -c 3 rustfmt --edition 2024 --check src/main.rs src/terrabase.rs
+ 
++fmt-d02:
++	nice -n 19 ionice -c 3 rustfmt --edition 2024 --check src/bin/p04_d02.rs ../../terrabase/crates/tb-storage/src/local.rs ../../terrabase/crates/tb-storage/src/run.rs ../../terrabase/crates/tb-storage/src/lib.rs
++
+ format:
+ 	nice -n 19 ionice -c 3 rustfmt --edition 2024 src/main.rs
+--- /dev/null
++++ d02/ts-benchmark/terra-rust/src/bin/p04_d02.rs
+@@ -0,0 +1,660 @@
++//! Instrumented, TerraBase-only P04 D02 diagnostic. This is not an acceptance lane.
++
++use std::fs::{self, File, OpenOptions};
++use std::io::{BufWriter, Read, Write};
++use std::path::{Path, PathBuf};
++use std::time::{Instant, SystemTime, UNIX_EPOCH};
++
++use anyhow::{Context, Result, bail, ensure};
++use clap::Parser;
++use rustix::time::{ClockId, clock_gettime};
++use serde::Serialize;
++use serde_json::Value;
++use sha2::{Digest, Sha256};
++use tb_core::{BudgetConfig, Key, KeyRange, MemoryBudget, TenantId, TransactionId, WorkerId};
++use tb_storage::{D02PhaseTimes, Mutation, ScanWork, Storage, StorageConfig};
++
++const ROWS: u64 = 1_024;
++const BODY_BYTES: usize = 1;
++const SEED: u64 = 1;
++const FIXTURE_BATCH: u64 = 128;
++const WARM_SCANS: usize = 32;
++const TOTAL_SCANS: usize = WARM_SCANS + 1;
++const CALIBRATION_BRACKETS: usize = 64;
++const EXPECTED_FIXTURE: &str = "1d5c1a3d24146cea8f09abafd72ce11bbedbac9722c3fb40e3cc9ae46f0504d5";
++const PARENT_ELF: &str = "93e2099f1797033aab0263732bacb551209dad064ccc5847dcd66b3a17cf5ed2";
++const PARENT_INVENTORY: &str = "b5f251d333300086f15bba8df583ad6e267c7012f8975d5f892c459aff07969e";
++
++#[derive(Parser)]
++#[command(about = "TerraBase-only, instrumented P04 D02 observational diagnostic")]
++struct Args {
++    #[arg(long)]
++    database: PathBuf,
++    #[arg(long)]
++    samples: PathBuf,
++    #[arg(long)]
++    receipt: PathBuf,
++    #[arg(long)]
++    report: PathBuf,
++    #[arg(long)]
++    guest_manifest: PathBuf,
++    #[arg(long)]
++    derivative_inventory_sha256: String,
++    #[arg(long)]
++    source_delta_sha256: String,
++}
++
++#[derive(Serialize)]
++#[allow(
++    clippy::struct_field_names,
++    reason = "phase field names are the recorded wire schema and carry ns units"
++)]
++struct Phases {
++    storage_scan_ns: u64,
++    prelude_ns: u64,
++    cursor_open_ns: u64,
++    initial_advance_ns: u64,
++    merge_ns: u64,
++    block_load_nested_ns: u64,
++}
++
++impl From<D02PhaseTimes> for Phases {
++    fn from(value: D02PhaseTimes) -> Self {
++        Self {
++            storage_scan_ns: value.storage_scan_ns,
++            prelude_ns: value.prelude_ns,
++            cursor_open_ns: value.cursor_open_ns,
++            initial_advance_ns: value.initial_advance_ns,
++            merge_ns: value.merge_ns,
++            block_load_nested_ns: value.block_load_ns,
++        }
++    }
++}
++
++#[derive(Default, Serialize)]
++struct WorkDelta {
++    run_file_opens: Option<u64>,
++    run_metadata_calls: Option<u64>,
++    run_header_bytes_read: Option<u64>,
++    run_footer_bytes_read: Option<u64>,
++    run_directory_bytes_read: Option<u64>,
++    run_block_bytes_read: Option<u64>,
++    run_block_cache_evictions: Option<u64>,
++    run_block_rereads: Option<u64>,
++    mutable_keys_examined: Option<u64>,
++    next_key_descriptors_examined: Option<u64>,
++    next_key_records_examined: Option<u64>,
++    point_lookup_calls: Option<u64>,
++    point_descriptors_examined: Option<u64>,
++    point_records_examined: Option<u64>,
++}
++
++impl WorkDelta {
++    fn between(before: ScanWork, after: ScanWork) -> Self {
++        Self {
++            run_file_opens: after.run_file_opens.checked_sub(before.run_file_opens),
++            run_metadata_calls: after
++                .run_metadata_calls
++                .checked_sub(before.run_metadata_calls),
++            run_header_bytes_read: after
++                .run_header_bytes_read
++                .checked_sub(before.run_header_bytes_read),
++            run_footer_bytes_read: after
++                .run_footer_bytes_read
++                .checked_sub(before.run_footer_bytes_read),
++            run_directory_bytes_read: after
++                .run_directory_bytes_read
++                .checked_sub(before.run_directory_bytes_read),
++            run_block_bytes_read: after
++                .run_block_bytes_read
++                .checked_sub(before.run_block_bytes_read),
++            run_block_cache_evictions: after
++                .run_block_cache_evictions
++                .checked_sub(before.run_block_cache_evictions),
++            run_block_rereads: after
++                .run_block_rereads
++                .checked_sub(before.run_block_rereads),
++            mutable_keys_examined: after
++                .mutable_keys_examined
++                .checked_sub(before.mutable_keys_examined),
++            next_key_descriptors_examined: after
++                .next_key_descriptors_examined
++                .checked_sub(before.next_key_descriptors_examined),
++            next_key_records_examined: after
++                .next_key_records_examined
++                .checked_sub(before.next_key_records_examined),
++            point_lookup_calls: after
++                .point_lookup_calls
++                .checked_sub(before.point_lookup_calls),
++            point_descriptors_examined: after
++                .point_descriptors_examined
++                .checked_sub(before.point_descriptors_examined),
++            point_records_examined: after
++                .point_records_examined
++                .checked_sub(before.point_records_examined),
++        }
++    }
++}
++
++#[derive(Serialize)]
++struct ScanSample {
++    ordinal: usize,
++    phase: &'static str,
++    success: bool,
++    empty_result: Option<bool>,
++    first_key_id: Option<u64>,
++    checksum: u64,
++    operation_wall_ns: Option<u64>,
++    operation_thread_cpu_ns: Option<u64>,
++    phases: Option<Phases>,
++    work: WorkDelta,
++    error: Option<String>,
++}
++
++#[derive(Serialize)]
++#[allow(
++    clippy::struct_field_names,
++    reason = "receipt_path is an established receipt wire field"
++)]
++struct Receipt<'a> {
++    schema_version: u32,
++    status: &'static str,
++    purpose: &'static str,
++    parent_elf_sha256: &'static str,
++    parent_source_inventory_sha256: &'static str,
++    derivative_inventory_sha256: &'a str,
++    source_delta_sha256: &'a str,
++    derivative_elf_sha256: String,
++    derivative_lock_sha256: String,
++    guest_manifest_sha256: String,
++    fixture_sha256: String,
++    rows: u64,
++    body_bytes: usize,
++    seed: u64,
++    checkpoint_fixture: bool,
++    checkpoint_before_deletes: bool,
++    sparse_tail: bool,
++    first_after_fixture_scans: usize,
++    warm_scans_requested: usize,
++    warm_scans_completed: usize,
++    final_checksum: u64,
++    final_row_count: Option<usize>,
++    calibration_empty_bracket_ns: &'a [u64],
++    scans: &'a [ScanSample],
++    samples_path: &'a Path,
++    receipt_path: &'a Path,
++    report_path: &'a Path,
++    database_path: &'a Path,
++}
++
++#[allow(
++    clippy::too_many_lines,
++    reason = "one diagnostic run owns fixture, samples and report output"
++)]
++fn main() -> Result<()> {
++    let args = Args::parse();
++    for path in [&args.database, &args.samples, &args.receipt, &args.report] {
++        ensure!(
++            !path.exists(),
++            "output path already exists: {}",
++            path.display()
++        );
++    }
++    ensure!(
++        args.database != args.samples
++            && args.database != args.receipt
++            && args.database != args.report
++            && args.samples != args.receipt
++            && args.samples != args.report
++            && args.receipt != args.report,
++        "D02 output paths must differ"
++    );
++    ensure!(
++        args.derivative_inventory_sha256.len() == 64
++            && args
++                .derivative_inventory_sha256
++                .bytes()
++                .all(|byte| byte.is_ascii_hexdigit()),
++        "derivative inventory SHA-256 must be hex"
++    );
++    ensure!(
++        args.derivative_inventory_sha256 != PARENT_INVENTORY,
++        "D02 inventory must differ from the sealed a2 parent"
++    );
++    ensure!(
++        args.source_delta_sha256.len() == 64
++            && args
++                .source_delta_sha256
++                .bytes()
++                .all(|byte| byte.is_ascii_hexdigit()),
++        "D02 source delta SHA-256 must be hex"
++    );
++    let manifest_bytes = fs::read(&args.guest_manifest).context("read guest manifest")?;
++    let manifest: Value = serde_json::from_slice(&manifest_bytes)?;
++    ensure!(
++        manifest["vcpu_count"].as_u64() == Some(4)
++            && manifest["mem_size_mib"].as_u64() == Some(8192)
++            && manifest["swap_disabled"].as_bool() == Some(true)
++            && manifest["firecracker_version"]
++                .as_str()
++                .is_some_and(|version| !version.is_empty()),
++        "D02 guest shape differs from a2"
++    );
++    let guest_manifest_sha256 = hex_hash(&manifest_bytes);
++    let derivative_elf_sha256 = hash_file(&std::env::current_exe()?)?;
++    ensure!(
++        derivative_elf_sha256 != PARENT_ELF,
++        "instrumented binary unexpectedly matches parent ELF"
++    );
++    let derivative_lock_sha256 = hex_hash(include_bytes!("../../Cargo.lock"));
++
++    let mut calibration = Vec::with_capacity(CALIBRATION_BRACKETS);
++    for _ in 0..CALIBRATION_BRACKETS {
++        let started = Instant::now();
++        calibration.push(ns(started.elapsed()));
++    }
++    let budget = MemoryBudget::new(BudgetConfig::new(128 * 1024 * 1024, 32 * 1024 * 1024)?);
++    let storage = Storage::open(
++        StorageConfig::local(&args.database, TenantId::from_bytes([1; 16]), WorkerId(1)),
++        budget,
++    )?;
++    let expires_at = now_ms()?
++        .checked_add(3_600_000)
++        .context("expiry overflow")?;
++    let fixture_sha256 = populate_and_delete(&storage, expires_at)?;
++    ensure!(
++        fixture_sha256 == EXPECTED_FIXTURE,
++        "D02 fixture digest differs from D01"
++    );
++    let stats = storage.stats();
++    ensure!(
++        stats.immutable_runs == 1
++            && stats.mutable_bytes == 0
++            && stats.checkpoint == stats.visible
++            && stats.visible.get() == 16,
++        "D02 fixture is not the one-run checkpointed empty a2 shape"
++    );
++
++    let mut scans = Vec::with_capacity(TOTAL_SCANS);
++    let mut checksum = 0_u64;
++    for ordinal in 0..TOTAL_SCANS {
++        let before = storage.stats().scan_work;
++        let cpu_before = thread_cpu_ns();
++        let started = Instant::now();
++        let result = storage.scan_d02(storage.snapshot(), &KeyRange::all(), 1);
++        let (empty_result, first_key_id, phases, error) = match result {
++            Ok((page, phases)) => {
++                let empty = page.rows().is_empty();
++                let first = page
++                    .rows()
++                    .first()
++                    .and_then(|row| row.key.as_bytes().try_into().ok().map(u64::from_be_bytes));
++                (
++                    Some(empty),
++                    first,
++                    Some(phases.into()),
++                    (!empty).then_some("nonempty scan or invalid key".to_owned()),
++                )
++            }
++            Err(error) => (None, None, None, Some(error.to_string())),
++        };
++        checksum = checksum.wrapping_add(first_key_id.unwrap_or(0));
++        let operation_wall_ns = ns(started.elapsed());
++        let operation_thread_cpu_ns = cpu_before
++            .zip(thread_cpu_ns())
++            .and_then(|(before, after)| after.checked_sub(before));
++        let work = WorkDelta::between(before, storage.stats().scan_work);
++        let success = error.is_none();
++        scans.push(ScanSample {
++            ordinal,
++            phase: if ordinal == 0 {
++                "first_after_fixture"
++            } else {
++                "warm"
++            },
++            success,
++            empty_result,
++            first_key_id,
++            checksum,
++            operation_wall_ns: Some(operation_wall_ns),
++            operation_thread_cpu_ns,
++            phases,
++            work,
++            error,
++        });
++        if !success {
++            for missing in ordinal + 1..TOTAL_SCANS {
++                scans.push(ScanSample {
++                    ordinal: missing,
++                    phase: "warm",
++                    success: false,
++                    empty_result: None,
++                    first_key_id: None,
++                    checksum,
++                    operation_wall_ns: None,
++                    operation_thread_cpu_ns: None,
++                    phases: None,
++                    work: WorkDelta::default(),
++                    error: Some("not run after prior scan failure".to_owned()),
++                });
++            }
++            break;
++        }
++    }
++    let complete = scans.len() == TOTAL_SCANS
++        && scans
++            .iter()
++            .all(|sample| sample.success && sample.empty_result == Some(true));
++    let final_row_count = complete.then_some(0);
++
++    let receipt = Receipt {
++        schema_version: 1,
++        status: if complete {
++            "diagnostic_complete"
++        } else {
++            "diagnostic_failed"
++        },
++        purpose: "instrumented observational cost split; no P04 verdict",
++        parent_elf_sha256: PARENT_ELF,
++        parent_source_inventory_sha256: PARENT_INVENTORY,
++        derivative_inventory_sha256: &args.derivative_inventory_sha256,
++        source_delta_sha256: &args.source_delta_sha256,
++        derivative_elf_sha256,
++        derivative_lock_sha256,
++        guest_manifest_sha256,
++        fixture_sha256,
++        rows: ROWS,
++        body_bytes: BODY_BYTES,
++        seed: SEED,
++        checkpoint_fixture: true,
++        checkpoint_before_deletes: false,
++        sparse_tail: false,
++        first_after_fixture_scans: usize::from(!scans.is_empty()),
++        warm_scans_requested: WARM_SCANS,
++        warm_scans_completed: scans.iter().skip(1).filter(|sample| sample.success).count(),
++        final_checksum: checksum,
++        final_row_count,
++        calibration_empty_bracket_ns: &calibration,
++        scans: &scans,
++        samples_path: &args.samples,
++        receipt_path: &args.receipt,
++        report_path: &args.report,
++        database_path: &args.database,
++    };
++    let mut samples = BufWriter::new(
++        OpenOptions::new()
++            .create_new(true)
++            .write(true)
++            .open(&args.samples)?,
++    );
++    for sample in &scans {
++        serde_json::to_writer(&mut samples, sample)?;
++        samples.write_all(b"\n")?;
++    }
++    samples.flush()?;
++    let mut output = BufWriter::new(
++        OpenOptions::new()
++            .create_new(true)
++            .write(true)
++            .open(&args.receipt)?,
++    );
++    serde_json::to_writer_pretty(&mut output, &receipt)?;
++    output.write_all(b"\n")?;
++    output.flush()?;
++    write_report(&args.report, &receipt)?;
++    if !complete {
++        bail!("D02 diagnostic failed; see {}", args.receipt.display());
++    }
++    println!("{}", args.report.display());
++    Ok(())
++}
++
++fn populate_and_delete(storage: &Storage, expires_at: u64) -> Result<String> {
++    let mut digest = Sha256::new();
++    for start in (0..ROWS).step_by(usize::try_from(FIXTURE_BATCH).expect("fixed batch")) {
++        let end = (start + FIXTURE_BATCH).min(ROWS);
++        let mut puts = Vec::with_capacity(usize::try_from(end - start)?);
++        for id in start..end {
++            let payload = body(SEED, id);
++            digest.update(id.to_be_bytes());
++            digest.update(payload);
++            let mut value = 0_u64.to_be_bytes().to_vec();
++            value.extend_from_slice(&payload);
++            puts.push(Mutation::Put {
++                key: key(id)?,
++                value,
++            });
++        }
++        checked_commit(storage, token(start / FIXTURE_BATCH, expires_at), &puts)?;
++    }
++    for start in (0..ROWS).step_by(usize::try_from(FIXTURE_BATCH).expect("fixed batch")) {
++        let end = (start + FIXTURE_BATCH).min(ROWS);
++        let deletes = (start..end)
++            .map(|id| Ok(Mutation::Delete { key: key(id)? }))
++            .collect::<Result<Vec<_>>>()?;
++        checked_commit(
++            storage,
++            token(500_000 + start / FIXTURE_BATCH, expires_at),
++            &deletes,
++        )?;
++    }
++    storage.checkpoint()?;
++    Ok(format!("{:x}", digest.finalize()))
++}
++
++fn checked_commit(storage: &Storage, token: TransactionId, mutations: &[Mutation]) -> Result<()> {
++    let receipt = storage.commit_batch(storage.snapshot(), token, mutations)?;
++    ensure!(
++        receipt.frontiers.durable == Some(receipt.commit_seq)
++            && receipt.frontiers.applied == Some(receipt.commit_seq),
++        "fixture commit was not local durable"
++    );
++    Ok(())
++}
++
++fn token(serial: u64, expires_at: u64) -> TransactionId {
++    let mut nonce = [0_u8; 16];
++    nonce[..8].copy_from_slice(&SEED.to_be_bytes());
++    nonce[8..].copy_from_slice(&serial.to_be_bytes());
++    TransactionId::new(expires_at, nonce)
++}
++
++fn key(id: u64) -> Result<Key> {
++    Ok(Key::new(id.to_be_bytes().to_vec())?)
++}
++
++fn body(seed: u64, id: u64) -> [u8; BODY_BYTES] {
++    let mut state = seed ^ id.rotate_left(17);
++    state = splitmix64(state);
++    [state.to_be_bytes()[0]]
++}
++
++fn splitmix64(mut value: u64) -> u64 {
++    value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
++    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
++    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
++    value ^ (value >> 31)
++}
++
++fn now_ms() -> Result<u64> {
++    Ok(u64::try_from(
++        SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
++    )?)
++}
++
++fn ns(duration: std::time::Duration) -> u64 {
++    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
++}
++
++fn thread_cpu_ns() -> Option<u64> {
++    let time = clock_gettime(ClockId::ThreadCPUTime);
++    u64::try_from(time.tv_sec)
++        .ok()?
++        .checked_mul(1_000_000_000)?
++        .checked_add(u64::try_from(time.tv_nsec).ok()?)
++}
++
++fn hex_hash(bytes: &[u8]) -> String {
++    format!("{:x}", Sha256::digest(bytes))
++}
++
++fn hash_file(path: &Path) -> Result<String> {
++    let mut file = File::open(path)?;
++    let mut digest = Sha256::new();
++    let mut block = [0_u8; 16 * 1024];
++    loop {
++        let len = file.read(&mut block)?;
++        if len == 0 {
++            break;
++        }
++        digest.update(&block[..len]);
++    }
++    Ok(format!("{:x}", digest.finalize()))
++}
++
++#[allow(
++    clippy::too_many_lines,
++    reason = "the diagnostic Markdown table is emitted in one pass"
++)]
++fn write_report(path: &Path, receipt: &Receipt<'_>) -> Result<()> {
++    let mut file = BufWriter::new(OpenOptions::new().create_new(true).write(true).open(path)?);
++    writeln!(file, "# P04 D02 instrumented TerraBase scan diagnostic")?;
++    writeln!(
++        file,
++        "\nStatus: **{}**. Observational cost split only; no performance verdict, ratio, or CI.",
++        receipt.status
++    )?;
++    writeln!(
++        file,
++        "\nParent ELF `{PARENT_ELF}` and inventory `{PARENT_INVENTORY}` are source parents, not this binary's identity."
++    )?;
++    writeln!(
++        file,
++        "\nDerivative ELF `{}`; inventory `{}`; lock `{}`; source delta `{}`.",
++        receipt.derivative_elf_sha256,
++        receipt.derivative_inventory_sha256,
++        receipt.derivative_lock_sha256,
++        receipt.source_delta_sha256
++    )?;
++    writeln!(
++        file,
++        "\nFixture: {ROWS} rows, body {BODY_BYTES}, seed {SEED}, all rows deleted, one checkpointed run. SHA-256 `{}`.",
++        receipt.fixture_sha256
++    )?;
++    let mut calibration = receipt.calibration_empty_bracket_ns.to_vec();
++    calibration.sort_unstable();
++    writeln!(
++        file,
++        "\nEmpty `Instant` bracket calibration ({} fixed samples, not subtracted): min {} / median {} / max {} ns.",
++        calibration.len(),
++        calibration[0],
++        calibration[calibration.len() / 2],
++        calibration[calibration.len() - 1]
++    )?;
++    writeln!(
++        file,
++        "\nOne first-after-fixture scan and {} ordered warm scans were requested; {} warm scans completed.",
++        WARM_SCANS, receipt.warm_scans_completed
++    )?;
++    writeln!(
++        file,
++        "\n| Phase (wall ns unless marked) | Warm n | Min | Median | Max |"
++    )?;
++    writeln!(file, "| --- | ---: | ---: | ---: | ---: |")?;
++    let warm = receipt
++        .scans
++        .iter()
++        .skip(1)
++        .filter(|scan| scan.success)
++        .collect::<Vec<_>>();
++    metric_row(&mut file, "operation inclusive", &warm, |scan| {
++        scan.operation_wall_ns
++    })?;
++    metric_row(&mut file, "Storage::scan inclusive", &warm, |scan| {
++        scan.phases.as_ref().map(|p| p.storage_scan_ns)
++    })?;
++    metric_row(&mut file, "prelude admission/allocation", &warm, |scan| {
++        scan.phases.as_ref().map(|p| p.prelude_ns)
++    })?;
++    metric_row(&mut file, "cursor open/directory", &warm, |scan| {
++        scan.phases.as_ref().map(|p| p.cursor_open_ns)
++    })?;
++    metric_row(&mut file, "initial advance", &warm, |scan| {
++        scan.phases.as_ref().map(|p| p.initial_advance_ns)
++    })?;
++    metric_row(&mut file, "merge and later advances", &warm, |scan| {
++        scan.phases.as_ref().map(|p| p.merge_ns)
++    })?;
++    metric_row(
++        &mut file,
++        "block load (nested, non-additive)",
++        &warm,
++        |scan| scan.phases.as_ref().map(|p| p.block_load_nested_ns),
++    )?;
++    metric_row(&mut file, "whole-operation thread CPU", &warm, |scan| {
++        scan.operation_thread_cpu_ns
++    })?;
++    writeln!(
++        file,
++        "\nThe first and all 32 ordered warm slots, full work-counter deltas, checksum, and failures are retained in `{}` and `{}`. Unrun or missing counters remain null.",
++        receipt.samples_path.display(),
++        receipt.receipt_path.display()
++    )?;
++    writeln!(
++        file,
++        "\n| Scan | Phase | Result | Checksum | Wall ns | Thread CPU ns | Run block bytes | Records | Error |"
++    )?;
++    writeln!(
++        file,
++        "| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |"
++    )?;
++    for scan in receipt.scans {
++        writeln!(
++            file,
++            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
++            scan.ordinal,
++            scan.phase,
++            if scan.success { "empty" } else { "failed" },
++            scan.checksum,
++            scan.operation_wall_ns
++                .map_or("missing".to_owned(), |v| v.to_string()),
++            scan.operation_thread_cpu_ns
++                .map_or("missing".to_owned(), |v| v.to_string()),
++            scan.work
++                .run_block_bytes_read
++                .map_or("missing".to_owned(), |v| v.to_string()),
++            scan.work
++                .next_key_records_examined
++                .map_or("missing".to_owned(), |v| v.to_string()),
++            scan.error.as_deref().unwrap_or("").replace('|', "\\|")
++        )?;
++    }
++    file.flush()?;
++    Ok(())
++}
++
++fn metric_row(
++    file: &mut impl Write,
++    label: &str,
++    scans: &[&ScanSample],
++    value: impl Fn(&ScanSample) -> Option<u64>,
++) -> Result<()> {
++    let mut values = scans
++        .iter()
++        .filter_map(|scan| value(scan))
++        .collect::<Vec<_>>();
++    values.sort_unstable();
++    if values.is_empty() {
++        writeln!(file, "| {label} | 0 | missing | missing | missing |")?;
++    } else {
++        writeln!(
++            file,
++            "| {label} | {} | {} | {} | {} |",
++            values.len(),
++            values[0],
++            values[values.len() / 2],
++            values[values.len() - 1]
++        )?;
++    }
++    Ok(())
++}

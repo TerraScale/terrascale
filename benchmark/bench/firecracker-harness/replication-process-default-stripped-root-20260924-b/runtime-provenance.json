@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "run_id": "replication-process-default-stripped-root-20260924-b",
+  "status": "passed",
+  "subject_repository": {
+    "head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "cargo_lock_sha256": "a33c17bc8e8df0249795dae1830894139ddecd2b977ff3e253f9b7f61c2c3979",
+    "runtime_manifest_identity_sha256": "83b364b7856e86bea61b3c64b73811ddfd3dbf0ae944053ac20555ea185200a9",
+    "live_tree_dirty": true
+  },
+  "source_identity": {
+    "original_69_entry_closure": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-source-closure.sha256",
+      "sha256": "85c1c7ee5291db4436354201e5a8f0d44849a6303d6ff6a5e9f7f1201d894816",
+      "entry_count": 69
+    },
+    "captured_pre_hook_source_snapshot": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-source-snapshot/",
+      "manifest": "source.sha256",
+      "manifest_sha256": "65b1cd9ec855c3da4eaace727e15ce30ecbf48965daa856baeeaa5714650de59",
+      "entry_count": 64,
+      "sha256_check": "all entries passed"
+    },
+    "original_build_artifact_map": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-artifacts/artifact-map.txt",
+      "sha256": "a487709fe9be32210290c2d866c8463f3d85c8a7ed864b9a18dde20e3eaed23f"
+    },
+    "live_tree_differences_from_original_closure": [
+      {
+        "path": "crates/tb-server/src/main.rs",
+        "built_source_sha256": "6e2175e8be518efdb339097a7b3d3047e77a06622b72bc61116290686991ee08",
+        "current_source_sha256": "deceef23ccc86c47a9f070621a9e2d1ca7da0eb2c055f35cfbfc6893c6761c16"
+      },
+      {
+        "path": "crates/tb-server/src/replication_config.rs",
+        "built_source_sha256": "ec27df88ffdcd09e900b3a1b5115dd4fbca95484cc2f0256a8bc752dd36a364d",
+        "current_source_sha256": "0748d7e677eac015f70754240cfe40a24f027eec21de3deae8538824f831ffb1"
+      },
+      {
+        "path": "crates/tb-server/src/replication_server.rs",
+        "built_source_sha256": "d2e1c860c517821a66add8ac5f4428335d95d80dc854c1f3981f9800d2fc81d2",
+        "current_source_sha256": "b034397b3955bc78ca15faa8613594c36335045897ea5873172304121c25d798"
+      },
+      {
+        "path": "crates/tb-server/tests/replication_process.rs",
+        "built_source_sha256": "526ba0ff26c7377f077a54d06eee58318bb2533bcbd6e6fa9ea7431165d314ed",
+        "current_source_sha256": "5a623c50048c5e222b7f0e55bbb1d55f712dd0693f4e46d9ccc0c591367c7414"
+      }
+    ],
+    "difference_scope": "Later hook-only source updates accepted by the coordinator; runtime used the captured pre-hook source and frozen default binaries."
+  },
+  "transformation": {
+    "receipt_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-strip-receipt.txt",
+    "receipt_sha256": "2d91bd4507945205784c74ef9a0594fa398a4cfe9ae6c6bb2b3acc3d23e1b35b",
+    "tool": "GNU strip 2.46",
+    "arguments": "--strip-debug",
+    "architecture_review": "ELF program headers and loaded bytes verified identical except section-table locator/count fields; runtime-sensitive segments matched."
+  },
+  "guest_payloads": [
+    {
+      "guest_path": "/root/fc-harness-payloads/replication_process",
+      "original_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-artifacts/replication_process",
+      "original_sha256": "a377cd9a4adf59121ee6f2a41186ff08ecceb675eadb2eee5e77da62e0985846",
+      "derived_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-stripped/replication_process",
+      "derived_sha256": "53ad154ab68775348c3cd166c0394e195b144e5158f15613a86a625899699755",
+      "derived_size_bytes": 18431128,
+      "guest_mode": "0755"
+    },
+    {
+      "guest_path": "/root/fc-harness-payloads/tb-server",
+      "original_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-artifacts/tb-server",
+      "original_sha256": "0e4d11d53cac9ff950eb303400593175465974c7ce6884b35447d3b7c060bca6",
+      "derived_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-stripped/tb-server",
+      "derived_sha256": "96c5e400fef78de5bf799a1bdc4b8f013abef84da995061b4a6f21d205fa422b",
+      "derived_size_bytes": 27428928,
+      "guest_mode": "0755"
+    }
+  ],
+  "runtime": {
+    "command": "nice -n 19 ionice -c 3 /tmp/fch-runtime-repo-final-20260924/fc-harness run --benchmark-repo /home/mariogk/Projects/TerraScale/ts-benchmark --subject-repo /home/mariogk/Projects/TerraScale/terrabase --program /home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/target/verification/finite-cgroup-runner-25ccdbc762bc/finite_cgroup_runner --run-id replication-process-default-stripped-root-20260924-b --timeout-seconds 300 --payload-file /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-stripped/replication_process:replication_process --payload-file /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-stripped/tb-server:tb-server -- --test-threads=1 --nocapture",
+    "finite_cgroup_runner": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/target/verification/finite-cgroup-runner-25ccdbc762bc/finite_cgroup_runner",
+      "sha256": "25ccdbc762bc9759e313f0287a64d5bf86611c1e66da3f26e27f18d7f140cbd6"
+    },
+    "controller": {
+      "path": "/tmp/fch-runtime-repo-final-20260924/fc-harness",
+      "sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20"
+    },
+    "guest_agent": {
+      "path": "/tmp/fch-runtime-repo-final-20260924/fc-guest-agent",
+      "sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb"
+    },
+    "firecracker": {
+      "version": "1.15.1",
+      "sha256": "9d9ec5ff68a23ce54a424b15ec097c7204a3f206884c092d570b75529811bd57",
+      "kvm_api_version": 12
+    },
+    "guest_config": {
+      "vcpu_count": 4,
+      "memory_mib": 8192,
+      "swap_disabled": true,
+      "network": "disabled"
+    },
+    "finite_test_cgroup": {
+      "limit_bytes": 6442450944,
+      "test_count": 3,
+      "test_passed": 3,
+      "test_failed": 0,
+      "test_exit_code": 0,
+      "test_timed_out": false,
+      "memory_events": "low 0; high 0; max 0; oom 0; oom_kill 0; oom_group_kill 0",
+      "wrapper_returned_to_agent_cgroup": true,
+      "remaining_child_processes": "",
+      "child_removed": true
+    },
+    "test_scope": "Default replication process tests; process restart and replay plus TLS peer cases were covered. Hook-only cancellation behavior is not claimed by this run.",
+    "kernel_rootfs_provenance": "Locally checksum-pinned; upstream provenance is unqualified."
+  },
+  "evidence": {
+    "run_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-process-default-stripped-root-20260924-b/run-manifest.json",
+      "sha256": "6322ebfd56838944cab03bc5bd49a0b53a4fb79ac05aa8da7098692ffa776743"
+    },
+    "guest_archive": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-process-default-stripped-root-20260924-b/guest-output.tar.gz",
+      "sha256": "8be0bb861adb89b765a24a198ad2355f976b821e617234679d4ddc41713fe5ee"
+    },
+    "embedded_cgroup_receipt_sha256": "f744fb05e96a95ba57e832e74818511d23701b0840f5b3d74525f8a327f9b934",
+    "firecracker_log_sha256": "e0bef5140c1b33c5019909053c9c508c0cc107a57aa232f3735e1ca74eb473f8",
+    "firecracker_internal_log_sha256": "65ef6a35277c67974241f23159e3fca0825deb33dbbf505394e9b9c443290c4c",
+    "firecracker_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "prior_prelaunch_payload_cap_failure": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-process-default-root-20260924-a/operator-attempt.log",
+      "sha256": "d08d2089dc62694ff3392e535ab36060ee230ea254adf3d89426716a7eb4a5a0"
+    }
+  }
+}

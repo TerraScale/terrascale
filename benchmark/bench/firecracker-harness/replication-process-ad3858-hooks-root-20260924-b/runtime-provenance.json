@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "run_id": "replication-process-ad3858-hooks-root-20260924-b",
+  "status": "passed",
+  "test_result": {
+    "passed": 5,
+    "failed": 0,
+    "ignored": 0,
+    "exit_code": 0,
+    "cases": [
+      "canceled_blocked_append_releases_guards_and_replays_after_restart",
+      "committed_lz4_group_gets_durable_ack_and_frontier_survives_process_restart",
+      "negotiated_format_two_group_is_durable_and_format_mismatch_is_rejected",
+      "silent_tls_peers_release_connection_slots_after_handshake_timeout",
+      "valid_member_certificate_with_a_different_hello_identity_is_rejected"
+    ]
+  },
+  "source_identity": {
+    "terrabase_head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "runtime_subject_repository_identity_sha256": "ad14f4c373699d87929c016bf8bfd726af1b6b6e7429a4aad62cf392afc618fa",
+    "package_features": "tb-server / replication-test-hooks",
+    "source_snapshot_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-transport-process-ad3858-source-snapshot/source.sha256",
+      "sha256": "852df5266dd9a7c3c9fdd4e933677db9f9b7f17a2b6982a425bf4a86216ccaad",
+      "entry_count": 65
+    },
+    "source_artifact_closure": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-transport-process-ad3858-hooks-source-closure.sha256",
+      "sha256": "8592adcea3f5367ecb76db127c9b17b99caceaf1a66f64542a170ecfaa16a72f",
+      "entry_count": 75
+    },
+    "artifact_map": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-transport-process-ad3858-hooks-artifact-map.txt",
+      "sha256": "33408b77a2d90ac324d3a2442f8b688b1c735af411ba545c76d6c31dbec139d4"
+    },
+    "transform_receipt": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-transport-process-ad3858-hooks-transform-receipt.txt",
+      "sha256": "852747a38285fe0eca4b62fa3aba2ae905e60e80f2d7c87667e1c3290bcb5a8f"
+    }
+  },
+  "payloads": [
+    {
+      "host_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-transport-process-ad3858-hooks-artifacts-stripped/replication_process",
+      "guest_path": "/root/fc-harness-payloads/replication_process",
+      "size_bytes": 18585904,
+      "sha256": "eeaaa9bf1b3abd329a3078f1a987ab6f52913c092d9f0688de916ab101f9abe8",
+      "guest_mode": "0755",
+      "role": "hook-enabled replication_process integration test executable"
+    },
+    {
+      "host_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-transport-process-ad3858-hooks-artifacts-stripped/tb-server",
+      "guest_path": "/root/fc-harness-payloads/tb-server",
+      "size_bytes": 27537104,
+      "sha256": "c48964929ae3b3d809a81eee6f9c607d3ca2cea6be54fc4e5755947ee11d61b5",
+      "guest_mode": "0755",
+      "role": "paired production tb-server executable"
+    }
+  ],
+  "runtime_identity": {
+    "command": "nice -n 19 ionice -c 3 /tmp/fch-runtime-repo-final-20260924/fc-harness run --benchmark-repo /home/mariogk/Projects/TerraScale/ts-benchmark --subject-repo /home/mariogk/Projects/TerraScale/terrabase --program /home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/target/verification/finite-cgroup-runner-25ccdbc762bc/finite_cgroup_runner --run-id replication-process-ad3858-hooks-root-20260924-b --timeout-seconds 300 --payload-file /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-transport-process-ad3858-hooks-artifacts-stripped/replication_process:replication_process --payload-file /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-transport-process-ad3858-hooks-artifacts-stripped/tb-server:tb-server -- --test-threads=1 --nocapture",
+    "finite_cgroup_runner": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/target/verification/finite-cgroup-runner-25ccdbc762bc/finite_cgroup_runner",
+      "sha256": "25ccdbc762bc9759e313f0287a64d5bf86611c1e66da3f26e27f18d7f140cbd6"
+    },
+    "controller": {
+      "path": "/tmp/fch-runtime-repo-final-20260924/fc-harness",
+      "sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20"
+    },
+    "guest_agent": {
+      "path": "/tmp/fch-runtime-repo-final-20260924/fc-guest-agent",
+      "sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb"
+    },
+    "firecracker": {
+      "version": "1.15.1",
+      "sha256": "9d9ec5ff68a23ce54a424b15ec097c7204a3f206884c092d570b75529811bd57",
+      "kvm_api_version": 12
+    },
+    "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+    "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+    "kernel_rootfs_upstream_provenance": "unqualified; local checksums are pinned",
+    "guest": {
+      "vcpu_count": 4,
+      "memory_mib": 8192,
+      "swap_disabled": true,
+      "network": "disabled; no host network or unisolated service fixture is attached"
+    },
+    "workload_timeout_seconds": 300,
+    "guest_elapsed_ms": 12813,
+    "test_cgroup_receipt": {
+      "schema_version": 1,
+      "status": "passed",
+      "limit_bytes": 6442450944,
+      "agent_cgroup": "/system.slice/fc-harness-agent.service",
+      "parent_cgroup": "/sys/fs/cgroup/system.slice",
+      "parent_controllers": "memory pids",
+      "parent_subtree_control": "memory pids",
+      "parent_processes": "",
+      "child_cgroup": "/sys/fs/cgroup/system.slice/terrabase-test-880-1790269485807057765",
+      "child_memory_max": "6442450944",
+      "wrapper_membership_in_child": "/system.slice/terrabase-test-880-1790269485807057765",
+      "test_pid": 881,
+      "test_membership": "0::/system.slice/terrabase-test-880-1790269485807057765",
+      "test_exit_code": 0,
+      "test_timed_out": false,
+      "memory_current_after_test": "688128",
+      "memory_max_after_test": "6442450944",
+      "memory_events_after_test": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "wrapper_membership_after_return": "/system.slice/fc-harness-agent.service",
+      "remaining_child_processes": "",
+      "child_removed": true,
+      "errors": []
+    }
+  },
+  "evidence": {
+    "run_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-process-ad3858-hooks-root-20260924-b/run-manifest.json",
+      "sha256": "23f71578a6d358211c598160ee2f6f021b13d209c27e9e6dbe6eb48cc67f0d66"
+    },
+    "guest_output_archive": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-process-ad3858-hooks-root-20260924-b/guest-output.tar.gz",
+      "sha256": "111e7d9510792365fe21d9a20106f8a6234952a824dd08d41bc664a4ab808520"
+    },
+    "embedded_cgroup_receipt_sha256": "221ad0d864bdd89e699b637a53ca7d7150a7a0537e55803a63707f7ccba08533",
+    "logs": {
+      "firecracker.log": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-process-ad3858-hooks-root-20260924-b/firecracker.log",
+        "sha256": "084866b78a1a46852c3bc0b4a66e1954193081ea03035d64f300da5b87a9f45c"
+      },
+      "firecracker-internal.log": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-process-ad3858-hooks-root-20260924-b/firecracker-internal.log",
+        "sha256": "5850781967ad81f46d9a2d0079ebfe90e29e138684c7d6508958ec69644e135c"
+      },
+      "firecracker.stderr.log": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-process-ad3858-hooks-root-20260924-b/firecracker.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  }
+}

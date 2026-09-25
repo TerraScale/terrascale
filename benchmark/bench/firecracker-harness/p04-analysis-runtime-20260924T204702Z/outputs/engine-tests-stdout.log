@@ -1,0 +1,23 @@
+
+running 18 tests
+test analysis::tests::archive_rejects_duplicate_aliases_and_oversized_members ... ok
+test analysis::tests::archive_rejects_excess_records_expansion_and_hidden_postlude ... ok
+test analysis::tests::authentic_guest_archive_rejects_altered_receipt_and_samples ... ok
+test analysis::tests::bootstrap_uses_pair_blocks_ratio_of_sums_and_one_reproducible_stream ... ok
+test analysis::tests::command_binding_rejects_changed_workload_and_wrong_guest_manifest_path ... ok
+test analysis::tests::mismatched_fixture_or_failed_pair_suppresses_inference ... ok
+test analysis::tests::rejects_host_guest_executable_hash_mismatch ... ok
+test analysis::tests::rejects_nonflat_campaign_artifact_paths ... ok
+test analysis::tests::rejects_reordered_or_overlapping_pair_schedule_and_binary_mismatch ... ok
+test analysis::tests::rejects_sample_order_phase_and_quantile_mismatch ... ok
+test analysis::tests::structured_command_hash_does_not_repurpose_plain_text_operator_hash ... ok
+test analysis::tests::validates_ordered_first_and_warm_samples_against_receipt ... ok
+test tests::disarm_at_expired_deadline_cannot_report_scan_success ... ok
+test tests::fixture_is_deterministic_and_keyed ... ok
+test tests::percentile_uses_nearest_rank ... ok
+test tests::repeated_deleted_history_scans_have_warm_samples_without_a_run_deadline ... ok
+test tests::timed_out_scan_reports_its_index_completed_count_and_identities ... ok
+test tests::upsert_counts_only_new_odd_keys ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.12s
+

@@ -1,0 +1,5 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness'
+nice -n 19 ionice -c 3 cargo check --locked --jobs 2 -p fc-harness -p fc-guest-agent
+    Checking fc-harness v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/crates/fc-harness)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.44s
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness'

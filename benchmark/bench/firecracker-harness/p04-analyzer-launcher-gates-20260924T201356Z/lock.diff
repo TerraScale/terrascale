@@ -1,0 +1,114 @@
+--- /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-locked-20260924T201356Z/old-Cargo.lock	2026-09-24 17:14:14.796288634 -0300
++++ /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-locked-20260924T201356Z/ts-benchmark/terra-rust/Cargo.lock	2026-09-24 17:14:15.120295982 -0300
+@@ -3,6 +3,12 @@
+ version = 4
+ 
+ [[package]]
++name = "adler2"
++version = "2.0.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
++
++[[package]]
+ name = "anstream"
+ version = "1.0.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -195,6 +201,15 @@
+ ]
+ 
+ [[package]]
++name = "crc32fast"
++version = "1.5.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
++dependencies = [
++ "cfg-if",
++]
++
++[[package]]
+ name = "crypto-common"
+ version = "0.1.7"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -257,12 +272,32 @@
+ checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
+ 
+ [[package]]
++name = "filetime"
++version = "0.2.29"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
++dependencies = [
++ "cfg-if",
++ "libc",
++]
++
++[[package]]
+ name = "find-msvc-tools"
+ version = "0.1.13"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b"
+ 
+ [[package]]
++name = "flate2"
++version = "1.1.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4a3d7db9596fecd151c5f638c0ee5d5bd487b6e0ea232e5dc96d5250f6f94b1d"
++dependencies = [
++ "crc32fast",
++ "miniz_oxide",
++]
++
++[[package]]
+ name = "foldhash"
+ version = "0.2.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -428,6 +463,15 @@
+ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+ 
+ [[package]]
++name = "miniz_oxide"
++version = "0.8.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
++dependencies = [
++ "adler2",
++]
++
++[[package]]
+ name = "once_cell"
+ version = "1.21.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -664,6 +708,16 @@
+ ]
+ 
+ [[package]]
++name = "tar"
++version = "0.4.46"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
++dependencies = [
++ "filetime",
++ "libc",
++]
++
++[[package]]
+ name = "tb-core"
+ version = "0.1.0"
+ dependencies = [
+@@ -701,12 +755,16 @@
+ version = "0.1.0"
+ dependencies = [
+  "anyhow",
++ "chacha20",
+  "clap",
++ "flate2",
++ "rand",
+  "rusqlite",
+  "rustix",
+  "serde",
+  "serde_json",
+  "sha2 0.10.9",
++ "tar",
+  "tb-core",
+  "tb-storage",
+ ]

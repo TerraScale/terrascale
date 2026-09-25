@@ -1,0 +1,35 @@
+2026-09-24T10:14:18.802863674 [fc-harness-tests-frozen-runtime-root-20260924-a:main:INFO] Running Firecracker v1.15.1
+2026-09-24T10:14:18.804495072 [fc-harness-tests-frozen-runtime-root-20260924-a:main:INFO] Listening on API socket ("/tmp/fch-KVUTHw/api.sock").
+2026-09-24T10:14:18.804895640 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] API server started.
+2026-09-24T10:14:18.862176362 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T10:14:18.862318443 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T10:14:18.862450782 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T10:14:18.862502340 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T10:14:18.862659455 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/fc-payload-dEb5lE\"}".
+2026-09-24T10:14:18.862731941 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T10:14:18.862847776 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/fc-harness-tests-frozen-runtime-root-20260924-a/guest-rootfs.ext4\"}".
+2026-09-24T10:14:18.862964217 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T10:14:18.866117440 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-KVUTHw/vsock.sock\"}".
+2026-09-24T10:14:18.866404992 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T10:14:18.866523044 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T10:14:18.904664079 [fc-harness-tests-frozen-runtime-root-20260924-a:main:INFO] Artificially kick devices
+2026-09-24T10:14:18.904766599 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T10:14:18.904808997 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T10:14:18.904884327 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T10:14:18.904947271 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T10:14:18.905085867 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T10:14:18.960740963 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:18.960953275 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:21.444140853 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:21.444254969 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:21.448221138 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:21.448305896 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:21.450150898 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:21.450244845 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:21.454828062 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:21.454945578 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:21.457187970 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:21.457300498 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:21.460886475 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:21.460969826 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T10:14:22.392555621 [fc-harness-tests-frozen-runtime-root-20260924-a:fc_vcpu 2:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

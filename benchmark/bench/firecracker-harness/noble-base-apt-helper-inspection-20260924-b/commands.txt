@@ -1,0 +1,41 @@
+Working directory for Podman commands: /home/mariogk/Projects/TerraScale/ts-benchmark
+Exact local image: docker.io/library/ubuntu@sha256:496754492fb28b4d3049432f2ca787449331e23fb14f0dd3fffea86bf5a93eb4
+
+# Source and host tool identity.
+git rev-parse HEAD
+podman version --format '{{.Client.Version}}'
+readlink -f /run/current-system/sw/bin/podman
+sha256sum /run/current-system/sw/bin/podman
+podman info --format '{{.Host.Security.Rootless}} {{.Host.Arch}} {{.Host.CgroupsVersion}} {{.Host.CgroupManager}} {{.Store.GraphRoot}}'
+sha256sum firecracker-harness/images/terrabase-noble-podman-v1/recipe.toml
+
+# Recheck the prior sealed inspection. Two rechecks were mistakenly run from the benchmark root, where sidecar-relative entries could not resolve; their outputs are retained as prior-evidence-verification-wrong-cwd.txt and prior-evidence-verification-wrong-cwd-2.txt. The correct recheck was run from the sealed evidence directory and all entries passed.
+sha256sum -c EVIDENCE.sha256
+
+# Pre-create inventory and prove the unique name did not exist.
+podman ps -a --no-trunc --format '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Image}}'
+podman ps -a --no-trunc --format '{{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Labels}}'
+podman ps -a --filter name=terrabase-noble-apt-helper-inspect-20260924-b --no-trunc --format '{{.ID}} {{.Names}} {{.State}} {{.Image}}'
+podman image inspect --format '{{.Id}} {{.Digest}} {{.Os}} {{.Architecture}} {{json .RepoDigests}}' docker.io/library/ubuntu@sha256:496754492fb28b4d3049432f2ca787449331e23fb14f0dd3fffea86bf5a93eb4
+
+# Create one isolated, stopped container from the exact local child. Captured ID: a8cdce53b452c06cc62d800f3e1ee71f3bd19b7279eed0c7cce0aad5324e3f68.
+podman create --pull=never --network=none --read-only --cap-drop=all --security-opt=no-new-privileges --pids-limit=48 --memory=512m --cpus=1 --name terrabase-noble-apt-helper-inspect-20260924-b --label org.terrascale.inspection=noble-apt-helper-inspection-20260924-b --entrypoint /bin/true docker.io/library/ubuntu@sha256:496754492fb28b4d3049432f2ca787449331e23fb14f0dd3fffea86bf5a93eb4
+podman inspect --format '{{.Id}} {{.Image}} {{.Config.Image}} {{.State.Status}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.State.Running}}' a8cdce53b452c06cc62d800f3e1ee71f3bd19b7279eed0c7cce0aad5324e3f68
+podman cp a8cdce53b452c06cc62d800f3e1ee71f3bd19b7279eed0c7cce0aad5324e3f68:/usr/lib/apt/apt-helper bench/firecracker-harness/noble-base-apt-helper-inspection-20260924-b/apt-helper
+stat -c '%F %s %a %A %u %g %n' bench/firecracker-harness/noble-base-apt-helper-inspection-20260924-b/apt-helper
+sha256sum bench/firecracker-harness/noble-base-apt-helper-inspection-20260924-b/apt-helper
+file bench/firecracker-harness/noble-base-apt-helper-inspection-20260924-b/apt-helper
+podman inspect --format '{{.Id}} {{.Image}} {{.Config.Image}} {{.State.Status}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.State.Running}}' a8cdce53b452c06cc62d800f3e1ee71f3bd19b7279eed0c7cce0aad5324e3f68
+podman ps -a --no-trunc --format '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Image}}'
+
+# Cleanup only the ID owned above. It was never started; no --force.
+podman rm a8cdce53b452c06cc62d800f3e1ee71f3bd19b7279eed0c7cce0aad5324e3f68
+
+# Final quiescence and inventory verification.
+podman ps -a --no-trunc --format '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Image}}'
+podman ps -a --filter label=org.terrascale.inspection=noble-apt-helper-inspection-20260924-b --no-trunc --format '{{.ID}} {{.Names}} {{.State}} {{.Image}}'
+podman image inspect --format '{{.Id}} {{.Digest}} {{.Os}} {{.Architecture}} {{json .RepoDigests}}' docker.io/library/ubuntu@sha256:496754492fb28b4d3049432f2ca787449331e23fb14f0dd3fffea86bf5a93eb4
+# Final manifest verification working directory: /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/noble-base-apt-helper-inspection-20260924-b
+sha256sum -c EVIDENCE.sha256
+
+No podman start, run, or exec command was issued. The helper was not executed. No APT, build, test, benchmark, or VM command was issued.

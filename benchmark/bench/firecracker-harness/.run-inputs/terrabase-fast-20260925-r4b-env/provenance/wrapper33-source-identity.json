@@ -1,0 +1,9 @@
+{
+  "base_archive": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/client-wrapper-build-20260925/source",
+  "base_inventory_sha256": "a2fc5fe05ce48c9d77b717c192313338704338de81843987eb77a3840eb1013a",
+  "benchmark_head": "5685f163bb7e9339e8eb0c839fe2512aaf562648",
+  "changed_path": "crates/fc-harness/examples/client_finite_cgroup_runner.rs",
+  "derivative_sha256": "7c2e8517a0ab19bce731a5d66446c8be05ea6d04116f0ca3264ac9072e714a98",
+  "preimage_sha256": "ed17fda592063c05d9cd7954e8274932b85677341b8448172d9c2de00dd1663e",
+  "review_packet": "/tmp/ts-client-wrapper-init-source-8lzQ4v"
+}

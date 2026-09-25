@@ -1,0 +1,30 @@
+Runtime operator attempt record
+Date: 2026-09-24
+Status: blocked before guest launch
+
+Environment identity
+- TerraBase revision: 352d9f61185d1b685e3032519579040d169ad47d
+- Benchmark repository revision: 5685f163bb7e9339e8eb0c839fe2512aaf562648
+- Cargo.lock SHA-256: a33c17bc8e8df0249795dae1830894139ddecd2b977ff3e253f9b7f61c2c3979
+- frozen source closure: target/verification/tb-server-final-default-d2e1-source-closure.sha256
+- source closure SHA-256: 85c1c7ee5291db4436354201e5a8f0d44849a6303d6ff6a5e9f7f1201d894816
+- artifact map SHA-256: a487709fe9be32210290c2d866c8463f3d85c8a7ed864b9a18dde20e3eaed23f
+- `crates/tb-server/src/replication_server.rs` SHA-256: d2e1c860c517821a66add8ac5f4428335d95d80dc854c1f3981f9800d2fc81d2
+- `crates/tb-server/tests/replication_process.rs` SHA-256: 526ba0ff26c7377f077a54d06eee58318bb2533bcbd6e6fa9ea7431165d314ed
+
+Frozen guest artifacts
+- `replication_process`: SHA-256 a377cd9a4adf59121ee6f2a41186ff08ecceb675eadb2eee5e77da62e0985846; 73,988,496 bytes
+- `tb-server`: SHA-256 0e4d11d53cac9ff950eb303400593175465974c7ce6884b35447d3b7c060bca6; 123,079,840 bytes
+- accepted finite cgroup runner: SHA-256 25ccdbc762bc9759e313f0287a64d5bf86611c1e66da3f26e27f18d7f140cbd6
+- frozen controller: SHA-256 32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20
+- frozen guest agent: SHA-256 3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb
+
+Attempted command (exit 1)
+`nice -n 19 ionice -c 3 /tmp/fch-runtime-repo-final-20260924/fc-harness run --benchmark-repo /home/mariogk/Projects/TerraScale/ts-benchmark --subject-repo /home/mariogk/Projects/TerraScale/terrabase --program /home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/target/verification/finite-cgroup-runner-25ccdbc762bc/finite_cgroup_runner --run-id replication-process-default-root-20260924-a --timeout-seconds 300 --payload-file /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-artifacts/replication_process:replication_process --payload-file /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-default-d2e1-artifacts/tb-server:tb-server -- --test-threads=1 --nocapture`
+
+Harness output: `firecracker-harness: payload exceeds its 60229232-byte size limit`
+The test and server supplemental payloads total 197,068,336 bytes, above the controller's 134,217,728-byte aggregate supplemental limit. Staging the test left 60,229,232 bytes; the server did not fit. No run manifest was emitted and no Firecracker process, guest, test process, or guest cgroup was started. At inspection, host MemAvailable was about 17 GiB and no Firecracker/build job was active.
+
+Earlier host diagnostic incident: `finite_cgroup_runner --help` was invoked outside Firecracker; the frozen executable has no help mode. It stopped during host-side preflight on missing guest payload paths and then could not write `/root/fc-harness-output/finite-cgroup-receipt.json` (permission denied). It did not spawn an integration test or write cgroups. Do not repeat this diagnostic.
+
+Next action requires coordinator-approved staging design/controller capacity for the frozen test+server pair. No source, build artifacts, or shared infrastructure were modified by this attempt; this log is the only added evidence file.

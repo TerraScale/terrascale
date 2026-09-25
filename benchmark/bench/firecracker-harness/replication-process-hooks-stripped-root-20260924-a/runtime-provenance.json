@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "run_id": "replication-process-hooks-stripped-root-20260924-a",
+  "status": "passed",
+  "test_result": {
+    "passed": 4,
+    "failed": 0,
+    "exit_code": 0,
+    "cases": [
+      "canceled_blocked_append_releases_guards_and_replays_after_restart",
+      "committed_lz4_group_gets_durable_ack_and_frontier_survives_process_restart",
+      "silent_tls_peers_release_connection_slots_after_handshake_timeout",
+      "valid_member_certificate_with_a_different_hello_identity_is_rejected"
+    ]
+  },
+  "source_identity": {
+    "terrabase_head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "package_features": "tb-server / replication-test-hooks",
+    "source_snapshot": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-hooks-5a62-source-snapshot/",
+      "manifest": "source.sha256",
+      "manifest_sha256": "b09122683d2380d2a84d229271f550c5a1ac7bedd6370e6279cdc69403424cd6",
+      "entry_count": 64,
+      "sha256_check": "all entries passed"
+    },
+    "full_74_entry_closure": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-hooks-5a62-source-closure.sha256",
+      "sha256": "b2b5c8f68e79ab3c42d04d5f627c953f9adaecbd1dc7c643185884f0c06724ac",
+      "entry_count": 74
+    },
+    "artifact_map": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-hooks-5a62-artifact-map.txt",
+      "sha256": "94fe48d13a5c57572d6ea42dcfb4e8f55ff2c5b3d5b5df2e209e82aeb9cdf067"
+    },
+    "derived_payload_manifest_sha256": "978f8c69426002bb9614f8ff973d3bb41ff6857562c3c4cfc570fcd7c024697d",
+    "transform_receipt": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-hooks-5a62-transform-receipt.txt",
+      "sha256": "4b73229875afea39b012df9803c5e25600f6187131e4e5d3013caa0d64f2be00",
+      "method": "GNU strip 2.46 --strip-debug",
+      "architecture_review": "all program headers and runtime-loaded bytes matched except section-table locator/count fields; PT_INTERP absent"
+    },
+    "hook_source_hashes": {
+      "crates/tb-server/src/replication_server.rs": "b034397b3955bc78ca15faa8613594c36335045897ea5873172304121c25d798",
+      "crates/tb-server/tests/replication_process.rs": "5a623c50048c5e222b7f0e55bbb1d55f712dd0693f4e46d9ccc0c591367c7414"
+    },
+    "runtime_subject_repository_identity_sha256": "a1250f5e1c53c33962f7780dcb104943186051821a4561a7955a642c9d4dbeec"
+  },
+  "guest_payloads": [
+    {
+      "guest_path": "/root/fc-harness-payloads/replication_process",
+      "role": "hook-enabled replication_process integration test executable",
+      "original_sha256": "d56c35859d85f8283581a34a6133322067dccd6cf21a80b6499429106c7d7d1b",
+      "derived_sha256": "3926387114b2eb33c50c6d583512befea091e2abe72d4cc00fd3aa204ed6cd74",
+      "derived_size_bytes": 18454880,
+      "guest_mode": "0755"
+    },
+    {
+      "guest_path": "/root/fc-harness-payloads/tb-server",
+      "role": "hook-enabled server executable",
+      "original_sha256": "27520cd6503e628d4fd836356483c69852e0ff08ce3d678c42cd2539b8a8b169",
+      "derived_sha256": "57ffadd23800922e91ac86a428e0a6495c96e715a2de0bd2872dd8b92968c1ef",
+      "derived_size_bytes": 27465400,
+      "guest_mode": "0755"
+    }
+  ],
+  "runtime": {
+    "command": "nice -n 19 ionice -c 3 /tmp/fch-runtime-repo-final-20260924/fc-harness run --benchmark-repo /home/mariogk/Projects/TerraScale/ts-benchmark --subject-repo /home/mariogk/Projects/TerraScale/terrabase --program /home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/target/verification/finite-cgroup-runner-25ccdbc762bc/finite_cgroup_runner --run-id replication-process-hooks-stripped-root-20260924-a --timeout-seconds 300 --payload-file /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-hooks-5a62-artifacts-stripped/replication_process:replication_process --payload-file /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-final-hooks-5a62-artifacts-stripped/tb-server:tb-server -- --test-threads=1 --nocapture",
+    "finite_cgroup_runner_sha256": "25ccdbc762bc9759e313f0287a64d5bf86611c1e66da3f26e27f18d7f140cbd6",
+    "controller_sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20",
+    "guest_agent_sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb",
+    "firecracker_version": "1.15.1",
+    "firecracker_sha256": "9d9ec5ff68a23ce54a424b15ec097c7204a3f206884c092d570b75529811bd57",
+    "kvm_api_version": 12,
+    "vcpu_count": 4,
+    "memory_mib": 8192,
+    "guest_swap_disabled": true,
+    "network": "disabled",
+    "finite_cgroup_limit_bytes": 6442450944,
+    "memory_events": "low 0; high 0; max 0; oom 0; oom_kill 0; oom_group_kill 0",
+    "test_timed_out": false,
+    "wrapper_returned_to_agent_cgroup": true,
+    "remaining_child_processes": "",
+    "child_removed": true,
+    "host_cgroup_changes": false,
+    "scope": "Hook-enabled replication process suite. The cancellation case exercised blocked append guard release and recovery after restart."
+  },
+  "evidence": {
+    "run_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-process-hooks-stripped-root-20260924-a/run-manifest.json",
+      "sha256": "0e5930ac3b94c0d9db649d8875194948d7f7a9468848529d8d6db5ebcf0e681e"
+    },
+    "guest_archive": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-process-hooks-stripped-root-20260924-a/guest-output.tar.gz",
+      "sha256": "f98169fc7199078973af4983e8b84c49213c28818512f5faed1179f7220db3eb"
+    },
+    "embedded_cgroup_receipt_sha256": "f1f86a61660e83bef141a941f6fbe570864a64c05927aec82c72c018fdc9921f",
+    "firecracker_log_sha256": "c0118233130dcadfda3f7b723e24420e72455d78266457ee3849a8a98d8bb5f4",
+    "firecracker_internal_log_sha256": "63bd525b8ddc5e88d1dabae4bc29753fc9cac6532703bde620d2bac23ae02359"
+  }
+}

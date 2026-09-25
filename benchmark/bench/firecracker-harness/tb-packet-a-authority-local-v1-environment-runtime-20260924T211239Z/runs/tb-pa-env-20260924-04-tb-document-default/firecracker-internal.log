@@ -1,0 +1,35 @@
+2026-09-24T18:35:45.661076497 [tb-pa-env-20260924-04-tb-document-default:main:INFO] Running Firecracker v1.15.1
+2026-09-24T18:35:45.663790663 [tb-pa-env-20260924-04-tb-document-default:main:INFO] Listening on API socket ("/tmp/fch-Xpl0jL/api.sock").
+2026-09-24T18:35:45.664198478 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] API server started.
+2026-09-24T18:35:45.831905526 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T18:35:45.832114815 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:35:45.832252934 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T18:35:45.832336899 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T18:35:45.832473529 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/fc-payload-mySCam\"}".
+2026-09-24T18:35:45.832578102 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:35:45.832689982 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-packet-a-authority-local-v1-environment-runtime-20260924T211239Z/runs/tb-pa-env-20260924-04-tb-document-default/guest-rootfs.ext4\"}".
+2026-09-24T18:35:45.832834313 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:35:45.832958735 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-Xpl0jL/vsock.sock\"}".
+2026-09-24T18:35:45.833305284 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:35:45.833428769 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T18:35:45.871408777 [tb-pa-env-20260924-04-tb-document-default:main:INFO] Artificially kick devices
+2026-09-24T18:35:45.871493184 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T18:35:45.871548922 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T18:35:45.871628553 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T18:35:45.871719404 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T18:35:45.871830197 [tb-pa-env-20260924-04-tb-document-default:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:35:45.937650869 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:45.937792236 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:49.150423923 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:49.150558046 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:49.154816474 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:49.154901693 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:49.156887348 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:49.156966187 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:49.160824870 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:49.160937550 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:49.163519781 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:49.163599164 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:49.168442082 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:49.168555417 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:35:50.202358130 [tb-pa-env-20260924-04-tb-document-default:fc_vcpu 3:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

@@ -1,5 +1,6 @@
 # Build output
 bin/
+!terra-rust/src/bin/
 obj/
 target/
 TestResults/
@@ -78,6 +79,31 @@ binaries/
 *.zip
 *.7z
 *.zst
+
+# Firecracker run receipts and small logs remain reviewable. Generated guest
+# images and compiled engine test executables stay local to the VM fixture cache.
+/bench/firecracker-harness/**/guest-rootfs.ext4
+/bench/firecracker-harness/**/firecracker.pid
+/bench/firecracker-harness/engine-test-fixtures/*/tb_*
+/bench/firecracker-harness/engine-test-fixtures/*/storage_contract-*
+# Keep versioned image build receipts visible while large kernel/rootfs and
+# downloaded package or OCI bytes stay local to the fixture cache.
+/bench/fixtures/firecracker-images/**/vmlinux
+/bench/fixtures/firecracker-images/**/rootfs.ext4
+/bench/fixtures/firecracker-images/**/cache/
+/bench/fixtures/firecracker-images/**/downloads/
+/bench/fixtures/firecracker-images/**/oci/
+!/bench/firecracker-harness/**/*.log
+# Compiled executables and OCI layer bytes staged for Firecracker runs stay
+# local; manifests, receipts and provenance remain reviewable.
+/bench/**/payloads/
+/bench/**/.run-inputs/*/harness/
+/bench/**/.run-inputs/*/program/
+/bench/**/oci-layout/*/blobs/
+/bench/firecracker-harness/**/test-program
+/bench/firecracker-harness/**/*-musl
+/bench/firecracker-harness/**/apt-helper
+/bench/firecracker-harness/**/evidence/rustfs
 
 # Launcher metadata and other generated operational files.
 **/launch.env

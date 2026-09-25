@@ -1,0 +1,1002 @@
+--- a/crates/tb-object/src/client.rs
++++ b/crates/tb-object/src/client.rs
+@@ -13,13 +13,14 @@
+     AdmissionError, Attribution, ItemReservation, MemoryBudget, MemoryCategory, Reservation,
+     process_memory_budget,
+ };
+-use tokio::io::{AsyncRead, AsyncReadExt};
++use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+ use tokio::time::timeout;
+ 
+ use crate::{
+     ContentDigest, ObjectCapability, ObjectError, ObjectGuarantee, ObjectKey, ObjectLimits,
+     ObjectReference, ProviderCapabilities, TransferOwner, VerifiedBlock, VerifiedObject,
++    VerifiedObjectBytes,
+ };
+ 
+ const CREATE_MARKER: &[u8] = b"TB-IMMUTABLE-RESERVATION-v1";
+@@ -334,6 +335,178 @@
+             return Err(ObjectError::BlockCorrupt { offset: start, end });
+         }
+         Ok(VerifiedBlock::new(bytes, reservation))
++    }
++
++    /// Fetch a bounded complete object whose identity is authenticated by a
++    /// validated manifest reference.
++    ///
++    /// The output reservation and one range-sized provider buffer are admitted
++    /// before reading. Bytes are returned only after the exact object length and
++    /// SHA-256 match the reference. The caller-supplied `max_bytes` is an
++    /// additional metadata/sidecar cap.
++    ///
++    /// # Errors
++    /// Returns an error if range reads are unproven, the object exceeds either
++    /// configured bound, provider bytes are short or oversized, the reference
++    /// digest does not match, or memory or request admission fails.
++    pub async fn get_verified_object(
++        &self,
++        object: &ObjectReference,
++        max_bytes: usize,
++        owner: TransferOwner,
++    ) -> Result<VerifiedObjectBytes, ObjectError> {
++        if !self.capabilities()?.range_reads {
++            return Err(ObjectError::CapabilityUnproven(ObjectCapability::RangeRead));
++        }
++        self.read_verified_span(
++            object,
++            0..object.length(),
++            object.sha256(),
++            max_bytes,
++            owner,
++        )
++        .await
++    }
++
++    /// Fetch and validate the segment directory authorized by a decoded remote
++    /// sidecar. The sidecar must already be bound to trusted manifest fields.
++    ///
++    /// The directory is fetched in exact `max_range_bytes` chunks under one
++    /// bounded output reservation. Its sidecar SHA-256 is checked before format
++    /// decoding; the decoded descriptor count, ordinal, offset, and length must
++    /// then agree with every sidecar block entry.
++    ///
++    /// # Errors
++    /// Returns an error if the sidecar belongs to another segment, directory
++    /// bytes fail their digest or format checks, descriptors disagree, or a
++    /// provider, request, or memory bound fails.
++    pub async fn get_verified_directory(
++        &self,
++        object: &ObjectReference,
++        sidecar: &tb_format::RemoteDescriptorSidecar<'_>,
++        owner: TransferOwner,
++    ) -> Result<VerifiedObjectBytes, ObjectError> {
++        if !self.capabilities()?.range_reads {
++            return Err(ObjectError::CapabilityUnproven(ObjectCapability::RangeRead));
++        }
++        if sidecar.segment_len() != object.length()
++            || sidecar.segment_sha256() != *object.sha256().as_bytes()
++        {
++            return Err(ObjectError::InvalidManifestReference(
++                "remote sidecar is bound to a different segment identity",
++            ));
++        }
++        let directory_offset = sidecar.directory_offset();
++        let directory_end = directory_offset
++            .checked_add(sidecar.directory_len())
++            .ok_or(ObjectError::InvalidRange {
++                start: directory_offset,
++                end: u64::MAX,
++                object_length: object.length(),
++            })?;
++        let limits = sidecar.limits();
++        let maximum = limits.max_directory_bytes;
++        let expected_directory_sha = ContentDigest::from_bytes(sidecar.directory_sha256());
++        let bytes = self
++            .read_verified_span(
++                object,
++                directory_offset..directory_end,
++                expected_directory_sha,
++                maximum,
++                owner,
++            )
++            .await?;
++        sidecar.verify_directory(directory_offset, bytes.as_bytes())?;
++        let directory = tb_format::decode_segment_directory(bytes.as_bytes(), &limits)?;
++        if directory.descriptor_count() != sidecar.block_count() {
++            return Err(ObjectError::InvalidRemoteDirectory(
++                "directory descriptor count differs from sidecar block count",
++            ));
++        }
++        for (index, descriptor) in directory.descriptors().enumerate() {
++            let descriptor = descriptor?;
++            let ordinal = u32::try_from(index).map_err(|_| {
++                ObjectError::InvalidRemoteDirectory("directory ordinal exceeds u32")
++            })?;
++            let block = sidecar
++                .block(ordinal)
++                .ok_or(ObjectError::InvalidSidecarBlock { ordinal })?;
++            if block.ordinal() != ordinal
++                || block.offset() != descriptor.block_offset
++                || block.len() != descriptor.total_block_len
++            {
++                return Err(ObjectError::InvalidRemoteDirectory(
++                    "directory ordinal, offset, or length differs from sidecar",
++                ));
++            }
++        }
++        Ok(bytes)
++    }
++
++    /// Stream an object into a caller-owned temporary destination and verify
++    /// its complete length and SHA-256 before returning success.
++    ///
++    /// The method reads exact ranges no larger than `max_range_bytes`, so it
++    /// does not materialize the complete object in memory. On any error the
++    /// destination may contain a partial or unverified prefix; the caller must
++    /// discard it. Success verifies bytes but does not sync the destination.
++    /// The caller must sync before trusting or publishing the file.
++    ///
++    /// # Errors
++    /// Returns an error if the reference exceeds the object cap, range reads are
++    /// unproven, provider bytes differ from the requested intervals, the final
++    /// digest differs, or the destination, provider, or request fails.
++    pub async fn download_verified_into<W>(
++        &self,
++        object: &ObjectReference,
++        destination: &mut W,
++        owner: TransferOwner,
++    ) -> Result<(), ObjectError>
++    where
++        W: AsyncWrite + Unpin,
++    {
++        if !self.capabilities()?.range_reads {
++            return Err(ObjectError::CapabilityUnproven(ObjectCapability::RangeRead));
++        }
++        self.verify_object_metadata(object).await?;
++        let mut hasher = Sha256::new();
++        let mut offset = 0_u64;
++        while offset < object.length() {
++            let maximum_range = u64::try_from(self.limits.max_range_bytes)
++                .map_err(|_| ObjectError::InvalidLimits("maximum range size does not fit u64"))?;
++            let length = (object.length() - offset).min(maximum_range);
++            let end = offset
++                .checked_add(length)
++                .ok_or(ObjectError::InvalidRange {
++                    start: offset,
++                    end: u64::MAX,
++                    object_length: object.length(),
++                })?;
++            let (bytes, reservation) = self
++                .read_range(object.key(), object.length(), offset..end, owner)
++                .await?;
++            hasher.update(&bytes);
++            timeout(
++                self.limits.request_timeout,
++                destination.write_all(bytes.as_ref()),
++            )
++            .await
++            .map_err(|_| ObjectError::RequestTimeout {
++                operation: "write verified object destination",
++            })?
++            .map_err(ObjectError::DownloadOutput)?;
++            drop(bytes);
++            drop(reservation);
++            offset = end;
++        }
++        let actual = digest_from_hasher(&hasher);
++        if actual != object.sha256() {
++            return Err(ObjectError::ObjectCorrupt {
++                key: object.key().clone(),
++                reason: "stored SHA-256 differs from the authenticated object reference",
++            });
++        }
++        Ok(())
+     }
+ 
+     /// Reject remote authority publication until both provider CAS and a
+@@ -442,6 +615,109 @@
+             return Err(ObjectError::ObjectCorrupt {
+                 key: key.clone(),
+                 reason: "stored SHA-256 differs from the uploaded bytes",
++            });
++        }
++        Ok(())
++    }
++
++    async fn read_verified_span(
++        &self,
++        object: &ObjectReference,
++        range: std::ops::Range<u64>,
++        expected_sha256: ContentDigest,
++        max_bytes: usize,
++        owner: TransferOwner,
++    ) -> Result<VerifiedObjectBytes, ObjectError> {
++        let maximum_bytes = u64::try_from(max_bytes)
++            .map_err(|_| ObjectError::InvalidLimits("metadata byte limit does not fit u64"))?;
++        let actual_bytes = range
++            .end
++            .checked_sub(range.start)
++            .ok_or(ObjectError::InvalidRange {
++                start: range.start,
++                end: range.end,
++                object_length: object.length(),
++            })?;
++        if actual_bytes > maximum_bytes {
++            return Err(ObjectError::ObjectTooLarge {
++                actual: actual_bytes,
++                maximum: maximum_bytes,
++            });
++        }
++        if range.end > object.length() || (range.start == range.end && object.length() != 0) {
++            return Err(ObjectError::InvalidRange {
++                start: range.start,
++                end: range.end,
++                object_length: object.length(),
++            });
++        }
++        if object.length() > self.limits.max_object_bytes {
++            return Err(ObjectError::ObjectTooLarge {
++                actual: object.length(),
++                maximum: self.limits.max_object_bytes,
++            });
++        }
++        self.verify_object_metadata(object).await?;
++        let output_length =
++            usize::try_from(actual_bytes).map_err(|_| ObjectError::AllocationFailed {
++                requested_bytes: usize::MAX,
++            })?;
++        let reservation = self.budget.try_reserve(attribution(owner), output_length)?;
++        let mut output = Vec::new();
++        output
++            .try_reserve_exact(output_length)
++            .map_err(|_| ObjectError::AllocationFailed {
++                requested_bytes: output_length,
++            })?;
++        let mut hasher = Sha256::new();
++        let mut offset = range.start;
++        while offset < range.end {
++            let maximum_range = u64::try_from(self.limits.max_range_bytes)
++                .map_err(|_| ObjectError::InvalidLimits("maximum range size does not fit u64"))?;
++            let length = (range.end - offset).min(maximum_range);
++            let end = offset
++                .checked_add(length)
++                .ok_or(ObjectError::InvalidRange {
++                    start: offset,
++                    end: u64::MAX,
++                    object_length: object.length(),
++                })?;
++            let (bytes, range_reservation) = self
++                .read_range(object.key(), object.length(), offset..end, owner)
++                .await?;
++            hasher.update(&bytes);
++            output.extend_from_slice(&bytes);
++            drop(bytes);
++            drop(range_reservation);
++            offset = end;
++        }
++        let actual = digest_from_hasher(&hasher);
++        if actual != expected_sha256 {
++            return Err(ObjectError::ObjectCorrupt {
++                key: object.key().clone(),
++                reason: "stored bytes differ from the authenticated SHA-256",
++            });
++        }
++        Ok(VerifiedObjectBytes::new(Bytes::from(output), reservation))
++    }
++
++    async fn verify_object_metadata(&self, object: &ObjectReference) -> Result<(), ObjectError> {
++        if object.length() > self.limits.max_object_bytes {
++            return Err(ObjectError::ObjectTooLarge {
++                actual: object.length(),
++                maximum: self.limits.max_object_bytes,
++            });
++        }
++        let metadata = self
++            .request(
++                "read object metadata",
++                self.store.head(&object.key().as_path()),
++            )
++            .await?;
++        if metadata.size != object.length() {
++            return Err(ObjectError::ObjectCorrupt {
++                key: object.key().clone(),
++                reason: "stored length differs from the authenticated object reference",
+             });
+         }
+         Ok(())
+--- a/crates/tb-object/src/error.rs
++++ b/crates/tb-object/src/error.rs
+@@ -59,6 +59,12 @@
+     /// The input reader failed while producing an upload.
+     #[error("object input stream failed: {0}")]
+     Input(#[from] io::Error),
++    /// A caller-owned download destination failed while accepting verified chunks.
++    #[error("object download destination failed: {0}")]
++    DownloadOutput(#[source] io::Error),
++    /// A remote directory or sidecar failed format validation.
++    #[error(transparent)]
++    Format(#[from] tb_format::FormatError),
+     /// The configured object limits are inconsistent or zero.
+     #[error("invalid object limits: {0}")]
+     InvalidLimits(&'static str),
+@@ -127,6 +133,9 @@
+     /// A block ordinal is not present in the authenticated sidecar.
+     #[error("authenticated remote sidecar has no block with ordinal {ordinal}")]
+     InvalidSidecarBlock { ordinal: u32 },
++    /// A verified remote directory disagrees with its authenticated sidecar.
++    #[error("remote segment directory disagrees with its authenticated sidecar: {0}")]
++    InvalidRemoteDirectory(&'static str),
+     /// Provider capabilities could not be read because the local report lock was poisoned.
+     #[error("provider capability report lock was poisoned")]
+     CapabilityReportPoisoned,
+--- a/crates/tb-object/src/types.rs
++++ b/crates/tb-object/src/types.rs
+@@ -3,7 +3,7 @@
+ 
+ use bytes::Bytes;
+ use sha2::{Digest, Sha256};
+-use tb_core::{DocumentId, WorkReservation};
++use tb_core::{DocumentId, Reservation, WorkReservation};
+ 
+ use crate::ObjectError;
+ 
+@@ -201,6 +201,42 @@
+     #[must_use]
+     pub const fn sha256(&self) -> ContentDigest {
+         self.sha256
++    }
++}
++
++/// Owned bytes verified against an authenticated object or directory digest.
++///
++/// The process memory reservation remains alive as long as this value owns the
++/// bytes. Callers that take the bytes with [`Self::into_parts`] must keep the
++/// returned reservation alive for the same duration.
++pub struct VerifiedObjectBytes {
++    bytes: Bytes,
++    reservation: Reservation,
++}
++
++impl VerifiedObjectBytes {
++    pub(crate) const fn new(bytes: Bytes, reservation: Reservation) -> Self {
++        Self { bytes, reservation }
++    }
++
++    /// Borrow the verified bytes without releasing their budget charge.
++    #[must_use]
++    pub fn as_bytes(&self) -> &Bytes {
++        &self.bytes
++    }
++
++    /// Return the bytes and reservation that must remain alive together.
++    pub fn into_parts(self) -> (Bytes, Reservation) {
++        (self.bytes, self.reservation)
++    }
++}
++
++impl fmt::Debug for VerifiedObjectBytes {
++    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
++        formatter
++            .debug_struct("VerifiedObjectBytes")
++            .field("length", &self.bytes.len())
++            .finish_non_exhaustive()
+     }
+ }
+ 
+--- a/crates/tb-object/src/lib.rs
++++ b/crates/tb-object/src/lib.rs
+@@ -16,5 +16,5 @@
+ pub use error::{ObjectCapability, ObjectError, ObjectGuarantee};
+ pub use types::{
+     ContentDigest, ObjectKey, ObjectLimits, ObjectReference, ProviderCapabilities, TransferOwner,
+-    VerifiedBlock, VerifiedObject,
++    VerifiedBlock, VerifiedObject, VerifiedObjectBytes,
+ };
+--- a/crates/tb-server/tests/support/object/slow.rs
++++ b/crates/tb-server/tests/support/object/slow.rs
+@@ -1,27 +1,40 @@
+-//! Real-provider object transfer checks for the separately scheduled Slow suite.
++//! Real-provider object transfer and verified-read checks for the separately scheduled Slow suite.
+ //!
+-//! The test requires a run-unique, pre-provisioned RustFS bucket because
+-//! `object_store` does not expose bucket creation or deletion. The Slow suite
+-//! fails clearly when its four fixture settings are missing; it never skips or
+-//! substitutes an in-memory provider.
+-
+-use std::sync::Arc;
++//! The RustFS fixture is run-unique and pre-provisioned. The small fault-injecting
++//! adapter below changes only selected GET response bodies so short and oversized
++//! streams can be tested while all requests still pass through the configured provider.
++
++use std::fmt::{self, Display, Formatter};
++use std::sync::{Arc, Mutex};
+ use std::time::Duration;
+ 
++use bytes::Bytes;
++use futures_util::StreamExt;
++use futures_util::stream::{self, BoxStream};
+ use object_store::aws::AmazonS3Builder;
+ use object_store::path::Path;
+-use object_store::{ObjectStore, ObjectStoreExt};
++use object_store::{
++    CopyOptions, GetOptions, GetResult, GetResultPayload, ListResult, MultipartUpload, ObjectMeta,
++    ObjectStore, ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult,
++};
+ use tb_core::{BudgetConfig, MemoryBudget, TenantId, WorkerId};
+ use tb_format::{
+-    FormatLimits, RemoteBlockDigest, RemoteDescriptorInput, decode_remote_descriptor_sidecar,
+-    encode_remote_descriptor_sidecar_into,
++    BlockDescriptor, FormatLimits, RemoteBlockDigest, RemoteDescriptorInput,
++    decode_remote_descriptor_sidecar, decode_segment_directory,
++    encode_remote_descriptor_sidecar_into, encode_segment_directory_into,
+ };
+-use tb_object::{ContentDigest, ObjectClient, ObjectLimits, TransferOwner};
++use tb_object::{
++    ContentDigest, ObjectClient, ObjectError, ObjectLimits, ObjectReference, TransferOwner,
++};
++use tokio::io::{AsyncReadExt, AsyncWriteExt};
++use tonic::async_trait;
+ 
+ const MULTIPART_PART_BYTES: usize = 5 * 1024 * 1024;
+ const SEGMENT_BYTES: usize = MULTIPART_PART_BYTES + 1024 * 1024;
+ const BLOCK_OFFSET: usize = 2 * 1024 * 1024 + 37;
+ const BLOCK_BYTES: usize = 4096;
++const DIRECTORY_BLOCKS: usize = 1024;
++const DIRECTORY_KEY_BYTES: usize = 1024;
+ 
+ struct RustFsFixture {
+     endpoint: String,
+@@ -58,6 +71,135 @@
+     }
+ }
+ 
++#[derive(Clone, Debug)]
++enum InjectedBody {
++    ShortOnce,
++    OversizedOnce,
++    ReplaceObject(Bytes),
++}
++
++#[derive(Debug)]
++struct FaultInjectingStore {
++    inner: Arc<dyn ObjectStore>,
++    next_body_fault: Mutex<Option<(Path, InjectedBody)>>,
++}
++
++impl FaultInjectingStore {
++    fn new(inner: Arc<dyn ObjectStore>) -> Self {
++        Self {
++            inner,
++            next_body_fault: Mutex::new(None),
++        }
++    }
++
++    fn arm(&self, path: Path, fault: InjectedBody) {
++        *self.next_body_fault.lock().expect("fault mutex is healthy") = Some((path, fault));
++    }
++
++    fn clear(&self) {
++        *self.next_body_fault.lock().expect("fault mutex is healthy") = None;
++    }
++
++    fn fault_for(&self, location: &Path) -> Option<InjectedBody> {
++        let mut guard = self.next_body_fault.lock().expect("fault mutex is healthy");
++        if !guard.as_ref().is_some_and(|(target, _)| target == location) {
++            return None;
++        }
++        match guard.as_ref().map(|(_, fault)| fault) {
++            Some(InjectedBody::ReplaceObject(bytes)) => {
++                Some(InjectedBody::ReplaceObject(bytes.clone()))
++            }
++            Some(InjectedBody::ShortOnce | InjectedBody::OversizedOnce) => {
++                guard.take().map(|(_, fault)| fault)
++            }
++            None => None,
++        }
++    }
++}
++
++impl Display for FaultInjectingStore {
++    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
++        write!(formatter, "fault-injecting({})", self.inner)
++    }
++}
++
++#[async_trait]
++impl ObjectStore for FaultInjectingStore {
++    async fn put_opts(
++        &self,
++        location: &Path,
++        payload: PutPayload,
++        options: PutOptions,
++    ) -> object_store::Result<PutResult> {
++        self.inner.put_opts(location, payload, options).await
++    }
++
++    async fn put_multipart_opts(
++        &self,
++        location: &Path,
++        options: PutMultipartOptions,
++    ) -> object_store::Result<Box<dyn MultipartUpload>> {
++        self.inner.put_multipart_opts(location, options).await
++    }
++
++    async fn get_opts(
++        &self,
++        location: &Path,
++        options: GetOptions,
++    ) -> object_store::Result<GetResult> {
++        let mut response = self.inner.get_opts(location, options).await?;
++        let Some(fault) = self.fault_for(location) else {
++            return Ok(response);
++        };
++        let expected = usize::try_from(response.range.end - response.range.start)
++            .expect("requested RustFS range fits usize");
++        let body = match fault {
++            InjectedBody::ShortOnce => Bytes::from(vec![0; expected.saturating_sub(1)]),
++            InjectedBody::OversizedOnce => Bytes::from(vec![0; expected + 1]),
++            InjectedBody::ReplaceObject(object) => {
++                let start = usize::try_from(response.range.start)
++                    .expect("requested RustFS range start fits usize");
++                let end = usize::try_from(response.range.end)
++                    .expect("requested RustFS range end fits usize");
++                let range = start..end;
++                assert!(
++                    object.get(range.clone()).is_some(),
++                    "replacement object covers requested RustFS range"
++                );
++                object.slice(range)
++            }
++        };
++        response.payload = GetResultPayload::Stream(
++            stream::iter([Ok::<Bytes, object_store::Error>(body)]).boxed(),
++        );
++        Ok(response)
++    }
++
++    fn delete_stream(
++        &self,
++        locations: BoxStream<'static, object_store::Result<Path>>,
++    ) -> BoxStream<'static, object_store::Result<Path>> {
++        self.inner.delete_stream(locations)
++    }
++
++    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
++        self.inner.list(prefix)
++    }
++
++    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
++        self.inner.list_with_delimiter(prefix).await
++    }
++
++    async fn copy_opts(
++        &self,
++        from: &Path,
++        to: &Path,
++        options: CopyOptions,
++    ) -> object_store::Result<()> {
++        self.inner.copy_opts(from, to, options).await
++    }
++}
++
+ fn transfer_owner() -> TransferOwner {
+     TransferOwner {
+         tenant: TenantId::from_bytes([0x71; 16]),
+@@ -76,16 +218,73 @@
+     }
+ }
+ 
++fn remote_sidecar(
++    segment: &[u8],
++    directory_offset: u64,
++    directory: &[u8],
++    blocks: &[RemoteBlockDigest],
++) -> (Vec<u8>, [u8; 32]) {
++    let input = RemoteDescriptorInput {
++        segment_len: segment.len() as u64,
++        segment_sha256: *ContentDigest::hash(segment).as_bytes(),
++        directory_offset,
++        directory_len: directory.len() as u64,
++        directory_sha256: *ContentDigest::hash(directory).as_bytes(),
++        blocks,
++    };
++    let mut sidecar = Vec::new();
++    let digest =
++        encode_remote_descriptor_sidecar_into(&mut sidecar, &input, &FormatLimits::default())
++            .expect("encode bounded remote sidecar");
++    (sidecar, digest)
++}
++
++fn increment_last_directory_offset(directory: &[u8], offset_at: usize) -> Vec<u8> {
++    let mut output = directory.to_vec();
++    let offset_end = offset_at + 8;
++    let current = u64::from_le_bytes(
++        output[offset_at..offset_end]
++            .try_into()
++            .expect("last directory offset is eight bytes"),
++    );
++    output[offset_at..offset_end].copy_from_slice(
++        &current
++            .checked_add(1)
++            .expect("test descriptor offset does not overflow")
++            .to_le_bytes(),
++    );
++    let crc_at = output.len() - 4;
++    let checksum = crc32c::crc32c(&output[..crc_at]);
++    output[crc_at..].copy_from_slice(&checksum.to_le_bytes());
++    output
++}
++
++fn decode_sidecar<'a>(
++    bytes: &'a [u8],
++    digest: [u8; 32],
++    segment: &[u8],
++) -> tb_format::RemoteDescriptorSidecar<'a> {
++    decode_remote_descriptor_sidecar(
++        bytes,
++        digest,
++        segment.len() as u64,
++        *ContentDigest::hash(segment).as_bytes(),
++        &FormatLimits::default(),
++    )
++    .expect("decode manifest-bound remote sidecar")
++}
++
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+-async fn rustfs_proves_strict_range_and_abort_after_one_uploaded_part() {
++async fn rustfs_proves_verified_reads_directory_binding_and_abort_cleanup() {
+     let fixture = RustFsFixture::from_environment();
+-    let store = fixture
++    let raw_store: Arc<dyn ObjectStore> = fixture
+         .object_store()
+         .expect("connect to the configured RustFS test provider");
++    let store = Arc::new(FaultInjectingStore::new(Arc::clone(&raw_store)));
+     let memory = MemoryBudget::new(
+         BudgetConfig::new(64 * 1024 * 1024, 0).expect("valid object-transfer test budget"),
+     );
+-    let client = ObjectClient::new(Arc::clone(&store), memory, object_limits())
++    let client = ObjectClient::new(Arc::clone(&store), memory.clone(), object_limits())
+         .expect("configure bounded RustFS object client");
+     let owner = transfer_owner();
+ 
+@@ -113,35 +312,59 @@
+     {
+         *byte = (offset % 251) as u8;
+     }
+-    let directory_offset = (SEGMENT_BYTES - 64) as u64;
+-    segment[directory_offset as usize..].fill(0x62);
+-    let block = RemoteBlockDigest {
+-        ordinal: 0,
+-        offset: BLOCK_OFFSET as u64,
+-        len: BLOCK_BYTES as u32,
+-        sha256: *ContentDigest::hash(&segment[BLOCK_OFFSET..BLOCK_OFFSET + BLOCK_BYTES]).as_bytes(),
+-    };
+-    let blocks = [block];
+-    let input = RemoteDescriptorInput {
+-        segment_len: segment.len() as u64,
+-        segment_sha256: *ContentDigest::hash(&segment).as_bytes(),
+-        directory_offset,
+-        directory_len: 64,
+-        directory_sha256: *ContentDigest::hash(&segment[directory_offset as usize..]).as_bytes(),
+-        blocks: &blocks,
+-    };
+-    let mut sidecar_bytes = Vec::new();
+-    let sidecar_digest =
+-        encode_remote_descriptor_sidecar_into(&mut sidecar_bytes, &input, &FormatLimits::default())
+-            .expect("encode authenticated remote block descriptor");
+-    let sidecar = decode_remote_descriptor_sidecar(
+-        &sidecar_bytes,
+-        sidecar_digest,
+-        segment.len() as u64,
+-        *ContentDigest::hash(&segment).as_bytes(),
+-        &FormatLimits::default(),
+-    )
+-    .expect("validate authenticated remote block descriptor");
++    let descriptor_len = 8 + 2 * DIRECTORY_KEY_BYTES + 8 + 4 + 4;
++    let directory_length = 16 + DIRECTORY_BLOCKS * descriptor_len;
++    let directory_offset = SEGMENT_BYTES - directory_length - 24;
++    let mut descriptors = Vec::with_capacity(DIRECTORY_BLOCKS);
++    let mut blocks = Vec::with_capacity(DIRECTORY_BLOCKS);
++    let sort_key = vec![b'k'; DIRECTORY_KEY_BYTES];
++    let mut next_offset = 36_u64;
++    for ordinal in 0..DIRECTORY_BLOCKS {
++        let length = if ordinal < 511 {
++            4096_u32
++        } else if ordinal == 511 {
++            4097_u32
++        } else if ordinal == 512 {
++            BLOCK_BYTES as u32
++        } else if ordinal < DIRECTORY_BLOCKS - 1 {
++            4055_u32
++        } else {
++            u32::try_from(directory_offset as u64 - next_offset)
++                .expect("final contiguous block length fits u32")
++        };
++        let offset = next_offset;
++        let end = offset + u64::from(length);
++        let start_index = usize::try_from(offset).expect("block offset fits usize");
++        let end_index = usize::try_from(end).expect("block end fits usize");
++        descriptors.push(BlockDescriptor {
++            min_key: &sort_key,
++            max_key: &sort_key,
++            block_offset: offset,
++            total_block_len: length,
++            block_crc32c: 0,
++        });
++        blocks.push(RemoteBlockDigest {
++            ordinal: u32::try_from(ordinal).expect("ordinal fits u32"),
++            offset,
++            len: length,
++            sha256: *ContentDigest::hash(&segment[start_index..end_index]).as_bytes(),
++        });
++        next_offset = end;
++    }
++    assert_eq!(next_offset, directory_offset as u64);
++    assert_eq!(blocks[512].offset, BLOCK_OFFSET as u64);
++    assert_eq!(blocks[512].len as usize, BLOCK_BYTES);
++    let mut directory_bytes = Vec::new();
++    encode_segment_directory_into(&mut directory_bytes, &descriptors, &FormatLimits::default())
++        .expect("encode bounded sorted-run directory");
++    assert_eq!(directory_bytes.len(), directory_length);
++    assert!(directory_bytes.len() > object_limits().max_range_bytes);
++    assert!(BLOCK_OFFSET + BLOCK_BYTES < directory_offset);
++    segment[directory_offset..directory_offset + directory_bytes.len()]
++        .copy_from_slice(&directory_bytes);
++    let (sidecar_bytes, sidecar_sha256) =
++        remote_sidecar(&segment, directory_offset as u64, &directory_bytes, &blocks);
++    let sidecar = decode_sidecar(&sidecar_bytes, sidecar_sha256, &segment);
+ 
+     let mut source = &segment[..];
+     let uploaded = client
+@@ -153,9 +376,10 @@
+         )
+         .await
+         .expect("multipart upload and full-object readback verification");
++    let segment_reference = uploaded.as_reference();
+     let key_path = Path::from(uploaded.key().as_str());
+     let block = client
+-        .get_verified_range(&uploaded.as_reference(), &sidecar, 0, owner)
++        .get_verified_range(&segment_reference, &sidecar, 512, owner)
+         .await
+         .expect("fetch authenticated strict subrange from longer object");
+     assert_eq!(
+@@ -163,11 +387,218 @@
+         &segment[BLOCK_OFFSET..BLOCK_OFFSET + BLOCK_BYTES]
+     );
+     drop(block);
+-    store
++    assert!(matches!(
++        client
++            .get_verified_range(&segment_reference, &sidecar, u32::MAX, owner)
++            .await,
++        Err(ObjectError::InvalidSidecarBlock { ordinal: u32::MAX })
++    ));
++
++    let fetched_directory = client
++        .get_verified_directory(&segment_reference, &sidecar, owner)
++        .await
++        .expect("fetch, authenticate, decode, and cross-check multi-range directory");
++    assert_eq!(fetched_directory.as_bytes().as_ref(), &directory_bytes);
++    drop(fetched_directory);
++    let fetched_object = client
++        .get_verified_object(&segment_reference, SEGMENT_BYTES, owner)
++        .await
++        .expect("fetch complete bounded object against the manifest identity");
++    assert_eq!(fetched_object.as_bytes().as_ref(), &segment);
++    drop(fetched_object);
++    assert!(matches!(
++        client
++            .get_verified_object(&segment_reference, SEGMENT_BYTES - 1, owner)
++            .await,
++        Err(ObjectError::ObjectTooLarge { actual, maximum })
++            if actual == SEGMENT_BYTES as u64 && maximum == (SEGMENT_BYTES - 1) as u64
++    ));
++
++    let (mut destination, mut downloaded) = tokio::io::duplex(SEGMENT_BYTES);
++    client
++        .download_verified_into(&segment_reference, &mut destination, owner)
++        .await
++        .expect("stream and verify the complete object into a caller-owned temporary sink");
++    destination
++        .shutdown()
++        .await
++        .expect("close verified temporary sink");
++    let mut downloaded_bytes = Vec::new();
++    downloaded
++        .read_to_end(&mut downloaded_bytes)
++        .await
++        .expect("read verified temporary sink");
++    assert_eq!(downloaded_bytes, segment);
++
++    for fault in [InjectedBody::ShortOnce, InjectedBody::OversizedOnce] {
++        store.arm(key_path.clone(), fault);
++        let (mut partial_destination, mut partial_reader) = tokio::io::duplex(SEGMENT_BYTES);
++        assert!(matches!(
++            client
++                .download_verified_into(&segment_reference, &mut partial_destination, owner)
++                .await,
++            Err(ObjectError::UnexpectedRange { .. })
++        ));
++        partial_destination
++            .shutdown()
++            .await
++            .expect("close partial failed-download sink");
++        let mut partial = Vec::new();
++        partial_reader
++            .read_to_end(&mut partial)
++            .await
++            .expect("read partial failed-download sink");
++        assert!(partial.is_empty(), "a bad first range is never written");
++    }
++
++    let wrong_segment_reference = ObjectReference::from_manifest(
++        uploaded.key().clone(),
++        segment.len() as u64,
++        ContentDigest::hash(b"different segment identity"),
++    )
++    .expect("nonempty wrong-digest manifest reference is constructible");
++    assert!(matches!(
++        client
++            .get_verified_directory(&wrong_segment_reference, &sidecar, owner)
++            .await,
++        Err(ObjectError::InvalidManifestReference(_))
++    ));
++    assert!(
++        decode_remote_descriptor_sidecar(
++            &sidecar_bytes,
++            [0xff; 32],
++            segment.len() as u64,
++            *ContentDigest::hash(&segment).as_bytes(),
++            &FormatLimits::default(),
++        )
++        .is_err()
++    );
++
++    let last_descriptor_offset =
++        12 + (DIRECTORY_BLOCKS - 1) * descriptor_len + 8 + 2 * DIRECTORY_KEY_BYTES;
++    let valid_crc_but_wrong_offset =
++        increment_last_directory_offset(&directory_bytes, last_descriptor_offset);
++    decode_segment_directory(&valid_crc_but_wrong_offset, &FormatLimits::default())
++        .expect("offset-mismatched directory remains structurally valid with a correct CRC");
++    let (wrong_offset_sidecar_bytes, wrong_offset_digest) = remote_sidecar(
++        &segment,
++        directory_offset as u64,
++        &valid_crc_but_wrong_offset,
++        &blocks,
++    );
++    let wrong_offset_sidecar =
++        decode_sidecar(&wrong_offset_sidecar_bytes, wrong_offset_digest, &segment);
++    let mut wrong_offset_segment = segment.clone();
++    wrong_offset_segment[directory_offset..directory_offset + directory_bytes.len()]
++        .copy_from_slice(&valid_crc_but_wrong_offset);
++    store.arm(
++        key_path.clone(),
++        InjectedBody::ReplaceObject(Bytes::from(wrong_offset_segment)),
++    );
++    assert!(matches!(
++        client
++            .get_verified_directory(&segment_reference, &wrong_offset_sidecar, owner)
++            .await,
++        Err(ObjectError::InvalidRemoteDirectory(_))
++    ));
++    store.clear();
++
++    let combined_end = blocks[1].offset + u64::from(blocks[1].len);
++    let combined_start = usize::try_from(blocks[0].offset).expect("combined start fits usize");
++    let combined_end_index = usize::try_from(combined_end).expect("combined end fits usize");
++    let mut wrong_count_blocks = Vec::with_capacity(DIRECTORY_BLOCKS - 1);
++    wrong_count_blocks.push(RemoteBlockDigest {
++        ordinal: 0,
++        offset: blocks[0].offset,
++        len: u32::try_from(combined_end - blocks[0].offset).expect("combined range fits u32"),
++        sha256: *ContentDigest::hash(&segment[combined_start..combined_end_index]).as_bytes(),
++    });
++    for (index, block) in blocks.iter().skip(2).enumerate() {
++        let mut block = *block;
++        block.ordinal = u32::try_from(index + 1).expect("re-numbered ordinal fits u32");
++        wrong_count_blocks.push(block);
++    }
++    assert_eq!(wrong_count_blocks.len(), DIRECTORY_BLOCKS - 1);
++    let (wrong_count_sidecar_bytes, wrong_count_digest) = remote_sidecar(
++        &segment,
++        directory_offset as u64,
++        &directory_bytes,
++        &wrong_count_blocks,
++    );
++    let wrong_count_sidecar =
++        decode_sidecar(&wrong_count_sidecar_bytes, wrong_count_digest, &segment);
++    assert!(matches!(
++        client
++            .get_verified_directory(&segment_reference, &wrong_count_sidecar, owner)
++            .await,
++        Err(ObjectError::InvalidRemoteDirectory(_))
++    ));
++
++    let valid_crc_but_corrupt_directory = valid_crc_but_wrong_offset.clone();
++    decode_segment_directory(&valid_crc_but_corrupt_directory, &FormatLimits::default())
++        .expect("mutated test directory retains a valid local CRC and format structure");
++    let mut corrupted_segment = segment.clone();
++    corrupted_segment[directory_offset..directory_offset + directory_bytes.len()]
++        .copy_from_slice(&valid_crc_but_corrupt_directory);
++    store.arm(
++        key_path.clone(),
++        InjectedBody::ReplaceObject(Bytes::from(corrupted_segment)),
++    );
++    assert!(matches!(
++        client
++            .get_verified_directory(&segment_reference, &sidecar, owner)
++            .await,
++        Err(ObjectError::ObjectCorrupt { .. })
++    ));
++    store.clear();
++
++    let mut sidecar_source = &sidecar_bytes[..];
++    let verified_sidecar = client
++        .put_immutable(
++            &mut sidecar_source,
++            sidecar_bytes.len() as u64,
++            ContentDigest::hash(&sidecar_bytes),
++            owner,
++        )
++        .await
++        .expect("store immutable authenticated sidecar");
++    let sidecar_reference = verified_sidecar.as_reference();
++    let fetched_sidecar = client
++        .get_verified_object(&sidecar_reference, sidecar_bytes.len(), owner)
++        .await
++        .expect("fetch bounded manifest-referenced sidecar bytes");
++    assert_eq!(fetched_sidecar.as_bytes().as_ref(), &sidecar_bytes);
++    drop(fetched_sidecar);
++    assert!(matches!(
++        client
++            .get_verified_object(&sidecar_reference, sidecar_bytes.len() - 1, owner)
++            .await,
++        Err(ObjectError::ObjectTooLarge { .. })
++    ));
++    let wrong_sidecar_reference = ObjectReference::from_manifest(
++        verified_sidecar.key().clone(),
++        verified_sidecar.length(),
++        ContentDigest::hash(b"wrong sidecar digest"),
++    )
++    .expect("nonempty wrong-digest manifest reference is constructible");
++    assert!(matches!(
++        client
++            .get_verified_object(&wrong_sidecar_reference, sidecar_bytes.len(), owner)
++            .await,
++        Err(ObjectError::ObjectCorrupt { .. })
++    ));
++
++    raw_store
+         .delete(&key_path)
+         .await
+         .expect("remove successful test object");
+-    assert!(store.head(&key_path).await.is_err());
++    assert!(raw_store.head(&key_path).await.is_err());
++    let sidecar_path = Path::from(verified_sidecar.key().as_str());
++    raw_store
++        .delete(&sidecar_path)
++        .await
++        .expect("remove successful sidecar test object");
++    assert!(raw_store.head(&sidecar_path).await.is_err());
+ 
+     // The adapter must have submitted one complete non-final S3 part before
+     // reaching EOF in the second part and aborting the unreferenced upload.
+@@ -185,13 +616,14 @@
+     let mut partial_input = &partial_part[..];
+     assert!(matches!(
+         upload.transfer_from(&mut partial_input).await,
+-        Err(tb_object::ObjectError::InputLengthMismatch {
++        Err(ObjectError::InputLengthMismatch {
+             expected,
+             actual
+         }) if expected == incomplete_length && actual == MULTIPART_PART_BYTES as u64
+     ));
+     assert!(
+-        store.head(&incomplete_key).await.is_err(),
++        raw_store.head(&incomplete_key).await.is_err(),
+         "failed upload must remove its reservation object after multipart abort"
+     );
+-}
++    assert_eq!(memory.snapshot().reserved_bytes, 0);
++}

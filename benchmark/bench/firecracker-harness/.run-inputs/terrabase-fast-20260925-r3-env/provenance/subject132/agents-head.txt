@@ -1,0 +1,23 @@
+AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
+
+- This is terrabase a leaderless document multi region database with a really efficient and fast sync and replication engine
+
+- When interacting with forgejo use the "fj" cli
+# RULES
+
+- This repo MUST use rust only
+- We MUST to expose metrics to prometheus compatible
+- We SHOULD use cargo packages that are tested and popular whenever possible instead of creating our own solutions
+- When building rust MUST always
+  - Lower priority (recommended, yields to other work)
+  - Compiling make and using the Makefile always use the lowest cpu priority
+
+## Code
+- The code must be very organized
+
+## Networking
+- We MUST use GRPC for terrabase <-> terrabase communication with LZ4 compression to save on bandwith
+
+## Benchmark
+- All benchmarks MUST live at ../ts-benchmark repo
+- No benchmark files or results must be saved in this repository

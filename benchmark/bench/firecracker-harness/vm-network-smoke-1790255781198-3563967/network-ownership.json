@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "run_id": "vm-network-smoke-1790255781198-3563967",
+  "status": "cleaned",
+  "namespace": "fcn-8e2b21d7a6f8a87948500b596118b801",
+  "namespace_inode": 4026534874,
+  "bridge": "fcb8e2b21d7a6f8",
+  "tap": "fct8e2b21d7a6f8",
+  "bridge_ipv4": "10.77.0.1/24",
+  "guest_ipv4": "10.77.0.2/24",
+  "guest_mac": "06:00:0a:4d:00:02",
+  "owner_uid": 1000,
+  "owner_gid": 1000,
+  "helper_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/vm-network-smoke-1790255781198-3563967/network-helper.bin",
+  "helper_sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20"
+}

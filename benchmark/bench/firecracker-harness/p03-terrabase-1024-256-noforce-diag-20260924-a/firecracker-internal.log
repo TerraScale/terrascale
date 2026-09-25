@@ -1,0 +1,35 @@
+2026-09-24T07:37:51.876194894 [p03-terrabase-1024-256-noforce-diag-20260924-a:main:INFO] Running Firecracker v1.15.1
+2026-09-24T07:37:51.878292171 [p03-terrabase-1024-256-noforce-diag-20260924-a:main:INFO] Listening on API socket ("/tmp/fch-3ztAWf/api.sock").
+2026-09-24T07:37:51.878685116 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] API server started.
+2026-09-24T07:37:51.884020251 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T07:37:51.884149264 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T07:37:51.884340231 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T07:37:51.884416890 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T07:37:51.884567462 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/vm-inputs/vmlinux\"}".
+2026-09-24T07:37:51.884750137 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T07:37:51.884889475 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/crates/fc-harness/../../../bench/firecracker-harness/p03-terrabase-1024-256-noforce-diag-20260924-a/guest-rootfs.ext4\"}".
+2026-09-24T07:37:51.885080937 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T07:37:51.885222578 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-3ztAWf/vsock.sock\"}".
+2026-09-24T07:37:51.885514333 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T07:37:51.885658423 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T07:37:51.924495679 [p03-terrabase-1024-256-noforce-diag-20260924-a:main:INFO] Artificially kick devices
+2026-09-24T07:37:51.924607897 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T07:37:51.924649303 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T07:37:51.924736040 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T07:37:51.924814234 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T07:37:51.924930768 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T07:37:51.978452231 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:51.978585101 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:54.763856639 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:54.763950134 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:54.767873704 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:54.767952321 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:54.769763321 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:54.769837920 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:54.774104036 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:54.774183366 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:54.776272836 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:54.776346585 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:54.780864628 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:54.781002756 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:37:55.684588957 [p03-terrabase-1024-256-noforce-diag-20260924-a:fc_vcpu 3:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

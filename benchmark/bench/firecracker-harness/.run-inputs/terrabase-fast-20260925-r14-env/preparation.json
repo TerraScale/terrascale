@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "run_id": "terrabase-fast-20260925-r14-env",
+  "preparation_status": "pending_foundation_r14_freeze_and_accepted_build_artifacts",
+  "prepared_utc": "2026-09-25T20:13:49.719886+00:00",
+  "authorization": {
+    "authorized_scope": "source-only runtime preparation; no build and no VM launch",
+    "root_runtime_lease_granted": false,
+    "launch_permitted": false,
+    "do_not_reuse_r12_source_or_start_duplicate_r12_run": true
+  },
+  "paths": {
+    "benchmark_repository": "/home/mariogk/Projects/TerraScale/ts-benchmark",
+    "benchmark_harness_root": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness",
+    "run_input_dir": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r14-env",
+    "run_output_dir": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r14-env",
+    "detached_subject_path": "/tmp/terrabase-fast-subject-r14-20260925",
+    "planned_r14_freeze_dir": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14",
+    "planned_source_manifest": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/SOURCE-SHA256SUMS",
+    "planned_artifact_receipt": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/ARTIFACT-RECEIPT.json",
+    "planned_cleanup_receipt": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r14-env/provenance/post-run-cleanup.json",
+    "planned_runtime_receipt": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r14-env/provenance/runtime-evidence.json"
+  },
+  "uniqueness_at_preparation": {
+    "run_id": "terrabase-fast-20260925-r14-env",
+    "run_input_dir_created": true,
+    "run_output_dir_absent": true,
+    "detached_subject_absent": true,
+    "r14_freeze_absent": true
+  },
+  "source_identity": {
+    "repository_head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "r14_source_manifest_sha256": null,
+    "r14_source_file_count": null,
+    "r14_frozen_subject_identity_sha256": null,
+    "status": "pending; Foundation says R14 cannot freeze until Storage_tests and Distributed_design/Review release reviewed corrections",
+    "current_r13_replication_process_rs_sha256": "eef17a45509f3501d93de9f606f82c17b6e4bbecf629f2b7ff778e2494ea798c",
+    "required_corrected_path": "crates/tb-server/tests/replication_process.rs",
+    "required_corrections": [
+      "expired seed_local_source_events fix",
+      "wrong-leaf r2"
+    ],
+    "required_review_binding": "wait for Foundation final R14 hash after both corrected changes are reviewed; verify frozen manifest and detached subject against that exact hash",
+    "agents_file_policy": "preserve detached HEAD AGENTS.md bytes; do not overlay mutable human-owned working-tree AGENTS.md"
+  },
+  "artifact_identity": {
+    "r14_artifact_receipt_sha256": null,
+    "r14_artifact_digest_list_sha256": null,
+    "r14_fast_client_process_sha256": null,
+    "r14_server_payload_hashes": null,
+    "foundation_accepted_build_gates": null,
+    "status": "pending Foundation accepted R14 gates/artifacts; do not copy R12 client_process or payload binaries",
+    "proven_initializer_wrapper": {
+      "binary_sha256": "bb61a354a9deb49e3d1ef09c74f459af85cb65034d835d0be805441cecd26d04",
+      "source_sha256": "7c2e8517a0ab19bce731a5d66446c8be05ea6d04116f0ca3264ac9072e714a98",
+      "R12_staged_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/wrapper33/client_finite_cgroup_runner",
+      "selection_rule": "use this accepted bb61 initializer-capable runner only; reject stale 8135 wrapper"
+    },
+    "accepted_harness_controller": {
+      "fc_harness_sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20",
+      "guest_agent_sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb",
+      "R12_input_paths": {
+        "fc_harness": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r12-env/harness/fc-harness",
+        "guest_agent": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r12-env/harness/fc-guest-agent"
+      }
+    }
+  },
+  "benchmark_runner_identity": {
+    "head": "5685f163bb7e9339e8eb0c839fe2512aaf562648",
+    "path": "/tmp/tsb-fast-runner31-20260925-r2-env",
+    "source_file_count": 31,
+    "source_inventory_sha256": "280f9d92b98fa91a20943d815d6b7bc1da913b1631bed3301e2a81e80525b8d2",
+    "inventory_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r2-env/provenance/runner31/source-sha256.txt"
+  },
+  "runtime_contract": {
+    "expected_fast_test_count": 41,
+    "test_filter": null,
+    "test_args": [
+      "--test-threads=1",
+      "--nocapture"
+    ],
+    "timeout_seconds": 1200,
+    "guest_vcpus": 4,
+    "guest_memory_mib": 8192,
+    "guest_swap_disabled": true,
+    "guest_network": "disabled; no host network or unisolated service fixture attached",
+    "host_priority": "nice -n 19; ionice -c 3",
+    "one_firecracker_vm_only": true,
+    "result_class": "multi-process Fast functional evidence within one VM; not separate-VM multi-region acceptance",
+    "required_test_coverage": "R14 corrected suite, including initializer caller via accepted bb61 wrapper"
+  },
+  "environment_revalidation_required_at_launch": {
+    "firecracker_version": "1.15.1 expected; revalidate binary digest at launch",
+    "firecracker_sha256": "9d9ec5ff68a23ce54a424b15ec097c7204a3f206884c092d570b75529811bd57",
+    "kernel_path": "/tmp/vm-inputs/vmlinux",
+    "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+    "rootfs_path": "/tmp/vm-inputs/rootfs.ext4",
+    "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+    "rootfs_provenance": "historical local manifest only; upstream artifact provenance unqualified",
+    "fresh_host_resource_gate_required": true,
+    "minimum_mem_available_bytes": 10737418240,
+    "disk_free_at_least_rootfs_plus_bytes": 536870912,
+    "kvm_read_write_required": true,
+    "no_active_firecracker_harness_or_conflicting_build_processes_required": true,
+    "gate_status": "not checked now; must be fresh immediately before launch after root lease"
+  },
+  "build_gate_prerequisite": {
+    "foundation_r14_gates_must_be_accepted_before_artifact_staging": true,
+    "r14_clippy_status": "pending; do not carry R12 failure forward as R14 result",
+    "r12_clippy_context": "R12 default strict Clippy failed 16 diagnostics; Slow Clippy was skipped; R12 Fast was 35/41 and is historical only"
+  },
+  "cleanup_receipt_contract": {
+    "write_only_under_sibling_ts_benchmark": true,
+    "capture_run_manifest_guest_archive_and_hashes": true,
+    "confirm_firecracker_pid_exited": true,
+    "confirm_no_run_cgroup_mount_loop_device_or_temporary_path": true,
+    "capture_guest_finite_cgroup_child_removed_no_remaining_children_no_oom_timeout": true,
+    "confirm_run_rootfs_copy_removed_by_controller": true,
+    "do_not_delete_shared_or_unrelated_resources": true
+  },
+  "no_operations_performed": {
+    "cargo_or_make_build": false,
+    "vm_launch": false,
+    "source_edit": false,
+    "R12_artifacts_copied": false
+  },
+  "foundation_handoff_status": "awaiting reviewed replication_process.rs corrections and exact R14 freeze/artifact receipt",
+  "next_step": "After Foundation provides the final R14 freeze and accepted gate artifacts, create the detached R14 subject from that frozen inventory, verify exact source/artifact hashes, then wait for Root launch lease."
+}

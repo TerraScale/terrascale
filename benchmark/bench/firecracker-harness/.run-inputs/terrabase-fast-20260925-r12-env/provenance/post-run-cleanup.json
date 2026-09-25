@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "run_id": "terrabase-fast-20260925-r12-env",
+  "checked_utc": "2026-09-25T19:44:49.809242+00:00",
+  "firecracker_pid": 223202,
+  "firecracker_process_alive": false,
+  "active_firecracker_or_harness_processes": [],
+  "matching_host_cgroups": [],
+  "run_specific_mounts": [],
+  "run_specific_loop_devices": [],
+  "run_specific_temporary_paths": {
+    "/tmp/fch-S9JCgY": false,
+    "/tmp/fc-payload-mKlXw1": false,
+    "/tmp/fc-payload-mWjphY": false,
+    "/tmp/fc-payload-frjCu4": false
+  },
+  "guest_rootfs_copy_present": false,
+  "finite_cgroup_child_removed": true,
+  "all_run_resources_released": true
+}

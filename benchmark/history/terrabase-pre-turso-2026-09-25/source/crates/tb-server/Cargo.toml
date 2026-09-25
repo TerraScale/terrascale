@@ -1,0 +1,79 @@
+[package]
+name = "tb-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autotests = false
+
+[features]
+replication-test-hooks = []
+client-decode-allocation-probe = []
+slow-tests = [
+    "dep:object_store",
+    "dep:tb-object",
+    "tb-replication/slow-test-hooks",
+    "tb-document/test-hooks",
+    "tb-storage/test-hooks",
+    "replication-test-hooks",
+]
+
+[dependencies]
+axum.workspace = true
+base64.workspace = true
+clap.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+governor.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+libc.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+object_store = { workspace = true, optional = true }
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+tb-core = { path = "../tb-core" }
+tb-document = { path = "../tb-document" }
+tb-format = { path = "../tb-format" }
+tb-object = { path = "../tb-object", optional = true }
+tb-protocol = { path = "../tb-protocol" }
+tb-replication = { path = "../tb-replication" }
+tb-storage = { path = "../tb-storage" }
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tonic.workspace = true
+tower.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+
+[[bin]]
+name = "terrabase-keygen"
+path = "src/terrabase_keygen.rs"
+
+[[bin]]
+name = "terrabase-init"
+path = "src/bin/terrabase-init.rs"
+
+[[test]]
+name = "fast"
+path = "tests/fast.rs"
+
+[[test]]
+name = "slow"
+path = "tests/slow.rs"
+required-features = ["slow-tests"]
+
+[dev-dependencies]
+aws-lc-rs.workspace = true
+crc32c.workspace = true
+fs2.workspace = true
+rcgen.workspace = true
+reqwest.workspace = true
+
+[lints]
+workspace = true

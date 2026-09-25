@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "status": "source_only_unbuilt",
+  "purpose": "P04 D02 TerraBase-only observational scan cost split",
+  "parent": {
+    "campaign": "p04-repeat-20260924-a2",
+    "measured_elf_sha256": "93e2099f1797033aab0263732bacb551209dad064ccc5847dcd66b3a17cf5ed2",
+    "source_inventory_sha256": "b5f251d333300086f15bba8df583ad6e267c7012f8975d5f892c459aff07969e",
+    "storage_local_sha256": "22d5ec284fa8c1d579ca3185e268ccd11556dd39a2beb0297f6cc57e99d33e73",
+    "storage_run_sha256": "c1dda8eabc436c806e701c1fc416913d7def6f7069cd5110d3fa7eb64c7fdba4",
+    "storage_work_sha256": "1a951a767c290ec2f1105cc81aa2f4c3a138dc8b5d2592becc81139ae84955fe"
+  },
+  "derivative": {
+    "protocol_path": "protocol.md",
+    "protocol_sha256": "ad5f9ddbf7d03c17a62a533158fabcce409da6cf8037c29076ca1d5868258b41",
+    "source_inventory_path": "source-inventory.sha256",
+    "source_inventory_entries": 81,
+    "source_inventory_sha256": "97df850d0d97d1ad87305e1b1b0adf1fe0ab4214356ba9a27c5402683f3bbefc",
+    "source_delta_path": "source-delta.patch",
+    "source_delta_sha256": "22ae25ce7272116d694dbb608e8f977399d058d9a6178a3d956dce26f6361d29",
+    "driver_lock_sha256": "3c1a4f2aabd538ad3c6e106dcf1cb6dcec62d302b33d4b4f1666be3868a2a723",
+    "storage_local_sha256": "f9f8846b2bdcb54a2fbcf5898756569e64af807affa9ea3bbfcab54bd914998e",
+    "storage_run_sha256": "61730588c96517dbce4f5105e1cc8c8271e25dfc1cf40f38480e4fe08b9dcfba",
+    "storage_lib_sha256": "310b0e1c7d11182604286bfea00f62f80c1186a32e326293db7ed8c8db31e57c",
+    "d02_driver_sha256": "7b5edde49fc0a63e6cd71ac1f7fc1f09f54209214f9090950d746ae7b6b33795",
+    "elf_sha256": null
+  },
+  "fixture": {
+    "rows": 1024,
+    "body_bytes": 1,
+    "seed": 1,
+    "checkpoint_fixture": true,
+    "checkpoint_before_deletes": false,
+    "sparse_tail": false,
+    "expected_fixture_sha256": "1d5c1a3d24146cea8f09abafd72ce11bbedbac9722c3fb40e3cc9ae46f0504d5",
+    "expected_physical_state": "one immutable run; checkpoint sequence 16 equals visible; mutable bytes zero; empty current scan"
+  },
+  "diagnostic": {
+    "empty_instant_bracket_calibration_count": 64,
+    "first_after_fixture_scans": 1,
+    "measured_warm_scans": 32,
+    "total_ordered_scan_slots": 33,
+    "engine": "terrabase_only",
+    "phase_clock": "std::time::Instant wall time",
+    "operation_cpu_clock": "CLOCK_THREAD_CPUTIME_ID",
+    "block_load_phase": "nested_non_additive",
+    "classification": "none"
+  }
+}

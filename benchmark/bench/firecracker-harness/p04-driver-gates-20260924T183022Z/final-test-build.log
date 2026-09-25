@@ -1,0 +1,81 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-current-engine-final-20260924T183724Z/ts-benchmark/terra-rust'
+CC_x86_64_unknown_linux_musl=x86_64-unknown-linux-musl-gcc CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-unknown-linux-musl-gcc nice -n 19 ionice -c 3 cargo test --locked --no-run --bin terrabase-sqlite-baseline --features terrabase --target x86_64-unknown-linux-musl -j 2
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.26
+   Compiling typenum v1.20.1
+   Compiling cfg-if v1.0.5
+   Compiling libc v0.2.189
+   Compiling syn v3.0.6
+   Compiling getrandom v0.4.3
+   Compiling cpufeatures v0.3.1
+   Compiling rand_core v0.10.1
+   Compiling version_check v0.9.5
+   Compiling generic-array v0.14.7
+   Compiling hybrid-array v0.4.15
+   Compiling semver v1.0.28
+   Compiling rustc_version v0.4.1
+   Compiling chacha20 v0.10.2
+   Compiling find-msvc-tools v0.1.13
+   Compiling thiserror v2.0.21
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.7
+   Compiling thiserror-impl v2.0.21
+   Compiling rand v0.10.3
+   Compiling crc32c v0.6.8
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling serde_core v1.0.229
+   Compiling utf8parse v0.2.2
+   Compiling vcpkg v0.2.15
+   Compiling pkg-config v0.3.34
+   Compiling const-oid v0.10.2
+   Compiling digest v0.11.3
+   Compiling anstyle-parse v1.0.0
+   Compiling ulid v3.0.0
+   Compiling foldhash v0.2.0
+   Compiling libsqlite3-sys v0.38.2
+   Compiling bitflags v2.13.2
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle v1.0.14
+   Compiling colorchoice v1.0.5
+   Compiling zmij v1.0.23
+   Compiling rustix v1.1.5
+   Compiling anstyle-query v1.1.5
+   Compiling twox-hash v2.1.4
+   Compiling lz4_flex v0.14.0
+   Compiling anstream v1.0.0
+   Compiling hashbrown v0.17.1
+   Compiling tb-core v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-current-engine-final-20260924T183724Z/terrabase/crates/tb-core)
+   Compiling sha2 v0.11.0
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling serde v1.0.229
+   Compiling heck v0.5.0
+   Compiling linux-raw-sys v0.12.1
+   Compiling clap_lex v1.1.1
+   Compiling strsim v0.11.1
+   Compiling serde_json v1.0.151
+   Compiling anyhow v1.0.104
+   Compiling clap_builder v4.6.6
+   Compiling clap_derive v4.6.4
+   Compiling digest v0.10.7
+   Compiling tb-format v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-current-engine-final-20260924T183724Z/terrabase/crates/tb-format)
+   Compiling hashlink v0.12.2
+   Compiling serde_derive v1.0.229
+   Compiling fs2 v0.4.3
+   Compiling cpufeatures v0.2.17
+   Compiling fallible-iterator v0.3.0
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling smallvec v1.16.1
+   Compiling rusqlite v0.40.2
+   Compiling sha2 v0.10.9
+   Compiling tb-storage v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-current-engine-final-20260924T183724Z/terrabase/crates/tb-storage)
+   Compiling clap v4.6.6
+   Compiling terrabase-sqlite-baseline v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-current-engine-final-20260924T183724Z/ts-benchmark/terra-rust)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 45.40s
+  Executable unittests src/main.rs (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-gates-20260924T183022Z/target/x86_64-unknown-linux-musl/debug/deps/terrabase_sqlite_baseline-765979f757881634)
+Compiled only. Resolve Cargo’s printed test executable path to an absolute path for make test-vm TEST_BINARY=... RUN_ID=...
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-current-engine-final-20260924T183724Z/ts-benchmark/terra-rust'

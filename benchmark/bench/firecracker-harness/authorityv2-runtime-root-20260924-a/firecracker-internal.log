@@ -1,0 +1,35 @@
+2026-09-24T13:35:22.351766611 [authorityv2-runtime-root-20260924-a:main:INFO] Running Firecracker v1.15.1
+2026-09-24T13:35:22.355443241 [authorityv2-runtime-root-20260924-a:main:INFO] Listening on API socket ("/tmp/fch-cFXFvo/api.sock").
+2026-09-24T13:35:22.356024955 [authorityv2-runtime-root-20260924-a:fc_api:INFO] API server started.
+2026-09-24T13:35:22.375092292 [authorityv2-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T13:35:22.375665220 [authorityv2-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T13:35:22.375997822 [authorityv2-runtime-root-20260924-a:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T13:35:22.376121801 [authorityv2-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T13:35:22.376331897 [authorityv2-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/fc-payload-cqKIbP\"}".
+2026-09-24T13:35:22.376446224 [authorityv2-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T13:35:22.376584317 [authorityv2-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/authorityv2-runtime-root-20260924-a/guest-rootfs.ext4\"}".
+2026-09-24T13:35:22.377002837 [authorityv2-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T13:35:22.377184110 [authorityv2-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-cFXFvo/vsock.sock\"}".
+2026-09-24T13:35:22.377540702 [authorityv2-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T13:35:22.377699847 [authorityv2-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T13:35:22.424597242 [authorityv2-runtime-root-20260924-a:main:INFO] Artificially kick devices
+2026-09-24T13:35:22.424689166 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T13:35:22.424775393 [authorityv2-runtime-root-20260924-a:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T13:35:22.424860361 [authorityv2-runtime-root-20260924-a:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T13:35:22.424938821 [authorityv2-runtime-root-20260924-a:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T13:35:22.425109583 [authorityv2-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T13:35:22.484085764 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:22.484241668 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:28.777201334 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:28.777309575 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:28.782714466 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:28.782834294 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:28.784837535 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:28.784914284 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:28.788993780 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:28.789070724 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:28.792781546 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:28.792855387 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:28.796686041 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:28.796762834 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T13:35:29.710772283 [authorityv2-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

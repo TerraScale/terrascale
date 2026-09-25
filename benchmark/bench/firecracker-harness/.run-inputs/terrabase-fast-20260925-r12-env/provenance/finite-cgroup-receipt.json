@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "status": "failed",
+  "limit_bytes": 6442450944,
+  "agent_cgroup": "/system.slice/fc-harness-agent.service",
+  "parent_cgroup": "/sys/fs/cgroup/system.slice",
+  "parent_controllers": "memory pids",
+  "parent_subtree_control": "memory pids",
+  "parent_processes": "",
+  "child_cgroup": "/sys/fs/cgroup/system.slice/terrabase-test-874-1790365123247186467",
+  "child_memory_max": "6442450944",
+  "wrapper_membership_in_child": "/system.slice/terrabase-test-874-1790365123247186467",
+  "test_pid": 875,
+  "test_membership": "0::/system.slice/terrabase-test-874-1790365123247186467",
+  "test_exit_code": 101,
+  "test_timed_out": false,
+  "memory_current_after_test": "544768",
+  "memory_max_after_test": "6442450944",
+  "memory_events_after_test": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+  "wrapper_membership_after_return": "/system.slice/fc-harness-agent.service",
+  "remaining_child_processes": "",
+  "child_removed": true,
+  "errors": [
+    "test exited with exit status: 101"
+  ]
+}

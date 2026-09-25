@@ -1,0 +1,19 @@
+[package]
+name = "tb-replication"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+aws-lc-rs.workspace = true
+crc32c.workspace = true
+fs2.workspace = true
+tb-core = { path = "../tb-core" }
+tb-format = { path = "../tb-format" }
+tb-storage = { path = "../tb-storage" }
+sha2.workspace = true
+ulid.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+source= docker://registry-1.docker.io/rustfs/rustfs@sha256:ba0a1b53e36f321c0d46f3867104abef169f7bc59c467c664ddac87e7ddc9a8b
+child_manifest_media_type=application/vnd.oci.image.manifest.v1+json
+child_manifest_digest=sha256:ba0a1b53e36f321c0d46f3867104abef169f7bc59c467c664ddac87e7ddc9a8b
+config_digest=sha256:1e81764caba3be454540c061eb50beeb7706b3c46ecec9b4243498b585760c1b
+config_architecture=amd64
+config_os=linux
+config_exposed_ports=9000/tcp,9001/tcp (image metadata; no service was launched)
+config_entrypoint=/entrypoint.sh
+config_cmd=rustfs
+effective_argv=/entrypoint.sh rustfs
+entrypoint_layer=sha256:a43ede1efa93f777ea220ad2b7c1064b93fa8c7a1d0d58b3af91a5f155c7e885
+entrypoint_credential_env_identifiers=RUSTFS_ACCESS_KEY,RUSTFS_ACCESS_KEY_FILE,RUSTFS_SECRET_KEY,RUSTFS_SECRET_KEY_FILE,RUSTFS_ROOT_USER,RUSTFS_ROOT_PASSWORD,RUSTFS_USERNAME,RUSTFS_RPC_SECRET
+note=environment variable names are extracted from the pinned image entrypoint; no credential values were read or recorded

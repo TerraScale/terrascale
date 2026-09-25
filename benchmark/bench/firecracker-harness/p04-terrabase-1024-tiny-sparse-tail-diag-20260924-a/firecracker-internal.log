@@ -1,0 +1,35 @@
+2026-09-24T08:14:49.405447296 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:main:INFO] Running Firecracker v1.15.1
+2026-09-24T08:14:49.407293576 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:main:INFO] Listening on API socket ("/tmp/fch-tCOLiW/api.sock").
+2026-09-24T08:14:49.407751085 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] API server started.
+2026-09-24T08:14:49.417554697 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T08:14:49.417732516 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:14:49.417931841 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T08:14:49.418020290 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T08:14:49.418197750 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/vm-inputs/vmlinux\"}".
+2026-09-24T08:14:49.418357015 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:14:49.418513286 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/crates/fc-harness/../../../bench/firecracker-harness/p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a/guest-rootfs.ext4\"}".
+2026-09-24T08:14:49.418679562 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:14:49.418839287 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-tCOLiW/vsock.sock\"}".
+2026-09-24T08:14:49.419166116 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:14:49.419318278 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T08:14:49.456439122 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:main:INFO] Artificially kick devices
+2026-09-24T08:14:49.456569956 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T08:14:49.456622377 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T08:14:49.456718793 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T08:14:49.456849143 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T08:14:49.457010319 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:14:49.514481784 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:49.514637214 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:52.255490396 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:52.255585673 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:52.259632308 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:52.259722742 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:52.261647081 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:52.261739833 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:52.268537955 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:52.268639555 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:52.270837178 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:52.270914019 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:52.275822600 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:52.275937439 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:14:53.190427079 [p04-terrabase-1024-tiny-sparse-tail-diag-20260924-a:fc_vcpu 1:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

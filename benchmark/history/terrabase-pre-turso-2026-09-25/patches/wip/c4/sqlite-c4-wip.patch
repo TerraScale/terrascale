@@ -1,0 +1,476 @@
+diff --git a/tmp/tb-sqlite-c4-private-bhrbtx/original/terra-rust/src/main.rs b/tmp/tb-sqlite-c4-private-bhrbtx/candidate/terra-rust/src/main.rs
+index abd58c19..a38616a0 100644
+--- a/tmp/tb-sqlite-c4-private-bhrbtx/original/terra-rust/src/main.rs
++++ b/tmp/tb-sqlite-c4-private-bhrbtx/candidate/terra-rust/src/main.rs
+@@ -1,8 +1,9 @@
+ use std::fs::{self, File, OpenOptions};
+ use std::io::{BufWriter, Read, Write};
+ use std::path::{Path, PathBuf};
+-use std::sync::{Arc, Condvar, Mutex};
+-use std::thread::JoinHandle;
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::{Arc, Barrier, Condvar, Mutex, mpsc};
++use std::thread::{self, JoinHandle};
+ use std::time::{Duration, Instant};
+ 
+ use anyhow::{Context, Result, bail, ensure};
+@@ -15,6 +16,7 @@ use sha2::{Digest, Sha256};
+ 
+ const MATRIX_VERSION: &str = "terrabase-rust-acceptance-v1";
+ const SQLITE_CACHE_KIB: i64 = 65_536;
++const SQLITE_C4_CACHE_KIB: i64 = SQLITE_CACHE_KIB / 4;
+ const RANGE_LIMIT: i64 = 16;
+ const MAX_DELETED_HISTORY_SCANS: u64 = 10_000;
+ const DELETED_HISTORY_SCAN_TIMEOUT: Duration = Duration::from_secs(30);
+@@ -71,6 +73,8 @@ struct RunArgs {
+     seed: u64,
+     #[arg(long)]
+     trial: u32,
++    #[arg(long, default_value_t = 1)]
++    clients: u32,
+     #[arg(long, default_value_t = false)]
+     checkpoint_fixture: bool,
+     #[arg(long, default_value_t = false)]
+@@ -103,6 +107,22 @@ struct Sample {
+     scan_phase: Option<&'static str>,
+ }
+ 
++#[derive(Serialize)]
++struct C4Sample {
++    operation: u64,
++    client_id: u32,
++    elapsed_ns: u64,
++    success: bool,
++    error: Option<String>,
++}
++
++struct C4Operation {
++    operation: u64,
++    client_id: u32,
++    elapsed_ns: u64,
++    result: std::result::Result<u64, String>,
++}
++
+ #[derive(Serialize)]
+ #[allow(clippy::struct_field_names)] // Units are part of the stable JSON receipt schema.
+ struct Latency {
+@@ -262,6 +282,7 @@ fn main() -> Result<()> {
+         Command::Run(args) => run(&args),
+         Command::AnalyzeP04(args) => analysis::run(&args),
+         Command::RunTerrabase(args) => {
++            ensure!(args.clients == 1, "run-terrabase requires --clients 1");
+             #[cfg(feature = "terrabase")]
+             {
+                 terrabase::run(&args)
+@@ -277,6 +298,25 @@ fn main() -> Result<()> {
+ 
+ #[allow(clippy::too_many_lines)] // Keep validation, timing, and receipt emission in one audited run path.
+ fn run(args: &RunArgs) -> Result<()> {
++    ensure!(
++        matches!(args.clients, 1 | 4),
++        "SQLite run supports only --clients 1 or 4"
++    );
++    if args.clients == 4 {
++        ensure!(
++            matches!(
++                args.case,
++                Case::PointHitRandom
++                    | Case::PointMissRandom
++                    | Case::Insert
++                    | Case::Update
++                    | Case::Delete
++                    | Case::Upsert
++                    | Case::ReadModifyWrite
++            ),
++            "SQLite --clients 4 does not support this case"
++        );
++    }
+     ensure!(
+         (1024..=10_000_000).contains(&args.rows),
+         "rows must be in 1024..=10000000 to bound correctness memory"
+@@ -354,7 +394,7 @@ fn run(args: &RunArgs) -> Result<()> {
+     let binary_hash = hash_file(&std::env::current_exe().context("resolve executable")?)?;
+ 
+     let mut conn = Connection::open(&args.database).context("open new SQLite database")?;
+-    configure_sqlite(&conn)?;
++    configure_sqlite(&conn, SQLITE_CACHE_KIB)?;
+     let journal_mode: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+     let synchronous: i64 = conn.query_row("PRAGMA synchronous", [], |row| row.get(0))?;
+     let cache_size: i64 = conn.query_row("PRAGMA cache_size", [], |row| row.get(0))?;
+@@ -403,6 +443,18 @@ fn run(args: &RunArgs) -> Result<()> {
+         );
+     }
+ 
++    if args.clients == 4 {
++        drop(conn);
++        return run_sqlite_c4(
++            args,
++            &manifest,
++            binary_hash,
++            manifest_hash,
++            fixture_hash,
++            query_plan,
++        );
++    }
++
+     let samples_file = OpenOptions::new()
+         .write(true)
+         .create_new(true)
+@@ -426,7 +478,7 @@ fn run(args: &RunArgs) -> Result<()> {
+     if matches!(args.case, Case::Reopen) {
+         drop(conn);
+         conn = Connection::open(&args.database).context("reopen SQLite database")?;
+-        configure_sqlite(&conn)?;
++        configure_sqlite(&conn, SQLITE_CACHE_KIB)?;
+     }
+     for i in 0..args.operations {
+         let diagnostic_before = args.scan_diagnostics.then(ScanSnapshot::capture_before);
+@@ -612,6 +664,267 @@ fn run(args: &RunArgs) -> Result<()> {
+     Ok(())
+ }
+ 
++#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
++fn run_sqlite_c4(
++    args: &RunArgs,
++    manifest: &Value,
++    binary_hash: String,
++    manifest_hash: String,
++    fixture_hash: String,
++    query_plan: Option<String>,
++) -> Result<()> {
++    let mut connections = Vec::with_capacity(4);
++    for client_id in 0..4 {
++        let conn = Connection::open(&args.database)
++            .with_context(|| format!("open SQLite client {client_id}"))?;
++        configure_sqlite(&conn, SQLITE_C4_CACHE_KIB)?;
++        let journal_mode: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
++        let synchronous: i64 = conn.query_row("PRAGMA synchronous", [], |row| row.get(0))?;
++        let cache_size: i64 = conn.query_row("PRAGMA cache_size", [], |row| row.get(0))?;
++        ensure!(
++            journal_mode.eq_ignore_ascii_case("wal")
++                && synchronous == 2
++                && cache_size == -SQLITE_C4_CACHE_KIB,
++            "SQLite client {client_id} WAL/FULL/cache tuning was not applied"
++        );
++        connections.push(conn);
++    }
++
++    let samples_file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(&args.samples)
++        .context("create raw samples")?;
++    let barrier = Barrier::new(5);
++    let stop = AtomicBool::new(false);
++    let (sender, receiver) = mpsc::channel::<C4Operation>();
++    let mut worker_errors = Vec::new();
++    let elapsed_ns = thread::scope(|scope| {
++        let mut workers = Vec::with_capacity(4);
++        for (client_index, conn) in connections.into_iter().enumerate() {
++            let client_id = u32::try_from(client_index).expect("four clients fit u32");
++            let sender = sender.clone();
++            let barrier = &barrier;
++            let stop = &stop;
++            workers.push((
++                client_id,
++                scope.spawn(move || {
++                    barrier.wait();
++                    for operation_id in (u64::from(client_id)..args.operations).step_by(4) {
++                        if stop.load(Ordering::Acquire) {
++                            break;
++                        }
++                        let start = Instant::now();
++                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++                            operation(&conn, args, operation_id)
++                        }))
++                        .map_err(|_| {
++                            format!(
++                                "SQLite client {client_id} panicked on operation {operation_id}"
++                            )
++                        })
++                        .and_then(|value| value.map_err(|cause| cause.to_string()));
++                        let elapsed_ns = ns(start.elapsed());
++                        let failed = result.is_err();
++                        if failed {
++                            stop.store(true, Ordering::Release);
++                        }
++                        sender
++                            .send(C4Operation {
++                                operation: operation_id,
++                                client_id,
++                                elapsed_ns,
++                                result,
++                            })
++                            .expect("sample receiver remains open until all workers join");
++                        if failed {
++                            break;
++                        }
++                    }
++                }),
++            ));
++        }
++        drop(sender);
++        let start = Instant::now();
++        barrier.wait();
++        for (client_id, worker) in workers {
++            if worker.join().is_err() {
++                stop.store(true, Ordering::Release);
++                worker_errors.push(format!("SQLite client {client_id} worker panicked"));
++            }
++        }
++        ns(start.elapsed())
++    });
++
++    let mut operations: Vec<C4Operation> = receiver.into_iter().collect();
++    operations.sort_unstable_by_key(|sample| sample.operation);
++    let mut error = worker_errors.first().cloned();
++    let mut errors = u64::try_from(worker_errors.len())?;
++    let mut completed = 0_u64;
++    let mut observed_checksum = 0_u64;
++    let mut latency = Vec::with_capacity(operations.len());
++    let mut samples = BufWriter::new(samples_file);
++    for sample in &operations {
++        match &sample.result {
++            Ok(value) => {
++                completed += 1;
++                observed_checksum = observed_checksum.wrapping_add(*value);
++                latency.push(sample.elapsed_ns);
++            }
++            Err(cause) => {
++                errors += 1;
++                if error.is_none() {
++                    error = Some(cause.clone());
++                }
++            }
++        }
++        serde_json::to_writer(
++            &mut samples,
++            &C4Sample {
++                operation: sample.operation,
++                client_id: sample.client_id,
++                elapsed_ns: sample.elapsed_ns,
++                success: sample.result.is_ok(),
++                error: sample.result.as_ref().err().cloned(),
++            },
++        )?;
++        samples.write_all(b"\n")?;
++    }
++    samples.flush()?;
++    if error.is_none()
++        && (operations.len() != usize::try_from(args.operations)?
++            || operations.iter().enumerate().any(|(expected, sample)| {
++                sample.operation
++                    != u64::try_from(expected).expect("operation count fits u64")
++                    || u64::from(sample.client_id) != sample.operation % 4
++            }))
++    {
++        errors += 1;
++        error = Some("SQLite clients did not complete each global operation exactly once".into());
++    }
++    latency.sort_unstable();
++
++    // Every measured connection is closed before post-run verification opens its own connection.
++    let conn = Connection::open(&args.database).context("open SQLite final verifier")?;
++    let integrity_check: String =
++        conn.query_row("PRAGMA integrity_check(1)", [], |row| row.get(0))?;
++    let (final_row_count, final_revision_sum): (i64, i64) = conn.query_row(
++        "SELECT count(*), coalesce(sum(rev),0) FROM items",
++        [],
++        |row| Ok((row.get(0)?, row.get(1)?)),
++    )?;
++    let final_row_count = u64::try_from(final_row_count)?;
++    let final_revision_sum = u64::try_from(final_revision_sum)?;
++    let (expected_count, expected_revisions) = expected_final(args);
++    if error.is_none()
++        && (integrity_check != "ok"
++            || final_row_count != expected_count
++            || final_revision_sum != expected_revisions)
++    {
++        errors += 1;
++        error = Some(format!(
++            "final verification failed: integrity={integrity_check}, rows={final_row_count}/{expected_count}, revisions={final_revision_sum}/{expected_revisions}"
++        ));
++    }
++    let final_state_sha256 = match verify_final(&conn, args) {
++        Ok(hash) => Some(hash),
++        Err(cause) => {
++            if error.is_none() {
++                errors += 1;
++                error = Some(format!("logical final-state verification failed: {cause}"));
++            }
++            None
++        }
++    };
++    drop(conn);
++
++    let receipt = Receipt {
++        schema_version: 1,
++        matrix_version: MATRIX_VERSION,
++        engine: "sqlite-embedded",
++        case: args.case,
++        status: if error.is_some() {
++            "failed"
++        } else {
++            "sqlite_baseline_only"
++        },
++        error: error.clone(),
++        rows: args.rows,
++        operations_requested: args.operations,
++        operations_completed: completed,
++        errors,
++        body_bytes: args.body_bytes,
++        seed: args.seed,
++        trial: args.trial,
++        checkpoint_fixture: args.checkpoint_fixture,
++        checkpoint_before_deletes: args.checkpoint_before_deletes,
++        sparse_tail: args.sparse_tail,
++        scan_diagnostics_enabled: args.scan_diagnostics,
++        clients: 4,
++        durability: "local-durable",
++        journal_mode: "wal".into(),
++        synchronous: 2,
++        cache_kib: SQLITE_C4_CACHE_KIB,
++        schema_kind: "primary-row",
++        query_plan,
++        sqlite_version: rusqlite::version(),
++        rust_toolchain: "1.98.1",
++        rusqlite_crate_version: "0.40.2",
++        libsqlite3_sys_crate_version: "0.38.2",
++        binary_sha256: binary_hash,
++        driver_source_sha256: hex_hash(include_bytes!("main.rs")),
++        matrix_sha256: hex_hash(include_bytes!(
++            "../../bench/terrabase-rust-acceptance-v1.md"
++        )),
++        dependency_lock_sha256: hex_hash(include_bytes!("../Cargo.lock")),
++        guest_manifest_sha256: manifest_hash,
++        guest_manifest: manifest,
++        benchmark_revision: &args.benchmark_revision,
++        engine_revision: &args.engine_revision,
++        fixture_sha256: fixture_hash,
++        observed_checksum,
++        elapsed_ns,
++        reopen_to_first_query_ns: None,
++        #[allow(clippy::cast_precision_loss)]
++        completed_ops_per_second: if elapsed_ns == 0 {
++            0.0
++        } else {
++            completed as f64 * 1e9 / elapsed_ns as f64
++        },
++        latency: latency_quantiles(&latency),
++        warm_scan_samples: None,
++        warm_scan_latency: None,
++        integrity_check,
++        final_row_count,
++        final_revision_sum,
++        final_state_sha256,
++        resources: resources(&args.database),
++        scan_diagnostics: None,
++        samples_path: &args.samples,
++        database_path: &args.database,
++    };
++    let mut receipt = serde_json::to_value(receipt)?;
++    receipt["aggregate_cache_kib"] = serde_json::json!(SQLITE_CACHE_KIB);
++    if error.is_some() {
++        receipt["latency"] = Value::Null;
++        receipt["completed_ops_per_second"] = Value::Null;
++    }
++    let receipt_file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(&args.receipt)
++        .context("create receipt")?;
++    serde_json::to_writer_pretty(receipt_file, &receipt)?;
++    if let Some(cause) = error {
++        bail!(
++            "baseline failed; receipt at {}: {cause}",
++            args.receipt.display()
++        );
++    }
++    println!("{}", args.receipt.display());
++    Ok(())
++}
++
+ fn validate_manifest(value: &Value) -> Result<()> {
+     ensure!(
+         value["vcpu_count"].as_u64() == Some(4),
+@@ -873,14 +1186,15 @@ fn deleted_history_timeout_receipt(
+     receipt
+ }
+ 
+-fn configure_sqlite(conn: &Connection) -> Result<()> {
++fn configure_sqlite(conn: &Connection, cache_kib: i64) -> Result<()> {
+     conn.busy_timeout(std::time::Duration::from_secs(10))?;
+     conn.set_prepared_statement_cache_capacity(32);
+     conn.execute_batch(
+         "PRAGMA page_size=4096; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;\
+-         PRAGMA cache_size=-65536; PRAGMA temp_store=FILE; PRAGMA mmap_size=0;\
++         PRAGMA temp_store=FILE; PRAGMA mmap_size=0;\
+          PRAGMA wal_autocheckpoint=1000; PRAGMA foreign_keys=ON;",
+     )?;
++    conn.pragma_update(None, "cache_size", -cache_kib)?;
+     Ok(())
+ }
+ 
+@@ -1360,6 +1674,7 @@ mod tests {
+             body_bytes: 1,
+             seed: 1,
+             trial: 1,
++            clients: 1,
+             checkpoint_fixture: false,
+             checkpoint_before_deletes: false,
+             sparse_tail: false,
+@@ -1382,6 +1697,7 @@ mod tests {
+             body_bytes: 1,
+             seed: 7,
+             trial: 1,
++            clients: 1,
+             checkpoint_fixture: true,
+             checkpoint_before_deletes: false,
+             sparse_tail: false,
+diff --git a/tmp/tb-sqlite-c4-private-bhrbtx/original/terra-rust/README.md b/tmp/tb-sqlite-c4-private-bhrbtx/candidate/terra-rust/README.md
+index cb2a74c4..48b6b277 100644
+--- a/tmp/tb-sqlite-c4-private-bhrbtx/original/terra-rust/README.md
++++ b/tmp/tb-sqlite-c4-private-bhrbtx/candidate/terra-rust/README.md
+@@ -42,7 +42,7 @@ terrabase-sqlite-baseline run \
+ 
+ The guest manifest is a harness-generated JSON object containing `vcpu_count: 4`, `mem_size_mib: 8192`, `swap_disabled: true`, and `firecracker_version`, plus guest-observed CPU, memory and swap, pinned image hashes, source identities, host CPU affinity, output filesystem, and the disabled-network statement. The current harness does not yet qualify a dedicated SSD, mount and cache state, volume reset, or exclusive host CPU use; those remain acceptance gates. The driver checks the mandatory envelope fields, embeds the manifest and its SHA-256 in the receipt, and records its own binary, source, matrix and dependency-lock hashes, SQLite version, source revisions, fixture hash, timings, errors, integrity check, and DB bytes. It scans every final row against independently regenerated keys, payloads and revisions, then records a logical SHA-256 over big-endian u64 key, u64 payload length, payload bytes, and big-endian u64 revision. The TerraBase adapter emits the same logical digest and its observed fixture state. The harness must independently verify manifest claims against the running VM. The driver refuses to overwrite prior data or receipts. Raw per-operation samples are JSONL. Keep raw and summary outputs under `bench/` when copied from the guest, with a Markdown results table; no host run qualifies. The guest agent archives `/root/fc-harness-output` up to 512 MiB, so keep the database at a fresh child of `/root/fc-bench-data` outside that directory; the VM is fresh and is discarded after the receipt is archived.
+ 
+-Cases: `point-hit-random`, `point-miss-random`, `point-hit-sequential`, `indexed-equality`, `ordered-range`, `insert`, `batch-insert` (16 inserts per durable commit), `update`, `delete`, `upsert`, `read-modify-write`, `mixed`, `reopen` (one clean reopen and first query), and `deleted-history` (one-row empty or sparse-tail scan, repeated up to 10,000 times over one fixture). All use one client in this initial driver. Every case has deterministic u64 big-endian keys and byte payloads. Point, range and mutation cases use a primary-key SQLite table without an unrelated secondary index or document field. Indexed equality uses a separate fixture with integer group/sort fields, SQLite JSONB, and the `(group_key, sort_key, id)` index. The driver runs `ANALYZE`, records the selected query plan, and refuses an indexed-equality result without that index. `run-terrabase` explicitly rejects indexed equality until a real secondary-index caller exists. Reads materialize and validate returned values. Mutations use `synchronous=FULL` WAL or the engine's local-durable receipt; RMW uses a SQLite `BEGIN IMMEDIATE` transaction or TerraBase snapshot/conflict commit. Fixture construction and raw sample emission are outside the measured interval. `--checkpoint-fixture` requests a final checkpoint; omitting it does not disable the engine's bounded automatic checkpoints. The TerraBase receipt records immutable-run count, checkpoint sequence and mutable bytes before measurement, and labels the observed physical state. `deleted-history` also accepts `--checkpoint-before-deletes` and `--sparse-tail`. A run is limited to 10 million rows and operations each to bound fixture and raw-latency memory; current TerraBase mutation runs are limited to 50,000 measured commits while its retry table is bounded. This is a closed-loop throughput baseline; open-loop offered-rate, concurrency, cold cache, dirty crash recovery and complete resource cases remain open in the matrix.
++Cases: `point-hit-random`, `point-miss-random`, `point-hit-sequential`, `indexed-equality`, `ordered-range`, `insert`, `batch-insert` (16 inserts per durable commit), `update`, `delete`, `upsert`, `read-modify-write`, `mixed`, `reopen` (one clean reopen and first query), and `deleted-history` (one-row empty or sparse-tail scan, repeated up to 10,000 times over one fixture). All cases support one client. SQLite `run --clients 4` additionally supports only `point-hit-random`, `point-miss-random`, `insert`, `update`, `delete`, `upsert`, and `read-modify-write`. It opens four separate SQLite connections and assigns global operation `i` to client `i % 4`; each client runs its assigned operations in ascending order. The four clients share a 64-MiB configured page-cache target (16 MiB per connection); the one-client target remains 64 MiB. The c4 receipt reports per-connection `cache_kib`, `aggregate_cache_kib`, and `clients: 4`; every c4 JSONL sample includes its global `operation` and `client_id`. Worker errors and panics produce failed receipts with no successful latency or throughput summary. `run-terrabase` accepts only one client. Every case has deterministic u64 big-endian keys and byte payloads. Point, range and mutation cases use a primary-key SQLite table without an unrelated secondary index or document field. Indexed equality uses a separate fixture with integer group/sort fields, SQLite JSONB, and the `(group_key, sort_key, id)` index. The driver runs `ANALYZE`, records the selected query plan, and refuses an indexed-equality result without that index. `run-terrabase` explicitly rejects indexed equality until a real secondary-index caller exists. Reads materialize and validate returned values. Mutations use `synchronous=FULL` WAL or the engine's local-durable receipt; RMW uses a SQLite `BEGIN IMMEDIATE` transaction or TerraBase snapshot/conflict commit. Fixture construction and raw sample emission are outside the measured interval. `--checkpoint-fixture` requests a final checkpoint; omitting it does not disable the engine's bounded automatic checkpoints. The TerraBase receipt records immutable-run count, checkpoint sequence and mutable bytes before measurement, and labels the observed physical state. `deleted-history` also accepts `--checkpoint-before-deletes` and `--sparse-tail`. A run is limited to 10 million rows and operations each to bound fixture and raw-latency memory; current TerraBase mutation runs are limited to 50,000 measured commits while its retry table is bounded. This is a closed-loop throughput baseline; each c4 client issues its next operation only after its previous operation completes. Open-loop offered-rate, cold cache, dirty crash recovery and complete resource cases remain open in the matrix.
+ 
+ The embedded adapter calls `tb-storage` directly. It encodes the logical revision as an eight-byte prefix of each engine value and verifies full payloads, commit durability frontiers, final rows/revisions, and a logical SHA-256 matching the SQLite receipt's key/payload/revision format. It records storage, WAL, admitted memory and process counters. SQLite's 64-MiB page cache and TerraBase's 128-MiB process admission budget are separate accounting scopes, both subject to the common 8-GiB guest limit; paired resource claims require measured whole-guest evidence and fair cache allowances. The SQLite and TerraBase receipts are **individual lane evidence**, not an automatic win/loss classifier. They become comparable only with a verified Firecracker manifest, source-matched fixture and guarantees, repeated paired trials, statistical intervals and all matrix resource gates. `--scan-diagnostics` is a separate one-operation `ordered-range` or `deleted-history` run for both engines. It samples calling-thread CPU runtime with Linux `CLOCK_THREAD_CPUTIME_ID` and process read/write bytes from `/proc/self/io` around the measured operation; unavailable fields are JSON `null`, never zero-filled. The receipt names the CPU clock and records the enclosing CPU-bracket wall interval plus its observed overhead outside the pure operation interval; the latter includes probe and scheduling cost and is not subtracted from CPU time. Earlier receipts sampled `/proc/self/schedstat`; their CPU deltas are unqualified and must not be compared with the new clock's values. The TerraBase lane also snapshots cumulative storage scan-work counters outside that interval and reports the delta for run opens, metadata calls, directory/header/footer/block bytes, and examined candidates. The scan-work delta now also reports `run_block_cache_evictions` (checked block buffers discarded under cache pressure) and `run_block_rereads` (successful loads of a previously loaded block by that scan cursor). They are cumulative saturating engine counters subtracted immediately before and after one scan; absence in older receipts means unavailable, not zero. Counter file reads and storage snapshots are outside the operation latency clock, and these diagnostic runs do not replace unprofiled repeated latency/throughput trials. `deleted-history` accepts one scan for first-scan diagnostics or 2–10,000 scans for repeated measurements on the same fixture. In repeated runs, sample 0 is labeled `first_after_fixture` and later samples `warm_repeat`; the receipt retains the all-sample `latency` field and adds `warm_scan_samples` and warm-only `warm_scan_latency` quantiles. The first scan is not called cold because no cache reset is established. A single watchdog worker enforces a separate 30-second deadline for each active scan, then is canceled and joined before final verification. A timed-out scan exits with code 124 and writes a `timed_out` receipt with its zero-based `timeout_operation`, already completed count, fixture and manifest hashes, and source identities. Earlier completed scan samples are buffered until the run ends and are unavailable when a later scan times out; `operations_completed` in the timeout receipt is not a persisted-sample count. A timed-out or failed run must not enter successful latency summaries or paired statistics. Retain that receipt and the guest command log as a failure, not a dropped case. Use separate one-scan `--scan-diagnostics` runs for CPU, I/O, and scan-work counters; repeated runs do not aggregate those diagnostic fields.
+ 
+diff --git a/tmp/tb-sqlite-c4-private-bhrbtx/original/bench/terrabase-rust-acceptance-v1.md b/tmp/tb-sqlite-c4-private-bhrbtx/candidate/bench/terrabase-rust-acceptance-v1.md
+index 0f7359a7..d40dd799 100644
+--- a/tmp/tb-sqlite-c4-private-bhrbtx/original/bench/terrabase-rust-acceptance-v1.md
++++ b/tmp/tb-sqlite-c4-private-bhrbtx/candidate/bench/terrabase-rust-acceptance-v1.md
+@@ -12,16 +12,16 @@ The primary metric is identified per row. Practical significance is **5%**. For
+ 
+ ## Required scoreboard
+ 
+-`Open` is the initial state; a measured row must become exactly one of **win**, **loss**, **statistically inconclusive**, **unsupported**, or **not comparable**, with a receipt and reason. Each `driver` row has a SQLite-only lane in `terra-rust`; it remains unsupported for a TerraBase comparison until the real adapter exists. The rows below are minimum shapes. **Every listed axis combination and every comma-separated primary metric expands into its own required scoreboard case**, named `<ID>/<axis values>/<metric>`; for example `P01/random/small/hot/c1/throughput` and `P01/random/small/hot/c1/p99` are different verdicts. A result for one cannot close another, and no aggregate may hide a loss. Every `driver` point case runs at 1 and 4 client connections, 256-byte and 8-KiB bodies, and hot and cold cache states when the harness supports the latter. `c4` and cold-cache qualification are not yet implemented in the first driver release and remain open.
++`Open` is the initial state; a measured row must become exactly one of **win**, **loss**, **statistically inconclusive**, **unsupported**, or **not comparable**, with a receipt and reason. Each `driver` row has a SQLite-only lane in `terra-rust`; it remains unsupported for a TerraBase comparison until the real adapter exists. The rows below are minimum shapes. **Every listed axis combination and every comma-separated primary metric expands into its own required scoreboard case**, named `<ID>/<axis values>/<metric>`; for example `P01/random/small/hot/c1/throughput` and `P01/random/small/hot/c1/p99` are different verdicts. A result for one cannot close another, and no aggregate may hide a loss. Every `driver` point case runs at 1 and 4 client connections, 256-byte and 8-KiB bodies, and hot and cold cache states when the harness supports the latter. The SQLite driver now supports `c4` only for random full PK hit, random PK miss, single insert/update/delete/upsert, and read-modify-write. Sequential point hit, batch insert, other case axes, and cold-cache qualification remain open; c4 support is baseline capability, not a TerraBase comparison verdict.
+ 
+ | ID | Area and required case/axes | Primary metric rows | SQLite baseline | Current status and reason |
+ | --- | --- | --- | --- | --- |
+-| P01 | PK hit, random/sequential keys; small/large bodies; full/projection/nested field; hot/cold RAM and SSD cache | throughput, p50, p95, p99, resource | driver: random full read, single client | Unsupported: TerraBase caller and other axes pending |
+-| P02 | PK miss, random/sequential keys; hot/cold; c1/c4 | throughput, p50, p95, p99, resource | driver: random miss, single client | Unsupported: TerraBase caller and other axes pending |
++| P01 | PK hit, random/sequential keys; small/large bodies; full/projection/nested field; hot/cold RAM and SSD cache | throughput, p50, p95, p99, resource | driver: random full read, c1/c4 | Unsupported: TerraBase caller and other axes pending |
++| P02 | PK miss, random/sequential keys; hot/cold; c1/c4 | throughput, p50, p95, p99, resource | driver: random miss, c1/c4 | Unsupported: TerraBase caller and other axes pending |
+ | P03 | **Registered focused storage scan**: 16 ordered rows from 1,024 and 50,000 primary rows; 256-byte and 8-KiB values; no-forced-checkpoint and explicit-checkpoint fixtures, with observed mutable-only, one-run, mixed, or multi-run physical state recorded; hot/cold cache, c1. A physical mutable-only result requires zero immutable runs and checkpoint sequence zero; the engine's bounded automatic checkpoints remain enabled at every fixture size. | throughput, p50, p95, p99, per-scan CPU, RSS/PSS, admitted bytes, WAL/run bytes, filesystem metadata reads, run opens and row/point probes | driver: primary-key ordered range c1 | Unsupported until guest trace counters and matched physical state are verified |
+ | P04 | **Registered deleted-history scan**: 1,024 and 50,000 tiny-key tombstones in no-forced-checkpoint and explicit-checkpoint fixtures, with observed physical state recorded; plus 100,000 tiny tombstones with inserted data explicitly checkpointed before deletes; request `row_limit=1` from the full range; result must be empty, with a **30-second per-scan guest process timeout**. Repeat with a sparse live tail key. | empty/sparse scan latency and timeout, examined key/history count, metadata reads, run opens, CPU, peak RSS/PSS, WAL/run bytes | SQLite delete/checkpoint state with equivalent logical emptiness; physical retention differences reported | Unsupported until guest work counters are verified; no speed verdict if retention semantics differ |
+-| M01 | Insert, update, delete, upsert; single and batch durable commit; c1/c4 | throughput, p50, p95, p99, resource | driver: single insert/update/delete/upsert, c1 | Unsupported: TerraBase caller and batch/c4 pending |
+-| M02 | Read-modify-write, atomic conflict/abort; c1/c4 | throughput, p50, p95, p99, error rate | driver: c1 RMW | Unsupported: TerraBase caller and conflict/c4 pending |
++| M01 | Insert, update, delete, upsert; single and batch durable commit; c1/c4 | throughput, p50, p95, p99, resource | driver: single insert/update/delete/upsert, c1/c4; batch insert c1 | Unsupported: TerraBase caller and other batch axes pending |
++| M02 | Read-modify-write, atomic conflict/abort; c1/c4 | throughput, p50, p95, p99, error rate | driver: c1/c4 RMW | Unsupported: TerraBase caller and explicit conflict/abort axis pending |
+ | M03 | Concurrent read/write mix, increasing offered rate through saturation and overload | throughput, p50, p95, p99, p99.9, error rate | pending | Unsupported: open-loop scheduler and real caller pending |
+ | M04 | Unique and relationship constraints, positive and rejected mutations | latency, throughput, correctness | pending | Unsupported: real caller pending |
+ | Q01 | Indexed equality, short selective ordered range; covering/composite/partial/multikey, skew/hot keys, pagination | throughput, p50, p95, p99, resource | driver: equality and ordered range c1 | Unsupported: real caller and additional index forms pending |
+@@ -40,6 +40,6 @@ The primary metric is identified per row. Practical significance is **5%**. For
+ 
+ ## Driver scope and receipts
+ 
+-`../terra-rust` has SQLite and feature-gated embedded TerraBase local-durable, single-client, closed-loop callers. Their receipts cannot close the above rows until equivalent guest execution, c4/open-loop where declared, full resource accounting, and Firecracker evidence are present. Each lane reports its own measurements without manufacturing a paired ratio. The SQLite 64-MiB page cache and TerraBase 128-MiB process admission budget cover different memory scopes; record both separately under the common 8-GiB guest envelope and compare measured whole-guest resources. A matched-cache physical comparison requires separately specified equal allowances and evidence. `terra-rust/README.md` specifies exact invocation and the adapter operation contract. Save completed raw JSON receipts and human-readable result tables in `bench/` with the matrix version, case ID, trial, and source identities.
++`../terra-rust` has SQLite and feature-gated embedded TerraBase local-durable, closed-loop callers. The TerraBase caller remains single-client; the SQLite caller adds c4 for the listed P01/P02/M01/M02 cases. Their receipts cannot close the above rows until equivalent guest execution, remaining c4/open-loop axes where declared, full resource accounting, and Firecracker evidence are present. Each lane reports its own measurements without manufacturing a paired ratio. The SQLite 64-MiB page cache and TerraBase 128-MiB process admission budget cover different memory scopes; record both separately under the common 8-GiB guest envelope and compare measured whole-guest resources. A matched-cache physical comparison requires separately specified equal allowances and evidence. `terra-rust/README.md` specifies exact invocation and the adapter operation contract. Save completed raw JSON receipts and human-readable result tables in `bench/` with the matrix version, case ID, trial, and source identities.
+ 
+ The P03/P04 diagnostic hypothesis is registered before an engine scan change: the current run reader may repeat directory/metadata access and point lookup for every output row or tombstoned key. Capture the current source-matched TerraBase and SQLite baseline plus guest scan-work counters first; report raw per-scan work and resources as well as latency. Use paired one-operation `--scan-diagnostics` runs for process CPU and I/O deltas, separate from unprofiled repeated throughput/latency trials; unavailable counters stay missing rather than becoming zero. Record immutable-run count, checkpoint sequence and mutable bytes before measurement; `--checkpoint-fixture=false` means only that the driver did not request a final checkpoint. P04 must verify the empty/sparse result and enforce a harness timeout so a large deleted history cannot hang qualification. An optimization is evaluated only after that evidence, and these rows remain open until repeated paired trials and the full gates above pass.

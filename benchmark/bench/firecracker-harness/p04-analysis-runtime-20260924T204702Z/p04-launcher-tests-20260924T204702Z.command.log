@@ -1,0 +1,5 @@
+run_id=p04-launcher-tests-20260924T204702Z
+started_at_utc=2026-09-24T20:50:02Z
+command=FC_GUEST_AGENT_PATH=/tmp/fch-runtime-repo-final-20260924/fc-guest-agent /tmp/fch-runtime-repo-final-20260924/fc-harness run --benchmark-repo /home/mariogk/Projects/TerraScale/ts-benchmark --subject-repo /home/mariogk/Projects/TerraScale/terrabase --program /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-gates-final-20260924T203626Z/payloads/p04-analysis-launcher-tests-musl --run-id p04-launcher-tests-20260924T204702Z --timeout-seconds 600 --output /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-launcher-tests-20260924T204702Z -- --test-threads=1 --nocapture
+finished_at_utc=2026-09-24T20:51:17Z
+exit_code=0

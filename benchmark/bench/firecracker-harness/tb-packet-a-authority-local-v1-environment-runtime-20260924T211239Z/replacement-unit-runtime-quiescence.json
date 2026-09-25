@@ -1,0 +1,32 @@
+{
+  "all_replacement_guest_rootfs_copies_absent": true,
+  "observation_worktrees_clean": true,
+  "observed_at_utc": "2026-09-24T22:33:53Z",
+  "owned_cgroup_directories": [],
+  "owned_firecracker_or_agent_process_matches": [],
+  "owned_mount_matches": [],
+  "replacement_ledger": {
+    "completed_rows": 2,
+    "lines": 4,
+    "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-packet-a-authority-local-v1-environment-runtime-20260924T211239Z/replacement-unit-runtime-ledger.jsonl",
+    "sha256": "a4192b605dd91601b71f4ac7fef368566e7ea408641c589f776138a6864c71d3"
+  },
+  "run_outputs_preserved": [
+    "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-pa-env-20260924-26-tb-document-default-corrected-7753f233",
+    "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-pa-env-20260924-27-tb-document-hooks-corrected-7753f233"
+  ],
+  "schema": "terrabase-corrected-unit-runtime-quiescence/v1",
+  "sessions": [
+    {
+      "exit_code": 0,
+      "id": 11741,
+      "run_id": "tb-pa-env-20260924-26-tb-document-default-corrected-7753f233"
+    },
+    {
+      "exit_code": 0,
+      "id": 36177,
+      "run_id": "tb-pa-env-20260924-27-tb-document-hooks-corrected-7753f233"
+    }
+  ],
+  "unrelated_resources_stopped_or_modified": false
+}

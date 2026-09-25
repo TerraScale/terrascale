@@ -1,0 +1,5 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-final-20260924T203626Z/ts-benchmark/terra-rust'
+nice -n 19 ionice -c 3 cargo clippy --locked --all-targets --features terrabase -j 2 -- -D warnings
+    Checking terrabase-sqlite-baseline v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-final-20260924T203626Z/ts-benchmark/terra-rust)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.25s
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-final-20260924T203626Z/ts-benchmark/terra-rust'

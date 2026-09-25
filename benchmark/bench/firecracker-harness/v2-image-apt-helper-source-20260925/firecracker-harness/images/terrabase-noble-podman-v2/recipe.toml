@@ -1,0 +1,259 @@
+# Schema 2 separates Rust CLI compilation from the Ubuntu/Noble image builder.
+# Candidate trust, package locks, and derived-image identity remain incomplete.
+schema_version = 2
+recipe_version = "2.0.0"
+identity = "terrabase-noble-podman-v2"
+architecture = "amd64"
+source_date_epoch = "kernel-release-time"
+
+[kernel]
+source_kind = "kernel.org-signed-tarball"
+source_version = "6.18.53"
+source_archive_url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.53.tar.xz"
+source_archive_sha256 = "4d6fba95c2244b08a7b4144a4d38b9be4fb31abb5e7682ae40bb5cb11374cfe0"
+source_signature_url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.53.tar.sign"
+source_signature_sha256 = "7e897372a7e0b0400176ea4065a33f4417119398bdaf9baa48a2e1030812ee6d"
+release_source_date_epoch = 1789996005
+release_source_date_utc = "2026-09-21T13:06:45Z"
+custom_config_sha256 = ""
+custom_config_diff_sha256 = ""
+custom_config_review_status = "pending-upstream-config-review"
+repository = ""
+annotated_tag = ""
+annotated_tag_object = ""
+commit = ""
+signature_policy = "required-before-extract"
+signing_fingerprint = "647F28654894E3BD457199BE38DBBDC86092693E"
+signing_key_url = "https://kernel.org/.well-known/openpgpkey/hu/e3n9xnm94c5apezqnj1pmrfuaoyfm8cf?l=gregkh"
+signing_key_sha256 = "61b758f0d4a386fc83565b92cfd6c05879573df0e96d44b71a5a3e19e1a8581a"
+firecracker_version = "1.17.0"
+firecracker_commit = "95f868c8e345b1cc8faccd1a3c910b4989dc3f58"
+firecracker_config_url = "https://raw.githubusercontent.com/firecracker-microvm/firecracker/95f868c8e345b1cc8faccd1a3c910b4989dc3f58/resources/guest_configs/microvm-kernel-ci-x86_64-6.18.config"
+firecracker_config_sha256 = "ba22401a0c7292a4c024ebcd10a562d4a1f1bfd2faed671406d3b159c0cf5215"
+kernel_policy_url = "https://raw.githubusercontent.com/firecracker-microvm/firecracker/95f868c8e345b1cc8faccd1a3c910b4989dc3f58/docs/kernel-policy.md"
+kernel_policy_sha256 = "cdc062c6cfe5766acbddaff3f200dfe0a50b6edd4c75b0786f573bb2a2f1d68e"
+expected_kernel_release_prefix = "6.18.53"
+build_user = "builder"
+build_host = "terrabase"
+build_version = "1"
+local_version = "-terrabase"
+build_salt = "terrabase-noble-podman-v2"
+locale = "C.UTF-8"
+timezone = "UTC"
+
+[firecracker]
+version = "1.17.0"
+release_tag_object = "29d66eb25954dbe3608eb91c180a6079f54d2ee8"
+release_tag_signature_status = "unsigned"
+archive_metadata_source = "github-release-assets-api"
+archive_url = "https://github.com/firecracker-microvm/firecracker/releases/download/v1.17.0/firecracker-v1.17.0-x86_64.tgz"
+archive_size_bytes = 7464385
+archive_sha256 = "06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558"
+executable_member = "release-v1.17.0-x86_64/firecracker-v1.17.0-x86_64"
+executable_sha256 = "99ad0f5cd0514a88aad0e9ae8cfdb3cc3b4ab9d190e1194602406c786b5de7a5"
+executable_review_status = "candidate-observed"
+
+[ubuntu_base]
+url = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-amd64.tar.gz"
+sha256 = "e77b6f10c2590cef872b33ee9f635a0e3fd1f57fb074c0e52b5c7f56147a0c86"
+sha256sums_url = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/SHA256SUMS"
+signature_url = "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/SHA256SUMS.gpg"
+primary_signing_fingerprint = "843938DF228D22F7B3742BC0D94AA3F0EFE21092"
+initial_verifier_source = "pinned-ubuntu-child"
+initial_verifier_path = "/usr/bin/gpgv"
+initial_verifier_sha256 = "f14d026b9eae172c432e015bce227483293b4966f2f3fdcfa582f71d3dbb2ae8"
+initial_keyring_path = "/usr/share/keyrings/ubuntu-archive-keyring.gpg"
+initial_keyring_sha256 = "80a36b0a6de2f69f49d2df75ef473ccde121e9e190b9ea01d20a4f63778d5c31"
+
+[guest_apt]
+snapshot_url = "https://snapshot.ubuntu.com/ubuntu/20260910T164400Z/"
+snapshot_timestamp = "20260910T164400Z"
+suites = ["noble", "noble-updates", "noble-security"]
+components = ["main", "universe"]
+architecture = "amd64"
+apt_version = "2.8.3"
+allow_unauthenticated = false
+install_recommends = false
+install_suggests = false
+check_valid_until = true
+initial_keyring_source = "pinned-ubuntu-child"
+initial_keyring_path = "/usr/share/keyrings/ubuntu-archive-keyring.gpg"
+initial_keyring_sha256 = "80a36b0a6de2f69f49d2df75ef473ccde121e9e190b9ea01d20a4f63778d5c31"
+signing_fingerprint = "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+packages_lock_path = "packages.lock.json"
+packages_lock_sha256 = ""
+candidate_packet_path = "candidate-package-research.json"
+candidate_packet_sha256 = "00a430ce9dc7e793cf05a81581ffdc75dab495ee74cbd5c21f9e2d567af3632d"
+known_noble_updates_inrelease_sha256 = "9f03de549c67af423447b5204dcd46298d23f69fe22bf30c76e9ee01548d0246"
+known_noble_updates_packages_index_sha256 = "cf06d0b20daa7eea4d4a4f4abc0fd8b29aed8389367681c6f6653c5068155265"
+
+[rust_cli_builder]
+base_image = "docker.io/library/rust:1.98.1-bookworm"
+base_image_digest = "sha256:c49256cbe5ea0188bc658a689500d70c41eb51f009a7a7be209caf60a944f3ec"
+base_image_index_digest = "sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e"
+debian_snapshot_url = "https://snapshot.debian.org/archive/debian/20260924T144048Z/"
+source_root = "../../crates/fc-image-builder"
+source_tree_sha256 = "c589be7087b754190bdd0ed198f7818c33f3033e0eea0a5d650939adaa61f7d6"
+workspace_manifest_path = "../../Cargo.toml"
+workspace_manifest_sha256 = "247ce2e3929de584c4f5dfa6ef1e188e334dbae8bd8ebe74cb5fa48ab77aafac"
+cargo_lock_path = "../../Cargo.lock"
+cargo_lock_sha256 = "19f498ba6d461985457ca8e45f8d799eb2b6fb25514dd3e50c0ec8e99090afda"
+rust_toolchain_path = "../../rust-toolchain.toml"
+rust_toolchain_sha256 = "448886c2bcf9939abf979026832834cd8630d5a66f3472eea3cbe277c283c445"
+rust_toolchain_channel = "1.98.1"
+target = "x86_64-unknown-linux-musl"
+output_executable_sha256 = ""
+output_executable_size_bytes = 0
+provision_receipt_sha256 = ""
+compile_receipt_sha256 = ""
+network = "none"
+rootless = true
+cpu_count = 4
+memory_mib = 8192
+pids_limit = 2048
+workspace_limit_bytes = 68719476736
+
+[ubuntu_build_builder]
+base_image = "docker.io/library/ubuntu:24.04"
+base_image_digest = "sha256:496754492fb28b4d3049432f2ca787449331e23fb14f0dd3fffea86bf5a93eb4"
+base_image_index_digest = "sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3"
+derived_image_digest = ""
+derived_image_archive_sha256 = ""
+derived_image_archive_size_bytes = 0
+derived_image_manifest_digest = ""
+derived_image_config_digest = ""
+derived_image_platform = "linux/amd64"
+snapshot_url = "https://snapshot.ubuntu.com/ubuntu/20260910T164400Z/"
+snapshot_timestamp = "20260910T164400Z"
+suites = ["noble", "noble-updates", "noble-security"]
+components = ["main", "universe"]
+architecture = "amd64"
+apt_version = "2.8.3"
+allow_unauthenticated = false
+install_recommends = false
+install_suggests = false
+check_valid_until = true
+initial_trust_source = "pinned-ubuntu-child"
+initial_gpgv_path = "/usr/bin/gpgv"
+initial_gpgv_sha256 = "f14d026b9eae172c432e015bce227483293b4966f2f3fdcfa582f71d3dbb2ae8"
+initial_apt_helper_path = "/usr/lib/apt/apt-helper"
+initial_apt_helper_sha256 = "91aa654ba3f5b68b784dd5ce94d625080fb6f7bdded88885120fd979936bcf8b"
+initial_keyring_path = "/usr/share/keyrings/ubuntu-archive-keyring.gpg"
+initial_keyring_sha256 = "80a36b0a6de2f69f49d2df75ef473ccde121e9e190b9ea01d20a4f63778d5c31"
+signing_fingerprint = "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+packages_lock_path = "builder-packages.lock.json"
+packages_lock_sha256 = ""
+network = "none"
+rootless = true
+cpu_count = 4
+memory_mib = 8192
+pids_limit = 2048
+workspace_limit_bytes = 68719476736
+
+[[ubuntu_build_builder.tools]]
+name = "gpgv"
+path = "/usr/bin/gpgv"
+version = ""
+sha256 = ""
+
+[[ubuntu_build_builder.tools]]
+name = "apt-get"
+path = "/usr/bin/apt-get"
+version = ""
+sha256 = ""
+
+[[ubuntu_build_builder.tools]]
+name = "apt-cache"
+path = "/usr/bin/apt-cache"
+version = ""
+sha256 = ""
+
+[[ubuntu_build_builder.tools]]
+name = "dpkg"
+path = "/usr/bin/dpkg"
+version = ""
+sha256 = ""
+
+[[ubuntu_build_builder.tools]]
+name = "dpkg-deb"
+path = "/usr/bin/dpkg-deb"
+version = ""
+sha256 = ""
+
+[[ubuntu_build_builder.tools]]
+name = "gcc"
+path = "/usr/bin/gcc"
+version = ""
+sha256 = ""
+
+[[ubuntu_build_builder.tools]]
+name = "make"
+path = "/usr/bin/make"
+version = ""
+sha256 = ""
+
+[[ubuntu_build_builder.tools]]
+name = "mke2fs"
+path = "/usr/sbin/mke2fs"
+version = ""
+sha256 = ""
+
+[[ubuntu_build_builder.tools]]
+name = "e2fsck"
+path = "/usr/sbin/e2fsck"
+version = ""
+sha256 = ""
+
+[[ubuntu_build_builder.tools]]
+name = "xz"
+path = "/usr/bin/xz"
+version = ""
+sha256 = ""
+
+[[ubuntu_build_builder.tools]]
+name = "git"
+path = "/usr/bin/git"
+version = ""
+sha256 = ""
+
+[[ubuntu_build_builder.tools]]
+name = "tar"
+path = "/usr/bin/tar"
+version = ""
+sha256 = ""
+
+[host_podman]
+path = "/nix/store/mi7484cckkxv8hgiawq1cg89sxknc3bh-podman-5.8.6/bin/podman"
+version = "5.8.6"
+sha256 = "402d507d68ed889dec999e688bd242b5ddb634b3bdc9f03ef9243e66baa367fc"
+rootless = true
+uid = 1000
+gid = 1000
+cpu_count = 4
+memory_mib = 8192
+pids_limit = 2048
+workspace_limit_bytes = 68719476736
+
+[filesystem]
+size_bytes = 17179869184
+block_size = 4096
+inode_size = 256
+reserved_percent = 0
+label = "TSNOBLE2"
+uuid_strategy = "sha256(recipe-bytes)[0..16], RFC4122 variant and version 8 bits"
+hash_seed_strategy = "filesystem UUID"
+lazy_itable_init = false
+lazy_journal_init = false
+
+[offline_smoke]
+image = "docker.io/library/busybox"
+digest = "sha256:dc88b80842580654294472735332ec7c7789a4010ec9a68b69f9b88c19abede6"
+platform = "linux/amd64"
+network = "none"
+archive_sha256 = ""
+
+[qualification]
+status = "candidate-lock-incomplete"
+two_clean_builds_required_for_reproducibility = true
+service_images_qualified = false
+profile_integration_complete = false

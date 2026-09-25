@@ -1,0 +1,2265 @@
+--- a/firecracker-harness/README.md
++++ b/firecracker-harness/README.md
+@@ -23,10 +23,12 @@
+ IMAGE-MANIFEST.json`. The matching Makefile variables are `IMAGE_PROFILE` for
+ `guest-run` and `guest-image-smoke`. The controller checks the candidate recipe,
+ signed source and package receipts, relative artifact paths, sizes, and hashes
+-before selecting its kernel and root filesystem. The candidate recipe under
+-`images/terrabase-noble-podman-v1/` is still incomplete; no image is qualified
+-until the builder emits a verified manifest and a guest smoke passes. Without an
+-explicit profile, the historical pins above remain the selected images.
++before selecting its kernel and root filesystem. The v1 recipe is retained
++as an archive-only input and is not accepted by the current image builder. The
++separate v2 candidate under `images/terrabase-noble-podman-v2/` remains
++unqualified; no image is qualified until its builder emits a verified manifest
++and a guest smoke passes. Without an explicit profile, the historical pins
++above remain the selected images.
+ 
+ Build the host controller and static musl guest agent through the Makefile. Its
+ Rust compiler commands use `nice -n 19`, `ionice -c 3`, and two build jobs by
+--- a/firecracker-harness/crates/fc-image-builder/src/build.rs
++++ b/firecracker-harness/crates/fc-image-builder/src/build.rs
+@@ -239,16 +239,6 @@
+     all_commands.extend(apt_commands);
+     all_commands.extend(stage_fetch_command_logs(&input_root, &fetch_receipt, &run)?);
+ 
+-    let artifacts = build_image_artifacts(
+-        recipe,
+-        guest,
+-        &fetch_receipt,
+-        &input_paths,
+-        &podman,
+-        &builder_image,
+-        &run,
+-        &mut all_commands,
+-    )?;
+     let context = BuildContext {
+         recipe,
+         guest,
+@@ -259,6 +249,7 @@
+         builder_image: &builder_image,
+         run: &run,
+     };
++    let artifacts = build_image_artifacts(&context, &mut all_commands)?;
+     write_image_manifest(ImageManifestInput {
+         context: &context,
+         guest_indexes,
+@@ -327,56 +318,17 @@
+         .ok_or_else(|| invalid("Fetch receipt omits the locked kernel signing key"))?;
+     let key_hash = sha256_file(kernel_key)?;
+     let gpgv = builder_tool(recipe, "gpgv")?;
+-    let verified = match recipe.recipe().kernel.source_variant()? {
+-        crate::recipe::KernelSourceVariant::SignedGitTag { .. } => {
+-            let payload_name = receipt
+-                .kernel_tag_payload_path
+-                .as_deref()
+-                .ok_or_else(|| invalid("Fetch receipt omits the signed kernel tag payload path"))?;
+-            let signature_name = receipt
+-                .kernel_tag_signature_path
+-                .as_deref()
+-                .ok_or_else(|| invalid("Fetch receipt omits the kernel tag signature path"))?;
+-            let payload = staged
+-                .get(payload_name)
+-                .ok_or_else(|| invalid("staged Fetch inputs omit the signed kernel tag payload"))?;
+-            let signature = staged
+-                .get(signature_name)
+-                .ok_or_else(|| invalid("staged Fetch inputs omit the kernel tag signature"))?;
+-            let payload_hash = sha256_file(payload)?;
+-            let signature_hash = sha256_file(signature)?;
+-            crate::signature::verify_signature_in_verified_local(
+-                podman,
+-                builder_image,
+-                SignatureRequest {
+-                    keyring_path: kernel_key,
+-                    keyring_source_path: &recipe.recipe().kernel.signing_key_url,
+-                    keyring_sha256: &key_hash,
+-                    signed_path: payload,
+-                    signed_sha256: &payload_hash,
+-                    detached_signature: Some((signature, &signature_hash)),
+-                    expected_fingerprint: &recipe.recipe().kernel.signing_fingerprint,
+-                    command_id: "build_kernel_tag",
+-                },
+-                &gpgv.path,
+-                &gpgv.sha256,
+-                run,
+-            )?
+-        }
+-        crate::recipe::KernelSourceVariant::SignedTarball { .. } => {
+-            verify_build_kernel_tar_signature(&KernelTarSignatureContext {
+-                recipe,
+-                receipt,
+-                staged,
+-                podman,
+-                builder_image,
+-                run,
+-                kernel_key,
+-                key_hash: &key_hash,
+-                gpgv,
+-            })?
+-        }
+-    };
++    let verified = verify_build_kernel_tar_signature(&KernelTarSignatureContext {
++        recipe,
++        receipt,
++        staged,
++        podman,
++        builder_image,
++        run,
++        kernel_key,
++        key_hash: &key_hash,
++        gpgv,
++    })?;
+     Ok(VerifiedKernelSourceSignature {
+         receipt: verified.receipt().clone(),
+         command: verified.command_receipt().clone(),
+@@ -401,7 +353,7 @@
+         .ok_or_else(|| invalid("staged Fetch inputs omit the uncompressed kernel tar"))?;
+     let archive_hash = sha256_file(archive)?;
+     let signature_hash = sha256_file(signature)?;
+-    crate::signature::verify_signature_in_verified_local(
++    Ok(crate::signature::verify_signature_in_verified_local(
+         context.podman,
+         context.builder_image,
+         SignatureRequest {
+@@ -417,7 +369,7 @@
+         &context.gpgv.path,
+         &context.gpgv.sha256,
+         context.run,
+-    )
++    )?)
+ }
+ 
+ fn build_image_artifacts(
+@@ -575,80 +527,57 @@
+ ) -> Result<KernelReceipt, Box<dyn Error>> {
+     let recipe = context.recipe;
+     let receipt = context.fetch_receipt;
+-    let variant = recipe.recipe().kernel.source_variant()?;
+-    let source_url = match &variant {
+-        crate::recipe::KernelSourceVariant::SignedGitTag { repository, .. } => repository.clone(),
+-        crate::recipe::KernelSourceVariant::SignedTarball { archive_url, .. } => {
+-            archive_url.clone()
+-        }
+-    };
+-    let revision = match &variant {
+-        crate::recipe::KernelSourceVariant::SignedGitTag { commit, .. } => commit.clone(),
+-        crate::recipe::KernelSourceVariant::SignedTarball { version, .. } => version.clone(),
+-    };
++    let kernel = &recipe.recipe().kernel;
++    let source_url = kernel.source_archive_url.clone();
+     let source_archive_uncompressed = SourceArtifactReceipt {
+-        source_url: match &variant {
+-            crate::recipe::KernelSourceVariant::SignedGitTag { .. } => {
+-                "generated-from-verified-git-checkout".to_owned()
+-            }
+-            crate::recipe::KernelSourceVariant::SignedTarball { archive_url, .. } => {
+-                archive_url.clone()
+-            }
+-        },
++        source_url: source_url.clone(),
+         path: receipt.kernel_source_archive_path.clone(),
+         size_bytes: receipt.kernel_source_archive_size_bytes,
+         sha256: receipt.kernel_source_archive_sha256.clone(),
+     };
+-    let source_archive_compressed = receipt
++    let compressed_path = receipt
+         .kernel_source_compressed_path
+-        .as_ref()
+-        .map(|path| source_artifact_from_download(receipt, path))
+-        .transpose()?;
+-    let source_signature = receipt
++        .as_deref()
++        .ok_or_else(|| invalid("Fetch receipt omits the compressed kernel source tarball"))?;
++    let source_archive_compressed = Some(source_artifact_from_download(receipt, compressed_path)?);
++    let signature_path = receipt
+         .kernel_source_signature_path
+-        .as_ref()
+-        .map(|path| {
+-            Ok::<_, Box<dyn Error>>(KernelSourceSignatureReceipt {
+-                artifact: source_artifact_from_download(receipt, path)?,
+-                verification: signature.clone(),
+-            })
+-        })
+-        .transpose()?;
++        .as_deref()
++        .ok_or_else(|| invalid("Fetch receipt omits the detached kernel tar signature"))?;
++    let source_signature = Some(KernelSourceSignatureReceipt {
++        artifact: source_artifact_from_download(receipt, signature_path)?,
++        verification: signature.clone(),
++    });
+     let resolved_config_path = "kernel-source/.config".to_owned();
+     let custom_config_sha256 = sha256_file(&context.run.path().join(&resolved_config_path))?;
+-    let resolved_config_diff_path = (recipe.recipe().kernel.source_kind
+-        == "kernel.org-signed-tarball")
+-        .then(|| "kernel-config.diff".to_owned());
+-    let custom_config_diff_sha256 = if let Some(path) = &resolved_config_diff_path {
+-        sha256_file(&context.run.path().join(path))?
+-    } else {
+-        String::new()
+-    };
+-    let tag_signature = matches!(
+-        variant,
+-        crate::recipe::KernelSourceVariant::SignedGitTag { .. }
+-    )
+-    .then(|| signature.clone());
++    let resolved_config_diff_path = Some("kernel-config.diff".to_owned());
++    let custom_config_diff_sha256 = sha256_file(
++        &context.run.path().join(
++            resolved_config_diff_path
++                .as_deref()
++                .ok_or_else(|| invalid("kernel config diff path is missing"))?,
++        ),
++    )?;
+     Ok(KernelReceipt {
+-        source_kind: recipe.recipe().kernel.source_kind.clone(),
++        source_kind: kernel.source_kind.clone(),
+         source_url,
+-        signing_key_url: recipe.recipe().kernel.signing_key_url.clone(),
+-        signing_key_sha256: recipe.recipe().kernel.signing_key_sha256.clone(),
+-        signing_fingerprint: recipe.recipe().kernel.signing_fingerprint.clone(),
+-        annotated_tag: recipe.recipe().kernel.annotated_tag.clone(),
+-        tag_object: receipt.kernel_tag_object.clone().unwrap_or_default(),
+-        source_revision: revision,
+-        tag_signature,
++        signing_key_url: kernel.signing_key_url.clone(),
++        signing_key_sha256: kernel.signing_key_sha256.clone(),
++        signing_fingerprint: kernel.signing_fingerprint.clone(),
++        annotated_tag: String::new(),
++        tag_object: String::new(),
++        source_revision: kernel.source_version.clone(),
++        tag_signature: None,
+         source_archive_compressed,
+         source_archive_uncompressed,
+         source_signature,
+-        firecracker_version: recipe.recipe().kernel.firecracker_version.clone(),
+-        firecracker_commit: recipe.recipe().kernel.firecracker_commit.clone(),
+-        config_url: recipe.recipe().kernel.firecracker_config_url.clone(),
++        firecracker_version: kernel.firecracker_version.clone(),
++        firecracker_commit: kernel.firecracker_commit.clone(),
++        config_url: kernel.firecracker_config_url.clone(),
+         source_date_epoch: source_epoch_from_run(context.run)?,
+-        config_sha256: recipe.recipe().kernel.firecracker_config_sha256.clone(),
+-        kernel_policy_url: recipe.recipe().kernel.kernel_policy_url.clone(),
+-        kernel_policy_sha256: recipe.recipe().kernel.kernel_policy_sha256.clone(),
++        config_sha256: kernel.firecracker_config_sha256.clone(),
++        kernel_policy_url: kernel.kernel_policy_url.clone(),
++        kernel_policy_sha256: kernel.kernel_policy_sha256.clone(),
+         custom_config_sha256,
+         custom_config_diff_sha256,
+         resolved_config_path,
+@@ -962,10 +891,7 @@
+     expected_builder_archive: &crate::oci_archive::OciArchiveIdentity,
+     receipt: &FetchReceipt,
+ ) -> Result<(), Box<dyn Error>> {
+-    let expected_revision = match recipe.recipe().kernel.source_variant()? {
+-        crate::recipe::KernelSourceVariant::SignedGitTag { commit, .. } => commit,
+-        crate::recipe::KernelSourceVariant::SignedTarball { version, .. } => version,
+-    };
++    let expected_revision = recipe.recipe().kernel.source_version.as_str();
+     if receipt.schema_version != 3
+         || receipt.recipe_identity != recipe.recipe().identity
+         || receipt.recipe_version != recipe.recipe().recipe_version
+@@ -1002,55 +928,30 @@
+     recipe: &RecipeFile,
+     receipt: &FetchReceipt,
+ ) -> Result<(), Box<dyn Error>> {
+-    match recipe.recipe().kernel.source_variant()? {
+-        crate::recipe::KernelSourceVariant::SignedGitTag {
+-            annotated_tag_object,
+-            ..
+-        } => {
+-            if receipt.kernel_tag_object.as_deref() != Some(annotated_tag_object.as_str())
+-                || receipt.kernel_tag_payload_path.as_deref() != Some("kernel-tag-payload")
+-                || receipt.kernel_tag_signature_path.as_deref() != Some("kernel-tag-signature")
+-                || receipt.kernel_tag_signature.is_none()
+-                || receipt.kernel_source_compressed_path.is_some()
+-                || receipt.kernel_source_signature_path.is_some()
+-                || receipt.kernel_source_signature.is_some()
+-            {
+-                return Err(invalid("Fetch receipt has incomplete Git-tag evidence"));
+-            }
+-        }
+-        crate::recipe::KernelSourceVariant::SignedTarball {
+-            archive_sha256,
+-            signature_sha256,
+-            ..
+-        } => {
+-            let signature = receipt
+-                .kernel_source_signature
+-                .as_ref()
+-                .ok_or_else(|| invalid("Fetch receipt omits the detached kernel tar signature"))?;
+-            if receipt.kernel_tag_object.is_some()
+-                || receipt.kernel_tag_payload_path.is_some()
+-                || receipt.kernel_tag_signature_path.is_some()
+-                || receipt.kernel_tag_signature.is_some()
+-                || receipt.kernel_source_compressed_path.as_deref() != Some("kernel-source.tar.xz")
+-                || receipt
+-                    .kernel_source_compressed_size_bytes
+-                    .unwrap_or_default()
+-                    == 0
+-                || receipt.kernel_source_compressed_sha256.as_deref()
+-                    != Some(archive_sha256.as_str())
+-                || receipt.kernel_source_signature_path.as_deref() != Some("kernel-source.tar.sign")
+-                || signature.signature_sha256 != signature_sha256
+-                || signature.signer_primary_fingerprint
+-                    != recipe.recipe().kernel.signing_fingerprint
+-                || receipt.kernel_source_archive_path != "kernel-source.tar"
+-                || receipt.kernel_source_archive_size_bytes == 0
+-                || receipt.kernel_source_archive_sha256.len() != 64
+-            {
+-                return Err(invalid(
+-                    "Fetch receipt has incomplete signed-tarball evidence",
+-                ));
+-            }
+-        }
++    let signature = receipt
++        .kernel_source_signature
++        .as_ref()
++        .ok_or_else(|| invalid("Fetch receipt omits the detached kernel tar signature"))?;
++    let kernel = &recipe.recipe().kernel;
++    if receipt.kernel_source_kind != "kernel.org-signed-tarball"
++        || receipt.kernel_source_revision != kernel.source_version
++        || receipt.kernel_source_compressed_path.as_deref() != Some("kernel-source.tar.xz")
++        || receipt
++            .kernel_source_compressed_size_bytes
++            .unwrap_or_default()
++            == 0
++        || receipt.kernel_source_compressed_sha256.as_deref()
++            != Some(kernel.source_archive_sha256.as_str())
++        || receipt.kernel_source_signature_path.as_deref() != Some("kernel-source.tar.sign")
++        || signature.signature_sha256 != kernel.source_signature_sha256
++        || signature.signer_primary_fingerprint != kernel.signing_fingerprint
++        || receipt.kernel_source_archive_path != "kernel-source.tar"
++        || receipt.kernel_source_archive_size_bytes == 0
++        || receipt.kernel_source_archive_sha256.len() != 64
++    {
++        return Err(invalid(
++            "Fetch receipt has incomplete signed-tarball evidence",
++        ));
+     }
+     Ok(())
+ }
+@@ -1161,19 +1062,6 @@
+             return Err(invalid("Fetch auxiliary input hash changed"));
+         }
+     }
+-    for name in [
+-        receipt.kernel_tag_payload_path.as_deref(),
+-        receipt.kernel_tag_signature_path.as_deref(),
+-    ]
+-    .into_iter()
+-    .flatten()
+-    {
+-        let path = confined_file(root, name)?;
+-        let metadata = fs::symlink_metadata(&path)?;
+-        if metadata.file_type().is_symlink() || !metadata.is_file() {
+-            return Err(invalid("Fetch signed-tag input is not a regular file"));
+-        }
+-    }
+     if !sha256_file(&confined_file(root, &receipt.offline_smoke_archive_path)?)?
+         .eq_ignore_ascii_case(&recipe.recipe().offline_smoke.archive_sha256)
+     {
+@@ -1304,36 +1192,26 @@
+     recipe: &RecipeFile,
+     observed: &ObservedSources<'_>,
+ ) -> Result<(), Box<dyn Error>> {
+-    match recipe.recipe().kernel.source_variant()? {
+-        crate::recipe::KernelSourceVariant::SignedGitTag { .. } => {}
+-        crate::recipe::KernelSourceVariant::SignedTarball {
+-            archive_url,
+-            archive_sha256,
+-            signature_url,
+-            signature_sha256,
+-            ..
+-        } => {
+-            for (id, url, sha256) in [
+-                (
+-                    "kernel-source.tar.xz",
+-                    archive_url.as_str(),
+-                    archive_sha256.as_str(),
+-                ),
+-                (
+-                    "kernel-source.tar.sign",
+-                    signature_url.as_str(),
+-                    signature_sha256.as_str(),
+-                ),
+-            ] {
+-                let source = observed.get(id).ok_or_else(|| {
+-                    invalid("Fetch receipt omits a locked kernel source artifact")
+-                })?;
+-                if source.source_url != url || !source.sha256.eq_ignore_ascii_case(sha256) {
+-                    return Err(invalid(
+-                        "fetched signed kernel source differs from its immutable recipe pin",
+-                    ));
+-                }
+-            }
++    let kernel = &recipe.recipe().kernel;
++    for (id, url, sha256) in [
++        (
++            "kernel-source.tar.xz",
++            kernel.source_archive_url.as_str(),
++            kernel.source_archive_sha256.as_str(),
++        ),
++        (
++            "kernel-source.tar.sign",
++            kernel.source_signature_url.as_str(),
++            kernel.source_signature_sha256.as_str(),
++        ),
++    ] {
++        let source = observed
++            .get(id)
++            .ok_or_else(|| invalid("Fetch receipt omits a locked kernel source artifact"))?;
++        if source.source_url != url || !source.sha256.eq_ignore_ascii_case(sha256) {
++            return Err(invalid(
++                "fetched signed kernel source differs from its immutable recipe pin",
++            ));
+         }
+     }
+     Ok(())
+@@ -1535,19 +1413,6 @@
+         let source_path = confined_file(input_root, source_name)?;
+         let destination = copy_verified_file(&source_path, destination_name, hash, size, run)?;
+         paths.insert(source_name.to_owned(), destination);
+-    }
+-    for name in [
+-        receipt.kernel_tag_payload_path.as_deref(),
+-        receipt.kernel_tag_signature_path.as_deref(),
+-    ]
+-    .into_iter()
+-    .flatten()
+-    {
+-        let source = confined_file(input_root, name)?;
+-        let expected_hash = sha256_file(&source)?;
+-        let size = source.metadata()?.len();
+-        let destination = copy_verified_file(&source, name, &expected_hash, size, run)?;
+-        paths.insert(name.to_owned(), destination);
+     }
+     Ok(paths)
+ }
+@@ -1928,16 +1793,6 @@
+     let source_dir = run.path().join("kernel-source");
+     fs::create_dir(&source_dir)?;
+     let tar = builder_tool(recipe, "tar")?;
+-    let mut unpack_arguments = vec![
+-        "--extract".to_owned(),
+-        format!("--file=/work/{}", receipt.kernel_source_archive_path),
+-        "--directory=/work/kernel-source".to_owned(),
+-        "--no-same-owner".to_owned(),
+-        "--no-same-permissions".to_owned(),
+-    ];
+-    if receipt.kernel_source_kind == "kernel.org-signed-tarball" {
+-        unpack_arguments.push("--strip-components=1".to_owned());
+-    }
+     let unpack = run_tool(
+         podman,
+         builder_image,
+@@ -1945,232 +1800,25 @@
+         ToolInvocation::new(
+             "kernel_source_unpack",
+             &tar.path,
+-            &unpack_arguments,
++            &[
++                "--extract".to_owned(),
++                format!("--file=/work/{}", receipt.kernel_source_archive_path),
++                "--directory=/work/kernel-source".to_owned(),
++                "--no-same-owner".to_owned(),
++                "--no-same-permissions".to_owned(),
++                "--strip-components=1".to_owned(),
++            ],
+             &[],
+             &[],
+         ),
+     )?;
+     commands.push(unpack);
+-
+-    if receipt.kernel_source_kind == "kernel.org-signed-tarball" {
+-        let makefile = fs::symlink_metadata(source_dir.join("Makefile"))?;
+-        if makefile.file_type().is_symlink() || !makefile.is_file() {
+-            return Err(invalid(
+-                "signed kernel release tar did not extract a regular root Makefile",
+-            ));
+-        }
+-        return Ok(());
+-    }
+-
+-    let mut verification = KernelArchiveVerification {
+-        recipe,
+-        receipt,
+-        staged,
+-        podman,
+-        builder_image,
+-        run,
+-        commands,
+-    };
+-    verify_git_kernel_source(&mut verification)
+-}
+-
+-struct KernelArchiveVerification<'a, 'run> {
+-    recipe: &'a RecipeFile,
+-    receipt: &'a FetchReceipt,
+-    staged: &'a BTreeMap<String, PathBuf>,
+-    podman: &'a PodmanExecutor<'run>,
+-    builder_image: &'a VerifiedLocalImage,
+-    run: &'a RunDirectory,
+-    commands: &'a mut Vec<CommandReceipt>,
+-}
+-
+-fn verify_git_kernel_source(
+-    verification: &mut KernelArchiveVerification<'_, '_>,
+-) -> Result<(), Box<dyn Error>> {
+-    verify_kernel_tag_object(verification)?;
+-    verify_kernel_tag_contents(verification)?;
+-    verify_kernel_tag_commit_and_worktree(verification)?;
+-    Ok(())
+-}
+-
+-fn verify_kernel_tag_object(
+-    verification: &mut KernelArchiveVerification<'_, '_>,
+-) -> Result<(), Box<dyn Error>> {
+-    let git = builder_tool(verification.recipe, "git")?;
+-    let tag_object = verification
+-        .receipt
+-        .kernel_tag_object
+-        .as_deref()
+-        .ok_or_else(|| invalid("Git kernel source receipt omits the annotated tag object"))?;
+-    let tag_ref = format!(
+-        "refs/tags/{}",
+-        verification.recipe.recipe().kernel.annotated_tag
+-    );
+-    let object_command = run_tool(
+-        verification.podman,
+-        verification.builder_image,
+-        verification.run,
+-        ToolInvocation::new(
+-            "build_kernel_tag_object",
+-            &git.path,
+-            &[
+-                "-C".to_owned(),
+-                "/work/kernel-source".to_owned(),
+-                "rev-parse".to_owned(),
+-                "--verify".to_owned(),
+-                tag_ref,
+-            ],
+-            &[],
+-            &[],
+-        ),
+-    )?;
+-    if !read_command_stdout(verification.run, &object_command)?
+-        .trim()
+-        .eq_ignore_ascii_case(tag_object)
+-    {
+-        return Err(invalid(
+-            "archived kernel source tag object differs from Fetch receipt",
+-        ));
+-    }
+-    verification.commands.push(object_command);
+-    let type_command = run_tool(
+-        verification.podman,
+-        verification.builder_image,
+-        verification.run,
+-        ToolInvocation::new(
+-            "build_kernel_tag_type",
+-            &git.path,
+-            &[
+-                "-C".to_owned(),
+-                "/work/kernel-source".to_owned(),
+-                "cat-file".to_owned(),
+-                "-t".to_owned(),
+-                tag_object.to_owned(),
+-            ],
+-            &[],
+-            &[],
+-        ),
+-    )?;
+-    if read_command_stdout(verification.run, &type_command)?.trim() != "tag" {
+-        return Err(invalid("kernel source pin is not an annotated Git tag"));
+-    }
+-    verification.commands.push(type_command);
+-    Ok(())
+-}
+-
+-fn verify_kernel_tag_contents(
+-    verification: &mut KernelArchiveVerification<'_, '_>,
+-) -> Result<(), Box<dyn Error>> {
+-    let git = builder_tool(verification.recipe, "git")?;
+-    let tag_object = verification
+-        .receipt
+-        .kernel_tag_object
+-        .as_deref()
+-        .ok_or_else(|| invalid("Git kernel source receipt omits the annotated tag object"))?;
+-    let contents_command = run_tool(
+-        verification.podman,
+-        verification.builder_image,
+-        verification.run,
+-        ToolInvocation::new(
+-            "build_kernel_tag_contents",
+-            &git.path,
+-            &[
+-                "-C".to_owned(),
+-                "/work/kernel-source".to_owned(),
+-                "cat-file".to_owned(),
+-                "tag".to_owned(),
+-                tag_object.to_owned(),
+-            ],
+-            &[],
+-            &[],
+-        ),
+-    )?;
+-    let observed_tag = fs::read(verification.run.path().join(&contents_command.stdout_path))?;
+-    let payload_name = verification
+-        .receipt
+-        .kernel_tag_payload_path
+-        .as_deref()
+-        .ok_or_else(|| invalid("Fetch receipt omits the kernel tag payload path"))?;
+-    let signature_name = verification
+-        .receipt
+-        .kernel_tag_signature_path
+-        .as_deref()
+-        .ok_or_else(|| invalid("Fetch receipt omits the kernel tag signature path"))?;
+-    let payload_path = verification
+-        .staged
+-        .get(payload_name)
+-        .ok_or_else(|| invalid("staged kernel tag payload is missing"))?;
+-    let signature_path = verification
+-        .staged
+-        .get(signature_name)
+-        .ok_or_else(|| invalid("staged kernel tag signature is missing"))?;
+-    let mut expected_tag = fs::read(payload_path)?;
+-    expected_tag.extend(fs::read(signature_path)?);
+-    if observed_tag != expected_tag {
+-        return Err(invalid(
+-            "kernel tag bytes differ from the signed payload and signature",
+-        ));
+-    }
+-    verification.commands.push(contents_command);
+-    Ok(())
+-}
+-
+-fn verify_kernel_tag_commit_and_worktree(
+-    verification: &mut KernelArchiveVerification<'_, '_>,
+-) -> Result<(), Box<dyn Error>> {
+-    let git = builder_tool(verification.recipe, "git")?;
+-    let tag_ref = format!(
+-        "refs/tags/{}",
+-        verification.recipe.recipe().kernel.annotated_tag
+-    );
+-    let peeled_command = run_tool(
+-        verification.podman,
+-        verification.builder_image,
+-        verification.run,
+-        ToolInvocation::new(
+-            "build_kernel_peeled_commit",
+-            &git.path,
+-            &[
+-                "-C".to_owned(),
+-                "/work/kernel-source".to_owned(),
+-                "rev-parse".to_owned(),
+-                format!("{tag_ref}^{{}}"),
+-            ],
+-            &[],
+-            &[],
+-        ),
+-    )?;
+-    if !read_command_stdout(verification.run, &peeled_command)?
+-        .trim()
+-        .eq_ignore_ascii_case(&verification.recipe.recipe().kernel.commit)
+-    {
+-        return Err(invalid("signed kernel tag peels to a different commit"));
+-    }
+-    verification.commands.push(peeled_command);
+-    let status_command = run_tool(
+-        verification.podman,
+-        verification.builder_image,
+-        verification.run,
+-        ToolInvocation::new(
+-            "build_kernel_worktree_status",
+-            &git.path,
+-            &[
+-                "-C".to_owned(),
+-                "/work/kernel-source".to_owned(),
+-                "status".to_owned(),
+-                "--porcelain=v1".to_owned(),
+-                "--untracked-files=all".to_owned(),
+-            ],
+-            &[],
+-            &[],
+-        ),
+-    )?;
+-    if !read_command_stdout(verification.run, &status_command)?.is_empty() {
+-        return Err(invalid(
+-            "kernel checkout contains files outside the signed commit",
+-        ));
+-    }
+-    verification.commands.push(status_command);
++    let makefile = fs::symlink_metadata(source_dir.join("Makefile"))?;
++    if makefile.file_type().is_symlink() || !makefile.is_file() {
++        return Err(invalid(
++            "signed kernel release tar did not extract a regular root Makefile",
++        ));
++    }
+     Ok(())
+ }
+ 
+@@ -2222,99 +1870,36 @@
+     run: &RunDirectory,
+     commands: &mut Vec<CommandReceipt>,
+ ) -> Result<(u64, String), Box<dyn Error>> {
+-    let identity = match recipe.recipe().kernel.source_variant()? {
+-        crate::recipe::KernelSourceVariant::SignedGitTag { commit, .. } => {
+-            let git = builder_tool(recipe, "git")?;
+-            let epoch_command = run_tool(
+-                podman,
+-                builder_image,
+-                run,
+-                ToolInvocation::new(
+-                    "kernel_source_epoch",
+-                    &git.path,
+-                    &[
+-                        "-C".to_owned(),
+-                        "/work/kernel-source".to_owned(),
+-                        "show".to_owned(),
+-                        "-s".to_owned(),
+-                        "--format=%ct".to_owned(),
+-                        commit.clone(),
+-                    ],
+-                    &[],
+-                    &[],
+-                ),
+-            )?;
+-            let source_epoch = read_command_stdout(run, &epoch_command)?
+-                .trim()
+-                .parse::<u64>()?;
+-            if source_epoch == 0 {
+-                return Err(invalid("kernel commit has an invalid source epoch"));
+-            }
+-            commands.push(epoch_command);
+-            let timestamp_command = run_tool(
+-                podman,
+-                builder_image,
+-                run,
+-                ToolInvocation::new(
+-                    "kernel_source_timestamp",
+-                    &git.path,
+-                    &[
+-                        "-C".to_owned(),
+-                        "/work/kernel-source".to_owned(),
+-                        "show".to_owned(),
+-                        "-s".to_owned(),
+-                        "--format=%cI".to_owned(),
+-                        commit,
+-                    ],
+-                    &[],
+-                    &[],
+-                ),
+-            )?;
+-            let timestamp = read_command_stdout(run, &timestamp_command)?
+-                .trim()
+-                .to_owned();
+-            commands.push(timestamp_command);
+-            (source_epoch, timestamp)
+-        }
+-        crate::recipe::KernelSourceVariant::SignedTarball {
+-            release_source_date_epoch,
+-            version,
+-            ..
+-        } => {
+-            let make = builder_tool(recipe, "make")?;
+-            let version_command = run_tool(
+-                podman,
+-                builder_image,
+-                run,
+-                ToolInvocation::new(
+-                    "kernel_source_version",
+-                    &make.path,
+-                    &[
+-                        "-s".to_owned(),
+-                        "-C".to_owned(),
+-                        "/work/kernel-source".to_owned(),
+-                        "kernelversion".to_owned(),
+-                    ],
+-                    &[],
+-                    &[],
+-                ),
+-            )?;
+-            let observed_version = read_command_stdout(run, &version_command)?
+-                .trim()
+-                .to_owned();
+-            if observed_version != version {
+-                return Err(invalid(
+-                    "kernel source tar version differs from its recipe pin",
+-                ));
+-            }
+-            commands.push(version_command);
+-            (
+-                release_source_date_epoch,
+-                recipe.recipe().kernel.release_source_date_utc.clone(),
+-            )
+-        }
+-    };
+-    let (source_epoch, timestamp) = identity;
++    let kernel = &recipe.recipe().kernel;
++    let make = builder_tool(recipe, "make")?;
++    let version_command = run_tool(
++        podman,
++        builder_image,
++        run,
++        ToolInvocation::new(
++            "kernel_source_version",
++            &make.path,
++            &[
++                "-s".to_owned(),
++                "-C".to_owned(),
++                "/work/kernel-source".to_owned(),
++                "kernelversion".to_owned(),
++            ],
++            &[],
++            &[],
++        ),
++    )?;
++    let observed_version = read_command_stdout(run, &version_command)?
++        .trim()
++        .to_owned();
++    if observed_version != kernel.source_version {
++        return Err(invalid(
++            "kernel source tar version differs from its recipe pin",
++        ));
++    }
++    commands.push(version_command);
++    let source_epoch = kernel.release_source_date_epoch;
++    let timestamp = kernel.release_source_date_utc.clone();
+     if source_epoch == 0
+         || timestamp.len() < 20
+         || (!timestamp.ends_with("+00:00") && !timestamp.ends_with('Z'))
+@@ -2357,29 +1942,22 @@
+     commands.push(configure);
+     let final_config = source_dir.join(".config");
+     let final_config_sha256 = sha256_file(&final_config)?;
+-    let config_is_tarball = recipe.recipe().kernel.source_kind == "kernel.org-signed-tarball";
+-    let expected_final_config_sha256 = if config_is_tarball {
+-        &recipe.recipe().kernel.custom_config_sha256
+-    } else {
+-        &recipe.recipe().kernel.firecracker_config_sha256
+-    };
++    let expected_final_config_sha256 = &recipe.recipe().kernel.custom_config_sha256;
+     if !final_config_sha256.eq_ignore_ascii_case(expected_final_config_sha256) {
+         return Err(invalid(
+             "resolved kernel .config differs from its locked final config identity",
+         ));
+     }
+-    if config_is_tarball {
+-        let seed_config = fs::read(config)?;
+-        let resolved_config = fs::read(&final_config)?;
+-        let diff = kernel_config_diff(&seed_config, &resolved_config);
+-        let diff_sha256 = sha256_bytes(&diff);
+-        if !diff_sha256.eq_ignore_ascii_case(&recipe.recipe().kernel.custom_config_diff_sha256) {
+-            return Err(invalid(
+-                "resolved upstream kernel config diff differs from its reviewed pin",
+-            ));
+-        }
+-        run.write_new("kernel-config.diff", &diff)?;
+-    }
++    let seed_config = fs::read(config)?;
++    let resolved_config = fs::read(&final_config)?;
++    let diff = kernel_config_diff(&seed_config, &resolved_config);
++    let diff_sha256 = sha256_bytes(&diff);
++    if !diff_sha256.eq_ignore_ascii_case(&recipe.recipe().kernel.custom_config_diff_sha256) {
++        return Err(invalid(
++            "resolved upstream kernel config diff differs from its reviewed pin",
++        ));
++    }
++    run.write_new("kernel-config.diff", &diff)?;
+     validate_firecracker_config(&fs::read_to_string(&final_config)?)?;
+     Ok(())
+ }
+@@ -3902,9 +3480,9 @@
+     use std::time::{SystemTime, UNIX_EPOCH};
+ 
+     const CANDIDATE_RECIPE: &[u8] =
+-        include_bytes!("../../../images/terrabase-noble-podman-v1/recipe.toml");
++        include_bytes!("../../../images/terrabase-noble-podman-v2/recipe.toml");
+     const CANDIDATE_PACKET: &[u8] =
+-        include_bytes!("../../../images/terrabase-noble-podman-v1/candidate-package-research.json");
++        include_bytes!("../../../images/terrabase-noble-podman-v2/candidate-package-research.json");
+     const REQUIRED_KERNEL_CONFIG: &str = concat!(
+         "CONFIG_VIRTIO=y\n",
+         "CONFIG_VIRTIO_MMIO=y\n",
+--- a/firecracker-harness/crates/fc-image-builder/src/cli_compiler.rs
++++ b/firecracker-harness/crates/fc-image-builder/src/cli_compiler.rs
+@@ -2280,7 +2280,7 @@
+     #[test]
+     fn changed_provision_receipt_is_rejected_before_run_creation()
+     -> Result<(), Box<dyn std::error::Error>> {
+-        let bytes = include_str!("../../../images/terrabase-noble-podman-v1/recipe.toml");
++        let bytes = include_str!("../../../images/terrabase-noble-podman-v2/recipe.toml");
+         let pinned = bytes.replace(
+             "provision_receipt_sha256 = \"\"",
+             &format!("provision_receipt_sha256 = \"{}\"", "0".repeat(64)),
+--- a/firecracker-harness/crates/fc-image-builder/src/input.rs
++++ b/firecracker-harness/crates/fc-image-builder/src/input.rs
+@@ -216,8 +216,7 @@
+         let (response, final_url, redirect_count) = if first.status() == reqwest::StatusCode::OK {
+             if first.url() != &initial {
+                 return Err(FetchError::Invalid(
+-                    "Firecracker release response changed its URL without a redirect"
+-                        .to_owned(),
++                    "Firecracker release response changed its URL without a redirect".to_owned(),
+                 ));
+             }
+             (first, initial, 0)
+@@ -271,7 +270,9 @@
+             origin: origin(&final_url),
+             cache_path: destination
+                 .file_name()
+-                .ok_or_else(|| FetchError::Invalid("release cache output has no filename".to_owned()))?
++                .ok_or_else(|| {
++                    FetchError::Invalid("release cache output has no filename".to_owned())
++                })?
+                 .to_string_lossy()
+                 .into_owned(),
+             size_bytes,
+@@ -290,9 +291,9 @@
+             "Firecracker redirect did not start at the exact pinned URL".to_owned(),
+         ));
+     }
+-    let target = initial.join(location).map_err(|_| {
+-        FetchError::Invalid("Firecracker release Location is malformed".to_owned())
+-    })?;
++    let target = initial
++        .join(location)
++        .map_err(|_| FetchError::Invalid("Firecracker release Location is malformed".to_owned()))?;
+     if target.scheme() != "https"
+         || target.host_str() != Some(FIRECRACKER_RELEASE_ASSET_HOST)
+         || target.port().is_some_and(|port| port != 443)
+@@ -321,8 +322,7 @@
+     if receipt.id == "firecracker-release-archive" {
+         if receipt.source_url != FIRECRACKER_RELEASE_URL || receipt.redirect_count > 1 {
+             return Err(FetchError::Invalid(
+-                "Firecracker release receipt has an unapproved origin or redirect count"
+-                    .to_owned(),
++                "Firecracker release receipt has an unapproved origin or redirect count".to_owned(),
+             ));
+         }
+         match receipt.redirect_count {
+@@ -492,7 +492,7 @@
+ #[cfg(test)]
+ mod tests {
+     use super::{
+-        ArtifactPin, FetchError, FIRECRACKER_RELEASE_URL, validate_firecracker_redirect_target,
++        ArtifactPin, FIRECRACKER_RELEASE_URL, FetchError, validate_firecracker_redirect_target,
+         validate_pin,
+     };
+ 
+@@ -543,11 +543,13 @@
+     #[test]
+     fn firecracker_release_redirect_is_limited_to_the_official_cdn_origin() {
+         let initial = reqwest::Url::parse(FIRECRACKER_RELEASE_URL).unwrap();
+-        assert!(validate_firecracker_redirect_target(
+-            &initial,
+-            "https://release-assets.githubusercontent.com/asset?token=opaque"
+-        )
+-        .is_ok());
++        assert!(
++            validate_firecracker_redirect_target(
++                &initial,
++                "https://release-assets.githubusercontent.com/asset?token=opaque"
++            )
++            .is_ok()
++        );
+         for location in [
+             "http://release-assets.githubusercontent.com/asset",
+             "https://github.com/other/asset",
+--- a/firecracker-harness/crates/fc-image-builder/src/main.rs
++++ b/firecracker-harness/crates/fc-image-builder/src/main.rs
+@@ -213,8 +213,14 @@
+                 CandidatePackageLock::from_research_packet(&recipe, &packet_path, "builder")?;
+             println!("recipe_identity={}", recipe.recipe().identity);
+             println!("recipe_sha256={}", recipe.sha256());
+-            println!("kernel_repository={}", recipe.recipe().kernel.repository);
+-            println!("kernel_commit={}", recipe.recipe().kernel.commit);
++            println!(
++                "kernel_source_url={}",
++                recipe.recipe().kernel.source_archive_url
++            );
++            println!(
++                "kernel_source_version={}",
++                recipe.recipe().kernel.source_version
++            );
+             println!("ubuntu_base_url={}", recipe.recipe().ubuntu_base.url);
+             println!("apt_snapshot={}", recipe.recipe().guest_apt.snapshot_url);
+             println!("apt_indexes={}", guest.indexes.len());
+--- a/firecracker-harness/crates/fc-image-builder/src/oci_archive.rs
++++ b/firecracker-harness/crates/fc-image-builder/src/oci_archive.rs
+@@ -414,7 +414,7 @@
+                 .as_deref()
+                 .ok_or_else(|| invalid("OCI image manifest exceeds the metadata budget"))?;
+             let manifest: OciManifest = serde_json::from_slice(manifest_bytes)?;
+-        let config = verify_blob_descriptor(&manifest.config, blobs)?;
++            let config = verify_blob_descriptor(&manifest.config, blobs)?;
+             let config_bytes = config
+                 .json
+                 .as_deref()
+@@ -428,7 +428,7 @@
+                     ));
+                 }
+             }
+-        if observed_platform == expected_platform {
++            if observed_platform == expected_platform {
+                 let candidate = SelectedManifest {
+                     value: manifest,
+                     manifest_digest: descriptor.digest.clone(),
+@@ -467,13 +467,9 @@
+             if nested.schema_version != 2 {
+                 return Err(invalid("nested OCI index schema version is invalid"));
+             }
+-            if let Some(found) = find_platform_manifest(
+-                &nested,
+-                blobs,
+-                expected_platform,
+-                depth + 1,
+-                visited,
+-            )? {
++            if let Some(found) =
++                find_platform_manifest(&nested, blobs, expected_platform, depth + 1, visited)?
++            {
+                 if selected.replace(found).is_some() {
+                     return Err(invalid(
+                         "OCI archive contains multiple images for the requested platform",
+@@ -481,7 +477,9 @@
+                 }
+             }
+         } else {
+-            return Err(invalid("OCI index uses an unsupported descriptor media type"));
++            return Err(invalid(
++                "OCI index uses an unsupported descriptor media type",
++            ));
+         }
+     }
+     Ok(selected)
+--- a/firecracker-harness/crates/fc-image-builder/src/package_lock.rs
++++ b/firecracker-harness/crates/fc-image-builder/src/package_lock.rs
+@@ -327,7 +327,7 @@
+         if self.schema_version != 2
+             || (!is_candidate && !is_verified)
+             || !["guest", "builder"].contains(&self.package_role.as_str())
+-            || self.recipe_identity != "terrabase-noble-podman-v1"
++            || self.recipe_identity != "terrabase-noble-podman-v2"
+             || self.recipe_version != "2.0.0"
+             || self.snapshot_timestamp != SNAPSHOT
+             || self.apt_version != "2.8.3"
+@@ -1327,9 +1327,9 @@
+     use std::path::Path;
+ 
+     const CANDIDATE_RECIPE: &[u8] =
+-        include_bytes!("../../../images/terrabase-noble-podman-v1/recipe.toml");
++        include_bytes!("../../../images/terrabase-noble-podman-v2/recipe.toml");
+     const CANDIDATE_PACKET: &[u8] =
+-        include_bytes!("../../../images/terrabase-noble-podman-v1/candidate-package-research.json");
++        include_bytes!("../../../images/terrabase-noble-podman-v2/candidate-package-research.json");
+ 
+     #[test]
+     fn research_packet_has_a_complete_candidate_graph_without_trust_promotion() {
+--- a/firecracker-harness/crates/fc-image-builder/src/podman.rs
++++ b/firecracker-harness/crates/fc-image-builder/src/podman.rs
+@@ -252,12 +252,11 @@
+         )?;
+         ensure_success(&inspect, "inspect verified local OCI image")?;
+         let output = fs::read_to_string(self.run.path().join(&inspect.stdout_path))?;
+-        let (observed_platform, observed_config) = output.trim().split_once(' ').ok_or_else(|| {
+-            PodmanError::Invalid("Podman image inspect output is incomplete".to_owned())
+-        })?;
+-        if observed_platform != platform
+-            || !observed_config.eq_ignore_ascii_case(config_digest)
+-        {
++        let (observed_platform, observed_config) =
++            output.trim().split_once(' ').ok_or_else(|| {
++                PodmanError::Invalid("Podman image inspect output is incomplete".to_owned())
++            })?;
++        if observed_platform != platform || !observed_config.eq_ignore_ascii_case(config_digest) {
+             return Err(PodmanError::Invalid(
+                 "loaded local image platform or config digest differs from its OCI receipt"
+                     .to_owned(),
+@@ -677,7 +676,10 @@
+     };
+     if identity.archive_size_bytes == 0
+         || identity.archive_sha256.len() != 64
+-        || !identity.archive_sha256.bytes().all(|b| b.is_ascii_hexdigit())
++        || !identity
++            .archive_sha256
++            .bytes()
++            .all(|b| b.is_ascii_hexdigit())
+         || !valid_oci_digest(&identity.manifest_digest)
+         || !valid_oci_digest(&identity.config_digest)
+         || identity.platform != "linux/amd64"
+@@ -693,7 +695,9 @@
+     let hash = config_digest
+         .strip_prefix("sha256:")
+         .filter(|hash| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+-        .ok_or_else(|| PodmanError::Invalid("derived image config digest is malformed".to_owned()))?;
++        .ok_or_else(|| {
++            PodmanError::Invalid("derived image config digest is malformed".to_owned())
++        })?;
+     Ok(format!(
+         "localhost/fc-image-builder-derived:cfg-{}",
+         &hash[..24].to_ascii_lowercase()
+--- a/firecracker-harness/crates/fc-image-builder/src/qualify.rs
++++ b/firecracker-harness/crates/fc-image-builder/src/qualify.rs
+@@ -142,7 +142,7 @@
+     commands: &mut Vec<CommandReceipt>,
+ ) -> Result<V2KernelQualificationReceipt, Box<dyn Error>> {
+     let downloads = fetch_v2_kernel_inputs(recipe, fetcher, run)?;
+-    let kernel_context = V2KernelContext {
++    let mut kernel_context = V2KernelContext {
+         recipe,
+         podman,
+         image,
+@@ -150,8 +150,8 @@
+         run,
+         commands,
+     };
+-    let source = verify_v2_kernel_source(&kernel_context, &downloads)?;
+-    let config = configure_v2_kernel(&kernel_context, &downloads)?;
++    let source = verify_v2_kernel_source(&mut kernel_context, &downloads)?;
++    let config = configure_v2_kernel(&mut kernel_context, &downloads)?;
+     let firecracker_release =
+         inspect_v2_firecracker_release(recipe, run, &downloads.release_archive)?;
+     v2_kernel_qualification_receipt(recipe, downloads, source, config, firecracker_release)
+@@ -230,7 +230,7 @@
+ }
+ 
+ fn verify_v2_kernel_source(
+-    context: &V2KernelContext<'_, '_>,
++    context: &mut V2KernelContext<'_, '_>,
+     downloads: &V2KernelDownloads,
+ ) -> Result<V2KernelSource, Box<dyn Error>> {
+     let kernel = &context.recipe.recipe().kernel;
+@@ -295,7 +295,7 @@
+ }
+ 
+ fn unpack_and_check_v2_kernel_source(
+-    context: &V2KernelContext<'_, '_>,
++    context: &mut V2KernelContext<'_, '_>,
+ ) -> Result<(), Box<dyn Error>> {
+     let source_dir = context.run.path().join("kernel-source");
+     fs::create_dir(&source_dir)?;
+@@ -350,7 +350,7 @@
+ }
+ 
+ fn configure_v2_kernel(
+-    context: &V2KernelContext<'_, '_>,
++    context: &mut V2KernelContext<'_, '_>,
+     downloads: &V2KernelDownloads,
+ ) -> Result<V2KernelConfig, Box<dyn Error>> {
+     let kernel = &context.recipe.recipe().kernel;
+@@ -579,7 +579,7 @@
+     let base_image = format!("{}@{}", ubuntu.base_image, ubuntu.base_image_digest);
+     verify_base_image(recipe, &podman, &run, &mut commands)?;
+     let (keyring, apt_helper_sha256) =
+-        copy_initial_qualification_tools(recipe, &podman, &run, &base_image, &mut commands)?;
++        copy_initial_qualification_tools(recipe, &podman, &base_image, &mut commands)?;
+     let fetcher = crate::HttpsFetcher::new()?;
+     let mut services = AptQualificationServices {
+         recipe,
+@@ -604,7 +604,6 @@
+ fn copy_initial_qualification_tools(
+     recipe: &RecipeFile,
+     podman: &PodmanExecutor<'_>,
+-    run: &RunDirectory,
+     base_image: &str,
+     commands: &mut Vec<CommandReceipt>,
+ ) -> Result<(PathBuf, String), Box<dyn Error>> {
+@@ -1105,8 +1104,7 @@
+ 
+ fn validate_candidate_bootstrap(recipe: &RecipeFile) -> Result<(), Box<dyn Error>> {
+     let candidate = recipe.recipe();
+-    if !["terrabase-noble-podman-v1", "terrabase-noble-podman-v2"]
+-        .contains(&candidate.identity.as_str())
++    if candidate.identity != "terrabase-noble-podman-v2"
+         || candidate.recipe_version != "2.0.0"
+         || candidate.qualification.status != "candidate-lock-incomplete"
+         || candidate.ubuntu_base.initial_verifier_sha256 != INITIAL_GPGV_SHA256
+--- a/firecracker-harness/crates/fc-image-builder/src/recipe.rs
++++ b/firecracker-harness/crates/fc-image-builder/src/recipe.rs
+@@ -6,10 +6,7 @@
+ use serde::Deserialize;
+ use sha2::{Digest, Sha256};
+ 
+-const EXPECTED_IDENTITY: &str = "terrabase-noble-podman-v1";
+-const EXPECTED_TARBALL_IDENTITY: &str = "terrabase-noble-podman-v2";
+-const EXPECTED_KERNEL_COMMIT: &str = "069c93d2b7bddda87c472453c38c450faf86f999";
+-const EXPECTED_KERNEL_TAG_OBJECT: &str = "4b0d5e9b869e49681addca8cf22cc83a340c44ff";
++const EXPECTED_IDENTITY: &str = "terrabase-noble-podman-v2";
+ const EXPECTED_KERNEL_TARBALL_SHA256: &str =
+     "4d6fba95c2244b08a7b4144a4d38b9be4fb31abb5e7682ae40bb5cb11374cfe0";
+ const EXPECTED_KERNEL_TARBALL_SIGNATURE_SHA256: &str =
+@@ -55,14 +52,6 @@
+ const EXPECTED_PODMAN_SHA256: &str =
+     "402d507d68ed889dec999e688bd242b5ddb634b3bdc9f03ef9243e66baa367fc";
+ 
+-fn default_initial_apt_helper_path() -> String {
+-    EXPECTED_INITIAL_APT_HELPER_PATH.to_owned()
+-}
+-
+-fn default_initial_apt_helper_sha256() -> String {
+-    EXPECTED_INITIAL_APT_HELPER_SHA256.to_owned()
+-}
+-
+ #[derive(Clone, Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct Recipe {
+@@ -72,7 +61,6 @@
+     pub architecture: String,
+     pub source_date_epoch: String,
+     pub kernel: KernelRecipe,
+-    #[serde(default)]
+     pub firecracker: Option<FirecrackerReleaseRecipe>,
+     pub ubuntu_base: UbuntuBaseRecipe,
+     pub guest_apt: GuestAptRecipe,
+@@ -102,32 +90,17 @@
+ #[derive(Clone, Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct KernelRecipe {
+-    #[serde(default = "default_kernel_source_kind")]
+     pub source_kind: String,
+-    #[serde(default)]
+     pub source_version: String,
+-    #[serde(default)]
+     pub source_archive_url: String,
+-    #[serde(default)]
+     pub source_archive_sha256: String,
+-    #[serde(default)]
+     pub source_signature_url: String,
+-    #[serde(default)]
+     pub source_signature_sha256: String,
+-    #[serde(default)]
+     pub release_source_date_epoch: u64,
+-    #[serde(default)]
+     pub release_source_date_utc: String,
+-    #[serde(default)]
+     pub custom_config_sha256: String,
+-    #[serde(default)]
+     pub custom_config_diff_sha256: String,
+-    #[serde(default)]
+     pub custom_config_review_status: String,
+-    pub repository: String,
+-    pub annotated_tag: String,
+-    pub annotated_tag_object: String,
+-    pub commit: String,
+     pub signature_policy: String,
+     pub signing_fingerprint: String,
+     pub signing_key_url: String,
+@@ -150,12 +123,6 @@
+ 
+ #[derive(Clone, Debug, Eq, PartialEq)]
+ pub enum KernelSourceVariant {
+-    SignedGitTag {
+-        repository: String,
+-        annotated_tag: String,
+-        annotated_tag_object: String,
+-        commit: String,
+-    },
+     SignedTarball {
+         version: String,
+         archive_url: String,
+@@ -164,10 +131,6 @@
+         signature_sha256: String,
+         release_source_date_epoch: u64,
+     },
+-}
+-
+-fn default_kernel_source_kind() -> String {
+-    "signed-git-tag".to_owned()
+ }
+ 
+ impl KernelRecipe {
+@@ -179,12 +142,6 @@
+     /// signature-verified kernel source variants.
+     pub fn source_variant(&self) -> Result<KernelSourceVariant, RecipeError> {
+         match self.source_kind.as_str() {
+-            "signed-git-tag" => Ok(KernelSourceVariant::SignedGitTag {
+-                repository: self.repository.clone(),
+-                annotated_tag: self.annotated_tag.clone(),
+-                annotated_tag_object: self.annotated_tag_object.clone(),
+-                commit: self.commit.clone(),
+-            }),
+             "kernel.org-signed-tarball" => Ok(KernelSourceVariant::SignedTarball {
+                 version: self.source_version.clone(),
+                 archive_url: self.source_archive_url.clone(),
+@@ -296,11 +253,7 @@
+     pub initial_trust_source: String,
+     pub initial_gpgv_path: String,
+     pub initial_gpgv_sha256: String,
+-    // The historical v1 TOML omits these fields; keep its bytes fixed and
+-    // deserialize the omission to the reviewed pinned-child helper identity.
+-    #[serde(default = "default_initial_apt_helper_path")]
+     pub initial_apt_helper_path: String,
+-    #[serde(default = "default_initial_apt_helper_sha256")]
+     pub initial_apt_helper_sha256: String,
+     pub initial_keyring_path: String,
+     pub initial_keyring_sha256: String,
+@@ -590,23 +543,20 @@
+             || !is_https_url(&self.recipe.kernel.signing_key_url)
+             || !valid_fingerprint(&self.recipe.kernel.signing_fingerprint)
+         {
+-            missing.push("verified kernel tag signer and pinned public key".to_owned());
+-        }
+-        if self.recipe.identity == EXPECTED_TARBALL_IDENTITY
+-            && (self.recipe.kernel.custom_config_review_status != "reviewed"
+-                || !is_sha256(&self.recipe.kernel.custom_config_sha256)
+-                || !is_sha256(&self.recipe.kernel.custom_config_diff_sha256))
++            missing.push("verified kernel tarball signer and pinned public key".to_owned());
++        }
++        if self.recipe.kernel.custom_config_review_status != "reviewed"
++            || !is_sha256(&self.recipe.kernel.custom_config_sha256)
++            || !is_sha256(&self.recipe.kernel.custom_config_diff_sha256)
+         {
+             missing
+                 .push("reviewed upstream-kernel config output and config-diff hashes".to_owned());
+         }
+-        if self.recipe.identity == EXPECTED_TARBALL_IDENTITY
+-            && self.recipe.firecracker.as_ref().is_none_or(|release| {
+-                release.executable_review_status != "reviewed"
+-                    || release.executable_member.is_empty()
+-                    || !is_sha256(&release.executable_sha256)
+-            })
+-        {
++        if self.recipe.firecracker.as_ref().is_none_or(|release| {
++            release.executable_review_status != "reviewed"
++                || release.executable_member.is_empty()
++                || !is_sha256(&release.executable_sha256)
++        }) {
+             missing.push("reviewed Firecracker release executable member and hash".to_owned());
+         }
+         if !is_sha256(&self.recipe.ubuntu_base.initial_verifier_sha256)
+@@ -835,21 +785,14 @@
+                 "unsupported recipe schema or version".to_owned(),
+             ));
+         }
+-        let profile_is_git =
+-            self.identity == EXPECTED_IDENTITY && self.kernel.source_kind == "signed-git-tag";
+-        let profile_is_tarball = self.identity == EXPECTED_TARBALL_IDENTITY
++        let profile_is_tarball = self.identity == EXPECTED_IDENTITY
+             && self.kernel.source_kind == "kernel.org-signed-tarball";
+-        if (!profile_is_git && !profile_is_tarball) || self.architecture != "amd64" {
+-            return Err(RecipeError::Invalid(
+-                "recipe identity or architecture does not match the candidate".to_owned(),
+-            ));
+-        }
+-        let expected_epoch_mode = if profile_is_git {
+-            "kernel-git-commit-time"
+-        } else {
+-            "kernel-release-time"
+-        };
+-        if self.source_date_epoch != expected_epoch_mode {
++        if !profile_is_tarball || self.architecture != "amd64" {
++            return Err(RecipeError::Invalid(
++                "recipe identity or architecture does not match the current candidate".to_owned(),
++            ));
++        }
++        if self.source_date_epoch != "kernel-release-time" {
+             return Err(RecipeError::Invalid(
+                 "SOURCE_DATE_EPOCH derivation does not match the locked kernel source variant"
+                     .to_owned(),
+@@ -863,60 +806,45 @@
+         validate_https_url(&self.kernel.kernel_policy_url)?;
+         validate_optional_sha256(&self.kernel.source_archive_sha256)?;
+         validate_optional_sha256(&self.kernel.source_signature_sha256)?;
+-        if profile_is_git {
+-            validate_https_url(&self.kernel.repository)?;
+-            validate_git_object(&self.kernel.annotated_tag_object)?;
+-            validate_sha256(&self.kernel.commit)?;
+-            validate_sha256(&self.kernel.kernel_policy_sha256)?;
+-            if self.kernel.commit != EXPECTED_KERNEL_COMMIT
+-                || self.kernel.annotated_tag != "microvm-kernel-6.1.155-13.282.amzn2023"
+-                || self.kernel.annotated_tag_object != EXPECTED_KERNEL_TAG_OBJECT
+-            {
+-                return Err(RecipeError::Invalid(
+-                    "kernel tag object or commit differs from the reviewed candidate".to_owned(),
+-                ));
+-            }
+-        } else {
+-            validate_https_url(&self.kernel.source_archive_url)?;
+-            validate_https_url(&self.kernel.source_signature_url)?;
+-            validate_sha256(&self.kernel.signing_key_sha256)?;
+-            validate_fingerprint(&self.kernel.signing_fingerprint)?;
+-            if self.kernel.source_version != "6.18.53"
+-                || self.kernel.source_archive_url
+-                    != "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.53.tar.xz"
+-                || self.kernel.source_archive_sha256 != EXPECTED_KERNEL_TARBALL_SHA256
+-                || self.kernel.source_signature_url
+-                    != "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.53.tar.sign"
+-                || self.kernel.source_signature_sha256 != EXPECTED_KERNEL_TARBALL_SIGNATURE_SHA256
+-                || self.kernel.signing_key_url
+-                    != "https://kernel.org/.well-known/openpgpkey/hu/e3n9xnm94c5apezqnj1pmrfuaoyfm8cf?l=gregkh"
+-                || self.kernel.signing_key_sha256 != EXPECTED_KERNEL_KEY_SHA256
+-                || self.kernel.signing_fingerprint != EXPECTED_KERNEL_FINGERPRINT
+-                || self.kernel.release_source_date_epoch != EXPECTED_KERNEL_RELEASE_EPOCH
+-                || self.kernel.signature_policy != "required-before-extract"
+-                || self.kernel.firecracker_version != "1.17.0"
+-                || self.kernel.firecracker_commit != EXPECTED_FIRECRACKER_V2_COMMIT
+-                || self.kernel.firecracker_config_sha256 != EXPECTED_FIRECRACKER_V2_CONFIG_SHA256
+-                || self.kernel.kernel_policy_url != EXPECTED_FIRECRACKER_V2_POLICY_URL
+-                || self.kernel.kernel_policy_sha256 != EXPECTED_FIRECRACKER_V2_POLICY_SHA256
+-                || self.kernel.release_source_date_utc != "2026-09-21T13:06:45Z"
+-                || ![
+-                    "pending-upstream-config-review",
+-                    "generated-pending-independent-review",
+-                    "reviewed",
+-                ]
+-                .contains(&self.kernel.custom_config_review_status.as_str())
+-                || (self.kernel.custom_config_review_status != "pending-upstream-config-review"
+-                    && (!is_sha256(&self.kernel.custom_config_sha256)
+-                        || !is_sha256(&self.kernel.custom_config_diff_sha256)))
+-                || (self.kernel.custom_config_review_status == "pending-upstream-config-review"
+-                    && (!self.kernel.custom_config_sha256.is_empty()
+-                        || !self.kernel.custom_config_diff_sha256.is_empty()))
+-            {
+-                return Err(RecipeError::Invalid(
+-                    "kernel.org tarball, Greg KH signer, release epoch, Firecracker policy, or custom-config review state differs from the reviewed candidate".to_owned(),
+-                ));
+-            }
++        validate_https_url(&self.kernel.source_archive_url)?;
++        validate_https_url(&self.kernel.source_signature_url)?;
++        validate_sha256(&self.kernel.signing_key_sha256)?;
++        validate_fingerprint(&self.kernel.signing_fingerprint)?;
++        if self.kernel.source_version != "6.18.53"
++            || self.kernel.source_archive_url
++                != "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.53.tar.xz"
++            || self.kernel.source_archive_sha256 != EXPECTED_KERNEL_TARBALL_SHA256
++            || self.kernel.source_signature_url
++                != "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.53.tar.sign"
++            || self.kernel.source_signature_sha256 != EXPECTED_KERNEL_TARBALL_SIGNATURE_SHA256
++            || self.kernel.signing_key_url
++                != "https://kernel.org/.well-known/openpgpkey/hu/e3n9xnm94c5apezqnj1pmrfuaoyfm8cf?l=gregkh"
++            || self.kernel.signing_key_sha256 != EXPECTED_KERNEL_KEY_SHA256
++            || self.kernel.signing_fingerprint != EXPECTED_KERNEL_FINGERPRINT
++            || self.kernel.release_source_date_epoch != EXPECTED_KERNEL_RELEASE_EPOCH
++            || self.kernel.signature_policy != "required-before-extract"
++            || self.kernel.firecracker_version != "1.17.0"
++            || self.kernel.firecracker_commit != EXPECTED_FIRECRACKER_V2_COMMIT
++            || self.kernel.firecracker_config_sha256 != EXPECTED_FIRECRACKER_V2_CONFIG_SHA256
++            || self.kernel.kernel_policy_url != EXPECTED_FIRECRACKER_V2_POLICY_URL
++            || self.kernel.kernel_policy_sha256 != EXPECTED_FIRECRACKER_V2_POLICY_SHA256
++            || self.kernel.release_source_date_utc != "2026-09-21T13:06:45Z"
++            || ![
++                "pending-upstream-config-review",
++                "generated-pending-independent-review",
++                "reviewed",
++            ]
++            .contains(&self.kernel.custom_config_review_status.as_str())
++            || (self.kernel.custom_config_review_status != "pending-upstream-config-review"
++                && (!is_sha256(&self.kernel.custom_config_sha256)
++                    || !is_sha256(&self.kernel.custom_config_diff_sha256)))
++            || (self.kernel.custom_config_review_status == "pending-upstream-config-review"
++                && (!self.kernel.custom_config_sha256.is_empty()
++                    || !self.kernel.custom_config_diff_sha256.is_empty()))
++        {
++            return Err(RecipeError::Invalid(
++                "kernel.org tarball, Greg KH signer, release epoch, Firecracker policy, or custom-config review state differs from the reviewed candidate".to_owned(),
++            ));
+         }
+         if self.kernel.build_user != "builder"
+             || self.kernel.build_host != "terrabase"
+@@ -930,56 +858,38 @@
+                 "kernel build environment differs from the fixed candidate environment".to_owned(),
+             ));
+         }
+-        match (&self.firecracker, profile_is_tarball) {
+-            (Some(release), true) => {
+-                validate_git_object(&release.release_tag_object)?;
+-                validate_https_url(&release.archive_url)?;
+-                validate_optional_sha256(&release.executable_sha256)?;
+-                if !release.executable_member.is_empty() {
+-                    validate_relative_path(&release.executable_member)?;
+-                }
+-                if release.version != "1.17.0"
+-                    || release.release_tag_object != EXPECTED_FIRECRACKER_V2_RELEASE_TAG_OBJECT
+-                    || release.release_tag_signature_status != "unsigned"
+-                    || release.archive_metadata_source != "github-release-assets-api"
+-                    || release.archive_url
+-                        != "https://github.com/firecracker-microvm/firecracker/releases/download/v1.17.0/firecracker-v1.17.0-x86_64.tgz"
+-                    || release.archive_size_bytes != 7_464_385
+-                    || release.archive_sha256 != EXPECTED_FIRECRACKER_V2_ARCHIVE_SHA256
+-                    || (release.executable_review_status != "pending-observation"
+-                        && (release.executable_member != EXPECTED_FIRECRACKER_V2_EXECUTABLE_MEMBER
+-                            || release.executable_sha256
+-                                != EXPECTED_FIRECRACKER_V2_EXECUTABLE_SHA256))
+-                    || !["pending-observation", "candidate-observed", "reviewed"]
+-                        .contains(&release.executable_review_status.as_str())
+-                    || (release.executable_review_status == "pending-observation"
+-                        && (!release.executable_member.is_empty()
+-                            || !release.executable_sha256.is_empty()))
+-                    || (release.executable_review_status != "pending-observation"
+-                        && (release.executable_member.is_empty()
+-                            || !is_sha256(&release.executable_sha256)))
+-                {
+-                    return Err(RecipeError::Invalid(
+-                        "Firecracker release archive identity or unsigned-tag provenance changed"
+-                            .to_owned(),
+-                    ));
+-                }
+-            }
+-            (None, false) => {}
+-            _ => {
+-                return Err(RecipeError::Invalid(
+-                    "Firecracker release binary pin is required only for the v2 candidate"
+-                        .to_owned(),
+-                ));
+-            }
+-        }
+-        if profile_is_git
+-            && (!self.kernel.custom_config_sha256.is_empty()
+-                || !self.kernel.custom_config_diff_sha256.is_empty()
+-                || !self.kernel.custom_config_review_status.is_empty())
+-        {
+-            return Err(RecipeError::Invalid(
+-                "historical Git-kernel recipe cannot acquire v2 custom-config metadata".to_owned(),
++        let Some(release) = &self.firecracker else {
++            return Err(RecipeError::Invalid(
++                "Firecracker release binary pin is required for the current candidate".to_owned(),
++            ));
++        };
++        validate_git_object(&release.release_tag_object)?;
++        validate_https_url(&release.archive_url)?;
++        validate_optional_sha256(&release.executable_sha256)?;
++        if !release.executable_member.is_empty() {
++            validate_relative_path(&release.executable_member)?;
++        }
++        if release.version != "1.17.0"
++            || release.release_tag_object != EXPECTED_FIRECRACKER_V2_RELEASE_TAG_OBJECT
++            || release.release_tag_signature_status != "unsigned"
++            || release.archive_metadata_source != "github-release-assets-api"
++            || release.archive_url
++                != "https://github.com/firecracker-microvm/firecracker/releases/download/v1.17.0/firecracker-v1.17.0-x86_64.tgz"
++            || release.archive_size_bytes != 7_464_385
++            || release.archive_sha256 != EXPECTED_FIRECRACKER_V2_ARCHIVE_SHA256
++            || (release.executable_review_status != "pending-observation"
++                && (release.executable_member != EXPECTED_FIRECRACKER_V2_EXECUTABLE_MEMBER
++                    || release.executable_sha256 != EXPECTED_FIRECRACKER_V2_EXECUTABLE_SHA256))
++            || !["pending-observation", "candidate-observed", "reviewed"]
++                .contains(&release.executable_review_status.as_str())
++            || (release.executable_review_status == "pending-observation"
++                && (!release.executable_member.is_empty() || !release.executable_sha256.is_empty()))
++            || (release.executable_review_status != "pending-observation"
++                && (release.executable_member.is_empty() || !is_sha256(&release.executable_sha256)))
++        {
++            return Err(RecipeError::Invalid(
++                "Firecracker release archive identity or unsigned-tag provenance changed"
++                    .to_owned(),
+             ));
+         }
+         validate_optional_sha256(&self.kernel.signing_key_sha256)?;
+@@ -989,12 +899,7 @@
+         if !self.kernel.signing_fingerprint.is_empty() {
+             validate_fingerprint(&self.kernel.signing_fingerprint)?;
+         }
+-        let expected_signature_policy = if profile_is_git {
+-            "required-before-fetch"
+-        } else {
+-            "required-before-extract"
+-        };
+-        if self.kernel.signature_policy != expected_signature_policy {
++        if self.kernel.signature_policy != "required-before-extract" {
+             return Err(RecipeError::Invalid(
+                 "kernel source signature policy differs from the accepted candidate".to_owned(),
+             ));
+@@ -1577,17 +1482,17 @@
+ 
+     const RECIPE: &str = concat!(
+         env!("CARGO_MANIFEST_DIR"),
+-        "/../../images/terrabase-noble-podman-v1/recipe.toml"
++        "/../../images/terrabase-noble-podman-v2/recipe.toml"
+     );
+ 
+     #[test]
+     fn candidate_recipe_is_bounded_and_remains_unqualified() {
+         let recipe = RecipeFile::parse(
+             Path::new(RECIPE),
+-            include_bytes!("../../../images/terrabase-noble-podman-v1/recipe.toml").to_vec(),
++            include_bytes!("../../../images/terrabase-noble-podman-v2/recipe.toml").to_vec(),
+         )
+         .expect("candidate recipe is valid");
+-        assert_eq!(recipe.recipe().identity, "terrabase-noble-podman-v1");
++        assert_eq!(recipe.recipe().identity, "terrabase-noble-podman-v2");
+         assert_eq!(recipe.recipe().schema_version, 2);
+         assert_eq!(recipe.recipe().recipe_version, "2.0.0");
+         assert_ne!(
+@@ -1604,12 +1509,11 @@
+     }
+ 
+     #[test]
+-    fn historical_single_builder_recipe_is_not_accepted_as_v2() {
+-        let error = RecipeFile::parse(
+-            Path::new(RECIPE),
+-            include_bytes!("../../../images/terrabase-noble-podman-v1/recipe-v1.0.0.toml").to_vec(),
+-        )
+-        .expect_err("schema 1 has the ambiguous builder role");
++    fn unsupported_schema_version_is_rejected() {
++        let current = include_str!("../../../images/terrabase-noble-podman-v2/recipe.toml");
++        let historical_schema = current.replacen("schema_version = 2", "schema_version = 1", 1);
++        let error = RecipeFile::parse(Path::new(RECIPE), historical_schema.into_bytes())
++            .expect_err("schema 1 has the ambiguous builder role");
+         assert!(
+             error
+                 .to_string()
+@@ -1618,15 +1522,27 @@
+     }
+ 
+     #[test]
++    fn archived_v1_identity_is_rejected_by_the_current_parser() {
++        let current = include_str!("../../../images/terrabase-noble-podman-v2/recipe.toml");
++        let archived_identity = current.replace(
++            "identity = \"terrabase-noble-podman-v2\"",
++            "identity = \"terrabase-noble-podman-v1\"",
++        );
++        let error = RecipeFile::parse(Path::new(RECIPE), archived_identity.into_bytes())
++            .expect_err("archived v1 identity is not an active input");
++        assert!(error.to_string().contains("current candidate"));
++    }
++
++    #[test]
+     fn recipe_uuid_is_deterministic_version_eight_and_changes_with_bytes() {
+         let first = RecipeFile::parse(
+             Path::new(RECIPE),
+-            include_bytes!("../../../images/terrabase-noble-podman-v1/recipe.toml").to_vec(),
++            include_bytes!("../../../images/terrabase-noble-podman-v2/recipe.toml").to_vec(),
+         )
+         .expect("candidate recipe parses");
+         let second = RecipeFile::parse(
+             Path::new(RECIPE),
+-            include_bytes!("../../../images/terrabase-noble-podman-v1/recipe.toml").to_vec(),
++            include_bytes!("../../../images/terrabase-noble-podman-v2/recipe.toml").to_vec(),
+         )
+         .expect("same recipe parses");
+         assert_eq!(first.filesystem_uuid(), second.filesystem_uuid());
+@@ -1640,7 +1556,7 @@
+     fn unresolved_inputs_are_reported_without_claiming_build_readiness() {
+         let recipe = RecipeFile::parse(
+             Path::new(RECIPE),
+-            include_bytes!("../../../images/terrabase-noble-podman-v1/recipe.toml").to_vec(),
++            include_bytes!("../../../images/terrabase-noble-podman-v2/recipe.toml").to_vec(),
+         )
+         .expect("candidate recipe parses");
+         let gaps: RecipeGaps = recipe.unresolved_inputs();
+@@ -1738,7 +1654,7 @@
+         fs::create_dir(&root)?;
+         let directory = TemporaryWorkspace(root);
+         let root = &directory.0;
+-        let recipe_directory = root.join("images/terrabase-noble-podman-v1");
++        let recipe_directory = root.join("images/terrabase-noble-podman-v2");
+         fs::create_dir_all(&recipe_directory)?;
+         fs::create_dir_all(root.join("crates/fc-image-builder"))?;
+         fs::write(root.join("Cargo.toml"), b"[workspace]\n")?;
+@@ -1747,7 +1663,7 @@
+         let recipe_path = recipe_directory.join("recipe.toml");
+         fs::write(
+             &recipe_path,
+-            include_bytes!("../../../images/terrabase-noble-podman-v1/recipe.toml"),
++            include_bytes!("../../../images/terrabase-noble-podman-v2/recipe.toml"),
+         )?;
+         let recipe = RecipeFile::read(&recipe_path)?;
+         Ok((directory, recipe))
+--- a/firecracker-harness/crates/fc-image-builder/src/signature.rs
++++ b/firecracker-harness/crates/fc-image-builder/src/signature.rs
+@@ -262,10 +262,10 @@
+     }
+     args.push(run_relative(&signed)?);
+     let mounts = [ContainerMount {
+-            host_path: run_root.clone(),
+-            container_path: "/work".to_owned(),
+-            read_only: true,
+-        }];
++        host_path: run_root.clone(),
++        container_path: "/work".to_owned(),
++        read_only: true,
++    }];
+     let command_id = format!("gpgv_{}", request.command_id);
+     let command = match image {
+         SignatureImage::Pinned(reference) => podman.run_container(
+--- a/firecracker-harness/crates/fc-image-builder/src/workflow.rs
++++ b/firecracker-harness/crates/fc-image-builder/src/workflow.rs
+@@ -37,10 +37,6 @@
+     pub(crate) initial_keyring_sha256: String,
+     pub(crate) kernel_source_kind: String,
+     pub(crate) kernel_source_revision: String,
+-    pub(crate) kernel_tag_object: Option<String>,
+-    pub(crate) kernel_tag_payload_path: Option<String>,
+-    pub(crate) kernel_tag_signature_path: Option<String>,
+-    pub(crate) kernel_tag_signature: Option<SignatureReceipt>,
+     pub(crate) kernel_source_compressed_path: Option<String>,
+     pub(crate) kernel_source_compressed_size_bytes: Option<u64>,
+     pub(crate) kernel_source_compressed_sha256: Option<String>,
+@@ -89,10 +85,6 @@
+ pub(crate) struct KernelSourceInputs {
+     pub(crate) kind: String,
+     pub(crate) revision: String,
+-    pub(crate) tag_object: Option<String>,
+-    pub(crate) tag_payload_path: Option<String>,
+-    pub(crate) tag_signature_path: Option<String>,
+-    pub(crate) tag_signature: Option<SignatureReceipt>,
+     pub(crate) compressed_path: Option<String>,
+     pub(crate) compressed_size_bytes: Option<u64>,
+     pub(crate) compressed_sha256: Option<String>,
+@@ -118,16 +110,6 @@
+     run: &'a RunDirectory,
+ }
+ 
+-struct GitTagContext<'a, 'run> {
+-    recipe: &'a RecipeFile,
+-    podman: &'a PodmanExecutor<'run>,
+-    git_image: &'a VerifiedLocalImage,
+-    verifier_image: &'a VerifiedLocalImage,
+-    public_key: &'a Path,
+-    run: &'a RunDirectory,
+-    git_path: &'a str,
+-}
+-
+ struct OfflineSmokeArchive {
+     size_bytes: u64,
+     sha256: String,
+@@ -169,8 +151,6 @@
+ 
+ struct FetchReceiptInput<'a> {
+     recipe: &'a RecipeFile,
+-    guest: &'a CandidatePackageLock,
+-    builder: &'a CandidatePackageLock,
+     staged_identity: &'a OciArchiveIdentity,
+     keyring_sha256: &'a str,
+     kernel_source: KernelSourceInputs,
+@@ -298,8 +278,6 @@
+ 
+     let mut receipt = new_fetch_receipt(FetchReceiptInput {
+         recipe,
+-        guest,
+-        builder,
+         staged_identity: &staged_identity,
+         keyring_sha256: &keyring_sha256,
+         kernel_source,
+@@ -335,8 +313,6 @@
+ fn new_fetch_receipt(input: FetchReceiptInput<'_>) -> Result<FetchReceipt, Box<dyn Error>> {
+     let FetchReceiptInput {
+         recipe,
+-        guest,
+-        builder,
+         staged_identity,
+         keyring_sha256,
+         kernel_source,
+@@ -347,10 +323,6 @@
+     let KernelSourceInputs {
+         kind: kernel_source_kind,
+         revision: kernel_source_revision,
+-        tag_object: kernel_tag_object,
+-        tag_payload_path: kernel_tag_payload_path,
+-        tag_signature_path: kernel_tag_signature_path,
+-        tag_signature: kernel_tag_signature,
+         compressed_path: kernel_source_compressed_path,
+         compressed_size_bytes: kernel_source_compressed_size_bytes,
+         compressed_sha256: kernel_source_compressed_sha256,
+@@ -387,10 +359,6 @@
+         initial_keyring_sha256: keyring_sha256.to_owned(),
+         kernel_source_kind,
+         kernel_source_revision,
+-        kernel_tag_object,
+-        kernel_tag_payload_path,
+-        kernel_tag_signature_path,
+-        kernel_tag_signature,
+         kernel_source_compressed_path,
+         kernel_source_compressed_size_bytes,
+         kernel_source_compressed_sha256,
+@@ -415,7 +383,7 @@
+ fn fetch_kernel_signing_key(
+     session: &FetchSession<'_, '_>,
+ ) -> Result<crate::DownloadReceipt, Box<dyn Error>> {
+-    session.fetcher.fetch_verified(
++    Ok(session.fetcher.fetch_verified(
+         &ArtifactPin {
+             id: "kernel_signing_key".to_owned(),
+             url: session.recipe.recipe().kernel.signing_key_url.clone(),
+@@ -423,92 +391,22 @@
+             max_bytes: 16 * 1024 * 1024,
+         },
+         session.run,
+-    )
++    )?)
+ }
+ 
+ fn fetch_kernel_source_inputs(
+     session: &FetchSession<'_, '_>,
+     public_key: &Path,
+ ) -> Result<KernelSourceInputs, Box<dyn Error>> {
+-    match session.recipe.recipe().kernel.source_variant()? {
+-        KernelSourceVariant::SignedGitTag { .. } => {
+-            fetch_signed_git_kernel_source(session, public_key)
+-        }
+-        KernelSourceVariant::SignedTarball { .. } => fetch_kernel_tarball(
+-            session.recipe,
+-            session.fetcher,
+-            session.podman,
+-            session.builder_image,
+-            public_key,
+-            session.run,
+-        ),
+-    }
+-}
+-
+-fn fetch_signed_git_kernel_source(
+-    session: &FetchSession<'_, '_>,
+-    public_key: &Path,
+-) -> Result<KernelSourceInputs, Box<dyn Error>> {
+-    let git = builder_tool(session.recipe, "git")?;
+-    let (tag_object, tag_signature, mut commands) = fetch_and_verify_kernel_tag(GitTagContext {
+-        recipe: session.recipe,
+-        podman: session.podman,
+-        git_image: session.builder_image,
+-        verifier_image: session.builder_image,
++    session.recipe.recipe().kernel.source_variant()?;
++    fetch_kernel_tarball(
++        session.recipe,
++        session.fetcher,
++        session.podman,
++        session.builder_image,
+         public_key,
+-        run: session.run,
+-        git_path: &git.path,
+-    })?;
+-    let tar = builder_tool(session.recipe, "tar")?;
+-    let archive = session.run.path().join("kernel-source.tar");
+-    let archive_command = session.podman.run_verified_container(
+-        "kernel_source_archive",
+-        session.builder_image,
+-        NetworkMode::None,
+-        &tar.path,
+-        &[ContainerMount {
+-            host_path: session.run.path().to_path_buf(),
+-            container_path: "/work".to_owned(),
+-            read_only: false,
+-        }],
+-        &[
+-            "-C".to_owned(),
+-            "/work/kernel-source".to_owned(),
+-            "-cf".to_owned(),
+-            "/work/kernel-source.tar".to_owned(),
+-            ".".to_owned(),
+-        ],
+-    )?;
+-    if archive_command.status_code != 0 {
+-        return Err(invalid(
+-            "pinned tar failed to archive the verified kernel checkout",
+-        ));
+-    }
+-    commands.push(archive_command);
+-    let metadata = fs::symlink_metadata(&archive)?;
+-    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() == 0 {
+-        return Err(invalid(
+-            "Git kernel source archive is not a regular nonempty file",
+-        ));
+-    }
+-    Ok(KernelSourceInputs {
+-        kind: "signed-git-tag".to_owned(),
+-        revision: session.recipe.recipe().kernel.commit.clone(),
+-        tag_object: Some(tag_object),
+-        tag_payload_path: Some("kernel-tag-payload".to_owned()),
+-        tag_signature_path: Some("kernel-tag-signature".to_owned()),
+-        tag_signature: Some(tag_signature),
+-        compressed_path: None,
+-        compressed_size_bytes: None,
+-        compressed_sha256: None,
+-        source_signature_path: None,
+-        source_signature: None,
+-        archive_path: "kernel-source.tar".to_owned(),
+-        archive_size_bytes: metadata.len(),
+-        archive_sha256: sha256_file(&archive)?,
+-        sources: Vec::new(),
+-        commands,
+-    })
++        session.run,
++    )
+ }
+ 
+ fn fetch_firecracker_release(
+@@ -725,13 +623,8 @@
+             lock.verify_packages_from_index(&decompressed)?;
+         }
+     }
+-    let (guest_receipt, builder_receipt) = build_apt_index_receipts(
+-        session,
+-        index,
+-        &inrelease,
+-        &packages,
+-        verified_signature.receipt(),
+-    );
++    let (guest_receipt, builder_receipt) =
++        build_apt_index_receipts(session, index, verified_signature.receipt());
+     Ok(FetchedAptIndex {
+         guest: guest_receipt,
+         builder: builder_receipt,
+@@ -747,8 +640,6 @@
+ fn build_apt_index_receipts(
+     session: &FetchSession<'_, '_>,
+     index: &CandidateIndex,
+-    inrelease: &crate::DownloadReceipt,
+-    packages: &crate::DownloadReceipt,
+     signature: &SignatureReceipt,
+ ) -> (AptIndexReceipt, AptIndexReceipt) {
+     let base_receipt = AptIndexReceipt {
+@@ -858,7 +749,7 @@
+     ]
+     .into_iter()
+     .map(|(id, url, sha256)| {
+-        session.fetcher.fetch_verified(
++        Ok(session.fetcher.fetch_verified(
+             &ArtifactPin {
+                 id: id.to_owned(),
+                 url: url.to_owned(),
+@@ -866,7 +757,7 @@
+                 max_bytes: 16 * 1024 * 1024,
+             },
+             session.run,
+-        )
++        )?)
+     })
+     .collect()
+ }
+@@ -941,220 +832,6 @@
+     })
+ }
+ 
+-fn fetch_and_verify_kernel_tag(
+-    context: GitTagContext<'_, '_>,
+-) -> Result<(String, SignatureReceipt, Vec<CommandReceipt>), Box<dyn Error>> {
+-    let repo_path = context.run.path().join("kernel-source");
+-    fs::create_dir(&repo_path)?;
+-    let mut commands = vec![invoke_pinned_git(
+-        &context,
+-        "kernel_git_init",
+-        &["init".to_owned(), "/work/kernel-source".to_owned()],
+-        NetworkMode::None,
+-    )?];
+-    let tag_ref = format!("refs/tags/{}", context.recipe.recipe().kernel.annotated_tag);
+-    commands.push(invoke_pinned_git(
+-        &context,
+-        "kernel_git_fetch_tag",
+-        &[
+-            "-c".to_owned(),
+-            "http.followRedirects=false".to_owned(),
+-            "-C".to_owned(),
+-            "/work/kernel-source".to_owned(),
+-            "fetch".to_owned(),
+-            "--depth=1".to_owned(),
+-            "--no-tags".to_owned(),
+-            "--filter=tree:0".to_owned(),
+-            context.recipe.recipe().kernel.repository.clone(),
+-            format!("{tag_ref}:{tag_ref}"),
+-        ],
+-        NetworkMode::Slirp4netns,
+-    )?);
+-    let object_command = invoke_pinned_git(
+-        &context,
+-        "kernel_git_tag_object_id",
+-        &[
+-            "-C".to_owned(),
+-            "/work/kernel-source".to_owned(),
+-            "rev-parse".to_owned(),
+-            "--verify".to_owned(),
+-            tag_ref.clone(),
+-        ],
+-        NetworkMode::None,
+-    )?;
+-    let tag_object = read_command_stdout(context.run, &object_command)?
+-        .trim()
+-        .to_owned();
+-    if !tag_object.eq_ignore_ascii_case(&context.recipe.recipe().kernel.annotated_tag_object) {
+-        return Err(invalid(
+-            "fetched annotated kernel tag object differs from the recipe",
+-        ));
+-    }
+-    commands.push(object_command);
+-    verify_annotated_tag_type(&context, &tag_object, &mut commands)?;
+-    let (signature, signature_commands) = verify_annotated_tag_signature(&context, &tag_object)?;
+-    commands.extend(signature_commands);
+-    commands.extend(verify_tag_commit_and_checkout(&context, &tag_ref)?);
+-    Ok((tag_object, signature, commands))
+-}
+-
+-fn invoke_pinned_git(
+-    context: &GitTagContext<'_, '_>,
+-    command_id: &str,
+-    arguments: &[String],
+-    network: NetworkMode,
+-) -> Result<CommandReceipt, Box<dyn Error>> {
+-    let command = context.podman.run_verified_container(
+-        command_id,
+-        context.git_image,
+-        network,
+-        context.git_path,
+-        &[ContainerMount {
+-            host_path: context.run.path().to_path_buf(),
+-            container_path: "/work".to_owned(),
+-            read_only: false,
+-        }],
+-        arguments,
+-    )?;
+-    if command.status_code != 0 {
+-        return Err(invalid(&format!(
+-            "pinned git command {command_id} exited with status {}",
+-            command.status_code
+-        )));
+-    }
+-    Ok(command)
+-}
+-
+-fn verify_annotated_tag_type(
+-    context: &GitTagContext<'_, '_>,
+-    tag_object: &str,
+-    commands: &mut Vec<CommandReceipt>,
+-) -> Result<(), Box<dyn Error>> {
+-    let type_command = invoke_pinned_git(
+-        context,
+-        "kernel_git_tag_type",
+-        &[
+-            "-C".to_owned(),
+-            "/work/kernel-source".to_owned(),
+-            "cat-file".to_owned(),
+-            "-t".to_owned(),
+-            tag_object.to_owned(),
+-        ],
+-        NetworkMode::None,
+-    )?;
+-    if read_command_stdout(context.run, &type_command)?.trim() != "tag" {
+-        return Err(invalid(
+-            "locked kernel reference is not an annotated Git tag",
+-        ));
+-    }
+-    commands.push(type_command);
+-    Ok(())
+-}
+-
+-fn verify_annotated_tag_signature(
+-    context: &GitTagContext<'_, '_>,
+-    tag_object: &str,
+-) -> Result<(SignatureReceipt, Vec<CommandReceipt>), Box<dyn Error>> {
+-    let tag_command = invoke_pinned_git(
+-        context,
+-        "kernel_git_tag_contents",
+-        &[
+-            "-C".to_owned(),
+-            "/work/kernel-source".to_owned(),
+-            "cat-file".to_owned(),
+-            "tag".to_owned(),
+-            tag_object.to_owned(),
+-        ],
+-        NetworkMode::None,
+-    )?;
+-    let tag_text = fs::read(context.run.path().join(&tag_command.stdout_path))?;
+-    let signed_tag = split_signed_git_tag(&tag_text)?;
+-    let payload_path = context
+-        .run
+-        .write_new("kernel-tag-payload", signed_tag.payload)?;
+-    let signature_path = context
+-        .run
+-        .write_new("kernel-tag-signature", signed_tag.signature)?;
+-    let gpgv = builder_tool(context.recipe, "gpgv")?;
+-    let public_key_sha256 = sha256_file(context.public_key)?;
+-    let payload_sha256 = sha256_file(&payload_path)?;
+-    let signature_sha256 = sha256_file(&signature_path)?;
+-    let signature = crate::signature::verify_signature_in_verified_local(
+-        context.podman,
+-        context.verifier_image,
+-        SignatureRequest {
+-            keyring_path: context.public_key,
+-            keyring_source_path: &context.recipe.recipe().kernel.signing_key_url,
+-            keyring_sha256: &public_key_sha256,
+-            signed_path: &payload_path,
+-            signed_sha256: &payload_sha256,
+-            detached_signature: Some((&signature_path, &signature_sha256)),
+-            expected_fingerprint: &context.recipe.recipe().kernel.signing_fingerprint,
+-            command_id: "kernel_tag_signature",
+-        },
+-        &gpgv.path,
+-        &gpgv.sha256,
+-        context.run,
+-    )?;
+-    Ok((
+-        signature.receipt().clone(),
+-        vec![tag_command, signature.command_receipt().clone()],
+-    ))
+-}
+-
+-fn verify_tag_commit_and_checkout(
+-    context: &GitTagContext<'_, '_>,
+-    tag_ref: &str,
+-) -> Result<Vec<CommandReceipt>, Box<dyn Error>> {
+-    let peeled_command = invoke_pinned_git(
+-        context,
+-        "kernel_git_peeled_commit",
+-        &[
+-            "-C".to_owned(),
+-            "/work/kernel-source".to_owned(),
+-            "rev-parse".to_owned(),
+-            format!("{tag_ref}^{{}}"),
+-        ],
+-        NetworkMode::None,
+-    )?;
+-    let peeled_commit = read_command_stdout(context.run, &peeled_command)?
+-        .trim()
+-        .to_owned();
+-    if !peeled_commit.eq_ignore_ascii_case(&context.recipe.recipe().kernel.commit) {
+-        return Err(invalid("signed kernel tag peels to a different commit"));
+-    }
+-    let mut commands = vec![peeled_command];
+-    commands.push(invoke_pinned_git(
+-        context,
+-        "kernel_git_fetch_commit",
+-        &[
+-            "-c".to_owned(),
+-            "http.followRedirects=false".to_owned(),
+-            "-C".to_owned(),
+-            "/work/kernel-source".to_owned(),
+-            "fetch".to_owned(),
+-            "--depth=1".to_owned(),
+-            "--no-tags".to_owned(),
+-            context.recipe.recipe().kernel.repository.clone(),
+-            context.recipe.recipe().kernel.commit.clone(),
+-        ],
+-        NetworkMode::Slirp4netns,
+-    )?);
+-    commands.push(invoke_pinned_git(
+-        context,
+-        "kernel_git_checkout",
+-        &[
+-            "-C".to_owned(),
+-            "/work/kernel-source".to_owned(),
+-            "checkout".to_owned(),
+-            "--detach".to_owned(),
+-            context.recipe.recipe().kernel.commit.clone(),
+-        ],
+-        NetworkMode::None,
+-    )?);
+-    Ok(commands)
+-}
+-
+ pub(crate) fn fetch_kernel_tarball(
+     recipe: &RecipeFile,
+     fetcher: &HttpsFetcher,
+@@ -1226,10 +903,6 @@
+     Ok(KernelSourceInputs {
+         kind: "kernel.org-signed-tarball".to_owned(),
+         revision: version,
+-        tag_object: None,
+-        tag_payload_path: None,
+-        tag_signature_path: None,
+-        tag_signature: None,
+         compressed_path: Some(compressed.cache_path.clone()),
+         compressed_size_bytes: Some(compressed.size_bytes),
+         compressed_sha256: Some(compressed.sha256.clone()),
+@@ -1255,10 +928,7 @@
+         signature_url,
+         signature_sha256,
+         release_source_date_epoch,
+-    } = recipe.recipe().kernel.source_variant()?
+-    else {
+-        return Err(invalid("tarball fetch received a Git-tag recipe"));
+-    };
++    } = recipe.recipe().kernel.source_variant()?;
+     if release_source_date_epoch != recipe.recipe().kernel.release_source_date_epoch {
+         return Err(invalid(
+             "kernel release epoch changed during variant resolution",
+@@ -1300,38 +970,6 @@
+         .iter()
+         .find(|tool| tool.name == name)
+         .ok_or_else(|| invalid(&format!("recipe omits the pinned builder {name} tool")))
+-}
+-
+-struct SignedGitTag<'a> {
+-    payload: &'a [u8],
+-    signature: &'a [u8],
+-}
+-
+-fn split_signed_git_tag(tag: &[u8]) -> Result<SignedGitTag<'_>, Box<dyn Error>> {
+-    const BEGIN: &[u8] = b"-----BEGIN PGP SIGNATURE-----";
+-    const END: &[u8] = b"-----END PGP SIGNATURE-----";
+-    let Some(begin) = tag.windows(BEGIN.len()).position(|window| window == BEGIN) else {
+-        return Err(invalid(
+-            "annotated kernel tag has no embedded OpenPGP signature",
+-        ));
+-    };
+-    let signature = &tag[begin..];
+-    let Some(end) = signature
+-        .windows(END.len())
+-        .position(|window| window == END)
+-    else {
+-        return Err(invalid("annotated kernel tag signature is incomplete"));
+-    };
+-    let trailing = &signature[end + END.len()..];
+-    if trailing.iter().any(|byte| !byte.is_ascii_whitespace()) {
+-        return Err(invalid(
+-            "annotated kernel tag has bytes after its signature",
+-        ));
+-    }
+-    Ok(SignedGitTag {
+-        payload: &tag[..begin],
+-        signature,
+-    })
+ }
+ 
+ pub(crate) fn read_command_stdout(
+--- a/firecracker-harness/images/terrabase-noble-podman-v1/README.md
++++ b/firecracker-harness/images/terrabase-noble-podman-v1/README.md
+@@ -1,10 +1,15 @@
+-# `terrabase-noble-podman-v1` image candidate
++# `terrabase-noble-podman-v1` archived image candidate
+ 
+-`recipe.toml` is the schema-2, recipe-version-2.0.0 entry point. It keeps the
+-candidate identity stable while separating the pinned Bookworm Rust CLI
+-compiler image from the pinned Ubuntu Noble image that owns `gpgv`, APT,
+-kernel-build, and ext4 tools. `recipe-v1.0.0.toml` is preserved as historical
+-input and is not interchangeable with the current recipe.
++This directory is retained as historical evidence. Both `recipe.toml` and
++`recipe-v1.0.0.toml` are archive-only and are not accepted by the current image
++builder. The active, separate candidate recipe is under
++`terrabase-noble-podman-v2/`; it remains unqualified and is not the harness
++runtime default.
++
++The archived v1 recipe described separate pinned Bookworm Rust CLI compilation
++and Ubuntu Noble image-builder environments. Its research packet and trust
++notes below record that candidate's unresolved inputs; they do not authorize a
++Fetch or Build run.
+ 
+ `packages.lock.json` is reserved for the guest package closure;
+ `builder-packages.lock.json` is reserved for the Ubuntu builder closure. Each
+--- a/firecracker-harness/images/terrabase-noble-podman-v2/README.md
++++ b/firecracker-harness/images/terrabase-noble-podman-v2/README.md
+@@ -1,7 +1,10 @@
+ # terrabase-noble-podman-v2 candidate
+ 
+-This is a separate, unqualified candidate. It keeps the v1 recipe and harness
+-profile available as historical inputs. The v2 kernel source is the
++This is a separate, unqualified candidate. The v1 recipe is preserved as an
++archive-only input, and the prior harness profile remains historical evidence.
++The current image builder accepts only the v2 recipe; the harness still uses
++its historical image pins unless a verified profile is selected explicitly.
++The v2 kernel source is the
+ kernel.org Linux 6.18.53 tarball, whose detached signature is verified against
+ the decompressed tar before extraction. Its pinned release timestamp supplies
+ `SOURCE_DATE_EPOCH`.
+--- a/firecracker-harness/images/terrabase-noble-podman-v2/recipe.toml
++++ b/firecracker-harness/images/terrabase-noble-podman-v2/recipe.toml
+@@ -18,10 +18,6 @@
+ custom_config_sha256 = ""
+ custom_config_diff_sha256 = ""
+ custom_config_review_status = "pending-upstream-config-review"
+-repository = ""
+-annotated_tag = ""
+-annotated_tag_object = ""
+-commit = ""
+ signature_policy = "required-before-extract"
+ signing_fingerprint = "647F28654894E3BD457199BE38DBBDC86092693E"
+ signing_key_url = "https://kernel.org/.well-known/openpgpkey/hu/e3n9xnm94c5apezqnj1pmrfuaoyfm8cf?l=gregkh"
+@@ -93,7 +89,7 @@
+ base_image_index_digest = "sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e"
+ debian_snapshot_url = "https://snapshot.debian.org/archive/debian/20260924T144048Z/"
+ source_root = "../../crates/fc-image-builder"
+-source_tree_sha256 = "c589be7087b754190bdd0ed198f7818c33f3033e0eea0a5d650939adaa61f7d6"
++source_tree_sha256 = "1bec6d5f101ed70179ac53024a1ff1370418d7786153df34275cad6bbaa38c39"
+ workspace_manifest_path = "../../Cargo.toml"
+ workspace_manifest_sha256 = "247ce2e3929de584c4f5dfa6ef1e188e334dbae8bd8ebe74cb5fa48ab77aafac"
+ cargo_lock_path = "../../Cargo.lock"

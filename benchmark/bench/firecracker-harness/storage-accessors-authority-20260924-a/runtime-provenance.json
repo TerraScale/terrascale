@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "run_id": "storage-accessors-authority-20260924-a",
+  "status": "passed",
+  "source_identity": {
+    "terrabase_head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "runtime_subject_repository_identity_sha256": "1ac3ab243ee9bcc282b02090c7c58c4623fae47e50b9cebe77420b34009d859a",
+    "frozen_source_snapshot": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-source-snapshot",
+      "manifest_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-source-snapshot/source.sha256",
+      "manifest_sha256": "3ae5cbbf54065440876c11ca6ee7a54e393e3a92caae68b29ae15a390f546b4d",
+      "manifest_entry_count": 86
+    },
+    "source_artifact_closure": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-replication-artifacts/source-closure.sha256",
+      "sha256": "3ae5cbbf54065440876c11ca6ee7a54e393e3a92caae68b29ae15a390f546b4d"
+    },
+    "artifact_map": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-replication-artifacts/artifact-map.txt",
+      "sha256": "eab8e45c7aac806a9fa0c10bf0f9cb5c00d0441e88786e0fa7a64f22883dbc54"
+    },
+    "artifacts_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-replication-artifacts/artifacts.sha256",
+      "sha256": "1155591df781dba86ca49853d98f8bd865986fda95c84d8b1b90d883e3054e62"
+    },
+    "relevant_source_files": {}
+  },
+  "test_result": {
+    "passed": 51,
+    "failed": 0,
+    "ignored": 0,
+    "exit_code": 0,
+    "test_summaries": [
+      {
+        "passed": 51,
+        "failed": 0,
+        "ignored": 0
+      }
+    ],
+    "successful_cases": [
+      "authority::tests::canonical_payload_rejects_invalid_inputs_before_signing",
+      "authority::tests::canonical_payload_signing_input_matches_production_verifier",
+      "authority::tests::one_time_record_recovers_exactly_and_missing_or_changed_record_fails_closed",
+      "authority::tests::rejects_re_signed_noncanonical_member_and_schema_rows",
+      "authority::tests::replay_certifies_exact_v1_and_v2_durable_bytes_only_for_current_receiver",
+      "authority::tests::replay_rejects_missing_signed_catalog_and_member",
+      "authority::tests::signed_scope_peer_and_catalog_are_exact",
+      "authority::tests::symlinked_inbox_root_fails_before_storage_open",
+      "authority::tests::two_origin_inboxes_coexist_and_reopen_without_scope_collision",
+      "authority::tests::v2_decoder_rejects_resigned_active_rows_and_signature_tampering",
+      "authority::tests::v2_encoder_requires_one_sorted_matching_active_binding_per_collection",
+      "authority::tests::v2_reopens_exactly_and_cannot_replace_an_installed_v1",
+      "authority::tests::v2_signed_active_catalog_and_domains_are_exact",
+      "journal::tests::durable_read_fails_closed_for_missing_or_corrupt_marker_and_needs_reopen",
+      "journal::tests::exact_durable_read_obeys_prefix_bounds_and_retains_work_permit",
+      "journal::tests::exact_durable_read_rejects_corrupt_marker_chunk_and_canonical_bindings",
+      "journal::tests::many_large_marked_groups_reopen_across_chunk_scan_pages",
+      "journal::tests::recovery_quarantines_multiple_unmarked_event_identities",
+      "journal::tests::reordered_synced_markers_recover_contiguous_prefix_and_detect_collision",
+      "journal::tests::retained_marker_cannot_be_relabelled_into_another_epoch",
+      "journal::tests::scan_byte_limit_must_fit_one_maximum_storage_row",
+      "journal::tests::synced_chunks_without_marker_do_not_advance_and_retry_reuses_them",
+      "journal::tests::synced_marker_before_cursor_update_recovers_but_missing_chunk_fails_closed",
+      "metadata::tests::canonical_digest_framing_matches_journal",
+      "metadata::tests::duplicate_change_bad_role_and_unclassified_extra_put_are_rejected",
+      "metadata::tests::format_two_pointer_and_d1_mismatches_fail_closed",
+      "metadata::tests::format_two_pointer_proves_same_frame_d1_and_preserves_full_source_bytes",
+      "metadata::tests::format_two_uses_logical_d1_ordinal_after_physical_wal_reordering",
+      "metadata::tests::incoming_proof_holds_semantic_byte_and_item_admission",
+      "metadata::tests::near_limit_d1_is_preserved_as_exact_bytes_under_format_two",
+      "metadata::tests::raw_delete_forged_binding_and_bad_causal_order_are_rejected",
+      "metadata::tests::record_format_is_explicit_and_v1_primary_remains_v1_only",
+      "metadata::tests::role_key_value_and_digest_mismatches_fail_closed",
+      "metadata::tests::truncated_sections_fail_before_count_driven_allocation",
+      "metadata::tests::two_collections_share_document_id_with_distinct_schema_bindings",
+      "metadata::tests::unknown_role_is_rejected_even_with_valid_checksum",
+      "tests::causal_delete_prevents_late_resurrection_and_exposes_concurrent_put",
+      "tests::complete_group_over_common_admission_cap_is_rejected",
+      "tests::concurrent_join_is_associative_commutative_and_idempotent",
+      "tests::cursor_hard_caps_reject_unbounded_gap_configuration",
+      "tests::duplicate_collision_epoch_and_gap_limits_do_not_advance_durable",
+      "tests::later_causal_write_removes_observed_siblings_but_keeps_concurrent_one",
+      "tests::pending_count_limit_rejects_reordered_backlog_without_advancing",
+      "tests::recovery_accepts_only_applied_prefix_within_durable_prefix",
+      "tests::reordered_receipt_and_sync_only_advance_contiguous_prefix",
+      "tests::same_document_id_in_two_collections_is_independent",
+      "tests::same_dot_with_different_bytes_or_digest_is_corruption",
+      "tests::sibling_limit_rejects_without_mutating_inputs",
+      "tests::transaction_expiry_is_neither_a_causal_clock_nor_merge_order",
+      "tests::unsupported_merge_policy_is_rejected_before_document_apply",
+      "tests::wrapper_can_exceed_small_wal_but_full_transfer_obeys_own_cap"
+    ]
+  },
+  "payload": {
+    "kind": "primary guest test executable",
+    "host_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-replication-artifacts/tb_replication",
+    "sha256": "7616097aa6ccac4f2fcddc22a912abf7c14c98a206156dc87c1599893c4c0340",
+    "supplemental_payloads": []
+  },
+  "runtime_identity": {
+    "command": "nice -n 19 ionice -c 3 /tmp/fch-runtime-repo-final-20260924/fc-harness run --benchmark-repo /home/mariogk/Projects/TerraScale/ts-benchmark --subject-repo /home/mariogk/Projects/TerraScale/terrabase --program /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-replication-artifacts/tb_replication --run-id storage-accessors-authority-20260924-a --timeout-seconds 300 -- --test-threads=1 --nocapture",
+    "guest_args": [
+      "--test-threads=1",
+      "--nocapture"
+    ],
+    "test_timeout_seconds": 300,
+    "controller": {
+      "path": "/tmp/fch-runtime-repo-final-20260924/fc-harness",
+      "sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20"
+    },
+    "guest_agent": {
+      "path": "/tmp/fch-runtime-repo-final-20260924/fc-guest-agent",
+      "sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb"
+    },
+    "firecracker": {
+      "version": "1.15.1",
+      "sha256": "9d9ec5ff68a23ce54a424b15ec097c7204a3f206884c092d570b75529811bd57",
+      "kvm_api_version": 12
+    },
+    "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+    "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+    "rootfs_release": "Ubuntu 24.04.3 LTS (Noble Numbat)",
+    "kernel_rootfs_provenance": "kernel and rootfs SHA-256 pinned from historical local manifest; upstream artifact URLs/version metadata are not available, so provenance is unqualified",
+    "guest": {
+      "vcpu_count": 4,
+      "memory_mib": 8192,
+      "swap_disabled": true,
+      "network": "disabled; no host network or unisolated service fixture is attached"
+    },
+    "guest_elapsed_ms": 25276,
+    "harness_elapsed_ms": 33915,
+    "test_specific_cgroup_limit_bytes": null,
+    "cgroup_note": "No test-specific child cgroup wrapper was used; this one-binary storage/authority packet ran directly in the fixed 8192 MiB, swap-disabled Firecracker guest. Do not claim the replication-only 6 GiB child cap."
+  },
+  "evidence": {
+    "run_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-accessors-authority-20260924-a/run-manifest.json",
+      "sha256": "b89b5fa9e7099e66ae83193bce49a166a13f483fb928d218138221185cadb390"
+    },
+    "guest_output_archive": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-accessors-authority-20260924-a/guest-output.tar.gz",
+      "sha256": "ca9de863a228c747067f891d6652aacc46861741631fe8202e16084cf08dff8d"
+    },
+    "archived_stdout_sha256": "a00e0463f57c38f1c71b4dc559bf971741126cf1131f882bd428258e713e9221",
+    "archived_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archived_guest_manifest_sha256": "2864da3d1e64e1e011078cfdad1bd811abb4b00a158c06630d918a93d6ac3857",
+    "firecracker_log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-accessors-authority-20260924-a/firecracker.log",
+      "sha256": "5e959e1a868eb90b4c258187ca2c5c3f1cfcdb7a5b8fc89e1a729897bbac700b"
+    },
+    "firecracker_internal_log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-accessors-authority-20260924-a/firecracker-internal.log",
+      "sha256": "aabbf225fcd484ff3ec7d91cf811c5501b756b9f23e063dcf90bc70779be2f44"
+    },
+    "firecracker_stderr_log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-accessors-authority-20260924-a/firecracker.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}

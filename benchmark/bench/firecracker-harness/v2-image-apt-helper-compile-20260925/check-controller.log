@@ -1,0 +1,20 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness'
+nice -n 19 ionice -c 3 cargo check --locked --jobs 2 -p fc-harness -p fc-guest-agent
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling getrandom v0.4.3
+   Compiling rustix v1.1.5
+    Checking bitflags v2.13.2
+   Compiling syn v3.0.6
+    Checking memchr v2.8.3
+    Checking linux-raw-sys v0.12.1
+    Checking serde_json v1.0.151
+   Compiling serde_derive v1.0.229
+    Checking fastrand v2.5.0
+    Checking once_cell v1.21.4
+    Checking tempfile v3.27.0
+    Checking serde v1.0.229
+    Checking fc-harness v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-harness)
+    Checking fc-guest-agent v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-guest-agent)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.92s
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness'

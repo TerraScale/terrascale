@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "run_id": "terrabase-fast-20260925-r12-env",
+  "checked_utc": "2026-09-25T19:36:13.479152+00:00",
+  "source_head": "352d9f61185d1b685e3032519579040d169ad47d",
+  "source_file_count": 138,
+  "source_manifest_sha256": "5ebb148919504fda86502bb694952cf9d8caf44abccd7837e534bfa649693d59",
+  "artifact_receipt_sha256": "c3020eab2be5dc643e6c43401908c1cdf4d9022cbd380cd90d56e8f1456b1750",
+  "artifact_digest_list_sha256": "536b06e3735a38af809e04376184d5017a221a65a87afc9eab7b135e3b9848a6",
+  "checks": {
+    "four_host_cpus_available": true,
+    "fast_host_memory_at_least_10_gib": true,
+    "disk_rootfs_plus_512_mib": true,
+    "kvm_read_write": true,
+    "no_existing_firecracker": true,
+    "no_harness_or_wrapper": true,
+    "no_cargo_rustc_sccache": true,
+    "no_matching_cgroups": true,
+    "new_output_absent": true,
+    "run_input_is_unique": true,
+    "firecracker_digest_matches": true,
+    "kernel_digest_matches": true,
+    "rootfs_digest_matches": true,
+    "subject_overlay_stable": true,
+    "benchmark_runner_source_stable": true,
+    "staged_artifacts_match": true,
+    "wrapper_is_accepted_bb61": true,
+    "controller_identity_verified": true,
+    "guest_agent_identity_verified": true,
+    "payload_client_process_matches_foundation_receipt": true,
+    "payload_tb-server_matches_foundation_receipt": true,
+    "payload_terrabase-init_matches_foundation_receipt": true,
+    "payload_terrabase-keygen_matches_foundation_receipt": true
+  },
+  "all_checks_passed": true,
+  "mem_available_bytes": 17087180800,
+  "required_fast_mem_available_bytes": 10737418240,
+  "required_rustfs_pair_mem_available_bytes": 19327352832,
+  "host_allowed_cpus": "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45",
+  "selected_guest_host_cpus": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "guest_vcpus": 4,
+  "guest_memory_mib": 8192,
+  "guest_swap_disabled": true,
+  "host_swap_total_bytes": 34359734272,
+  "guest_network": "disabled; no host network or unisolated service fixture is attached",
+  "host_priority": "nice -n 19; ionice -c 3",
+  "output_filesystem": "xfs",
+  "output_filesystem_free_bytes": 82122723328,
+  "required_extra_disk_bytes": 3220160000,
+  "firecracker_processes_before_launch": [],
+  "active_harness_or_wrapper_processes_before_launch": [],
+  "build_processes_before_launch": [],
+  "matching_cgroups_before_launch": [],
+  "image_inputs": {
+    "firecracker_sha256": "9d9ec5ff68a23ce54a424b15ec097c7204a3f206884c092d570b75529811bd57",
+    "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+    "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+    "upstream_provenance": "historical local manifest only; upstream artifact URLs/version metadata unavailable; unqualified"
+  },
+  "subject_overlay_verification": {
+    "exit_code": 0,
+    "stdout": "./.gitignore: OK\n./AGENTS.md: OK\n./Cargo.lock: OK\n./Cargo.toml: OK\n./GOAL.md: OK\n./Makefile: OK\n./crates/tb-core/Cargo.toml: OK\n./crates/tb-core/src/error.rs: OK\n./crates/tb-core/src/lib.rs: OK\n./crates/tb-core/src/memory.rs: OK\n./crates/tb-core/src/types.rs: OK\n./crates/tb-document/Cargo.toml: OK\n./crates/tb-document/src/distributed.rs: OK\n./crates/tb-document/src/distributed_apply.rs: OK\n./crates/tb-document/src/distributed_producer.rs: OK\n./crates/tb-document/src/distributed_read.rs: OK\n./crates/tb-document/src/distributed_state.rs: OK\n./crates/tb-document/src/lib.rs: OK\n./crates/tb-document/src/local_v1.rs: OK\n./crates/tb-document/src/producer.rs: OK\n./crates/tb-format/Cargo.toml: OK\n./crates/tb-format/src/document.rs: OK\n./crates/tb-format/src/document_v2.rs: OK\n./crates/tb-format/src/envelope.rs: OK\n./crates/tb-format/src/lib.rs: OK\n./crates/tb-format/src/remote.rs: OK\n./crates/tb-format/src/segment.rs: OK\n./crates/tb-format/src/wal.rs: OK\n./crates/tb-object/Cargo.toml: OK\n./crates/tb-object/src/client.rs: OK\n./crates/tb-object/src/error.rs: OK\n./crates/tb-object/src/lib.rs: OK\n./crates/tb-object/src/types.rs: OK\n./crates/tb-protocol/Cargo.toml: OK\n./crates/tb-protocol/build.rs: OK\n./crates/tb-protocol/src/admission.rs: OK\n./crates/tb-protocol/src/batch.rs: OK\n./crates/tb-protocol/src/handshake.rs: OK\n./crates/tb-protocol/src/lib.rs: OK\n./crates/tb-protocol/src/security.rs: OK\n./crates/tb-protocol/src/sync_codec.rs: OK\n./crates/tb-protocol/src/timeout.rs: OK\n./crates/tb-replication/Cargo.toml: OK\n./crates/tb-replication/src/authority.rs: OK\n./crates/tb-replication/src/cursor.rs: OK\n./crates/tb-replication/src/event.rs: OK\n./crates/tb-replication/src/journal.rs: OK\n./crates/tb-replication/src/lib.rs: OK\n./crates/tb-replication/src/merge.rs: OK\n./crates/tb-replication/src/metadata.rs: OK\n./crates/tb-replication/src/tests.rs: OK\n./crates/tb-server/Cargo.toml: OK\n./crates/tb-server/src/bin/terrabase-init.rs: OK\n./crates/tb-server/src/client_auth.rs: OK\n./crates/tb-server/src/client_http.rs: OK\n./crates/tb-server/src/client_json.rs: OK\n./crates/tb-server/src/config.rs: OK\n./crates/tb-server/src/distributed_runtime.rs: OK\n./crates/tb-server/src/document_service.rs: OK\n./crates/tb-server/src/http.rs: OK\n./crates/tb-server/src/lib.rs: OK\n./crates/tb-server/src/lifecycle.rs: OK\n./crates/tb-server/src/local_v1_runtime.rs: OK\n./crates/tb-server/src/main.rs: OK\n./crates/tb-server/src/member_control.rs: OK\n./crates/tb-server/src/memory_metrics.rs: OK\n./crates/tb-server/src/memory_pressure.rs: OK\n./crates/tb-server/src/replication_config.rs: OK\n./crates/tb-server/src/replication_sender.rs: OK\n./crates/tb-server/src/replication_sender_tls.rs: OK\n./crates/tb-server/src/replication_server.rs: OK\n./crates/tb-server/src/state.rs: OK\n./crates/tb-server/src/terrabase_keygen.rs: OK\n./crates/tb-server/tests/client_decode_allocations.rs: OK\n./crates/tb-server/tests/client_process.rs: OK\n./crates/tb-server/tests/distributed_client_process.rs: OK\n./crates/tb-server/tests/fast.rs: OK\n./crates/tb-server/tests/replication_process.rs: OK\n./crates/tb-server/tests/server_process.rs: OK\n./crates/tb-server/tests/slow.rs: OK\n./crates/tb-server/tests/support/document/distributed_open.rs: OK\n./crates/tb-server/tests/support/document/distributed_source.rs: OK\n./crates/tb-server/tests/support/document/document_contract.rs: OK\n./crates/tb-server/tests/support/document/fast.rs: OK\n./crates/tb-server/tests/support/document/local_v1_contract.rs: OK\n./crates/tb-server/tests/support/document/receiver_fast.rs: OK\n./crates/tb-server/tests/support/document/receiver_fixture.rs: OK\n./crates/tb-server/tests/support/document/receiver_slow.rs: OK\n./crates/tb-server/tests/support/document/slow.rs: OK\n./crates/tb-server/tests/support/format/fast.rs: OK\n./crates/tb-server/tests/support/format/slow.rs: OK\n./crates/tb-server/tests/support/object/slow.rs: OK\n./crates/tb-server/tests/support/server/fast.rs: OK\n./crates/tb-server/tests/support/server/fixture.rs: OK\n./crates/tb-server/tests/support/server/member_control_managed.rs: OK\n./crates/tb-server/tests/support/server/slow.rs: OK\n./crates/tb-server/tests/support/storage/document_mode_contract.rs: OK\n./crates/tb-server/tests/support/storage/fast.rs: OK\n./crates/tb-server/tests/support/storage/floor_initialization_contract.rs: OK\n./crates/tb-server/tests/support/storage/local_document_mode_contract.rs: OK\n./crates/tb-server/tests/support/storage/post_sync_apply_contract.rs: OK\n./crates/tb-server/tests/support/storage/prepared_batch_contract.rs: OK\n./crates/tb-server/tests/support/storage/retained_lookup_contract.rs: OK\n./crates/tb-server/tests/support/storage/retry_deadline_contract.rs: OK\n./crates/tb-server/tests/support/storage/scan_clone_contract.rs: OK\n./crates/tb-server/tests/support/storage/scan_contract.rs: OK\n./crates/tb-server/tests/support/storage/slow.rs: OK\n./crates/tb-server/tests/support/storage/staged_batch_contract.rs: OK\n./crates/tb-server/tests/support/storage/storage_contract.rs: OK\n./crates/tb-storage/Cargo.toml: OK\n./crates/tb-storage/src/floor.rs: OK\n./crates/tb-storage/src/lib.rs: OK\n./crates/tb-storage/src/local.rs: OK\n./crates/tb-storage/src/local_mode.rs: OK\n./crates/tb-storage/src/mode.rs: OK\n./crates/tb-storage/src/run.rs: OK\n./crates/tb-storage/src/work.rs: OK\n./docs/acceptance.md: OK\n./docs/architecture.md: OK\n./docs/coordination-test-runtime-20260925.md: OK\n./docs/distributed-document-apply.md: OK\n./docs/distributed-document-open.md: OK\n./docs/distributed-document-write-apply.md: OK\n./docs/distributed-protocol.md: OK\n./docs/document-contract.md: OK\n./docs/document-state-v2.md: OK\n./docs/engineering-plan.md: OK\n./docs/evidence-ledger.md: OK\n./docs/replication-v2-replay.md: OK\n./docs/server-data-plane-boundary.md: OK\n./docs/server-http-json-api-key-provisional.md: OK\n./docs/server-http-json-first-caller-decision.md: OK\n./docs/storage-format.md: OK\n./docs/storage-prepared-batch.md: OK\n./docs/storage-reclamation.md: OK\n./mise.toml: OK\n./proto/terrabase/v1/replication.proto: OK\n./rust-toolchain.toml: OK\n",
+    "stderr": ""
+  },
+  "benchmark_runner_verification": {
+    "source_inventory_sha256": "280f9d92b98fa91a20943d815d6b7bc1da913b1631bed3301e2a81e80525b8d2",
+    "exit_code": 0,
+    "stdout": "./.forgejo/workflows/ci.yml: OK\n./Makefile: OK\n./README.md: OK\n./firecracker-harness/Cargo.lock: OK\n./firecracker-harness/Cargo.toml: OK\n./firecracker-harness/Makefile: OK\n./firecracker-harness/README.md: OK\n./firecracker-harness/crates/fc-guest-agent/Cargo.toml: OK\n./firecracker-harness/crates/fc-guest-agent/src/main.rs: OK\n./firecracker-harness/crates/fc-harness/Cargo.toml: OK\n./firecracker-harness/crates/fc-harness/src/image_profile.rs: OK\n./firecracker-harness/crates/fc-harness/src/main.rs: OK\n./firecracker-harness/crates/fc-harness/src/network.rs: OK\n./firecracker-harness/crates/fc-image-builder/Cargo.toml: OK\n./firecracker-harness/crates/fc-image-builder/src/apt.rs: OK\n./firecracker-harness/crates/fc-image-builder/src/input.rs: OK\n./firecracker-harness/crates/fc-image-builder/src/lib.rs: OK\n./firecracker-harness/crates/fc-image-builder/src/main.rs: OK\n./firecracker-harness/crates/fc-image-builder/src/manifest.rs: OK\n./firecracker-harness/crates/fc-image-builder/src/package_lock.rs: OK\n./firecracker-harness/crates/fc-image-builder/src/recipe.rs: OK\n./firecracker-harness/crates/fc-image-builder/src/run_dir.rs: OK\n./firecracker-harness/crates/fc-image-builder/src/signature.rs: OK\n./firecracker-harness/crates/fc-image-builder/src/tool.rs: OK\n./firecracker-harness/images/terrabase-noble-podman-v1/README.md: OK\n./firecracker-harness/images/terrabase-noble-podman-v1/candidate-package-research.json: OK\n./firecracker-harness/images/terrabase-noble-podman-v1/recipe.toml: OK\n./firecracker-harness/pins.toml: OK\n./firecracker-harness/rust-toolchain.toml: OK\n./mise.toml: OK\n./rust-toolchain.toml: OK\n",
+    "stderr": ""
+  },
+  "staged_artifact_verification": {
+    "exit_code": 0,
+    "stdout": "payloads/client_process: OK\npayloads/tb-server: OK\npayloads/terrabase-init: OK\npayloads/terrabase-keygen: OK\nprogram/client_finite_cgroup_runner: OK\n",
+    "stderr": ""
+  },
+  "build_gate_limitations": {
+    "all_required_build_gates_pass": false,
+    "clippy_default": "failed, 16 strict diagnostics",
+    "clippy_slow": "skipped"
+  },
+  "notes": "Single authorized R12 Fast functional run; one VM; not multi-region acceptance or benchmark qualification."
+}

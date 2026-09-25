@@ -1,0 +1,35 @@
+2026-09-24T09:08:48.279539403 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:main:INFO] Running Firecracker v1.15.1
+2026-09-24T09:08:48.281249947 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:main:INFO] Listening on API socket ("/tmp/fch-OwbPoW/api.sock").
+2026-09-24T09:08:48.281567876 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] API server started.
+2026-09-24T09:08:48.294218674 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T09:08:48.294392958 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:08:48.294510039 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T09:08:48.294567446 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T09:08:48.294740764 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/vm-inputs/vmlinux\"}".
+2026-09-24T09:08:48.294826128 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:08:48.294934600 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/crates/fc-harness/../../../bench/firecracker-harness/p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b/guest-rootfs.ext4\"}".
+2026-09-24T09:08:48.295117996 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:08:48.295258676 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-OwbPoW/vsock.sock\"}".
+2026-09-24T09:08:48.295568163 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:08:48.295708499 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T09:08:48.327316962 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:main:INFO] Artificially kick devices
+2026-09-24T09:08:48.327423670 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T09:08:48.327471741 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T09:08:48.327522992 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T09:08:48.327643258 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T09:08:48.327780138 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:08:48.391838970 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:48.392075697 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:51.695534604 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:51.695662894 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:51.700809413 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:51.700924161 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:51.703818330 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:51.703933608 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:51.709532953 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:51.709707234 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:51.712553082 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:51.712677222 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:51.717092842 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:51.717212530 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:08:52.986259932 [p04-sqlite-1024-tiny-checkpoint-ctime-20260924-b:fc_vcpu 3:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

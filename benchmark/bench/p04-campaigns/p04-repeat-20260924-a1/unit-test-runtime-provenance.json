@@ -1,0 +1,113 @@
+{
+  "build_artifact_map_sha256": "dea3c5407707c42a629c4fc96729bdd166ac90407e4ddad7b10552e736f2c6b0",
+  "compiled_source_revisions": {
+    "packet_inventory_entry_count": 81,
+    "packet_inventory_verification": "all entries passed sha256sum -c before guest launch",
+    "terrabase_head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "ts_benchmark_head": "5685f163bb7e9339e8eb0c839fe2512aaf562648"
+  },
+  "guest_args": [
+    "--test-threads=1",
+    "--nocapture"
+  ],
+  "guest_output_archive_sha256": "f36a6ec42999e1932a974f55e97d5c9927a2a0263ddba76db48766f92015a5d0",
+  "guest_runtime": {
+    "elapsed_ms": 949,
+    "firecracker_sha256": "9d9ec5ff68a23ce54a424b15ec097c7204a3f206884c092d570b75529811bd57",
+    "firecracker_version": "1.15.1",
+    "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+    "memory_mib": 8192,
+    "network": "disabled; no host network or unisolated service fixture is attached",
+    "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+    "swap_disabled": true,
+    "vcpu_count": 4,
+    "workload_timeout_seconds": 300
+  },
+  "guest_test_result": {
+    "failed": 0,
+    "ignored": 0,
+    "passed": 6
+  },
+  "host_command_argv": [
+    "nice",
+    "-n",
+    "19",
+    "ionice",
+    "-c",
+    "3",
+    "/tmp/fch-runtime-repo-final-20260924/fc-harness",
+    "run",
+    "--benchmark-repo",
+    "/home/mariogk/Projects/TerraScale/ts-benchmark",
+    "--subject-repo",
+    "/home/mariogk/Projects/TerraScale/terrabase",
+    "--program",
+    "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-gates-20260924T183022Z/payloads/terrabase-sqlite-baseline-tests",
+    "--run-id",
+    "p04-driver-gates-unit-20260924T184508Z",
+    "--timeout-seconds",
+    "300",
+    "--output",
+    "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-gates-unit-20260924T184508Z",
+    "--",
+    "--test-threads=1",
+    "--nocapture"
+  ],
+  "measured_program_sha256": "1679d397b482bf4df896ee6dac8a84ab4c013d9837d275782b60149abb0c71c8",
+  "operator_log_sha256": "171dd889d2f3a7f4e74a49f20cc47082d386f7776c5b5e7ac7dcab963bfe459f",
+  "packet_source_inventory_sha256": "b5f251d333300086f15bba8df583ad6e267c7012f8975d5f892c459aff07969e",
+  "run_id": "p04-driver-gates-unit-20260924T184508Z",
+  "run_manifest_sha256": "b97e7fe7ac124ecd7b09907c8cdfae2db0b8e4410c053032a162ea42f52d1bfb",
+  "runtime_checkout_observation": {
+    "dirty": true,
+    "head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "identity_sha256": "7ece1724a7ba264ad1ca6ce2aa71bd20d8bf14846d5e2f5d71ee311082d9463f",
+    "path": "/home/mariogk/Projects/TerraScale/terrabase",
+    "post_seal_packet_differences": [
+      {
+        "packet_sha256": "a3009f56062a06ad7fa58d418a5ed0b1946812f7fd020b1209967b14f29f2caf",
+        "path": "terrabase/crates/tb-document/Cargo.toml",
+        "runtime_checkout_sha256": "44e1452af677b2573c51eb0bf9aa3933002fa4cbb2235840fa9971ab48d8dc6e"
+      },
+      {
+        "packet_sha256": "f1607666a2b1550e25e84c4dc5a5989a4d30067b0bc24ad278be6746f22ed910",
+        "path": "terrabase/crates/tb-document/src/distributed.rs",
+        "runtime_checkout_sha256": "4d22534be5f3fb9d7f4badd6f84f8e9a119e8104dae6f587e94c884f88d1146e"
+      },
+      {
+        "packet_sha256": "848a7b04fd0cc432f14e26130d0d616e3e54fde5bd92c71eebde1097c3bc14a1",
+        "path": "terrabase/crates/tb-document/src/lib.rs",
+        "runtime_checkout_sha256": "8c6558688a9272ec38dff82772306e3866aa463922e7ece11b544e5ff94d3428"
+      },
+      {
+        "packet_sha256": "bd1a8fe15248ccef3aa3ccc33c7bc638b6b1807b704d64f142a1e2bff88f133f",
+        "path": "terrabase/crates/tb-storage/tests/document_mode_contract.rs",
+        "runtime_checkout_sha256": "d71bf0ce466aedb26da7b55f95907dfc721e538d5ad7b281fb895891d69803e8"
+      },
+      {
+        "packet_sha256": "361d6013830efa0e40d51816ad5c14c987da285e54e6c1f9598ebcd614ae8ecb",
+        "path": "terrabase/crates/tb-storage/tests/staged_batch_contract.rs",
+        "runtime_checkout_sha256": "9eff19bea191f7bc8147d6505325826f1ef396bc99d7fa233bc471f9e8609ef7"
+      },
+      {
+        "packet_sha256": "b3d08a1d988c66092fb6f1d1b7624d35d5f41a4e5b63d64bebdcfe61b100d360",
+        "path": "ts-benchmark/terra-rust/src/main.rs",
+        "runtime_checkout_sha256": "879ae9f81f6c34d0408e2295ce3e4f6fe5dd5bf93b502697b2a5626795803366"
+      }
+    ],
+    "relationship": "runtime checkout observation only; it is not the compiled-source identity",
+    "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "untracked_file_count": 92
+  },
+  "schema_version": 1,
+  "source_boundary_note": "The guest received the sealed immutable test ELF; no TerraBase or benchmark source files were staged into the guest. Compiled-source identity is the complete verified packet inventory listed above. Live checkout differences are recorded separately.",
+  "source_paths": {
+    "build_artifact_map": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-gates-20260924T183022Z/artifact-map.md",
+    "guest_output_archive": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-gates-unit-20260924T184508Z/guest-output.tar.gz",
+    "measured_program": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-gates-20260924T183022Z/payloads/terrabase-sqlite-baseline-tests",
+    "operator_log": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-gates-unit-20260924T184508Z.operator.log",
+    "packet_source_inventory": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-current-engine-final-20260924T183724Z/packet-source.sha256",
+    "run_manifest": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-gates-unit-20260924T184508Z/run-manifest.json"
+  },
+  "staged_source_files": false
+}

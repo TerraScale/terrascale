@@ -1,0 +1,42 @@
+{
+  "cgroup_probe": {
+    "matching_cgroup_directories": [],
+    "patterns": [
+      "tb-pa",
+      "firecracker",
+      "fch"
+    ],
+    "searched_roots": [
+      "/sys/fs/cgroup"
+    ],
+    "terrascale_slice_cgroup_procs_nonempty": []
+  },
+  "evidence": {
+    "guest_02_failure_diagnosis_sha256": "a46a7f60db1835aa4c98b2a363f75479f09938f10a5dfbedf4859a39b25002df",
+    "guest_04_failure_diagnosis_sha256": "bf2284f19b0b463d183d9e4c1b00ebe0a3550168df8175e34aa067bf5c7c54b7"
+  },
+  "ledger": {
+    "all_completed_guest_rootfs_copy_absent": true,
+    "completed_rows": 25,
+    "lines": 50,
+    "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-packet-a-authority-local-v1-environment-runtime-20260924T211239Z/runtime-ledger.jsonl",
+    "sha256": "7c04ef60c91df8d5faafb4fc283c6512df8b0cc147f87be7e0fab5cac48b932d"
+  },
+  "mount_probe": {
+    "broad_virtiofs_observation": "Only unrelated incus_secrets virtiofs at /run/homelab/secrets was observed by an earlier broad probe.",
+    "probe": "findmnt targets/sources filtered for tb-pa-env- or firecracker",
+    "task_mount_matches": []
+  },
+  "observed_at_utc": "2026-09-24T22:14:04Z",
+  "process_probe": {
+    "exact_task_process_matches": [],
+    "probe": "ps -eo pid=,comm=,args= filtered for comm firecracker/fc-guest-agent or python3 run-component-queue-v3.py"
+  },
+  "queue_session": {
+    "exit_code": 0,
+    "id": 53979
+  },
+  "run_owned_rootfs_copies_remaining": [],
+  "schema": "terrabase-firecracker-quiescence/v1",
+  "task_cgroups_remaining": []
+}

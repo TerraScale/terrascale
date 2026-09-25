@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "terrabase-fast-20260925-r9-env-retry2",
+  "checked_utc": "2026-09-25T18:20:42.590160+00:00",
+  "controller_exit_code": 1,
+  "guest_status": "program_failed",
+  "guest_exit_code": 1,
+  "test_summary": "21 passed; 1 failed; 0 ignored",
+  "failed_test": "server_fast::replication_process::signed_v2_member_receives_document_and_reopens_public_point_read",
+  "failure_cause": "Sync stream admission returned ResourceExhausted: memory controller is busy; retry admission",
+  "selected_wrapper_sha256": "bb61a354a9deb49e3d1ef09c74f459af85cb65034d835d0be805441cecd26d04",
+  "firecracker_pid_recorded": 3825689,
+  "recorded_pid_comm_after_run": null,
+  "no_run_firecracker_process": true,
+  "no_harness_or_wrapper_process": true,
+  "no_host_terrabase_test_cgroup": true,
+  "guest_cgroup_cleanup": {
+    "status": "failed",
+    "limit_bytes": 6442450944,
+    "child_removed": true,
+    "remaining_child_processes": "",
+    "timed_out": false,
+    "memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0"
+  },
+  "temporary_firecracker_paths": {
+    "/tmp/fc-payload-dm6JCg": "absent",
+    "/tmp/fc-payload-Ebwaoq": "absent",
+    "/tmp/fc-payload-zxx9qB": "absent",
+    "/tmp/fch-ichf8I": "absent"
+  },
+  "rootfs_loop_attachment": "none",
+  "run_mounts": [],
+  "guest_archive_valid": true,
+  "guest_archive_files": [
+    "./finite-cgroup-receipt.json",
+    "./guest-manifest.json",
+    "./stderr.log",
+    "./stdout.log"
+  ],
+  "output_preserved": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r9-env-retry2",
+  "guest_archive_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r9-env-retry2/guest-output.tar.gz",
+  "run_manifest_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r9-env-retry2/run-manifest.json",
+  "rerun_performed": false,
+  "cleanup_claim": "run-owned Firecracker, harness, wrapper, guest test cgroup, loop, and temporary staging resources are quiescent/removed; full output evidence retained",
+  "runtime_process_check": {
+    "checked_utc": "2026-09-25T18:20:42.590160+00:00",
+    "recorded_firecracker_pid": 3825689,
+    "recorded_firecracker_pid_present": false,
+    "recorded_pid_comm_after_run": null,
+    "exact_comm_names_checked": [
+      "firecracker",
+      "fc-harness",
+      "fc-guest-agent"
+    ],
+    "exact_comm_matches": [],
+    "method": "recorded PID absent from /proc; ps process comm matched exact basenames only"
+  }
+}

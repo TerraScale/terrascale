@@ -1,0 +1,125 @@
+{
+  "all_config_and_layer_descriptor_hashes_verified": true,
+  "binary_layer_candidate": {
+    "actual_size_bytes": 99409331,
+    "diff_id": "sha256:40fc2ce12bb7b67cea697f2f544d944f944c731ae2753b0974ce32fd17c26337",
+    "digest": "sha256:eebc17ed47f769bbb78cec6f2bcd5c1719e53102818d9455faf1797bf6e99392",
+    "expected_size_bytes": 99409331,
+    "history_created_by": "COPY /build/rustfs /usr/bin/rustfs # buildkit",
+    "ordinal": 4,
+    "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/rustfs-oci-extraction-20260925-r2-pinned/oci-layout/rustfs/blobs/sha256/eebc17ed47f769bbb78cec6f2bcd5c1719e53102818d9455faf1797bf6e99392",
+    "role": "layer-4",
+    "sha256_verified": true
+  },
+  "binary_layer_history_match_count": 1,
+  "config": {
+    "actual_size_bytes": 5402,
+    "digest": "sha256:1e81764caba3be454540c061eb50beeb7706b3c46ecec9b4243498b585760c1b",
+    "expected_size_bytes": 5402,
+    "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/rustfs-oci-extraction-20260925-r2-pinned/oci-layout/rustfs/blobs/sha256/1e81764caba3be454540c061eb50beeb7706b3c46ecec9b4243498b585760c1b",
+    "role": "config",
+    "sha256_verified": true
+  },
+  "config_architecture": "amd64",
+  "config_os": "linux",
+  "destination_manifest_sha256": "ba0a1b53e36f321c0d46f3867104abef169f7bc59c467c664ddac87e7ddc9a8b",
+  "expected_child_manifest_sha256": "ba0a1b53e36f321c0d46f3867104abef169f7bc59c467c664ddac87e7ddc9a8b",
+  "image_config_labels": {
+    "build-date": "",
+    "description": "RustFS is a distributed object storage system written in Rust, supporting erasure coding, multi-tenant management, and observability.",
+    "license": "Apache-2.0",
+    "maintainer": "RustFS Team <dev@rustfs.com>",
+    "name": "RustFS",
+    "org.opencontainers.image.title": "RustFS,org.opencontainers.image.description=RustFS distributed object storage system,org.opencontainers.image.version=1.0.0,org.opencontainers.image.revision=d47f54bfb2f39f48bd1adda334bd27e151fe85b8,org.opencontainers.image.source=https://github.com/rustfs/rustfs,org.opencontainers.image.created=2026-09-16T10:05:14Z,org.opencontainers.image.build-type=release",
+    "release": "1.0.0",
+    "summary": "High-performance distributed object storage system compatible with S3 API",
+    "url": "https://rustfs.com",
+    "vcs-ref": "",
+    "vendor": "RustFS Team",
+    "version": "v1.0.0"
+  },
+  "layers": [
+    {
+      "actual_size_bytes": 3846391,
+      "diff_id": "sha256:34884abbe92863fce933ed7c39c0e045631af0ed86d5cc0dfbdf9fdca426ce3c",
+      "digest": "sha256:55afa1ecc21d2bb5e5045f32dafee56272ffd89860bac26f6c32123439af26a4",
+      "expected_size_bytes": 3846391,
+      "history_created_by": "ADD alpine-minirootfs-3.24.1-x86_64.tar.gz / # buildkit",
+      "ordinal": 1,
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/rustfs-oci-extraction-20260925-r2-pinned/oci-layout/rustfs/blobs/sha256/55afa1ecc21d2bb5e5045f32dafee56272ffd89860bac26f6c32123439af26a4",
+      "role": "layer-1",
+      "sha256_verified": true
+    },
+    {
+      "actual_size_bytes": 6295687,
+      "diff_id": "sha256:8484fb198fc25c61583e3d42259f3dbfb8561b232b988436663fee01e771e81a",
+      "digest": "sha256:fc60adad4a1da2464dc5b668fd18fd6cddef8a96b212eac629bf518afda409b1",
+      "expected_size_bytes": 6295687,
+      "history_created_by": "RUN |3 RELEASE=1.0.0 BUILD_DATE= VCS_REF= /bin/sh -c apk upgrade --no-cache &&     apk add --no-cache     ca-certificates     coreutils     curl     tzdata     && test \"$(TZ=Asia/Kolkata date +%z)\" = \"+0530\" # buildkit",
+      "ordinal": 2,
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/rustfs-oci-extraction-20260925-r2-pinned/oci-layout/rustfs/blobs/sha256/fc60adad4a1da2464dc5b668fd18fd6cddef8a96b212eac629bf518afda409b1",
+      "role": "layer-2",
+      "sha256_verified": true
+    },
+    {
+      "actual_size_bytes": 104777,
+      "diff_id": "sha256:5ed99fd16a24ab541cd492bf080ce1c4bd31c26b567227ef801545cfdc718a51",
+      "digest": "sha256:2db50cf901eb2ac1a08aff2434dd6e613461a17a27597db8f9403befa999d162",
+      "expected_size_bytes": 104777,
+      "history_created_by": "COPY /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ # buildkit",
+      "ordinal": 3,
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/rustfs-oci-extraction-20260925-r2-pinned/oci-layout/rustfs/blobs/sha256/2db50cf901eb2ac1a08aff2434dd6e613461a17a27597db8f9403befa999d162",
+      "role": "layer-3",
+      "sha256_verified": true
+    },
+    {
+      "actual_size_bytes": 99409331,
+      "diff_id": "sha256:40fc2ce12bb7b67cea697f2f544d944f944c731ae2753b0974ce32fd17c26337",
+      "digest": "sha256:eebc17ed47f769bbb78cec6f2bcd5c1719e53102818d9455faf1797bf6e99392",
+      "expected_size_bytes": 99409331,
+      "history_created_by": "COPY /build/rustfs /usr/bin/rustfs # buildkit",
+      "ordinal": 4,
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/rustfs-oci-extraction-20260925-r2-pinned/oci-layout/rustfs/blobs/sha256/eebc17ed47f769bbb78cec6f2bcd5c1719e53102818d9455faf1797bf6e99392",
+      "role": "layer-4",
+      "sha256_verified": true
+    },
+    {
+      "actual_size_bytes": 3881,
+      "diff_id": "sha256:e5ba8e12218d93d641eb880e940562ff98b715348d4e59b84f04ef943d724487",
+      "digest": "sha256:a43ede1efa93f777ea220ad2b7c1064b93fa8c7a1d0d58b3af91a5f155c7e885",
+      "expected_size_bytes": 3881,
+      "history_created_by": "COPY entrypoint.sh /entrypoint.sh # buildkit",
+      "ordinal": 5,
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/rustfs-oci-extraction-20260925-r2-pinned/oci-layout/rustfs/blobs/sha256/a43ede1efa93f777ea220ad2b7c1064b93fa8c7a1d0d58b3af91a5f155c7e885",
+      "role": "layer-5",
+      "sha256_verified": true
+    },
+    {
+      "actual_size_bytes": 32,
+      "diff_id": "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+      "digest": "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+      "expected_size_bytes": 32,
+      "history_created_by": "RUN |3 RELEASE=1.0.0 BUILD_DATE= VCS_REF= /bin/sh -c chmod +x /usr/bin/rustfs /entrypoint.sh # buildkit",
+      "ordinal": 6,
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/rustfs-oci-extraction-20260925-r2-pinned/oci-layout/rustfs/blobs/sha256/4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+      "role": "layer-6",
+      "sha256_verified": true
+    },
+    {
+      "actual_size_bytes": 982,
+      "diff_id": "sha256:81dedda1d12d97c33bbe7c5ac8905a8396a251fcb15621e6a1efa28f57ecfd6a",
+      "digest": "sha256:e993fc96bab52947f3d8ab936deeddc46a882a8e7662bf907ecbaf5484f26471",
+      "expected_size_bytes": 982,
+      "history_created_by": "RUN |3 RELEASE=1.0.0 BUILD_DATE= VCS_REF= /bin/sh -c addgroup -g 10001 -S rustfs &&     adduser -u 10001 -G rustfs -S rustfs -D &&     mkdir -p /data /logs &&     chown -R rustfs:rustfs /data /logs &&     chmod 0750 /data /logs # buildkit",
+      "ordinal": 7,
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/rustfs-oci-extraction-20260925-r2-pinned/oci-layout/rustfs/blobs/sha256/e993fc96bab52947f3d8ab936deeddc46a882a8e7662bf907ecbaf5484f26471",
+      "role": "layer-7",
+      "sha256_verified": true
+    }
+  ],
+  "layout_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/rustfs-oci-extraction-20260925-r2-pinned/oci-layout/rustfs",
+  "manifest_media_type": "application/vnd.oci.image.manifest.v1+json",
+  "schema_version": 1,
+  "source_manifest_sha256": "ba0a1b53e36f321c0d46f3867104abef169f7bc59c467c664ddac87e7ddc9a8b",
+  "source_reference": "docker://registry-1.docker.io/rustfs/rustfs@sha256:ba0a1b53e36f321c0d46f3867104abef169f7bc59c467c664ddac87e7ddc9a8b"
+}

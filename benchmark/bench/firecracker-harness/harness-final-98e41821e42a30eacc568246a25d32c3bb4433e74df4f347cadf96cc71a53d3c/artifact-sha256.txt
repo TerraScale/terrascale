@@ -1,0 +1,3 @@
+fc-harness 5684795c8e5b573a30e0af0ef5af6f76dec7232752734783db92d0f3fedc541f
+fc-guest-agent 03ee13edbcddcba51f99b8c1bf7edfaea5128452ce9c227481154e9d036d60af
+fc-harness-tests-musl 2678a08107b4600dd23acc354ce20a6caf3baca5fa71c16205ae733fcece7b9c

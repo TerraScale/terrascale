@@ -1,0 +1,3 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-final-20260924T203626Z/ts-benchmark/terra-rust'
+nice -n 19 ionice -c 3 rustfmt --edition 2024 --check src/main.rs src/terrabase.rs src/analysis.rs src/p04_analysis_launcher.rs
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-final-20260924T203626Z/ts-benchmark/terra-rust'

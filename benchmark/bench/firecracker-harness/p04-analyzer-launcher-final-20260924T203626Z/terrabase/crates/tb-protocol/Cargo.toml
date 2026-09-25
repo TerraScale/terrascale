@@ -1,0 +1,23 @@
+[package]
+name = "tb-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+sha2.workspace = true
+tb-core = { path = "../tb-core" }
+tb-format = { path = "../tb-format" }
+thiserror.workspace = true
+prost.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+tokio.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,12 @@
+artifact=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/rustfs-oci-extraction-20260925-r2-pinned/evidence/rustfs
+source_child_manifest=sha256:ba0a1b53e36f321c0d46f3867104abef169f7bc59c467c664ddac87e7ddc9a8b
+binary_layer=sha256:eebc17ed47f769bbb78cec6f2bcd5c1719e53102818d9455faf1797bf6e99392
+tar_member=usr/bin/rustfs
+tar_member_mode=0755
+size_bytes_before=264596736
+size_bytes_after=264596736
+sha256_before=222eedc3d9baabf6516702d9fbf230270c3ca49b50f562d3461c96e2cc6ae6ad
+sha256_after=222eedc3d9baabf6516702d9fbf230270c3ca49b50f562d3461c96e2cc6ae6ad
+mode_before=644
+mode_after=755
+binary_executed=false

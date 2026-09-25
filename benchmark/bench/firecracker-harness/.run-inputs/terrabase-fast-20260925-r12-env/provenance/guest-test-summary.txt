@@ -1,0 +1,9 @@
+FAILED. 35 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 32.53s
+
+Failing tests:
+server_fast::replication_process::outbound_durable_prefix_closes_gap_without_sending_skipped_group
+server_fast::replication_process::outbound_idle_synthetic_ack_drops_an_unsent_undercredited_group
+server_fast::replication_process::outbound_invalid_welcome_ack_and_credit_fail_the_process
+server_fast::replication_process::outbound_process_restart_replays_from_lower_welcome_frontier
+server_fast::replication_process::outbound_received_and_credit_do_not_advance_durable_or_applied_progress
+server_fast::replication_process::outbound_wrong_signed_leaf_fails_ready_process

@@ -1,0 +1,37 @@
+[package]
+name = "tb-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+replication-test-hooks = []
+
+[dependencies]
+axum.workspace = true
+clap.workspace = true
+futures-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+rustls.workspace = true
+tb-core = { path = "../tb-core" }
+tb-protocol = { path = "../tb-protocol" }
+tb-replication = { path = "../tb-replication" }
+tb-storage = { path = "../tb-storage" }
+thiserror.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+tower.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+aws-lc-rs.workspace = true
+rcgen.workspace = true
+tb-document = { path = "../tb-document" }
+tb-format = { path = "../tb-format" }
+
+[lints]
+workspace = true

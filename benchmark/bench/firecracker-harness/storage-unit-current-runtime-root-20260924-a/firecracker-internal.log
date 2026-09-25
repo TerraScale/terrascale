@@ -1,0 +1,35 @@
+2026-09-24T09:59:31.602601184 [storage-unit-current-runtime-root-20260924-a:main:INFO] Running Firecracker v1.15.1
+2026-09-24T09:59:31.605628092 [storage-unit-current-runtime-root-20260924-a:main:INFO] Listening on API socket ("/tmp/fch-nq6TNN/api.sock").
+2026-09-24T09:59:31.606050651 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] API server started.
+2026-09-24T09:59:31.622271315 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T09:59:31.622411142 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:59:31.622530601 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T09:59:31.622616077 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T09:59:31.623469503 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/fc-payload-SpfRCg\"}".
+2026-09-24T09:59:31.623600349 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:59:31.623738145 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-unit-current-runtime-root-20260924-a/guest-rootfs.ext4\"}".
+2026-09-24T09:59:31.623888842 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:59:31.624047019 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-nq6TNN/vsock.sock\"}".
+2026-09-24T09:59:31.624367523 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:59:31.624497702 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T09:59:31.662886029 [storage-unit-current-runtime-root-20260924-a:main:INFO] Artificially kick devices
+2026-09-24T09:59:31.662989973 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T09:59:31.663078277 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T09:59:31.663142715 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T09:59:31.663200995 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T09:59:31.663309177 [storage-unit-current-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:59:31.718873076 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:31.719036832 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:35.229222424 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:35.229317804 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:35.234721325 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:35.234840665 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:35.237045341 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:35.237134131 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:35.240970904 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:35.241093581 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:35.243365630 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:35.243442489 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:35.247562027 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:35.247643151 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:59:36.293904935 [storage-unit-current-runtime-root-20260924-a:fc_vcpu 3:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

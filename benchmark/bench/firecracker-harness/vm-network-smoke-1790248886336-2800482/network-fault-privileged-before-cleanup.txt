@@ -1,0 +1,7 @@
+observation=privileged_run_owned_namespace_before_cleanup
+Thu Sep 24 11:23:38 UTC 2026
+fcn-10e993b48b68e84f1e82b07f2cbab5b5
+namespace_inode=4026534874 path=/run/netns/fcn-10e993b48b68e84f1e82b07f2cbab5b5
+namespace_pids=1: lo: <LOOPBACK> mtu 65536 qdisc noop state DOWN mode DEFAULT group default qlen 1000\    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+host_bridges=recorded_tap=Device "fct10e993b48b68" does not exist.
+firecracker_processes=    PID COMMAND         COMMAND

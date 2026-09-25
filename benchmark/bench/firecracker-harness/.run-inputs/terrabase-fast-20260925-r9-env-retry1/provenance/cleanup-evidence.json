@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "run_id": "terrabase-fast-20260925-r9-env-retry1",
+  "checked_utc": "2026-09-25T18:09:15.445313+00:00",
+  "controller_exit_code": 1,
+  "guest_status": "program_failed",
+  "guest_exit_code": 1,
+  "test_summary": "21 passed; 1 failed; 0 ignored",
+  "failed_test": "server_fast::client_process::packaged_initializer_bootstraps_fresh_local_v1_for_https_document_caller",
+  "firecracker_pid_recorded": 3765072,
+  "recorded_pid_comm_after_run": null,
+  "no_firecracker_process": true,
+  "no_harness_or_wrapper_process": true,
+  "no_host_terrabase_test_cgroup": true,
+  "guest_cgroup_cleanup": {
+    "status": "failed",
+    "child_removed": true,
+    "remaining_child_processes": "",
+    "memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0"
+  },
+  "temporary_firecracker_paths": {
+    "/tmp/fc-payload-4dNT78": "absent",
+    "/tmp/fc-payload-4TJ6RM": "absent",
+    "/tmp/fc-payload-2ksOXY": "absent",
+    "/tmp/fch-15oOF6": "absent"
+  },
+  "rootfs_loop_attachment": "none",
+  "run_mounts": [],
+  "guest_archive_valid": true,
+  "guest_archive_files": [
+    "./finite-cgroup-receipt.json",
+    "./guest-manifest.json",
+    "./stderr.log",
+    "./stdout.log"
+  ],
+  "output_preserved": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r9-env-retry1",
+  "guest_archive_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r9-env-retry1/guest-output.tar.gz",
+  "run_manifest_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r9-env-retry1/run-manifest.json",
+  "cleanup_claim": "all run-owned Firecracker, harness, wrapper, test cgroup, loop, and temporary staging resources are quiescent/removed; complete output evidence retained",
+  "failure_cause": "test used compile-time CARGO_BIN_EXE_terrabase-init host path; the guest staged terrabase-init payload but r9 wrapper33 did not set TB_INIT_TEST_BINARY",
+  "rerun_performed": false
+}

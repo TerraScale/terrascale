@@ -1,0 +1,9 @@
+a91f401db563729cd21edee3b619a208a5ae50a127ed3994135deaceb55e13f8  ./artifact-index.tsv
+3bc0e902e6a1acf460ddcfd705a0e3a13e650eff1492d600fa9413ad3dcb0c76  ./artifact-sha256.txt
+6c565d338866d48b73052b9d93b6b29c1509b064b970df99ee9eef8184ae5688  ./bin/tb_format-e2b9a3a3a0e2779c
+a4bc470bc23c79d119996fc2c56878bef96f460a5e9905fab02c7245541fc6f6  ./build-command.txt
+a222813536c1be60991c4ceb9a6752d315eed4c8bef79582d59b80a24449511b  ./build-receipts.jsonl
+a5a49e2fdd2c83e96d92dd1cec40528a5c18677eecae629afdb86281c2c53a0d  ./build.stderr.log
+64eae5d5db2d078e4bd3c89f8193de0a17f028984ea71fff21265681d7be6b3a  ./source-inventory.after.txt
+64eae5d5db2d078e4bd3c89f8193de0a17f028984ea71fff21265681d7be6b3a  ./source-inventory.before.txt
+64eae5d5db2d078e4bd3c89f8193de0a17f028984ea71fff21265681d7be6b3a  ./source-inventory.txt

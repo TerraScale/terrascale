@@ -1,0 +1,20 @@
+[package]
+name = "tb-document"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sha2.workspace = true
+tb-core = { path = "../tb-core" }
+tb-format = { path = "../tb-format" }
+tb-replication = { path = "../tb-replication" }
+tb-storage = { path = "../tb-storage" }
+thiserror.workspace = true
+
+[dev-dependencies]
+aws-lc-rs.workspace = true
+
+[lints]
+workspace = true

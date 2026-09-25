@@ -1,0 +1,35 @@
+2026-09-24T18:43:50.325963537 [tb-pa-env-20260924-08-distributed-open-hooks:main:INFO] Running Firecracker v1.15.1
+2026-09-24T18:43:50.327808111 [tb-pa-env-20260924-08-distributed-open-hooks:main:INFO] Listening on API socket ("/tmp/fch-l28vgN/api.sock").
+2026-09-24T18:43:50.328243508 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] API server started.
+2026-09-24T18:43:50.445559167 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T18:43:50.445722117 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:43:50.445845388 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T18:43:50.445904145 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T18:43:50.446064713 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/fc-payload-3Bsxfq\"}".
+2026-09-24T18:43:50.446164137 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:43:50.446294844 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-packet-a-authority-local-v1-environment-runtime-20260924T211239Z/runs/tb-pa-env-20260924-08-distributed-open-hooks/guest-rootfs.ext4\"}".
+2026-09-24T18:43:50.446435335 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:43:50.446590547 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-l28vgN/vsock.sock\"}".
+2026-09-24T18:43:50.446879631 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:43:50.447026773 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T18:43:50.495620572 [tb-pa-env-20260924-08-distributed-open-hooks:main:INFO] Artificially kick devices
+2026-09-24T18:43:50.495729654 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T18:43:50.495797258 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T18:43:50.495877135 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T18:43:50.495944498 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T18:43:50.496050021 [tb-pa-env-20260924-08-distributed-open-hooks:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T18:43:50.550589665 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:50.550705774 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:53.802597000 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:53.802687514 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:53.807143122 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:53.807230131 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:53.809480035 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:53.809558221 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:53.813464908 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:53.813544558 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:53.815744911 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:53.815819816 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:53.820675735 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:53.820789762 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T18:43:54.814203563 [tb-pa-env-20260924-08-distributed-open-hooks:fc_vcpu 1:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

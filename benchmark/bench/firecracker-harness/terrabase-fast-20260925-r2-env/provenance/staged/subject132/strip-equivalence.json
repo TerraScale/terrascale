@@ -1,0 +1,267 @@
+{
+  "strip_tool_path": "/run/current-system/sw/bin/strip",
+  "strip_tool_resolved_path": "/nix/store/la0zcwbbm1jazcjqf80m49xfyj14k4b3-binutils-wrapper-2.46/bin/strip",
+  "strip_tool_sha256": "2c920ffc5d012d70cd8cb3727a27253120eb1780d1a9c059de3bd3d085451db9",
+  "strip_tool_version": "GNU strip (GNU Binutils) 2.46",
+  "strip_operation": "--strip-debug on copied outputs only; original Cargo outputs retained unchanged",
+  "payload_count": 3,
+  "aggregate_staged_bytes": 59625288,
+  "aggregate_limit_bytes": 134217728,
+  "payloads": [
+    {
+      "name": "tb-server",
+      "original": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-frozen-target-20260925-r1/x86_64-unknown-linux-musl/debug/tb-server",
+      "original_sha256": "236393cdfd907c11b5d40ecfd41bbf50382b63d835ec9ce6bae3d3a6a65c1156",
+      "original_size_bytes": 144903568,
+      "stripped_copy": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-frozen-artifacts-20260925-r1/tb-server",
+      "stripped_sha256": "046192d1b8966f535cd1b5b0c1b42727414092d0c330dc196fe0153d80ad038b",
+      "stripped_size_bytes": 31869840,
+      "strip_argv": [
+        "/run/current-system/sw/bin/strip",
+        "--strip-debug",
+        "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-frozen-artifacts-20260925-r1/tb-server"
+      ],
+      "loaded_elf_comparison": {
+        "elf_class": "ELF64",
+        "endianness": "little",
+        "machine": 62,
+        "type": 3,
+        "entry": 1120310,
+        "program_header_count": 9,
+        "section_table_fields_before": {
+          "e_shoff": 144901200,
+          "e_shnum": 37,
+          "e_shstrndx": 36
+        },
+        "section_table_fields_after": {
+          "e_shoff": 31867984,
+          "e_shnum": 29,
+          "e_shstrndx": 28
+        },
+        "identical_program_header_bytes": true,
+        "identical_pt_load_bytes_except_allowed_header_fields": true,
+        "allowed_pt_load_header_byte_exceptions": [
+          {
+            "offset": 40,
+            "length": 8,
+            "field": "e_shoff"
+          },
+          {
+            "offset": 60,
+            "length": 2,
+            "field": "e_shnum"
+          },
+          {
+            "offset": 62,
+            "length": 2,
+            "field": "e_shstrndx"
+          }
+        ],
+        "pt_load_segments": [
+          {
+            "program_header_index": 0,
+            "offset": 0,
+            "file_size": 1092888,
+            "memory_size": 1092888,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 1,
+            "offset": 1093632,
+            "file_size": 13689559,
+            "memory_size": 13689559,
+            "flags": 5,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 2,
+            "offset": 14786560,
+            "file_size": 3428980,
+            "memory_size": 3428980,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 3,
+            "offset": 18217360,
+            "file_size": 659800,
+            "memory_size": 690520,
+            "flags": 6,
+            "alignment": 4096
+          }
+        ]
+      }
+    },
+    {
+      "name": "terrabase-keygen",
+      "original": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-frozen-target-20260925-r1/x86_64-unknown-linux-musl/debug/terrabase-keygen",
+      "original_sha256": "446da34dbff028ba1f6f6190ff11db14fe4f24efcf32494915e07e1b66f17a05",
+      "original_size_bytes": 8720632,
+      "stripped_copy": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-frozen-artifacts-20260925-r1/terrabase-keygen",
+      "stripped_sha256": "486f7ada8e44750fcac452bf59c5002ee2a6b687da4e87038052c98e3aae28ed",
+      "stripped_size_bytes": 1040208,
+      "strip_argv": [
+        "/run/current-system/sw/bin/strip",
+        "--strip-debug",
+        "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-frozen-artifacts-20260925-r1/terrabase-keygen"
+      ],
+      "loaded_elf_comparison": {
+        "elf_class": "ELF64",
+        "endianness": "little",
+        "machine": 62,
+        "type": 3,
+        "entry": 58822,
+        "program_header_count": 9,
+        "section_table_fields_before": {
+          "e_shoff": 8718264,
+          "e_shnum": 37,
+          "e_shstrndx": 36
+        },
+        "section_table_fields_after": {
+          "e_shoff": 1038352,
+          "e_shnum": 29,
+          "e_shstrndx": 28
+        },
+        "identical_program_header_bytes": true,
+        "identical_pt_load_bytes_except_allowed_header_fields": true,
+        "allowed_pt_load_header_byte_exceptions": [
+          {
+            "offset": 40,
+            "length": 8,
+            "field": "e_shoff"
+          },
+          {
+            "offset": 60,
+            "length": 2,
+            "field": "e_shnum"
+          },
+          {
+            "offset": 62,
+            "length": 2,
+            "field": "e_shstrndx"
+          }
+        ],
+        "pt_load_segments": [
+          {
+            "program_header_index": 0,
+            "offset": 0,
+            "file_size": 34800,
+            "memory_size": 34800,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 1,
+            "offset": 36864,
+            "file_size": 564454,
+            "memory_size": 564454,
+            "flags": 5,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 2,
+            "offset": 602112,
+            "file_size": 159380,
+            "memory_size": 159380,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 3,
+            "offset": 763120,
+            "file_size": 26096,
+            "memory_size": 32336,
+            "flags": 6,
+            "alignment": 4096
+          }
+        ]
+      }
+    },
+    {
+      "name": "fast",
+      "original": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-frozen-target-20260925-r1/x86_64-unknown-linux-musl/debug/deps/fast-dfc6803a59b0c84d",
+      "original_sha256": "a53a5caeb3e4fe6997b3620f9921d1f61af4a95cea7dd033fbc096dc2ab35e23",
+      "original_size_bytes": 103813920,
+      "stripped_copy": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-frozen-artifacts-20260925-r1/fast",
+      "stripped_sha256": "573856a5118403219b3e3ec7b5f8655006482561301248e0ad3001bfb2c7bdfb",
+      "stripped_size_bytes": 26715240,
+      "strip_argv": [
+        "/run/current-system/sw/bin/strip",
+        "--strip-debug",
+        "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-frozen-artifacts-20260925-r1/fast"
+      ],
+      "loaded_elf_comparison": {
+        "elf_class": "ELF64",
+        "endianness": "little",
+        "machine": 62,
+        "type": 3,
+        "entry": 1101494,
+        "program_header_count": 9,
+        "section_table_fields_before": {
+          "e_shoff": 103811552,
+          "e_shnum": 37,
+          "e_shstrndx": 36
+        },
+        "section_table_fields_after": {
+          "e_shoff": 26713384,
+          "e_shnum": 29,
+          "e_shstrndx": 28
+        },
+        "identical_program_header_bytes": true,
+        "identical_pt_load_bytes_except_allowed_header_fields": true,
+        "allowed_pt_load_header_byte_exceptions": [
+          {
+            "offset": 40,
+            "length": 8,
+            "field": "e_shoff"
+          },
+          {
+            "offset": 60,
+            "length": 2,
+            "field": "e_shnum"
+          },
+          {
+            "offset": 62,
+            "length": 2,
+            "field": "e_shstrndx"
+          }
+        ],
+        "pt_load_segments": [
+          {
+            "program_header_index": 0,
+            "offset": 0,
+            "file_size": 1068936,
+            "memory_size": 1068936,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 1,
+            "offset": 1069056,
+            "file_size": 12865367,
+            "memory_size": 12865367,
+            "flags": 5,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 2,
+            "offset": 13934592,
+            "file_size": 3163976,
+            "memory_size": 3163976,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 3,
+            "offset": 17099664,
+            "file_size": 689208,
+            "memory_size": 711352,
+            "flags": 6,
+            "alignment": 4096
+          }
+        ]
+      }
+    }
+  ]
+}

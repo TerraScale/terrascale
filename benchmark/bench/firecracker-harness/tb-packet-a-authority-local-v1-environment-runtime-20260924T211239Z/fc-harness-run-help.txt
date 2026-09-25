@@ -1,0 +1,4 @@
+Attempt: fc-harness run --help
+Exit: 2
+Output: firecracker-harness: missing value for --help
+Effect: parser-only; no preflight or guest launch occurred.

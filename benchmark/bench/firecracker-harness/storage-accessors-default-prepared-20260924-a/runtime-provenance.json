@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "run_id": "storage-accessors-default-prepared-20260924-a",
+  "status": "passed",
+  "source_identity": {
+    "terrabase_head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "runtime_subject_repository_identity_sha256": "f8038f8b1c5f5303f97262af215bf26245923c87d17fe3c799a9bd3044ee9488",
+    "frozen_source_snapshot": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-source-snapshot",
+      "manifest_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-source-snapshot/source.sha256",
+      "manifest_sha256": "3ae5cbbf54065440876c11ca6ee7a54e393e3a92caae68b29ae15a390f546b4d",
+      "manifest_entry_count": 86
+    },
+    "source_artifact_closure": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-default-artifacts/source-closure.sha256",
+      "sha256": "3ae5cbbf54065440876c11ca6ee7a54e393e3a92caae68b29ae15a390f546b4d"
+    },
+    "artifact_map": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-default-artifacts/artifact-map.txt",
+      "sha256": "ae26520bf408e03c986d6c0ae84ac1b1c25b60c2cebf4c2e6f70b1483f6ad457"
+    },
+    "artifacts_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-default-artifacts/artifacts.sha256",
+      "sha256": "c0db7bcadc32d5f51c4e7c2893358c967f4c98c4db7a46d9a1fb99ec39b0e632"
+    },
+    "relevant_source_files": {}
+  },
+  "test_result": {
+    "passed": 6,
+    "failed": 0,
+    "ignored": 0,
+    "exit_code": 0,
+    "test_summaries": [
+      {
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0
+      }
+    ],
+    "successful_cases": [
+      "deterministic_admission_failures_precede_external_marker",
+      "dropping_ready_releases_reservations_without_target_commit",
+      "expiry_while_ready_is_held_aborts_without_wal_append",
+      "held_ready_excludes_other_writer_until_drop",
+      "item_and_disk_admission_fail_before_target_wal",
+      "matching_retry_returns_original_receipt_before_stale_key_conflict"
+    ]
+  },
+  "payload": {
+    "kind": "primary guest test executable",
+    "host_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-default-artifacts/prepared_batch_contract",
+    "sha256": "29a41427592222d2e77e74a3f205c85d3e172113a8cd046fb6b79cf619eff0af",
+    "supplemental_payloads": []
+  },
+  "runtime_identity": {
+    "command": "nice -n 19 ionice -c 3 /tmp/fch-runtime-repo-final-20260924/fc-harness run --benchmark-repo /home/mariogk/Projects/TerraScale/ts-benchmark --subject-repo /home/mariogk/Projects/TerraScale/terrabase --program /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-default-artifacts/prepared_batch_contract --run-id storage-accessors-default-prepared-20260924-a --timeout-seconds 300 -- --test-threads=1 --nocapture",
+    "guest_args": [
+      "--test-threads=1",
+      "--nocapture"
+    ],
+    "test_timeout_seconds": 300,
+    "controller": {
+      "path": "/tmp/fch-runtime-repo-final-20260924/fc-harness",
+      "sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20"
+    },
+    "guest_agent": {
+      "path": "/tmp/fch-runtime-repo-final-20260924/fc-guest-agent",
+      "sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb"
+    },
+    "firecracker": {
+      "version": "1.15.1",
+      "sha256": "9d9ec5ff68a23ce54a424b15ec097c7204a3f206884c092d570b75529811bd57",
+      "kvm_api_version": 12
+    },
+    "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+    "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+    "rootfs_release": "Ubuntu 24.04.3 LTS (Noble Numbat)",
+    "kernel_rootfs_provenance": "kernel and rootfs SHA-256 pinned from historical local manifest; upstream artifact URLs/version metadata are not available, so provenance is unqualified",
+    "guest": {
+      "vcpu_count": 4,
+      "memory_mib": 8192,
+      "swap_disabled": true,
+      "network": "disabled; no host network or unisolated service fixture is attached"
+    },
+    "guest_elapsed_ms": 1619,
+    "harness_elapsed_ms": 10096,
+    "test_specific_cgroup_limit_bytes": null,
+    "cgroup_note": "No test-specific child cgroup wrapper was used; this one-binary storage/authority packet ran directly in the fixed 8192 MiB, swap-disabled Firecracker guest. Do not claim the replication-only 6 GiB child cap."
+  },
+  "evidence": {
+    "run_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-accessors-default-prepared-20260924-a/run-manifest.json",
+      "sha256": "710dbbef41f369f8f3aac1bcecb5ace163ada317e7a8080ff0982ae473bbbf48"
+    },
+    "guest_output_archive": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-accessors-default-prepared-20260924-a/guest-output.tar.gz",
+      "sha256": "675672c76e64aa38fa9a74a42002cce5c409668ca03e02b73fcea68dfdfe14c9"
+    },
+    "archived_stdout_sha256": "a849f0cb20b818d29921bcd9e3c0c4af1e7fabd06df8b71ced24a5d5a96dc93f",
+    "archived_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archived_guest_manifest_sha256": "75333f17e9512bae3823b29ae14f9d005867d6548df9b61239923fe074b8c5d7",
+    "firecracker_log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-accessors-default-prepared-20260924-a/firecracker.log",
+      "sha256": "edd6c0e7d39e6fc0ce9b3c7de76e2dc1c09f6b7e5ad511b2922efb7879fc450b"
+    },
+    "firecracker_internal_log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-accessors-default-prepared-20260924-a/firecracker-internal.log",
+      "sha256": "5ab08cccfc95d6e638377f3f79bce8064731ced1a40478a9cf499fc9bd876271"
+    },
+    "firecracker_stderr_log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-accessors-default-prepared-20260924-a/firecracker.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}

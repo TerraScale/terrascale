@@ -1,0 +1,14 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness'
+nice -n 19 ionice -c 3 cargo check --locked --jobs 2 -p fc-image-builder
+    Checking fc-image-builder v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/crates/fc-image-builder)
+warning: unused variable: `compressed_path`
+   --> crates/fc-image-builder/src/qualify.rs:168:9
+    |
+168 |     let compressed_path = run.path().join(&compressed.cache_path);
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_compressed_path`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `fc-image-builder` (lib) generated 1 warning (run `cargo fix --lib -p fc-image-builder` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.77s
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness'

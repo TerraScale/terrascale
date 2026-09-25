@@ -1,0 +1,35 @@
+2026-09-24T07:55:05.431478572 [fc-harness-network-unit-20260924-a:main:INFO] Running Firecracker v1.15.1
+2026-09-24T07:55:05.435621556 [fc-harness-network-unit-20260924-a:main:INFO] Listening on API socket ("/tmp/fch-LlaZ6p/api.sock").
+2026-09-24T07:55:05.436153997 [fc-harness-network-unit-20260924-a:fc_api:INFO] API server started.
+2026-09-24T07:55:05.447158225 [fc-harness-network-unit-20260924-a:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T07:55:05.447339312 [fc-harness-network-unit-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T07:55:05.447463919 [fc-harness-network-unit-20260924-a:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T07:55:05.447554199 [fc-harness-network-unit-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T07:55:05.448193340 [fc-harness-network-unit-20260924-a:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/vm-inputs/vmlinux\"}".
+2026-09-24T07:55:05.448326052 [fc-harness-network-unit-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T07:55:05.448445027 [fc-harness-network-unit-20260924-a:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/crates/fc-harness/../../../bench/firecracker-harness/fc-harness-network-unit-20260924-a/guest-rootfs.ext4\"}".
+2026-09-24T07:55:05.448590088 [fc-harness-network-unit-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T07:55:05.448701662 [fc-harness-network-unit-20260924-a:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-LlaZ6p/vsock.sock\"}".
+2026-09-24T07:55:05.449002153 [fc-harness-network-unit-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T07:55:05.449174078 [fc-harness-network-unit-20260924-a:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T07:55:05.482610104 [fc-harness-network-unit-20260924-a:main:INFO] Artificially kick devices
+2026-09-24T07:55:05.482709665 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T07:55:05.482775534 [fc-harness-network-unit-20260924-a:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T07:55:05.482853277 [fc-harness-network-unit-20260924-a:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T07:55:05.482933651 [fc-harness-network-unit-20260924-a:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T07:55:05.483056626 [fc-harness-network-unit-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T07:55:05.542050882 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:05.542181969 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.018242258 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.018361618 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.023460978 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.023579411 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.025529432 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.025608392 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.029360156 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.029441483 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.031865564 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.031949086 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.036047419 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.036130705 [fc-harness-network-unit-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T07:55:08.958478203 [fc-harness-network-unit-20260924-a:fc_vcpu 2:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

@@ -1,0 +1,35 @@
+2026-09-25T15:03:14.781328888 [terrabase-fast-20260925-r9-env-retry1:main:INFO] Running Firecracker v1.15.1
+2026-09-25T15:03:14.783132933 [terrabase-fast-20260925-r9-env-retry1:main:INFO] Listening on API socket ("/tmp/fch-15oOF6/api.sock").
+2026-09-25T15:03:14.783502762 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] API server started.
+2026-09-25T15:03:14.787637592 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-25T15:03:14.787758662 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-25T15:03:14.787914063 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-25T15:03:14.788018390 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-25T15:03:14.789028947 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/fc-payload-4dNT78\"}".
+2026-09-25T15:03:14.789148425 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-25T15:03:14.789267648 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r9-env-retry1/guest-rootfs.ext4\"}".
+2026-09-25T15:03:14.789386796 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-25T15:03:14.789517166 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-15oOF6/vsock.sock\"}".
+2026-09-25T15:03:14.789790605 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-25T15:03:14.789920054 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-25T15:03:14.826187495 [terrabase-fast-20260925-r9-env-retry1:main:INFO] Artificially kick devices
+2026-09-25T15:03:14.826272572 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-25T15:03:14.826346435 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-25T15:03:14.826433962 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-25T15:03:14.826536200 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-25T15:03:14.826662331 [terrabase-fast-20260925-r9-env-retry1:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-25T15:03:14.879911117 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:14.880047698 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:17.290431902 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:17.290543930 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:17.294541729 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:17.294628622 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:17.296661900 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:17.296740897 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:17.301242587 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:17.301358010 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:17.303585008 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:17.303662194 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:17.307327416 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:17.307417484 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-25T15:03:18.261179768 [terrabase-fast-20260925-r9-env-retry1:fc_vcpu 0:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

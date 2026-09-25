@@ -1,0 +1,925 @@
+{
+  "source_revision": "27fb234d5a058059b8a1a415937f4537f15072ff",
+  "old_terrabase_prefix": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/",
+  "archive": "/home/mariogk/Projects/TerraScale/ts-benchmark/history/legacy-pre-rust-2026-09-24",
+  "link_count": 131,
+  "links": [
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/AWSSDK.Core.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./AWSSDK.Core.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/AWSSDK.Core.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/AWSSDK.Core.dll",
+      "original_inode": 1907239822
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/AWSSDK.S3.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./AWSSDK.S3.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/AWSSDK.S3.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/AWSSDK.S3.dll",
+      "original_inode": 1907239819
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Ardalis.SmartEnum.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Ardalis.SmartEnum.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Ardalis.SmartEnum.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Ardalis.SmartEnum.dll",
+      "original_inode": 1907239820
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Google.Protobuf.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Google.Protobuf.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Google.Protobuf.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Google.Protobuf.dll",
+      "original_inode": 1907239823
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Grpc.AspNetCore.Server.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Grpc.AspNetCore.Server.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Grpc.AspNetCore.Server.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Grpc.AspNetCore.Server.dll",
+      "original_inode": 1908829071
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Grpc.Core.Api.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Grpc.Core.Api.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Grpc.Core.Api.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Grpc.Core.Api.dll",
+      "original_inode": 1907239821
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Grpc.Net.Client.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Grpc.Net.Client.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Grpc.Net.Client.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Grpc.Net.Client.dll",
+      "original_inode": 1908829076
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Grpc.Net.Common.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Grpc.Net.Common.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Grpc.Net.Common.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Grpc.Net.Common.dll",
+      "original_inode": 1908829077
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/LiteDB.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./LiteDB.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/LiteDB.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/LiteDB.dll",
+      "original_inode": 1908829078
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/MessagePack.Annotations.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./MessagePack.Annotations.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/MessagePack.Annotations.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/MessagePack.Annotations.dll",
+      "original_inode": 1908829075
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/MessagePack.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./MessagePack.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/MessagePack.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/MessagePack.dll",
+      "original_inode": 1908829073
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.AspNetCore.OpenApi.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.AspNetCore.OpenApi.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.AspNetCore.OpenApi.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.AspNetCore.OpenApi.dll",
+      "original_inode": 1908829079
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.Data.Sqlite.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.Data.Sqlite.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Data.Sqlite.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Data.Sqlite.dll",
+      "original_inode": 1908829080
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.Extensions.AmbientMetadata.Application.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.Extensions.AmbientMetadata.Application.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.AmbientMetadata.Application.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.AmbientMetadata.Application.dll",
+      "original_inode": 1908829081
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.Extensions.Compliance.Abstractions.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.Extensions.Compliance.Abstractions.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Compliance.Abstractions.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Compliance.Abstractions.dll",
+      "original_inode": 1908829082
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.Extensions.DependencyInjection.AutoActivation.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.Extensions.DependencyInjection.AutoActivation.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.DependencyInjection.AutoActivation.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.DependencyInjection.AutoActivation.dll",
+      "original_inode": 1907239824
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.Extensions.Diagnostics.ExceptionSummarization.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.Extensions.Diagnostics.ExceptionSummarization.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Diagnostics.ExceptionSummarization.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Diagnostics.ExceptionSummarization.dll",
+      "original_inode": 1907239825
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.Extensions.Http.Diagnostics.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.Extensions.Http.Diagnostics.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Http.Diagnostics.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Http.Diagnostics.dll",
+      "original_inode": 1908829083
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.Extensions.Http.Resilience.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.Extensions.Http.Resilience.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Http.Resilience.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Http.Resilience.dll",
+      "original_inode": 1908829084
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.Extensions.Resilience.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.Extensions.Resilience.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Resilience.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Resilience.dll",
+      "original_inode": 1908829086
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.Extensions.Telemetry.Abstractions.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.Extensions.Telemetry.Abstractions.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Telemetry.Abstractions.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Telemetry.Abstractions.dll",
+      "original_inode": 1908829087
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.Extensions.Telemetry.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.Extensions.Telemetry.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Telemetry.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.Extensions.Telemetry.dll",
+      "original_inode": 1907239826
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.NET.StringTools.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.NET.StringTools.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.NET.StringTools.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.NET.StringTools.dll",
+      "original_inode": 1907239828
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Microsoft.OpenApi.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Microsoft.OpenApi.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.OpenApi.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Microsoft.OpenApi.dll",
+      "original_inode": 1908829089
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/NativeCompressions.LZ4.Core.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./NativeCompressions.LZ4.Core.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/NativeCompressions.LZ4.Core.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/NativeCompressions.LZ4.Core.dll",
+      "original_inode": 1908829091
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/NativeCompressions.Zstandard.Core.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./NativeCompressions.Zstandard.Core.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/NativeCompressions.Zstandard.Core.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/NativeCompressions.Zstandard.Core.dll",
+      "original_inode": 1907239829
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/OpenTelemetry.Api.ProviderBuilderExtensions.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./OpenTelemetry.Api.ProviderBuilderExtensions.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Api.ProviderBuilderExtensions.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Api.ProviderBuilderExtensions.dll",
+      "original_inode": 1908829093
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/OpenTelemetry.Api.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./OpenTelemetry.Api.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Api.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Api.dll",
+      "original_inode": 1908829092
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/OpenTelemetry.Exporter.OpenTelemetryProtocol.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./OpenTelemetry.Exporter.OpenTelemetryProtocol.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Exporter.OpenTelemetryProtocol.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Exporter.OpenTelemetryProtocol.dll",
+      "original_inode": 1907239830
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/OpenTelemetry.Extensions.Hosting.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./OpenTelemetry.Extensions.Hosting.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Extensions.Hosting.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Extensions.Hosting.dll",
+      "original_inode": 1907239831
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/OpenTelemetry.Instrumentation.AspNetCore.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./OpenTelemetry.Instrumentation.AspNetCore.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Instrumentation.AspNetCore.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Instrumentation.AspNetCore.dll",
+      "original_inode": 1908829096
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/OpenTelemetry.Instrumentation.Http.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./OpenTelemetry.Instrumentation.Http.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Instrumentation.Http.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Instrumentation.Http.dll",
+      "original_inode": 1907239832
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/OpenTelemetry.Instrumentation.Runtime.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./OpenTelemetry.Instrumentation.Runtime.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Instrumentation.Runtime.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.Instrumentation.Runtime.dll",
+      "original_inode": 1908829097
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/OpenTelemetry.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./OpenTelemetry.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/OpenTelemetry.dll",
+      "original_inode": 1908829090
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Polly.Core.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Polly.Core.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Polly.Core.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Polly.Core.dll",
+      "original_inode": 1908829102
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Polly.Extensions.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Polly.Extensions.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Polly.Extensions.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Polly.Extensions.dll",
+      "original_inode": 1908829103
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Polly.RateLimiting.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Polly.RateLimiting.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Polly.RateLimiting.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Polly.RateLimiting.dll",
+      "original_inode": 1907239833
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Reactive/Incremental/bin/Release/net11.0/IncrementalCheck.deps.json",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Reactive/Incremental/bin/Release/net11.0/IncrementalCheck.deps.json",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Reactive/Incremental/bin/Release/net11.0/IncrementalCheck.deps.json",
+      "relative_target": "../../../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Reactive/Incremental/bin/Release/net11.0/IncrementalCheck.deps.json",
+      "original_inode": 1240904385
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Reactive/Incremental/bin/Release/net11.0/IncrementalCheck.runtimeconfig.json",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Reactive/Incremental/bin/Release/net11.0/IncrementalCheck.runtimeconfig.json",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Reactive/Incremental/bin/Release/net11.0/IncrementalCheck.runtimeconfig.json",
+      "relative_target": "../../../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Reactive/Incremental/bin/Release/net11.0/IncrementalCheck.runtimeconfig.json",
+      "original_inode": 1240904386
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Reactive/Incremental/obj/IncrementalCheck.csproj.nuget.dgspec.json",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Reactive/Incremental/obj/IncrementalCheck.csproj.nuget.dgspec.json",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Reactive/Incremental/obj/IncrementalCheck.csproj.nuget.dgspec.json",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Reactive/Incremental/obj/IncrementalCheck.csproj.nuget.dgspec.json",
+      "original_inode": 1907235912
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Reactive/Incremental/obj/project.assets.json",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Reactive/Incremental/obj/project.assets.json",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Reactive/Incremental/obj/project.assets.json",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Reactive/Incremental/obj/project.assets.json",
+      "original_inode": 1907235937
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/SQLitePCLRaw.batteries_v2.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./SQLitePCLRaw.batteries_v2.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/SQLitePCLRaw.batteries_v2.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/SQLitePCLRaw.batteries_v2.dll",
+      "original_inode": 1907239834
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/SQLitePCLRaw.core.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./SQLitePCLRaw.core.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/SQLitePCLRaw.core.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/SQLitePCLRaw.core.dll",
+      "original_inode": 1907239835
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/SQLitePCLRaw.provider.e_sqlite3.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./SQLitePCLRaw.provider.e_sqlite3.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/SQLitePCLRaw.provider.e_sqlite3.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/SQLitePCLRaw.provider.e_sqlite3.dll",
+      "original_inode": 1908829109
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Scalar.AspNetCore.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Scalar.AspNetCore.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Scalar.AspNetCore.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Scalar.AspNetCore.dll",
+      "original_inode": 1908829104
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Sentry.AspNetCore.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Sentry.AspNetCore.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Sentry.AspNetCore.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Sentry.AspNetCore.dll",
+      "original_inode": 1907239812
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Sentry.Extensions.Logging.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Sentry.Extensions.Logging.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Sentry.Extensions.Logging.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Sentry.Extensions.Logging.dll",
+      "original_inode": 1908829105
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Sentry.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Sentry.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Sentry.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Sentry.dll",
+      "original_inode": 1908829106
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/System.IO.Hashing.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./System.IO.Hashing.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/System.IO.Hashing.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/System.IO.Hashing.dll",
+      "original_inode": 1908829110
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase",
+      "original_inode": 1907239808
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase.Benchmarks",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase.Benchmarks",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks",
+      "original_inode": 1907239816
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase.Benchmarks.deps.json",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase.Benchmarks.deps.json",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.deps.json",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.deps.json",
+      "original_inode": 1907239817
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase.Benchmarks.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase.Benchmarks.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll",
+      "original_inode": 1907239813
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase.Benchmarks.pdb",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase.Benchmarks.pdb",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.pdb",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.pdb",
+      "original_inode": 1907239839
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase.Benchmarks.runtimeconfig.json",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase.Benchmarks.runtimeconfig.json",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.runtimeconfig.json",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.runtimeconfig.json",
+      "original_inode": 1907239810
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase.ZoneTree.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase.ZoneTree.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.ZoneTree.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.ZoneTree.dll",
+      "original_inode": 1908829117
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase.ZoneTree.pdb",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase.ZoneTree.pdb",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.ZoneTree.pdb",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.ZoneTree.pdb",
+      "original_inode": 1908829118
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase.deps.json",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase.deps.json",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.deps.json",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.deps.json",
+      "original_inode": 1908829119
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.dll",
+      "original_inode": 1907239814
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase.pdb",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase.pdb",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.pdb",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.pdb",
+      "original_inode": 1907239840
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase.runtimeconfig.json",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase.runtimeconfig.json",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.runtimeconfig.json",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.runtimeconfig.json",
+      "original_inode": 1907239842
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraBase.staticwebassets.endpoints.json",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraBase.staticwebassets.endpoints.json",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.staticwebassets.endpoints.json",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.staticwebassets.endpoints.json",
+      "original_inode": 1907239809
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraScale.DotNet.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraScale.DotNet.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraScale.DotNet.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraScale.DotNet.dll",
+      "original_inode": 1907239811
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraScale.DotNet.xml",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraScale.DotNet.xml",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraScale.DotNet.xml",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraScale.DotNet.xml",
+      "original_inode": 1907239818
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraScale.Endpoints.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraScale.Endpoints.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraScale.Endpoints.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraScale.Endpoints.dll",
+      "original_inode": 1907239841
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/TerraScale.Endpoints.pdb",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./TerraScale.Endpoints.pdb",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraScale.Endpoints.pdb",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraScale.Endpoints.pdb",
+      "original_inode": 1907239815
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Turso.Data.Sqlite.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Turso.Data.Sqlite.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Turso.Data.Sqlite.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Turso.Data.Sqlite.dll",
+      "original_inode": 1908829111
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Turso.Data.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Turso.Data.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Turso.Data.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Turso.Data.dll",
+      "original_inode": 1907239836
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Turso.Raw.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Turso.Raw.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Turso.Raw.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Turso.Raw.dll",
+      "original_inode": 1907239837
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Ulid.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Ulid.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Ulid.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Ulid.dll",
+      "original_inode": 1908829116
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/Utf8StringInterpolation.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./Utf8StringInterpolation.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Utf8StringInterpolation.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/Utf8StringInterpolation.dll",
+      "original_inode": 1907239838
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/ZLinq.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./ZLinq.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/ZLinq.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/ZLinq.dll",
+      "original_inode": 1908829112
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/ZLogger.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./ZLogger.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/ZLogger.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/ZLogger.dll",
+      "original_inode": 1908829113
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/ZString.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./ZString.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/ZString.dll",
+      "relative_target": "../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/ZString.dll",
+      "original_inode": 1908829114
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/android-arm/native/liblz4.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/android-arm/native/liblz4.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-arm/native/liblz4.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-arm/native/liblz4.so",
+      "original_inode": 1240838417
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/android-arm/native/libturso_sdk_kit.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/android-arm/native/libturso_sdk_kit.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-arm/native/libturso_sdk_kit.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-arm/native/libturso_sdk_kit.so",
+      "original_inode": 1240838431
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/android-arm/native/libzstd.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/android-arm/native/libzstd.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-arm/native/libzstd.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-arm/native/libzstd.so",
+      "original_inode": 1240838427
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/android-arm64/native/liblz4.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/android-arm64/native/liblz4.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-arm64/native/liblz4.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-arm64/native/liblz4.so",
+      "original_inode": 1240837242
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/android-arm64/native/libturso_sdk_kit.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/android-arm64/native/libturso_sdk_kit.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-arm64/native/libturso_sdk_kit.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-arm64/native/libturso_sdk_kit.so",
+      "original_inode": 1240837247
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/android-arm64/native/libzstd.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/android-arm64/native/libzstd.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-arm64/native/libzstd.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-arm64/native/libzstd.so",
+      "original_inode": 1240837245
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/android-x64/native/liblz4.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/android-x64/native/liblz4.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-x64/native/liblz4.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-x64/native/liblz4.so",
+      "original_inode": 155709907
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/android-x64/native/libturso_sdk_kit.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/android-x64/native/libturso_sdk_kit.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-x64/native/libturso_sdk_kit.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-x64/native/libturso_sdk_kit.so",
+      "original_inode": 155709918
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/android-x64/native/libzstd.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/android-x64/native/libzstd.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-x64/native/libzstd.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-x64/native/libzstd.so",
+      "original_inode": 155709916
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/android-x86/native/libturso_sdk_kit.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/android-x86/native/libturso_sdk_kit.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-x86/native/libturso_sdk_kit.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/android-x86/native/libturso_sdk_kit.so",
+      "original_inode": 155383121
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/browser-wasm/nativeassets/net9.0/e_sqlite3.a",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/browser-wasm/nativeassets/net9.0/e_sqlite3.a",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/browser-wasm/nativeassets/net9.0/e_sqlite3.a",
+      "relative_target": "../../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/browser-wasm/nativeassets/net9.0/e_sqlite3.a",
+      "original_inode": 1778132509
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/ios-arm64/native/liblz4.a",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/ios-arm64/native/liblz4.a",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-arm64/native/liblz4.a",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-arm64/native/liblz4.a",
+      "original_inode": 155709904
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/Info.plist",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/ios-universal/native/libturso_sdk_kit.xcframework/Info.plist",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/Info.plist",
+      "relative_target": "../../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/Info.plist",
+      "original_inode": 1240901476
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64-simulator/libturso_sdk_kit.framework/Info.plist",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64-simulator/libturso_sdk_kit.framework/Info.plist",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64-simulator/libturso_sdk_kit.framework/Info.plist",
+      "relative_target": "../../../../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64-simulator/libturso_sdk_kit.framework/Info.plist",
+      "original_inode": 155383114
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64-simulator/libturso_sdk_kit.framework/libturso_sdk_kit",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64-simulator/libturso_sdk_kit.framework/libturso_sdk_kit",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64-simulator/libturso_sdk_kit.framework/libturso_sdk_kit",
+      "relative_target": "../../../../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64-simulator/libturso_sdk_kit.framework/libturso_sdk_kit",
+      "original_inode": 155383115
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64/libturso_sdk_kit.framework/Info.plist",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64/libturso_sdk_kit.framework/Info.plist",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64/libturso_sdk_kit.framework/Info.plist",
+      "relative_target": "../../../../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64/libturso_sdk_kit.framework/Info.plist",
+      "original_inode": 1240901474
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64/libturso_sdk_kit.framework/libturso_sdk_kit",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64/libturso_sdk_kit.framework/libturso_sdk_kit",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64/libturso_sdk_kit.framework/libturso_sdk_kit",
+      "relative_target": "../../../../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-universal/native/libturso_sdk_kit.xcframework/ios-arm64/libturso_sdk_kit.framework/libturso_sdk_kit",
+      "original_inode": 1240901475
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/ios-x64/native/liblz4.a",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/ios-x64/native/liblz4.a",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-x64/native/liblz4.a",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/ios-x64/native/liblz4.a",
+      "original_inode": 1240896776
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-arm/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-arm/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-arm/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-arm/native/libe_sqlite3.so",
+      "original_inode": 155709941
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-arm64/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-arm64/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-arm64/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-arm64/native/libe_sqlite3.so",
+      "original_inode": 155709925
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-arm64/native/liblz4.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-arm64/native/liblz4.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-arm64/native/liblz4.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-arm64/native/liblz4.so",
+      "original_inode": 155709922
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-arm64/native/libturso_sdk_kit.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-arm64/native/libturso_sdk_kit.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-arm64/native/libturso_sdk_kit.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-arm64/native/libturso_sdk_kit.so",
+      "original_inode": 155709926
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-arm64/native/libzstd.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-arm64/native/libzstd.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-arm64/native/libzstd.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-arm64/native/libzstd.so",
+      "original_inode": 155709924
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-armel/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-armel/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-armel/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-armel/native/libe_sqlite3.so",
+      "original_inode": 888824296
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-mips64/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-mips64/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-mips64/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-mips64/native/libe_sqlite3.so",
+      "original_inode": 888824310
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-musl-arm/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-musl-arm/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-musl-arm/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-musl-arm/native/libe_sqlite3.so",
+      "original_inode": 1778132513
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-musl-arm64/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-musl-arm64/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-musl-arm64/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-musl-arm64/native/libe_sqlite3.so",
+      "original_inode": 1778132538
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-musl-riscv64/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-musl-riscv64/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-musl-riscv64/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-musl-riscv64/native/libe_sqlite3.so",
+      "original_inode": 889307763
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-musl-s390x/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-musl-s390x/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-musl-s390x/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-musl-s390x/native/libe_sqlite3.so",
+      "original_inode": 1778132542
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-musl-x64/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-musl-x64/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-musl-x64/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-musl-x64/native/libe_sqlite3.so",
+      "original_inode": 1858066464
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-ppc64le/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-ppc64le/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-ppc64le/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-ppc64le/native/libe_sqlite3.so",
+      "original_inode": 895810245
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-riscv64/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-riscv64/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-riscv64/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-riscv64/native/libe_sqlite3.so",
+      "original_inode": 895810258
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-s390x/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-s390x/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-s390x/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-s390x/native/libe_sqlite3.so",
+      "original_inode": 1883243468
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-x64/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-x64/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-x64/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-x64/native/libe_sqlite3.so",
+      "original_inode": 1240896783
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-x64/native/liblz4.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-x64/native/liblz4.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-x64/native/liblz4.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-x64/native/liblz4.so",
+      "original_inode": 1240896779
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-x64/native/libturso_sdk_kit.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-x64/native/libturso_sdk_kit.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-x64/native/libturso_sdk_kit.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-x64/native/libturso_sdk_kit.so",
+      "original_inode": 1240896784
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-x64/native/libzstd.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-x64/native/libzstd.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-x64/native/libzstd.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-x64/native/libzstd.so",
+      "original_inode": 1240896782
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/linux-x86/native/libe_sqlite3.so",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/linux-x86/native/libe_sqlite3.so",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-x86/native/libe_sqlite3.so",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/linux-x86/native/libe_sqlite3.so",
+      "original_inode": 895810261
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/maccatalyst-arm64/native/libe_sqlite3.dylib",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/maccatalyst-arm64/native/libe_sqlite3.dylib",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/maccatalyst-arm64/native/libe_sqlite3.dylib",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/maccatalyst-arm64/native/libe_sqlite3.dylib",
+      "original_inode": 1883243503
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/maccatalyst-x64/native/libe_sqlite3.dylib",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/maccatalyst-x64/native/libe_sqlite3.dylib",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/maccatalyst-x64/native/libe_sqlite3.dylib",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/maccatalyst-x64/native/libe_sqlite3.dylib",
+      "original_inode": 895810263
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/osx-arm64/native/libe_sqlite3.dylib",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/osx-arm64/native/libe_sqlite3.dylib",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-arm64/native/libe_sqlite3.dylib",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-arm64/native/libe_sqlite3.dylib",
+      "original_inode": 155709932
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/osx-arm64/native/liblz4.dylib",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/osx-arm64/native/liblz4.dylib",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-arm64/native/liblz4.dylib",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-arm64/native/liblz4.dylib",
+      "original_inode": 155709929
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/osx-arm64/native/libturso_sdk_kit.dylib",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/osx-arm64/native/libturso_sdk_kit.dylib",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-arm64/native/libturso_sdk_kit.dylib",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-arm64/native/libturso_sdk_kit.dylib",
+      "original_inode": 155709933
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/osx-arm64/native/libzstd.dylib",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/osx-arm64/native/libzstd.dylib",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-arm64/native/libzstd.dylib",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-arm64/native/libzstd.dylib",
+      "original_inode": 155709930
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/osx-x64/native/libe_sqlite3.dylib",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/osx-x64/native/libe_sqlite3.dylib",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-x64/native/libe_sqlite3.dylib",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-x64/native/libe_sqlite3.dylib",
+      "original_inode": 1240896795
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/osx-x64/native/liblz4.dylib",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/osx-x64/native/liblz4.dylib",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-x64/native/liblz4.dylib",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-x64/native/liblz4.dylib",
+      "original_inode": 1240896790
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/osx-x64/native/libturso_sdk_kit.dylib",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/osx-x64/native/libturso_sdk_kit.dylib",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-x64/native/libturso_sdk_kit.dylib",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-x64/native/libturso_sdk_kit.dylib",
+      "original_inode": 1240896796
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/osx-x64/native/libzstd.dylib",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/osx-x64/native/libzstd.dylib",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-x64/native/libzstd.dylib",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/osx-x64/native/libzstd.dylib",
+      "original_inode": 1240896793
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/win-arm64/native/e_sqlite3.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/win-arm64/native/e_sqlite3.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-arm64/native/e_sqlite3.dll",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-arm64/native/e_sqlite3.dll",
+      "original_inode": 1240896811
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/win-arm64/native/libzstd.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/win-arm64/native/libzstd.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-arm64/native/libzstd.dll",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-arm64/native/libzstd.dll",
+      "original_inode": 1240896805
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/win-arm64/native/lz4.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/win-arm64/native/lz4.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-arm64/native/lz4.dll",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-arm64/native/lz4.dll",
+      "original_inode": 1240896803
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/win-arm64/native/turso_sdk_kit.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/win-arm64/native/turso_sdk_kit.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-arm64/native/turso_sdk_kit.dll",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-arm64/native/turso_sdk_kit.dll",
+      "original_inode": 1240896812
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/win-x64/native/e_sqlite3.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/win-x64/native/e_sqlite3.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-x64/native/e_sqlite3.dll",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-x64/native/e_sqlite3.dll",
+      "original_inode": 155709937
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/win-x64/native/libzstd.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/win-x64/native/libzstd.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-x64/native/libzstd.dll",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-x64/native/libzstd.dll",
+      "original_inode": 155709936
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/win-x64/native/lz4.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/win-x64/native/lz4.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-x64/native/lz4.dll",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-x64/native/lz4.dll",
+      "original_inode": 155709935
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/win-x64/native/turso_sdk_kit.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/win-x64/native/turso_sdk_kit.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-x64/native/turso_sdk_kit.dll",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-x64/native/turso_sdk_kit.dll",
+      "original_inode": 155709938
+    },
+    {
+      "link": "bench/query-independent-first-repeat-trace-captured-20260924T0533Z/runner-app/runtimes/win-x86/native/e_sqlite3.dll",
+      "original_target": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/./runtimes/win-x86/native/e_sqlite3.dll",
+      "mapped_target": "terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-x86/native/e_sqlite3.dll",
+      "relative_target": "../../../../../../terrabase/TerraBase.Benchmarks/bin/Release/net11.0/runtimes/win-x86/native/e_sqlite3.dll",
+      "original_inode": 1898163591
+    }
+  ]
+}

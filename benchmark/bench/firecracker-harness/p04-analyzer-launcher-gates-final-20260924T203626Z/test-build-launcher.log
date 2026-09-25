@@ -1,0 +1,17 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-final-20260924T203626Z/ts-benchmark/terra-rust'
+CC_x86_64_unknown_linux_musl=x86_64-unknown-linux-musl-gcc CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-unknown-linux-musl-gcc nice -n 19 ionice -c 3 cargo test --locked --no-run --bin p04-analysis-launcher --target x86_64-unknown-linux-musl -j 2
+   Compiling typenum v1.20.1
+   Compiling rustix v1.1.5
+   Compiling bitflags v2.13.2
+   Compiling rusqlite v0.40.2
+   Compiling generic-array v0.14.7
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling rand v0.10.3
+   Compiling terrabase-sqlite-baseline v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-final-20260924T203626Z/ts-benchmark/terra-rust)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.20s
+  Executable unittests src/p04_analysis_launcher.rs (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-gates-final-20260924T203626Z/target/x86_64-unknown-linux-musl/debug/deps/p04_analysis_launcher-0d13ee443611f3df)
+Compiled P04 analysis launcher unit tests only; run the musl executable inside Firecracker.
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-final-20260924T203626Z/ts-benchmark/terra-rust'

@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "evidence_created_utc": "2026-09-24",
+  "subject_repository": {
+    "path": "/home/mariogk/Projects/TerraScale/terrabase",
+    "head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "current_cargo_lock_sha256": "a33c17bc8e8df0249795dae1830894139ddecd2b977ff3e253f9b7f61c2c3979"
+  },
+  "storage_packet": {
+    "source_inventory": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-prepared-batch-final-current-lock-source.sha256",
+      "sha256": "46f515b2b75466a78a3416fc71bdda3117e84a506e47b29b405e49745711daa0",
+      "entries": 28,
+      "matched_entries": 25,
+      "mismatches": [
+        {
+          "path": "Cargo.toml",
+          "expected_sha256": "aa56d286b59b7ede8498d5cd71b6f5c21ebbbbb11803995ca313b8ef23c0041f",
+          "observed_sha256": "9d1e9e9cae23c3af94edcd194216d75a111cb048b36af183e27f49f1c0e760d8",
+          "matches": false
+        },
+        {
+          "path": "Cargo.lock",
+          "expected_sha256": "f2c74b62ad4115c412418166c30cfb1c24b26136c347a78c11791db5d8b15573",
+          "observed_sha256": "a33c17bc8e8df0249795dae1830894139ddecd2b977ff3e253f9b7f61c2c3979",
+          "matches": false
+        },
+        {
+          "path": "Makefile",
+          "expected_sha256": "fbe1d8643681dd4145c9bf4894756bc16283f54eabf80f8216f49e2730b4543e",
+          "observed_sha256": "37edba96d431bc1d3317790de5e7e05127ed0b07629c859fead96ad9f10dd4df",
+          "matches": false
+        }
+      ]
+    },
+    "build_lock_sha256_recorded_in_inventory": "f2c74b62ad4115c412418166c30cfb1c24b26136c347a78c11791db5d8b15573",
+    "build_manifest_sha256_recorded_in_inventory": "aa56d286b59b7ede8498d5cd71b6f5c21ebbbbb11803995ca313b8ef23c0041f",
+    "artifact_map": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-prepared-batch-final-current-lock-artifacts/artifact-map.txt",
+      "sha256": "9f75db34a88ea7c8ed0040f92ddb2b211b19d7013efd9cfe550e8e786b96c940"
+    },
+    "artifact_checksums": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-prepared-batch-final-current-lock-artifacts/artifacts.sha256",
+      "sha256": "95c2741be1827b5de1a45e495562af1a2e976ada728ddfc00093909042913558"
+    },
+    "test_build_log": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-prepared-batch-final-current-lock-test-build.log",
+      "sha256": "965b1a845497a21c60da07613acb2b0ded0004b01bc6ed0e50d2edba7c92bf70",
+      "command": "nice -n 19 env -u RUSTUP_TOOLCHAIN RUSTC=/home/mariogk/.cargo/bin/rustc CARGO_BUILD_JOBS=2 CC_x86_64_unknown_linux_musl=x86_64-unknown-linux-musl-gcc CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-unknown-linux-musl-gcc /home/mariogk/.cargo/bin/cargo test -p tb-storage --features test-hooks --all-targets --no-run --target x86_64-unknown-linux-musl --message-format=json-render-diagnostics --locked"
+    },
+    "runtime_receipts": [
+      {
+        "run_id": "storage-final-packet-unit-root-20260924-b",
+        "receipt": {
+          "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-final-packet-unit-root-20260924-b/run-manifest.json",
+          "sha256": "b1bf784dfc78ce7a2d83afb1f1af0f79173b163e77aec31cbcc358825087fef9"
+        },
+        "guest_archive": {
+          "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-final-packet-unit-root-20260924-b/guest-output.tar.gz",
+          "sha256": "8defd4ea5df63121f2a87ae273ee4729693e33210041ced2c59eb49a27424d73"
+        },
+        "status": "passed",
+        "guest_exit_code": 0,
+        "guest_elapsed_ms": 572,
+        "program_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-prepared-batch-final-current-lock-artifacts/tb_storage_unit",
+        "program_sha256": "08966960b64c78c94e0d0ba4292be9eaea6c29674c7cb8c647603385695017e7",
+        "controller_sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20",
+        "guest_agent_sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb",
+        "firecracker_version": "1.15.1",
+        "kvm_api_version": 12,
+        "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+        "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+        "guest_vcpus": 4,
+        "guest_memory_mib": 8192,
+        "guest_swap_disabled": true,
+        "guest_network": "disabled; no host network or unisolated service fixture is attached",
+        "test_summaries": [
+          "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s"
+        ]
+      },
+      {
+        "run_id": "storage-final-packet-prepared-batch-root-20260924-b",
+        "receipt": {
+          "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-final-packet-prepared-batch-root-20260924-b/run-manifest.json",
+          "sha256": "c867c28aade43e00d4f891d1566bba02cea84feb4a3d6eb288f6820f86eee593"
+        },
+        "guest_archive": {
+          "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-final-packet-prepared-batch-root-20260924-b/guest-output.tar.gz",
+          "sha256": "f928a7be0c0300993829d03149519b6e04eb223eb8d3b38e8c4699804db93430"
+        },
+        "status": "passed",
+        "guest_exit_code": 0,
+        "guest_elapsed_ms": 1052,
+        "program_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-prepared-batch-final-current-lock-artifacts/prepared_batch_contract",
+        "program_sha256": "44c4a777689cee11298fb67074b4c163c0ed6b95982da7d7e8d12b30bffadf1e",
+        "controller_sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20",
+        "guest_agent_sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb",
+        "firecracker_version": "1.15.1",
+        "kvm_api_version": 12,
+        "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+        "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+        "guest_vcpus": 4,
+        "guest_memory_mib": 8192,
+        "guest_swap_disabled": true,
+        "guest_network": "disabled; no host network or unisolated service fixture is attached",
+        "test_summaries": [
+          "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.65s"
+        ]
+      },
+      {
+        "run_id": "storage-final-packet-retained-lookup-root-20260924-b",
+        "receipt": {
+          "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-final-packet-retained-lookup-root-20260924-b/run-manifest.json",
+          "sha256": "cb8f4f8ba011e276e6aae032cce2ed8f2ed84931e02e0563a6d3a4d3563da431"
+        },
+        "guest_archive": {
+          "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-final-packet-retained-lookup-root-20260924-b/guest-output.tar.gz",
+          "sha256": "e0909188b9b01167d99006f31115ec7db161d2d955a20accce9911c3eb1b4300"
+        },
+        "status": "passed",
+        "guest_exit_code": 0,
+        "guest_elapsed_ms": 1232,
+        "program_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-prepared-batch-final-current-lock-artifacts/retained_lookup_contract",
+        "program_sha256": "a0ba3a08a2a75230becbb0d82d72c95b68b48609ec12f41e406cbf0622338d5f",
+        "controller_sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20",
+        "guest_agent_sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb",
+        "firecracker_version": "1.15.1",
+        "kvm_api_version": 12,
+        "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+        "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+        "guest_vcpus": 4,
+        "guest_memory_mib": 8192,
+        "guest_swap_disabled": true,
+        "guest_network": "disabled; no host network or unisolated service fixture is attached",
+        "test_summaries": [
+          "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s"
+        ]
+      },
+      {
+        "run_id": "storage-final-packet-contract-root-20260924-b",
+        "receipt": {
+          "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-final-packet-contract-root-20260924-b/run-manifest.json",
+          "sha256": "c9d01c756b1388bbf5a5317c3a7b2023ef71aef0c27aef965e7149b9fbc02d63"
+        },
+        "guest_archive": {
+          "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/storage-final-packet-contract-root-20260924-b/guest-output.tar.gz",
+          "sha256": "89ec573b049ea50cfcdd8efc1a87cac8daaec00cd1ce7712e1d673cb24efdacb"
+        },
+        "status": "passed",
+        "guest_exit_code": 0,
+        "guest_elapsed_ms": 1127,
+        "program_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-prepared-batch-final-current-lock-artifacts/storage_contract",
+        "program_sha256": "99520a094c28ef6270a97b8b2ea19b810463cc413779cc4445b827a6bd4fadc4",
+        "controller_sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20",
+        "guest_agent_sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb",
+        "firecracker_version": "1.15.1",
+        "kvm_api_version": 12,
+        "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+        "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+        "guest_vcpus": 4,
+        "guest_memory_mib": 8192,
+        "guest_swap_disabled": true,
+        "guest_network": "disabled; no host network or unisolated service fixture is attached",
+        "test_summaries": [
+          "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s"
+        ]
+      }
+    ],
+    "result": "31 passed, 0 failed across four guests",
+    "lock_provenance_note": "The frozen packet source inventory records Cargo.lock SHA-256 f2c74b62...; runtime receipts record the live subject Cargo.lock SHA-256 a33c17bc... . Old lockfile bytes were not reconstructed from the live tree."
+  },
+  "replication_packet": {
+    "source_inventory": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-replication-authority-8212-source.sha256",
+      "sha256": "c49902c80637d5aee0fb3505ed5a2991fd4ee2ee03fac7b2a0e8f5aad8418f71",
+      "entries": 37,
+      "matched_entries": 35,
+      "mismatches": [
+        {
+          "path": "Makefile",
+          "expected_sha256": "fbe1d8643681dd4145c9bf4894756bc16283f54eabf80f8216f49e2730b4543e",
+          "observed_sha256": "37edba96d431bc1d3317790de5e7e05127ed0b07629c859fead96ad9f10dd4df",
+          "matches": false
+        },
+        {
+          "path": "crates/tb-replication/src/metadata.rs",
+          "expected_sha256": "0c278c81663e1e35e32faa46b35bce9f9679e93cd4e7c2d18c1671b1b370cf84",
+          "observed_sha256": "2c8a8b6d9d9d8921cb386b99a10f1962cc31ac7bf95badc56640855c6630e8e3",
+          "matches": false
+        }
+      ]
+    },
+    "artifact_map": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-replication-authority-final-artifacts/artifact-map.txt",
+      "sha256": "ebf004d7e6078dc5cc8056182e30000cbc984229bf78ece535829c16d2a3ab49"
+    },
+    "artifact_checksums": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-replication-authority-final-artifacts/artifacts.sha256",
+      "sha256": "7d8968584cc4b43edbb0f1823efbeb4622a2b939006ba5e10e3b9641fa6d6165"
+    },
+    "test_build_log": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-replication-authority-8212-test-build.log",
+      "sha256": "7b65607e007faae9d0b24194d6410b7931422686f55daa2b389b2a4f5b855019",
+      "command": "nice -n 19 env -u RUSTUP_TOOLCHAIN RUSTC=/home/mariogk/.cargo/bin/rustc CARGO_BUILD_JOBS=2 CC_x86_64_unknown_linux_musl=x86_64-unknown-linux-musl-gcc CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-unknown-linux-musl-gcc /home/mariogk/.cargo/bin/cargo test -p tb-replication --all-targets --no-run --target x86_64-unknown-linux-musl --message-format=json-render-diagnostics --locked"
+    },
+    "runtime_receipt": {
+      "run_id": "replication-authority-final-root-20260924-b",
+      "receipt": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-authority-final-root-20260924-b/run-manifest.json",
+        "sha256": "27b4182116d1e78416e6c0f5e64c0639edaecda298b94c9cfa3ddbd69d1650a6"
+      },
+      "guest_archive": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-authority-final-root-20260924-b/guest-output.tar.gz",
+        "sha256": "b19e5427106557bc96db75717a12cba5a8be9820e6fe31005aed6e209ea043aa"
+      },
+      "status": "failed",
+      "guest_exit_code": 101,
+      "guest_elapsed_ms": 20036,
+      "program_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-replication-authority-final-artifacts/tb_replication_authority",
+      "program_sha256": "7bbb1d755f6bd3e28f87a045d2c885d34af837a150e21ac79a4078966d3eb114",
+      "controller_sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20",
+      "guest_agent_sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb",
+      "firecracker_version": "1.15.1",
+      "kvm_api_version": 12,
+      "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+      "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+      "guest_vcpus": 4,
+      "guest_memory_mib": 8192,
+      "guest_swap_disabled": true,
+      "guest_network": "disabled; no host network or unisolated service fixture is attached",
+      "test_summaries": [
+        "test result: FAILED. 41 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.37s"
+      ]
+    },
+    "result": "41 passed, 1 failed; metadata::tests::format_two_pointer_and_d1_mismatches_fail_closed",
+    "failure_detail": "At metadata.rs:1287, the test mutated the D1 generation and recomputed the D1 CRC, then expected MetadataError::Invalid(\"source change value or binding mismatch\"); the observed result did not match that variant.",
+    "no_retry": "No rerun was made after the technical test failure."
+  },
+  "runtime_limits": [
+    "Guest networking disabled.",
+    "Kernel and rootfs hashes were locally pinned, but upstream artifact provenance is unqualified.",
+    "The receipts do not establish guest cgroup-v2 mode or finite memory.max."
+  ]
+}

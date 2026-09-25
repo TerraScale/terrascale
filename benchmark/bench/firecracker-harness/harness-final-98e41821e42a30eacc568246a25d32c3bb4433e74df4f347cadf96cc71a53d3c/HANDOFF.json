@@ -1,0 +1,22 @@
+{
+  "repository": "/home/mariogk/Projects/TerraScale/ts-benchmark",
+  "head": "5685f163bb7e9339e8eb0c839fe2512aaf562648",
+  "source_sha256": {
+    "firecracker-harness/crates/fc-harness/src/network.rs": "52e7d780f62b01b46afd5d89e22b0b3950cc54d085befe402c701fa28a8e9e1c",
+    "firecracker-harness/crates/fc-harness/src/main.rs": "b9e0c5164ba1cd6a0d932a79f0ff139d0f097d0e2ac3071fba00714d75a65dbe",
+    "firecracker-harness/crates/fc-guest-agent/src/main.rs": "153724ea4253da43017e9759c36e691e2e61c3e46943d712946bcb04f773b369",
+    "firecracker-harness/Cargo.lock": "068f417715789c7c1e0cafbd528032344f94aa98620c4ceb251db13f2ade0e2e",
+    "firecracker-harness/pins.toml": "123c9e0421f7feb59b30415b59c99b696161cf67e13982aef431cbc9e949b01f",
+    "firecracker-harness/Makefile": "7db66d152c4a94f872dc1770a09c37d0b01cdb907278acf896837032845ed635",
+    "firecracker-harness/README.md": "89d62795ea2b5125331658d09a9141329c76a8e5af197c3b8e66801b63a9d020"
+  },
+  "artifacts_sha256": {
+    "/tmp/fch-network-QLix0j/fc-harness-final": "5684795c8e5b573a30e0af0ef5af6f76dec7232752734783db92d0f3fedc541f",
+    "/tmp/fch-network-QLix0j/fc-guest-agent-final": "03ee13edbcddcba51f99b8c1bf7edfaea5128452ce9c227481154e9d036d60af",
+    "/tmp/fch-network-QLix0j/fc-harness-tests-musl-final": "2678a08107b4600dd23acc354ce20a6caf3baca5fa71c16205ae733fcece7b9c"
+  },
+  "build_log": "/tmp/fch-network-final-build-20260924.log",
+  "guest_test_command": "FC_GUEST_AGENT_PATH=/tmp/fch-network-QLix0j/fc-guest-agent-final /tmp/fch-network-QLix0j/fc-harness-final run --subject-repo /home/mariogk/Projects/TerraScale/ts-benchmark --program /tmp/fch-network-QLix0j/fc-harness-tests-musl-final --run-id fc-harness-network-unit-final-20260924-a --timeout-seconds 120 -- --nocapture",
+  "network_smoke_command": "FC_GUEST_AGENT_PATH=/tmp/fch-network-QLix0j/fc-guest-agent-final /tmp/fch-network-QLix0j/fc-harness-final network-smoke",
+  "fault_injection_command": "FC_GUEST_AGENT_PATH=/tmp/fch-network-QLix0j/fc-guest-agent-final FC_HARNESS_TEST_EXIT_AFTER_NETNS_ADD=1 /tmp/fch-network-QLix0j/fc-harness-final network-smoke"
+}

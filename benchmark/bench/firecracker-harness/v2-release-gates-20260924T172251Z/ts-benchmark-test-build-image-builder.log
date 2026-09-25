@@ -1,0 +1,31 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness'
+CC_x86_64_unknown_linux_musl="/run/current-system/sw/bin/x86_64-unknown-linux-musl-gcc" \
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="/run/current-system/sw/bin/x86_64-unknown-linux-musl-gcc" \
+nice -n 19 ionice -c 3 cargo test --locked --no-run --lib \
+	--jobs 2 --target x86_64-unknown-linux-musl -p fc-image-builder
+   Compiling crc32fast v1.5.2
+   Compiling adler2 v2.0.1
+   Compiling miniz_oxide v0.8.9
+   Compiling filetime v0.2.29
+   Compiling tar v0.4.46
+   Compiling flate2 v1.1.2
+   Compiling fc-image-builder v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/crates/fc-image-builder)
+error[E0624]: associated function `from_research_packet_bytes` is private
+    --> crates/fc-image-builder/src/build.rs:3234:35
+     |
+3234 |               CandidatePackageLock::from_research_packet_bytes(&recipe, CANDIDATE_PACKET, "guest")
+     |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^ private associated function
+     |
+    ::: crates/fc-image-builder/src/package_lock.rs:289:5
+     |
+ 289 | /     fn from_research_packet_bytes(
+ 290 | |         recipe: &RecipeFile,
+ 291 | |         bytes: &[u8],
+ 292 | |         package_role: &str,
+ 293 | |     ) -> Result<Self, PackageLockError> {
+     | |_______________________________________- private associated function defined here
+
+For more information about this error, try `rustc --explain E0624`.
+error: could not compile `fc-image-builder` (lib test) due to 1 previous error
+make: *** [Makefile:52: test-build-image-builder] Error 101
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness'

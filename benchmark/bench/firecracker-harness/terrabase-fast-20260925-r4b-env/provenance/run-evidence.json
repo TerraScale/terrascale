@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "run_id": "terrabase-fast-20260925-r4b-env",
+  "status": "passed",
+  "test_result": {
+    "tests": 21,
+    "passed": 21,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 0,
+    "initializer_test": "test server_fast::client_process::packaged_initializer_bootstraps_fresh_local_v1_for_https_document_caller ... ok"
+  },
+  "source": {
+    "head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "source_identity_sha256": "dc68cbee864bbc81bc1460d598dc98e4b7cc7458169fcf5e59b9f899cf625298",
+    "frozen_source_manifest_sha256": "505a44b228d7a14dafcd8544b03fd7d38b5f4c1eb46d5eb1d4c6662c180b91a3",
+    "source_file_count": 134,
+    "overlay_matches_non_agents": 133,
+    "agents_head_sha256": "add8c2a91a50f38b211cd469fc5dab9a1341e4c64e9e4c85e84250e8cffa78ae"
+  },
+  "runner": {
+    "benchmark_head": "5685f163bb7e9339e8eb0c839fe2512aaf562648",
+    "identity_sha256": "df500ce3da9505b3fae6e5d2bb74487859c3c3dae322d8ed3162fc666f48e3ef",
+    "tracked_diff_sha256": "ffba5d38d14d7644d3ccf4d4d2345612ec62fd328fc05e80a59a3da1d3be79b0"
+  },
+  "program": {
+    "wrapper_sha256": "bb61a354a9deb49e3d1ef09c74f459af85cb65034d835d0be805441cecd26d04",
+    "controller_sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20",
+    "payloads": [
+      {
+        "host_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4b-env/payloads/client_process",
+        "guest_path": "/root/fc-harness-payloads/client_process",
+        "size_bytes": 26944216,
+        "sha256": "36d872c1fa00eea7fddce6b804e22742bca7dfa7e44cf424fd375dd65433d51b",
+        "guest_mode": "0755"
+      },
+      {
+        "host_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4b-env/payloads/tb-server",
+        "guest_path": "/root/fc-harness-payloads/tb-server",
+        "size_bytes": 31896568,
+        "sha256": "2bb9ca6d901b5703e4b7ad2db431c623484b01c26ea99e800937c97b955029d1",
+        "guest_mode": "0755"
+      },
+      {
+        "host_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4b-env/payloads/terrabase-keygen",
+        "guest_path": "/root/fc-harness-payloads/terrabase-keygen",
+        "size_bytes": 1040208,
+        "sha256": "1d1f97c89b6c90db1fd5d81d4df5354cc98d7c99ffed785c1abb601b64724940",
+        "guest_mode": "0755"
+      },
+      {
+        "host_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4b-env/payloads/terrabase-init",
+        "guest_path": "/root/fc-harness-payloads/terrabase-init",
+        "size_bytes": 6098920,
+        "sha256": "0c85ad398143695fe5c9068a06b686b86961eac6a271cc9f63e814d9397a474c",
+        "guest_mode": "0755"
+      }
+    ]
+  },
+  "runtime": {
+    "guest_exit_code": 0,
+    "guest_elapsed_ms": 15737,
+    "controller_elapsed_ms": 25235,
+    "timeout_seconds": 300,
+    "network_fixture": null,
+    "guest_network": "disabled; no host network or unisolated service fixture is attached",
+    "host_swap_active": true,
+    "guest_swap_entries": 0
+  },
+  "cleanup": {
+    "host_firecracker_pid_from_file": 3008830,
+    "firecracker_process_absent": true,
+    "guest_test_cgroup": "/sys/fs/cgroup/system.slice/terrabase-test-868-1790351866050965506",
+    "cgroup_removed": true,
+    "remaining_child_processes": "",
+    "timed_out": false,
+    "memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "errors": [],
+    "ephemeral_files_absent": {
+      "/tmp/fc-payload-j93Tgs": true,
+      "/tmp/fc-payload-8KksvT": true,
+      "/tmp/fc-payload-i6ZJWn": true
+    }
+  },
+  "evidence": {
+    "run_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r4b-env/run-manifest.json",
+      "sha256": "e6dbdc3a879ab09251565b4cc519116ecd136c442532e72c9e16ecd58ba70b2a",
+      "size_bytes": 23327
+    },
+    "guest_output_archive": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r4b-env/guest-output.tar.gz",
+      "sha256": "d94cab5d58b4aa81d0cda63b33ef1ed95a5f03f9c32eb81b16e23198294eaf20",
+      "size_bytes": 10601
+    },
+    "guest_stdout": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r4b-env/provenance/guest-test-stdout.log",
+      "sha256": "734ca4ca55a52db1d984b05f1c1c403788bd3a206ddb61bbec000cc609bab356",
+      "size_bytes": 2386
+    },
+    "finite_cgroup_receipt": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r4b-env/provenance/finite-cgroup-receipt.json",
+      "sha256": "1fbf4d872c22db06b4a133f728c6c63f2eef697284e71424d8883ba3c522fa5d",
+      "size_bytes": 984
+    },
+    "controller_stdout": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4b-env/provenance/controller.stdout.log",
+      "sha256": "92b2aeb9868ea312d07c031feeb91995dc7034a428e191da1188ceb116a7748c",
+      "size_bytes": 883
+    },
+    "prelaunch_input_set": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4b-env/provenance/prelaunch-input-set.json",
+      "sha256": "4882ac8525e3a7d81870c34fa1baae14c988cfc5e62a8dcf366e5a48a4130ebc",
+      "size_bytes": 6076
+    },
+    "subject_source_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4b-env/provenance/subject-source-manifest.sha256",
+      "sha256": "505a44b228d7a14dafcd8544b03fd7d38b5f4c1eb46d5eb1d4c6662c180b91a3",
+      "size_bytes": 14139
+    },
+    "subject_overlay_inventory": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4b-env/provenance/subject-overlay.sha256",
+      "sha256": "5cb866e151e8361ea978f4e74df8465d5bd910ecbd4e12c2441b225db1787f48",
+      "size_bytes": 13871
+    },
+    "foundation_build_receipt": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4b-env/provenance/foundation-build-receipt.json",
+      "sha256": "49f96174eaa6a047bebfd181ccc9ccf87a3a30eec350bc115b42c623930cb64b",
+      "size_bytes": 8127
+    },
+    "foundation_artifact_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4b-env/provenance/foundation-artifacts.sha256",
+      "sha256": "464b5f33297e6985d875abcab307911c0d32f37b676063d287acec3805893bee",
+      "size_bytes": 311
+    },
+    "foundation_strip_equivalence": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4b-env/provenance/foundation-strip-equivalence.json",
+      "sha256": "2ef6b84bfdd32947f50330d80116da45ee5ea329c1dbba7d39c448490b4dc71d",
+      "size_bytes": 11517
+    },
+    "prior_attempt_note": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r4b-env/provenance/prior-attempt.txt",
+      "sha256": "0c58e55c22f33535248a8dc28e499cd1e3e0b89102eb4b13644487bd5466ba31",
+      "size_bytes": 810
+    }
+  }
+}

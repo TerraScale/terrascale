@@ -14,6 +14,6 @@ source_manifest = "/tmp/ts-oci-readiness-20260921/vm-inputs-v1/MANIFEST.txt"
 [machine]
 vcpu_count = 4
 mem_size_mib = 8192
-ht_enabled = false
+smt = false
 dynamic_memory = false
 swap_disabled = true

@@ -3,14 +3,37 @@ name = "terrabase-sqlite-baseline"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
+default-run = "terrabase-sqlite-baseline"
+
+[[bin]]
+name = "p04-analysis-launcher"
+path = "src/p04_analysis_launcher.rs"
+
+[[bin]]
+name = "p04-three-way"
+path = "src/bin/p04_three_way.rs"
+required-features = ["three-way"]
+
+[features]
+terrabase = ["dep:tb-core", "dep:tb-storage"]
+three-way = ["terrabase", "dep:turso", "dep:tokio"]
 
 [dependencies]
 anyhow = "=1.0.104"
+chacha20 = { version = "=0.10.2", default-features = false, features = ["rng"] }
 clap = { version = "=4.6.6", features = ["derive"] }
+flate2 = { version = "=1.1.2", default-features = false, features = ["rust_backend"] }
+rand = { version = "=0.10.3", default-features = false, features = ["unbiased"] }
 rusqlite = { version = "=0.40.2", features = ["bundled", "modern_sqlite"] }
+rustix = { version = "=1.1.5", default-features = false, features = ["time"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 sha2 = "=0.10.9"
+tar = { version = "=0.4.46", default-features = false }
+tb-core = { path = "../../terrabase/crates/tb-core", optional = true }
+tb-storage = { path = "../../terrabase/crates/tb-storage", optional = true }
+tokio = { version = "=1.53.1", features = ["rt", "time"], optional = true }
+turso = { version = "=0.7.2", default-features = false, optional = true }
 
 [lints.rust]
 unsafe_code = "warn"

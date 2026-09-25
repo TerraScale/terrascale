@@ -1,0 +1,16 @@
+# P04 analyzer and launcher guest artifacts
+
+The build source is the read-only 85-file packet `../p04-analyzer-launcher-final-20260924T203626Z`. Its `packet-source.sha256` digest is `c5cf25cc1648edf48a58b605930d9c57a21912d3e7b87fb42428bef8d28a965b`; the packet's `ts-benchmark/terra-rust/Cargo.lock` digest is `88a7530d89125a2a79757b18882327fbeac2cbfd821bf9997afd4e3ad2bf6045`. The analyzer source digest is `142fc045a7976c9cc8e0798bcad3586a0d4c4949fc1db3ad69589b5702f9868c`, and the launcher source digest is `c9095c786aecbe07704d986c936f73cfe37bdbba8ec6eeb4032070cacc19249c`. The packet differs from its reviewed predecessor only in the analyzer source. `post-build-source-check.log` records successful checks of all 85 source entries after the builds.
+
+The `target/` directory was created empty specifically for this packet. With `CARGO_TARGET_DIR` set to that absolute directory, `CARGO_NET_OFFLINE=true`, and `CARGO_INCREMENTAL=0`, low-priority `make -C ../p04-analyzer-launcher-final-20260924T203626Z/ts-benchmark/terra-rust` ran `fmt`, `check`, `lint`, `check-engine`, `lint-engine`, `test-build`, `test-build-launcher`, `build-guest-engine`, and `build-guest-launcher` serially. Every gate returned zero (`results.txt`); the two test builds only compiled executables. Each gate has a same-named `.log` file. The debug/release Cargo depfiles and fingerprints under this target name the packet's analyzer or launcher source; the guest engine build log also names the copied engine source path. Source markers are present in both test ELFs and the release analyzer ELF. The release launcher ELF has no embedded packet-path marker, so its empty-target provenance is established by its build log, depfile, fingerprint, and artifact hash.
+
+| Immutable mode-0555 payload | Bytes | SHA-256 | Built by |
+| --- | ---: | --- | --- |
+| `payloads/terrabase-sqlite-baseline-tests-musl` | 34,397,928 | `9b7a04b3bb868f332d4ef45f9b7bd98b078e8ec23b63ddc530f8d49e9c8f3521` | `test-build` |
+| `payloads/p04-analysis-launcher-tests-musl` | 21,723,256 | `1676e9a478a08bebecf41bba76d1fa9eceb7880684e3ac06f747e59a1d06652e` | `test-build-launcher` |
+| `payloads/terrabase-sqlite-baseline-musl` | 5,598,312 | `766d89d2917e38ea988fd9e619139040e8c9965c04d749f156b1960d1d0d6257` | `build-guest-engine` |
+| `payloads/p04-analysis-launcher-musl` | 1,548,040 | `ff47c791343c19598af4f8517d5d96b02479703cf3c4675dd42a98e2e167e9bf` | `build-guest-launcher` |
+
+`payloads.sha256` checks all copied payloads against the originals. `file` reports x86-64 static PIE for all four; `readelf` found neither `PT_INTERP` nor `DT_NEEDED`. None of these test executables ran on the host. The release launcher is the Firecracker harness program, with the release analyzer and flat campaign evidence archive as supplemental payloads. The release analyzer plus the staged 5,406,423-byte archive total 11,004,735 bytes, below the 128-MiB supplemental-payload limit. The measured scan ELF is a separate previously sealed artifact, not one of these four binaries.
+
+The earlier `p04-analyzer-launcher-gates-20260924T201356Z/` and `p04-analyzer-launcher-gates-clippyfix-20260924T203257Z/` directories retain the initial Clippy failures. This map is an operator build assertion tied to the isolated source packet and target, not cryptographic proof of compiler behavior.

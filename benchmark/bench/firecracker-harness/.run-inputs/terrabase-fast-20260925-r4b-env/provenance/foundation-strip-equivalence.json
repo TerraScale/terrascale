@@ -1,0 +1,352 @@
+{
+  "strip_tool_path": "/run/current-system/sw/bin/strip",
+  "strip_tool_resolved_path": "/nix/store/la0zcwbbm1jazcjqf80m49xfyj14k4b3-binutils-wrapper-2.46/bin/strip",
+  "strip_tool_sha256": "2c920ffc5d012d70cd8cb3727a27253120eb1780d1a9c059de3bd3d085451db9",
+  "strip_tool_version": "GNU strip (GNU Binutils) 2.46",
+  "strip_operation": "--strip-debug on copied outputs only; original Cargo outputs retained unchanged",
+  "payload_count": 4,
+  "aggregate_staged_bytes": 65979912,
+  "aggregate_limit_bytes": 134217728,
+  "payloads": [
+    {
+      "name": "tb-server",
+      "original": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-target-20260925-r6/x86_64-unknown-linux-musl/debug/tb-server",
+      "original_sha256": "2b82606371518a6093241503754008496786af634477096ea0a3bc57d2cddf31",
+      "original_size_bytes": 144255088,
+      "stripped_copy": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6/tb-server",
+      "stripped_sha256": "2bb9ca6d901b5703e4b7ad2db431c623484b01c26ea99e800937c97b955029d1",
+      "stripped_size_bytes": 31896568,
+      "strip_argv": [
+        "/run/current-system/sw/bin/strip",
+        "--strip-debug",
+        "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6/tb-server"
+      ],
+      "loaded_elf_comparison": {
+        "elf_class": "ELF64",
+        "endianness": "little",
+        "machine": 62,
+        "type": 3,
+        "entry": 1120310,
+        "program_header_count": 9,
+        "section_table_fields_before": {
+          "e_shoff": 144252720,
+          "e_shnum": 37,
+          "e_shstrndx": 36
+        },
+        "section_table_fields_after": {
+          "e_shoff": 31894712,
+          "e_shnum": 29,
+          "e_shstrndx": 28
+        },
+        "identical_program_header_bytes": true,
+        "identical_pt_load_bytes_except_allowed_header_fields": true,
+        "allowed_pt_load_header_byte_exceptions": [
+          {
+            "offset": 40,
+            "length": 8,
+            "field": "e_shoff"
+          },
+          {
+            "offset": 60,
+            "length": 2,
+            "field": "e_shnum"
+          },
+          {
+            "offset": 62,
+            "length": 2,
+            "field": "e_shstrndx"
+          }
+        ],
+        "pt_load_segments": [
+          {
+            "program_header_index": 0,
+            "offset": 0,
+            "file_size": 1093392,
+            "memory_size": 1093392,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 1,
+            "offset": 1093632,
+            "file_size": 13700023,
+            "memory_size": 13700023,
+            "flags": 5,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 2,
+            "offset": 14794752,
+            "file_size": 3429104,
+            "memory_size": 3429104,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 3,
+            "offset": 18225360,
+            "file_size": 659992,
+            "memory_size": 690712,
+            "flags": 6,
+            "alignment": 4096
+          }
+        ]
+      }
+    },
+    {
+      "name": "terrabase-keygen",
+      "original": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-target-20260925-r6/x86_64-unknown-linux-musl/debug/terrabase-keygen",
+      "original_sha256": "442b59bdf59f82d8e9b2e5f735ae7007c27cdb5abf379c2f6e7a02b1fdc790a7",
+      "original_size_bytes": 8720632,
+      "stripped_copy": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6/terrabase-keygen",
+      "stripped_sha256": "1d1f97c89b6c90db1fd5d81d4df5354cc98d7c99ffed785c1abb601b64724940",
+      "stripped_size_bytes": 1040208,
+      "strip_argv": [
+        "/run/current-system/sw/bin/strip",
+        "--strip-debug",
+        "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6/terrabase-keygen"
+      ],
+      "loaded_elf_comparison": {
+        "elf_class": "ELF64",
+        "endianness": "little",
+        "machine": 62,
+        "type": 3,
+        "entry": 58822,
+        "program_header_count": 9,
+        "section_table_fields_before": {
+          "e_shoff": 8718264,
+          "e_shnum": 37,
+          "e_shstrndx": 36
+        },
+        "section_table_fields_after": {
+          "e_shoff": 1038352,
+          "e_shnum": 29,
+          "e_shstrndx": 28
+        },
+        "identical_program_header_bytes": true,
+        "identical_pt_load_bytes_except_allowed_header_fields": true,
+        "allowed_pt_load_header_byte_exceptions": [
+          {
+            "offset": 40,
+            "length": 8,
+            "field": "e_shoff"
+          },
+          {
+            "offset": 60,
+            "length": 2,
+            "field": "e_shnum"
+          },
+          {
+            "offset": 62,
+            "length": 2,
+            "field": "e_shstrndx"
+          }
+        ],
+        "pt_load_segments": [
+          {
+            "program_header_index": 0,
+            "offset": 0,
+            "file_size": 34800,
+            "memory_size": 34800,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 1,
+            "offset": 36864,
+            "file_size": 564454,
+            "memory_size": 564454,
+            "flags": 5,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 2,
+            "offset": 602112,
+            "file_size": 159380,
+            "memory_size": 159380,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 3,
+            "offset": 763120,
+            "file_size": 26096,
+            "memory_size": 32336,
+            "flags": 6,
+            "alignment": 4096
+          }
+        ]
+      }
+    },
+    {
+      "name": "terrabase-init",
+      "original": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-target-20260925-r6/x86_64-unknown-linux-musl/debug/terrabase-init",
+      "original_sha256": "7cd2f2999663bda9ae7adfd9e05b0e6a58f3c83e43f92b6c60e16bf4fd1720bd",
+      "original_size_bytes": 36256088,
+      "stripped_copy": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6/terrabase-init",
+      "stripped_sha256": "0c85ad398143695fe5c9068a06b686b86961eac6a271cc9f63e814d9397a474c",
+      "stripped_size_bytes": 6098920,
+      "strip_argv": [
+        "/run/current-system/sw/bin/strip",
+        "--strip-debug",
+        "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6/terrabase-init"
+      ],
+      "loaded_elf_comparison": {
+        "elf_class": "ELF64",
+        "endianness": "little",
+        "machine": 62,
+        "type": 3,
+        "entry": 229654,
+        "program_header_count": 9,
+        "section_table_fields_before": {
+          "e_shoff": 36253720,
+          "e_shnum": 37,
+          "e_shstrndx": 36
+        },
+        "section_table_fields_after": {
+          "e_shoff": 6097064,
+          "e_shnum": 29,
+          "e_shstrndx": 28
+        },
+        "identical_program_header_bytes": true,
+        "identical_pt_load_bytes_except_allowed_header_fields": true,
+        "allowed_pt_load_header_byte_exceptions": [
+          {
+            "offset": 40,
+            "length": 8,
+            "field": "e_shoff"
+          },
+          {
+            "offset": 60,
+            "length": 2,
+            "field": "e_shnum"
+          },
+          {
+            "offset": 62,
+            "length": 2,
+            "field": "e_shstrndx"
+          }
+        ],
+        "pt_load_segments": [
+          {
+            "program_header_index": 0,
+            "offset": 0,
+            "file_size": 203040,
+            "memory_size": 203040,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 1,
+            "offset": 204800,
+            "file_size": 2859798,
+            "memory_size": 2859798,
+            "flags": 5,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 2,
+            "offset": 3067904,
+            "file_size": 713768,
+            "memory_size": 713768,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 3,
+            "offset": 3783560,
+            "file_size": 131224,
+            "memory_size": 138720,
+            "flags": 6,
+            "alignment": 4096
+          }
+        ]
+      }
+    },
+    {
+      "name": "fast",
+      "original": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-target-20260925-r6/x86_64-unknown-linux-musl/debug/deps/fast-157b3a3f788afa69",
+      "original_sha256": "3820d7208200ac526f8581d644d92418ae9f02c708a0570e4089156ed76598f6",
+      "original_size_bytes": 104411456,
+      "stripped_copy": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6/fast",
+      "stripped_sha256": "36d872c1fa00eea7fddce6b804e22742bca7dfa7e44cf424fd375dd65433d51b",
+      "stripped_size_bytes": 26944216,
+      "strip_argv": [
+        "/run/current-system/sw/bin/strip",
+        "--strip-debug",
+        "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6/fast"
+      ],
+      "loaded_elf_comparison": {
+        "elf_class": "ELF64",
+        "endianness": "little",
+        "machine": 62,
+        "type": 3,
+        "entry": 1109686,
+        "program_header_count": 9,
+        "section_table_fields_before": {
+          "e_shoff": 104409088,
+          "e_shnum": 37,
+          "e_shstrndx": 36
+        },
+        "section_table_fields_after": {
+          "e_shoff": 26942360,
+          "e_shnum": 29,
+          "e_shstrndx": 28
+        },
+        "identical_program_header_bytes": true,
+        "identical_pt_load_bytes_except_allowed_header_fields": true,
+        "allowed_pt_load_header_byte_exceptions": [
+          {
+            "offset": 40,
+            "length": 8,
+            "field": "e_shoff"
+          },
+          {
+            "offset": 60,
+            "length": 2,
+            "field": "e_shnum"
+          },
+          {
+            "offset": 62,
+            "length": 2,
+            "field": "e_shstrndx"
+          }
+        ],
+        "pt_load_segments": [
+          {
+            "program_header_index": 0,
+            "offset": 0,
+            "file_size": 1075392,
+            "memory_size": 1075392,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 1,
+            "offset": 1077248,
+            "file_size": 13000839,
+            "memory_size": 13000839,
+            "flags": 5,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 2,
+            "offset": 14082048,
+            "file_size": 3184656,
+            "memory_size": 3184656,
+            "flags": 4,
+            "alignment": 4096
+          },
+          {
+            "program_header_index": 3,
+            "offset": 17269552,
+            "file_size": 695448,
+            "memory_size": 717592,
+            "flags": 6,
+            "alignment": 4096
+          }
+        ]
+      }
+    }
+  ]
+}

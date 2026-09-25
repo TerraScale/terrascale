@@ -1,0 +1,21 @@
+=== OCI child manifest ===
+ba0a1b53e36f321c0d46f3867104abef169f7bc59c467c664ddac87e7ddc9a8b  /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/rustfs-oci-extraction-20260925-r2-pinned/oci-layout/rustfs/blobs/sha256/ba0a1b53e36f321c0d46f3867104abef169f7bc59c467c664ddac87e7ddc9a8b
+=== layer 4: binary copy ===
+drwxr-xr-x 0/0               0 2026-09-16 07:05 usr/
+drwxr-xr-x 0/0               0 2026-09-16 07:05 usr/bin/
+-rwxr-xr-x 0/0       264596736 2026-09-16 05:20 usr/bin/rustfs
+=== layer 5 ===
+-rwxr-xr-x 0/0           11862 2026-09-16 07:04 entrypoint.sh
+=== layer 6 ===
+=== layer 7 ===
+drwxr-x--- 10001/10001       0 2026-09-16 07:05 data/
+drwxr-xr-x 0/0               0 2026-09-16 07:05 etc/
+-rw-r--r-- 0/0             532 2026-09-16 07:05 etc/group
+-rw-r--r-- 0/0             526 2026-09-16 07:05 etc/group-
+-rw-r--r-- 0/0             751 2026-09-16 07:05 etc/passwd
+-rw-r--r-- 0/0             702 2026-03-24 16:40 etc/passwd-
+-rw-r----- 0/42            288 2026-09-16 07:05 etc/shadow
+-rw-r----- 0/42            260 2026-06-13 13:38 etc/shadow-
+drwxr-xr-x 0/0               0 2026-09-16 07:05 home/
+drwxr-sr-x 10001/10001       0 2026-09-16 07:05 home/rustfs/
+drwxr-x--- 10001/10001       0 2026-09-16 07:05 logs/

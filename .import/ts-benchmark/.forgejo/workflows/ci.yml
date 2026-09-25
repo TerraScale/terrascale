@@ -9,36 +9,191 @@ on:
 
 jobs:
   rust-driver:
-    name: Format, check, and build Rust SQLite driver
+    name: Check Rust driver against published TerraBase source
     runs-on: terrascale-builder
-    timeout-minutes: 30
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: "2"
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           github-server-url: "https://git.terrascale.tech"
           ref: ${{ forgejo.sha }}
+          path: ts-benchmark
           persist-credentials: false
 
-      - name: Build at lowest CPU and I/O priority
-        run: nice -n 19 ionice -c 3 make fmt check build
-
-      - name: Build the guest executable
+      - name: Require a published TerraBase commit
+        env:
+          ENGINE_SHA: ${{ vars.TERRABASE_CI_SHA }}
         run: |
+          if [ "${#ENGINE_SHA}" -ne 40 ]; then
+            echo 'TERRABASE_CI_SHA must be a published 40-character commit SHA' >&2
+            exit 2
+          fi
+          case "$ENGINE_SHA" in
+            *[!0123456789abcdef]*) echo 'TERRABASE_CI_SHA must be lowercase hexadecimal' >&2; exit 2 ;;
+          esac
+
+      - name: Check out the paired TerraBase source
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          repository: TerraScale/terrabase
+          ref: ${{ vars.TERRABASE_CI_SHA }}
+          path: terrabase
+          token: ${{ secrets.TERRABASE_READ_TOKEN || forgejo.token }}
+          persist-credentials: false
+
+      - name: Verify paired source layout and revision
+        env:
+          ENGINE_SHA: ${{ vars.TERRABASE_CI_SHA }}
+          BENCHMARK_SHA: ${{ forgejo.sha }}
+        run: |
+          test "$(git -C ts-benchmark rev-parse HEAD)" = "$BENCHMARK_SHA" || { echo 'Benchmark checkout differs from the event revision' >&2; exit 2; }
+          test "$(git -C terrabase rev-parse HEAD)" = "$ENGINE_SHA" || { echo 'TerraBase checkout revision differs from TERRABASE_CI_SHA' >&2; exit 2; }
+          test -f terrabase/crates/tb-core/Cargo.toml || { echo 'Published TerraBase source lacks crates/tb-core' >&2; exit 2; }
+          test -f terrabase/crates/tb-storage/Cargo.toml || { echo 'Published TerraBase source lacks crates/tb-storage' >&2; exit 2; }
+          printf 'Benchmark commit: %s\nTerraBase commit: %s\n' "$BENCHMARK_SHA" "$ENGINE_SHA"
+
+      - name: Check and build both driver modes at lowest priority
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          unset RUSTUP_TOOLCHAIN
+          nice -n 19 ionice -c 3 make -C ts-benchmark fmt check lint build check-engine lint-engine
+
+      - name: Build both guest executables without running them on the host
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          unset RUSTUP_TOOLCHAIN
           rustup target add x86_64-unknown-linux-musl --toolchain 1.98.1
-          nice -n 19 ionice -c 3 make build-guest
+          nice -n 19 ionice -c 3 make -C ts-benchmark build-guest build-guest-engine
 
   firecracker-environment:
-    name: Verify pinned guest and boot smoke
+    name: Run pinned guest smoke and Rust tests
+    needs: rust-driver
     runs-on: terrascale-builder
-    timeout-minutes: 30
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: "2"
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           github-server-url: "https://git.terrascale.tech"
           ref: ${{ forgejo.sha }}
+          path: ts-benchmark
           persist-credentials: false
 
+      - name: Require a published TerraBase commit
+        env:
+          ENGINE_SHA: ${{ vars.TERRABASE_CI_SHA }}
+        run: |
+          if [ "${#ENGINE_SHA}" -ne 40 ]; then
+            echo 'TERRABASE_CI_SHA must be a published 40-character commit SHA' >&2
+            exit 2
+          fi
+          case "$ENGINE_SHA" in
+            *[!0123456789abcdef]*) echo 'TERRABASE_CI_SHA must be lowercase hexadecimal' >&2; exit 2 ;;
+          esac
+
+      - name: Check out the paired TerraBase source
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          repository: TerraScale/terrabase
+          ref: ${{ vars.TERRABASE_CI_SHA }}
+          path: terrabase
+          token: ${{ secrets.TERRABASE_READ_TOKEN || forgejo.token }}
+          persist-credentials: false
+
+      - name: Verify paired source layout and revision
+        env:
+          ENGINE_SHA: ${{ vars.TERRABASE_CI_SHA }}
+          BENCHMARK_SHA: ${{ forgejo.sha }}
+        run: |
+          test "$(git -C ts-benchmark rev-parse HEAD)" = "$BENCHMARK_SHA" || { echo 'Benchmark checkout differs from the event revision' >&2; exit 2; }
+          test "$(git -C terrabase rev-parse HEAD)" = "$ENGINE_SHA" || { echo 'TerraBase checkout revision differs from TERRABASE_CI_SHA' >&2; exit 2; }
+          test -f terrabase/crates/tb-core/Cargo.toml || { echo 'Published TerraBase source lacks crates/tb-core' >&2; exit 2; }
+          test -f terrabase/crates/tb-storage/Cargo.toml || { echo 'Published TerraBase source lacks crates/tb-storage' >&2; exit 2; }
+          printf 'Benchmark commit: %s\nTerraBase commit: %s\n' "$BENCHMARK_SHA" "$ENGINE_SHA"
+
+      - name: Install pinned Rust guest target
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup target add x86_64-unknown-linux-musl --toolchain 1.98.1
+
+      - name: Check harness and compile image-builder tests without executing them
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          unset RUSTUP_TOOLCHAIN
+          nice -n 19 ionice -c 3 make -C ts-benchmark/firecracker-harness fmt check-controller lint-controller check-image-builder lint-image-builder
+
       - name: Verify Firecracker, KVM, images, and effective guest limits
-        run: nice -n 19 ionice -c 3 make vm-preflight vm-smoke
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          unset RUSTUP_TOOLCHAIN
+          nice -n 19 ionice -c 3 make -C ts-benchmark vm-preflight vm-smoke
+
+      - name: Compile musl test executables and the real TerraBase caller
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          unset RUSTUP_TOOLCHAIN
+          nice -n 19 ionice -c 3 make -C ts-benchmark/firecracker-harness test-build test-build-image-builder
+          nice -n 19 ionice -c 3 make -C ts-benchmark test-build build-guest-engine
+
+      - name: Run Rust tests and the real TerraBase caller in Firecracker
+        env:
+          RUN_BASE: ci-${{ forgejo.run_id }}-${{ forgejo.run_attempt }}
+        run: |
+          set -eu
+          packet="$(mktemp -d)"
+          cp -p ts-benchmark/firecracker-harness/target/release/fc-harness "$packet/fc-harness"
+          cp -p ts-benchmark/firecracker-harness/target/x86_64-unknown-linux-musl/release/fc-guest-agent "$packet/fc-guest-agent"
+          (cd "$packet" && sha256sum fc-harness fc-guest-agent > SHA256SUMS && sha256sum -c SHA256SUMS)
+          harness_sha="$(sha256sum "$packet/fc-harness" | cut -d ' ' -f 1)"
+          agent_sha="$(sha256sum "$packet/fc-guest-agent" | cut -d ' ' -f 1)"
+          printf 'Frozen controller SHA-256: %s\nFrozen agent SHA-256: %s\n' "$harness_sha" "$agent_sha"
+
+          pick_test_executable() {
+            found=
+            for candidate in "$@"; do
+              if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+                test -z "$found" || { echo 'Multiple matching musl test executables' >&2; return 2; }
+                found="$candidate"
+              fi
+            done
+            test -n "$found" || { echo 'Musl test executable was not found' >&2; return 2; }
+            printf '%s\n' "$found"
+          }
+
+          harness_tests="$(pick_test_executable "$PWD"/ts-benchmark/firecracker-harness/target/x86_64-unknown-linux-musl/debug/deps/fc_harness-*)"
+          builder_tests="$(pick_test_executable "$PWD"/ts-benchmark/firecracker-harness/target/x86_64-unknown-linux-musl/debug/deps/fc_image_builder-*)"
+          engine_tests="$(pick_test_executable "$PWD"/ts-benchmark/terra-rust/target/x86_64-unknown-linux-musl/debug/deps/terrabase_sqlite_baseline-*)"
+
+          (cd "$packet" && sha256sum -c SHA256SUMS)
+          nice -n 19 ionice -c 3 make -C ts-benchmark/firecracker-harness test-vm \
+            TEST_BINARY="$harness_tests" RUN_ID="$RUN_BASE-harness" SUBJECT_REPO="$PWD/terrabase" \
+            HARNESS_BINARY="$packet/fc-harness" GUEST_AGENT_BINARY="$packet/fc-guest-agent"
+          (cd "$packet" && sha256sum -c SHA256SUMS)
+          nice -n 19 ionice -c 3 make -C ts-benchmark/firecracker-harness test-vm \
+            TEST_BINARY="$builder_tests" RUN_ID="$RUN_BASE-image-builder" SUBJECT_REPO="$PWD/terrabase" \
+            HARNESS_BINARY="$packet/fc-harness" GUEST_AGENT_BINARY="$packet/fc-guest-agent"
+          nice -n 19 ionice -c 3 make -C ts-benchmark test-vm \
+            TEST_BINARY="$engine_tests" RUN_ID="$RUN_BASE-engine-unit" SUBJECT_REPO="$PWD/terrabase" \
+            HARNESS_BINARY="$packet/fc-harness" GUEST_AGENT_BINARY="$packet/fc-guest-agent" \
+            HARNESS_SHA256="$harness_sha" GUEST_AGENT_SHA256="$agent_sha"
+
+          (cd "$packet" && sha256sum -c SHA256SUMS)
+          FC_GUEST_AGENT_PATH="$packet/fc-guest-agent" "$packet/fc-harness" run \
+            --benchmark-repo "$PWD/ts-benchmark" --subject-repo "$PWD/terrabase" \
+            --program "$PWD/ts-benchmark/terra-rust/target/x86_64-unknown-linux-musl/release/terrabase-sqlite-baseline" \
+            --run-id "$RUN_BASE-terrabase" --timeout-seconds 120 -- \
+            run-terrabase --case point-hit-random --rows 1024 --operations 4 \
+            --body-bytes 16 --seed 1 --trial 1 \
+            --database /root/fc-bench-data/ci-terrabase.tbdb \
+            --samples /root/fc-harness-output/samples.jsonl \
+            --receipt /root/fc-harness-output/receipt.json \
+            --guest-manifest /root/fc-harness-output/guest-manifest.json \
+            --benchmark-revision "$(git -C ts-benchmark rev-parse HEAD)" \
+            --engine-revision "$(git -C terrabase rev-parse HEAD)"

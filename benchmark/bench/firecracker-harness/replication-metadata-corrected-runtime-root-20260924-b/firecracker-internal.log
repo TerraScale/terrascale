@@ -1,0 +1,35 @@
+2026-09-24T11:39:59.462395030 [replication-metadata-corrected-runtime-root-20260924-b:main:INFO] Running Firecracker v1.15.1
+2026-09-24T11:39:59.464381918 [replication-metadata-corrected-runtime-root-20260924-b:main:INFO] Listening on API socket ("/tmp/fch-XNjTpa/api.sock").
+2026-09-24T11:39:59.464814700 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] API server started.
+2026-09-24T11:39:59.507195847 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T11:39:59.508676819 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T11:39:59.508883806 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T11:39:59.508999489 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T11:39:59.509691083 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/fc-payload-PyiDdJ\"}".
+2026-09-24T11:39:59.509821202 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T11:39:59.510023411 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/replication-metadata-corrected-runtime-root-20260924-b/guest-rootfs.ext4\"}".
+2026-09-24T11:39:59.510184417 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T11:39:59.510439971 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-XNjTpa/vsock.sock\"}".
+2026-09-24T11:39:59.510799223 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T11:39:59.510997618 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T11:39:59.568741167 [replication-metadata-corrected-runtime-root-20260924-b:main:INFO] Artificially kick devices
+2026-09-24T11:39:59.568858551 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T11:39:59.568919809 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T11:39:59.569083348 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T11:39:59.569242687 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T11:39:59.569375079 [replication-metadata-corrected-runtime-root-20260924-b:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T11:39:59.625604480 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T11:39:59.625723204 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:02.764972562 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:02.765530297 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:02.770504300 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:02.770630922 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:02.772904019 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:02.773024286 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:02.776970943 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:02.777090943 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:02.779544970 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:02.779627788 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:02.785120996 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:02.785210594 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T11:40:03.856209167 [replication-metadata-corrected-runtime-root-20260924-b:fc_vcpu 1:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

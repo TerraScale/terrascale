@@ -1,0 +1,32 @@
+Fast compile-only warning inventory; build succeeded; tests not run
+
+crates/tb-server/tests/support/document/receiver_fixture.rs:26:24: unused imports: `AppendFailureKind`, `ConfigurationId`, and `DurableReadKind`
+crates/tb-server/tests/support/server/../../client_process.rs:7:61: unused import: `TcpStream`
+crates/tb-server/tests/support/server/../../client_process.rs:55:9: variable does not need to be mutable
+crates/tb-server/tests/support/server/../../client_process.rs:318:9: unused variable: `read_only`
+crates/tb-server/tests/support/server/../../client_process.rs:319:9: unused variable: `collection_scoped`
+crates/tb-server/tests/support/server/../../client_process.rs:320:9: unused variable: `rate_limited`
+crates/tb-server/tests/support/server/../../client_process.rs:684:13: variable does not need to be mutable
+crates/tb-server/tests/support/document/receiver_fixture.rs:715:19: method `seed_source_change` is never used
+crates/tb-server/tests/support/server/../../client_process.rs:47:7: constant `CONFLICT_DOCUMENT` is never used
+crates/tb-server/tests/support/server/../../client_process.rs:48:7: constant `LARGE_DOCUMENT` is never used
+crates/tb-server/tests/support/server/../../client_process.rs:592:5: fields `certificate` and `private_key` are never read
+crates/tb-server/tests/support/server/../../client_process.rs:769:8: methods `replace_keys` and `write_tls` are never used
+crates/tb-server/tests/support/server/../../client_process.rs:1364:4: function `assert_error_code` is never used
+crates/tb-server/tests/support/server/../../client_process.rs:1371:10: function `wait_for_status` is never used
+crates/tb-server/tests/support/server/../../client_process.rs:1387:10: function `wait_for_rejected_handshakes` is never used
+crates/tb-server/tests/support/server/../../client_process.rs:1403:4: function `rejected_handshake_count` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:58:7: constant `CONNECTIONS_ACTIVE_METRIC` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:155:10: function `assert_unsupported_record_format_leaves_frontier_zero` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:179:10: function `assert_v1_group_rejected_on_v2_stream` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:232:10: function `accept_mixed_format_groups` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:270:10: function `assert_replays_after_restart` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:787:4: function `format_two_source_group` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:930:5: fields `untrusted_certificate_pem` and `untrusted_key_pem` are never read
+crates/tb-server/tests/support/server/../../replication_process.rs:1304:10: function `assert_tls_peer_rejected` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:1396:4: function `make_hello_with_record_format_range` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:1513:10: function `send_group_until_status` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:1542:10: function `send_overlimit_group` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:1580:10: function `stream_error` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:1675:4: function `metric_value` is never used
+crates/tb-server/tests/support/server/../../replication_process.rs:1690:4: function `wait_for_metric` is never used

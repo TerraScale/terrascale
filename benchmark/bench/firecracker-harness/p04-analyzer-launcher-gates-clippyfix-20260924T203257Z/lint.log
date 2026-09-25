@@ -1,0 +1,73 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-clippyfix-20260924T203257Z/ts-benchmark/terra-rust'
+nice -n 19 ionice -c 3 cargo clippy --locked --all-targets -j 2 -- -D warnings
+    Checking terrabase-sqlite-baseline v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-clippyfix-20260924T203257Z/ts-benchmark/terra-rust)
+error: using `write!()` with a format string that ends in a single newline
+    --> src/analysis.rs:1911:17
+     |
+1911 |           let _ = write!(
+     |  _________________^
+1912 | |             out,
+1913 | |             "| {} | {} | {} | {} | {} | {}; {} |\n",
+1914 | |             md(&pair.id),
+...    |
+1920 | |             receipt_link(&pair.terrabase)
+1921 | |         );
+     | |_________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#write_with_newline
+     = note: `-D clippy::write-with-newline` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::write_with_newline)]`
+help: use `writeln!` instead
+     |
+1911 ~         let _ = writeln!(
+1912 |             out,
+1913 ~             "| {} | {} | {} | {} | {} | {}; {} |",
+     |
+
+error: using `write!()` with a format string that ends in a single newline
+    --> src/analysis.rs:1925:17
+     |
+1925 |           let _ = write!(
+     |  _________________^
+1926 | |             out,
+1927 | |             "| {} | {:.6} | [{:.6}, {:.6}] | {} | `{}` |\n",
+1928 | |             metric.metric,
+...    |
+1933 | |             metric.resample_index_sha256
+1934 | |         );
+     | |_________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#write_with_newline
+help: use `writeln!` instead
+     |
+1925 ~         let _ = writeln!(
+1926 |             out,
+1927 ~             "| {} | {:.6} | [{:.6}, {:.6}] | {} | `{}` |",
+     |
+
+error: using `write!()` with a format string that ends in a single newline
+    --> src/analysis.rs:1963:25
+     |
+1963 |                   let _ = write!(
+     |  _________________________^
+1964 | |                     out,
+1965 | |                     "- Run `{}` observed host status `{}`, guest exit `{:?}`, measured receipt status `{}`: {}\n",
+1966 | |                     md(&lane.run_id),
+...    |
+1976 | |                         .unwrap_or("no receipt error text"))
+1977 | |                 );
+     | |_________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#write_with_newline
+help: use `writeln!` instead
+     |
+1963 ~                 let _ = writeln!(
+1964 |                     out,
+1965 ~                     "- Run `{}` observed host status `{}`, guest exit `{:?}`, measured receipt status `{}`: {}",
+     |
+
+error: could not compile `terrabase-sqlite-baseline` (bin "terrabase-sqlite-baseline") due to 3 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `terrabase-sqlite-baseline` (bin "terrabase-sqlite-baseline" test) due to 3 previous errors
+make: *** [Makefile:24: lint] Error 101
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-clippyfix-20260924T203257Z/ts-benchmark/terra-rust'

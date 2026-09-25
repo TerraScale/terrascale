@@ -1,0 +1,1 @@
+make --silent test-build CARGO_ARGS='-p tb-object'

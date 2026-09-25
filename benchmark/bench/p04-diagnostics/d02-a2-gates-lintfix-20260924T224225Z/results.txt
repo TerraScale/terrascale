@@ -1,0 +1,5 @@
+fmt-d02 0
+check-d02 0
+lint-d02 0
+test-build 2
+build-guest-d02 0

@@ -1,0 +1,178 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness'
+nice -n 19 ionice -c 3 cargo fmt --all --check
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/input.rs:216:
+         let (response, final_url, redirect_count) = if first.status() == reqwest::StatusCode::OK {
+             if first.url() != &initial {
+                 return Err(FetchError::Invalid(
+-                    "Firecracker release response changed its URL without a redirect"
+-                        .to_owned(),
++                    "Firecracker release response changed its URL without a redirect".to_owned(),
+                 ));
+             }
+             (first, initial, 0)
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/input.rs:271:
+             origin: origin(&final_url),
+             cache_path: destination
+                 .file_name()
+-                .ok_or_else(|| FetchError::Invalid("release cache output has no filename".to_owned()))?
++                .ok_or_else(|| {
++                    FetchError::Invalid("release cache output has no filename".to_owned())
++                })?
+                 .to_string_lossy()
+                 .into_owned(),
+             size_bytes,
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/input.rs:290:
+             "Firecracker redirect did not start at the exact pinned URL".to_owned(),
+         ));
+     }
+-    let target = initial.join(location).map_err(|_| {
+-        FetchError::Invalid("Firecracker release Location is malformed".to_owned())
+-    })?;
++    let target = initial
++        .join(location)
++        .map_err(|_| FetchError::Invalid("Firecracker release Location is malformed".to_owned()))?;
+     if target.scheme() != "https"
+         || target.host_str() != Some(FIRECRACKER_RELEASE_ASSET_HOST)
+         || target.port().is_some_and(|port| port != 443)
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/input.rs:321:
+     if receipt.id == "firecracker-release-archive" {
+         if receipt.source_url != FIRECRACKER_RELEASE_URL || receipt.redirect_count > 1 {
+             return Err(FetchError::Invalid(
+-                "Firecracker release receipt has an unapproved origin or redirect count"
+-                    .to_owned(),
++                "Firecracker release receipt has an unapproved origin or redirect count".to_owned(),
+             ));
+         }
+         match receipt.redirect_count {
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/input.rs:492:
+ #[cfg(test)]
+ mod tests {
+     use super::{
+-        ArtifactPin, FetchError, FIRECRACKER_RELEASE_URL, validate_firecracker_redirect_target,
++        ArtifactPin, FIRECRACKER_RELEASE_URL, FetchError, validate_firecracker_redirect_target,
+         validate_pin,
+     };
+ 
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/input.rs:543:
+     #[test]
+     fn firecracker_release_redirect_is_limited_to_the_official_cdn_origin() {
+         let initial = reqwest::Url::parse(FIRECRACKER_RELEASE_URL).unwrap();
+-        assert!(validate_firecracker_redirect_target(
+-            &initial,
+-            "https://release-assets.githubusercontent.com/asset?token=opaque"
+-        )
+-        .is_ok());
++        assert!(
++            validate_firecracker_redirect_target(
++                &initial,
++                "https://release-assets.githubusercontent.com/asset?token=opaque"
++            )
++            .is_ok()
++        );
+         for location in [
+             "http://release-assets.githubusercontent.com/asset",
+             "https://github.com/other/asset",
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/oci_archive.rs:414:
+                 .as_deref()
+                 .ok_or_else(|| invalid("OCI image manifest exceeds the metadata budget"))?;
+             let manifest: OciManifest = serde_json::from_slice(manifest_bytes)?;
+-        let config = verify_blob_descriptor(&manifest.config, blobs)?;
++            let config = verify_blob_descriptor(&manifest.config, blobs)?;
+             let config_bytes = config
+                 .json
+                 .as_deref()
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/oci_archive.rs:428:
+                     ));
+                 }
+             }
+-        if observed_platform == expected_platform {
++            if observed_platform == expected_platform {
+                 let candidate = SelectedManifest {
+                     value: manifest,
+                     manifest_digest: descriptor.digest.clone(),
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/oci_archive.rs:467:
+             if nested.schema_version != 2 {
+                 return Err(invalid("nested OCI index schema version is invalid"));
+             }
+-            if let Some(found) = find_platform_manifest(
+-                &nested,
+-                blobs,
+-                expected_platform,
+-                depth + 1,
+-                visited,
+-            )? {
++            if let Some(found) =
++                find_platform_manifest(&nested, blobs, expected_platform, depth + 1, visited)?
++            {
+                 if selected.replace(found).is_some() {
+                     return Err(invalid(
+                         "OCI archive contains multiple images for the requested platform",
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/oci_archive.rs:481:
+                 }
+             }
+         } else {
+-            return Err(invalid("OCI index uses an unsupported descriptor media type"));
++            return Err(invalid(
++                "OCI index uses an unsupported descriptor media type",
++            ));
+         }
+     }
+     Ok(selected)
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/podman.rs:252:
+         )?;
+         ensure_success(&inspect, "inspect verified local OCI image")?;
+         let output = fs::read_to_string(self.run.path().join(&inspect.stdout_path))?;
+-        let (observed_platform, observed_config) = output.trim().split_once(' ').ok_or_else(|| {
+-            PodmanError::Invalid("Podman image inspect output is incomplete".to_owned())
+-        })?;
+-        if observed_platform != platform
+-            || !observed_config.eq_ignore_ascii_case(config_digest)
+-        {
++        let (observed_platform, observed_config) =
++            output.trim().split_once(' ').ok_or_else(|| {
++                PodmanError::Invalid("Podman image inspect output is incomplete".to_owned())
++            })?;
++        if observed_platform != platform || !observed_config.eq_ignore_ascii_case(config_digest) {
+             return Err(PodmanError::Invalid(
+                 "loaded local image platform or config digest differs from its OCI receipt"
+                     .to_owned(),
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/podman.rs:677:
+     };
+     if identity.archive_size_bytes == 0
+         || identity.archive_sha256.len() != 64
+-        || !identity.archive_sha256.bytes().all(|b| b.is_ascii_hexdigit())
++        || !identity
++            .archive_sha256
++            .bytes()
++            .all(|b| b.is_ascii_hexdigit())
+         || !valid_oci_digest(&identity.manifest_digest)
+         || !valid_oci_digest(&identity.config_digest)
+         || identity.platform != "linux/amd64"
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/podman.rs:693:
+     let hash = config_digest
+         .strip_prefix("sha256:")
+         .filter(|hash| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+-        .ok_or_else(|| PodmanError::Invalid("derived image config digest is malformed".to_owned()))?;
++        .ok_or_else(|| {
++            PodmanError::Invalid("derived image config digest is malformed".to_owned())
++        })?;
+     Ok(format!(
+         "localhost/fc-image-builder-derived:cfg-{}",
+         &hash[..24].to_ascii_lowercase()
+Diff in /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/signature.rs:262:
+     }
+     args.push(run_relative(&signed)?);
+     let mounts = [ContainerMount {
+-            host_path: run_root.clone(),
+-            container_path: "/work".to_owned(),
+-            read_only: true,
+-        }];
++        host_path: run_root.clone(),
++        container_path: "/work".to_owned(),
++        read_only: true,
++    }];
+     let command_id = format!("gpgv_{}", request.command_id);
+     let command = match image {
+         SignatureImage::Pinned(reference) => podman.run_container(
+make: *** [Makefile:19: fmt] Error 1
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness'

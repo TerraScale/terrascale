@@ -1,0 +1,35 @@
+2026-09-24T09:52:08.168476386 [document-contract-runtime-root-20260924-a:main:INFO] Running Firecracker v1.15.1
+2026-09-24T09:52:08.170144317 [document-contract-runtime-root-20260924-a:main:INFO] Listening on API socket ("/tmp/fch-Xo7YNN/api.sock").
+2026-09-24T09:52:08.170581859 [document-contract-runtime-root-20260924-a:fc_api:INFO] API server started.
+2026-09-24T09:52:08.189302242 [document-contract-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T09:52:08.189450796 [document-contract-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:52:08.189620857 [document-contract-runtime-root-20260924-a:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T09:52:08.189714275 [document-contract-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T09:52:08.190442287 [document-contract-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/fc-payload-BvDlkM\"}".
+2026-09-24T09:52:08.190559922 [document-contract-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:52:08.190673871 [document-contract-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/document-contract-runtime-root-20260924-a/guest-rootfs.ext4\"}".
+2026-09-24T09:52:08.190808294 [document-contract-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:52:08.190921597 [document-contract-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-Xo7YNN/vsock.sock\"}".
+2026-09-24T09:52:08.191295529 [document-contract-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:52:08.191436576 [document-contract-runtime-root-20260924-a:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T09:52:08.229563452 [document-contract-runtime-root-20260924-a:main:INFO] Artificially kick devices
+2026-09-24T09:52:08.229703809 [document-contract-runtime-root-20260924-a:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T09:52:08.229775830 [document-contract-runtime-root-20260924-a:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T09:52:08.229853125 [document-contract-runtime-root-20260924-a:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T09:52:08.229915029 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T09:52:08.230045861 [document-contract-runtime-root-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T09:52:08.284426915 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:08.284553532 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:11.835274237 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:11.835379136 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:11.839732047 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:11.839813180 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:11.841769949 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:11.841846297 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:11.846707871 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:11.846822661 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:11.849232215 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:11.849307846 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:11.853109608 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:11.853190325 [document-contract-runtime-root-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T09:52:12.906286249 [document-contract-runtime-root-20260924-a:fc_vcpu 1:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

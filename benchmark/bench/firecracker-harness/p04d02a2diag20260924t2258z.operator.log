@@ -1,0 +1,13 @@
+started_utc=2026-09-24T22:59:24Z
+argv: nice -n 19 ionice -c 3 env FC_BENCHMARK_REPO=/tmp/tb-packet-a-runtime-observation-checkouts-20260924/benchmark FC_GUEST_AGENT_PATH=/tmp/fch-runtime-repo-final-20260924/fc-guest-agent /tmp/fch-runtime-repo-final-20260924/fc-harness run --benchmark-repo /tmp/tb-packet-a-runtime-observation-checkouts-20260924/benchmark --subject-repo /tmp/tb-packet-a-runtime-observation-checkouts-20260924/terrabase --program /home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-diagnostics/d02-a2-gates-lintfix-20260924T224225Z/payloads/p04-d02-musl --run-id p04d02a2diag20260924t2258z --timeout-seconds 300 --output /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04d02a2diag20260924t2258z --kernel /tmp/vm-inputs/vmlinux --rootfs /tmp/vm-inputs/rootfs.ext4 -- --database /root/fc-bench-data/p04d02a2diag20260924t2258z.terrabase --samples /root/fc-harness-output/p04d02a2diag20260924t2258z-samples.jsonl --receipt /root/fc-harness-output/p04d02a2diag20260924t2258z-receipt.json --report /root/fc-harness-output/p04d02a2diag20260924t2258z.md --guest-manifest /root/fc-harness-output/guest-manifest.json --derivative-inventory-sha256 deeffbbbc7b1559de4e47c286a904bee64967f20a0d012f66bd8c3da2b9303f7 --source-delta-sha256 88198cfd293d895a49d6830f9b5c83eb781e2e997716984adc95c20fb5b5a5c7
+Firecracker 1.15.1: OK
+KVM_GET_API_VERSION: 12
+guest: 4 vCPUs / 8192 MiB / swap disabled
+kernel /tmp/fc-payload-6EumaI sha256=e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2
+rootfs /tmp/vm-inputs/rootfs.ext4 sha256=dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314
+guest agent /tmp/fc-payload-nstgM2 sha256=3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb
+host CPU affinity candidates: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+guest image upstream provenance: unqualified (checksum-pinned local artifact only)
+run p04d02a2diag20260924t2258z completed in 8662 ms; receipt: /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04d02a2diag20260924t2258z/run-manifest.json
+finished_utc=2026-09-24T23:00:35Z
+operator_exit_code=0

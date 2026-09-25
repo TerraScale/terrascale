@@ -1,0 +1,313 @@
+[    0.000000] Linux version 6.1.155+ (root@c3d8009cd6d2) (gcc (Ubuntu 11.4.0-1ubuntu1~22.04.2) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38) #1 SMP PREEMPT_DYNAMIC Thu Dec 18 15:17:16 UTC 2025
+[    0.000000] Command line: console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service pci=off root=/dev/vda rw virtio_mmio.device=4K@0xc0001000:5 virtio_mmio.device=4K@0xc0002000:6
+[    0.000000] KASLR disabled
+[    0.000000] BIOS-provided physical RAM map:
+[    0.000000] BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+[    0.000000] BIOS-e820: [mem 0x000000000009fc00-0x00000000000fffff] reserved
+[    0.000000] BIOS-e820: [mem 0x0000000000100000-0x00000000bfffffff] usable
+[    0.000000] BIOS-e820: [mem 0x00000000eec00000-0x00000000febfffff] reserved
+[    0.000000] BIOS-e820: [mem 0x0000000100000000-0x000000023fffffff] usable
+[    0.000000] NX (Execute Disable) protection: active
+[    0.000000] DMI not present or invalid.
+[    0.000000] Hypervisor detected: KVM
+[    0.000000] kvm-clock: Using msrs 4b564d01 and 4b564d00
+[    0.000002] kvm-clock: using sched offset of 113974201 cycles
+[    0.000169] clocksource: kvm-clock: mask: 0xffffffffffffffff max_cycles: 0x1cd42e4dffb, max_idle_ns: 881590591483 ns
+[    0.000346] tsc: Detected 1995.378 MHz processor
+[    0.002839] last_pfn = 0x240000 max_arch_pfn = 0x400000000
+[    0.004347] x86/PAT: Configuration [0-7]: WB  WC  UC- UC  WB  WP  UC- WT  
+[    0.004602] last_pfn = 0xc0000 max_arch_pfn = 0x400000000
+[    0.004933] Using GB pages for direct mapping
+[    0.005417] ACPI: Early table checksum verification disabled
+[    0.005877] ACPI: RSDP 0x00000000000E0000 000024 (v02 FIRECK)
+[    0.006004] ACPI: XSDT 0x00000000000A0257 00003C (v01 FIRECK FCMVXSDT 00000000 FCAT 20240119)
+[    0.006096] ACPI: FACP 0x00000000000A00AF 000114 (v06 FIRECK FCVMFADT 00000000 FCAT 20240119)
+[    0.006161] ACPI: DSDT 0x000000000009FD6C 000343 (v02 FIRECK FCVMDSDT 00000000 FCAT 20240119)
+[    0.006168] ACPI: APIC 0x00000000000A01C3 000058 (v06 FIRECK FCVMMADT 00000000 FCAT 20240119)
+[    0.006172] ACPI: MCFG 0x00000000000A021B 00003C (v01 FIRECK FCMVMCFG 00000000 FCAT 20240119)
+[    0.006175] ACPI: Reserving FACP table memory at [mem 0xa00af-0xa01c2]
+[    0.006206] ACPI: Reserving DSDT table memory at [mem 0x9fd6c-0xa00ae]
+[    0.006207] ACPI: Reserving APIC table memory at [mem 0xa01c3-0xa021a]
+[    0.006208] ACPI: Reserving MCFG table memory at [mem 0xa021b-0xa0256]
+[    0.007527] No NUMA configuration found
+[    0.007529] Faking a node at [mem 0x0000000000000000-0x000000023fffffff]
+[    0.007608] NODE_DATA(0) allocated [mem 0x23ffd5000-0x23fffffff]
+[    0.010055] Zone ranges:
+[    0.010109]   DMA      [mem 0x0000000000001000-0x0000000000ffffff]
+[    0.010113]   DMA32    [mem 0x0000000001000000-0x00000000ffffffff]
+[    0.010115]   Normal   [mem 0x0000000100000000-0x000000023fffffff]
+[    0.010116]   Device   empty
+[    0.010117] Movable zone start for each node
+[    0.010121] Early memory node ranges
+[    0.010122]   node   0: [mem 0x0000000000001000-0x000000000009efff]
+[    0.010123]   node   0: [mem 0x0000000000100000-0x00000000bfffffff]
+[    0.010125]   node   0: [mem 0x0000000100000000-0x000000023fffffff]
+[    0.010155] Initmem setup node 0 [mem 0x0000000000001000-0x000000023fffffff]
+[    0.010334] On node 0, zone DMA: 1 pages in unavailable ranges
+[    0.012875] On node 0, zone DMA: 97 pages in unavailable ranges
+[    0.730865] IOAPIC[0]: apic_id 0, version 17, address 0xfec00000, GSI 0-23
+[    0.731044] ACPI: Using ACPI (MADT) for SMP configuration information
+[    0.731081] TSC deadline timer available
+[    0.731141] smpboot: Allowing 4 CPUs, 0 hotplug CPUs
+[    0.733063] kvm-guest: KVM setup pv remote TLB flush
+[    0.733759] kvm-guest: setup PV sched yield
+[    0.734719] PM: hibernation: Registered nosave memory: [mem 0x00000000-0x00000fff]
+[    0.734779] PM: hibernation: Registered nosave memory: [mem 0x0009f000-0x000fffff]
+[    0.734781] PM: hibernation: Registered nosave memory: [mem 0xc0000000-0xffffffff]
+[    0.734783] [mem 0xc0000000-0xeebfffff] available for PCI devices
+[    0.734785] Booting paravirtualized kernel on KVM
+[    0.734820] clocksource: refined-jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645519600211568 ns
+[    0.734879] setup_percpu: NR_CPUS:64 nr_cpumask_bits:4 nr_cpu_ids:4 nr_node_ids:1
+[    0.779821] percpu: Embedded 44 pages/cpu s148456 r0 d31768 u524288
+[    0.780801] kvm-guest: PV spinlocks enabled
+[    0.780868] PV qspinlock hash table entries: 256 (order: 0, 4096 bytes, linear)
+[    0.780880] Fallback order for Node 0: 0 
+[    0.780912] Built 1 zonelists, mobility grouping on.  Total pages: 2064128
+[    0.780944] Policy zone: Normal
+[    0.780946] Kernel command line: console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service pci=off root=/dev/vda rw virtio_mmio.device=4K@0xc0001000:5 virtio_mmio.device=4K@0xc0002000:6
+[    0.785774] random: crng init done
+[    0.971458] Dentry cache hash table entries: 1048576 (order: 11, 8388608 bytes, linear)
+[    1.065034] Inode-cache hash table entries: 524288 (order: 10, 4194304 bytes, linear)
+[    1.068143] mem auto-init: stack:off, heap alloc:off, heap free:off
+[    1.068350] software IO TLB: area num 4.
+[    2.659060] Memory: 3183312K/8388216K available (14338K kernel code, 1196K rwdata, 2340K rodata, 2676K init, 2136K bss, 237900K reserved, 0K cma-reserved)
+[    2.660892] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=4, Nodes=1
+[    2.661193] Kernel/User page tables isolation: enabled
+[    2.667273] Dynamic Preempt: none
+[    2.667876] rcu: Preemptible hierarchical RCU implementation.
+[    2.667878] rcu: 	RCU restricting CPUs from NR_CPUS=64 to nr_cpu_ids=4.
+[    2.667908] 	Trampoline variant of Tasks RCU enabled.
+[    2.667908] 	Tracing variant of Tasks RCU enabled.
+[    2.667936] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    2.667938] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=4
+[    2.668051] NR_IRQS: 4352, nr_irqs: 440, preallocated irqs: 0
+[    2.668605] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    2.669617] Console: colour dummy device 80x25
+[    3.470006] printk: console [ttyS0] enabled
+[    3.476065] ACPI: Core revision 20220331
+[    3.481828] APIC: Switch to symmetric I/O mode setup
+[    3.492300] x2apic enabled
+[    3.498182] Switched APIC routing to physical x2apic.
+[    3.504528] kvm-guest: setup PV IPIs
+[    3.510244] clocksource: tsc-early: mask: 0xffffffffffffffff max_cycles: 0x3986404c536, max_idle_ns: 881590442461 ns
+[    3.522957] Calibrating delay loop (skipped) preset value.. 3990.75 BogoMIPS (lpj=7981512)
+[    3.526951] x86/cpu: User Mode Instruction Prevention (UMIP) activated
+[    3.526951] Last level iTLB entries: 4KB 0, 2MB 0, 4MB 0
+[    3.526951] Last level dTLB entries: 4KB 0, 2MB 0, 4MB 0, 1GB 0
+[    3.526951] Spectre V1 : Mitigation: usercopy/swapgs barriers and __user pointer sanitization
+[    3.526951] Spectre V2 : Mitigation: Retpolines
+[    3.526951] Spectre V2 : Spectre v2 / SpectreRSB: Filling RSB on context switch and VMEXIT
+[    3.526951] Spectre V2 : Enabling Restricted Speculation for firmware calls
+[    3.526951] Spectre V2 : mitigation: Enabling conditional Indirect Branch Prediction Barrier
+[    3.526951] Speculative Store Bypass: Mitigation: Speculative Store Bypass disabled via prctl
+[    3.526951] MDS: Mitigation: Clear CPU buffers
+[    3.526951] TAA: Mitigation: Clear CPU buffers
+[    3.526951] MMIO Stale Data: Mitigation: Clear CPU buffers
+[    3.526951] x86/fpu: Supporting XSAVE feature 0x001: 'x87 floating point registers'
+[    3.526951] x86/fpu: Supporting XSAVE feature 0x002: 'SSE registers'
+[    3.526951] x86/fpu: Supporting XSAVE feature 0x004: 'AVX registers'
+[    3.526951] x86/fpu: xstate_offset[2]:  576, xstate_sizes[2]:  256
+[    3.526951] x86/fpu: Enabled xstate features 0x7, context size is 832 bytes, using 'standard' format.
+[    3.526951] Freeing SMP alternatives memory: 40K
+[    3.526951] pid_max: default: 32768 minimum: 301
+[    3.526951] LSM: Security Framework initializing
+[    3.526951] SELinux:  Initializing.
+[    3.526951] SELinux: CONFIG_SECURITY_SELINUX_CHECKREQPROT_VALUE is non-zero.  This is deprecated and will be rejected in a future kernel release.
+[    3.526951] SELinux: https://github.com/SELinuxProject/selinux-kernel/wiki/DEPRECATE-checkreqprot
+[    3.526951] Mount-cache hash table entries: 16384 (order: 5, 131072 bytes, linear)
+[    3.526951] Mountpoint-cache hash table entries: 16384 (order: 5, 131072 bytes, linear)
+[    3.526951] smpboot: CPU0: Intel(R) Xeon(R) Processor @ 2.00GHz (family: 0x6, model: 0x4f, stepping: 0x1)
+[    3.528549] cblist_init_generic: Setting adjustable number of callback queues.
+[    3.530973] cblist_init_generic: Setting shift to 2 and lim to 1.
+[    3.535238] cblist_init_generic: Setting adjustable number of callback queues.
+[    3.538975] cblist_init_generic: Setting shift to 2 and lim to 1.
+[    3.543182] Performance Events: unsupported p6 CPU model 79 no PMU driver, software events only.
+[    3.547438] signal: max sigframe size: 1776
+[    3.551185] rcu: Hierarchical SRCU implementation.
+[    3.554973] rcu: 	Max phase no-delay instances is 1000.
+[    3.559655] NMI watchdog: Perf NMI watchdog permanently disabled
+[    3.564593] smp: Bringing up secondary CPUs ...
+[    3.568476] x86: Booting SMP configuration:
+[    3.570978] .... node  #0, CPUs:      #1 #2 #3
+[    3.589114] smp: Brought up 1 node, 4 CPUs
+[    3.594984] smpboot: Max logical packages: 1
+[    3.598986] smpboot: Total of 4 processors activated (15963.02 BogoMIPS)
+[    3.861817] node 0 deferred pages initialised in 260ms
+[    3.984076] devtmpfs: initialized
+[    3.988769] x86/mm: Memory block size: 128MB
+[    3.997032] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    3.999075] futex hash table entries: 1024 (order: 4, 65536 bytes, linear)
+[    4.009181] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    4.011813] audit: initializing netlink subsys (disabled)
+[    4.015384] audit: type=2000 audit(1790246188.822:1): state=initialized audit_enabled=0 res=1
+[    4.016984] thermal_sys: Registered thermal governor 'fair_share'
+[    4.018985] thermal_sys: Registered thermal governor 'step_wise'
+[    4.022974] thermal_sys: Registered thermal governor 'user_space'
+[    4.027128] cpuidle: using governor ladder
+[    4.034985] cpuidle: using governor menu
+[    4.041662] PCI: Fatal: No config space access function found
+[    4.047416] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+[    4.050976] HugeTLB: 16380 KiB vmemmap can be freed for a 1.00 GiB page
+[    4.054975] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    4.058974] HugeTLB: 28 KiB vmemmap can be freed for a 2.00 MiB page
+[    4.068185] ACPI: Added _OSI(Module Device)
+[    4.070974] ACPI: Added _OSI(Processor Device)
+[    4.074975] ACPI: Added _OSI(Processor Aggregator Device)
+[    4.079941] ACPI: 1 ACPI AML tables successfully acquired and loaded
+[    4.083270] ACPI: Interpreter enabled
+[    4.087078] ACPI: PM: (supports S0)
+[    4.091009] ACPI: Using IOAPIC for interrupt routing
+[    4.095139] PCI: Using host bridge windows from ACPI; if necessary, use "pci=nocrs" and report a bug
+[    4.098974] PCI: Using E820 reservations for host bridge windows
+[    4.105906] iommu: Default domain type: Translated 
+[    4.106974] iommu: DMA domain TLB invalidation policy: lazy mode 
+[    4.112209] SCSI subsystem initialized
+[    4.115197] pps_core: LinuxPPS API ver. 1 registered
+[    4.118973] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    4.122989] PTP clock support registered
+[    4.129428] NetLabel: Initializing
+[    4.130973] NetLabel:  domain hash size = 128
+[    4.134973] NetLabel:  protocols = UNLABELED CIPSOv4 CALIPSO
+[    4.139138] NetLabel:  unlabeled traffic allowed by default
+[    4.142976] PCI: Using ACPI for IRQ routing
+[    4.146974] PCI: System does not support PCI
+[    4.151261] vgaarb: loaded
+[    4.155515] clocksource: Switched to clocksource kvm-clock
+[    4.164786] VFS: Disk quotas dquot_6.6.0
+[    4.169961] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+[    4.179221] pnp: PnP ACPI init
+[    4.186024] pnp: PnP ACPI: found 5 devices
+[    4.215728] NET: Registered PF_INET protocol family
+[    4.231877] IP idents hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    4.244831] tcp_listen_portaddr_hash hash table entries: 4096 (order: 4, 65536 bytes, linear)
+[    4.255832] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    4.265482] TCP established hash table entries: 65536 (order: 7, 524288 bytes, linear)
+[    4.284977] TCP bind hash table entries: 65536 (order: 9, 2097152 bytes, linear)
+[    4.321836] TCP: Hash tables configured (established 65536 bind 65536)
+[    4.334825] MPTCP token hash table entries: 8192 (order: 5, 196608 bytes, linear)
+[    4.345023] UDP hash table entries: 4096 (order: 5, 131072 bytes, linear)
+[    4.355183] UDP-Lite hash table entries: 4096 (order: 5, 131072 bytes, linear)
+[    4.366322] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    4.377833] RPC: Registered named UNIX socket transport module.
+[    4.385652] RPC: Registered udp transport module.
+[    4.391863] RPC: Registered tcp transport module.
+[    4.398145] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[    4.406764] NET: Registered PF_XDP protocol family
+[    4.413337] PCI: CLS 0 bytes, default 64
+[    4.418830] PCI-DMA: Using software bounce buffering for IO (SWIOTLB)
+[    4.427764] software IO TLB: mapped [mem 0x00000000bc000000-0x00000000c0000000] (64MB)
+[    4.439515] RAPL PMU: API unit is 2^-32 Joules, 0 fixed counters, 10737418240 ms ovfl timer
+[    4.450807] clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x3986404c536, max_idle_ns: 881590442461 ns
+[    4.464151] clocksource: Switched to clocksource tsc
+[    4.471416] platform rtc_cmos: registered platform RTC device (no PNP device found)
+[    4.491625] Initialise system trusted keyrings
+[    4.498310] Key type blacklist registered
+[    4.504613] workingset: timestamp_bits=36 max_order=21 bucket_order=0
+[    4.521872] zbud: loaded
+[    4.528362] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[    4.538084] NFS: Registering the id_resolver key type
+[    4.545279] Key type id_resolver registered
+[    4.551131] Key type id_legacy registered
+[    4.556605] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    4.566381] SGI XFS with ACLs, security attributes, quota, no debug enabled
+[    4.607375] Key type asymmetric registered
+[    4.613014] Asymmetric key parser 'x509' registered
+[    4.619851] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 248)
+[    4.630385] io scheduler mq-deadline registered
+[    4.636341] io scheduler kyber registered
+[    4.641797] io scheduler bfq registered
+[    4.653863] Serial: 8250/16550 driver, 1 ports, IRQ sharing disabled
+[    4.663666] 00:00: ttyS0 at I/O 0x3f8 (irq = 28, base_baud = 115200) is a 16550A
+[    4.715694] loop: module loaded
+[    4.720778] virtio_blk virtio0: 1/0/0 default/read/poll queues
+[    4.730835] virtio_blk virtio0: [vda] 5240799 512-byte logical blocks (2.68 GB/2.50 GiB)
+[    4.748787] Loading iSCSI transport class v2.0-870.
+[    4.757156] iscsi: registered transport (tcp)
+[    4.763894] i8042: PNP: PS/2 Controller [PNP0303:PS2] at 0x60,0x64 irq 30
+[    4.772902] i8042: PNP: PS/2 appears to have AUX port disabled, if this is incorrect please boot with i8042.nopnp
+[    4.787681] serio: i8042 KBD port at 0x60,0x64 irq 30
+[    4.795693] vmclock AMZNC10C:00: vmclock0: registered miscdev
+[    4.803715] intel_pstate: CPU model not supported
+[    4.809921] hid: raw HID events driver (C) Jiri Kosina
+[    4.864494] Initializing XFRM netlink socket
+[    4.870777] NET: Registered PF_INET6 protocol family
+[    4.883913] Segment Routing with IPv6
+[    4.888948] In-situ OAM (IOAM) with IPv6
+[    4.917223] bpfilter: Loaded bpfilter_umh pid 200
+[    4.927704] NET: Registered PF_PACKET protocol family
+[    4.936790] Bridge firewalling registered
+[    4.944677] Key type dns_resolver registered
+[    4.952777] NET: Registered PF_VSOCK protocol family
+[    4.980848] IPI shorthand broadcast: enabled
+[    4.988619] sched_clock: Marking stable (4133931516, 854241410)->(5543085490, -554912564)
+[    5.004742] registered taskstats version 1
+[    5.012913] Loading compiled-in X.509 certificates
+[    5.020461] zswap: loaded using pool lzo/zbud
+[    5.028941] Key type .fscrypt registered
+[    5.034212] Key type fscrypt-provisioning registered
+[    5.043527] Key type encrypted registered
+[    5.094088] clk: Disabling unused clocks
+[    5.317448] input: AT Raw Set 2 keyboard as /devices/platform/i8042/serio0/input/input0
+[    5.412721] EXT4-fs (vda): mounted filesystem with ordered data mode. Quota mode: none.
+[    5.419439] VFS: Mounted root (ext4 filesystem) on device 254:0.
+[    5.425055] devtmpfs: mounted
+[    5.440230] Freeing unused kernel image (initmem) memory: 2676K
+[    5.445332] Write protecting the kernel read-only data: 20480k
+[    5.466953] Freeing unused kernel image (text/rodata gap) memory: 2044K
+[    5.487653] Freeing unused kernel image (rodata/data gap) memory: 1756K
+[    5.492714] Run /sbin/init as init process
+SELinux:  Could not open policy file <= /etc/selinux/targeted/policy/policy.33:  No such file or directory
+[    5.702105] systemd[1]: systemd 255.4-1ubuntu8.10 running in system mode (+PAM +AUDIT +SELINUX +APPARMOR +IMA +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -XKBCOMMON +UTMP +SYSVINIT default-hierarchy=unified)
+[    5.728009] systemd[1]: Detected virtualization kvm.
+[    5.732031] systemd[1]: Detected architecture x86-64.
+[    5.739624] systemd[1]: Hostname set to <ubuntu>.
+[    5.749130] systemd[1]: Initializing machine ID from random generator.
+[    6.395628] systemd[1]: Queued start job for default target graphical.target.
+[    6.426069] systemd[1]: Created slice system-modprobe.slice - Slice /system/modprobe.
+[    6.433264] systemd[1]: Created slice system-serial\x2dgetty.slice - Slice /system/serial-getty.
+[    6.441482] systemd[1]: Created slice user.slice - User and Session Slice.
+[    6.447222] systemd[1]: Started systemd-ask-password-console.path - Dispatch Password Requests to Console Directory Watch.
+[    6.457833] systemd[1]: Started systemd-ask-password-wall.path - Forward Password Requests to Wall Directory Watch.
+[    6.466821] systemd[1]: Set up automount proc-sys-fs-binfmt_misc.automount - Arbitrary Executable File Formats File System Automount Point.
+[    6.476421] systemd[1]: Expecting device dev-ttyS0.device - /dev/ttyS0...
+[    6.481745] systemd[1]: Reached target cryptsetup.target - Local Encrypted Volumes.
+[    6.487870] systemd[1]: Reached target integritysetup.target - Local Integrity Protected Volumes.
+[    6.494836] systemd[1]: Reached target remote-fs.target - Remote File Systems.
+[    6.500667] systemd[1]: Reached target slices.target - Slice Units.
+[    6.505720] systemd[1]: Reached target snapd.mounts-pre.target - Mounting snaps.
+[    6.511615] systemd[1]: Reached target snapd.mounts.target - Mounted snaps.
+[    6.517123] systemd[1]: Reached target swap.target - Swaps.
+[    6.521557] systemd[1]: Reached target veritysetup.target - Local Verity Protected Volumes.
+[    6.528571] systemd[1]: Listening on systemd-fsckd.socket - fsck to fsckd communication Socket.
+[    6.535551] systemd[1]: Listening on systemd-initctl.socket - initctl Compatibility Named Pipe.
+[    6.542959] systemd[1]: Listening on systemd-journald-dev-log.socket - Journal Socket (/dev/log).
+[    6.550621] systemd[1]: Listening on systemd-journald.socket - Journal Socket.
+[    6.556753] systemd[1]: Listening on systemd-networkd.socket - Network Service Netlink Socket.
+[    6.563311] systemd[1]: systemd-pcrextend.socket - TPM2 PCR Extension (Varlink) was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+[    6.575350] systemd[1]: Listening on systemd-udevd-control.socket - udev Control Socket.
+[    6.581745] systemd[1]: Listening on systemd-udevd-kernel.socket - udev Kernel Socket.
+[    6.610488] systemd[1]: Mounting dev-hugepages.mount - Huge Pages File System...
+[    6.619812] systemd[1]: Mounting dev-mqueue.mount - POSIX Message Queue File System...
+[    6.631617] systemd[1]: Mounting sys-kernel-debug.mount - Kernel Debug File System...
+[    6.639656] systemd[1]: sys-kernel-tracing.mount - Kernel Trace File System was skipped because of an unmet condition check (ConditionPathExists=/sys/kernel/tracing).
+[    6.664328] systemd[1]: Starting systemd-journald.service - Journal Service...
+[    6.675611] systemd[1]: Starting keyboard-setup.service - Set the console keyboard layout...
+[    6.684671] systemd[1]: kmod-static-nodes.service - Create List of Static Device Nodes was skipped because of an unmet condition check (ConditionFileNotEmpty=/lib/modules/6.1.155+/modules.devname).
+[    6.707981] systemd[1]: Starting modprobe@configfs.service - Load Kernel Module configfs...
+[    6.718927] systemd[1]: Starting modprobe@dm_mod.service - Load Kernel Module dm_mod...
+[    6.731209] systemd[1]: Starting modprobe@drm.service - Load Kernel Module drm...
+[    6.750816] systemd[1]: Starting modprobe@efi_pstore.service - Load Kernel Module efi_pstore...
+[    6.764639] systemd-journald[319]: Collecting audit messages is disabled.
+[    6.770026] systemd[1]: Starting modprobe@fuse.service - Load Kernel Module fuse...
+[    6.783354] systemd[1]: Starting modprobe@loop.service - Load Kernel Module loop...
+[    6.792064] systemd[1]: netplan-ovs-cleanup.service - OpenVSwitch configuration for cleanup was skipped because of an unmet condition check (ConditionFileIsExecutable=/usr/bin/ovs-vsctl).
+[    6.792263] systemd[1]: systemd-fsck-root.service - File System Check on Root Device was skipped because of an unmet condition check (ConditionPathIsReadWrite=!/).
+[    6.810915] systemd[1]: Starting systemd-modules-load.service - Load Kernel Modules...
+[    6.834616] systemd[1]: systemd-pcrmachine.service - TPM2 PCR Machine ID Measurement was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+[    6.851201] systemd[1]: Starting systemd-remount-fs.service - Remount Root and Kernel File Systems...
+[    6.861384] systemd[1]: Starting systemd-tmpfiles-setup-dev-early.service - Create Static Device Nodes in /dev gracefully...
+[    6.873323] systemd[1]: systemd-tpm2-setup-early.service - TPM2 SRK Setup (Early) was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+[    6.888280] systemd[1]: Starting systemd-udev-trigger.service - Coldplug All udev Devices...
+[    6.901684] systemd[1]: Started systemd-journald.service - Journal Service.
+[    6.924976] EXT4-fs (vda): re-mounted. Quota mode: none.
+[    6.982175] systemd-journald[319]: Received client request to flush runtime journal.

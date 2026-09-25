@@ -1,0 +1,271 @@
+{
+  "milestone": "R12 compile-only handoff with Clippy failure preserved",
+  "repository_head": "352d9f61185d1b685e3032519579040d169ad47d",
+  "source_manifest_sha256": "5ebb148919504fda86502bb694952cf9d8caf44abccd7837e534bfa649693d59",
+  "source_file_count": 138,
+  "production_and_build_input_closure_matches_r11": true,
+  "build_gates": {
+    "fmt-check": {
+      "status": "passed",
+      "exit_code": 0,
+      "passed": true,
+      "log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/fmt-check-r12.log",
+      "log_sha256": "51a5d14d90e063fea09576d03b76ad3807de579c2a919f9225c2749f04f633f3",
+      "receipt": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/fmt-check-r12.exit"
+    },
+    "default-build": {
+      "status": "passed_reused",
+      "exit_code": 0,
+      "passed": true,
+      "log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r11/default-build.log",
+      "log_sha256": "4515576189e0b7ba35b3a9f4c21cf2545008143342d2956ec3e11f0386ece950",
+      "receipt": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r11/default-build.exit",
+      "evidence_reused_from": "R11 source manifest 2f75c4aba4206b01a86cf0f880b7690bc437f9ff68448b9072178e1d10277064; production/build closure identical"
+    },
+    "fast-no-run": {
+      "status": "passed",
+      "exit_code": 0,
+      "passed": true,
+      "log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/fast-no-run.log",
+      "log_sha256": "bbf4475be5d44ff49518ead931da4330229d0d3c37a97ecdd64794de58b7e978",
+      "receipt": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/fast-no-run.exit"
+    },
+    "slow-no-run": {
+      "status": "passed",
+      "exit_code": 0,
+      "passed": true,
+      "log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/slow-no-run.log",
+      "log_sha256": "fadb9be1875424b5f40d8fc3b8b87a3968af380940de72250130d4884fa6a35d",
+      "receipt": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/slow-no-run.exit"
+    },
+    "clippy-default": {
+      "status": "failed",
+      "exit_code": 2,
+      "passed": false,
+      "log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/clippy-default-r12.log",
+      "log_sha256": "3482bb39d09cf0566d8266bc3ce00b3660e27d06efd944c5a84e06a32624b51e",
+      "receipt": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/clippy-default-r12.exit",
+      "reason": "16 strict Clippy diagnostics in tb-server production library"
+    },
+    "clippy-slow": {
+      "status": "skipped",
+      "exit_code": null,
+      "passed": false,
+      "reason": "dependent lint gate stopped after default Clippy failure"
+    },
+    "msrv188-product": {
+      "status": "passed_reused",
+      "exit_code": 0,
+      "passed": true,
+      "log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r11/msrv188-product.log",
+      "log_sha256": "e0c891d4ff04e3b5ca78a49b840de178babef36f55ba7f2b65fdc401833ebea2",
+      "receipt": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r11/msrv188-product.exit",
+      "evidence_reused_from": "R11 source manifest 2f75c4aba4206b01a86cf0f880b7690bc437f9ff68448b9072178e1d10277064; production/build closure identical"
+    }
+  },
+  "all_required_build_gates_pass": false,
+  "clippy_default_failure": {
+    "diagnostic_count": 16,
+    "log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/clippy-default-r12.log",
+    "log_sha256": "3482bb39d09cf0566d8266bc3ce00b3660e27d06efd944c5a84e06a32624b51e",
+    "diagnostic_paths": [
+      "crates/tb-server/src/local_v1_runtime.rs:232",
+      "crates/tb-server/src/replication_sender.rs:218,301,389,523,644,646,648,793,803,814",
+      "crates/tb-server/src/replication_server.rs:212,572,698,1276,1323"
+    ]
+  },
+  "slow_clippy_status": "skipped_after_default_gate_failure",
+  "payload_sets": {
+    "fast": {
+      "count": 4,
+      "total_bytes": 78173216,
+      "total_mib": 74.55,
+      "files": [
+        {
+          "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/payloads/fast/client_process",
+          "size_bytes": 33854088,
+          "sha256": "dcdf90bc773ffbabf6a62d90e4c563c9b66433934e49ce5f5e41b47fbb56e1a4"
+        },
+        {
+          "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/payloads/fast/tb-server",
+          "size_bytes": 37180728,
+          "sha256": "58196cf1ce9628707318621bdc5a7f0c90a9824eec0eaf7d230ce54c4a159b4c"
+        },
+        {
+          "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/payloads/fast/terrabase-init",
+          "size_bytes": 6097880,
+          "sha256": "03b10182ac29d42414ca6549d4bb21b89a5d20cc071e2763405e74429108d149"
+        },
+        {
+          "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/payloads/fast/terrabase-keygen",
+          "size_bytes": 1040520,
+          "sha256": "dc95177886e18ee2262849c6a84f91d2045f3e68007b812e3fd66f6ad579764a"
+        }
+      ],
+      "server_products_reused_from": "R11 default musl product build"
+    }
+  },
+  "stripped_payload_load_segment_checks": [
+    {
+      "name": "fast/client_process",
+      "source": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/unstripped/fast/client_process",
+      "source_sha256": "c7ecf29ace16c7946510eba56f68da54cc45f81b50b6ef75831f39d6667b01c7",
+      "source_size_bytes": 161295624,
+      "payload": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/payloads/fast/client_process",
+      "payload_sha256": "dcdf90bc773ffbabf6a62d90e4c563c9b66433934e49ce5f5e41b47fbb56e1a4",
+      "payload_size_bytes": 33854088,
+      "pt_load_count": 4,
+      "pt_load_headers_identical": true,
+      "pt_load_runtime_bytes_equivalent": true,
+      "allowed_elf_metadata_differences": [
+        40,
+        41,
+        42,
+        43,
+        60,
+        62
+      ]
+    },
+    {
+      "name": "fast/tb-server",
+      "source": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/unstripped/default/tb-server",
+      "source_sha256": "dae5714ad28a6f63b9b59fdd5de84bd8ac50160f7605c499ce15d25ecbe0c942",
+      "source_size_bytes": 137523208,
+      "payload": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/payloads/fast/tb-server",
+      "payload_sha256": "58196cf1ce9628707318621bdc5a7f0c90a9824eec0eaf7d230ce54c4a159b4c",
+      "payload_size_bytes": 37180728,
+      "pt_load_count": 4,
+      "pt_load_headers_identical": true,
+      "pt_load_runtime_bytes_equivalent": true,
+      "allowed_elf_metadata_differences": [
+        40,
+        41,
+        42,
+        43,
+        60,
+        62
+      ]
+    },
+    {
+      "name": "fast/terrabase-init",
+      "source": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/unstripped/default/terrabase-init",
+      "source_sha256": "acce7ec66e61285ce69ec148806a4d485cd549e3a590e0a703f1ef22516aa21d",
+      "source_size_bytes": 34839136,
+      "payload": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/payloads/fast/terrabase-init",
+      "payload_sha256": "03b10182ac29d42414ca6549d4bb21b89a5d20cc071e2763405e74429108d149",
+      "payload_size_bytes": 6097880,
+      "pt_load_count": 4,
+      "pt_load_headers_identical": true,
+      "pt_load_runtime_bytes_equivalent": true,
+      "allowed_elf_metadata_differences": [
+        40,
+        41,
+        42,
+        43,
+        60,
+        62
+      ]
+    },
+    {
+      "name": "fast/terrabase-keygen",
+      "source": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/unstripped/default/terrabase-keygen",
+      "source_sha256": "ba36d461e0a055b8ca6cdefa05cc8ada3bee267e90502f5728dac1a4a8e32960",
+      "source_size_bytes": 8597264,
+      "payload": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/payloads/fast/terrabase-keygen",
+      "payload_sha256": "dc95177886e18ee2262849c6a84f91d2045f3e68007b812e3fd66f6ad579764a",
+      "payload_size_bytes": 1040520,
+      "pt_load_count": 4,
+      "pt_load_headers_identical": true,
+      "pt_load_runtime_bytes_equivalent": true,
+      "allowed_elf_metadata_differences": [
+        40,
+        41,
+        42,
+        60,
+        62
+      ]
+    }
+  ],
+  "fast_test_executable": {
+    "source": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/cargo-target/x86_64-unknown-linux-musl/debug/deps/fast-d0dcf9911b916c69",
+    "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/unstripped/fast/client_process",
+    "size_bytes": 161295624,
+    "sha256": "c7ecf29ace16c7946510eba56f68da54cc45f81b50b6ef75831f39d6667b01c7"
+  },
+  "slow_test_executable_compile_only": {
+    "source": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/cargo-target/x86_64-unknown-linux-musl/debug/deps/slow-0d3c9084256fac65",
+    "size_bytes": 146393688,
+    "sha256": "ce005514fa9cc215898432511e77fa77747ff396c0d21e0f7f0098584adda5a0",
+    "staged": false
+  },
+  "reused_r11_default_products": [
+    {
+      "source": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r11/artifacts/unstripped/default/tb-server",
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/unstripped/default/tb-server",
+      "size_bytes": 137523208,
+      "sha256": "dae5714ad28a6f63b9b59fdd5de84bd8ac50160f7605c499ce15d25ecbe0c942",
+      "r11_build_log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r11/default-build.log",
+      "r11_build_log_sha256": "4515576189e0b7ba35b3a9f4c21cf2545008143342d2956ec3e11f0386ece950",
+      "r11_source_manifest_sha256": "2f75c4aba4206b01a86cf0f880b7690bc437f9ff68448b9072178e1d10277064",
+      "r12_closure_reuse_basis": "R12 differs from R11 only in two integration test files"
+    },
+    {
+      "source": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r11/artifacts/unstripped/default/terrabase-init",
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/unstripped/default/terrabase-init",
+      "size_bytes": 34839136,
+      "sha256": "acce7ec66e61285ce69ec148806a4d485cd549e3a590e0a703f1ef22516aa21d",
+      "r11_build_log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r11/default-build.log",
+      "r11_build_log_sha256": "4515576189e0b7ba35b3a9f4c21cf2545008143342d2956ec3e11f0386ece950",
+      "r11_source_manifest_sha256": "2f75c4aba4206b01a86cf0f880b7690bc437f9ff68448b9072178e1d10277064",
+      "r12_closure_reuse_basis": "R12 differs from R11 only in two integration test files"
+    },
+    {
+      "source": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r11/artifacts/unstripped/default/terrabase-keygen",
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/unstripped/default/terrabase-keygen",
+      "size_bytes": 8597264,
+      "sha256": "ba36d461e0a055b8ca6cdefa05cc8ada3bee267e90502f5728dac1a4a8e32960",
+      "r11_build_log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r11/default-build.log",
+      "r11_build_log_sha256": "4515576189e0b7ba35b3a9f4c21cf2545008143342d2956ec3e11f0386ece950",
+      "r11_source_manifest_sha256": "2f75c4aba4206b01a86cf0f880b7690bc437f9ff68448b9072178e1d10277064",
+      "r12_closure_reuse_basis": "R12 differs from R11 only in two integration test files"
+    }
+  ],
+  "wrapper33": {
+    "binary": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/wrapper33/client_finite_cgroup_runner",
+    "sha256": "bb61a354a9deb49e3d1ef09c74f459af85cb65034d835d0be805441cecd26d04",
+    "source": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/wrapper33/client_finite_cgroup_runner.rs",
+    "source_sha256": "7c2e8517a0ab19bce731a5d66446c8be05ea6d04116f0ca3264ac9072e714a98",
+    "build_receipt": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/wrapper33/wrapper-build-receipt.json",
+    "build_receipt_sha256": "a8a85262c67c4c855d2de4a9a759da5169ea9d5990646b68094c6f0edfaf10c3",
+    "correction_receipt": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/wrapper33/wrapper-correction-receipt.json",
+    "correction_receipt_sha256": "15ec017094431ba39b7eba03c84b0570a7ee1f0d0d1e92e5bcd375f0282444fd",
+    "behavior": "preflights /root/fc-harness-payloads/terrabase-init and sets TB_INIT_TEST_BINARY to that guest path"
+  },
+  "runtime_status": "pending explicit Root authorization; no host tests or VMs performed by this worker",
+  "artifact_digest_list": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/ARTIFACTS-SHA256SUMS",
+  "sccache": {
+    "binary": "/home/mariogk/.local/share/mise/installs/aqua-mozilla-sccache/0.18.0/sccache-v0.18.0-x86_64-unknown-linux-musl/sccache",
+    "binary_sha256": "973cb15f6a986d84ca334bbed3bbe2eb8f1ee8fd81bf9e115b8539a293bf8d59",
+    "version": "0.18.0",
+    "directory": "/home/mariogk/.cache/terrabase-sccache-next",
+    "directory_retained": true,
+    "directory_size_after_stop": "781M",
+    "server_pid": 3923894,
+    "server_stopped": true,
+    "server_socket": "/tmp/terrabase-sccache-next.sock",
+    "server_socket_removed": true,
+    "stats_log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/sccache-stats-final.txt",
+    "stats_log_sha256": "7537477fe477a7edf3135f3c2a6168432df54730825e442684f2bdcaac760c84",
+    "stop_log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/sccache-stop.log",
+    "stop_log_sha256": "5ec8c86ebce0543d886d64ce9bcfbe62871a26815f1b3081982621aee49ec11d",
+    "quiescence_log": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/process-quiescence-after-cache-release.txt",
+    "quiescence_log_sha256": "5a25710d4e7874415d17b87351262963fb678e5e81a02e1e726780aa663e6bfa",
+    "compile_requests": 2714,
+    "compile_requests_executed": 2451,
+    "cache_hits": 762,
+    "cache_misses": 1677,
+    "cache_hit_rate": "31.24%",
+    "cache_errors": 0,
+    "timeouts": 0
+  }
+}

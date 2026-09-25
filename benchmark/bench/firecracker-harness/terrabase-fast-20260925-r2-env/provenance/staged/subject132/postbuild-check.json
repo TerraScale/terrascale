@@ -1,0 +1,13 @@
+{
+  "expected_source_file_count": 132,
+  "live_source_file_count": 132,
+  "snapshot_source_file_count": 132,
+  "live_matches_frozen": true,
+  "snapshot_matches_frozen": true,
+  "live_added": [],
+  "live_missing": [],
+  "live_changed": [],
+  "snapshot_changed": [],
+  "frozen_manifest_sha256": "f8109bcef5bdf44850733968a988fb9a3be5be2665dcd1e146c6559743b64954",
+  "postbuild_manifest_sha256": "f8109bcef5bdf44850733968a988fb9a3be5be2665dcd1e146c6559743b64954"
+}

@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "run_id": "terrabase-fast-20260925-r9-env",
+  "source": {
+    "head": "352d9f61185d1b685e3032519579040d169ad47d",
+    "snapshot_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r9/source",
+    "snapshot_manifest_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r9/SOURCE-SHA256SUMS",
+    "snapshot_manifest_sha256": "c417e3a4fab0cb2691244855cf449aab6fc44299f86cbecc5f1bda1e165da6c3",
+    "source_file_count": 135,
+    "subject_overlay_path": "/tmp/terrabase-fast-subject135-20260925-r9-env",
+    "subject_overlay_inventory_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r9-env/provenance/subject-overlay.sha256",
+    "subject_overlay_inventory_sha256": "f69bf8270b49685e68c21ef4ef4c0abccdda67a15f8bc9938e72ff7ae7b545af",
+    "source_overlay_matches": 134,
+    "human_owned_agents": {
+      "snapshot_sha256": "4cae7ecfb70558d87ede80e94664db56ac69eacd4037904254244ec76cf92dbb",
+      "subject_sha256": "add8c2a91a50f38b211cd469fc5dab9a1341e4c64e9e4c85e84250e8cffa78ae",
+      "head_bytes_preserved": true,
+      "working_tree_ag_file_was_not_used": true
+    },
+    "foundation_artifact_receipt_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r9/ARTIFACT-RECEIPT.json",
+    "foundation_artifact_receipt_sha256": "1ed73e77be22fff1f61c2258036c2c7ae655e60f21e9d67620c9266b13ea9ae8",
+    "foundation_artifact_manifest_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r9/ARTIFACTS-SHA256SUMS",
+    "foundation_artifact_manifest_sha256": "94860a8a6a5949fcb868cf1e9b8806f5e5c25c7605ad3dde54328659c4fb34fd",
+    "stripped_payload_load_segments_verified": true,
+    "all_required_build_gates_pass": false,
+    "build_gate_status": {
+      "fmt-check": "passed",
+      "default-build": "passed",
+      "fast-no-run": "passed",
+      "slow-no-run": "passed",
+      "clippy-fast": "failed",
+      "clippy-slow": "skipped",
+      "msrv188-product": "passed"
+    }
+  },
+  "benchmark_repository": {
+    "head": "5685f163bb7e9339e8eb0c839fe2512aaf562648",
+    "path": "/tmp/tsb-fast-runner31-20260925-r2-env",
+    "source_file_count": 31,
+    "source_inventory_sha256": "280f9d92b98fa91a20943d815d6b7bc1da913b1631bed3301e2a81e80525b8d2",
+    "verified": true,
+    "prior_verified_input_set_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r3-env/input-set.json",
+    "prior_verified_input_set_sha256": "7b714192e70e87628c5d0c768599fa8fc6cc05455c2e0cd6772fd14a7ac942b8"
+  },
+  "controller": {
+    "fc_harness_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r9-env/harness/fc-harness",
+    "fc_harness_sha256": "32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20",
+    "guest_agent_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r9-env/harness/fc-guest-agent",
+    "guest_agent_sha256": "3a2b582bd911e654aaa1a7181e0761dee6231cc317270bceca62486b7ea0c6bb",
+    "firecracker_sha256": "9d9ec5ff68a23ce54a424b15ec097c7204a3f206884c092d570b75529811bd57",
+    "kernel_path": "/tmp/vm-inputs/vmlinux",
+    "kernel_sha256": "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2",
+    "rootfs_path": "/tmp/vm-inputs/rootfs.ext4",
+    "rootfs_sha256": "dd49aee1d9c28f8e781a627bec744db3a961ce4402950130ff9268504c551314",
+    "rootfs_provenance": "historical local manifest; upstream artifact URLs/version metadata unavailable; unqualified"
+  },
+  "wrapper": {
+    "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r9-env/program/client_finite_cgroup_runner",
+    "sha256": "8135e6a19edc49c480ef15d7cb93d90754338a97fcf2dac3eea99c15351cfc03",
+    "mode": "0755",
+    "accepted_wrapper_source": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r9/artifacts/wrapper33/client_finite_cgroup_runner",
+    "accepted_wrapper_inventory_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r9/artifacts/wrapper33/wrapper-build-receipt.json"
+  },
+  "payloads": [
+    {
+      "name": "client_process",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r9/artifacts/payloads/fast/client_process",
+      "host_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r9-env/payloads/client_process",
+      "guest_path": "/root/fc-harness-payloads/client_process",
+      "size_bytes": 27174232,
+      "sha256": "d0f9add2c84e8203ed2d426e91be212aa4348007546466489bb6b91a8235ccb9",
+      "guest_mode": "0755"
+    },
+    {
+      "name": "tb-server",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r9/artifacts/payloads/fast/tb-server",
+      "host_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r9-env/payloads/tb-server",
+      "guest_path": "/root/fc-harness-payloads/tb-server",
+      "size_bytes": 32840104,
+      "sha256": "6ed755abab7a635ebd1178f1789f557c305d0f424a564906ade1fafb40a0e9ae",
+      "guest_mode": "0755"
+    },
+    {
+      "name": "terrabase-init",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r9/artifacts/payloads/fast/terrabase-init",
+      "host_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r9-env/payloads/terrabase-init",
+      "guest_path": "/root/fc-harness-payloads/terrabase-init",
+      "size_bytes": 6098920,
+      "sha256": "0c85ad398143695fe5c9068a06b686b86961eac6a271cc9f63e814d9397a474c",
+      "guest_mode": "0755"
+    },
+    {
+      "name": "terrabase-keygen",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r9/artifacts/payloads/fast/terrabase-keygen",
+      "host_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r9-env/payloads/terrabase-keygen",
+      "guest_path": "/root/fc-harness-payloads/terrabase-keygen",
+      "size_bytes": 1040208,
+      "sha256": "1d1f97c89b6c90db1fd5d81d4df5354cc98d7c99ffed785c1abb601b64724940",
+      "guest_mode": "0755"
+    }
+  ],
+  "runtime": {
+    "filter": null,
+    "test_args": [
+      "--test-threads=1",
+      "--nocapture"
+    ],
+    "timeout_seconds": 300,
+    "guest_memory_mib": 8192,
+    "guest_vcpus": 4,
+    "guest_swap_disabled": true,
+    "guest_network": "disabled; no host network or unisolated service fixture is attached",
+    "host_priority": "nice -n 19; ionice -c 3",
+    "required_stdout_test": "server_fast::client_process::packaged_initializer_bootstraps_fresh_local_v1_for_https_document_caller",
+    "known_limitations": [
+      "all_required_build_gates_pass=false: Clippy fast failed on known doc_markdown lint; Clippy slow was skipped",
+      "Fast run does not qualify the RustFS provider or pair fixture",
+      "historical Firecracker kernel/rootfs upstream provenance is unqualified"
+    ]
+  }
+}

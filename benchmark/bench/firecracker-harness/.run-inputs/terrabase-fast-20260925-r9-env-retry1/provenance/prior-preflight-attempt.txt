@@ -1,0 +1,5 @@
+prior_run_id=terrabase-fast-20260925-r9-env
+prior_run_inputs=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/.run-inputs/terrabase-fast-20260925-r9-env
+prior_empty_output=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r9-env
+prior_controller_exit=1; controller stdout: git -C subject-repo rev-parse HEAD failed because the copied source overlay lacked detached-worktree .git metadata
+no Firecracker process started in the prior preflight attempt; its stdout/exit and empty output directory are preserved

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/fc-harness", "crates/fc-guest-agent"]
+members = ["crates/fc-harness", "crates/fc-guest-agent", "crates/fc-image-builder", "crates/rustfs-bucket-admin"]
 
 [workspace.package]
 edition = "2024"
@@ -8,10 +8,18 @@ rust-version = "1.85"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+aws-sdk-s3 = { version = "=1.96.0", default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls", "default-https-client"] }
+clap = { version = "4.6.7", features = ["derive", "std"] }
 libc = "0.2.177"
+object = { version = "=0.37.3", default-features = false, features = ["read_core", "elf", "std"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10.9"
+tar = { version = "=0.4.46", default-features = false }
+tempfile = "=3.27.0"
+toml = "0.9"
+tokio = { version = "=1.47.1", features = ["macros", "rt-multi-thread", "time"] }
 
 [workspace.lints.rust]
 unsafe_code = "warn"

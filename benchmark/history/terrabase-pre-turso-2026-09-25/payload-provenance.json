@@ -1,0 +1,983 @@
+{
+  "schema_version": 1,
+  "files": [
+    {
+      "archive_path": "source/.gitignore",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/.gitignore",
+      "sha256": "3d7aa5fbe287d94118d8dead1a14a50b3aa11616637329e2b5977fc6411509a6",
+      "size_bytes": 38
+    },
+    {
+      "archive_path": "source/AGENTS.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/AGENTS.md",
+      "sha256": "4cae7ecfb70558d87ede80e94664db56ac69eacd4037904254244ec76cf92dbb",
+      "size_bytes": 3280
+    },
+    {
+      "archive_path": "source/Cargo.lock",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/Cargo.lock",
+      "sha256": "356800a12d68297ca892ae9dd939d9a37fa57523c568a315536c2e4400dcc9d7",
+      "size_bytes": 81688
+    },
+    {
+      "archive_path": "source/Cargo.toml",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/Cargo.toml",
+      "sha256": "d678c21d1234656f0b86e8f386b8505962d93417fd67fa5e1cbb91a21a932795",
+      "size_bytes": 2834
+    },
+    {
+      "archive_path": "source/GOAL.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/GOAL.md",
+      "sha256": "9cd9be4a029199e6c1f9e1a6f1eab59a51e3a287127c0d724d445b8264fc404a",
+      "size_bytes": 50421
+    },
+    {
+      "archive_path": "source/Makefile",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/Makefile",
+      "sha256": "48d49743c6e50526c9d531210aedee8e13a39aab636ca06e3ed77f20bbf29d64",
+      "size_bytes": 2463
+    },
+    {
+      "archive_path": "source/crates/tb-core/Cargo.toml",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-core/Cargo.toml",
+      "sha256": "ced808149dbdcceec24e18b87d27e9db5e09ef19e9270162dc216cf099df9efa",
+      "size_bytes": 241
+    },
+    {
+      "archive_path": "source/crates/tb-core/src/error.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-core/src/error.rs",
+      "sha256": "fbb3e3d6ff96523e541db3686d40e11e01e01919e8740a749f952f7b8669314f",
+      "size_bytes": 3860
+    },
+    {
+      "archive_path": "source/crates/tb-core/src/lib.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-core/src/lib.rs",
+      "sha256": "d4a188e79697d72d3e649dd16fa6424e7b3a4fe498884affdbe42cfaab122c2a",
+      "size_bytes": 1081
+    },
+    {
+      "archive_path": "source/crates/tb-core/src/memory.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-core/src/memory.rs",
+      "sha256": "aeed1eb3a8a0f45ef1a4d73806f8e2c758206f11e77140c7ddf05362dc3246d4",
+      "size_bytes": 68212
+    },
+    {
+      "archive_path": "source/crates/tb-core/src/types.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-core/src/types.rs",
+      "sha256": "83e8e9a3322142bf8c604dda81ebfc440a4ce7d8186d0abc965e5318026b2a0d",
+      "size_bytes": 18824
+    },
+    {
+      "archive_path": "source/crates/tb-document/Cargo.toml",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-document/Cargo.toml",
+      "sha256": "ccf0b88bac0ff2c68ad29229e3756ca1114d40d69fb1df10026a17eef5afac1e",
+      "size_bytes": 503
+    },
+    {
+      "archive_path": "source/crates/tb-document/src/distributed.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-document/src/distributed.rs",
+      "sha256": "108efdaef31d0cf083da57aa8dbe10278976574f2f72d054828cdbda0f28ac3a",
+      "size_bytes": 15020
+    },
+    {
+      "archive_path": "source/crates/tb-document/src/distributed_apply.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-document/src/distributed_apply.rs",
+      "sha256": "5e5d9cae578253e49f1e8661ae0e5bd8b450c29ae68c12f1343753cc54eeb1f5",
+      "size_bytes": 52404
+    },
+    {
+      "archive_path": "source/crates/tb-document/src/distributed_producer.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-document/src/distributed_producer.rs",
+      "sha256": "c78627ee96edb4ec0c6ee2acf2c366018d2d489fe255660f1a71625d8ffee725",
+      "size_bytes": 42942
+    },
+    {
+      "archive_path": "source/crates/tb-document/src/distributed_read.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-document/src/distributed_read.rs",
+      "sha256": "0ad02e842c0e81cc5b221e7696fa8312225645e7b967c5a2ded10ab891c186e0",
+      "size_bytes": 8090
+    },
+    {
+      "archive_path": "source/crates/tb-document/src/distributed_state.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-document/src/distributed_state.rs",
+      "sha256": "b0304e99be5ab77b3ce6a85f6b815538af1e20ce211f71c2831a19930a04aca0",
+      "size_bytes": 27866
+    },
+    {
+      "archive_path": "source/crates/tb-document/src/lib.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-document/src/lib.rs",
+      "sha256": "24d1f66fc8086f182b326b7566c686e5c7fac6aabf8ab59381abe917866cc362",
+      "size_bytes": 15619
+    },
+    {
+      "archive_path": "source/crates/tb-document/src/local_v1.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-document/src/local_v1.rs",
+      "sha256": "099b13a16e266687cba01628b10e45d8ad38a18f550b38a056eedd7578ce3faf",
+      "size_bytes": 5418
+    },
+    {
+      "archive_path": "source/crates/tb-document/src/producer.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-document/src/producer.rs",
+      "sha256": "63ede1d554130a5359afcfa81d395b09670ecbe0c5af050ce326d1a9f1971a05",
+      "size_bytes": 46211
+    },
+    {
+      "archive_path": "source/crates/tb-format/Cargo.toml",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-format/Cargo.toml",
+      "sha256": "345f785f98603dc514f9731c726ad8c6061f5bf9b8a204a7dcfbe39b74a3bf7b",
+      "size_bytes": 327
+    },
+    {
+      "archive_path": "source/crates/tb-format/src/document.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-format/src/document.rs",
+      "sha256": "cab750b73265248295f10db5e0a098a650e9b371c73da6ff63818c0cde44fbdd",
+      "size_bytes": 86485
+    },
+    {
+      "archive_path": "source/crates/tb-format/src/document_v2.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-format/src/document_v2.rs",
+      "sha256": "da73c94766d11f4b0be7194a6535c72e9bf8d5baef5ddb24af45388cfb30f7da",
+      "size_bytes": 45116
+    },
+    {
+      "archive_path": "source/crates/tb-format/src/envelope.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-format/src/envelope.rs",
+      "sha256": "a41d3b2b8910bee6a3a007d781fab1c3fda2b2edf5d5d40f62dc7e0a2b559062",
+      "size_bytes": 23308
+    },
+    {
+      "archive_path": "source/crates/tb-format/src/lib.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-format/src/lib.rs",
+      "sha256": "8b1550b0fbfe3df479c597cec8d6ccc1e865a63f70e823dd31bc5cfb93a5daee",
+      "size_bytes": 9835
+    },
+    {
+      "archive_path": "source/crates/tb-format/src/remote.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-format/src/remote.rs",
+      "sha256": "0f208c10f43d16bbc73dace41d91da0db7604b0d653d857c6c2e4d4026d24664",
+      "size_bytes": 22398
+    },
+    {
+      "archive_path": "source/crates/tb-format/src/segment.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-format/src/segment.rs",
+      "sha256": "567a42a2f368d7ea5700159e0321712e557f4f10a80f3b49559ff8f14b15416e",
+      "size_bytes": 58282
+    },
+    {
+      "archive_path": "source/crates/tb-format/src/wal.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-format/src/wal.rs",
+      "sha256": "a6bb04b930d350090f1731bf1a67fa29aa0b67707a9083c4b7c0db7c1d72bee2",
+      "size_bytes": 19129
+    },
+    {
+      "archive_path": "source/crates/tb-object/Cargo.toml",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-object/Cargo.toml",
+      "sha256": "d88db45895a82d7d2be9f72139640c6092b8f78f444bea008e69760b182f6f70",
+      "size_bytes": 421
+    },
+    {
+      "archive_path": "source/crates/tb-object/src/client.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-object/src/client.rs",
+      "sha256": "32cfce451e29870dbd855b3622e4fc9cd72899e742cd6a918de3da04169785c2",
+      "size_bytes": 57053
+    },
+    {
+      "archive_path": "source/crates/tb-object/src/error.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-object/src/error.rs",
+      "sha256": "6d8a6c984bbf1503a15018efe07ad6a333c8f60ff56bef9af8184b8339e1dc9c",
+      "size_bytes": 7892
+    },
+    {
+      "archive_path": "source/crates/tb-object/src/lib.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-object/src/lib.rs",
+      "sha256": "aaec0f0d0dde9ff71a420cf6628e3c66ea6fa61cd39349abb224f060763fecd0",
+      "size_bytes": 779
+    },
+    {
+      "archive_path": "source/crates/tb-object/src/types.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-object/src/types.rs",
+      "sha256": "5cefca33a703d70fb91ba18e86ddb7310422f6934c21ccf02c10b59e2e2d9fd2",
+      "size_bytes": 11710
+    },
+    {
+      "archive_path": "source/crates/tb-protocol/Cargo.toml",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-protocol/Cargo.toml",
+      "sha256": "6b569a51d3aadf67b35e23ed402e1f138a34ae490241971c25dcdae0181e1042",
+      "size_bytes": 495
+    },
+    {
+      "archive_path": "source/crates/tb-protocol/build.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-protocol/build.rs",
+      "sha256": "d585849a370ee528d3baa3d68afca72b25cbd16b77c740489aa1392f07a55f45",
+      "size_bytes": 408
+    },
+    {
+      "archive_path": "source/crates/tb-protocol/src/admission.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-protocol/src/admission.rs",
+      "sha256": "77cdba0781a81c9512df7ee923ace4dfe4aa12512892cd66875d2b1cd5dec71f",
+      "size_bytes": 16766
+    },
+    {
+      "archive_path": "source/crates/tb-protocol/src/batch.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-protocol/src/batch.rs",
+      "sha256": "e2fc47e41c275fe9c0acc15f865fa79524375ff12965ab3758686aad45e0ffa7",
+      "size_bytes": 59634
+    },
+    {
+      "archive_path": "source/crates/tb-protocol/src/handshake.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-protocol/src/handshake.rs",
+      "sha256": "1aefbf1be918389f46615bacfddc164f2a25390fd85d8ab2c6444d761ffde40c",
+      "size_bytes": 23455
+    },
+    {
+      "archive_path": "source/crates/tb-protocol/src/lib.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-protocol/src/lib.rs",
+      "sha256": "53ad460f88c068308cb53c1a93f61429a1aa28df1947d04e16ccd8a449f0c652",
+      "size_bytes": 3580
+    },
+    {
+      "archive_path": "source/crates/tb-protocol/src/security.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-protocol/src/security.rs",
+      "sha256": "41b8fb01b614bd257383a8018b9621fa6695abfc1507cb449f0f52211df58a5b",
+      "size_bytes": 4199
+    },
+    {
+      "archive_path": "source/crates/tb-protocol/src/sync_codec.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-protocol/src/sync_codec.rs",
+      "sha256": "3cf896d59548627c6de534eec98cdc9b1340d315d401c7514b5add0e17b2bb96",
+      "size_bytes": 33626
+    },
+    {
+      "archive_path": "source/crates/tb-protocol/src/timeout.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-protocol/src/timeout.rs",
+      "sha256": "1c25110c1d63904092fa4e2a3900d99d52b579047e672d39a05822cb28dd4467",
+      "size_bytes": 3389
+    },
+    {
+      "archive_path": "source/crates/tb-replication/Cargo.toml",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-replication/Cargo.toml",
+      "sha256": "1c4f8b44b3b1f26aebdeb05aa51608dd24196787e86cf6fadee48e020e071401",
+      "size_bytes": 460
+    },
+    {
+      "archive_path": "source/crates/tb-replication/src/authority.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-replication/src/authority.rs",
+      "sha256": "5ffb9abe90e636b25650cab31f3cbf2fb5fbd578652b8a5f7c886a261e8b4dd7",
+      "size_bytes": 120855
+    },
+    {
+      "archive_path": "source/crates/tb-replication/src/cursor.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-replication/src/cursor.rs",
+      "sha256": "9a0275f281699d1d24250ce23526027d67feb7a8418cf3a189599a625c7005c3",
+      "size_bytes": 10859
+    },
+    {
+      "archive_path": "source/crates/tb-replication/src/event.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-replication/src/event.rs",
+      "sha256": "56576aae259b07ca806428ab6da70412ba1549be5cdc7ecc4cf85a4dcad77667",
+      "size_bytes": 20689
+    },
+    {
+      "archive_path": "source/crates/tb-replication/src/journal.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-replication/src/journal.rs",
+      "sha256": "fa21579d38db6af2e42e9eb52a2c46f6b281c32342b60cd23358f42537a9d6a0",
+      "size_bytes": 62671
+    },
+    {
+      "archive_path": "source/crates/tb-replication/src/lib.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-replication/src/lib.rs",
+      "sha256": "5f6df912e242d31d7c8957c66d587c1652e8d4be2ea4235eb8b2d972e3a70b6e",
+      "size_bytes": 1645
+    },
+    {
+      "archive_path": "source/crates/tb-replication/src/merge.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-replication/src/merge.rs",
+      "sha256": "4bc6b9a2933c7d657872dea470704d5203f15a066c744ae7aedcbf97d4fd2026",
+      "size_bytes": 6711
+    },
+    {
+      "archive_path": "source/crates/tb-replication/src/metadata.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-replication/src/metadata.rs",
+      "sha256": "2c8a8b6d9d9d8921cb386b99a10f1962cc31ac7bf95badc56640855c6630e8e3",
+      "size_bytes": 69036
+    },
+    {
+      "archive_path": "source/crates/tb-replication/src/tests.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-replication/src/tests.rs",
+      "sha256": "0b76bd92d5f3182fca54562dde882c7d2184d0fc1afeb66a247271ce292feebd",
+      "size_bytes": 16210
+    },
+    {
+      "archive_path": "source/crates/tb-server/Cargo.toml",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/Cargo.toml",
+      "sha256": "a3fc59b7ec76c52e5504ba840ae69ead21e72b50c2b48aeefb266c0eb43eaf11",
+      "size_bytes": 1807
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/bin/terrabase-init.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/bin/terrabase-init.rs",
+      "sha256": "a094765538906955812db4b2c812cdc3751c37a24ebb8d330d30bab3c8235999",
+      "size_bytes": 19269
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/client_auth.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/client_auth.rs",
+      "sha256": "08843369468d8d9fb96d9a3d73362cd416b8af566301610b17a03f5fa77293fb",
+      "size_bytes": 24355
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/client_http.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/client_http.rs",
+      "sha256": "50fcafb2daabfc4dadca571ea4704d555c890f6a23ad49129819763fab4740e9",
+      "size_bytes": 33199
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/client_json.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/client_json.rs",
+      "sha256": "f894e592ea643e80bd0e3bb81518373d2ab7a8326b78484a02412965c639d1f8",
+      "size_bytes": 75848
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/config.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/config.rs",
+      "sha256": "11d0c7b7e21a5fea883d08fdd36bd4c3d7655db1c6098c9e521d0717528c5d5b",
+      "size_bytes": 24927
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/distributed_runtime.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/distributed_runtime.rs",
+      "sha256": "706052cfe86ba688d4f50c5f5cddf565747c04b012752050401ab7b9de053bb7",
+      "size_bytes": 5749
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/document_service.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/document_service.rs",
+      "sha256": "395d2fd554192c096c48327b2f67c70becd0e6edc549a58dd669fe801ba1b544",
+      "size_bytes": 41264
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/http.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/http.rs",
+      "sha256": "14d4bcf9429bda3212228111e82191ccb9ca2d6c5ef32c464212656121d69334",
+      "size_bytes": 22015
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/lib.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/lib.rs",
+      "sha256": "0b3bc25646bdd7492a972d85b4279124cccc204fcd8e00cf3bc7416f85b0b53a",
+      "size_bytes": 6341
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/lifecycle.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/lifecycle.rs",
+      "sha256": "015ad2230090898f188d13899b3a1ba35dd446b330ddef5bf3a9dda286f4c81b",
+      "size_bytes": 4327
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/local_v1_runtime.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/local_v1_runtime.rs",
+      "sha256": "0b9690aa7a0df60c4f713841568b387b237143e0cfeef504931e355f3c88f0f0",
+      "size_bytes": 54487
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/main.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/main.rs",
+      "sha256": "ef34fa145d19b18a754f70f47914d934b3b9efcade7f724614c7d396af201316",
+      "size_bytes": 19653
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/member_control.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/member_control.rs",
+      "sha256": "966e7278f5808846623d1b72ad6f5b439b786c967e42e29ffbe3b11c7a17964a",
+      "size_bytes": 11757
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/memory_metrics.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/memory_metrics.rs",
+      "sha256": "c3fd37057a486a6d6112b9e970019cf02ab8c5a64cb882197da3d1adc68d3b24",
+      "size_bytes": 4279
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/memory_pressure.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/memory_pressure.rs",
+      "sha256": "131ad0618c0d8fb476674e0fd66eac7c1a562f65e3b4295ddf5a33d82a3a00c2",
+      "size_bytes": 10318
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/replication_config.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/replication_config.rs",
+      "sha256": "0b433b7fe0989e4ac16afa4d2b54f731ebf269344bb1c9f51ea47e07718471ce",
+      "size_bytes": 16719
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/replication_sender.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/replication_sender.rs",
+      "sha256": "634069e6547d9d6ca96185f41a2c39771e5afaa12f6ff5ae85ee0729072779c5",
+      "size_bytes": 35693
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/replication_sender_tls.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/replication_sender_tls.rs",
+      "sha256": "c0a8f065e4e6c50048b4c2d2554877627b02bd34a0d3bef5940b122344ee5bb7",
+      "size_bytes": 8896
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/replication_server.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/replication_server.rs",
+      "sha256": "f1d42b563b82c2e211bf10787f12b67b7ace41eb0ee25724f3bf0e25d9df7730",
+      "size_bytes": 84675
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/state.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/state.rs",
+      "sha256": "9099352ae1d1eef3b0259a9370381a4d34472259a7f7d610ff706e058621c576",
+      "size_bytes": 9407
+    },
+    {
+      "archive_path": "source/crates/tb-server/src/terrabase_keygen.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/src/terrabase_keygen.rs",
+      "sha256": "9de8d1d1b574a15600c10ec2682d913b6d4688a52687a82de7acf72074ce80bd",
+      "size_bytes": 2973
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/client_decode_allocations.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/client_decode_allocations.rs",
+      "sha256": "6e2f9ed3df3f8a48f1b88cc69e22e9b3a3f6645e50af919bd9f7a3f77e3e609d",
+      "size_bytes": 25307
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/client_process.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/client_process.rs",
+      "sha256": "80098e3023e29d5eaf3736197f5e68fd976ddeeec1be7f7e84c13cf73d5c7ac2",
+      "size_bytes": 62002
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/distributed_client_process.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/distributed_client_process.rs",
+      "sha256": "572f378a83a40acd6003ce6d3b10ff24e850f26b1380b10bc4b3c9b665240e60",
+      "size_bytes": 30698
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/fast.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/fast.rs",
+      "sha256": "e303bfc43187173aa2e080a504ee292d0ca060fc1c5f83fa7af737e0d22613a5",
+      "size_bytes": 393
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/replication_process.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/replication_process.rs",
+      "sha256": "254b0fd190ac544cd51858bef2027a2c94f0512bc225c0530d1cb8305302d689",
+      "size_bytes": 155003
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/server_process.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/server_process.rs",
+      "sha256": "20bd878c1b5e01b29bcecd00d6b2083b0a7b92d798f0ffd7eb51d8428953b3d2",
+      "size_bytes": 9588
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/slow.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/slow.rs",
+      "sha256": "7053804bbb74730b5b344edbcf3383281cc52a6b8ef19b81f33eefed3ca763b0",
+      "size_bytes": 620
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/document/distributed_open.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/document/distributed_open.rs",
+      "sha256": "1b45a36ecac9df35f2d259b85aa82c663b8e0fa663c68c7a025027721abe51a1",
+      "size_bytes": 26109
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/document/distributed_source.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/document/distributed_source.rs",
+      "sha256": "242020180ae4f9be2779c2e65999e978c38d14b414ee1e4d761b17b27fb70a4c",
+      "size_bytes": 43228
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/document/document_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/document/document_contract.rs",
+      "sha256": "e283e40858dc461c4435e6fb1a9ca9d744b1a6dd6d3c1ba2d844d393b7e55952",
+      "size_bytes": 18361
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/document/fast.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/document/fast.rs",
+      "sha256": "7b9a775744ef93033849df1a2f484755b4126f4887ef5eb102a2f2d6830c4f1e",
+      "size_bytes": 163
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/document/local_v1_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/document/local_v1_contract.rs",
+      "sha256": "1b0da650612aa3e0a16a0f062f217e774384122fe4ab45358f0081558908865b",
+      "size_bytes": 7958
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/document/receiver_fast.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/document/receiver_fast.rs",
+      "sha256": "1a872192ec47ac05f39348cfd57bdf8ac3d1240f3a820b8e558d0ea6b521f1c4",
+      "size_bytes": 18747
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/document/receiver_fixture.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/document/receiver_fixture.rs",
+      "sha256": "11fd4b920014d9d6b25cf24be0618868696af8bc52b1c093f2fdab8da1b9578d",
+      "size_bytes": 25578
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/document/receiver_slow.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/document/receiver_slow.rs",
+      "sha256": "f873a2d2a31a61d04859ee6d335207cb5a0874dee18516f67b9e7049eaf2e76d",
+      "size_bytes": 30481
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/document/slow.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/document/slow.rs",
+      "sha256": "54b3bd9e61dd9753744d1d54dac5fbd4fccda1d34008bca6b93f960f6ede165e",
+      "size_bytes": 163
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/format/fast.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/format/fast.rs",
+      "sha256": "0cff0a34ab03015440cc4c7b1efdf16a05f309713e3f4d4d2af2b24ed7b022f3",
+      "size_bytes": 4464
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/format/slow.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/format/slow.rs",
+      "sha256": "d893b4c21b13f523349ccf1e017fa8526f7df162455e79c98365884486bdfd9a",
+      "size_bytes": 4865
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/object/slow.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/object/slow.rs",
+      "sha256": "cf17dc59340790ec9202ecf56849cc95f7b9a693fa7460f1ae679547f4ccf910",
+      "size_bytes": 7304
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/server/fast.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/server/fast.rs",
+      "sha256": "89e80c1de46e74abe75c29eeef88ff30c31cefe34b39137796296f5d73627480",
+      "size_bytes": 331
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/server/fixture.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/server/fixture.rs",
+      "sha256": "a6054049ced433ec79a46b0841671557ac3f37ae9228360f42776303b0e89a0f",
+      "size_bytes": 2146
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/server/member_control_managed.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/server/member_control_managed.rs",
+      "sha256": "a803c675e4ed16411457d74c7be351029953f29de7a72f24d0d454e0a63c4117",
+      "size_bytes": 18603
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/server/slow.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/server/slow.rs",
+      "sha256": "7f084c67c99f220708edc3d39dca1c142c22315be2a441eea3865a85f48bbc4a",
+      "size_bytes": 333
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/document_mode_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/document_mode_contract.rs",
+      "sha256": "aad284ee86545774f3c081199d64023bdc5bcd67e0ef50f11527f6c83743a3ff",
+      "size_bytes": 22664
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/fast.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/fast.rs",
+      "sha256": "13a833629b22fe9cc5da336e230af673f080f4aa4130224607a5de2125937cce",
+      "size_bytes": 4941
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/floor_initialization_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/floor_initialization_contract.rs",
+      "sha256": "66d258ccba9daa445cb1882280d8558962836c1254045d3a82bbb00f50af2a8e",
+      "size_bytes": 20097
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/local_document_mode_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/local_document_mode_contract.rs",
+      "sha256": "01a4e952fd1905f0318161f32e488aa4d2158a823bb433efec7b084b6977193a",
+      "size_bytes": 27529
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/post_sync_apply_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/post_sync_apply_contract.rs",
+      "sha256": "a43767661ca0b647fe3c575d681cc146f270a00b7cd923fd5ecfc96c8a941952",
+      "size_bytes": 2629
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/prepared_batch_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/prepared_batch_contract.rs",
+      "sha256": "9885693da31a44a4163538f24bb18e669f9e8f0bc7c4f8db8b69ce6700dc1bee",
+      "size_bytes": 12529
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/retained_lookup_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/retained_lookup_contract.rs",
+      "sha256": "ab43ff5c94b1f766e57f3e52f0db5ef595d93bdca73902ddd5e336f34d0c0d09",
+      "size_bytes": 9967
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/retry_deadline_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/retry_deadline_contract.rs",
+      "sha256": "b4902f18178fa7361559474133120e8c890c1e39ffa5052f106151b5c08e94c7",
+      "size_bytes": 3489
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/scan_clone_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/scan_clone_contract.rs",
+      "sha256": "faade54566f6af132e530bc36f50bf796e258db12db453cd101430cc42fbe87a",
+      "size_bytes": 3847
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/scan_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/scan_contract.rs",
+      "sha256": "72784321db967942784fc62beffd54fc98a62dafc3e0e882ac9f15d26b3e8eb1",
+      "size_bytes": 12520
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/slow.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/slow.rs",
+      "sha256": "1d09688f1db7cb67df2c834ed1b7f737eb37929bd53478f1a1c71a0982208919",
+      "size_bytes": 873
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/staged_batch_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/staged_batch_contract.rs",
+      "sha256": "1a0fe7455d4e823efe1a5968ef4d8af7c64c2904bc55d52179353fd24922e81d",
+      "size_bytes": 43753
+    },
+    {
+      "archive_path": "source/crates/tb-server/tests/support/storage/storage_contract.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-server/tests/support/storage/storage_contract.rs",
+      "sha256": "7de0a066409ce3b0de1332fe75a41e8a152290d6d1a9ea83cc6e0c72b60840c1",
+      "size_bytes": 28994
+    },
+    {
+      "archive_path": "source/crates/tb-storage/Cargo.toml",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-storage/Cargo.toml",
+      "sha256": "ca70d5ee1239ad65eaec10efed907edae066e7c12c64f5e7e9d1860067a3387e",
+      "size_bytes": 435
+    },
+    {
+      "archive_path": "source/crates/tb-storage/src/floor.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-storage/src/floor.rs",
+      "sha256": "a456179ef655070b5d1aa50f35c234316c1cc42ed592ef5234f8919d36fad454",
+      "size_bytes": 14300
+    },
+    {
+      "archive_path": "source/crates/tb-storage/src/lib.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-storage/src/lib.rs",
+      "sha256": "4be7303ac9af8952f15bba64e9bde53fd19483c46b3f3d1a94bc5cc470cbc205",
+      "size_bytes": 4751
+    },
+    {
+      "archive_path": "source/crates/tb-storage/src/local.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-storage/src/local.rs",
+      "sha256": "9578802d581b2c4e059b7d536cab0071e25cccbae8d8e98f4c46aa11a8d37584",
+      "size_bytes": 98976
+    },
+    {
+      "archive_path": "source/crates/tb-storage/src/local_mode.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-storage/src/local_mode.rs",
+      "sha256": "806c9e0ff0460127001f600fb4618e7d5b117a340757e8b35554a76700761fc0",
+      "size_bytes": 7960
+    },
+    {
+      "archive_path": "source/crates/tb-storage/src/mode.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-storage/src/mode.rs",
+      "sha256": "2bf0ebab105a851ad43f29a9e417ce327d6b152f76f576f6fd16e9bc5897cdf4",
+      "size_bytes": 24570
+    },
+    {
+      "archive_path": "source/crates/tb-storage/src/run.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-storage/src/run.rs",
+      "sha256": "c1dda8eabc436c806e701c1fc416913d7def6f7069cd5110d3fa7eb64c7fdba4",
+      "size_bytes": 33806
+    },
+    {
+      "archive_path": "source/crates/tb-storage/src/work.rs",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/crates/tb-storage/src/work.rs",
+      "sha256": "1a951a767c290ec2f1105cc81aa2f4c3a138dc8b5d2592becc81139ae84955fe",
+      "size_bytes": 4879
+    },
+    {
+      "archive_path": "source/docs/acceptance.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/acceptance.md",
+      "sha256": "042071798bed3d0f1555da1c0eab1f6a919d0095d8b3680c40def5f5e5395c84",
+      "size_bytes": 55360
+    },
+    {
+      "archive_path": "source/docs/architecture.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/architecture.md",
+      "sha256": "b4cbccec8dd1e8b8da67843117c9a3865bc8b22a4409abed7f814f8a5ce7edb1",
+      "size_bytes": 23847
+    },
+    {
+      "archive_path": "source/docs/coordination-test-runtime-20260925.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/coordination-test-runtime-20260925.md",
+      "sha256": "2eb35b284448a3df632179f5b7b6a0d7eae598321f9b0abe8ae7fab844c955c8",
+      "size_bytes": 22906
+    },
+    {
+      "archive_path": "source/docs/distributed-document-apply.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/distributed-document-apply.md",
+      "sha256": "4df3ef0c42d0df4713b01277b2bd1a516bb14171e69d722a4e28d648859b2e50",
+      "size_bytes": 16634
+    },
+    {
+      "archive_path": "source/docs/distributed-document-open.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/distributed-document-open.md",
+      "sha256": "23a77e39d11eab93ef9f07c3210db18c6d55ca206822bbeb7862dea7aaca59ac",
+      "size_bytes": 15876
+    },
+    {
+      "archive_path": "source/docs/distributed-document-write-apply.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/distributed-document-write-apply.md",
+      "sha256": "ffea29394dc36763ed5570f7676108809d63de37134596c7d6c4cd7f43730164",
+      "size_bytes": 18222
+    },
+    {
+      "archive_path": "source/docs/distributed-protocol.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/distributed-protocol.md",
+      "sha256": "b55606f9712eedf7380070c98cbdc51c3fe84463aafce066d18f9840e17ceeca",
+      "size_bytes": 24336
+    },
+    {
+      "archive_path": "source/docs/document-contract.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/document-contract.md",
+      "sha256": "8b8f0cfea7b2ce4591a33343c212a8d9dafe13864686ad6deccdd1015f944850",
+      "size_bytes": 24866
+    },
+    {
+      "archive_path": "source/docs/document-state-v2.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/document-state-v2.md",
+      "sha256": "22ef94c55efa856422b8ec033192ccbd68c8cc122c20447e6878dc4ad4965992",
+      "size_bytes": 16530
+    },
+    {
+      "archive_path": "source/docs/engineering-plan.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/engineering-plan.md",
+      "sha256": "3be912f7939cd1d5f1a96de9d3d5c3b9490b12ebf0c3f08c786f8df8a50dd098",
+      "size_bytes": 68933
+    },
+    {
+      "archive_path": "source/docs/evidence-ledger.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/evidence-ledger.md",
+      "sha256": "f8a48232bc87b6236e7c372c3a72856c20695b165eb57de7bc245d8755702259",
+      "size_bytes": 288441
+    },
+    {
+      "archive_path": "source/docs/replication-v2-replay.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/replication-v2-replay.md",
+      "sha256": "c87b9f6634786df1bfb56edac0b473bd0cd4c508bd45ccf01341cff29441cf49",
+      "size_bytes": 10875
+    },
+    {
+      "archive_path": "source/docs/server-data-plane-boundary.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/server-data-plane-boundary.md",
+      "sha256": "4c1e8a3413616226d1e763d5c3c84d02bd76fd821616383ab55276fa93079e92",
+      "size_bytes": 12300
+    },
+    {
+      "archive_path": "source/docs/server-http-json-api-key-provisional.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/server-http-json-api-key-provisional.md",
+      "sha256": "0434e43765b0d53b1761d002e42c7d9580f25be98e160ff09c6717ac00cfe61a",
+      "size_bytes": 13572
+    },
+    {
+      "archive_path": "source/docs/server-http-json-first-caller-decision.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/server-http-json-first-caller-decision.md",
+      "sha256": "161a1cde6695dcdf7f3f2741180e6a31a7bdd82f312eceeab4d185b7bd2be1c8",
+      "size_bytes": 27050
+    },
+    {
+      "archive_path": "source/docs/storage-format.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/storage-format.md",
+      "sha256": "226a13f2b746fc0600921917cabaa1a5379dc36aa02537ff0e531f1193419429",
+      "size_bytes": 20363
+    },
+    {
+      "archive_path": "source/docs/storage-prepared-batch.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/storage-prepared-batch.md",
+      "sha256": "9443f2eef06630662209ed52c911372f0efeb865a664a0e617ac56a4d8d58788",
+      "size_bytes": 14394
+    },
+    {
+      "archive_path": "source/docs/storage-reclamation.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/docs/storage-reclamation.md",
+      "sha256": "36749d63ddce8bdaa3ced32163ef62fb29cae44ce3105949f3436d73c372a542",
+      "size_bytes": 17658
+    },
+    {
+      "archive_path": "source/mise.toml",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/mise.toml",
+      "sha256": "01d98b238f8864d4bfb250466cb78f5242695a8e3c8f0954d56cc6ce2ef6e92e",
+      "size_bytes": 312
+    },
+    {
+      "archive_path": "source/proto/terrabase/v1/replication.proto",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/proto/terrabase/v1/replication.proto",
+      "sha256": "64f47d4db34281140a718dd42320a6c1ee2f1e6d8c27990b5205ca21c3dae887",
+      "size_bytes": 7272
+    },
+    {
+      "archive_path": "source/rust-toolchain.toml",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/source/rust-toolchain.toml",
+      "sha256": "2ca9bd8c09dbcda0b3644412530df2c49b1f4db05400492d093868f1bd31a884",
+      "size_bytes": 87
+    },
+    {
+      "archive_path": "provenance/r14/SOURCE-FREEZE-RECEIPT.json",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/SOURCE-FREEZE-RECEIPT.json",
+      "sha256": "d526d5f9ad10ec9a9d41b17fb5f823531f93a4d8c85b38a9bed4a4d9c04d3461",
+      "size_bytes": 3099
+    },
+    {
+      "archive_path": "provenance/r14/SOURCE-SHA256SUMS",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/SOURCE-SHA256SUMS",
+      "sha256": "9b4483ea61bb76b02fb122192f552cc36669c7fe835e877da2eb3ca7cacc23e2",
+      "size_bytes": 14598
+    },
+    {
+      "archive_path": "provenance/r14/SOURCE-MANIFEST.SHA256",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/SOURCE-MANIFEST.SHA256",
+      "sha256": "a633417296dcf193be3ded782520125312c0ba3f0b0e632c1c98b3b2dfa43589",
+      "size_bytes": 65
+    },
+    {
+      "archive_path": "provenance/r14/VERIFICATION-PLAN.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r14/VERIFICATION-PLAN.md",
+      "sha256": "a94a3e286d839f126d7cec39ea6c25cf44ccdcc869d21a9ab541add201fe24f8",
+      "size_bytes": 4435
+    },
+    {
+      "archive_path": "evidence/r12-fast/ARTIFACT-RECEIPT.json",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/ARTIFACT-RECEIPT.json",
+      "sha256": "c3020eab2be5dc643e6c43401908c1cdf4d9022cbd380cd90d56e8f1456b1750",
+      "size_bytes": 15805
+    },
+    {
+      "archive_path": "evidence/r12-fast/fast-suite.json",
+      "source_path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/fast-suite.json",
+      "sha256": "22e16b7369304a33ebe3c535c8ecc19fc3b8a6ee0ad99f0a1c6cc1c6b771c16c",
+      "size_bytes": 455
+    },
+    {
+      "archive_path": "evidence/r12-fast/run-manifest.json",
+      "source_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r12-env/run-manifest.json",
+      "sha256": "5c3f2aaa2df9198d8276da73ff1a2f0f6c0e5f22167c8f97576a0f9d07d381cc",
+      "size_bytes": 23872
+    },
+    {
+      "archive_path": "evidence/r12-fast/guest-output.tar.gz",
+      "source_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/terrabase-fast-20260925-r12-env/guest-output.tar.gz",
+      "sha256": "ca46c0370ab7e2387db9d2036a1d3a7a1fe993551f1032c806f75a52f75f1dff",
+      "size_bytes": 11698
+    },
+    {
+      "archive_path": "evidence/p04-provisional/p04-analysis-runtime-receipt.json",
+      "source_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/p04-analysis-runtime-receipt.json",
+      "sha256": "ae816efa1a9665705e09d21f3d226795a3e770e00f18402bae08ef798f075e10",
+      "size_bytes": 26165
+    },
+    {
+      "archive_path": "evidence/p04-provisional/outputs/analysis.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/outputs/analysis.md",
+      "sha256": "71ad4b280797b63b39f3a8ce41875e664fd9c1f4c81c6cbb37a12618c2d15308",
+      "size_bytes": 4754
+    },
+    {
+      "archive_path": "evidence/p04-provisional/outputs/analysis.json",
+      "source_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analysis-runtime-20260924T204702Z/outputs/analysis.json",
+      "sha256": "d1507d5e56996bb0fb364be2dc4bf50ebe69aba15b62ae07922d409f07f2638e",
+      "size_bytes": 103816
+    },
+    {
+      "archive_path": "evidence/p04-provisional/protocol.md",
+      "source_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a2/protocol.md",
+      "sha256": "138abc0c939335103311d8edf97a1a060dd68f0d728351f4d5380bd82bde0a22",
+      "size_bytes": 12377
+    },
+    {
+      "archive_path": "evidence/p04-provisional/campaign.json",
+      "source_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a2/campaign.json",
+      "sha256": "35a7cea433b559c993d18185727dee96803e03adb7fd25e8ceb834d69a21ca2f",
+      "size_bytes": 19270
+    },
+    {
+      "archive_path": "evidence/p04-provisional/execution-receipt.json",
+      "source_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/p04-campaigns/p04-repeat-20260924-a2-execution-receipt.json",
+      "sha256": "feee333a5a09698965d15257ef38b745c48a7b3e5f8163e944c7e9dff85afa64",
+      "size_bytes": 107717
+    },
+    {
+      "archive_path": "patches/accepted/d2-storage-v5.patch",
+      "source_path": "/tmp/tb-d2-archive-v5-private-20260925/d2-archive-v5.patch",
+      "sha256": "7091f9dbf2c4fa1c1ece0521d9436fc618c2bcfaf523d7dfb78b855ec29d2360",
+      "size_bytes": 76581
+    },
+    {
+      "archive_path": "patches/accepted/d2-object.patch",
+      "source_path": "/tmp/terrabase-object-candidate-20260925/object-d2.patch",
+      "sha256": "95164257c66c3fc9ee49fe48bbd59fe519eb0dfed938f03b65c143998d150362",
+      "size_bytes": 39770
+    },
+    {
+      "archive_path": "patches/accepted/d2-server-v2.patch",
+      "source_path": "/tmp/tb-d2-archive-v5-private-20260925/d2-server-integration-v2.patch",
+      "sha256": "65bee51d30f58288fca3773264fd41e34543329050de60806ad9c575072693b0",
+      "size_bytes": 41628
+    },
+    {
+      "archive_path": "patches/accepted/d2-source-manifest-v2.txt",
+      "source_path": "/tmp/tb-d2-archive-v5-private-20260925/d2-source-manifest-v2.txt",
+      "sha256": "9948d7c13c1fbbc3e63e29ff61b9d7077651ceadde334e7c2092a0392848b7a3",
+      "size_bytes": 2028
+    },
+    {
+      "archive_path": "patches/wip/d2-tests/crates/tb-server/tests/support/storage/archive_contract.rs",
+      "source_path": "/tmp/tb-d2-archive-private-20260925/v5-test-candidate/crates/tb-server/tests/support/storage/archive_contract.rs",
+      "sha256": "d473c11f65574ecaf57167f23c4426cef01550760875a06e5ed77c6776426246",
+      "size_bytes": 24592
+    },
+    {
+      "archive_path": "patches/wip/d2-tests/crates/tb-server/tests/support/storage/fast.rs",
+      "source_path": "/tmp/tb-d2-archive-private-20260925/v5-test-candidate/crates/tb-server/tests/support/storage/fast.rs",
+      "sha256": "8c9d9e4966ed864836f01300e17f014fbd6d4babe1b497823eea06efe1f5f233",
+      "size_bytes": 4996
+    },
+    {
+      "archive_path": "patches/wip/d2-tests/crates/tb-server/tests/support/storage/slow.rs",
+      "source_path": "/tmp/tb-d2-archive-private-20260925/v5-test-candidate/crates/tb-server/tests/support/storage/slow.rs",
+      "sha256": "097d30bae0d38a2ddffc7a63bab481204fa88d26d8fd877d4915905107443a77",
+      "size_bytes": 928
+    },
+    {
+      "archive_path": "patches/wip/c4/sqlite-c4-wip.patch",
+      "source_path": "/tmp/tb-sqlite-c4-private-bhrbtx/sqlite-c4-wip.patch",
+      "sha256": "33d2cef597437b07be93c5d0fe42d9e2d99d3ffb1fe3b2581d5228513b883a01",
+      "size_bytes": 36202
+    },
+    {
+      "archive_path": "patches/wip/c4/candidate/terra-rust/src/main.rs",
+      "source_path": "/tmp/tb-sqlite-c4-private-bhrbtx/candidate/terra-rust/src/main.rs",
+      "sha256": "9339a179ada12d0b2d001558dbb368059cf88e921ca116503492d5a79a6c5487",
+      "size_bytes": 63846
+    },
+    {
+      "archive_path": "patches/wip/c4/candidate/terra-rust/README.md",
+      "source_path": "/tmp/tb-sqlite-c4-private-bhrbtx/candidate/terra-rust/README.md",
+      "sha256": "d813c3da6d35cc86f4e053f96e5d8f5e3aa8ad8ba9d2949e80e88a5924ce7bf7",
+      "size_bytes": 15011
+    },
+    {
+      "archive_path": "patches/wip/c4/candidate/bench/terrabase-rust-acceptance-v1.md",
+      "source_path": "/tmp/tb-sqlite-c4-private-bhrbtx/candidate/bench/terrabase-rust-acceptance-v1.md",
+      "sha256": "56a3ebf462aac9ea65ccaae65edfdb6a37fb6d74d98c05d962fde5f7cb7e5e74",
+      "size_bytes": 12955
+    }
+  ]
+}

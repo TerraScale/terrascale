@@ -1,0 +1,184 @@
+{
+  "benchmark_repo_head": "5685f163bb7e9339e8eb0c839fe2512aaf562648",
+  "compiled_artifacts": [
+    {
+      "archive_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/artifacts/fc_harness-65b97a48521685cf",
+      "depfile_archive_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/artifacts/fc_harness-65b97a48521685cf.d",
+      "depfile_bindings": [
+        "crates/fc-harness/src/main.rs",
+        "crates/fc-harness/src/image_profile.rs",
+        "crates/fc-harness/src/network.rs",
+        "crates/fc-harness/src/../../../pins.toml"
+      ],
+      "depfile_original_path": "/tmp/tb-v2-image-apt-helper-gates-20260925/cargo-target/x86_64-unknown-linux-musl/debug/deps/fc_harness-65b97a48521685cf.d",
+      "depfile_sha256": "af7f99ac1885de53c802fc37550c06b78aebc8c1613bd43edb5f567a4929277a",
+      "file_type": "ELF64 x86-64 static-pie musl test executable",
+      "original_path": "/tmp/tb-v2-image-apt-helper-gates-20260925/cargo-target/x86_64-unknown-linux-musl/debug/deps/fc_harness-65b97a48521685cf",
+      "sha256": "566cd9ec82dce13058c8d5f7bba9245ab367725cc742bd3b57469b48ef9ce7d2",
+      "size_bytes": 17407960
+    }
+  ],
+  "external_cargo_target_dir": "/tmp/tb-v2-image-apt-helper-gates-20260925/cargo-target",
+  "fmt_diff_paths": [
+    "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/input.rs",
+    "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/oci_archive.rs",
+    "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/podman.rs",
+    "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-image-builder/src/signature.rs"
+  ],
+  "gates": [
+    {
+      "command": "RUSTUP_TOOLCHAIN=1.98.1 CARGO_TARGET_DIR=/tmp/tb-v2-image-apt-helper-gates-20260925/cargo-target CARGO_BUILD_JOBS=2 ionice -c 3 nice -n 19 make -C /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness fmt CARGO_BUILD_JOBS=2",
+      "command_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/fmt.command",
+      "exit_record_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/fmt.exit",
+      "exit_record_sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3",
+      "gate": "fmt",
+      "log_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/fmt.log",
+      "log_sha256": "e100c283e17750757e8d5d17ef4706d6d5841f5762b3984de2ae94f8cc5e836d",
+      "log_size_bytes": 10119,
+      "make_exit_code": 2,
+      "pre_gate_source_check_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/fmt.source-check.log",
+      "pre_gate_source_check_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "status": "failed"
+    },
+    {
+      "command": "RUSTUP_TOOLCHAIN=1.98.1 CARGO_TARGET_DIR=/tmp/tb-v2-image-apt-helper-gates-20260925/cargo-target CARGO_BUILD_JOBS=2 ionice -c 3 nice -n 19 make -C /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness check-image-builder CARGO_BUILD_JOBS=2",
+      "command_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/check-image-builder.command",
+      "exit_record_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/check-image-builder.exit",
+      "exit_record_sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3",
+      "gate": "check-image-builder",
+      "log_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/check-image-builder.log",
+      "log_sha256": "328810b14cd02fffe1d8abdb116d803df4f9ca56312c06ab7292ed66422c7812",
+      "log_size_bytes": 13523,
+      "make_exit_code": 2,
+      "pre_gate_source_check_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/check-image-builder.source-check.log",
+      "pre_gate_source_check_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "status": "failed"
+    },
+    {
+      "exit_record_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/lint-image-builder.exit",
+      "exit_record_sha256": "bc725b4a1ebc0093cff0a3018956b4829ba6506389f55c3e1415fc2715af59a0",
+      "gate": "lint-image-builder",
+      "reason": "check-image-builder compiler failure",
+      "status": "skipped"
+    },
+    {
+      "exit_record_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/test-build-image-builder.exit",
+      "exit_record_sha256": "bc725b4a1ebc0093cff0a3018956b4829ba6506389f55c3e1415fc2715af59a0",
+      "gate": "test-build-image-builder",
+      "reason": "check-image-builder compiler failure",
+      "status": "skipped"
+    },
+    {
+      "command": "RUSTUP_TOOLCHAIN=1.98.1 CARGO_TARGET_DIR=/tmp/tb-v2-image-apt-helper-gates-20260925/cargo-target CARGO_BUILD_JOBS=2 ionice -c 3 nice -n 19 make -C /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness check-controller CARGO_BUILD_JOBS=2",
+      "command_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/check-controller.command",
+      "exit_record_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/check-controller.exit",
+      "exit_record_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "gate": "check-controller",
+      "log_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/check-controller.log",
+      "log_sha256": "0126b2a3be8ee635338da717f41214f3b98cbb8615ff156767527d716571087e",
+      "log_size_bytes": 1256,
+      "make_exit_code": 0,
+      "pre_gate_source_check_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/check-controller.source-check.log",
+      "pre_gate_source_check_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "status": "passed"
+    },
+    {
+      "command": "RUSTUP_TOOLCHAIN=1.98.1 CARGO_TARGET_DIR=/tmp/tb-v2-image-apt-helper-gates-20260925/cargo-target CARGO_BUILD_JOBS=2 ionice -c 3 nice -n 19 make -C /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness lint-controller CARGO_BUILD_JOBS=2",
+      "command_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/lint-controller.command",
+      "exit_record_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/lint-controller.exit",
+      "exit_record_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "gate": "lint-controller",
+      "log_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/lint-controller.log",
+      "log_sha256": "3bd96196fa5503b37b791d3a7f6e34ea261a3c71854a493f1fa7b1d93dde3f26",
+      "log_size_bytes": 866,
+      "make_exit_code": 0,
+      "pre_gate_source_check_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/lint-controller.source-check.log",
+      "pre_gate_source_check_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "status": "passed"
+    },
+    {
+      "command": "RUSTUP_TOOLCHAIN=1.98.1 CARGO_TARGET_DIR=/tmp/tb-v2-image-apt-helper-gates-20260925/cargo-target CARGO_BUILD_JOBS=2 ionice -c 3 nice -n 19 make -C /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness test-build CARGO_BUILD_JOBS=2",
+      "command_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/test-build.command",
+      "exit_record_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/test-build.exit",
+      "exit_record_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "gate": "test-build",
+      "log_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/test-build.log",
+      "log_sha256": "c361f4c877181ce507891dd0aa5362eaca53ffa693c6ff47414abdfa6eeaf27e",
+      "log_size_bytes": 2250,
+      "make_exit_code": 0,
+      "pre_gate_source_check_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/test-build.source-check.log",
+      "pre_gate_source_check_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "status": "passed"
+    }
+  ],
+  "host_binary_or_vm_execution": false,
+  "image_builder_compile_error_count": 9,
+  "image_builder_compile_errors": [
+    {
+      "code": "E0061",
+      "column": 21,
+      "line": 242,
+      "path": "crates/fc-image-builder/src/build.rs"
+    },
+    {
+      "code": "E0308",
+      "column": 5,
+      "line": 404,
+      "path": "crates/fc-image-builder/src/build.rs"
+    },
+    {
+      "code": "E0308",
+      "column": 5,
+      "line": 418,
+      "path": "crates/fc-image-builder/src/workflow.rs"
+    },
+    {
+      "code": "E0277",
+      "column": 6,
+      "line": 871,
+      "path": "crates/fc-image-builder/src/workflow.rs"
+    },
+    {
+      "code": "E0596",
+      "column": 5,
+      "line": 257,
+      "path": "crates/fc-image-builder/src/qualify.rs"
+    },
+    {
+      "code": "E0596",
+      "column": 5,
+      "line": 287,
+      "path": "crates/fc-image-builder/src/qualify.rs"
+    },
+    {
+      "code": "E0596",
+      "column": 5,
+      "line": 319,
+      "path": "crates/fc-image-builder/src/qualify.rs"
+    },
+    {
+      "code": "E0596",
+      "column": 5,
+      "line": 342,
+      "path": "crates/fc-image-builder/src/qualify.rs"
+    },
+    {
+      "code": "E0596",
+      "column": 5,
+      "line": 402,
+      "path": "crates/fc-image-builder/src/qualify.rs"
+    }
+  ],
+  "image_builder_warning_count": 5,
+  "image_qualification": false,
+  "makefile_sha256": "78094ea614ac65268f0d0699512bfa3c5e134eea07cc14ac35adb28c709b3ad4",
+  "runner_session_id": 62678,
+  "runner_shell_exit_code": 127,
+  "runner_shell_note": "All seven gate decisions and final source check were recorded; login-shell /etc/bash_logout failed after script exit because set -u saw an unset variable. Gates were not rerun.",
+  "rust_toolchain_sha256": "448886c2bcf9939abf979026832834cd8630d5a66f3472eea3cbe277c283c445",
+  "source_file_count": 42,
+  "source_manifest_sha256": "9003630ad3b3c017c47b8e21b1d3e3dfd8e4f4ab8a557d1b401be86fab9d9149",
+  "source_postcheck_path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-compile-20260925/source-postcheck.json",
+  "source_postcheck_sha256": "7b81a3587804351510e6c811d8ae27ceee1af5c13e99def791ad4f91a520b18b",
+  "status": "compile_gates_incomplete"
+}

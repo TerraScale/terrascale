@@ -1,0 +1,35 @@
+2026-09-24T08:26:02.908493950 [engine-final-protocol-corrected-0fec-20260924-a:main:INFO] Running Firecracker v1.15.1
+2026-09-24T08:26:02.909910495 [engine-final-protocol-corrected-0fec-20260924-a:main:INFO] Listening on API socket ("/tmp/fch-qw1BxQ/api.sock").
+2026-09-24T08:26:02.910308394 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] API server started.
+2026-09-24T08:26:02.921234388 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T08:26:02.921382791 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:26:02.921582220 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T08:26:02.921663154 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T08:26:02.921846869 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/vm-inputs/vmlinux\"}".
+2026-09-24T08:26:02.921957245 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:26:02.922182013 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/crates/fc-harness/../../../bench/firecracker-harness/engine-final-protocol-corrected-0fec-20260924-a/guest-rootfs.ext4\"}".
+2026-09-24T08:26:02.923771745 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:26:02.923933185 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-qw1BxQ/vsock.sock\"}".
+2026-09-24T08:26:02.924236496 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:26:02.924363693 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T08:26:02.961903908 [engine-final-protocol-corrected-0fec-20260924-a:main:INFO] Artificially kick devices
+2026-09-24T08:26:02.962048831 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T08:26:02.962120161 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T08:26:02.962192454 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T08:26:02.962254636 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T08:26:02.962368985 [engine-final-protocol-corrected-0fec-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:26:03.020434680 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:03.020581018 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:05.558235751 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:05.558333336 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:05.563504751 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:05.563634399 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:05.565573112 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:05.565659701 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:05.569307941 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:05.569387397 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:05.571496698 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:05.571577051 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:05.575903072 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:05.576001327 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:26:06.575167307 [engine-final-protocol-corrected-0fec-20260924-a:fc_vcpu 2:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

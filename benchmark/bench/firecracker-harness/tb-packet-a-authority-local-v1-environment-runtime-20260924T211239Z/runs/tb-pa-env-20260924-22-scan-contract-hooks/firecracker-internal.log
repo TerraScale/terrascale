@@ -1,0 +1,35 @@
+2026-09-24T19:02:30.989350616 [tb-pa-env-20260924-22-scan-contract-hooks:main:INFO] Running Firecracker v1.15.1
+2026-09-24T19:02:30.991027192 [tb-pa-env-20260924-22-scan-contract-hooks:main:INFO] Listening on API socket ("/tmp/fch-ZqlfSG/api.sock").
+2026-09-24T19:02:30.991479910 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] API server started.
+2026-09-24T19:02:31.096682147 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T19:02:31.096862178 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T19:02:31.097211972 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T19:02:31.097443852 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T19:02:31.098256926 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/fc-payload-AxHwm2\"}".
+2026-09-24T19:02:31.098491820 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T19:02:31.098606241 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/tb-packet-a-authority-local-v1-environment-runtime-20260924T211239Z/runs/tb-pa-env-20260924-22-scan-contract-hooks/guest-rootfs.ext4\"}".
+2026-09-24T19:02:31.098723635 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T19:02:31.098838678 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-ZqlfSG/vsock.sock\"}".
+2026-09-24T19:02:31.099473604 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T19:02:31.100097236 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T19:02:31.140064001 [tb-pa-env-20260924-22-scan-contract-hooks:main:INFO] Artificially kick devices
+2026-09-24T19:02:31.140219451 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T19:02:31.140283500 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T19:02:31.140360911 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T19:02:31.140428943 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T19:02:31.140545005 [tb-pa-env-20260924-22-scan-contract-hooks:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T19:02:31.195702228 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:31.195808920 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:34.050093247 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:34.050186672 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:34.059835482 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:34.059925119 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:34.061701232 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:34.061776574 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:34.066409516 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:34.066524600 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:34.069268935 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:34.069347588 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:34.072940074 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:34.073034247 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T19:02:35.175418904 [tb-pa-env-20260924-22-scan-contract-hooks:fc_vcpu 2:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

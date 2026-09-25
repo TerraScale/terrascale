@@ -1,0 +1,6 @@
+{
+  "source": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/cargo-target/x86_64-unknown-linux-musl/debug/deps/fast-d0dcf9911b916c69",
+  "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-runtime-freeze-20260925-r12/artifacts/unstripped/fast/client_process",
+  "size_bytes": 161295624,
+  "sha256": "c7ecf29ace16c7946510eba56f68da54cc45f81b50b6ef75831f39d6667b01c7"
+}

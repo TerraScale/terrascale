@@ -1,0 +1,43 @@
+{
+  "repository_head": "352d9f61185d1b685e3032519579040d169ad47d",
+  "source_snapshot": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-rebuild-20260925-r6",
+  "source_file_count": 134,
+  "live_before_equals_copy": true,
+  "live_before_equals_after": true,
+  "source_manifest_sha256": "505a44b228d7a14dafcd8544b03fd7d38b5f4c1eb46d5eb1d4c6662c180b91a3",
+  "owner_hashes_match": true,
+  "expected_owner_hashes": {
+    "Cargo.toml": "d678c21d1234656f0b86e8f386b8505962d93417fd67fa5e1cbb91a21a932795",
+    "Cargo.lock": "356800a12d68297ca892ae9dd939d9a37fa57523c568a315536c2e4400dcc9d7",
+    "crates/tb-server/Cargo.toml": "a3fc59b7ec76c52e5504ba840ae69ead21e72b50c2b48aeefb266c0eb43eaf11",
+    "crates/tb-server/src/bin/terrabase-init.rs": "a094765538906955812db4b2c812cdc3751c37a24ebb8d330d30bab3c8235999",
+    "crates/tb-document/src/distributed_read.rs": "0ad02e842c0e81cc5b221e7696fa8312225645e7b967c5a2ded10ab891c186e0",
+    "crates/tb-document/src/distributed_apply.rs": "aa63f8f83d8cda6609dbfd85eb65370e845694e0013f36d7c51dce20c1bcaedc",
+    "crates/tb-document/src/lib.rs": "24d1f66fc8086f182b326b7566c686e5c7fac6aabf8ab59381abe917866cc362",
+    "crates/tb-server/tests/support/document/receiver_fixture.rs": "11fd4b920014d9d6b25cf24be0618868696af8bc52b1c093f2fdab8da1b9578d",
+    "crates/tb-server/tests/support/document/receiver_fast.rs": "e2803431ba291b631b67e688650d287a54dccd483f80a6119ad7a320054f9617",
+    "crates/tb-server/tests/support/document/receiver_slow.rs": "f873a2d2a31a61d04859ee6d335207cb5a0874dee18516f67b9e7049eaf2e76d",
+    "crates/tb-server/tests/support/document/document_contract.rs": "e283e40858dc461c4435e6fb1a9ca9d744b1a6dd6d3c1ba2d844d393b7e55952",
+    "crates/tb-server/tests/client_process.rs": "80098e3023e29d5eaf3736197f5e68fd976ddeeec1be7f7e84c13cf73d5c7ac2",
+    "crates/tb-server/tests/replication_process.rs": "3cdb836b50bf467fc59f53fc9ca7f90b8b68c167c01d6ce4142a6a2f521047ac",
+    "crates/tb-server/tests/support/object/slow.rs": "cf17dc59340790ec9202ecf56849cc95f7b9a693fa7460f1ae679547f4ccf910",
+    "docs/server-http-json-first-caller-decision.md": "3c2dca4ded7107425fc92495ee2327b713898bb8451e90ef5ef1d69febd66c81"
+  },
+  "actual_owner_hashes": {
+    "Cargo.toml": "d678c21d1234656f0b86e8f386b8505962d93417fd67fa5e1cbb91a21a932795",
+    "Cargo.lock": "356800a12d68297ca892ae9dd939d9a37fa57523c568a315536c2e4400dcc9d7",
+    "crates/tb-server/Cargo.toml": "a3fc59b7ec76c52e5504ba840ae69ead21e72b50c2b48aeefb266c0eb43eaf11",
+    "crates/tb-server/src/bin/terrabase-init.rs": "a094765538906955812db4b2c812cdc3751c37a24ebb8d330d30bab3c8235999",
+    "crates/tb-document/src/distributed_read.rs": "0ad02e842c0e81cc5b221e7696fa8312225645e7b967c5a2ded10ab891c186e0",
+    "crates/tb-document/src/distributed_apply.rs": "aa63f8f83d8cda6609dbfd85eb65370e845694e0013f36d7c51dce20c1bcaedc",
+    "crates/tb-document/src/lib.rs": "24d1f66fc8086f182b326b7566c686e5c7fac6aabf8ab59381abe917866cc362",
+    "crates/tb-server/tests/support/document/receiver_fixture.rs": "11fd4b920014d9d6b25cf24be0618868696af8bc52b1c093f2fdab8da1b9578d",
+    "crates/tb-server/tests/support/document/receiver_fast.rs": "e2803431ba291b631b67e688650d287a54dccd483f80a6119ad7a320054f9617",
+    "crates/tb-server/tests/support/document/receiver_slow.rs": "f873a2d2a31a61d04859ee6d335207cb5a0874dee18516f67b9e7049eaf2e76d",
+    "crates/tb-server/tests/support/document/document_contract.rs": "e283e40858dc461c4435e6fb1a9ca9d744b1a6dd6d3c1ba2d844d393b7e55952",
+    "crates/tb-server/tests/client_process.rs": "80098e3023e29d5eaf3736197f5e68fd976ddeeec1be7f7e84c13cf73d5c7ac2",
+    "crates/tb-server/tests/replication_process.rs": "3cdb836b50bf467fc59f53fc9ca7f90b8b68c167c01d6ce4142a6a2f521047ac",
+    "crates/tb-server/tests/support/object/slow.rs": "cf17dc59340790ec9202ecf56849cc95f7b9a693fa7460f1ae679547f4ccf910",
+    "docs/server-http-json-first-caller-decision.md": "3c2dca4ded7107425fc92495ee2327b713898bb8451e90ef5ef1d69febd66c81"
+  }
+}

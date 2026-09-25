@@ -1,0 +1,35 @@
+2026-09-24T16:57:47.938319181 [p04a204s:main:INFO] Running Firecracker v1.15.1
+2026-09-24T16:57:47.941384702 [p04a204s:main:INFO] Listening on API socket ("/tmp/fch-miENvG/api.sock").
+2026-09-24T16:57:47.942188983 [p04a204s:fc_api:INFO] API server started.
+2026-09-24T16:57:47.998552573 [p04a204s:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T16:57:47.998927661 [p04a204s:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T16:57:47.999066279 [p04a204s:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T16:57:47.999163455 [p04a204s:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T16:57:47.999753308 [p04a204s:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/fc-payload-HR22Ed\"}".
+2026-09-24T16:57:47.999872403 [p04a204s:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T16:57:48.000007335 [p04a204s:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04a204s/guest-rootfs.ext4\"}".
+2026-09-24T16:57:48.000163863 [p04a204s:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T16:57:48.000316312 [p04a204s:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-miENvG/vsock.sock\"}".
+2026-09-24T16:57:48.000700945 [p04a204s:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T16:57:48.000861960 [p04a204s:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T16:57:48.040452618 [p04a204s:main:INFO] Artificially kick devices
+2026-09-24T16:57:48.040559628 [p04a204s:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T16:57:48.040630903 [p04a204s:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T16:57:48.040713736 [p04a204s:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T16:57:48.040783830 [p04a204s:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T16:57:48.040899777 [p04a204s:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T16:57:48.096325924 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:48.096427544 [p04a204s:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:51.496510362 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:51.496611708 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:51.500727165 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:51.500804624 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:51.502742720 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:51.502814915 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:51.507695532 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:51.507803467 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:51.510084623 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:51.510157571 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:51.513904301 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:51.514000348 [p04a204s:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T16:57:52.514572042 [p04a204s:fc_vcpu 0:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange

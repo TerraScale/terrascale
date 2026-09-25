@@ -1,0 +1,6 @@
+make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness'
+nice -n 19 ionice -c 3 cargo clippy --locked --all-targets --jobs 2 -p fc-harness -p fc-guest-agent -- -D warnings
+    Checking fc-harness v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-harness)
+    Checking fc-guest-agent v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness/crates/fc-guest-agent)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.18s
+make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/v2-image-apt-helper-source-20260925/firecracker-harness'

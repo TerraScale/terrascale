@@ -1,0 +1,147 @@
+{
+  "status": "production dev/debug binaries and Fast/Slow compile-only passed; no tests executed on host",
+  "repository_head": "352d9f61185d1b685e3032519579040d169ad47d",
+  "source_snapshot": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-rebuild-20260925-r6",
+  "source_file_count": 134,
+  "source_manifest_sha256": "505a44b228d7a14dafcd8544b03fd7d38b5f4c1eb46d5eb1d4c6662c180b91a3",
+  "snapshot_postbuild_matches_manifest": true,
+  "live_postbuild_matches_manifest": true,
+  "snapshot_postbuild_manifest_sha256": "505a44b228d7a14dafcd8544b03fd7d38b5f4c1eb46d5eb1d4c6662c180b91a3",
+  "toolchain": {
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "target": "x86_64-unknown-linux-musl",
+    "profile": "dev/debug (unoptimized + debuginfo)"
+  },
+  "build_jobs": 2,
+  "build_priority": "nice -n 19 ionice -c3",
+  "commands": [
+    {
+      "command": "nice -n 19 ionice -c3 env CARGO_TARGET_DIR=<r6-target> CARGO_BUILD_JOBS=2 MUSL_CC=/run/current-system/sw/bin/x86_64-unknown-linux-musl-gcc make -C <r6-snapshot> build 'CARGO_ARGS=-p tb-server' CARGO_TARGET=x86_64-unknown-linux-musl",
+      "result": "exit 0; tb-server/keygen/init compiled"
+    },
+    {
+      "command": "nice -n 19 ionice -c3 env CARGO_TARGET_DIR=<r6-target> CARGO_BUILD_JOBS=2 MUSL_CC=/run/current-system/sw/bin/x86_64-unknown-linux-musl-gcc make -C <r6-snapshot> test-fast-build CARGO_TARGET=x86_64-unknown-linux-musl",
+      "result": "exit 0; Fast ELF compiled with --no-run; not executed"
+    },
+    {
+      "command": "nice -n 19 ionice -c3 env CARGO_TARGET_DIR=<r6-target> CARGO_BUILD_JOBS=2 MUSL_CC=/run/current-system/sw/bin/x86_64-unknown-linux-musl-gcc make -C <r6-snapshot> test-slow-build CARGO_TARGET=x86_64-unknown-linux-musl",
+      "result": "exit 0; Slow ELF compiled with --no-run; not executed"
+    },
+    {
+      "command": "nice -n 19 ionice -c3 env CARGO_TARGET_DIR=<r6-target> CARGO_BUILD_JOBS=2 MUSL_CC=/run/current-system/sw/bin/x86_64-unknown-linux-musl-gcc make -C <r6-snapshot> build 'CARGO_ARGS=-p tb-server' CARGO_TARGET=x86_64-unknown-linux-musl",
+      "result": "exit 0; restored default-feature product outputs after test compilation"
+    }
+  ],
+  "production_binaries": {
+    "tb-server": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-target-20260925-r6/x86_64-unknown-linux-musl/debug/tb-server",
+      "sha256": "2b82606371518a6093241503754008496786af634477096ea0a3bc57d2cddf31",
+      "size_bytes": 144255088
+    },
+    "terrabase-keygen": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-target-20260925-r6/x86_64-unknown-linux-musl/debug/terrabase-keygen",
+      "sha256": "442b59bdf59f82d8e9b2e5f735ae7007c27cdb5abf379c2f6e7a02b1fdc790a7",
+      "size_bytes": 8720632
+    },
+    "terrabase-init": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-target-20260925-r6/x86_64-unknown-linux-musl/debug/terrabase-init",
+      "sha256": "7cd2f2999663bda9ae7adfd9e05b0e6a58f3c83e43f92b6c60e16bf4fd1720bd",
+      "size_bytes": 36256088
+    }
+  },
+  "compile_only_test_binaries": {
+    "fast": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-target-20260925-r6/x86_64-unknown-linux-musl/debug/deps/fast-157b3a3f788afa69",
+      "sha256": "3820d7208200ac526f8581d644d92418ae9f02c708a0570e4089156ed76598f6",
+      "size_bytes": 104411456
+    },
+    "slow": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-target-20260925-r6/x86_64-unknown-linux-musl/debug/deps/slow-ee5d60ed7dc5f306",
+      "sha256": "0e82c0d62884b67b556e22f7dc4f11d5ddd8e6d76c5fcc77ba573d579cac0bc3",
+      "size_bytes": 136658840
+    }
+  },
+  "runtime_executed": false,
+  "fast_warning_count": 0,
+  "fast_warning_inventory": {
+    "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-rebuild-logs-20260925-r6/fast-warnings.txt",
+    "sha256": "ac3a32492a58aeb44f7f3eb3df67e37ed405247dd99fc9c6886a01ba46e8d24e"
+  },
+  "slow_warning_count": 6,
+  "slow_warning_inventory": {
+    "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-rebuild-logs-20260925-r6/slow-warnings.txt",
+    "sha256": "da7c3f53e325d34e3419ba7535426720ae314f008228500af4375898eed4993f"
+  },
+  "logs": {
+    "production-build.log": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-rebuild-logs-20260925-r6/production-build.log",
+      "sha256": "b04efa280b768e880581d33b054147444a48cffa0bc02e44241f4b9a8cd4dba2",
+      "size_bytes": 7122
+    },
+    "fast-build.log": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-rebuild-logs-20260925-r6/fast-build.log",
+      "sha256": "a84ecc6a27acd948230281f6722694d77f864bf0af5efae9a45bcb08703fbfe5",
+      "size_bytes": 276786
+    },
+    "slow-build.log": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-rebuild-logs-20260925-r6/slow-build.log",
+      "sha256": "0b94077bc49b0dadb59ec9aa842429087381bf473a5562864b5e2fcbde63b48f",
+      "size_bytes": 302110
+    },
+    "production-final-build.log": {
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-rebuild-logs-20260925-r6/production-final-build.log",
+      "sha256": "57ba6a7246a582e49c814eecf685cfbd0c47097d858bd697ca1cd0d083b73b48",
+      "size_bytes": 715
+    }
+  },
+  "strip_receipt": {
+    "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-rebuild-logs-20260925-r6/strip-equivalence.json",
+    "sha256": "2ef6b84bfdd32947f50330d80116da45ee5ea329c1dbba7d39c448490b4dc71d"
+  },
+  "strip_script": {
+    "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-rebuild-logs-20260925-r6/strip-equivalence.py",
+    "sha256": "2773c879a0905c085dec19e04eae0c7717e7e4127089fa67e88ff3ab0e11da91"
+  },
+  "strip_tool_version": "GNU strip (GNU Binutils) 2.46",
+  "strip_tool_sha256": "2c920ffc5d012d70cd8cb3727a27253120eb1780d1a9c059de3bd3d085451db9",
+  "artifact_directory": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6",
+  "artifact_manifest": {
+    "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-rebuild-logs-20260925-r6/artifacts.sha256",
+    "sha256": "464b5f33297e6985d875abcab307911c0d32f37b676063d287acec3805893bee"
+  },
+  "artifact_payload_count": 4,
+  "artifact_payloads": [
+    {
+      "name": "tb-server",
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6/tb-server",
+      "sha256": "2bb9ca6d901b5703e4b7ad2db431c623484b01c26ea99e800937c97b955029d1",
+      "size_bytes": 31896568,
+      "executable": true
+    },
+    {
+      "name": "terrabase-keygen",
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6/terrabase-keygen",
+      "sha256": "1d1f97c89b6c90db1fd5d81d4df5354cc98d7c99ffed785c1abb601b64724940",
+      "size_bytes": 1040208,
+      "executable": true
+    },
+    {
+      "name": "terrabase-init",
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6/terrabase-init",
+      "sha256": "0c85ad398143695fe5c9068a06b686b86961eac6a271cc9f63e814d9397a474c",
+      "size_bytes": 6098920,
+      "executable": true
+    },
+    {
+      "name": "fast",
+      "path": "/home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-server-fast-reviewed-artifacts-20260925-r6/fast",
+      "sha256": "36d872c1fa00eea7fddce6b804e22742bca7dfa7e44cf424fd375dd65433d51b",
+      "size_bytes": 26944216,
+      "executable": true
+    }
+  ],
+  "aggregate_artifact_bytes": 65979912,
+  "aggregate_limit_bytes": 134217728,
+  "unstripped_originals_retained": true
+}

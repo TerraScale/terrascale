@@ -1,0 +1,4 @@
+ff47c791343c19598af4f8517d5d96b02479703cf3c4675dd42a98e2e167e9bf  payloads/p04-analysis-launcher-musl
+1676e9a478a08bebecf41bba76d1fa9eceb7880684e3ac06f747e59a1d06652e  payloads/p04-analysis-launcher-tests-musl
+766d89d2917e38ea988fd9e619139040e8c9965c04d749f156b1960d1d0d6257  payloads/terrabase-sqlite-baseline-musl
+9b7a04b3bb868f332d4ef45f9b7bd98b078e8ec23b63ddc530f8d49e9c8f3521  payloads/terrabase-sqlite-baseline-tests-musl

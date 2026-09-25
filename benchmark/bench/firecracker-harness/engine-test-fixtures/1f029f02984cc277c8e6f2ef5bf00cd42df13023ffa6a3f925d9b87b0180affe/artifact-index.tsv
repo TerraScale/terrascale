@@ -1,0 +1,5 @@
+path+file:///home/mariogk/Projects/TerraScale/terrabase/crates/tb-format#0.1.0	tb_format	lib	/home/mariogk/Projects/TerraScale/terrabase/target/x86_64-unknown-linux-musl/debug/deps/tb_format-e2b9a3a3a0e2779c
+path+file:///home/mariogk/Projects/TerraScale/terrabase/crates/tb-storage#0.1.0	tb_storage	lib	/home/mariogk/Projects/TerraScale/terrabase/target/x86_64-unknown-linux-musl/debug/deps/tb_storage-62f9ab50deb2f647
+path+file:///home/mariogk/Projects/TerraScale/terrabase/crates/tb-replication#0.1.0	tb_replication	lib	/home/mariogk/Projects/TerraScale/terrabase/target/x86_64-unknown-linux-musl/debug/deps/tb_replication-13f81d84a4cd104d
+path+file:///home/mariogk/Projects/TerraScale/terrabase/crates/tb-core#0.1.0	tb_core	lib	/home/mariogk/Projects/TerraScale/terrabase/target/x86_64-unknown-linux-musl/debug/deps/tb_core-37d742f1d9f75ef6
+path+file:///home/mariogk/Projects/TerraScale/terrabase/crates/tb-storage#0.1.0	storage_contract	test	/home/mariogk/Projects/TerraScale/terrabase/target/x86_64-unknown-linux-musl/debug/deps/storage_contract-1f237d4b92e02fd2

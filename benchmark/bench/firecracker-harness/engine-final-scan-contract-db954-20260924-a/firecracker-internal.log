@@ -1,0 +1,35 @@
+2026-09-24T08:40:42.448520238 [engine-final-scan-contract-db954-20260924-a:main:INFO] Running Firecracker v1.15.1
+2026-09-24T08:40:42.452213876 [engine-final-scan-contract-db954-20260924-a:main:INFO] Listening on API socket ("/tmp/fch-kDwp12/api.sock").
+2026-09-24T08:40:42.452553685 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] API server started.
+2026-09-24T08:40:42.461522992 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
+2026-09-24T08:40:42.462058028 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:40:42.462250743 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] The API server received a Get request on "/machine-config".
+2026-09-24T08:40:42.462565557 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 200 OK.
+2026-09-24T08:40:42.462727605 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] The API server received a Put request on "/boot-source" with body "{\"boot_args\":\"console=ttyS0 root=/dev/vda rootfstype=ext4 rootwait rw panic=1 systemd.show_status=0 systemd.mask=cloud-init-local.service systemd.mask=cloud-init.service systemd.mask=cloud-config.service systemd.mask=cloud-final.service\",\"kernel_image_path\":\"/tmp/vm-inputs/vmlinux\"}".
+2026-09-24T08:40:42.463036459 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:40:42.463201347 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] The API server received a Put request on "/drives/rootfs" with body "{\"cache_type\":\"Writeback\",\"drive_id\":\"rootfs\",\"io_engine\":\"Sync\",\"is_read_only\":false,\"is_root_device\":true,\"path_on_host\":\"/home/mariogk/Projects/TerraScale/ts-benchmark/firecracker-harness/crates/fc-harness/../../../bench/firecracker-harness/engine-final-scan-contract-db954-20260924-a/guest-rootfs.ext4\"}".
+2026-09-24T08:40:42.463616410 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:40:42.463777247 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] The API server received a Put request on "/vsock" with body "{\"guest_cid\":3,\"uds_path\":\"/tmp/fch-kDwp12/vsock.sock\"}".
+2026-09-24T08:40:42.464226148 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:40:42.464374980 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] The API server received a Put request on "/actions" with body "{\"action_type\":\"InstanceStart\"}".
+2026-09-24T08:40:42.508689596 [engine-final-scan-contract-db954-20260924-a:main:INFO] Artificially kick devices
+2026-09-24T08:40:42.508886943 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 3:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T08:40:42.508967891 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 2:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T08:40:42.509022053 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T08:40:42.509087127 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 1:WARN] Received a VcpuEvent::Resume message with immediate_exit enabled. immediate_exit was disabled before proceeding
+2026-09-24T08:40:42.509207650 [engine-final-scan-contract-db954-20260924-a:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
+2026-09-24T08:40:42.588451396 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0xcf8:0x4 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:42.588578016 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO read @ 0xcfc:0x2 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.059413094 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.059521616 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.064808793 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.064922607 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.066923691 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.067045806 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.071108887 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.071190463 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.073263824 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.073338404 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.077305399 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x70:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.077383819 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 0:WARN] vcpu: IO write @ 0x71:0x1 failed: bus_error: MissingAddressRange
+2026-09-24T08:40:45.983318088 [engine-final-scan-contract-db954-20260924-a:fc_vcpu 1:WARN] vcpu: IO read @ 0x87:0x1 failed: bus_error: MissingAddressRange
