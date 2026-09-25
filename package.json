@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build:css": "node scripts/build-css.mjs",
-    "build:test-sdk": "npm --prefix tests/integration/sdk ci --no-audit --no-fund && npm --prefix tests/integration/sdk run build",
+    "build:test-sdk": "bash scripts/build-test-sdk.sh",
     "watch:css": "node scripts/build-css.mjs --watch --dev",
     "e2e": "npm run build:test-sdk && playwright test",
     "e2e:headed": "npm run build:test-sdk && playwright test --headed",
