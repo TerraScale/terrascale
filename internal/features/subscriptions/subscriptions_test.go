@@ -31,7 +31,7 @@ func TestSubscriptionPagesRenderTypedTemplViewsWithEscapingAndFinalCSRF(t *testi
 		{
 			name: "billing",
 			path: "/billing",
-			want: []string{"Plans and billing", "Billing &lt;img src=x onerror=alert(1)&gt;", "&lt;script&gt;", "Choose monthly", `value="renderer-token&lt;&amp;&#34;"`, `name="return" value="/billing"`},
+			want: []string{"Plans and billing", "&lt;script&gt;", "Choose monthly", `value="renderer-token&lt;&amp;&#34;"`, `name="return" value="/billing"`},
 			omit: []string{"<script>", `name="return" value="/subscriptions"`},
 		},
 		{

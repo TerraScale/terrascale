@@ -1,0 +1,430 @@
+package authentication
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
+)
+
+// resourceSection is the list page shared by every record section.
+templ resourceSection(data pageData, csrfToken string) {
+	@ui.Card(ui.CardProps{ID: "auth-" + data.Section.Key, Title: data.Section.Title, Description: data.Section.Description, Actions: listToolbar(data, "auth-create"), Flush: len(data.Rows) > 0}) {
+		@resourceList(data, csrfToken)
+	}
+	if data.CanManage && missingPrerequisite(data) == "" {
+		@resourceDialog(data, "auth-create", "Add "+data.Section.Noun, data.Section.Description, "", "", data.Section.Fields, nil, csrfToken)
+	}
+}
+
+// listToolbar holds the search form and the create button of a list card.
+templ listToolbar(data pageData, createDialog string) {
+	<form class="ts-filters" method="get" action={ templ.SafeURL("/auth/" + data.Section.Key) } role="search" aria-label={ "Search " + strings.ToLower(data.Section.Title) }>
+		<input class="ts-input ts-input-sm" type="search" name="q" value={ data.Search } placeholder={ "Search " + strings.ToLower(data.Section.Title) } aria-label={ "Search " + strings.ToLower(data.Section.Title) }/>
+		if data.Search != "" {
+			<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ templ.SafeURL("/auth/" + data.Section.Key) }>Clear</a>
+		}
+	</form>
+	if data.CanManage && createDialog != "" && missingPrerequisite(data) == "" {
+		<button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor={ createDialog }>
+			@icons.Plus(15)
+			<span>Add { data.Section.Noun }</span>
+		</button>
+	}
+}
+
+templ resourceList(data pageData, csrfToken string) {
+	if len(data.Rows) > 0 {
+		<div class="ts-table-wrap">
+			<table class="ts-table ts-idp-table">
+				<thead>
+					<tr>
+						<th>{ columnTitle(data.Section) }</th>
+						<th>Details</th>
+						<th>Status</th>
+						<th>Created</th>
+						if data.CanManage {
+							<th class="ts-table-actions"><span class="ts-sr-only">Actions</span></th>
+						}
+					</tr>
+				</thead>
+				<tbody>
+					for _, row := range data.Rows {
+						@resourceRowView(data, row, csrfToken)
+					}
+				</tbody>
+			</table>
+		</div>
+		if data.PageCount > 1 {
+			<nav class="ts-pager" aria-label={ data.Section.Title + " pages" }>
+				<span>Page { fmt.Sprint(data.Page) } of { fmt.Sprint(data.PageCount) } · { fmt.Sprint(data.Total) } total</span>
+				<div class="ts-row">
+					if data.Page > 1 {
+						<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ templ.SafeURL(data.pageURL(data.Page - 1)) } rel="prev">Previous</a>
+					}
+					if data.Page < data.PageCount {
+						<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ templ.SafeURL(data.pageURL(data.Page + 1)) } rel="next">Next</a>
+					}
+				</div>
+			</nav>
+		}
+		if data.CanManage {
+			for _, row := range data.Rows {
+				if len(row.Fields) > 0 {
+					@resourceDialog(data, "edit-"+row.ID, "Edit "+row.Name, data.Section.Description, row.ID, row.Values["protocol"], nil, row.Fields, csrfToken)
+				}
+				@removeDialog(data, row, csrfToken)
+			}
+		}
+	} else if data.Search != "" {
+		@ui.Empty("No matches for “"+data.Search+"”", "Try another name, email, or ID.") {
+			<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ templ.SafeURL("/auth/" + data.Section.Key) }>Clear search</a>
+		}
+	} else {
+		@emptyState(data)
+	}
+}
+
+templ emptyState(data pageData) {
+	<div class="ts-idp-empty" data-tone={ data.Section.Tone }>
+		@tile(data.Section.Icon, data.Section.Tone)
+		<p class="ts-empty-title">No { strings.ToLower(data.Section.Title) } yet</p>
+		<p class="ts-empty-detail">{ data.Section.EmptyDetail }</p>
+		if missing := missingPrerequisite(data); missing != "" {
+			<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ templ.SafeURL("/auth/" + missing) }>Create { prerequisiteNoun(missing) } first</a>
+		} else if data.CanManage && data.Section.Key != "connections" {
+			<button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="auth-create">
+				@icons.Plus(15)
+				<span>Add { data.Section.Noun }</span>
+			</button>
+		}
+	</div>
+}
+
+templ resourceRowView(data pageData, row resourceRow, csrfToken string) {
+	<tr>
+		<td>
+			<div class="ts-idp-identity">
+				if row.Initials != "" {
+					<span class="ts-idp-avatar" data-tone={ avatarTone(row.Name) } aria-hidden="true">{ row.Initials }</span>
+				} else {
+					@tile(row.Icon, row.Tone)
+				}
+				<div class="ts-list-main">
+					<span class="ts-strong ts-break">{ row.Name }</span>
+					if row.Subtitle != "" {
+						<span class="ts-meta ts-break">{ row.Subtitle }</span>
+					}
+				</div>
+			</div>
+		</td>
+		<td>
+			<div class="ts-idp-chips">
+				for _, chip := range row.Chips {
+					<span class="ts-idp-chip">{ chip }</span>
+				}
+			</div>
+			if row.Callback != "" {
+				<p class="ts-meta ts-idp-callback">Callback <code class="ts-break">{ row.Callback }</code></p>
+			}
+		</td>
+		<td>
+			@statusBadge(row.Status)
+		</td>
+		<td class="ts-meta ts-idp-nowrap">{ row.Created.UTC().Format("Jan 2, 2006") }</td>
+		if data.CanManage {
+			<td class="ts-table-actions">
+				@rowMenu(data, row, csrfToken)
+			</td>
+		}
+	</tr>
+}
+
+templ rowMenu(data pageData, row resourceRow, csrfToken string) {
+	if len(row.Fields) > 0 || len(row.Actions) > 0 || removable(data.Section, row) {
+		<details { ui.MenuBehavior... } class="ts-menu ts-menu-end">
+			<summary class="ts-icon-btn" aria-label={ "Actions for " + row.Name }>
+				@icons.MoreHorizontal(16)
+			</summary>
+			<div class="ts-menu-panel">
+				if len(row.Fields) > 0 {
+					<button class="ts-menu-item" type="button" command="show-modal" commandfor={ "edit-" + row.ID }>
+						@icons.Pencil(15)
+						<span>Edit</span>
+					</button>
+				}
+				for _, action := range row.Actions {
+					<form method="post" action={ templ.SafeURL(fmt.Sprintf("/api/v1/auth-management/%s/%s/actions/%s", data.Section.Key, row.ID, action.Key)) }>
+						<input type="hidden" name="_csrf" value={ csrfToken }/>
+						<button class="ts-menu-item" type="submit">
+							@action.Icon(15)
+							<span>{ action.Label }</span>
+						</button>
+					</form>
+				}
+				if removable(data.Section, row) {
+					<div class="ts-menu-separator"></div>
+					<button class="ts-menu-item ts-menu-item-danger" type="button" command="show-modal" commandfor={ "remove-" + row.ID }>
+						@icons.Trash2(15)
+						<span>{ removeVerb(data.Section) }</span>
+					</button>
+				}
+			</div>
+		</details>
+	}
+}
+
+// resourceDialog is the create or edit form of a record. Create passes the
+// section fields; edit passes the record's mutable fields with values.
+templ resourceDialog(data pageData, id, title, description, resourceID, protocol string, fields []field, values []fieldValue, csrfToken string) {
+	<dialog id={ id } class={ "ts-dialog", templ.KV("ts-idp-dialog-wide", hasChoices(fields, values)) } aria-labelledby={ id + "-title" }>
+		<form class="ts-dialog-content" method="post" action={ templ.SafeURL("/api/v1/auth-management/" + data.Section.Key) }>
+			<div class="ts-dialog-header">
+				<h2 class="ts-dialog-title" id={ id + "-title" }>{ title }</h2>
+				<p class="ts-dialog-description">{ description }</p>
+			</div>
+			<input type="hidden" name="_csrf" value={ csrfToken }/>
+			if resourceID != "" {
+				<input type="hidden" name="id" value={ resourceID }/>
+			}
+			if protocol != "" {
+				<input type="hidden" name="protocol" value={ protocol }/>
+			}
+			<div class="ts-form">
+				for _, item := range fields {
+					@fieldInput(data, id, item, "")
+				}
+				for _, value := range values {
+					@fieldInput(data, id, value.Field, value.Value)
+				}
+			</div>
+			if data.Section.Key == "templates" {
+				@placeholderHelp()
+			}
+			<div class="ts-dialog-footer">
+				<button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor={ id }>Cancel</button>
+				<button class="ts-btn ts-btn-primary" type="submit">
+					if resourceID != "" {
+						Save changes
+					} else {
+						{ title }
+					}
+				</button>
+			</div>
+		</form>
+	</dialog>
+}
+
+templ removeDialog(data pageData, row resourceRow, csrfToken string) {
+	if removable(data.Section, row) {
+		<dialog id={ "remove-" + row.ID } class="ts-dialog" aria-labelledby={ "remove-" + row.ID + "-title" }>
+			<form class="ts-dialog-content" method="post" action={ templ.SafeURL(fmt.Sprintf("/api/v1/auth-management/%s/%s/delete", data.Section.Key, row.ID)) }>
+				<div class="ts-dialog-header">
+					<h2 class="ts-dialog-title" id={ "remove-" + row.ID + "-title" }>{ removeVerb(data.Section) } { row.Name }?</h2>
+					<p class="ts-dialog-description">{ removeWarning(data.Section) }</p>
+				</div>
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				<div class="ts-dialog-footer">
+					<button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor={ "remove-" + row.ID }>Cancel</button>
+					<button class="ts-btn ts-btn-danger" type="submit">{ removeVerb(data.Section) }</button>
+				</div>
+			</form>
+		</dialog>
+	}
+}
+
+templ fieldInput(data pageData, formID string, item field, value string) {
+	switch item.Type {
+		case typeChoices:
+			<fieldset class="ts-field ts-idp-choices">
+				<legend class="ts-label">{ item.Label }</legend>
+				<div class="ts-idp-choice-grid">
+					for _, choice := range item.Options {
+						<label class="ts-check">
+							<input type="checkbox" name={ item.Key } value={ choice.Value } checked?={ slices.Contains(strings.Split(value, ","), choice.Value) }/>
+							<span class={ templ.KV("ts-mono", choice.Value == choice.Label) }>{ choice.Label }</span>
+						</label>
+					}
+				</div>
+				if item.Hint != "" {
+					<p class="ts-hint">{ item.Hint }</p>
+				}
+			</fieldset>
+		default:
+			<div class="ts-field">
+				<label class="ts-label" for={ formID + "-" + item.Key }>
+					{ item.Label }
+					if !item.Required && item.Type != typeSecret {
+						<span class="ts-idp-optional">Optional</span>
+					}
+				</label>
+				@control(data, formID+"-"+item.Key, item, value)
+				if item.Hint != "" {
+					<p class="ts-hint">{ item.Hint }</p>
+				}
+			</div>
+	}
+}
+
+templ control(data pageData, id string, item field, value string) {
+	switch item.Type {
+		case typeTextarea:
+			<textarea class={ "ts-input", templ.KV("ts-mono", item.Key != "redirect_uris") } id={ id } name={ item.Key } placeholder={ item.Placeholder } required?={ item.Required } rows="4">{ value }</textarea>
+		case typeOrganization, typeUser:
+			<select class="ts-select" id={ id } name={ item.Key } required?={ item.Required }>
+				if item.Required {
+					<option value="">Choose { strings.ToLower(item.Label) }</option>
+				} else if data.Section.Key == "directories" {
+					<option value="">Instance-wide</option>
+				} else {
+					<option value="">None</option>
+				}
+				for _, choice := range recordOptions(data, item.Type) {
+					<option value={ choice.Value } selected?={ choice.Value == value }>{ choice.Label }</option>
+				}
+			</select>
+		case typeSelect:
+			<select class="ts-select" id={ id } name={ item.Key } required?={ item.Required }>
+				for _, choice := range item.Options {
+					<option value={ choice.Value } selected?={ choice.Value == value }>{ choice.Label }</option>
+				}
+			</select>
+		case typeRole:
+			<input class="ts-input" id={ id } name={ item.Key } value={ defaultRole(value) } list={ id + "-roles" } required?={ item.Required } maxlength="64" autocomplete="off"/>
+			<datalist id={ id + "-roles" }>
+				for _, choice := range item.Options {
+					<option value={ choice.Value }>{ choice.Label }</option>
+				}
+			</datalist>
+		case typeSecret:
+			<input class="ts-input" id={ id } type="password" name={ item.Key } required?={ item.Required } autocomplete="new-password" placeholder={ item.Placeholder }/>
+		default:
+			<input class="ts-input" id={ id } type={ item.Type } name={ item.Key } value={ value } placeholder={ item.Placeholder } required?={ item.Required } autocomplete="off"/>
+	}
+}
+
+templ placeholderHelp() {
+	<div class="ts-idp-placeholders">
+		<p class="ts-label">Placeholders</p>
+		<div class="ts-idp-chips">
+			for _, placeholder := range templatePlaceholders {
+				<code class="ts-idp-chip">{ "{{" + placeholder + "}}" }</code>
+			}
+		</div>
+		<p class="ts-hint">Claim values are strings. iss, exp, iat, nbf, and token_use are set by ts-auth.</p>
+	</div>
+}
+
+func columnTitle(current section) string {
+	switch current.Key {
+	case "users", "memberships":
+		return "User"
+	case "invitations":
+		return "Invitee"
+	case "domains":
+		return "Domain"
+	case "webhooks":
+		return "Endpoint"
+	case "directories":
+		return "Directory"
+	}
+	return "Name"
+}
+
+func removable(current section, row resourceRow) bool {
+	return !current.Revocable || row.Status != "Revoked"
+}
+
+func removeVerb(current section) string {
+	switch {
+	case current.Revocable:
+		return "Revoke"
+	case current.Key == "memberships":
+		return "Remove"
+	}
+	return "Delete"
+}
+
+func removeWarning(current section) string {
+	switch current.Key {
+	case "users":
+		return "The user loses access immediately and their organization memberships are removed."
+	case "organizations":
+		return "Its memberships, invitations, enrollment domains, directories, and connections are removed too."
+	case "keys":
+		return "Requests signed with this key are rejected. Revoked keys stay listed for audit."
+	case "invitations":
+		return "The invitation link stops working. The invitee can be invited again."
+	case "connections":
+		return "Users can no longer sign in through this provider."
+	case "directories":
+		return "The identity provider can no longer provision or deprovision users through this directory."
+	case "clients":
+		return "Applications using this client ID can no longer start sign-ins or refresh tokens."
+	}
+	return "This cannot be undone."
+}
+
+func missingPrerequisite(data pageData) string {
+	switch data.Section.Key {
+	case "memberships":
+		if len(data.Organizations) == 0 {
+			return "organizations"
+		}
+		if len(data.Users) == 0 {
+			return "users"
+		}
+	case "invitations", "domains":
+		if len(data.Organizations) == 0 {
+			return "organizations"
+		}
+	}
+	return ""
+}
+
+func prerequisiteNoun(key string) string {
+	if key == "users" {
+		return "a user"
+	}
+	return "an organization"
+}
+
+func recordOptions(data pageData, kind string) []option {
+	if kind == typeUser {
+		return data.Users
+	}
+	return data.Organizations
+}
+
+func hasChoices(fields []field, values []fieldValue) bool {
+	for _, item := range fields {
+		if item.Type == typeChoices {
+			return true
+		}
+	}
+	for _, value := range values {
+		if value.Field.Type == typeChoices {
+			return true
+		}
+	}
+	return false
+}
+
+func defaultRole(value string) string {
+	if value == "" {
+		return "member"
+	}
+	return value
+}
+
+// avatarTone picks a stable tone for an avatar from its name.
+func avatarTone(name string) string {
+	tones := []string{"pink", "violet", "blue", "cyan", "emerald", "amber", "orange", "rose", "indigo", "teal"}
+	sum := 0
+	for _, r := range name {
+		sum += int(r)
+	}
+	return tones[sum%len(tones)]
+}

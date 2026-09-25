@@ -11,7 +11,7 @@ import (
 
 templ homeView(data pageData) {
 	<main class="ts-page ts-home">
-		@ui.PageHeader(ui.Header{Eyebrow: data.ProjectName, Title: homeTitle(data.Tab), Description: homeDescription(data.Tab)}) {
+		@ui.PageHeader(homeTitle(data.Tab)) {
 			<a class="ts-btn ts-btn-secondary" href="/api-keys">@icons.KeyRound(16)<span>API keys</span></a>
 			<a class="ts-btn ts-btn-primary" href="/databases">@icons.Plus(16)<span>New database</span></a>
 		}
@@ -127,9 +127,3 @@ func homeTitle(tab string) string {
 	return "Overview"
 }
 
-func homeDescription(tab string) string {
-	if tab == "connect" {
-		return "Reach this project from your assistant, application, or pipeline. Connection flows are previewed while provisioning finishes."
-	}
-	return "Current project totals, recent activity, and next steps."
-}

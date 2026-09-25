@@ -4,7 +4,7 @@ import "fmt"
 
 templ Line(data LineData) {
 	if len(data.Paths) > 0 {
-		<svg class="ts-chart" viewBox={ data.ViewBox } role="img" aria-label={ data.Label }>
+		<svg class="ts-chart" viewBox={ data.ViewBox } role="group" aria-label={ data.Label }>
 			<defs>
 				<linearGradient id={ data.GradientID } x1="0" y1="0" x2="0" y2="1">
 					<stop class="ts-chart-fill-start" offset="0"></stop>
@@ -27,29 +27,60 @@ templ Line(data LineData) {
 				<path class={ "ts-chart-line " + path.Class } d={ path.Data }></path>
 			}
 			for _, column := range data.Columns {
-				<g class="ts-chart-column">
-					<title>{ column.Title }</title>
+				<g class="ts-chart-column" tabindex="0" role="img" aria-label={ column.Label }>
 					<rect class="ts-chart-hit" x={ column.Left } y={ fmt.Sprint(data.PlotTop) } width={ column.Width } height={ fmt.Sprint(data.PlotBottom - data.PlotTop) }></rect>
 					<line class="ts-chart-guide" x1={ column.X } y1={ fmt.Sprint(data.PlotTop) } x2={ column.X } y2={ fmt.Sprint(data.PlotBottom) }></line>
 					for _, dot := range column.Dots {
 						<circle class={ "ts-chart-dot " + dot.Class } cx={ dot.X } cy={ dot.Y } r="4"></circle>
 					}
+					@lineTip(column.Tip)
 				</g>
 			}
 		</svg>
 	}
 }
 
+// lineTip is drawn inside its column so :hover and :focus-visible on the
+// column reveal it; the column's aria-label already carries the same text.
+templ lineTip(tip ChartTip) {
+	<g class="ts-chart-tip" aria-hidden="true">
+		<rect class="ts-chart-tip-box" x={ tip.X } y={ tip.Y } width={ tip.Width } height={ tip.Height } rx="6"></rect>
+		if tip.Header != "" {
+			<text class="ts-chart-tip-label" x={ tip.HeaderX } y={ tip.HeaderY } dy="0.35em">{ tip.Header }</text>
+		}
+		for _, row := range tip.Rows {
+			<circle class={ "ts-chart-tip-swatch " + row.Class } cx={ tip.SwatchX } cy={ row.Y } r="3"></circle>
+			<text class="ts-chart-tip-name" x={ tip.NameX } y={ row.Y } dy="0.35em">{ row.Name }</text>
+			<text class="ts-chart-tip-value" x={ tip.ValueX } y={ row.Y } dy="0.35em" text-anchor="end">{ row.Value }</text>
+		}
+	</g>
+}
+
 templ Ring(data RingData) {
-	<svg class={ "ts-ring ts-ring-" + data.Tone } viewBox="0 0 120 120" role="img" aria-label={ data.Label }>
-		<circle class="ts-ring-track" cx="60" cy="60" r="52" pathLength="100"/>
-		<circle class="ts-ring-fill" cx="60" cy="60" r="52" pathLength="100" stroke-dasharray={ data.Dash }/>
-	</svg>
+	<span class="ts-chart-meter" tabindex="0" role="img" aria-label={ data.Label }>
+		<svg class={ "ts-ring ts-ring-" + data.Tone } viewBox="0 0 120 120" aria-hidden="true">
+			<circle class="ts-ring-track" cx="60" cy="60" r="52" pathLength="100"></circle>
+			<circle class="ts-ring-fill" cx="60" cy="60" r="52" pathLength="100" stroke-dasharray={ data.Dash }></circle>
+		</svg>
+		@meterTip(data.Name, data.Value)
+	</span>
 }
 
 templ Bar(data BarData) {
-	<svg class="ts-svg-sharebar" viewBox="0 0 100 8" preserveAspectRatio="none" role="img" aria-label={ data.Label }>
-		<rect class="ts-svg-sharebar-track" x="0" y="0" width="100" height="8"/>
-		<rect class="ts-svg-sharebar-fill" x="0" y="0" width={ data.Width } height="8"/>
-	</svg>
+	<span class="ts-chart-meter" tabindex="0" role="img" aria-label={ data.Label }>
+		<svg class="ts-svg-sharebar" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true">
+			<rect class="ts-svg-sharebar-track" x="0" y="0" width="100" height="8"></rect>
+			<rect class="ts-svg-sharebar-fill" x="0" y="0" width={ data.Width } height="8"></rect>
+		</svg>
+		@meterTip(data.Name, data.Value)
+	</span>
+}
+
+// meterTip is the HTML tooltip above a ring or bar, revealed on :hover and
+// :focus-visible of its meter.
+templ meterTip(name, value string) {
+	<span class="ts-chart-tooltip" aria-hidden="true">
+		<span class="ts-chart-tooltip-label">{ name }</span>
+		<strong>{ value }</strong>
+	</span>
 }

@@ -71,7 +71,7 @@ func TestOverviewRendersScopedCountsAndAnHonestZeroChart(t *testing.T) {
 		`Organization members</dt><dd class="ts-stat-value">2</dd>`,
 		`Unread alerts</dt><dd class="ts-stat-value">1</dd>`,
 		"2 notifications loaded", "Plotted operations <strong>0</strong>", "Illustrative zero baseline",
-		"ts-chart-shell", "ts-chart-line ts-chart-series-1", "30d ago",
+		"ts-chart-shell", "ts-chart-line ts-chart-series-1", "30d ago", `aria-label="29d ago: Operations 0"`,
 		"href=\"/?range=30d\"", "aria-current=\"page\"",
 	} {
 		if !strings.Contains(body, expected) {

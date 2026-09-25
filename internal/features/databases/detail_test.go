@@ -85,7 +85,7 @@ func TestDemoLatencyEstimateIsLimitedToSeededMarioDatabase(t *testing.T) {
 			project.ID = tc.project
 			database.ProjectID = tc.project
 			database.ID = tc.dbID
-			info := makeDetailInfo(tc.demo, principal, account, project, database, "unknown", false)
+			info := makeDetailInfo(tc.demo, principal, account, project, database, "unknown", false, false)
 			if len(info.Regions) != 1 || info.Regions[0].Sample != tc.sample || (strings.Contains(info.Regions[0].Estimate, "0 ms") != tc.sample) {
 				t.Fatalf("sample scope %s: %#v", tc.name, info.Regions)
 			}
@@ -114,7 +114,7 @@ func TestDatabaseDetailBackupPolicyToggleReturnsToSelectedTab(t *testing.T) {
 	backups.Mount(mux, deps)
 	form := url.Values{
 		"databaseId": {"db-1"}, "fullBackupCron": {"0 2 * * *"}, "retentionDays": {"7"},
-		"disabled": {"1"}, "returnTo": {"databaseDetail"},
+		"disabled": {"1"},
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/dashboard/backups/policy", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -131,14 +131,5 @@ func TestDatabaseDetailBackupPolicyToggleReturnsToSelectedTab(t *testing.T) {
 	policy := account.Organizations[principal.OrganizationID].Projects[principal.ProjectID].BackupPolicies["db-1"]
 	if !policy.Disabled || policy.FullBackupCron != "0 2 * * *" || policy.RetentionDays != 7 {
 		t.Fatalf("policy after toggle: %#v", policy)
-	}
-	form.Set("returnTo", "//elsewhere.test")
-	request = httptest.NewRequest(http.MethodPost, "/api/v1/dashboard/backups/policy", strings.NewReader(form.Encode()))
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("Accept", "text/html")
-	response = httptest.NewRecorder()
-	mux.ServeHTTP(response, request)
-	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/backups?databaseId=db-1" {
-		t.Fatalf("unsafe return target: %d %q", response.Code, response.Header().Get("Location"))
 	}
 }

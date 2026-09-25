@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	sdk "terrascale.tech/sdk"
 )
@@ -23,7 +22,6 @@ type backupView struct {
 }
 
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	mux.HandleFunc("GET /backups", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps) })
 	mux.HandleFunc("GET /api/v1/dashboard/backups", func(w http.ResponseWriter, r *http.Request) {
 		p, project, db, err := selected(deps, r, r.URL.Query().Get("databaseId"))
 		if err != nil {
@@ -106,7 +104,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if wantsHTML(r) {
-			http.Redirect(w, r, "/backups?databaseId="+url.QueryEscape(db.ID), http.StatusSeeOther)
+			redirectToDatabase(w, r, db.ID)
 			return
 		}
 		writeJSON(w, http.StatusCreated, backupView{ID: created.ID, Status: created.Status, CreatedAt: created.CreatedAt, SizeBytes: created.SizeBytes})
@@ -164,11 +162,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if wantsHTML(r) {
-			if r.FormValue("returnTo") == "databaseDetail" {
-				http.Redirect(w, r, "/databases/"+url.PathEscape(db.ID)+"?tab=backups", http.StatusSeeOther)
-				return
-			}
-			http.Redirect(w, r, "/backups?databaseId="+url.QueryEscape(db.ID), http.StatusSeeOther)
+			redirectToDatabase(w, r, db.ID)
 			return
 		}
 		writeJSON(w, http.StatusOK, policy)
@@ -309,60 +303,12 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 }
 
-type pageData struct {
-	ProjectID  string
-	DatabaseID string
-	Databases  []databaseChoice
-	Backups    []backupView
-	Policy     core.BackupPolicy
-	Error      string
-}
-
-type databaseChoice struct{ ID, Name string }
-
-func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps) {
-	p, ok := deps.Sessions.Principal(r)
-	if !ok || p.ProjectID == "" {
-		writeError(w, core.ErrUnauthorized)
-		return
-	}
-	a, err := deps.Store.SnapshotAs(p)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	data := pageData{ProjectID: project.ID, DatabaseID: r.URL.Query().Get("databaseId"), Error: r.URL.Query().Get("error")}
-	for _, db := range project.Databases {
-		data.Databases = append(data.Databases, databaseChoice{ID: db.ID, Name: db.Name})
-	}
-	slices.SortFunc(data.Databases, func(a, b databaseChoice) int { return strings.Compare(a.Name, b.Name) })
-	if data.DatabaseID == "" && len(data.Databases) > 0 {
-		data.DatabaseID = data.Databases[0].ID
-	}
-	if data.DatabaseID != "" {
-		db, ok := project.Databases[data.DatabaseID]
-		if !ok {
-			writeError(w, core.ErrNotFound)
-			return
-		}
-		data.Policy = project.BackupPolicies[db.ID]
-		for _, backup := range db.Backups {
-			data.Backups = append(data.Backups, backupView{ID: backup.ID, Status: backup.Status, CreatedAt: backup.CreatedAt, SizeBytes: backup.SizeBytes})
-		}
-	}
-	org := a.Organizations[p.OrganizationID]
-	page := core.Page{Layout: "shell", Title: "Backups · TerraScale", Principal: p, View: func(page core.Page) templ.Component { return backupsContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r), Shell: core.Shell{UserName: a.User.Name, UserEmail: a.User.Email, OrganizationName: org.Name, ProjectName: project.Name}}
-	if err := deps.Render.Page(w, r, page); err != nil {
-		http.Error(w, "could not render backups", http.StatusInternalServerError)
-	}
-}
-
 func wantsHTML(r *http.Request) bool { return strings.Contains(r.Header.Get("Accept"), "text/html") }
+
+// redirectToDatabase returns form submissions to the database's backups tab.
+func redirectToDatabase(w http.ResponseWriter, r *http.Request, databaseID string) {
+	http.Redirect(w, r, "/databases/"+url.PathEscape(databaseID)+"?tab=backups", http.StatusSeeOther)
+}
 
 func selected(deps core.Deps, r *http.Request, databaseID string) (core.Principal, core.Project, core.Database, error) {
 	p, ok := deps.Sessions.Principal(r)

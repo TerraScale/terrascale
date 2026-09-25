@@ -23,9 +23,9 @@ details.ts-menu > .ts-menu-panel {
   min-width: 14rem;
   max-width: min(90vw, 22rem);
   padding: var(--ts-s1);
-  border-radius: var(--ts-radius);
-  background: var(--ts-surface);
-  box-shadow: var(--ts-shadow-overlay);
+  border-radius: var(--ts-radius-lg);
+  background: linear-gradient(180deg, var(--ts-surface-2), var(--ts-surface) 48px);
+  box-shadow: var(--ts-shadow-overlay), inset 0 1px 0 rgb(255 255 255 / 0.05), 0 24px 48px -24px rgb(0 0 0 / 0.7);
 }
 
 details.ts-menu[open] > .ts-menu-panel {
@@ -80,6 +80,7 @@ details.ts-menu-up > .ts-menu-panel {
 
 .ts-menu-item[aria-current="true"],
 .ts-menu-item[aria-current="page"] {
+  background: var(--ts-accent-soft);
   color: var(--ts-ink);
   font-weight: 600;
 }
@@ -87,6 +88,29 @@ details.ts-menu-up > .ts-menu-panel {
 .ts-menu-item > svg {
   flex: none;
   color: var(--ts-ink-3);
+  transition: color var(--ts-fast) var(--ts-ease);
+}
+
+/* Toned items tint their icon, fully on hover. */
+.ts-menu-item[data-tone] > svg {
+  color: color-mix(in oklab, var(--tone) 75%, var(--ts-ink-3));
+}
+
+.ts-menu-item[data-tone]:hover > svg,
+.ts-menu-item[data-tone]:focus-visible > svg {
+  color: var(--tone);
+}
+
+.ts-menu-item-danger:hover,
+.ts-menu-item-danger:focus-visible,
+.ts-menu-item-danger:hover > svg,
+.ts-menu-item-danger:focus-visible > svg {
+  color: var(--ts-danger);
+}
+
+.ts-menu-item-danger:hover,
+.ts-menu-item-danger:focus-visible {
+  background: color-mix(in oklab, var(--ts-danger) 12%, transparent);
 }
 
 .ts-menu-item[aria-current] > svg:last-child {

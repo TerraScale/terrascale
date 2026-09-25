@@ -4,7 +4,7 @@ import "terrascale.tech/dashboard/internal/ui"
 
 templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
 	<main class="ts-page">
-		@ui.PageHeader(ui.Header{Eyebrow: "Organization billing", Title: "Plans and billing", Description: "Billing for " + data.OrganizationName + "."}) {
+		@ui.PageHeader("Plans and billing") {
 			if data.Demo {
 				@ui.Badge("info", "Demo billing")
 			}

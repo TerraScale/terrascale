@@ -1,0 +1,238 @@
+package authentication
+
+import (
+	"strconv"
+
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
+)
+
+// strategySection lists the sign-in or multi-factor strategy cards.
+templ strategySection(data pageData, csrfToken string) {
+	for _, group := range groupsFor(data.Section.Key) {
+		<section class="ts-card ts-idp-setting-card" id={ "auth-" + group.ID } aria-labelledby={ "auth-" + group.ID + "-title" }>
+			<header class="ts-idp-setting-head">
+				@tile(group.Icon, group.Tone)
+				<div class="ts-card-heading">
+					<h2 class="ts-card-title" id={ "auth-" + group.ID + "-title" }>{ group.Title }</h2>
+					<p class="ts-card-description">{ group.Description }</p>
+				</div>
+			</header>
+			<ul class="ts-idp-settings">
+				for _, item := range group.Strategies {
+					<li class="ts-idp-setting">
+						<div class="ts-idp-setting-text">
+							<p class="ts-strong" id={ "setting-" + item.Key }>{ item.Label }</p>
+							<p class="ts-meta">{ item.Description }</p>
+						</div>
+						@strategySwitch(data, item, csrfToken)
+					</li>
+				}
+			</ul>
+		</section>
+	}
+	if data.Section.Key == "sign-in" {
+		@ui.Card(ui.CardProps{ID: "auth-sso-summary", Title: "Single sign-on", Description: "Social and enterprise providers appear as buttons on the hosted sign-in page.", Actions: linkButton("/auth/connections", "Manage connections")}) {
+			<p class="ts-meta">{ plural(data.Counts["connections"], "connection is", "connections are") } configured for this instance.</p>
+		}
+	} else {
+		@ui.Card(ui.CardProps{ID: "auth-mfa-flow", Title: "How step-up works"}) {
+			<ol class="ts-idp-steps">
+				<li class="ts-idp-step">
+					<span class="ts-idp-step-marker">1</span>
+					<div class="ts-idp-step-text">
+						<p class="ts-strong">Users enroll a factor</p>
+						<p class="ts-meta">From their account at <code>{ data.hosted("/mfa/enroll") }</code>.</p>
+					</div>
+				</li>
+				<li class="ts-idp-step">
+					<span class="ts-idp-step-marker">2</span>
+					<div class="ts-idp-step-text">
+						<p class="ts-strong">Sign-in asks for it</p>
+						<p class="ts-meta">After the first factor, enrolled users enter a TOTP code or a recovery code before a session starts.</p>
+					</div>
+				</li>
+				<li class="ts-idp-step">
+					<span class="ts-idp-step-marker">3</span>
+					<div class="ts-idp-step-text">
+						<p class="ts-strong">Administrators can reset factors</p>
+						<p class="ts-meta">List, delete, or regenerate recovery codes with <code>{ "/v1/" + data.Slug + "/users/{id}/mfa-factors" }</code>.</p>
+					</div>
+				</li>
+			</ol>
+		}
+	}
+}
+
+templ strategySwitch(data pageData, item strategy, csrfToken string) {
+	<form class="ts-idp-switch-form" method="post" action="/api/v1/auth-management/settings">
+		<input type="hidden" name="_csrf" value={ csrfToken }/>
+		<input type="hidden" name="setting" value={ item.Key }/>
+		<input type="hidden" name="enabled" value={ strconv.FormatBool(!item.get(data.Settings)) }/>
+		<button
+			class="ts-idp-switch"
+			type="submit"
+			role="switch"
+			aria-checked={ strconv.FormatBool(item.get(data.Settings)) }
+			aria-labelledby={ "setting-" + item.Key }
+			disabled?={ !data.CanManage || blockedByRequirement(data, item) }
+		></button>
+	</form>
+}
+
+templ sessionsSection(data pageData) {
+	<dl class="ts-stats ts-stats-compact" aria-label="Session policy">
+		@ui.ToneStat("orange", "Session lifetime", "14 days", "Fixed for every instance")
+		@ui.ToneStat("blue", "Token signing", "ES256", "ID and access tokens")
+		@ui.ToneStat("emerald", "Refresh tokens", "Rotating", "Reuse revokes the token family")
+	</dl>
+	@ui.Card(ui.CardProps{ID: "auth-session-policy", Title: "Session policy", Description: "Sessions are stored by ts-auth and referenced by an httpOnly cookie."}) {
+		<dl class="ts-kv">
+			<dt>Lifetime</dt>
+			<dd>14 days from sign-in</dd>
+			<dt>Storage</dt>
+			<dd>Server-side session record, httpOnly cookie</dd>
+			<dt>Credential changes</dt>
+			<dd>A password change or reset invalidates sessions issued before it</dd>
+			<dt>Silent sign-in</dt>
+			<dd><code>prompt=none</code> reuses an active session or returns <code>login_required</code></dd>
+		</dl>
+	}
+	@ui.Card(ui.CardProps{ID: "auth-session-revocation", Title: "Ending sessions", Description: "Users and administrators can end sessions at any time."}) {
+		<ul class="ts-list">
+			<li class="ts-list-item">
+				@tile(icons.Monitor, "orange")
+				<div class="ts-list-main">
+					<span class="ts-strong">Users sign out their own devices</span>
+					<span class="ts-meta">The hosted device list revokes one session or all of them.</span>
+				</div>
+				@copyValue("Device list URL", data.hosted("/account/sessions"))
+			</li>
+			<li class="ts-list-item">
+				@tile(icons.Terminal, "slate")
+				<div class="ts-list-main">
+					<span class="ts-strong">Your backend revokes sessions</span>
+					<span class="ts-meta">Management API routes in the sessions and users families.</span>
+				</div>
+				@copyValue("Revoke all sessions route", "POST /v1/"+data.Slug+"/users/{user_id}/sessions/revoke-all")
+			</li>
+		</ul>
+	}
+	@ui.Card(ui.CardProps{ID: "auth-session-claims", Title: "Custom tokens", Description: "Mint short-lived tokens with your own claims for third-party services.", Actions: linkButton("/auth/templates", "JWT templates")}) {
+		<p class="ts-meta">{ plural(len(data.Templates), "template is", "templates are") } defined for this instance.</p>
+	}
+}
+
+templ brandingSection(data pageData, csrfToken string) {
+	<div class="ts-idp-branding">
+		@ui.Card(ui.CardProps{ID: "auth-branding", Title: "Hosted page branding", Description: data.Section.Description}) {
+			<form class="ts-form" method="post" action="/api/v1/auth-management/instance">
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				@ui.Field(ui.FieldProps{ID: "auth-instance-name", Label: "Application name", Hint: "Shown in page titles, emails, and the sign-in heading."}) {
+					<input class="ts-input" id="auth-instance-name" name="name" required maxlength="128" value={ data.InstanceName } disabled?={ !data.CanManage }/>
+				}
+				@ui.Field(ui.FieldProps{ID: "auth-logo-url", Label: "Logo URL", Hint: "An HTTPS image, ideally a square SVG or PNG."}) {
+					<input class="ts-input" id="auth-logo-url" type="url" name="logo_url" value={ data.Instance.LogoURL } placeholder="https://assets.example.com/logo.svg" disabled?={ !data.CanManage }/>
+				}
+				@ui.Field(ui.FieldProps{ID: "auth-theme-color", Label: "Theme color", Hint: "Used for buttons and links on the hosted pages."}) {
+					<input class="ts-idp-color" id="auth-theme-color" type="color" name="theme_color" value={ themeColor(data) } disabled?={ !data.CanManage }/>
+				}
+				if data.CanManage {
+					<div class="ts-form-actions">
+						<button class="ts-btn ts-btn-primary" type="submit">Save branding</button>
+					</div>
+				}
+			</form>
+		}
+		@signInPreview(data)
+	</div>
+	@ui.Card(ui.CardProps{ID: "auth-hosted-pages", Title: "Hosted pages", Description: "Link to these pages from your application; they use this branding.", Flush: true}) {
+		<ul class="ts-list ts-idp-hosted">
+			for _, hosted := range hostedPages {
+				<li class="ts-list-item">
+					<div class="ts-list-main">
+						<span class="ts-strong">{ hosted.Label }</span>
+						<span class="ts-meta">{ hosted.Detail }</span>
+					</div>
+					@copyValue(hosted.Label+" URL", data.hosted(hosted.Path))
+				</li>
+			}
+		</ul>
+	}
+}
+
+// signInPreview sketches the hosted sign-in card with the saved branding.
+// The theme color is applied through SVG fills, which the page's style CSP
+// allows.
+templ signInPreview(data pageData) {
+	<figure class="ts-idp-preview" aria-label="Hosted sign-in preview">
+		<div class="ts-idp-preview-card">
+			<svg class="ts-idp-preview-mark" viewBox="0 0 40 40" width="40" height="40" aria-hidden="true">
+				<rect width="40" height="40" rx="10" fill={ themeColor(data) }></rect>
+				<text x="20" y="26" text-anchor="middle" font-size="17" font-weight="700" fill="#ffffff">{ initials(data.InstanceName) }</text>
+			</svg>
+			<p class="ts-idp-preview-title">Sign in to { data.InstanceName }</p>
+			<p class="ts-meta">Welcome back! Please sign in to continue.</p>
+			for _, connection := range data.Connections {
+				<span class="ts-idp-preview-sso">
+					@connection.Icon(15)
+					<span>Continue with { connection.Name }</span>
+				</span>
+			}
+			if len(data.Connections) > 0 {
+				<span class="ts-idp-preview-divider">or</span>
+			}
+			<span class="ts-idp-preview-input">
+				if data.Settings.Username {
+					Email address or username
+				} else {
+					Email address
+				}
+			</span>
+			<svg class="ts-idp-preview-button" width="100%" height="36" aria-hidden="true">
+				<rect width="100%" height="100%" rx="6" fill={ themeColor(data) }></rect>
+				<text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="13" font-weight="600" fill="#ffffff">Continue</text>
+			</svg>
+			if data.Settings.Passkeys {
+				<span class="ts-idp-preview-link">
+					@icons.Fingerprint(14)
+					<span>Sign in with a passkey</span>
+				</span>
+			}
+		</div>
+		<figcaption class="ts-meta">Preview of { data.hosted("/sign-in") }</figcaption>
+	</figure>
+}
+
+templ linkButton(href, label string) {
+	<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ templ.SafeURL(href) }>
+		<span>{ label }</span>
+		@icons.ArrowRight(14)
+	</a>
+}
+
+type hostedPage struct {
+	Label, Detail, Path string
+}
+
+var hostedPages = []hostedPage{
+	{"Sign in", "Every enabled sign-in method and SSO connection.", "/sign-in"},
+	{"Sign up", "New accounts, with email verification when enabled.", "/sign-up"},
+	{"Account", "Profile, password, passkeys, and multi-factor settings.", "/account"},
+	{"Organization admin portal", "Organization admins configure their own SSO connections.", "/admin"},
+}
+
+func themeColor(data pageData) string {
+	if data.Instance.ThemeColor != "" {
+		return data.Instance.ThemeColor
+	}
+	return "#3b82f6"
+}
+
+func blockedByRequirement(data pageData, item strategy) bool {
+	if item.Requires == "" {
+		return false
+	}
+	required, _, _ := findStrategy(item.Requires)
+	return !required.get(data.Settings) && !item.get(data.Settings)
+}

@@ -200,7 +200,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		page := core.Page{
 			Layout: "shell", Title: "Usage", Principal: p,
 			View: func(view core.Page) templ.Component {
-				return usageView(data, view.Shell.ProjectName, view.CSRFToken)
+				return usageView(data, view.CSRFToken)
 			},
 		}
 		if err := deps.Render.Page(w, r, page); err != nil {
@@ -623,7 +623,7 @@ func addMarioSampleVisuals(data *pageData) {
 	data.SampleHistory = true
 	data.HistoryChart = charts.NewLine(
 		"Illustrative organization reads, writes, and replication, "+data.HistoryRangeLabel,
-		demovisuals.TickLabels(data.HistoryRange), 200,
+		demovisuals.TickLabels(data.HistoryRange), demovisuals.PointLabels(data.HistoryRange, len(values)), 200,
 		charts.Series{Name: "Reads", Values: reads},
 		charts.Series{Name: "Writes", Values: writes},
 		charts.Series{Name: "Replication", Values: replication},

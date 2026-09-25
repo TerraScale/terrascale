@@ -282,14 +282,26 @@ code:not(pre code) {
 .ts-chart-fill-start { stop-color: var(--ts-chart-1); stop-opacity: 0.32; }
 .ts-chart-fill-end { stop-color: var(--ts-chart-1); stop-opacity: 0; }
 
-/* Hover columns: a guide line and dots per value; the SVG <title> is the tooltip. */
+/* Hover columns: a guide line, dots per value, and a tooltip, revealed on
+   hover and keyboard focus. The focused column tints its band instead of
+   drawing an outline around the hidden tooltip. */
+.ts-chart-column {
+  outline: none;
+}
+
 .ts-chart-hit {
   fill: transparent;
+  transition: fill var(--ts-fast) var(--ts-ease);
+}
+
+.ts-chart-column:focus-visible .ts-chart-hit {
+  fill: var(--ts-accent-soft);
 }
 
 .ts-chart-guide {
   stroke: var(--ts-line-strong);
   opacity: 0;
+  pointer-events: none;
 }
 
 .ts-chart-dot {
@@ -297,19 +309,48 @@ code:not(pre code) {
   stroke: var(--ts-chart-1);
   stroke-width: 2;
   opacity: 0;
+  pointer-events: none;
 }
 
 .ts-chart-dot.ts-cat-2 { stroke: var(--ts-cat-2); }
 .ts-chart-dot.ts-cat-3 { stroke: var(--ts-cat-3); }
 
-.ts-chart-column:hover .ts-chart-guide,
-.ts-chart-column:hover .ts-chart-dot {
-  opacity: 1;
-}
-
+.ts-chart-column:is(:hover, :focus-visible) :is(.ts-chart-guide, .ts-chart-dot, .ts-chart-tip),
 .ts-chart-column:last-of-type .ts-chart-dot {
   opacity: 1;
 }
+
+/* Line tooltip, drawn in SVG by charts.lineTip. */
+.ts-chart-tip {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--ts-fast) var(--ts-ease);
+}
+
+.ts-chart-tip-box {
+  fill: var(--ts-surface-2);
+  stroke: var(--ts-line-strong);
+  filter: drop-shadow(0 8px 12px rgb(0 0 0 / 0.45));
+}
+
+.ts-chart .ts-chart-tip text {
+  fill: var(--ts-ink-2);
+  font-family: var(--ts-font-mono);
+  font-size: 11px;
+}
+
+.ts-chart .ts-chart-tip .ts-chart-tip-label {
+  fill: var(--ts-ink-3);
+}
+
+.ts-chart .ts-chart-tip .ts-chart-tip-value {
+  fill: var(--ts-ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-chart-tip-swatch { fill: var(--ts-chart-1); }
+.ts-chart-tip-swatch[class*="ts-cat-"] { fill: var(--series); }
 
 .ts-chart-legend {
   display: flex;
@@ -342,7 +383,56 @@ code:not(pre code) {
 .ts-chart .ts-chart-line[class*="ts-cat-"] { stroke: var(--series); }
 .ts-chart-swatch[class*="ts-cat-"] { background: var(--series); }
 
-/* Share bar and utilization ring (SVG, sized by viewBox attributes). */
+/* Share bar and utilization ring (SVG, sized by viewBox attributes). Each
+   sits in a focusable meter that shows its name and value above it. */
+.ts-chart-meter {
+  position: relative;
+  display: block;
+  border-radius: var(--ts-radius-sm);
+}
+
+.ts-chart-meter > svg {
+  display: block;
+}
+
+/* Tooltips start at the meter's left edge, so meters flush with the page
+   edge never push them out of view. */
+.ts-chart-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: var(--ts-z-tooltip);
+  display: flex;
+  align-items: baseline;
+  gap: var(--ts-s3);
+  padding: 6px var(--ts-s3);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface-2);
+  box-shadow: var(--ts-shadow-overlay);
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-xs);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(2px);
+  transition: opacity var(--ts-fast) var(--ts-ease), transform var(--ts-fast) var(--ts-ease);
+}
+
+.ts-chart-meter:is(:hover, :focus-visible) > .ts-chart-tooltip {
+  opacity: 1;
+  transform: none;
+}
+
+.ts-chart-tooltip-label {
+  color: var(--ts-ink-3);
+}
+
+.ts-chart-tooltip strong {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .ts-svg-sharebar {
   display: block;
   width: 100%;

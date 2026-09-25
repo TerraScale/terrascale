@@ -7,7 +7,7 @@ import (
 
 templ subscriptionsContent(page core.Page, d pageData) {
 	<main class="ts-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
-		@ui.PageHeader(ui.Header{Title: "Subscriptions", Description: "Save project shared-result configurations for a database. Demo configurations do not start an external reactive stream."})
+		@ui.PageHeader("Subscriptions")
 		@ui.Alert("info", "", "Demo configuration only. Live revisions, checkpoints, subscriber counts, and delivery metrics are unavailable.")
 		<div class="ts-split">
 			@ui.Card(ui.CardProps{ID: "saved-configurations", Title: "Saved configurations", Description: "Shared views saved in this project.", Flush: true}) {

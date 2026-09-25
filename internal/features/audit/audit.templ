@@ -12,7 +12,7 @@ import (
 
 templ auditView(data pageData) {
 	<main class="ts-page ts-audit-page">
-		@ui.PageHeader(ui.Header{Eyebrow: "Security and access", Title: "Audit", Description: "Recent activity for the selected organization and project."}) {
+		@ui.PageHeader("Audit") {
 				<details { ui.MenuBehavior... } class="ts-menu ts-menu-end">
 					<summary class="ts-btn ts-btn-secondary" aria-label="Export audit events">@icons.Download(16)<span>Export</span></summary>
 					<div class="ts-menu-panel" aria-label="Export formats">

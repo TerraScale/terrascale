@@ -10,7 +10,7 @@ import (
 
 templ apiKeysContent(page core.Page, d pageData) {
 	<main class="ts-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
-		@ui.PageHeader(ui.Header{Title: "API keys", Description: "Manage project credentials and their database scope."})
+		@ui.PageHeader("API keys")
 		if d.Error != "" {
 			@ui.Alert("danger", "", d.Error)
 		}
@@ -20,15 +20,14 @@ templ apiKeysContent(page core.Page, d pageData) {
 				<p class="ts-alert-body">It is shown only in this response.</p>
 				<div class="ts-row">
 					<code class="ts-apikeys-secret-value">{ d.CreatedSecret }</code>
-					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-signals="{_copied: false}" data-on:click="navigator.clipboard.writeText(el.previousElementSibling.textContent).then(() => $_copied = true)">@icons.Copy(14)<span data-text="$_copied ? 'Copied' : 'Copy'">Copy</span></button>
+					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-signals="{_copied: false}" data-on:click="navigator.clipboard.writeText(el.previousElementSibling.textContent).then(() => $_copied = true)">
+						@icons.Copy(14)
+						<span data-text="$_copied ? 'Copied' : 'Copy'">Copy</span>
+					</button>
 				</div>
 			</section>
 		}
-		@ui.Stats("Credential counts") {
-			@ui.Stat("Active keys", strconv.Itoa(d.ActiveKeys), "Available for project access")
-			@ui.Stat("Expiring keys", strconv.Itoa(d.ExpiringKeys), "Dated keys expiring within 14 days")
-			@ui.Stat("M2M clients", strconv.Itoa(d.M2MClients), "Active machine credentials")
-		}
+		@credentialSummary(d.Summary)
 		if d.CanManage {
 			<div class="ts-row ts-apikeys-create">
 				@createCredential(page, d, "key", "Create key", "New project key", "database:read,database:write")
@@ -92,6 +91,26 @@ templ apiKeysContent(page core.Page, d pageData) {
 	</main>
 }
 
+// credentialSummary is a row of compact counts: status figures carry a dot,
+// type figures the same icon as the credential rows.
+templ credentialSummary(figures []summaryFigure) {
+	<dl class="ts-apikeys-summary" aria-label="Credential summary">
+		for _, figure := range figures {
+			<div class="ts-apikeys-figure" data-tone={ figure.Tone }>
+				<dt>
+					if figure.Icon != nil {
+						@figure.Icon(14)
+					} else {
+						<span class="ts-dot" aria-hidden="true"></span>
+					}
+					{ figure.Label }
+				</dt>
+				<dd>{ strconv.Itoa(figure.Value) }</dd>
+			</div>
+		}
+	</dl>
+}
+
 templ createCredential(page core.Page, d pageData, kind, action, title, scopes string) {
 	@ui.Disclosure(ui.DisclosureProps{Label: action, Icon: credentialIcon(kind), Variant: credentialVariant(kind), Open: d.Create == kind}) {
 		<form method="post" action={ "/api/v1/dashboard/credentials/" + kind } class="ts-form ts-apikeys-create-form">
@@ -120,9 +139,9 @@ templ createCredential(page core.Page, d pageData, kind, action, title, scopes s
 
 func credentialIcon(kind string) templ.Component {
 	if kind == "key" {
-		return icons.KeyRound(16)
+		return readWriteKey.Icon(16)
 	}
-	return icons.Bot(16)
+	return machineClient.Icon(16)
 }
 
 func credentialVariant(kind string) string {
@@ -135,7 +154,12 @@ func credentialVariant(kind string) string {
 templ credentialRow(page core.Page, canManage bool, key keyView) {
 	<tr>
 		<td class="ts-strong">{ key.Name }</td>
-		<td class="ts-meta">{ key.Kind }</td>
+		<td>
+			<span class="ts-badge ts-badge-tone ts-apikeys-type" data-tone={ key.Type.Tone }>
+				@key.Type.Icon(12)
+				{ key.Type.Label }
+			</span>
+		</td>
 		<td><code>{ key.Prefix }…{ key.LastFour }</code></td>
 		<td>
 			<div class="ts-row ts-apikeys-scopes">

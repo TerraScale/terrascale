@@ -54,7 +54,7 @@ func subscriptionsContent(csrfToken string, data subscriptionsPage) templ.Compon
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = ui.PageHeader(ui.Header{Eyebrow: "Organization billing", Title: "Plans and billing", Description: "Billing for " + data.OrganizationName + "."}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.PageHeader("Plans and billing").Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -44,6 +45,14 @@ type invitationView struct {
 	ExpiresAt string
 }
 
+// shareView is one colored row of a distribution chart.
+type shareView struct {
+	Label   string
+	Tone    string
+	Count   int
+	Percent int
+}
+
 type pageData struct {
 	OrganizationName   string
 	CurrentUserID      string
@@ -51,6 +60,9 @@ type pageData struct {
 	MemberCount        int
 	ProjectCount       int
 	PendingInviteCount int
+	RoleShares         []shareView
+	InvitationShares   []shareView
+	InvitationTotal    int
 	Members            []memberView
 	Projects           []projectView
 	Invitations        []invitationView
@@ -264,6 +276,9 @@ func buildPageData(account core.Account, org core.Organization, p core.Principal
 			data.PendingInviteCount++
 		}
 	}
+	data.RoleShares = roleShares(org)
+	data.InvitationShares = invitationShares(allInvitations)
+	data.InvitationTotal = len(allInvitations)
 	switch tab {
 	case "members":
 		data.Members = pageWindow(allMembers, start, pageSize)
@@ -287,6 +302,85 @@ func buildPageData(account core.Account, org core.Organization, p core.Principal
 		data.NextURL = accessPageURL(query, tab, search, roleFilter, page+1)
 	}
 	return data
+}
+
+// roleShares splits active members by organization role. Every role is
+// listed, even when empty, so its color stays put.
+func roleShares(org core.Organization) []shareView {
+	shares := []shareView{
+		{Label: "Organization Owner", Tone: roleTone("owner")},
+		{Label: "Member", Tone: roleTone("member")},
+		{Label: "Viewer", Tone: roleTone("viewer")},
+	}
+	total := 0
+	for _, member := range org.Members {
+		if member.Status != "active" {
+			continue
+		}
+		total++
+		switch {
+		case member.UserID == org.OwnerUserID || member.Role == "owner":
+			shares[0].Count++
+		case member.Role == "member":
+			shares[1].Count++
+		case member.Role == "viewer":
+			shares[2].Count++
+		}
+	}
+	return withPercents(shares, total)
+}
+
+// invitationShares counts invitations by status, keeping only statuses in use.
+func invitationShares(invitations []invitationView) []shareView {
+	var shares []shareView
+	for _, status := range []string{"Pending", "Accepted", "Declined", "Canceled", "Expired"} {
+		share := shareView{Label: status, Tone: invitationTone(status)}
+		for _, invitation := range invitations {
+			if invitation.Status == status {
+				share.Count++
+			}
+		}
+		if share.Count > 0 {
+			shares = append(shares, share)
+		}
+	}
+	return withPercents(shares, len(invitations))
+}
+
+func withPercents(shares []shareView, total int) []shareView {
+	if total == 0 {
+		return shares
+	}
+	for i := range shares {
+		shares[i].Percent = int(math.Round(float64(shares[i].Count) * 100 / float64(total)))
+	}
+	return shares
+}
+
+// roleTone colors an organization role on badges and charts.
+func roleTone(role string) string {
+	switch role {
+	case "owner":
+		return "violet"
+	case "member":
+		return "blue"
+	default:
+		return "slate"
+	}
+}
+
+// invitationTone colors an invitation status on badges and charts.
+func invitationTone(status string) string {
+	switch status {
+	case "Pending":
+		return "amber"
+	case "Accepted":
+		return "emerald"
+	case "Declined":
+		return "rose"
+	default:
+		return "slate"
+	}
 }
 
 func pageWindow[T any](items []T, start, size int) []T {

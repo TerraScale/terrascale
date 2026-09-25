@@ -87,24 +87,6 @@ func estateTabs(active string) []ui.Tab {
 	}
 }
 
-func adminDescription(section string) string {
-	switch section {
-	case "users":
-		return "Review registered accounts and platform administrator access in the demo store."
-	case "organizations":
-		return "View organizations and their owner and project relationships."
-	case "projects":
-		return "Review projects, their recorded regions, and linked databases."
-	case "databases":
-		return "Review database inventory from the demo store. Version details are unavailable here."
-	case "estate":
-		return "Review region placement recorded on projects and databases. Provider availability is not reported."
-	case "usage":
-		return "View in-memory inventory totals. Provider-metered usage is unavailable."
-	}
-	return "Create and manage pricing plans stored in the dashboard demo."
-}
-
 func adminView(data pageData, csrfToken string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -130,7 +112,7 @@ func adminView(data pageData, csrfToken string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = ui.PageHeader(ui.Header{Eyebrow: "Administration", Title: data.Title, Description: adminDescription(data.Section)}).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.PageHeader(data.Title).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -235,7 +217,7 @@ func filterForm(action templ.SafeURL, id, label, placeholder, query, tab string)
 		var templ_7745c5c3_Var3 templ.SafeURL
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinURLErrs(action)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 137, Col: 71}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 120, Col: 71}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -253,7 +235,7 @@ func filterForm(action templ.SafeURL, id, label, placeholder, query, tab string)
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.ResolveAttributeValue(tab)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 139, Col: 46}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 122, Col: 46}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var4)
 			if templ_7745c5c3_Err != nil {
@@ -271,7 +253,7 @@ func filterForm(action templ.SafeURL, id, label, placeholder, query, tab string)
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.ResolveAttributeValue(id)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 141, Col: 36}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 124, Col: 36}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var5)
 		if templ_7745c5c3_Err != nil {
@@ -284,7 +266,7 @@ func filterForm(action templ.SafeURL, id, label, placeholder, query, tab string)
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 141, Col: 46}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 124, Col: 46}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -297,7 +279,7 @@ func filterForm(action templ.SafeURL, id, label, placeholder, query, tab string)
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.ResolveAttributeValue(id)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 142, Col: 45}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 125, Col: 45}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var7)
 		if templ_7745c5c3_Err != nil {
@@ -310,7 +292,7 @@ func filterForm(action templ.SafeURL, id, label, placeholder, query, tab string)
 		var templ_7745c5c3_Var8 string
 		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.ResolveAttributeValue(query)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 142, Col: 100}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 125, Col: 100}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var8)
 		if templ_7745c5c3_Err != nil {
@@ -323,7 +305,7 @@ func filterForm(action templ.SafeURL, id, label, placeholder, query, tab string)
 		var templ_7745c5c3_Var9 string
 		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.ResolveAttributeValue(placeholder)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 142, Col: 128}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 125, Col: 128}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var9)
 		if templ_7745c5c3_Err != nil {
@@ -342,7 +324,7 @@ func filterForm(action templ.SafeURL, id, label, placeholder, query, tab string)
 				var templ_7745c5c3_Var10 templ.SafeURL
 				templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinURLErrs(action + templ.SafeURL("?tab="+tab))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 146, Col: 87}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 129, Col: 87}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 				if templ_7745c5c3_Err != nil {
@@ -360,7 +342,7 @@ func filterForm(action templ.SafeURL, id, label, placeholder, query, tab string)
 				var templ_7745c5c3_Var11 templ.SafeURL
 				templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinURLErrs(action)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 148, Col: 58}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 131, Col: 58}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 				if templ_7745c5c3_Err != nil {
@@ -409,7 +391,7 @@ func recordName(name, id string) templ.Component {
 		var templ_7745c5c3_Var13 string
 		templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(name)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 157, Col: 32}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 140, Col: 32}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 		if templ_7745c5c3_Err != nil {
@@ -422,7 +404,7 @@ func recordName(name, id string) templ.Component {
 		var templ_7745c5c3_Var14 string
 		templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(id)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 158, Col: 32}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 141, Col: 32}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 		if templ_7745c5c3_Err != nil {
@@ -464,7 +446,7 @@ func nameField(name string) templ.Component {
 		var templ_7745c5c3_Var16 string
 		templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.ResolveAttributeValue(name)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 163, Col: 150}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 146, Col: 150}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var16)
 		if templ_7745c5c3_Err != nil {
@@ -554,7 +536,7 @@ func usersSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var20 string
 					templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(row.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 182, Col: 44}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 165, Col: 44}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 					if templ_7745c5c3_Err != nil {
@@ -567,7 +549,7 @@ func usersSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var21 string
 					templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(row.Email)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 183, Col: 43}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 166, Col: 43}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 					if templ_7745c5c3_Err != nil {
@@ -595,7 +577,7 @@ func usersSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var22 string
 					templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(row.AccountID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 193, Col: 51}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 176, Col: 51}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 					if templ_7745c5c3_Err != nil {
@@ -608,7 +590,7 @@ func usersSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var23 string
 					templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(row.UserID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 195, Col: 48}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 178, Col: 48}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 					if templ_7745c5c3_Err != nil {
@@ -621,7 +603,7 @@ func usersSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var24 string
 					templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(row.OrganizationCount))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 198, Col: 64}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 181, Col: 64}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 					if templ_7745c5c3_Err != nil {
@@ -634,7 +616,7 @@ func usersSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var25 string
 					templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(row.ProjectCount))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 199, Col: 59}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 182, Col: 59}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 					if templ_7745c5c3_Err != nil {
@@ -647,7 +629,7 @@ func usersSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var26 string
 					templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(row.CreatedAt)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 200, Col: 57}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 183, Col: 57}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 					if templ_7745c5c3_Err != nil {
@@ -660,7 +642,7 @@ func usersSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var27 templ.SafeURL
 					templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinURLErrs("/api/v1/admin/users/" + row.AccountID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 202, Col: 105}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 185, Col: 105}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 					if templ_7745c5c3_Err != nil {
@@ -673,7 +655,7 @@ func usersSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var28 string
 					templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 203, Col: 61}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 186, Col: 61}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var28)
 					if templ_7745c5c3_Err != nil {
@@ -816,7 +798,7 @@ func organizationsSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var32 string
 					templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(adminFallback(row.OwnerEmail, "Owner account unavailable"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 243, Col: 72}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 226, Col: 72}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 					if templ_7745c5c3_Err != nil {
@@ -837,7 +819,7 @@ func organizationsSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var33 string
 					templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(row.ProjectCount))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 247, Col: 59}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 230, Col: 59}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var33))
 					if templ_7745c5c3_Err != nil {
@@ -850,7 +832,7 @@ func organizationsSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var34 string
 					templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(row.CreatedAt)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 248, Col: 57}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 231, Col: 57}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 					if templ_7745c5c3_Err != nil {
@@ -863,7 +845,7 @@ func organizationsSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var35 templ.SafeURL
 					templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinURLErrs("/api/v1/admin/organizations/" + row.AccountID + "/" + row.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 251, Col: 129}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 234, Col: 129}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 					if templ_7745c5c3_Err != nil {
@@ -876,7 +858,7 @@ func organizationsSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var36 string
 					templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 252, Col: 62}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 235, Col: 62}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var36)
 					if templ_7745c5c3_Err != nil {
@@ -897,7 +879,7 @@ func organizationsSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var37 templ.SafeURL
 					templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.JoinURLErrs("/admin/projects?q=" + url.QueryEscape(row.ID))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 256, Col: 104}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 239, Col: 104}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var37))
 					if templ_7745c5c3_Err != nil {
@@ -1012,7 +994,7 @@ func projectsSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var41 string
 					templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(row.Organization)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 287, Col: 30}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 270, Col: 30}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
 					if templ_7745c5c3_Err != nil {
@@ -1025,7 +1007,7 @@ func projectsSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var42 string
 					templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(adminFallback(row.Region, "Not recorded"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 288, Col: 55}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 271, Col: 55}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
 					if templ_7745c5c3_Err != nil {
@@ -1046,7 +1028,7 @@ func projectsSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var43 string
 					templ_7745c5c3_Var43, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(row.DatabaseCount))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 292, Col: 60}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 275, Col: 60}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var43))
 					if templ_7745c5c3_Err != nil {
@@ -1059,7 +1041,7 @@ func projectsSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var44 string
 					templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.JoinStringErrs(row.CreatedAt)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 293, Col: 57}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 276, Col: 57}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var44))
 					if templ_7745c5c3_Err != nil {
@@ -1072,7 +1054,7 @@ func projectsSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var45 templ.SafeURL
 					templ_7745c5c3_Var45, templ_7745c5c3_Err = templ.JoinURLErrs("/api/v1/admin/projects/" + row.AccountID + "/" + row.OrganizationID + "/" + row.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 295, Col: 150}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 278, Col: 150}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var45))
 					if templ_7745c5c3_Err != nil {
@@ -1085,7 +1067,7 @@ func projectsSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var46 string
 					templ_7745c5c3_Var46, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 296, Col: 61}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 279, Col: 61}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var46)
 					if templ_7745c5c3_Err != nil {
@@ -1208,7 +1190,7 @@ func databasesSection(data pageData) templ.Component {
 					var templ_7745c5c3_Var50 string
 					templ_7745c5c3_Var50, templ_7745c5c3_Err = templ.JoinStringErrs(row.Organization)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 329, Col: 30}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 312, Col: 30}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var50))
 					if templ_7745c5c3_Err != nil {
@@ -1221,7 +1203,7 @@ func databasesSection(data pageData) templ.Component {
 					var templ_7745c5c3_Var51 string
 					templ_7745c5c3_Var51, templ_7745c5c3_Err = templ.JoinStringErrs(row.Project)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 330, Col: 25}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 313, Col: 25}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var51))
 					if templ_7745c5c3_Err != nil {
@@ -1234,7 +1216,7 @@ func databasesSection(data pageData) templ.Component {
 					var templ_7745c5c3_Var52 string
 					templ_7745c5c3_Var52, templ_7745c5c3_Err = templ.JoinStringErrs(row.Region)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 331, Col: 24}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 314, Col: 24}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var52))
 					if templ_7745c5c3_Err != nil {
@@ -1255,7 +1237,7 @@ func databasesSection(data pageData) templ.Component {
 					var templ_7745c5c3_Var53 string
 					templ_7745c5c3_Var53, templ_7745c5c3_Err = templ.JoinStringErrs(row.CreatedAt)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 335, Col: 57}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 318, Col: 57}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var53))
 					if templ_7745c5c3_Err != nil {
@@ -1384,7 +1366,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 						var templ_7745c5c3_Var57 string
 						templ_7745c5c3_Var57, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(row.ObservedProjects))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 368, Col: 65}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 351, Col: 65}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var57))
 						if templ_7745c5c3_Err != nil {
@@ -1397,7 +1379,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 						var templ_7745c5c3_Var58 string
 						templ_7745c5c3_Var58, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(row.ObservedDatabases))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 369, Col: 66}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 352, Col: 66}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var58))
 						if templ_7745c5c3_Err != nil {
@@ -1478,7 +1460,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 						var templ_7745c5c3_Var60 string
 						templ_7745c5c3_Var60, templ_7745c5c3_Err = templ.JoinStringErrs(row.Region)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 398, Col: 26}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 381, Col: 26}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var60))
 						if templ_7745c5c3_Err != nil {
@@ -1499,7 +1481,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 						var templ_7745c5c3_Var61 string
 						templ_7745c5c3_Var61, templ_7745c5c3_Err = templ.JoinStringErrs(row.CreatedAt)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 402, Col: 59}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 385, Col: 59}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var61))
 						if templ_7745c5c3_Err != nil {
@@ -1527,7 +1509,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		default:
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 98, "<div class=\"ts-page-heading\"><h2 class=\"ts-section-title\" id=\"estate-operations-title\">Operations</h2><p class=\"ts-meta\">Demo product-action requests are recorded for review. This page has no provider operation or live estate telemetry contract.</p></div><div class=\"ts-split\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 98, "<div class=\"ts-stack-sm\"><h2 class=\"ts-section-title\" id=\"estate-operations-title\">Operations</h2><p class=\"ts-meta\">Demo product-action requests are recorded for review. This page has no provider operation or live estate telemetry contract.</p></div><div class=\"ts-split\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1556,7 +1538,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 						var templ_7745c5c3_Var63 string
 						templ_7745c5c3_Var63, templ_7745c5c3_Err = templ.JoinStringErrs(row.Action)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 427, Col: 45}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 410, Col: 45}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var63))
 						if templ_7745c5c3_Err != nil {
@@ -1569,7 +1551,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 						var templ_7745c5c3_Var64 string
 						templ_7745c5c3_Var64, templ_7745c5c3_Err = templ.JoinStringErrs(row.Target)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 428, Col: 53}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 411, Col: 53}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var64))
 						if templ_7745c5c3_Err != nil {
@@ -1582,7 +1564,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 						var templ_7745c5c3_Var65 string
 						templ_7745c5c3_Var65, templ_7745c5c3_Err = templ.JoinStringErrs(row.Reason)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 429, Col: 27}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 412, Col: 27}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var65))
 						if templ_7745c5c3_Err != nil {
@@ -1595,7 +1577,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 						var templ_7745c5c3_Var66 string
 						templ_7745c5c3_Var66, templ_7745c5c3_Err = templ.JoinStringErrs(row.ActorUserID)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 430, Col: 58}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 413, Col: 58}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var66))
 						if templ_7745c5c3_Err != nil {
@@ -1608,7 +1590,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 						var templ_7745c5c3_Var67 string
 						templ_7745c5c3_Var67, templ_7745c5c3_Err = templ.ResolveAttributeValue(row.RecordedAt.Format("2006-01-02T15:04:05Z07:00"))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 431, Col: 112}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 414, Col: 112}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var67)
 						if templ_7745c5c3_Err != nil {
@@ -1621,7 +1603,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 						var templ_7745c5c3_Var68 string
 						templ_7745c5c3_Var68, templ_7745c5c3_Err = templ.JoinStringErrs(formatTime(row.RecordedAt))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 431, Col: 143}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 414, Col: 143}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var68))
 						if templ_7745c5c3_Err != nil {
@@ -1671,7 +1653,7 @@ func estateSection(data pageData, csrfToken string) templ.Component {
 				var templ_7745c5c3_Var70 string
 				templ_7745c5c3_Var70, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 444, Col: 57}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 427, Col: 57}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var70)
 				if templ_7745c5c3_Err != nil {
@@ -1935,7 +1917,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var80 string
 					templ_7745c5c3_Var80, templ_7745c5c3_Err = templ.JoinStringErrs(plan.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 501, Col: 45}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 484, Col: 45}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var80))
 					if templ_7745c5c3_Err != nil {
@@ -1948,7 +1930,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var81 string
 					templ_7745c5c3_Var81, templ_7745c5c3_Err = templ.JoinStringErrs(plan.Key)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 502, Col: 46}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 485, Col: 46}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var81))
 					if templ_7745c5c3_Err != nil {
@@ -1961,7 +1943,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var82 string
 					templ_7745c5c3_Var82, templ_7745c5c3_Err = templ.JoinStringErrs(plan.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 503, Col: 75}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 486, Col: 75}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var82))
 					if templ_7745c5c3_Err != nil {
@@ -1974,7 +1956,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var83 string
 					templ_7745c5c3_Var83, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.FormatInt(plan.PriceCents, 10))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 506, Col: 67}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 489, Col: 67}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var83))
 					if templ_7745c5c3_Err != nil {
@@ -1987,7 +1969,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var84 string
 					templ_7745c5c3_Var84, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.FormatInt(plan.AnnualPriceCents, 10))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 507, Col: 73}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 490, Col: 73}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var84))
 					if templ_7745c5c3_Err != nil {
@@ -2000,7 +1982,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var85 string
 					templ_7745c5c3_Var85, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(plan.TrialDays))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 508, Col: 57}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 491, Col: 57}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var85))
 					if templ_7745c5c3_Err != nil {
@@ -2013,7 +1995,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var86 string
 					templ_7745c5c3_Var86, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.FormatInt(plan.StorageMiB, 10))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 509, Col: 67}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 492, Col: 67}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var86))
 					if templ_7745c5c3_Err != nil {
@@ -2026,7 +2008,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var87 string
 					templ_7745c5c3_Var87, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.FormatInt(plan.MonthlyRequests, 10))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 510, Col: 72}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 493, Col: 72}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var87))
 					if templ_7745c5c3_Err != nil {
@@ -2054,7 +2036,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var88 templ.SafeURL
 					templ_7745c5c3_Var88, templ_7745c5c3_Err = templ.JoinURLErrs("/api/v1/admin/plans/" + plan.ID + "/visibility")
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 520, Col: 87}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 503, Col: 87}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var88))
 					if templ_7745c5c3_Err != nil {
@@ -2067,7 +2049,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var89 string
 					templ_7745c5c3_Var89, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 521, Col: 62}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 504, Col: 62}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var89)
 					if templ_7745c5c3_Err != nil {
@@ -2080,7 +2062,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var90 string
 					templ_7745c5c3_Var90, templ_7745c5c3_Err = templ.ResolveAttributeValue(planVisibilityValue(plan.Visible))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 521, Col: 143}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 504, Col: 143}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var90)
 					if templ_7745c5c3_Err != nil {
@@ -2093,7 +2075,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var91 string
 					templ_7745c5c3_Var91, templ_7745c5c3_Err = templ.JoinStringErrs(planVisibilityLabel(plan.Visible))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 522, Col: 110}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 505, Col: 110}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var91))
 					if templ_7745c5c3_Err != nil {
@@ -2106,7 +2088,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var92 templ.SafeURL
 					templ_7745c5c3_Var92, templ_7745c5c3_Err = templ.JoinURLErrs("/api/v1/admin/plans/" + plan.ID + "/delete")
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 524, Col: 83}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 507, Col: 83}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var92))
 					if templ_7745c5c3_Err != nil {
@@ -2119,7 +2101,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var93 string
 					templ_7745c5c3_Var93, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 525, Col: 62}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 508, Col: 62}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var93)
 					if templ_7745c5c3_Err != nil {
@@ -2193,7 +2175,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var96 string
 					templ_7745c5c3_Var96, templ_7745c5c3_Err = templ.JoinStringErrs(plan.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 548, Col: 42}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 531, Col: 42}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var96))
 					if templ_7745c5c3_Err != nil {
@@ -2206,7 +2188,7 @@ func plansSection(data pageData, csrfToken string) templ.Component {
 					var templ_7745c5c3_Var97 string
 					templ_7745c5c3_Var97, templ_7745c5c3_Err = templ.JoinStringErrs(plan.Key)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 549, Col: 43}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 532, Col: 43}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var97))
 					if templ_7745c5c3_Err != nil {
@@ -2270,7 +2252,7 @@ func planForm(csrfToken string, plan core.Plan, isNew bool) templ.Component {
 		var templ_7745c5c3_Var99 string
 		templ_7745c5c3_Var99, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 563, Col: 53}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 546, Col: 53}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var99)
 		if templ_7745c5c3_Err != nil {
@@ -2288,7 +2270,7 @@ func planForm(csrfToken string, plan core.Plan, isNew bool) templ.Component {
 			var templ_7745c5c3_Var100 string
 			templ_7745c5c3_Var100, templ_7745c5c3_Err = templ.ResolveAttributeValue(plan.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 565, Col: 53}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 548, Col: 53}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var100)
 			if templ_7745c5c3_Err != nil {
@@ -2316,7 +2298,7 @@ func planForm(csrfToken string, plan core.Plan, isNew bool) templ.Component {
 			var templ_7745c5c3_Var101 string
 			templ_7745c5c3_Var101, templ_7745c5c3_Err = templ.JoinStringErrs(plan.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 571, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 554, Col: 47}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var101))
 			if templ_7745c5c3_Err != nil {
@@ -2350,7 +2332,7 @@ func planForm(csrfToken string, plan core.Plan, isNew bool) templ.Component {
 			var templ_7745c5c3_Var103 string
 			templ_7745c5c3_Var103, templ_7745c5c3_Err = templ.ResolveAttributeValue(planFieldID(plan, isNew, "key"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 577, Col: 42}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 560, Col: 42}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var103)
 			if templ_7745c5c3_Err != nil {
@@ -2368,7 +2350,7 @@ func planForm(csrfToken string, plan core.Plan, isNew bool) templ.Component {
 				var templ_7745c5c3_Var104 string
 				templ_7745c5c3_Var104, templ_7745c5c3_Err = templ.ResolveAttributeValue(plan.Key)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 581, Col: 23}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 564, Col: 23}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var104)
 				if templ_7745c5c3_Err != nil {
@@ -2418,7 +2400,7 @@ func planForm(csrfToken string, plan core.Plan, isNew bool) templ.Component {
 			var templ_7745c5c3_Var106 string
 			templ_7745c5c3_Var106, templ_7745c5c3_Err = templ.ResolveAttributeValue(planFieldID(plan, isNew, "name"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 591, Col: 66}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 574, Col: 66}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var106)
 			if templ_7745c5c3_Err != nil {
@@ -2431,7 +2413,7 @@ func planForm(csrfToken string, plan core.Plan, isNew bool) templ.Component {
 			var templ_7745c5c3_Var107 string
 			templ_7745c5c3_Var107, templ_7745c5c3_Err = templ.ResolveAttributeValue(plan.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 591, Col: 114}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 574, Col: 114}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var107)
 			if templ_7745c5c3_Err != nil {
@@ -2486,7 +2468,7 @@ func planForm(csrfToken string, plan core.Plan, isNew bool) templ.Component {
 			var templ_7745c5c3_Var109 string
 			templ_7745c5c3_Var109, templ_7745c5c3_Err = templ.ResolveAttributeValue(planFieldID(plan, isNew, "visible"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 599, Col: 70}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 582, Col: 70}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var109)
 			if templ_7745c5c3_Err != nil {
@@ -2585,7 +2567,7 @@ func planNumberField(id, label, name, value string) templ.Component {
 			var templ_7745c5c3_Var112 string
 			templ_7745c5c3_Var112, templ_7745c5c3_Err = templ.ResolveAttributeValue(id)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 618, Col: 33}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 601, Col: 33}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var112)
 			if templ_7745c5c3_Err != nil {
@@ -2598,7 +2580,7 @@ func planNumberField(id, label, name, value string) templ.Component {
 			var templ_7745c5c3_Var113 string
 			templ_7745c5c3_Var113, templ_7745c5c3_Err = templ.ResolveAttributeValue(name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 618, Col: 47}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 601, Col: 47}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var113)
 			if templ_7745c5c3_Err != nil {
@@ -2611,7 +2593,7 @@ func planNumberField(id, label, name, value string) templ.Component {
 			var templ_7745c5c3_Var114 string
 			templ_7745c5c3_Var114, templ_7745c5c3_Err = templ.ResolveAttributeValue(value)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 618, Col: 85}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/admin/admin.templ`, Line: 601, Col: 85}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var114)
 			if templ_7745c5c3_Err != nil {

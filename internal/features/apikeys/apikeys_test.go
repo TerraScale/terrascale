@@ -153,8 +153,11 @@ func TestCredentialSummaryCountsScopedInventoryBeforeFilters(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("credential summary status = %d: %s", w.Code, w.Body.String())
 	}
-	for label, want := range map[string]string{"Active keys": "2", "Expiring keys": "1", "M2M clients": "1"} {
-		pattern := regexp.MustCompile(`(?s)<dt class="ts-stat-label">` + regexp.QuoteMeta(label) + `</dt>\s*<dd class="ts-stat-value">(\d+)</dd>`)
+	for label, want := range map[string]string{
+		"Total": "5", "Active": "3", "Expiring soon": "1", "Inactive": "2",
+		"Read-write keys": "0", "Read-only keys": "4", "Full-access keys": "0", "M2M clients": "1",
+	} {
+		pattern := regexp.MustCompile(`(?s)<dt>(?:<svg[^>]*>.*?</svg>|<span class="ts-dot" aria-hidden="true"></span>)\s*` + regexp.QuoteMeta(label) + `</dt>\s*<dd>(\d+)</dd>`)
 		match := pattern.FindStringSubmatch(w.Body.String())
 		if len(match) != 2 || match[1] != want {
 			t.Fatalf("%s count = %v, want %s: %s", label, match, want, w.Body.String())
@@ -162,6 +165,37 @@ func TestCredentialSummaryCountsScopedInventoryBeforeFilters(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), ">Existing<") || !strings.Contains(w.Body.String(), ">machine<") {
 		t.Fatalf("credential filter did not apply to rows: %s", w.Body.String())
+	}
+}
+
+func TestCredentialRowsShowTypeIconAndTone(t *testing.T) {
+	deps, p := fixture(t, "owner")
+	if err := deps.Store.UpdateAs(p, func(a *core.Account) error {
+		org := a.Organizations[p.OrganizationID]
+		project := org.Projects[p.ProjectID]
+		project.APIKeys["writer"] = core.APIKey{ID: "writer", Kind: "api-key", ProjectID: p.ProjectID, Name: "writer", Scopes: []string{"databases:read", "documents:write"}}
+		project.APIKeys["root"] = core.APIKey{ID: "root", Kind: "api-key", ProjectID: p.ProjectID, Name: "root", Scopes: []string{"*"}}
+		project.APIKeys["worker"] = core.APIKey{ID: "worker", Kind: "m2m", ProjectID: p.ProjectID, Name: "worker", Scopes: []string{"*"}}
+		org.Projects[p.ProjectID] = project
+		a.Organizations[p.OrganizationID] = org
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deps.Render = renderingRenderer{}
+	mux := http.NewServeMux()
+	Mount(mux, deps)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api-keys", nil))
+	for name, want := range map[string]credentialType{"Existing": readOnlyKey, "writer": readWriteKey, "root": fullAccessKey, "worker": machineClient} {
+		var icon bytes.Buffer
+		if err := want.Icon(12).Render(context.Background(), &icon); err != nil {
+			t.Fatal(err)
+		}
+		row := regexp.MustCompile(`(?s)<td class="ts-strong">` + regexp.QuoteMeta(name) + `</td>\s*<td><span class="ts-badge ts-badge-tone ts-apikeys-type" data-tone="([a-z]+)">(.*?)</span></td>`).FindStringSubmatch(w.Body.String())
+		if len(row) != 3 || row[1] != want.Tone || !strings.Contains(row[2], icon.String()) || !strings.Contains(row[2], want.Label) {
+			t.Fatalf("%s type cell = %q, want %s %s badge", name, row, want.Tone, want.Label)
+		}
 	}
 }
 

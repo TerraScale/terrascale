@@ -1,4 +1,46 @@
-/* API keys: one-time secret banner and collapsible creation cards. */
+/* API keys: summary figures, one-time secret banner, and collapsible creation cards. */
+
+/* Summary: small tinted figures, each colored by its [data-tone]. */
+.ts-apikeys-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+}
+
+.ts-apikeys-figure {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  height: var(--ts-control-h-sm);
+  padding: 0 var(--ts-s3);
+  border: 1px solid color-mix(in oklab, var(--tone) 28%, transparent);
+  border-radius: var(--ts-radius-pill);
+  background: color-mix(in oklab, var(--tone) 8%, transparent);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-apikeys-figure > dt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ts-ink-2);
+}
+
+.ts-apikeys-figure > dt > :first-child {
+  flex: none;
+  color: var(--tone);
+}
+
+/* Credential type badge: the icon keeps its size in narrow table cells. */
+.ts-apikeys-type > svg {
+  flex: none;
+}
+
+.ts-apikeys-figure > dd {
+  color: var(--ts-ink);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
 
 .ts-apikeys-secret-value {
   flex: 1 1 280px;

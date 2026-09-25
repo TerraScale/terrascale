@@ -139,7 +139,7 @@ test("profile email and language persist, password change ends the session, and 
     email.getByRole("button", { name: "Change email" }).click(),
   );
   await expect(page.getByRole("status")).toContainText("Email changed in this demo");
-  await expect(page.locator(".ts-page-header")).toContainText(newEmail);
+  await expect(page.locator("#profile-context")).toContainText(newEmail);
 
   const language = page.locator('form[action="/api/v1/dashboard/profile/language"]');
   await language.locator('[name="locale"]').selectOption("pt-BR");
@@ -276,7 +276,7 @@ test("seeded demo charts render labelled samples and respond to the selected ran
   expect(await page.locator("#home-activity path.ts-chart-line").getAttribute("d")).not.toBe(sevenDayPath);
 
   expect((await page.goto("/usage?tab=overview&range=7d"))?.status()).toBe(200);
-  const rings = page.locator(".ts-usage-sample-gauges .ts-usage-ring svg[role='img']");
+  const rings = page.locator(".ts-usage-sample-gauges .ts-usage-ring .ts-chart-meter[role='img']");
   await expect(rings).toHaveCount(2);
   await expect(rings.nth(0)).toHaveAttribute("aria-label", /81% of illustrative demo capacity/);
   await expect(rings.nth(1)).toHaveAttribute("aria-label", /163% of illustrative demo capacity/);
@@ -303,7 +303,7 @@ test("seeded demo charts render labelled samples and respond to the selected ran
   try {
     const noJS = await context.newPage();
     expect((await noJS.goto("/usage?tab=overview&range=7d"))?.status()).toBe(200);
-    await expect(noJS.locator(".ts-usage-sample-gauges .ts-usage-ring svg[role='img']")).toHaveCount(2);
+    await expect(noJS.locator(".ts-usage-sample-gauges .ts-usage-ring .ts-chart-meter[role='img']")).toHaveCount(2);
     await expect(noJS.locator(".ts-usage-chart-shell path.ts-cat-1")).toHaveCount(1);
     await expect(noJS.locator(".ts-usage-share svg.ts-svg-sharebar rect.ts-svg-sharebar-fill")).toHaveCount(3);
   } finally {
@@ -313,7 +313,7 @@ test("seeded demo charts render labelled samples and respond to the selected ran
   await expect(page.getByText("Next recorded invoice", { exact: true })).toBeVisible();
   await expect(page.getByText("Billing period", { exact: true })).toBeVisible();
   await expect(page.getByText("Outstanding balance", { exact: true })).toBeVisible();
-  const periodFill = page.locator('.ts-usage-billing-kpis svg.ts-svg-sharebar[aria-label*="recorded billing period"] rect.ts-svg-sharebar-fill');
+  const periodFill = page.locator('.ts-usage-billing-kpis .ts-chart-meter[aria-label*="recorded billing period"] rect.ts-svg-sharebar-fill');
   await expect(periodFill).toHaveCount(1);
   expect(Number(await periodFill.getAttribute("width"))).toBeGreaterThan(0);
 });
@@ -372,8 +372,9 @@ test("seeded database detail tabs retain placement, backup, branch, and import c
 
   await tabs.getByRole("link", { name: "Backups" }).click();
   await expect(tabs.getByRole("link", { name: "Backups" })).toHaveAttribute("aria-current", "page");
-  await expect(page.getByRole("heading", { name: "Backups" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Manage backups and restore points" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Restore points" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Backup policy" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create backup" })).toBeVisible();
 
   await tabs.getByRole("link", { name: "Import and export" }).click();
   await expect(tabs.getByRole("link", { name: "Import and export" })).toHaveAttribute("aria-current", "page");

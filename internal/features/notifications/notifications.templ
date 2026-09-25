@@ -10,7 +10,7 @@ import (
 
 templ notificationsView(data pageData, csrfToken string) {
 	<main class="ts-page">
-		@ui.PageHeader(ui.Header{Eyebrow: "Account activity", Title: "Notifications", Description: "Review updates for your selected organization and project."}) {
+		@ui.PageHeader("Notifications") {
 			<form method="post" action="/api/v1/notifications/read-all">
 				<input type="hidden" name="_csrf" value={ csrfToken }/>
 				<button class="ts-btn ts-btn-secondary" type="submit" disabled?={ data.Unread == 0 }>Mark all read</button>

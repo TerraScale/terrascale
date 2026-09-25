@@ -3,7 +3,9 @@
 package demovisuals
 
 import (
+	"fmt"
 	"math"
+	"time"
 
 	"terrascale.tech/dashboard/internal/core"
 )
@@ -53,6 +55,37 @@ func TickLabels(value string) []string {
 		return []string{"30d ago", "22d", "15d", "7d", "Now"}
 	default:
 		return []string{"7d ago", "5d", "3d", "1d", "Now"}
+	}
+}
+
+// PointLabels names count samples that split the range into equal buckets by
+// their distance from now, for chart tooltips.
+func PointLabels(value string, count int) []string {
+	span := 7 * 24 * time.Hour
+	switch NormalizeRange(value) {
+	case "24h":
+		span = 24 * time.Hour
+	case "30d":
+		span = 30 * 24 * time.Hour
+	}
+	labels := make([]string, count)
+	for i := range labels {
+		labels[i] = ago(span * time.Duration(count-1-i) / time.Duration(count))
+	}
+	return labels
+}
+
+func ago(elapsed time.Duration) string {
+	days, hours := int(elapsed/(24*time.Hour)), int(elapsed%(24*time.Hour)/time.Hour)
+	switch {
+	case days == 0 && hours == 0:
+		return "Now"
+	case days == 0:
+		return fmt.Sprintf("%dh ago", hours)
+	case hours == 0:
+		return fmt.Sprintf("%dd ago", days)
+	default:
+		return fmt.Sprintf("%dd %dh ago", days, hours)
 	}
 }
 

@@ -20,26 +20,24 @@ type navDestination struct {
 }
 
 var navDestinations = map[string]navDestination{
-	"/":                    {icons.Home, "violet"},
+	"/":                    {icons.LayoutDashboard, "violet"},
 	"/databases":           {icons.Database, "blue"},
 	"/data":                {icons.Table, "cyan"},
-	"/backups":             {icons.Archive, "teal"},
-	"/engine":              {icons.Terminal, "lime"},
 	"/api-keys":            {icons.KeyRound, "amber"},
 	"/access":              {icons.Users, "pink"},
-	"/auth":                {icons.ShieldCheck, "emerald"},
+	"/auth":                {icons.Fingerprint, "emerald"},
 	"/audit":               {icons.ScrollText, "orange"},
-	"/usage":               {icons.Gauge, "sky"},
-	"/subscriptions":       {icons.Sparkles, "fuchsia"},
+	"/usage":               {icons.ChartColumnBig, "sky"},
+	"/subscriptions":       {icons.RadioTower, "fuchsia"},
 	"/billing":             {icons.CreditCard, "rose"},
-	"/organization":        {icons.Building, "indigo"},
+	"/organization":        {icons.Building2, "indigo"},
 	"/settings":            {icons.Settings, "slate"},
-	"/admin/users":         {icons.Fingerprint, "pink"},
+	"/admin/users":         {icons.Users, "pink"},
 	"/admin/organizations": {icons.Building2, "indigo"},
 	"/admin/projects":      {icons.Boxes, "cyan"},
 	"/admin/databases":     {icons.Database, "blue"},
 	"/admin/estate":        {icons.Globe, "teal"},
-	"/admin/usage":         {icons.Gauge, "sky"},
+	"/admin/usage":         {icons.ChartColumnBig, "sky"},
 	"/admin/plans":         {icons.CreditCard, "rose"},
 }
 
@@ -74,6 +72,28 @@ func navSectionsLabel(admin bool) string {
 func contextTriggerLabel(shell core.Shell) string {
 	return fmt.Sprintf("Switch organization or project, current: %s / %s",
 		displayName(shell.OrganizationName, "none"), displayName(shell.ProjectName, "none"))
+}
+
+// initialTones color organization and project tiles; a name always maps to
+// the same tone so a workspace keeps its color across pages.
+var initialTones = []string{"violet", "blue", "cyan", "teal", "amber", "pink", "emerald", "orange", "fuchsia", "indigo"}
+
+func initialTone(name string) string {
+	if name == "" {
+		return "slate"
+	}
+	var hash uint32 = 2166136261
+	for _, b := range []byte(name) {
+		hash = (hash ^ uint32(b)) * 16777619
+	}
+	return initialTones[hash%uint32(len(initialTones))]
+}
+
+func initial(name string) string {
+	for _, r := range name {
+		return strings.ToUpper(string(r))
+	}
+	return "?"
 }
 
 func displayName(value, fallback string) string {

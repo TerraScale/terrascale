@@ -25,6 +25,42 @@ func TestDatabaseContentPreservesValidNamePattern(t *testing.T) {
 	}
 }
 
+func TestDatabaseListShowsColoredSummary(t *testing.T) {
+	summary := summarize(map[string]core.Database{
+		"db-1": {ID: "db-1", Name: "orders", Status: "ready", Region: "GRU", Documents: map[string]map[string][]byte{"orders": {"a": nil, "b": nil}}},
+		"db-2": {ID: "db-2", Name: "events", Status: "provisioning", Region: "FRA"},
+		"db-3": {ID: "db-3", Name: "logs", Status: "failed", Region: "GRU"},
+	})
+	d := pageData{ProjectID: "project-1", Summary: summary, Databases: []databaseView{{ID: "db-1", Name: "orders", Status: "ready", Region: "GRU"}}}
+	var out bytes.Buffer
+	if err := databasesContent(core.Page{}, d).Render(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`aria-label="Database totals"`,
+		`<div class="ts-stat" data-tone="blue"><dt class="ts-stat-label"><span class="ts-dot" aria-hidden="true"></span>`,
+		`Databases</dt><dd class="ts-stat-value">3</dd>`,
+		`Ready</dt><dd class="ts-stat-value">1</dd><dd class="ts-stat-detail">33% of databases</dd>`,
+		`Provisioning</dt><dd class="ts-stat-value">1</dd>`,
+		`Failed</dt><dd class="ts-stat-value">1</dd>`,
+		`Regions</dt><dd class="ts-stat-value">2</dd><dd class="ts-stat-detail">FRA · GRU</dd>`,
+		`Documents</dt><dd class="ts-stat-value">2</dd><dd class="ts-stat-detail">Across 1 collection</dd>`,
+		`<span class="ts-badge ts-badge-tone" data-tone="emerald"><span class="ts-dot" aria-hidden="true"></span>ready</span>`,
+	} {
+		if !strings.Contains(out.String(), expected) {
+			t.Errorf("database list is missing %q", expected)
+		}
+	}
+
+	out.Reset()
+	if err := databasesContent(core.Page{}, pageData{ProjectID: "project-1"}).Render(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "Database totals") {
+		t.Error("empty project renders database totals")
+	}
+}
+
 func TestDatabaseContentHidesUnauthorizedMutations(t *testing.T) {
 	d := pageData{ProjectID: "project-1", Region: "GRU", Detail: &databaseView{ID: "db-1", Name: "primary", Status: "ready"}}
 	var out bytes.Buffer

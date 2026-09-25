@@ -1,0 +1,40 @@
+package authentication
+
+import "terrascale.tech/dashboard/internal/ui"
+
+templ auditSection(data pageData) {
+	@ui.Card(ui.CardProps{ID: "auth-audit", Title: data.Section.Title, Description: data.Section.Description, Flush: len(data.Events) > 0}) {
+		if len(data.Events) > 0 {
+			<div class="ts-table-wrap">
+				<table class="ts-table">
+					<thead><tr><th>Event</th><th>Target</th><th>Actor</th><th>Time</th></tr></thead>
+					<tbody>
+						for _, event := range data.Events {
+							<tr>
+								<td>
+									<div class="ts-idp-identity">
+										@ui.Badge(eventTone(event.Action), eventVerb(event.Action))
+										<div class="ts-list-main">
+											<span class="ts-strong">{ eventSubject(event.Action) }</span>
+											<span class="ts-meta ts-mono">{ event.Action }</span>
+										</div>
+									</div>
+								</td>
+								<td class="ts-table-mono ts-break">{ event.Target }</td>
+								<td>
+									<div class="ts-idp-identity">
+										<span class="ts-idp-avatar" data-tone={ avatarTone(event.Actor) } aria-hidden="true">{ initials(event.Actor) }</span>
+										<span>{ event.Actor }</span>
+									</div>
+								</td>
+								<td class="ts-meta ts-idp-nowrap">{ event.At.UTC().Format("Jan 2, 2006 15:04 UTC") }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		} else {
+			@ui.Empty("No authentication changes are recorded for this project.", "Changes to users, organizations, connections, and settings appear here.")
+		}
+	}
+}

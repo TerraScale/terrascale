@@ -6,12 +6,13 @@ import (
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/charts"
 	"terrascale.tech/dashboard/internal/ui/icons"
 )
 
 templ accessPageView(page core.Page, data pageData) {
 	<main id="access-page" class="ts-page ts-access-page">
-		@ui.PageHeader(ui.Header{Title: "Team", Description: "People, projects and invitations for the active organization."}) {
+		@ui.PageHeader("Team") {
 			if data.CanManage {
 				<a class="ts-btn ts-btn-primary" href="/access?tab=invitations&amp;create=1">@icons.UserPlus(16)<span>Invite member</span></a>
 			}
@@ -81,10 +82,26 @@ templ memberFilters(data pageData) {
 
 templ accessOverview(page core.Page, data pageData) {
 	@ui.Stats("Team totals") {
-		@ui.Stat("Organization members", fmt.Sprint(data.MemberCount), "People with organization access")
-		@ui.Stat("Projects", fmt.Sprint(data.ProjectCount), "Projects visible to this account")
-		@ui.Stat("Pending invitations", fmt.Sprint(data.PendingInviteCount), "Awaiting a response")
+		@ui.ToneStat("pink", "Organization members", fmt.Sprint(data.MemberCount), "People with organization access")
+		@ui.ToneStat("indigo", "Projects", fmt.Sprint(data.ProjectCount), "Projects visible to this account")
+		@ui.ToneStat("amber", "Pending invitations", fmt.Sprint(data.PendingInviteCount), "Awaiting a response")
 	}
+	<div class="ts-grid-2">
+		@ui.Card(ui.CardProps{ID: "team-roles", Title: "Roles", Description: "Active members by organization role"}) {
+			if data.MemberCount == 0 {
+				@noMembers()
+			} else {
+				@shareChart("Members by role", "active members", data.RoleShares)
+			}
+		}
+		@ui.Card(ui.CardProps{ID: "team-invitation-status", Title: "Invitation status", Description: fmt.Sprintf("%d %s created for this organization", data.InvitationTotal, invitationNoun(data.InvitationTotal))}) {
+			if data.InvitationTotal == 0 {
+				@ui.Empty("No invitations yet.", "Invite a teammate by email to give them access to this organization.")
+			} else {
+				@shareChart("Invitations by status", "invitations", data.InvitationShares)
+			}
+		}
+	</div>
 	<div class="ts-grid-2">
 		@ui.Card(ui.CardProps{ID: "organization-members", Title: "Organization members", Description: "Users returned by the TerraScale Dashboard API", Actions: linkAction("/access?tab=members", "View all"), Flush: data.MemberCount > 0}) {
 			if data.MemberCount == 0 {
@@ -94,7 +111,7 @@ templ accessOverview(page core.Page, data pageData) {
 					for _, member := range data.Members[:min(len(data.Members), 5)] {
 						<li class="ts-list-item">
 							@memberIdentity(member)
-							@ui.Badge(memberTone(member.IsOwner), accessMemberRoleLabel(member))
+							@ui.StatusBadge(memberRoleTone(member), accessMemberRoleLabel(member))
 						</li>
 					}
 				</ul>
@@ -115,7 +132,7 @@ templ accessOverview(page core.Page, data pageData) {
 						for _, invitation := range data.Invitations[:min(len(data.Invitations), 3)] {
 							<li class="ts-list-item">
 								<span class="ts-list-main ts-strong ts-truncate">{ invitation.Email }</span>
-								@ui.Badge(invitationTone(invitation.Status), invitation.Status)
+								@ui.StatusBadge(invitationTone(invitation.Status), invitation.Status)
 								if invitation.Status == "Pending" {
 									<form method="post" action={ "/api/v1/access/invitations/" + invitation.ID + "/revoke" }><input type="hidden" name="_csrf" value={ page.CSRFToken }/><button class="ts-btn ts-btn-ghost ts-btn-sm" type="submit" title={ "Cancel invitation for " + invitation.Email }>Cancel</button></form>
 								}
@@ -234,6 +251,20 @@ templ accessInvitations(page core.Page, data pageData) {
 	}
 }
 
+// shareChart lists one colored share bar per category; of names the whole
+// each bar is a share of ("Member: 40 percent of active members").
+templ shareChart(label, of string, shares []shareView) {
+	<ul class="ts-access-shares" aria-label={ label }>
+		for _, share := range shares {
+			<li class="ts-access-share" data-tone={ share.Tone }>
+				<span class="ts-access-share-label"><span class="ts-dot" aria-hidden="true"></span>{ share.Label }</span>
+				<span class="ts-access-share-value"><span class="ts-strong">{ fmt.Sprint(share.Count) }</span> <span class="ts-meta">{ fmt.Sprint(share.Percent) }%</span></span>
+				@charts.Bar(charts.NewBar(share.Label, share.Percent, of))
+			</li>
+		}
+	</ul>
+}
+
 templ noMembers() {
 	@ui.Empty("No members returned", "The API did not return organization members for this account.")
 }
@@ -254,7 +285,7 @@ templ accessMemberRow(page core.Page, member memberView) {
 	<tr>
 		<td><div class="ts-row ts-access-member">@memberIdentity(member)</div></td>
 		<td><code class="ts-meta">{ member.ID }</code></td>
-		<td>@ui.Badge(memberTone(member.IsOwner), accessMemberRoleLabel(member))</td>
+		<td>@ui.StatusBadge(memberRoleTone(member), accessMemberRoleLabel(member))</td>
 		<td class="ts-meta">{ member.JoinedAt }</td>
 		<td class="ts-table-actions">
 			if member.CanEdit {
@@ -286,7 +317,7 @@ templ accessInvitationRow(page core.Page, canManage bool, invitation invitationV
 	<tr>
 		<td class="ts-strong">{ invitation.Email }</td>
 		<td>{ invitation.Role }</td>
-		<td>@ui.Badge(invitationTone(invitation.Status), invitation.Status)</td>
+		<td>@ui.StatusBadge(invitationTone(invitation.Status), invitation.Status)</td>
 		<td class="ts-meta">{ invitation.ExpiresAt }</td>
 		<td class="ts-table-actions">
 			if canManage && invitation.Status == "Pending" {
@@ -392,16 +423,9 @@ func projectStatus(selected bool) string {
 	return "Available"
 }
 
-func memberTone(owner bool) string {
-	if owner {
-		return "success"
+func memberRoleTone(member memberView) string {
+	if member.IsOwner {
+		return roleTone("owner")
 	}
-	return "neutral"
-}
-
-func invitationTone(status string) string {
-	if status == "Pending" {
-		return "info"
-	}
-	return "neutral"
+	return roleTone(member.Role)
 }

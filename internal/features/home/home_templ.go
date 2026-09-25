@@ -75,7 +75,7 @@ func homeView(data pageData) templ.Component {
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = ui.PageHeader(ui.Header{Eyebrow: data.ProjectName, Title: homeTitle(data.Tab), Description: homeDescription(data.Tab)}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.PageHeader(homeTitle(data.Tab)).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -673,13 +673,6 @@ func homeTitle(tab string) string {
 		return "Connect your AI or platform"
 	}
 	return "Overview"
-}
-
-func homeDescription(tab string) string {
-	if tab == "connect" {
-		return "Reach this project from your assistant, application, or pipeline. Connection flows are previewed while provisioning finishes."
-	}
-	return "Current project totals, recent activity, and next steps."
 }
 
 var _ = templruntime.GeneratedTemplate

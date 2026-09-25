@@ -70,8 +70,13 @@ it with Lightning CSS into the single stylesheet `web/static/css/terrascale.css`
 ## Charts
 
 `internal/ui/charts` renders SVG on the server: monotone curves, a gradient
-area for single series, a dashed grid, and hover columns (capped at 60) with a
-guide line, dots and a native `<title>` tooltip. No chart library or script.
+area for single series, a dashed grid, and focusable hover columns (capped at
+60) with a guide line, dots and an SVG tooltip listing the point label and the
+exact value of every series. The tooltip is sized from its monospaced text and
+flips left near the plot end, so it never leaves the viewBox. Rings and share
+bars sit in a focusable `ts-chart-meter` whose `ts-chart-tooltip` shows name and
+percent above it. Tooltips appear on `:hover` and `:focus-visible`; no chart
+library or script.
 
 ## Performance
 

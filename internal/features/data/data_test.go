@@ -148,7 +148,7 @@ func TestDataPagesRenderDistinctViews(t *testing.T) {
 	mux := http.NewServeMux()
 	Mount(mux, deps)
 	for _, tc := range []struct{ path, heading, detail string }{
-		{"/data", "Saved queries", "Project queries"},
+		{"/data", "Saved queries", `id="data-queries"`},
 		{"/data?view=table", "Collection documents", "Enter a collection name"},
 		{"/data?view=editor", "Document editor", "Apply document operation"},
 		{"/data?view=sql", "SQL console", "Run query"},

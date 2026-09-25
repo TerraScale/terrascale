@@ -161,11 +161,22 @@ func TestAccessOverviewRendersSummaryAndKeepsDatastarMemberFilters(t *testing.T)
 		t.Fatalf("GET /access: status = %d", status)
 	}
 	for _, expected := range []string{
-		`<h1 class="ts-page-title">Team</h1>`, `aria-label="Team totals"`, "Organization members",
+		`<h1 class="ts-sr-only">Team</h1>`, `aria-label="Team totals"`, "Organization members",
 		`aria-label="Organization member summary"`, "member@example.test",
 		"Invitations and role changes", `aria-label="Invitation summary"`,
 		"pending@example.test", `action="/api/v1/access/invitations"`,
 		`name="_csrf"`, "1 pending invitation and 2 organization access records.",
+		`<div class="ts-stat" data-tone="pink"><dt class="ts-stat-label"><span class="ts-dot" aria-hidden="true"></span>`,
+		`<ul class="ts-access-shares" aria-label="Members by role">`,
+		`<li class="ts-access-share" data-tone="violet">`,
+		`aria-label="Organization Owner: 50 percent of active members"`,
+		`aria-label="Member: 50 percent of active members"`,
+		`aria-label="Viewer: 0 percent of active members"`,
+		`<ul class="ts-access-shares" aria-label="Invitations by status">`,
+		`<li class="ts-access-share" data-tone="amber">`,
+		`aria-label="Pending: 50 percent of invitations"`, `aria-label="Accepted: 50 percent of invitations"`,
+		`<span class="ts-badge ts-badge-tone" data-tone="amber"><span class="ts-dot" aria-hidden="true"></span>Pending</span>`,
+		`<span class="ts-badge ts-badge-tone" data-tone="violet"><span class="ts-dot" aria-hidden="true"></span>Organization Owner</span>`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("access overview is missing %q", expected)
@@ -214,7 +225,7 @@ func TestOrganizationOverviewAndProjectDisclosureIntent(t *testing.T) {
 		t.Fatalf("GET /organization: status = %d", status)
 	}
 	for _, expected := range []string{
-		`class="ts-page-title"`, `aria-label="Organization summary"`,
+		`<h1 class="ts-sr-only">`, `aria-label="Organization summary"`,
 		`id="activeOrganization"`, `id="projects"`, "Organization details",
 		"Signed-in user", "Manage team",
 	} {

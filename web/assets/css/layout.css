@@ -1,4 +1,4 @@
-/* Page container, page header, and layout helpers. Pages space their
+/* Page container, page actions, and layout helpers. Pages space their
    blocks with gap, never with margins, so rhythm stays consistent. */
 
 .ts-page {
@@ -7,23 +7,7 @@
   align-content: start;
   gap: var(--ts-s8);
   width: 100%;
-  max-width: var(--ts-page-max);
-  margin-inline: auto;
   padding: var(--ts-s8) var(--ts-s10) var(--ts-s12);
-}
-
-.ts-page-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--ts-s4);
-}
-
-.ts-page-heading {
-  display: grid;
-  gap: var(--ts-s1);
-  min-width: 0;
 }
 
 .ts-eyebrow {
@@ -34,18 +18,9 @@
   text-transform: uppercase;
 }
 
-.ts-page-title {
-  font-size: var(--ts-fs-2xl);
-  font-weight: 700;
-}
-
-.ts-page-description {
-  max-width: 68ch;
-  color: var(--ts-ink-2);
-}
-
 .ts-page-actions {
   display: flex;
+  justify-content: flex-end;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--ts-s2);
@@ -134,10 +109,6 @@
   .ts-page {
     gap: var(--ts-s5);
     padding: var(--ts-s5) var(--ts-s4) var(--ts-s10);
-  }
-
-  .ts-page-title {
-    font-size: var(--ts-fs-xl);
   }
 
   .ts-grid-2 {

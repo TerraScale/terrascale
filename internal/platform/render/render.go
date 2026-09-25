@@ -118,9 +118,9 @@ func (e *Engine) Fragment(w http.ResponseWriter, r *http.Request, fragment core.
 	return err
 }
 
-// navAliases lists routes that belong to a navigation section without being
+// navAliases lists pages that belong to a navigation section without being
 // nested under its URL.
-var navAliases = map[string][]string{"/data": {"/schema", "/indexes", "/history"}}
+var navAliases = map[string][]string{"/data": {"/schema", "/indexes", "/history"}, "/auth/overview": {"/auth"}}
 
 func shellFor(account core.Account, p core.Principal, layout string, r *http.Request) core.Shell {
 	shell := core.Shell{UserName: account.User.Name, UserEmail: account.User.Email}
@@ -172,12 +172,11 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 		shell.Navigation = []core.NavGroup{
 			{Label: "Build", Items: []core.NavItem{
 				{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
-				{Label: "Tables", URL: "/data"}, {Label: "Backups", URL: "/backups"},
-				{Label: "Engine", URL: "/engine"},
+				{Label: "Tables", URL: "/data"},
 			}},
 			{Label: "Secure", Items: []core.NavItem{
 				{Label: "API keys", URL: "/api-keys"}, {Label: "Team", URL: "/access"},
-				{Label: "Authentication", URL: "/auth"}, {Label: "Audit", URL: "/audit"},
+				{Label: "Authentication", URL: "/auth", Children: core.AuthNavigation()}, {Label: "Audit", URL: "/audit"},
 			}},
 			{Label: "Manage", Items: []core.NavItem{
 				{Label: "Usage", URL: "/usage"}, {Label: "Subscriptions", URL: "/subscriptions"},
@@ -188,11 +187,17 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 		}
 	}
 	for _, group := range shell.Navigation {
-		for i := range group.Items {
-			group.Items[i].Active = slices.ContainsFunc(append([]string{group.Items[i].URL}, navAliases[group.Items[i].URL]...), func(url string) bool {
-				return r.URL.Path == url || (url != "/" && strings.HasPrefix(r.URL.Path, url+"/"))
-			})
-		}
+		markActive(group.Items, r.URL.Path)
 	}
 	return shell
+}
+
+// markActive flags the items whose section contains path, including nested
+// sub-navigation items. Aliases name single pages, so they match exactly.
+func markActive(items []core.NavItem, path string) {
+	for i := range items {
+		url := items[i].URL
+		items[i].Active = path == url || (url != "/" && strings.HasPrefix(path, url+"/")) || slices.Contains(navAliases[url], path)
+		markActive(items[i].Children, path)
+	}
 }

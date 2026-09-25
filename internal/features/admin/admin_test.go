@@ -57,7 +57,7 @@ func TestAdminRoutesAndActionsUsePersistedAdminAuthorization(t *testing.T) {
 	for path, expected := range map[string]string{
 		"/admin/databases": "Tenant database",
 		"/admin/estate":    "GRU",
-		"/admin/usage":     "Provider-metered usage is unavailable.",
+		"/admin/usage":     "Demo inventory",
 	} {
 		page := httptest.NewRecorder()
 		mux.ServeHTTP(page, httptest.NewRequest(http.MethodGet, path, nil))
@@ -68,7 +68,7 @@ func TestAdminRoutesAndActionsUsePersistedAdminAuthorization(t *testing.T) {
 	databaseSearch := httptest.NewRecorder()
 	mux.ServeHTTP(databaseSearch, httptest.NewRequest(http.MethodGet, "/admin/databases?q=Tenant", nil))
 	if databaseSearch.Code != http.StatusOK || !strings.Contains(databaseSearch.Body.String(), "Tenant database") ||
-		!strings.Contains(databaseSearch.Body.String(), "Version details are unavailable here.") {
+		!strings.Contains(databaseSearch.Body.String(), "Version details are not represented by this demo.") {
 		t.Fatalf("database inventory search did not show unavailable version details: status=%d body=%s", databaseSearch.Code, databaseSearch.Body.String())
 	}
 

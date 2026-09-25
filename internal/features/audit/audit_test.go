@@ -62,7 +62,7 @@ func TestAuditExportActionsUseNativeMenu(t *testing.T) {
 		t.Fatalf("audit export is not a Datastar-enhanced native menu: %s", body)
 	}
 	for _, expected := range []string{
-		`<main class="ts-page ts-audit-page">`, `<header class="ts-page-header">`,
+		`<main class="ts-page ts-audit-page">`, `<div class="ts-page-actions">`,
 		`class="ts-filters ts-audit-filters"`, `class="ts-filter-field ts-audit-search-field"`,
 		`class="ts-input"`, `class="ts-select"`, `class="ts-btn ts-btn-primary ts-btn-sm"`,
 		`aria-label="Export audit events"`,

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -163,12 +164,11 @@ func TestShellNavigationMatchesDashboardRoutes(t *testing.T) {
 	want := []core.NavGroup{
 		{Label: "Build", Items: []core.NavItem{
 			{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
-			{Label: "Tables", URL: "/data"}, {Label: "Backups", URL: "/backups"},
-			{Label: "Engine", URL: "/engine"},
+			{Label: "Tables", URL: "/data"},
 		}},
 		{Label: "Secure", Items: []core.NavItem{
 			{Label: "API keys", URL: "/api-keys"}, {Label: "Team", URL: "/access"},
-			{Label: "Authentication", URL: "/auth"}, {Label: "Audit", URL: "/audit"},
+			{Label: "Authentication", URL: "/auth", Children: core.AuthNavigation()}, {Label: "Audit", URL: "/audit"},
 		}},
 		{Label: "Manage", Items: []core.NavItem{
 			{Label: "Usage", URL: "/usage"}, {Label: "Subscriptions", URL: "/subscriptions"},
@@ -206,6 +206,26 @@ func TestDataToolRoutesHighlightTables(t *testing.T) {
 		shell := shellFor(account, account.Principal(), "shell", httptest.NewRequest(http.MethodGet, path, nil))
 		if tables := shell.Navigation[0].Items[2]; tables.URL != "/data" || !tables.Active {
 			t.Fatalf("%s: Tables item = %+v, want active", path, tables)
+		}
+	}
+}
+
+func TestAuthSubNavigationHighlightsOnlyTheCurrentSection(t *testing.T) {
+	store := core.NewStore()
+	account, err := store.CreateAccount(core.User{Name: "Avery Example", Email: "avery@example.test", PasswordHash: "hash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{"/auth": "/auth/overview", "/auth/overview": "/auth/overview", "/auth/users": "/auth/users"} {
+		shell := shellFor(account, account.Principal(), "shell", httptest.NewRequest(http.MethodGet, path, nil))
+		index := slices.IndexFunc(shell.Navigation[1].Items, func(item core.NavItem) bool { return item.URL == "/auth" })
+		if index < 0 || !shell.Navigation[1].Items[index].Active {
+			t.Fatalf("%s: Authentication item is not active", path)
+		}
+		for _, child := range shell.Navigation[1].Items[index].Children {
+			if child.Active != (child.URL == want) {
+				t.Errorf("%s: %s active = %v", path, child.URL, child.Active)
+			}
 		}
 	}
 }

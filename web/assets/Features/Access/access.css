@@ -40,3 +40,43 @@
 .ts-access-filters .ts-filter-field:has(ts-menu) {
   flex: 0 0 170px;
 }
+
+/* Role and invitation distributions: one colored share bar per category. */
+.ts-access-shares {
+  display: grid;
+  gap: var(--ts-s4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts-access-share {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ts-s2) var(--ts-s3);
+}
+
+.ts-access-share > .ts-chart-meter {
+  grid-column: 1 / -1;
+}
+
+.ts-access-share .ts-svg-sharebar-fill {
+  fill: var(--tone);
+}
+
+.ts-access-share-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-access-share-label > .ts-dot {
+  color: var(--tone);
+}
+
+.ts-access-share-value {
+  font-variant-numeric: tabular-nums;
+}

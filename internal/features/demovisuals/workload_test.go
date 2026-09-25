@@ -45,3 +45,24 @@ func TestSampleWorkloadIsDeterministicAndScopedToKnownFixture(t *testing.T) {
 		}
 	}
 }
+
+func TestPointLabelsNameEachBucketFromNow(t *testing.T) {
+	for _, tc := range []struct {
+		value       string
+		count       int
+		first, last string
+	}{
+		{"24h", 24, "23h ago", "Now"},
+		{"7d", 168, "6d 23h ago", "Now"},
+		{"7d", 7, "6d ago", "Now"},
+		{"30d", 30, "29d ago", "Now"},
+	} {
+		labels := PointLabels(tc.value, tc.count)
+		if len(labels) != tc.count || labels[0] != tc.first || labels[len(labels)-1] != tc.last {
+			t.Fatalf("PointLabels(%q, %d) = %q … %q, want %q … %q", tc.value, tc.count, labels[0], labels[len(labels)-1], tc.first, tc.last)
+		}
+	}
+	if labels := PointLabels("7d", 168); labels[166] != "1h ago" {
+		t.Fatalf("second to last hourly label = %q", labels[166])
+	}
+}

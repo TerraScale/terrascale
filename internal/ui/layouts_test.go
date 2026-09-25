@@ -38,8 +38,6 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 			Navigation: []core.NavGroup{
 				{Label: "Build", Items: []core.NavItem{
 					{Label: "Overview", URL: "/", Active: true},
-					{Label: "Backups", URL: "/backups"},
-					{Label: "Engine", URL: "/engine"},
 				}},
 				{Label: "Manage", Items: []core.NavItem{
 					{Label: "Billing", URL: "/billing"},
@@ -76,8 +74,8 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 		`data-show="$projectSearch === '' || el.dataset.projectName.toLowerCase().includes($projectSearch.toLowerCase())"`,
 		`data-organization-name="Org &lt;script&gt;"`,
 		`data-project-name="Production"`,
-		`href="/organization?newProject=1#projects">`,
-		`href="/settings?tab=identity">`,
+		`href="/organization?newProject=1#projects" data-tone="emerald">`,
+		`href="/settings?tab=identity" data-tone="slate">`,
 		`<span>Create new project</span></a>`,
 		`<span>All workspaces</span></a>`,
 		`action="/api/v1/dashboard/switch-project"`,
@@ -85,7 +83,7 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 		`action="/api/v1/dashboard/switch-organization"`,
 		`action="/api/v1/auth/logout"`,
 		`name="_csrf" value="csrf_test_123"`,
-		`src="/brand/logo-terrascale-white.svg"`,
+		`src="/brand/logo-terrascale-principal.svg"`,
 		`<span class="ts-account-avatar" aria-hidden="true">AE</span>`,
 		`nonce="nonce_test_123"`,
 		`<script type="module" src="` + datastarURL + `" integrity="` + datastarIntegrity + `" crossorigin="anonymous" nonce="nonce_test_123"></script>`,
@@ -142,7 +140,7 @@ func TestAdminTemplLayoutUsesAdminNavigationSemantics(t *testing.T) {
 			t.Errorf("rendered admin shell is missing %q", want)
 		}
 	}
-	if strings.Count(html, `src="/brand/logo-terrascale-white.svg"`) != 2 {
+	if strings.Count(html, `src="/brand/logo-terrascale-principal.svg"`) != 2 {
 		t.Fatal("admin shell should render the file-backed brand logo in the sidebar and mobile top bar")
 	}
 }
@@ -198,7 +196,7 @@ func TestEmbeddedStaticAssetsContainOneBundledStylesheetAndBrand(t *testing.T) {
 		}
 	}
 	for _, path := range []string{
-		"brand/logo-terrascale-white.svg",
+		"brand/logo-terrascale-principal.svg",
 		"brand/logo-terrascale-auth.svg",
 		"brand/logo-icon-blue.svg",
 		"brand/region-map.svg",
