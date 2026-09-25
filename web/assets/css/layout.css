@@ -103,6 +103,12 @@
   .ts-grid-3 {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  /* Stacked split columns keep the hairline between sections. */
+  .ts-split > * + * {
+    padding-top: var(--ts-s6);
+    border-top: 1px solid var(--ts-line);
+  }
 }
 
 @media (max-width: 47.99rem) {

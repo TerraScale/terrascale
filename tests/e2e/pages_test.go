@@ -221,7 +221,7 @@ func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 	}
 
 	goTo(t, mapPage, "/organization")
-	click(t, mapPage.Locator(`button[commandfor="create-project"]`))
+	click(t, mapPage.Locator(`button[command="show-modal"][commandfor="create-project"]`))
 	regionMap := mapPage.Locator(`.ts-region-map[data-select-id="project-region"]`)
 	must(t, expect.Locator(regionMap).ToHaveAttribute("aria-hidden", "true"))
 	mapImage := regionMap.Locator("img")
@@ -232,7 +232,7 @@ func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 
 	nativePage := watchedPage(t, cloneSession(t, page.Context(), false))
 	goTo(t, nativePage, "/organization")
-	click(t, nativePage.Locator(`button[commandfor="create-project"]`))
+	click(t, nativePage.Locator(`button[command="show-modal"][commandfor="create-project"]`))
 	projectForm := nativePage.Locator(`form[action="/api/v1/dashboard/organization/projects"]`)
 	region := projectForm.GetByLabel("Primary region")
 	visible(t, region)

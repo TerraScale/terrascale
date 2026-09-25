@@ -31,7 +31,7 @@ templ Frame(p FrameProps) {
 				<span class="ts-db-icon ts-db-icon-lg" aria-hidden="true">@icons.Database(20)</span>
 				<h1 class="ts-db-title">{ p.Database.Name }</h1>
 				@statusBadge(p.Database.Status)
-				<span class="ts-meta ts-mono">{ regionDisplay(p.Database.Region) }</span>
+				<span class="ts-meta">{ regionDisplay(p.Database.Region) }</span>
 			</div>
 		</header>
 		@ui.Tabs("Database sections", frameTabs(p))

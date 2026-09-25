@@ -37,7 +37,7 @@ templ databasesContent(page core.Page, d pageData) {
 										</a>
 									</td>
 									<td>@statusBadge(db.Status)</td>
-									<td class="ts-mono">{ db.Region }</td>
+									<td class="ts-muted">{ regionDisplay(db.Region) }</td>
 								</tr>
 							}
 						</tbody>

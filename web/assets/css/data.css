@@ -6,6 +6,11 @@
   overflow-x: auto;
 }
 
+/* An open row menu must not be clipped by the scroll container. */
+.ts-table-wrap:has(details.ts-menu[open]) {
+  overflow: visible;
+}
+
 .ts-table {
   width: 100%;
   border-collapse: collapse;
