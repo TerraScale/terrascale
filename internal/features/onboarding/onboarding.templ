@@ -84,8 +84,13 @@ templ onboardingView(data pageData, csrfToken string) {
 				<form class="ts-form" method="post" action="/onboarding/step" aria-labelledby="payment-method-title">
 					<input type="hidden" name="_csrf" value={ csrfToken }/>
 					<input type="hidden" name="step" value="payment-method"/>
+					<input type="hidden" name="return" value="/onboarding"/>
 					<div class="ts-row-between ts-onboarding-payment-head">
-						@stepHeading("payment-method-title", "Choose your plan", "Payment setup is optional for your Personal workspace. No real payment details or charges are used in this demo.")
+						if data.Demo {
+							@stepHeading("payment-method-title", "Choose your plan", "Payment setup is optional for your Personal workspace. No real payment details or charges are used in this demo.")
+						} else {
+							@stepHeading("payment-method-title", "Choose your plan", "Payment setup is optional for your Personal workspace. Stripe collects your card and confirms the subscription.")
+						}
 						<fieldset class="ts-segmented" aria-label="Billing interval">
 							<legend class="ts-sr-only">Billing interval</legend>
 							<label>
@@ -110,14 +115,20 @@ templ onboardingView(data pageData, csrfToken string) {
 								</span>
 								<span class="ts-onboarding-plan-price">{ fmt.Sprintf("$%.2f", float64(plan.PriceCents)/100) }<span class="ts-meta"> / month</span></span>
 								<span class="ts-meta">{ fmt.Sprintf("$%.2f", float64(plan.AnnualPriceCents)/100) } / year</span>
+								<span class="ts-meta">{ plan.DatabaseAllowance() } · { plan.OperationsAllowance() }</span>
+								<span class="ts-meta">{ plan.StorageAllowance() } · { plan.MemberAllowance() }</span>
 								@ui.Badge("tone", fmt.Sprintf("%d-day trial", plan.TrialDays))
 							</label>
 						}
 					</fieldset>
-					<p class="ts-meta">Continue to a local checkout simulation to test the flow. You can also continue on the Free plan without payment.</p>
+					if data.Demo {
+						<p class="ts-meta">Continue to a local checkout simulation to test the flow. You can also continue on the Free plan without payment.</p>
+					} else {
+						<p class="ts-meta">Continue to Stripe Checkout or stay on Free without payment.</p>
+					}
 					<div class="ts-onboarding-footer">
 						<button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit" name="bypass" value="1" formnovalidate>Continue on Free</button>
-						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Continue to demo checkout <span aria-hidden="true">→</span></button>
+						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Continue to checkout <span aria-hidden="true">→</span></button>
 					</div>
 				</form>
 			} else {
@@ -152,4 +163,3 @@ templ stepHeading(id, title, description string) {
 		<p class="ts-meta">{ description }</p>
 	</div>
 }
-

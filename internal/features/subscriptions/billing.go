@@ -60,6 +60,135 @@ func (service BillingService) Snapshot(principal core.Principal) (BillingSnapsho
 	return BillingSnapshot{Account: account, Organization: organization, Plan: plan, Plans: plans}, nil
 }
 
+// RecordScheduledChange stores a provider-confirmed future change without
+// changing entitlements before the subscription webhook reports the new price.
+func (service BillingService) RecordScheduledChange(principal core.Principal, subscriptionID, planKey, interval, scheduleID string, effectiveAt time.Time) error {
+	if planKey != "free" {
+		if _, err := service.selectedPlan(planKey, interval); err != nil {
+			return err
+		}
+	}
+	return service.store.UpdateAs(principal, func(account *core.Account) error {
+		org, ok := account.Organizations[principal.OrganizationID]
+		if !ok || account.ActiveOrganizationID != org.ID || org.OwnerUserID != principal.UserID || org.Archived || org.DeletionRequested {
+			return ErrBillingOwnerRequired
+		}
+		if org.Billing.SubscriptionID != subscriptionID || subscriptionID == "" || effectiveAt.IsZero() {
+			return core.ErrConflict
+		}
+		if org.Billing.PendingPlanKey != "" || org.Billing.ScheduledPlanKey != "" {
+			if org.Billing.ScheduledPlanKey == planKey && org.Billing.ScheduledInterval == interval && org.Billing.ScheduleID == scheduleID {
+				return nil
+			}
+			return core.ErrConflict
+		}
+		if planKey == "free" {
+			if org.Kind != "personal" {
+				return ErrPlanUnavailable
+			}
+			interval = ""
+		}
+		org.Billing.ScheduledPlanKey = planKey
+		org.Billing.ScheduledInterval = interval
+		org.Billing.ScheduledAt = effectiveAt
+		org.Billing.ScheduleID = scheduleID
+		org.Billing.ChangeVersion++
+		account.Organizations[org.ID] = org
+		return nil
+	})
+}
+
+func (service BillingService) ClearScheduledChange(principal core.Principal, subscriptionID string) error {
+	return service.store.UpdateAs(principal, func(account *core.Account) error {
+		org, ok := account.Organizations[principal.OrganizationID]
+		if !ok || account.ActiveOrganizationID != org.ID || org.OwnerUserID != principal.UserID {
+			return ErrBillingOwnerRequired
+		}
+		if org.Billing.SubscriptionID != subscriptionID || subscriptionID == "" {
+			return core.ErrConflict
+		}
+		org.Billing.ScheduledPlanKey = ""
+		org.Billing.ScheduledInterval = ""
+		org.Billing.ScheduledAt = time.Time{}
+		org.Billing.ScheduleID = ""
+		account.Organizations[org.ID] = org
+		return nil
+	})
+}
+
+func (service BillingService) RecordPendingChange(principal core.Principal, subscriptionID, planKey, interval string) error {
+	if _, err := service.selectedPlan(planKey, interval); err != nil {
+		return err
+	}
+	return service.store.UpdateAs(principal, func(account *core.Account) error {
+		org, ok := account.Organizations[principal.OrganizationID]
+		if !ok || account.ActiveOrganizationID != org.ID || org.OwnerUserID != principal.UserID {
+			return ErrBillingOwnerRequired
+		}
+		if subscriptionID == "" || org.Billing.SubscriptionID != subscriptionID {
+			return core.ErrConflict
+		}
+		if org.Billing.ScheduledPlanKey != "" || org.Billing.PendingPlanKey != "" {
+			if org.Billing.PendingPlanKey == planKey && org.Billing.PendingInterval == interval {
+				return nil
+			}
+			return core.ErrConflict
+		}
+		if org.Billing.PlanKey == planKey && org.Billing.Interval == interval {
+			return nil
+		}
+		org.Billing.PendingPlanKey = planKey
+		org.Billing.PendingInterval = interval
+		org.Billing.ChangeVersion++
+		account.Organizations[org.ID] = org
+		return nil
+	})
+}
+
+// ChangeDemoPlan keeps the in-memory preview usable without contacting Stripe.
+func (service BillingService) ChangeDemoPlan(principal core.Principal, planKey, interval string) error {
+	var target core.Plan
+	if planKey != "free" {
+		var err error
+		target, err = service.selectedPlan(planKey, interval)
+		if err != nil {
+			return err
+		}
+	}
+	return service.store.UpdateAs(principal, func(account *core.Account) error {
+		org, ok := account.Organizations[principal.OrganizationID]
+		if !ok || account.ActiveOrganizationID != org.ID || org.OwnerUserID != principal.UserID || org.Archived || org.DeletionRequested {
+			return ErrBillingOwnerRequired
+		}
+		if planKey == "free" && org.Kind != "personal" {
+			return ErrPlanUnavailable
+		}
+		if org.Billing.SubscriptionID == "" && planKey != "free" {
+			return ErrCheckoutUnavailable
+		}
+		if planKey == "free" {
+			org.PlanID = "plan_free"
+			org.Billing.PlanKey = "free"
+			org.Billing.Interval = ""
+			org.Billing.Status = "canceled"
+			org.Billing.SubscriptionID = ""
+			org.BillingRenewal = time.Time{}
+		} else {
+			org.PlanID = target.ID
+			org.Billing.PlanKey = planKey
+			org.Billing.Interval = interval
+			org.Billing.Status = "active"
+		}
+		org.Billing.ScheduledPlanKey = ""
+		org.Billing.ScheduledInterval = ""
+		org.Billing.ScheduledAt = time.Time{}
+		org.Billing.PendingPlanKey = ""
+		org.Billing.PendingInterval = ""
+		account.Organizations[org.ID] = org
+		return nil
+	})
+}
+
 func (service BillingService) availablePlans() []core.Plan {
 	plans := service.store.Plans()
 	plans = slices.DeleteFunc(plans, func(plan core.Plan) bool {
@@ -100,6 +229,9 @@ func (service BillingService) BeginDemoCheckout(principal core.Principal, planKe
 		organization, ok := account.Organizations[principal.OrganizationID]
 		if !ok || organization.OwnerUserID != principal.UserID || organization.Status != "active" || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
+		}
+		if organization.Billing.SubscriptionID != "" && organization.Billing.Status != "canceled" && organization.Billing.Status != "incomplete_expired" {
+			return core.ErrConflict
 		}
 		session.PlanID = plan.ID
 		organization.CheckoutSessions = map[string]core.CheckoutSession{session.ID: session}
@@ -207,6 +339,8 @@ func (service BillingService) CompleteDemoCheckout(principal core.Principal, ses
 			}
 			session.Status = checkoutDone
 			organization.PlanID = plan.ID
+			organization.Billing.SubscriptionID = core.NewID("sub_local")
+			organization.Billing.TrialUsed = true
 			organization.Billing.PlanKey = normalizePlanKey(plan.Key)
 			organization.Billing.Interval = session.Interval
 			organization.Billing.Status = "active"
@@ -297,6 +431,9 @@ func (service BillingService) RecordExternalCheckout(principal core.Principal, p
 			return ErrBillingOwnerRequired
 		}
 		if organization.Billing.CustomerID == "" {
+			return core.ErrConflict
+		}
+		if organization.Billing.SubscriptionID != "" && organization.Billing.Status != "canceled" && organization.Billing.Status != "incomplete_expired" {
 			return core.ErrConflict
 		}
 		if providerSession.CustomerID != organization.Billing.CustomerID || providerSession.ClientReferenceID != organization.ID {
@@ -392,6 +529,31 @@ func (service BillingService) ReconcileCheckoutReturn(principal core.Principal, 
 func (service BillingService) ApplyStripeEvent(event payments.BillingEvent) error {
 	if event.ID == "" || event.CreatedAt.IsZero() || (event.CustomerID == "" && event.SubscriptionID == "") {
 		return core.ErrInvalid
+	}
+	if event.Invoice != nil {
+		return service.store.ApplyBillingEventWithPlans(event.ID, event.CustomerID, event.SubscriptionID, func(organization *core.Organization, _ map[string]core.Plan) error {
+			if organization.Billing.CustomerID != event.CustomerID || organization.Billing.SubscriptionID != event.SubscriptionID {
+				return nil
+			}
+			invoice := *event.Invoice
+			if invoice.ID == "" {
+				return core.ErrInvalid
+			}
+			for i, previous := range organization.Billing.Invoices {
+				if previous.ID != invoice.ID {
+					continue
+				}
+				if event.CreatedAt.Before(previous.LastEventAt) {
+					return nil
+				}
+				invoice.LastEventAt = event.CreatedAt
+				organization.Billing.Invoices[i] = invoice
+				return nil
+			}
+			invoice.LastEventAt = event.CreatedAt
+			organization.Billing.Invoices = append(organization.Billing.Invoices, invoice)
+			return nil
+		})
 	}
 	orderAt := event.CreatedAt
 	if event.ProviderCurrent && !event.ObservedAt.IsZero() {
@@ -518,12 +680,30 @@ func applySubscriptionEvent(plans map[string]core.Plan, organization *core.Organ
 		organization.Billing.Status = event.SubscriptionState
 		organization.BillingStatus = "active"
 		organization.PaymentMethodValidated = true
+		organization.Billing.TrialUsed = true
 		if !event.PeriodEnd.IsZero() {
 			organization.BillingRenewal = event.PeriodEnd
 		}
 	case "canceled", "incomplete_expired", "past_due", "unpaid", "paused":
 		organization.Billing.Status = event.SubscriptionState
 		organization.BillingStatus = "billing_required"
+		if event.SubscriptionState == "canceled" && organization.Kind == "personal" {
+			organization.PlanID = "plan_free"
+			organization.Billing.PlanKey = "free"
+			organization.Billing.Interval = ""
+			organization.BillingStatus = "active"
+			organization.PaymentMethodValidated = false
+		}
+	}
+	if organization.Billing.ScheduledPlanKey != "" && (event.PlanKey == organization.Billing.ScheduledPlanKey && event.Interval == organization.Billing.ScheduledInterval || event.SubscriptionState == "canceled") {
+		organization.Billing.ScheduledPlanKey = ""
+		organization.Billing.ScheduledInterval = ""
+		organization.Billing.ScheduledAt = time.Time{}
+		organization.Billing.ScheduleID = ""
+	}
+	if organization.Billing.PendingPlanKey != "" && (event.PlanKey == organization.Billing.PendingPlanKey && event.Interval == organization.Billing.PendingInterval || event.SubscriptionState == "canceled" || event.ProviderCurrent && !event.PendingUpdate) {
+		organization.Billing.PendingPlanKey = ""
+		organization.Billing.PendingInterval = ""
 	}
 	organization.Billing.LastEventAt = orderAt
 	return nil
@@ -534,6 +714,7 @@ func activateSubscription(organization *core.Organization, session core.Checkout
 	organization.Billing.PlanKey = normalizePlanKey(plan.Key)
 	organization.Billing.Interval = session.Interval
 	organization.Billing.SubscriptionID = subscriptionID
+	organization.Billing.TrialUsed = true
 	organization.Billing.Status = "active"
 	organization.BillingStatus = "active"
 	organization.PaymentMethodValidated = true
@@ -555,6 +736,21 @@ func activateSubscription(organization *core.Organization, session core.Checkout
 
 func isEntitledSubscriptionState(status string) bool {
 	return status == "active" || status == "trialing"
+}
+
+func (service BillingService) selectedPlan(planKey, interval string) (core.Plan, error) {
+	planID, planKey, err := service.planCandidate(planKey, interval)
+	if err != nil {
+		return core.Plan{}, err
+	}
+	plan, ok := service.store.Plan(planID)
+	if !ok {
+		return core.Plan{}, ErrPlanUnavailable
+	}
+	if err := validatePlanSelection(plan, planKey, interval); err != nil {
+		return core.Plan{}, err
+	}
+	return plan, nil
 }
 
 func (service BillingService) planCandidate(planKey, interval string) (string, string, error) {

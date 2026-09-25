@@ -33,6 +33,7 @@ type subscriptionsPage struct {
 	BillingInterval  string
 	Renewal          string
 	PaymentValidated bool
+	HasSubscription  bool
 	Demo             bool
 	PaymentNotice    string
 	Interval         string
@@ -79,6 +80,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			BillingInterval:  intervalLabel(view.Organization.Billing.Interval),
 			Renewal:          formatRenewal(view.Organization.BillingRenewal),
 			PaymentValidated: view.Organization.PaymentMethodValidated,
+			HasSubscription:  view.Organization.Billing.SubscriptionID != "" && view.Organization.Billing.Status != "canceled" && view.Organization.Billing.Status != "incomplete_expired",
 			Demo:             deps.Demo,
 			PaymentNotice:    paymentNotice(r.URL.Query().Get("payment")),
 			Interval:         interval,
@@ -197,6 +199,7 @@ func makePlanView(plan core.Plan, index int, interval, currentKey, currentInterv
 	if plan.MonthlyRequests > 0 {
 		card.Features = append(card.Features, formatCount(plan.MonthlyRequests)+" requests per month")
 	}
+	card.Features = append(card.Features, plan.DatabaseAllowance(), plan.MemberAllowance())
 	if plan.TrialDays > 0 {
 		card.Features = append(card.Features, fmt.Sprintf("%d-day free trial", plan.TrialDays))
 	}

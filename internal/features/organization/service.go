@@ -317,6 +317,18 @@ func (s Service) CreateInvitation(p core.Principal, email, role string) (core.In
 	if err != nil || !strings.EqualFold(parsed.Address, email) || (role != roleMember && role != roleViewer) {
 		return core.Invitation{}, "", core.ErrInvalid
 	}
+	account, err := s.store.SnapshotAs(p)
+	if err != nil {
+		return core.Invitation{}, "", err
+	}
+	selected, ok := account.Organizations[p.OrganizationID]
+	if !ok {
+		return core.Invitation{}, "", core.ErrNotFound
+	}
+	plan, ok := s.store.Plan(selected.PlanID)
+	if !ok {
+		return core.Invitation{}, "", core.ErrNotFound
+	}
 	token := newToken()
 	digest := sha256.Sum256([]byte(token))
 	invitation := core.Invitation{
@@ -327,6 +339,25 @@ func (s Service) CreateInvitation(p core.Principal, email, role string) (core.In
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
+		}
+		if org.PlanID != plan.ID {
+			return core.ErrConflict
+		}
+		if plan.MaxMembers > 0 {
+			occupied := 0
+			for _, member := range org.Members {
+				if member.Status == statusActive {
+					occupied++
+				}
+			}
+			for _, existing := range org.Invitations {
+				if existing.Status == statusPending && existing.ExpiresAt.After(s.now()) {
+					occupied++
+				}
+			}
+			if occupied >= plan.MaxMembers {
+				return core.ErrConflict
+			}
 		}
 		for _, member := range org.Members {
 			if core.NormalizeEmail(member.Email) == email && member.Status == statusActive {

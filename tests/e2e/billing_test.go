@@ -46,8 +46,12 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 	waitForPath(t, page, func(u *url.URL) bool { return u.Query().Get("interval") == "annual" })
 	must(t, expect.Locator(proPlan).ToContainText("billed annually"))
 	visible(t, byRole(proPlan, *playwright.AriaRoleButton, "Switch to annual billing"))
+	click(t, byRole(proPlan, *playwright.AriaRoleButton, "Switch to annual billing"))
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/usage" && u.Query().Get("review") == "1" })
+	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Review plan change"))
+	click(t, pageByRole(page, *playwright.AriaRoleLink, "Close plan review"))
 
-	click(t, pageByRole(page, *playwright.AriaRoleLink, "Manage billing"))
+	click(t, pageByRole(page, *playwright.AriaRoleLink, "Manage payment"))
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Local billing portal"))
 	must(t, expect.Locator(status).ToContainText("Demo simulator only"))
 	must(t, expect.Locator(status).ToContainText("does not collect payment details or contact Stripe"))

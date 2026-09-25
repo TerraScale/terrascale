@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"net/url"
+	"regexp"
 	"testing"
 
 	"github.com/mxschmitt/playwright-go"
@@ -9,12 +10,20 @@ import (
 
 // registerAndOnboard creates a fresh demo account and finishes the payment
 // and project onboarding steps.
-func registerAndOnboard(t *testing.T, page playwright.Page, account credentials) {
+func registerAndOnboard(t *testing.T, page playwright.Page, account credentials, paidPlan ...string) {
 	t.Helper()
 	registerAndOpenPaymentStep(t, page, account)
 
 	payment := onboardingStep(t, page, "payment-method")
-	click(t, byRole(payment, *playwright.AriaRoleButton, "Continue on Free"))
+	if len(paidPlan) > 0 {
+		must(t, payment.Locator(`[name="plan"][value="`+paidPlan[0]+`"]`).Check())
+		click(t, byRole(payment, *playwright.AriaRoleButton, "Continue to checkout"))
+		must(t, page.WaitForURL(regexp.MustCompile(`/checkout/cs_local_`)))
+		click(t, pageByRole(page, *playwright.AriaRoleButton, "Confirm local demo setup"))
+		waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/onboarding" && u.Query().Get("payment") == "success" })
+	} else {
+		click(t, byRole(payment, *playwright.AriaRoleButton, "Continue on Free"))
+	}
 
 	project := onboardingStep(t, page, "project")
 	fill(t, project.Locator(`[name="name"]`), "Personal")

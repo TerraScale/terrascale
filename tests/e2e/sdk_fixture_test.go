@@ -22,6 +22,7 @@ import (
 	"terrascale.tech/dashboard/internal/features/auth"
 	"terrascale.tech/dashboard/internal/features/databases"
 	"terrascale.tech/dashboard/internal/features/onboarding"
+	"terrascale.tech/dashboard/internal/features/subscriptions"
 	"terrascale.tech/dashboard/internal/platform/assets"
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/render"
@@ -56,6 +57,7 @@ func startSDKFixture(t *testing.T) sdkFixture {
 	must(t, assets.Mount(mux, false))
 	auth.Mount(mux, demo)
 	onboarding.Mount(mux, demo)
+	subscriptions.Mount(mux, demo)
 	databases.Mount(mux, live)
 	apikeys.MountWithIssuer(mux, live, fixtureIssuer{store: store, producer: producer})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {

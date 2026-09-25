@@ -286,6 +286,14 @@ type APIKey struct {
 type Billing struct {
 	CustomerID            string
 	SubscriptionID        string
+	TrialUsed             bool
+	ChangeVersion         uint64
+	PendingPlanKey        string
+	PendingInterval       string
+	ScheduledPlanKey      string
+	ScheduledInterval     string
+	ScheduledAt           time.Time
+	ScheduleID            string
 	PaymentMethodID       string
 	PaymentMethodLastFour string
 	PaymentMethodExpiry   string
@@ -318,6 +326,7 @@ type CheckoutSession struct {
 
 type Invoice struct {
 	ID          string
+	LastEventAt time.Time
 	Number      string
 	Status      string
 	AmountCents int64
@@ -330,15 +339,19 @@ type Invoice struct {
 }
 
 type Plan struct {
-	ID               string
-	Key              string
-	Name             string
-	PriceCents       int64
-	AnnualPriceCents int64
-	TrialDays        int
-	Visible          bool
-	StorageMiB       int64
-	MonthlyRequests  int64
+	ID                 string
+	Key                string
+	Name               string
+	PriceCents         int64
+	AnnualPriceCents   int64
+	TrialDays          int
+	Visible            bool
+	StorageMiB         int64
+	MonthlyRequests    int64
+	OperationsPerMonth int64
+	StorageLabel       string
+	MaxDatabases       int
+	MaxMembers         int
 }
 
 // Sessions keep opaque bearer values inside the implementation; callers only

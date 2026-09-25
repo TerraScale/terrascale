@@ -23,7 +23,7 @@ func TestAccountCreatedDatabaseWorksThroughIssuedCredentialsAndGoSDK(t *testing.
 
 	page := watchedPage(t, newContext(t, fixture.dashboardURL))
 	email := "sdk-e2e-" + uuid.New().String() + "@example.test"
-	registerAndOnboard(t, page, credentials{Email: email, Password: "E2e-sdk-journey-123!", DisplayName: "SDK Integration"})
+	registerAndOnboard(t, page, credentials{Email: email, Password: "E2e-sdk-journey-123!", DisplayName: "SDK Integration"}, "starter")
 
 	goTo(t, page, "/databases")
 	projectID := requiredAttribute(t, page.Locator("main[data-project-id]"), "data-project-id",
