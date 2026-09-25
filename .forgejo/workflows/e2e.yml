@@ -1,13 +1,15 @@
 name: e2e
 on:
   pull_request:
+  push:
+    branches: [main]
+concurrency:
+  group: dashboard-slow-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: terrascale-builder
     timeout-minutes: 30
-    concurrency:
-      group: dashboard-tests-${{ github.ref }}
-      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - name: Set up pinned Go and Node.js toolchains
@@ -15,8 +17,6 @@ jobs:
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
       # terrascale-builder already supplies the pinned, library-patched Chromium.
-      - name: Check generated Templ, lint, bundle, and run fast Go tests
-        run: make lint css test-fast build
       - name: Check Chromium navigation in the runner
         env:
           CI: "1"
@@ -24,7 +24,7 @@ jobs:
         run: |
           . scripts/prepare-ci-browser.sh || exit 1
           node scripts/browser-preflight.mjs
-      - name: Run slow browser and SDK contract tests
+      - name: Run browser and account-to-TypeScript-SDK tests
         env:
           CI: "1"
           DEBUG: "pw:browser"
