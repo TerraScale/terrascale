@@ -5,20 +5,36 @@ import "fmt"
 templ Line(data LineData) {
 	if len(data.Paths) > 0 {
 		<svg class="ts-chart" viewBox={ data.ViewBox } role="img" aria-label={ data.Label }>
-			for _, grid := range data.Grid {
-				<line class="ts-chart-grid" x1={ fmt.Sprint(data.PlotLeft) } y1={ grid.Y } x2={ fmt.Sprint(data.PlotEnd) } y2={ grid.Y }/>
+			<defs>
+				<linearGradient id={ data.GradientID } x1="0" y1="0" x2="0" y2="1">
+					<stop class="ts-chart-fill-start" offset="0"></stop>
+					<stop class="ts-chart-fill-end" offset="1"></stop>
+				</linearGradient>
+			</defs>
+			for i, grid := range data.Grid {
+				<line class={ "ts-chart-grid", templ.KV("ts-chart-baseline", i == len(data.Grid)-1) } x1={ fmt.Sprint(data.PlotLeft) } y1={ grid.Y } x2={ fmt.Sprint(data.PlotEnd) } y2={ grid.Y }></line>
 				if grid.Label != "" {
-					<text class="ts-chart-axis" x={ fmt.Sprint(data.PlotLeft - 8) } y={ grid.Y } text-anchor="end">{ grid.Label }</text>
+					<text class="ts-chart-axis" x={ fmt.Sprint(data.PlotLeft - 10) } y={ grid.Y } dy="0.32em" text-anchor="end">{ grid.Label }</text>
 				}
 			}
 			for _, tick := range data.Ticks {
-				<text class="ts-chart-axis" x={ tick.X } y={ fmt.Sprint(data.Height - 7) } text-anchor={ tick.Anchor }>{ tick.Label }</text>
+				<text class="ts-chart-axis" x={ tick.X } y={ fmt.Sprint(data.Height - 8) } text-anchor={ tick.Anchor }>{ tick.Label }</text>
 			}
 			if data.AreaPath != "" {
-				<path d={ data.AreaPath } fill="var(--ts-chart-1)" opacity="0.08"/>
+				<path class="ts-chart-area" d={ data.AreaPath } fill={ "url(#" + data.GradientID + ")" }></path>
 			}
 			for _, path := range data.Paths {
-				<path class={ "ts-chart-line " + path.Class } d={ path.Data }/>
+				<path class={ "ts-chart-line " + path.Class } d={ path.Data }></path>
+			}
+			for _, column := range data.Columns {
+				<g class="ts-chart-column">
+					<title>{ column.Title }</title>
+					<rect class="ts-chart-hit" x={ column.Left } y={ fmt.Sprint(data.PlotTop) } width={ column.Width } height={ fmt.Sprint(data.PlotBottom - data.PlotTop) }></rect>
+					<line class="ts-chart-guide" x1={ column.X } y1={ fmt.Sprint(data.PlotTop) } x2={ column.X } y2={ fmt.Sprint(data.PlotBottom) }></line>
+					for _, dot := range column.Dots {
+						<circle class={ "ts-chart-dot " + dot.Class } cx={ dot.X } cy={ dot.Y } r="4"></circle>
+					}
+				</g>
 			}
 		</svg>
 	}
@@ -33,7 +49,7 @@ templ Ring(data RingData) {
 
 templ Bar(data BarData) {
 	<svg class="ts-svg-sharebar" viewBox="0 0 100 8" preserveAspectRatio="none" role="img" aria-label={ data.Label }>
-		<rect class="ts-svg-sharebar-track" x="0" y="0" width="100" height="8" rx="4"/>
-		<rect class="ts-svg-sharebar-fill" x="0" y="0" width={ data.Width } height="8" rx="4"/>
+		<rect class="ts-svg-sharebar-track" x="0" y="0" width="100" height="8"/>
+		<rect class="ts-svg-sharebar-fill" x="0" y="0" width={ data.Width } height="8"/>
 	</svg>
 }

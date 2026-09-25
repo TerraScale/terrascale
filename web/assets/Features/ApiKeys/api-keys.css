@@ -8,45 +8,16 @@
 }
 
 .ts-apikeys-create {
-  align-self: start;
+  align-items: flex-start;
 }
 
-.ts-apikeys-create-summary {
-  display: flex;
-  align-items: center;
-  gap: var(--ts-s3);
-  padding: var(--ts-s4) var(--ts-s5);
-  cursor: pointer;
-  list-style: none;
-}
-
-.ts-apikeys-create-summary::-webkit-details-marker {
-  display: none;
-}
-
-.ts-apikeys-create-summary > svg {
-  margin-left: auto;
-  color: var(--ts-ink-3);
-  transition: transform var(--ts-fast) var(--ts-ease);
-}
-
-.ts-apikeys-create[open] > .ts-apikeys-create-summary > svg {
-  transform: rotate(180deg);
-}
-
-.ts-apikeys-create-icon {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--ts-radius);
-  background: color-mix(in oklab, var(--tone) 18%, transparent);
-  color: var(--tone);
+.ts-apikeys-create > .ts-disclosure[open] {
+  flex: 1 1 100%;
+  order: 1;
 }
 
 .ts-apikeys-create-form {
-  padding: var(--ts-s4) var(--ts-s5) var(--ts-s5);
-  border-top: 1px solid var(--ts-line);
+  max-width: 36rem;
 }
 
 .ts-apikeys-scopes {

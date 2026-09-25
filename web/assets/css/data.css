@@ -34,7 +34,7 @@
 }
 
 .ts-table tbody tr:hover {
-  background: rgb(255 255 255 / 0.025);
+  background: rgb(59 130 246 / 0.05);
 }
 
 .ts-table tbody tr:last-child td {
@@ -63,23 +63,19 @@
   white-space: nowrap;
 }
 
-/* Tables and lists inside a flush card line up with the card padding. */
-.ts-card-flush .ts-table th:first-child,
-.ts-card-flush .ts-table td:first-child {
-  padding-left: var(--ts-s6);
+/* Tables align with the section edge: no outer cell padding. */
+.ts-table th:first-child,
+.ts-table td:first-child {
+  padding-left: 0;
 }
 
-.ts-card-flush .ts-table th:last-child,
-.ts-card-flush .ts-table td:last-child {
-  padding-right: var(--ts-s6);
+.ts-table th:last-child,
+.ts-table td:last-child {
+  padding-right: 0;
 }
 
-/* Stand-alone tables get the card frame themselves. */
-.ts-page > .ts-table-wrap,
-.ts-stack > .ts-table-wrap {
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-lg);
-  background: var(--ts-surface);
+.ts-table thead th {
+  border-bottom-color: var(--ts-line-strong);
 }
 
 /* Divided rows: members, keys, steps. */
@@ -99,10 +95,6 @@
 
 .ts-list-item:last-child {
   border-bottom: 0;
-}
-
-.ts-card-flush .ts-list-item {
-  padding-inline: var(--ts-s6);
 }
 
 .ts-list-main {
@@ -160,7 +152,7 @@
   width: 0;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--tone), var(--ts-accent));
+  background: var(--ts-accent);
   transition: width var(--ts-base) var(--ts-ease);
 }
 
@@ -178,9 +170,8 @@
 .ts-snippet {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius);
-  background: #07080c;
+  background: var(--ts-surface);
 }
 
 .ts-snippet-header {
@@ -213,18 +204,39 @@ code:not(pre code) {
   background: var(--ts-surface-3);
 }
 
-/* Disclosure: a <details> whose summary is a button. */
+/* Disclosure: a <details> whose summary is a button (ui.Disclosure). */
+.ts-disclosure {
+  min-width: 0;
+}
+
 .ts-disclosure > summary {
-  list-style: none;
   width: fit-content;
+  list-style: none;
 }
 
 .ts-disclosure > summary::-webkit-details-marker {
   display: none;
 }
 
+.ts-disclosure-chevron {
+  display: inline-flex;
+  opacity: 0.7;
+  transition: transform var(--ts-fast) var(--ts-ease);
+}
+
+.ts-disclosure[open] .ts-disclosure-chevron {
+  transform: rotate(180deg);
+}
+
 .ts-disclosure[open] > summary {
   margin-bottom: var(--ts-s4);
+}
+
+.ts-disclosure-body {
+  display: grid;
+  gap: var(--ts-s4);
+  padding: var(--ts-s5) 0 var(--ts-s2) var(--ts-s5);
+  border-left: 2px solid var(--ts-accent);
 }
 
 /* Charts rendered by internal/ui/charts. */
@@ -238,27 +250,66 @@ code:not(pre code) {
 .ts-chart {
   width: 100%;
   height: auto;
+  overflow: visible;
 }
 
 .ts-chart .ts-chart-grid {
   stroke: var(--ts-line);
+  stroke-dasharray: 3 4;
+}
+
+.ts-chart .ts-chart-baseline {
+  stroke: var(--ts-line-strong);
+  stroke-dasharray: none;
 }
 
 .ts-chart .ts-chart-axis {
   fill: var(--ts-ink-3);
   font-family: var(--ts-font-mono);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .ts-chart .ts-chart-line {
   fill: none;
-  stroke-width: 2;
+  stroke-width: 2.25;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
-.ts-chart .ts-chart-series-1 { stroke: var(--tone); }
+.ts-chart .ts-chart-series-1 { stroke: var(--ts-chart-1); }
 .ts-chart .ts-chart-series-2 { stroke: var(--ts-chart-2); }
+
+.ts-chart-fill-start { stop-color: var(--ts-chart-1); stop-opacity: 0.32; }
+.ts-chart-fill-end { stop-color: var(--ts-chart-1); stop-opacity: 0; }
+
+/* Hover columns: a guide line and dots per value; the SVG <title> is the tooltip. */
+.ts-chart-hit {
+  fill: transparent;
+}
+
+.ts-chart-guide {
+  stroke: var(--ts-line-strong);
+  opacity: 0;
+}
+
+.ts-chart-dot {
+  fill: var(--ts-canvas);
+  stroke: var(--ts-chart-1);
+  stroke-width: 2;
+  opacity: 0;
+}
+
+.ts-chart-dot.ts-cat-2 { stroke: var(--ts-cat-2); }
+.ts-chart-dot.ts-cat-3 { stroke: var(--ts-cat-3); }
+
+.ts-chart-column:hover .ts-chart-guide,
+.ts-chart-column:hover .ts-chart-dot {
+  opacity: 1;
+}
+
+.ts-chart-column:last-of-type .ts-chart-dot {
+  opacity: 1;
+}
 
 .ts-chart-legend {
   display: flex;
@@ -275,10 +326,10 @@ code:not(pre code) {
 }
 
 .ts-chart-swatch {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 3px;
   border-radius: 2px;
-  background: var(--tone);
+  background: var(--ts-chart-1);
 }
 
 .ts-chart-swatch-2 {
@@ -299,7 +350,7 @@ code:not(pre code) {
 }
 
 .ts-svg-sharebar-track { fill: var(--ts-surface-3); }
-.ts-svg-sharebar-fill { fill: var(--tone); }
+.ts-svg-sharebar-fill { fill: var(--ts-accent); }
 
 .ts-ring {
   width: 96px;
@@ -315,7 +366,7 @@ code:not(pre code) {
 .ts-ring-track { stroke: var(--ts-surface-3); }
 
 .ts-ring-fill {
-  stroke: var(--tone);
+  stroke: var(--ts-accent);
   stroke-linecap: round;
 }
 

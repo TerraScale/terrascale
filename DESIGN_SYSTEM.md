@@ -9,9 +9,12 @@ it with Lightning CSS into the single stylesheet `web/static/css/terrascale.css`
 
 1. **Compose the kit.** Build pages from the components in
    `internal/ui/components.templ` before writing markup or CSS.
-2. **Color finds the way.** Every navigation destination owns a tone
-   (`internal/ui/layout_helpers.go`). The page it opens inherits it as `--tone`
-   for the eyebrow, active tab, stat accents and charts.
+2. **Flat and blue.** Content sits directly on the canvas; sections are split
+   by hairlines, never boxed, and nothing glows (no gradients, blur or soft
+   shadows; focus is a solid outline). Blue (`--ts-accent`) is the one accent
+   for actions, tabs, charts and highlights. Only the navigation icons carry
+   their own tones (`internal/ui/layout_helpers.go`) so sections are easy to
+   find.
 3. **Spacing by gap.** Containers space their children with `gap`, never with
    margins. Use the 4px scale `--ts-s1`…`--ts-s12`.
 4. **Tokens only.** Colors, type, radius and motion come from
@@ -43,8 +46,9 @@ it with Lightning CSS into the single stylesheet `web/static/css/terrascale.css`
 |---|---|
 | `ui.PageHeader` | The page's single `h1`, eyebrow, description; children are actions |
 | `ui.Tabs` | Underline tabs linking page sections (`?tab=`) |
-| `ui.Card` | The one content surface; `Flush` for edge-to-edge tables and lists |
-| `ui.Stats` / `ui.Stat` | Headline numbers |
+| `ui.Card` | A flat section: heading row plus content, hairline-separated from its siblings |
+| `ui.Stats` / `ui.Stat` | Headline numbers in a divided row (`ts-stats-compact` for word values) |
+| `ui.Disclosure` | A button that expands a create or destructive form inline |
 | `ui.Empty` | Empty lists and charts; children hold the call to action |
 | `ui.Alert` | `info`, `success`, `warning`, `danger` messages |
 | `ui.Badge` | Status pills: `neutral`, `info`, `success`, `warning`, `danger`, `violet` |
@@ -62,6 +66,20 @@ it with Lightning CSS into the single stylesheet `web/static/css/terrascale.css`
 | Forms | `ts-form` `ts-form-grid` `ts-form-actions` `ts-filters` `ts-filter-field` |
 | Data | `ts-table-wrap` `ts-table` `ts-list` `ts-list-item` `ts-kv` `ts-pager` `ts-progress` `ts-code` `ts-snippet` `ts-dot` `ts-avatar` |
 | Overlays | `ts-menu` (`<details { ui.MenuBehavior... }>` + `ts-menu-panel`, `ts-menu-item`), `dialog.ts-dialog`, `ts-tip` |
+
+## Charts
+
+`internal/ui/charts` renders SVG on the server: monotone curves, a gradient
+area for single series, a dashed grid, and hover columns (capped at 60) with a
+guide line, dots and a native `<title>` tooltip. No chart library or script.
+
+## Performance
+
+Responses are compressed (brotli, zstd, gzip) by `httpcompression`. Datastar
+comes from the jsDelivr CDN (immutable, pinned by SRI). The stylesheet is
+linked with its content hash (`static.URL`) and cached as immutable; other static files revalidate by ETag. Speculation rules
+prefetch pages on hover, and every mutating request clears the prefetch cache
+with `Clear-Site-Data`.
 
 ## Motion
 

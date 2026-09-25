@@ -52,7 +52,7 @@ func onboardingView(data pageData, csrfToken string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\"><header class=\"ts-onboarding-header\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-white.svg\" alt=\"TerraScale\" decoding=\"async\"><h1 class=\"ts-sr-only\">Activate your TerraScale account</h1></header><div class=\"ts-onboarding-progress\"><div class=\"ts-row-between ts-meta\"><span class=\"ts-eyebrow\">Step ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\"><header class=\"ts-onboarding-header\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-blue.svg\" alt=\"TerraScale\" decoding=\"async\"><h1 class=\"ts-sr-only\">Activate your TerraScale account</h1></header><div class=\"ts-onboarding-progress\"><div class=\"ts-row-between ts-meta\"><span class=\"ts-eyebrow\">Step ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

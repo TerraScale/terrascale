@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"html"
 	"math"
 	"strings"
 
@@ -10,9 +11,9 @@ import (
 	"terrascale.tech/dashboard/internal/ui/icons"
 )
 
-// navDestination gives every dashboard section its own icon and color tone so
+// navDestination gives every dashboard section its own icon and icon color so
 // users can find a section by color as well as by label. Tones are defined in
-// web/assets/css/tokens.css.
+// web/assets/css/tokens.css; page content itself uses the blue accent.
 type navDestination struct {
 	icon func(int) templ.Component
 	tone string
@@ -49,18 +50,6 @@ func navIcon(url string) templ.Component {
 	return icons.Circle(16)
 }
 
-// activeTone colors the page with the tone of its navigation section.
-func activeTone(groups []core.NavGroup) string {
-	for _, group := range groups {
-		for _, item := range group.Items {
-			if item.Active {
-				return navDestinations[item.URL].tone
-			}
-		}
-	}
-	return "violet"
-}
-
 func title(value string) string {
 	if value == "" {
 		return "TerraScale"
@@ -82,11 +71,9 @@ func navSectionsLabel(admin bool) string {
 	return "Dashboard sections"
 }
 
-func projectTriggerLabel(kind, value string) string {
-	if value == "" {
-		return fmt.Sprintf("Choose %s, current: none", kind)
-	}
-	return fmt.Sprintf("Choose %s, current: %s", kind, value)
+func contextTriggerLabel(shell core.Shell) string {
+	return fmt.Sprintf("Switch organization or project, current: %s / %s",
+		displayName(shell.OrganizationName, "none"), displayName(shell.ProjectName, "none"))
 }
 
 func displayName(value, fallback string) string {
@@ -131,3 +118,26 @@ const navClickPending = "$_navPending = $_navPending || !!(!evt.defaultPrevented
 // navSubmitPending flags native form submissions; Datastar-handled forms
 // prevent the default and never show the bar.
 const navSubmitPending = "$_navPending = $_navPending || (!evt.defaultPrevented && evt.target.method !== 'dialog' && !evt.target.target)"
+
+// speculationRules prefetches page links on hover. Routes with side effects
+// (API calls, exports, payment sessions, one-shot links) are never prefetched.
+const speculationRules = `{"prefetch":[{"where":{"and":[{"href_matches":"/*"},` +
+	`{"not":{"href_matches":["/api/*","/__dev/*","/audit/export*","/billing/*","/checkout/*","/invitations/*","/cli/*","/agent/*","/oauth/*"]}},` +
+	`{"not":{"selector_matches":"[download], [data-no-prefetch]"}}]},"eagerness":"moderate"}]}`
+
+// speculationScript renders the rules as JSON inside a nonced script tag;
+// templ would otherwise treat the script body as literal text.
+func speculationScript(nonce string) templ.Component {
+	attr := ""
+	if nonce != "" {
+		attr = ` nonce="` + html.EscapeString(nonce) + `"`
+	}
+	return templ.Raw(`<script type="speculationrules"` + attr + `>` + speculationRules + `</script>`)
+}
+
+// Datastar v1.0.4 with Rocket, loaded from the official CDN build. The
+// integrity hash pins the exact file; bump both together when upgrading.
+const (
+	datastarURL       = "https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.4/bundles/datastar-rocket.js"
+	datastarIntegrity = "sha384-vUxZojLrF1Ar3de5h7VINqhJXBgjyZS4U49pHvGa87kum6j5Xn6JRziuARNw5ELG"
+)

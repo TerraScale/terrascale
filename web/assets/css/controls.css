@@ -11,12 +11,12 @@
   border: 1px solid transparent;
   border-radius: var(--ts-radius);
   font-size: var(--ts-fs-md);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
-  transition: background-color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease), box-shadow var(--ts-fast) var(--ts-ease);
+  transition: background-color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
 }
 
 .ts-btn:hover {
@@ -24,8 +24,8 @@
 }
 
 .ts-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--ts-focus-ring);
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
 }
 
 .ts-btn:disabled,
@@ -35,9 +35,8 @@
 }
 
 .ts-btn-primary {
-  background: linear-gradient(180deg, var(--ts-accent-hover), var(--ts-accent));
+  background: var(--ts-accent);
   color: var(--ts-on-accent);
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.18) inset, 0 6px 16px -8px var(--ts-accent);
 }
 
 .ts-btn-primary:hover {
@@ -47,14 +46,14 @@
 .ts-btn-secondary,
 .ts-btn-outline {
   border-color: var(--ts-line-strong);
-  background: var(--ts-surface-2);
+  background: transparent;
   color: var(--ts-ink);
 }
 
 .ts-btn-secondary:hover,
 .ts-btn-outline:hover {
   border-color: rgb(148 163 184 / 0.34);
-  background: var(--ts-surface-3);
+  background: var(--ts-surface-2);
 }
 
 .ts-btn-ghost {
@@ -166,10 +165,10 @@
   padding: 0 var(--ts-s3);
   border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius);
-  background: var(--ts-canvas);
+  background: var(--ts-surface);
   color: var(--ts-ink);
   font-size: var(--ts-fs-md);
-  transition: border-color var(--ts-fast) var(--ts-ease), box-shadow var(--ts-fast) var(--ts-ease);
+  transition: border-color var(--ts-fast) var(--ts-ease);
 }
 
 textarea.ts-input {
@@ -193,8 +192,8 @@ textarea.ts-input {
 .ts-input:focus-visible,
 .ts-select:focus-visible {
   border-color: var(--ts-accent);
-  outline: none;
-  box-shadow: var(--ts-focus-ring);
+  outline: 1px solid var(--ts-accent);
+  outline-offset: 0;
 }
 
 .ts-input[aria-invalid="true"],
@@ -206,6 +205,10 @@ textarea.ts-input {
 .ts-select:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.ts-input-lg {
+  height: var(--ts-control-h-lg);
 }
 
 .ts-input-sm {

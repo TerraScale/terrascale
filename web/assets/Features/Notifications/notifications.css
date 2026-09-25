@@ -15,15 +15,12 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start;
   gap: var(--ts-s4);
-  padding: var(--ts-s4) var(--ts-s5);
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-lg);
-  background: var(--ts-surface);
+  padding: var(--ts-s4) 0;
+  border-bottom: 1px solid var(--ts-line);
 }
 
-.ts-notification-unread {
-  border-color: color-mix(in oklab, var(--tone) 35%, transparent);
-  background: linear-gradient(90deg, color-mix(in oklab, var(--tone) 8%, var(--ts-surface)), var(--ts-surface) 50%);
+.ts-notification-unread .ts-strong {
+  color: #cfe0ff;
 }
 
 .ts-notification-marker {
@@ -32,7 +29,6 @@
   margin-top: 6px;
   border-radius: 50%;
   background: var(--tone);
-  box-shadow: 0 0 0 4px color-mix(in oklab, var(--tone) 18%, transparent);
 }
 
 .ts-notification:not(.ts-notification-unread) .ts-notification-marker {

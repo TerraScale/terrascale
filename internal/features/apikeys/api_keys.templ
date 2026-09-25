@@ -30,7 +30,7 @@ templ apiKeysContent(page core.Page, d pageData) {
 			@ui.Stat("M2M clients", strconv.Itoa(d.M2MClients), "Active machine credentials")
 		}
 		if d.CanManage {
-			<div class="ts-grid-2">
+			<div class="ts-row ts-apikeys-create">
 				@createCredential(page, d, "key", "Create key", "New project key", "database:read,database:write")
 				@createCredential(page, d, "m2m", "Create machine credential", "New machine credential", "database:read")
 			</div>
@@ -93,18 +93,7 @@ templ apiKeysContent(page core.Page, d pageData) {
 }
 
 templ createCredential(page core.Page, d pageData, kind, action, title, scopes string) {
-	<details class="ts-card ts-apikeys-create" open?={ d.Create == kind }>
-		<summary class="ts-apikeys-create-summary">
-			<span class="ts-apikeys-create-icon" aria-hidden="true">
-				if kind == "key" {
-					@icons.KeyRound(16)
-				} else {
-					@icons.Bot(16)
-				}
-			</span>
-			<span class="ts-strong">{ action }</span>
-			@icons.ChevronDown(16)
-		</summary>
+	@ui.Disclosure(ui.DisclosureProps{Label: action, Icon: credentialIcon(kind), Variant: credentialVariant(kind), Open: d.Create == kind}) {
 		<form method="post" action={ "/api/v1/dashboard/credentials/" + kind } class="ts-form ts-apikeys-create-form">
 			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 			<h2 class="ts-section-title">{ title }</h2>
@@ -126,7 +115,21 @@ templ createCredential(page core.Page, d pageData, kind, action, title, scopes s
 				<button class="ts-btn ts-btn-primary" type="submit">{ action }</button>
 			</div>
 		</form>
-	</details>
+	}
+}
+
+func credentialIcon(kind string) templ.Component {
+	if kind == "key" {
+		return icons.KeyRound(16)
+	}
+	return icons.Bot(16)
+}
+
+func credentialVariant(kind string) string {
+	if kind == "key" {
+		return "primary"
+	}
+	return "secondary"
 }
 
 templ credentialRow(page core.Page, canManage bool, key keyView) {

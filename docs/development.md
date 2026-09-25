@@ -34,10 +34,12 @@ bootstrap needs access to the Go module proxy. The dashboard and templ
 generator build from vendored modules. Stopping the foreground `make dev`
 process with Ctrl+C terminates Air, its app child, and the CSS watcher.
 
-The only script is the official Datastar v1.0.4 browser bundle, checked in at
-`web/static/js/datastar.js`. There is no custom JavaScript: behavior lives in
-Go handlers, templ components, native HTML (`<details>`, `<dialog>` with
-`command`/`commandfor`) and Datastar attributes. Starbase informs the dashboard's visual direction; it is
+The only script is the official Datastar v1.0.4 bundle with Rocket, loaded from
+the jsDelivr CDN with a pinned Subresource Integrity hash (`datastarURL` and
+`datastarIntegrity` in `internal/ui/layout_helpers.go`; update both together).
+There is no custom JavaScript: behavior lives in Go handlers, templ components,
+native HTML (`<details>`, `<dialog>` with `command`/`commandfor`) and Datastar
+attributes. Starbase informs the dashboard's visual direction; it is
 a design reference, and no Starbase framework code is copied into the app.
 
 `DASHBOARD_DEMO_ADMIN_EMAIL` and `DASHBOARD_DEMO_ADMIN_PASSWORD` seed the local

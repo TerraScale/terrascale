@@ -10,6 +10,7 @@ import (
 
 	"terrascale.tech/dashboard/internal/features/auth"
 	"terrascale.tech/dashboard/internal/platform/config"
+	static "terrascale.tech/dashboard/web/static"
 )
 
 const originalDemoPassword = "terrascale"
@@ -19,7 +20,7 @@ func TestMountedCallerAndAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"/health/ready", "/login", "/onboarding", "/css/terrascale.css", "/js/datastar.js", "/brand/logo-terrascale-auth.svg"} {
+	for _, target := range []string{"/health/ready", "/login", "/onboarding", "/css/terrascale.css", "/brand/logo-terrascale-auth.svg"} {
 		request := httptest.NewRequest(http.MethodGet, "http://dashboard.test"+target, nil)
 		response := httptest.NewRecorder()
 		application.Handler.ServeHTTP(response, request)
@@ -301,5 +302,39 @@ func TestDemoAccountSeedPreservesExistingCredentials(t *testing.T) {
 	}
 	if _, err := New(config.Config{}); err == nil {
 		t.Fatal("non-demo mode unexpectedly started with a seeded account")
+	}
+}
+
+func TestStaticAssetsAreCompressedCachedAndMutationsDropPrefetches(t *testing.T) {
+	application, err := New(config.Config{Demo: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serve := func(method, target string, header http.Header) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, "http://dashboard.test"+target, nil)
+		for key, values := range header {
+			request.Header[key] = values
+		}
+		response := httptest.NewRecorder()
+		application.Handler.ServeHTTP(response, request)
+		return response
+	}
+	css := serve(http.MethodGet, static.URL("css/terrascale.css"), http.Header{"Accept-Encoding": {"br, gzip"}})
+	if css.Code != http.StatusOK || css.Header().Get("Content-Encoding") != "br" ||
+		css.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Fatalf("versioned stylesheet: %d %v", css.Code, css.Header())
+	}
+	etag := css.Header().Get("ETag")
+	if revalidated := serve(http.MethodGet, "/css/terrascale.css", http.Header{"If-None-Match": {etag}}); revalidated.Code != http.StatusNotModified {
+		t.Fatalf("unversioned stylesheet revalidation: %d", revalidated.Code)
+	}
+	if font := serve(http.MethodGet, "/fonts/oxanium-latin-wght-normal.woff2", http.Header{"Accept-Encoding": {"br"}}); font.Header().Get("Content-Encoding") != "" {
+		t.Fatal("already-compressed fonts were compressed again")
+	}
+	if post := serve(http.MethodPost, "/api/v1/auth/logout", nil); post.Header().Get("Clear-Site-Data") != `"prefetchCache"` {
+		t.Fatalf("mutation did not clear prefetched pages: %v", post.Header())
+	}
+	if page := serve(http.MethodGet, "/login", nil); page.Header().Get("Clear-Site-Data") != "" {
+		t.Fatal("a page view cleared prefetched pages")
 	}
 }

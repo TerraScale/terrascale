@@ -167,8 +167,7 @@ body.ts-nav-pending::before {
   height: 3px;
   background:
     linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent) 0 0 / 30% 100% no-repeat,
-    linear-gradient(90deg, #a78bfa, #60a5fa 35%, #22d3ee 65%, #34d399);
-  box-shadow: 0 0 12px color-mix(in oklab, #60a5fa 70%, transparent);
+    var(--ts-accent);
   transform-origin: left center;
   pointer-events: none;
   animation:

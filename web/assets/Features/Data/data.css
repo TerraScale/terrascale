@@ -132,12 +132,12 @@
 
 .ts-data-progress::-webkit-progress-value {
   border-radius: var(--ts-radius-pill);
-  background: linear-gradient(90deg, var(--tone), var(--ts-accent));
+  background: var(--ts-accent);
 }
 
 .ts-data-progress::-moz-progress-bar {
   border-radius: var(--ts-radius-pill);
-  background: linear-gradient(90deg, var(--tone), var(--ts-accent));
+  background: var(--ts-accent);
 }
 
 /* Document revisions as a timeline. */

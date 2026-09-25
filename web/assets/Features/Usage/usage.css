@@ -10,10 +10,6 @@
   display: flex;
   align-items: center;
   gap: var(--ts-s4);
-  padding: var(--ts-s4);
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-lg);
-  background: var(--ts-surface);
 }
 
 .ts-usage-ring {

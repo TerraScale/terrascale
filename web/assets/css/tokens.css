@@ -4,11 +4,11 @@
   color-scheme: dark;
 
   /* Canvas and surfaces, darkest to lightest. */
-  --ts-canvas: #0a0b10;
-  --ts-sidebar: #0d0f15;
-  --ts-surface: #12151d;
-  --ts-surface-2: #181c26;
-  --ts-surface-3: #202533;
+  --ts-canvas: #0a0c12;
+  --ts-sidebar: #0a0c12;
+  --ts-surface: #11141c;
+  --ts-surface-2: #161a24;
+  --ts-surface-3: #1e2330;
   --ts-line: rgb(148 163 184 / 0.12);
   --ts-line-strong: rgb(148 163 184 / 0.22);
 
@@ -18,24 +18,26 @@
   --ts-ink-3: #6c7589;
 
   /* Primary accent and status colors. */
-  --ts-accent: #4f7cff;
-  --ts-accent-hover: #6a91ff;
+  --ts-accent: #3b82f6;
+  --ts-accent-hover: #5b96f8;
+  --ts-accent-soft: rgb(59 130 246 / 0.14);
   --ts-on-accent: #ffffff;
-  --ts-link: #8aa8ff;
+  --ts-link: #6ea8ff;
   --ts-success: #34d399;
   --ts-warning: #fbbf24;
   --ts-danger: #f87171;
   --ts-info: #60a5fa;
 
   /* Chart series (kept for the SVG chart renderer). */
-  --ts-chart-1: #6a91ff;
+  /* Charts: a blue family, validated against the canvas. */
+  --ts-chart-1: #3b82f6;
   --ts-chart-2: #22d3ee;
-  --ts-cat-1: #6a91ff;
-  --ts-cat-2: #fb923c;
-  --ts-cat-3: #34d399;
+  --ts-cat-1: #3b82f6;
+  --ts-cat-2: #22d3ee;
+  --ts-cat-3: #a5b4fc;
 
-  /* Current section tone; set by [data-tone] below. */
-  --tone: #a78bfa;
+  /* Page accent. Navigation icons override it with their [data-tone]. */
+  --tone: var(--ts-accent);
 
   /* Type. Oxanium carries the brand; body copy stays at a readable 14px. */
   --ts-font-sans: "Oxanium", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -60,18 +62,17 @@
   --ts-s12: 48px;
 
   /* Shape. */
-  --ts-radius-sm: 6px;
-  --ts-radius: 9px;
-  --ts-radius-lg: 14px;
+  --ts-radius-sm: 4px;
+  --ts-radius: 6px;
+  --ts-radius-lg: 10px;
   --ts-radius-pill: 999px;
-  --ts-control-h: 38px;
+  --ts-control-h: 36px;
   --ts-control-h-sm: 32px;
   --ts-control-h-lg: 44px;
 
   /* Depth. */
-  --ts-shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 8px 24px -12px rgb(0 0 0 / 0.6);
-  --ts-shadow-overlay: 0 24px 64px -16px rgb(0 0 0 / 0.75), 0 0 0 1px var(--ts-line-strong);
-  --ts-focus-ring: 0 0 0 3px color-mix(in oklab, var(--ts-accent) 45%, transparent);
+  /* Overlays separate by a hairline; the faint drop only lifts them off content. */
+  --ts-shadow-overlay: 0 0 0 1px var(--ts-line-strong), 0 12px 24px -16px rgb(0 0 0 / 0.6);
   --ts-scrim: rgb(5 6 10 / 0.72);
 
   /* Motion. */

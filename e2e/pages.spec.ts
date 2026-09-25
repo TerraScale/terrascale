@@ -75,8 +75,8 @@ test("member navigation works with native keyboard controls and on mobile", asyn
   mkdirSync("/tmp/dsh-198-after", { recursive: true });
   await page.screenshot({ path: "/tmp/dsh-198-after/member-desktop-navigation.png", fullPage: true });
 
-  const projectMenu = page.locator("details.ts-project-menu:not(.ts-organization-menu)");
-  const projectTrigger = page.locator('details.ts-project-menu:not(.ts-organization-menu) > summary.ts-context-trigger[aria-label="Choose project, current: Personal"]');
+  const projectMenu = page.locator("details.ts-context-menu");
+  const projectTrigger = page.locator('details.ts-context-menu > summary.ts-context-trigger[aria-label="Switch organization or project, current: Personal / Personal"]');
   await projectTrigger.focus();
   await page.keyboard.press("Enter");
   await expect(projectMenu).toHaveAttribute("open", "");

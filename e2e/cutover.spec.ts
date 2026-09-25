@@ -252,7 +252,7 @@ test("fresh account charts show a zero baseline without inventing usage", async 
   await expect(page.locator(".ts-home-activity-total")).toContainText("Plotted operations");
   const path = await activity.locator("path.ts-chart-line").getAttribute("d");
   expect(path).toBeTruthy();
-  const verticalCoordinates = [...path!.matchAll(/(?:M|L)\s+[\d.]+,([\d.]+)/g)].map((match) => match[1]);
+  const verticalCoordinates = [...path!.matchAll(/[\d.]+,([\d.]+)/g)].map((match) => match[1]);
   expect(verticalCoordinates.length).toBeGreaterThan(1);
   expect(new Set(verticalCoordinates).size).toBe(1);
 

@@ -123,8 +123,8 @@ dialog.ts-org-wizard {
   padding: var(--ts-s4);
   padding-right: var(--ts-s10);
   border: 1px solid var(--ts-line-strong);
-  border-radius: var(--ts-radius-lg);
-  background: var(--ts-surface-2);
+  border-radius: var(--ts-radius);
+  background: transparent;
   cursor: pointer;
   transition: border-color var(--ts-fast) var(--ts-ease), background-color var(--ts-fast) var(--ts-ease);
 }

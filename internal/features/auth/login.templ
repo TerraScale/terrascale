@@ -2,24 +2,20 @@ package auth
 
 import "terrascale.tech/dashboard/internal/ui"
 
+// loginView pairs a full-bleed region map with the sign-in column.
 templ loginView(data loginPageData, csrfToken string) {
 	<main class="ts-login">
 		<section class="ts-login-hero" aria-hidden="true">
-			<img class="ts-brand-logo" src="/brand/logo-terrascale-white.svg" alt="" decoding="async"/>
-			<div class="ts-login-pitch">
-				<p class="ts-eyebrow">Globally distributed data</p>
-				<p class="ts-login-headline">One control plane for every region your users are in.</p>
-			</div>
 			@ui.RegionMap("")
 			<ul class="ts-login-regions">
-				<li data-tone="sky"><span class="ts-dot"></span>San Francisco</li>
-				<li data-tone="emerald"><span class="ts-dot"></span>São Paulo</li>
-				<li data-tone="violet"><span class="ts-dot"></span>Frankfurt</li>
+				<li><span class="ts-dot"></span>San Francisco</li>
+				<li><span class="ts-dot"></span>São Paulo</li>
+				<li><span class="ts-dot"></span>Frankfurt</li>
 			</ul>
 		</section>
 		<div class="ts-login-column">
-			<div class="ts-auth-card">
-				<img class="ts-brand-logo ts-login-mobile-logo" src="/brand/logo-terrascale-white.svg" alt="TerraScale" decoding="async"/>
+			<div class="ts-login-panel">
+				<img class="ts-login-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async"/>
 				<div class="ts-auth-heading">
 					<h1 class="ts-auth-title" id="login-title">Sign in</h1>
 					<p class="ts-auth-subtitle">Access your databases and cloud operations.</p>
@@ -31,7 +27,7 @@ templ loginView(data loginPageData, csrfToken string) {
 					<input type="hidden" name="_csrf" value={ csrfToken }/>
 					<input type="hidden" name="redirectTo" value={ data.RedirectTo }/>
 					@ui.Field(ui.FieldProps{ID: "email", Label: "Email"}) {
-						<input class="ts-input" type="email" id="email" name="email" autocomplete="email" placeholder="name@company.com" required/>
+						<input class="ts-input ts-input-lg" type="email" id="email" name="email" autocomplete="email" placeholder="name@company.com" required/>
 					}
 					<div class="ts-field">
 						<div class="ts-row-between">
@@ -50,7 +46,9 @@ templ loginView(data loginPageData, csrfToken string) {
 				</div>
 				<p class="ts-auth-footer">New to TerraScale? <a class="ts-link" href="/onboarding">Create account</a></p>
 			</div>
-			@localeSelect()
+			<footer class="ts-login-footer">
+				@localeSelect()
+			</footer>
 		</div>
 	</main>
 }
@@ -84,7 +82,7 @@ templ authStatusView(data authStatusPageData, csrfToken string) {
 		<main class="ts-auth">
 			<div class="ts-auth-card">
 				<div class="ts-auth-brand">
-					<img class="ts-brand-logo" src="/brand/logo-terrascale-white.svg" alt="TerraScale" decoding="async"/>
+					<img class="ts-brand-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async"/>
 				</div>
 				<div class="ts-auth-heading">
 					<h1 class="ts-auth-title">{ data.Title }</h1>

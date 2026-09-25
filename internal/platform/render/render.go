@@ -154,6 +154,9 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 			}
 		}
 	}
+	byName := func(a, b string) int { return strings.Compare(strings.ToLower(a), strings.ToLower(b)) }
+	slices.SortFunc(shell.Organizations, func(a, b core.OrganizationOption) int { return byName(a.Name, b.Name) })
+	slices.SortFunc(shell.Projects, func(a, b core.ProjectOption) int { return byName(a.Name, b.Name) })
 	if layout == "admin" {
 		shell.Navigation = []core.NavGroup{
 			{Label: "Accounts", Items: []core.NavItem{

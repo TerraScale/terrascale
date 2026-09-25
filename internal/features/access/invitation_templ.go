@@ -33,7 +33,7 @@ func invitationPageView(page core.Page, data invitationPageData) templ.Component
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<main class=\"ts-auth\"><section class=\"ts-auth-card\" aria-labelledby=\"invitation-title\"><div class=\"ts-auth-brand\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-white.svg\" alt=\"TerraScale\" decoding=\"async\"></div><div class=\"ts-auth-heading\"><p class=\"ts-eyebrow\">Organization invitation</p><h1 class=\"ts-auth-title\" id=\"invitation-title\">Join ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<main class=\"ts-auth\"><section class=\"ts-auth-card\" aria-labelledby=\"invitation-title\"><div class=\"ts-auth-brand\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-blue.svg\" alt=\"TerraScale\" decoding=\"async\"></div><div class=\"ts-auth-heading\"><p class=\"ts-eyebrow\">Organization invitation</p><h1 class=\"ts-auth-title\" id=\"invitation-title\">Join ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

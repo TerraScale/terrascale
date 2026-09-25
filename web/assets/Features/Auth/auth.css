@@ -1,54 +1,34 @@
-/* Sign-in page: region-map hero beside the credential card. */
+/* Sign-in page: a full-bleed region map beside the credential column. */
 
 .ts-login {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(24rem, 1fr);
+  grid-template-columns: minmax(0, 2fr) minmax(24rem, 1fr);
   min-height: 100dvh;
 }
 
 .ts-login-hero {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: var(--ts-s8);
-  padding: var(--ts-s10) var(--ts-s12);
-  border-right: 1px solid var(--ts-line);
-  background:
-    radial-gradient(700px 480px at 40% 55%, rgb(79 124 255 / 0.14), transparent 70%),
-    rgb(13 15 21 / 0.6);
-}
-
-.ts-login-hero .ts-brand-logo {
-  align-self: flex-start;
-}
-
-.ts-login-pitch {
+  position: relative;
   display: grid;
-  gap: var(--ts-s3);
-  max-width: 30rem;
-}
-
-.ts-login-pitch .ts-eyebrow {
-  color: #a78bfa;
-}
-
-.ts-login-headline {
-  font-size: var(--ts-fs-3xl);
-  font-weight: 700;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
+  place-items: center;
+  padding: var(--ts-s10);
+  overflow: hidden;
 }
 
 .ts-login-hero .ts-region-map {
-  max-width: 40rem;
-  border-color: transparent;
+  width: 100%;
+  border: 0;
   background: transparent;
 }
 
 .ts-login-regions {
+  position: absolute;
+  bottom: var(--ts-s8);
+  left: var(--ts-s10);
   display: flex;
   flex-wrap: wrap;
-  gap: var(--ts-s2);
+  gap: var(--ts-s5);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
   list-style: none;
 }
 
@@ -56,28 +36,41 @@
   display: inline-flex;
   align-items: center;
   gap: var(--ts-s2);
-  padding: var(--ts-s1) var(--ts-s3);
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-pill);
-  color: var(--ts-ink-2);
-  font-size: var(--ts-fs-sm);
 }
 
 .ts-login-regions .ts-dot {
-  color: var(--tone);
+  width: 6px;
+  height: 6px;
+  color: var(--ts-accent);
 }
 
 .ts-login-column {
   display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: var(--ts-s5);
-  padding: var(--ts-s10) var(--ts-s4);
+  grid-template-rows: 1fr auto;
+  border-left: 1px solid color-mix(in oklab, var(--ts-accent) 45%, transparent);
+  background: var(--ts-canvas);
 }
 
-.ts-login-mobile-logo {
-  display: none;
+.ts-login-panel {
+  display: grid;
+  align-content: center;
+  gap: var(--ts-s5);
+  width: min(20rem, 100%);
+  margin-inline: auto;
+  padding: var(--ts-s10) 0;
+}
+
+.ts-login-logo {
   justify-self: center;
+  width: auto;
+  height: 68px;
+}
+
+.ts-login-footer {
+  display: flex;
+  justify-content: center;
+  padding: var(--ts-s4);
+  border-top: 1px solid var(--ts-line);
 }
 
 @media (max-width: 64rem) {
@@ -89,7 +82,15 @@
     display: none;
   }
 
-  .ts-login-mobile-logo {
-    display: block;
+  .ts-login-column {
+    border-left: 0;
+  }
+
+  .ts-login-panel {
+    width: min(22rem, calc(100% - 2 * var(--ts-s4)));
+  }
+
+  .ts-login-logo {
+    height: 52px;
   }
 }

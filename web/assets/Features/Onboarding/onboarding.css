@@ -24,7 +24,7 @@
 }
 
 .ts-onboarding-progress .ts-eyebrow {
-  color: #a78bfa;
+  color: var(--ts-link);
 }
 
 .ts-onboarding-steps {
@@ -62,7 +62,6 @@
   border-color: transparent;
   background: var(--ts-accent);
   color: var(--ts-on-accent);
-  box-shadow: 0 0 0 4px color-mix(in oklab, var(--ts-accent) 25%, transparent);
 }
 
 .ts-onboarding-step-complete {
@@ -80,10 +79,8 @@
   gap: var(--ts-s5);
   padding: var(--ts-s8);
   border: 1px solid var(--ts-line);
-  border-radius: 18px;
-  background: rgb(18 21 29 / 0.82);
-  box-shadow: var(--ts-shadow-overlay);
-  backdrop-filter: blur(16px);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
 }
 
 .ts-onboarding-heading {
@@ -140,7 +137,8 @@
 }
 
 .ts-segmented label:has(input:focus-visible) {
-  box-shadow: var(--ts-focus-ring);
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
 }
 
 /* Plan cards: the radio is visually hidden, the whole card is the target. */
@@ -159,9 +157,9 @@
   padding: var(--ts-s4);
   border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius-lg);
-  background: linear-gradient(160deg, color-mix(in oklab, var(--tone) 8%, var(--ts-surface)), var(--ts-surface) 70%);
+  background: transparent;
   cursor: pointer;
-  transition: border-color var(--ts-fast) var(--ts-ease), box-shadow var(--ts-fast) var(--ts-ease);
+  transition: border-color var(--ts-fast) var(--ts-ease), background-color var(--ts-fast) var(--ts-ease);
 }
 
 .ts-onboarding-plan > .ts-row-between {
@@ -179,12 +177,13 @@
 }
 
 .ts-onboarding-plan:has(:checked) {
-  border-color: var(--tone);
-  box-shadow: 0 0 0 1px var(--tone), 0 12px 32px -16px var(--tone);
+  border-color: var(--ts-accent);
+  background: var(--ts-accent-soft);
 }
 
 .ts-onboarding-plan:has(:focus-visible) {
-  box-shadow: var(--ts-focus-ring);
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
 }
 
 .ts-onboarding-plan-name {

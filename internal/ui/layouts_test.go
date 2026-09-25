@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"encoding/json"
 	"io/fs"
 	"strings"
 	"testing"
@@ -65,7 +66,6 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 		`class="ts-nav-link" href="/organization" data-tone="indigo"`,
 		`class="ts-nav-link" href="/" data-tone="violet" aria-current="page"`,
 		`class="ts-nav-count" aria-hidden="true">6</span>`,
-		`data-tone="violet"><main`,
 		`rel="preload" href="/fonts/oxanium-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin`,
 		`href="/billing"`,
 		`data-active-project-id="project-1"`,
@@ -88,10 +88,13 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 		`src="/brand/logo-terrascale-white.svg"`,
 		`<span class="ts-account-avatar" aria-hidden="true">AE</span>`,
 		`nonce="nonce_test_123"`,
-		`<script type="module" src="/js/datastar.js" nonce="nonce_test_123"></script>`,
+		`<script type="module" src="` + datastarURL + `" integrity="` + datastarIntegrity + `" crossorigin="anonymous" nonce="nonce_test_123"></script>`,
+		`<script type="speculationrules" nonce="nonce_test_123">`,
+		`href="` + static.URL("css/terrascale.css") + `"`,
 		`class="ts-shell" data-signals="{navOpen: false}" data-class:nav-open="$navOpen"`,
-		`class="ts-menu ts-context-menu ts-organization-menu"`,
-		`<div id="ts-main" class="ts-main" tabindex="-1" data-tone="violet">`,
+		`class="ts-menu ts-context-menu"`,
+		`aria-label="Switch organization or project, current: Org &lt;script&gt; / Production"`,
+		`<div id="ts-main" class="ts-main" tabindex="-1">`,
 		`<h1>Overview</h1>`,
 		`Org &lt;script&gt;`,
 		`Avery &lt;script&gt;alert(1)&lt;/script&gt;`,
@@ -106,11 +109,11 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 	if strings.Count(html, `data-dashboard-css`) != 1 {
 		t.Fatalf("want one stylesheet link, got %d", strings.Count(html, `data-dashboard-css`))
 	}
-	if strings.Count(html, "<script") != 1 || strings.Count(html, `src="/js/datastar.js"`) != 1 {
-		t.Fatal("the shell must load Datastar as its only script")
+	if strings.Count(html, "<script") != 2 || strings.Count(html, `src="`+datastarURL+`"`) != 1 {
+		t.Fatal("the shell must load the CDN Datastar bundle as its only script, next to the speculation rules")
 	}
-	if count := strings.Count(html, `data-on:click__outside="el.open = false"`); count != 3 {
-		t.Fatalf("want three Datastar-enhanced menus, got %d", count)
+	if count := strings.Count(html, `data-on:click__outside="el.open = false"`); count != 2 {
+		t.Fatalf("want the context and account menus, got %d", count)
 	}
 	if count := strings.Count(html, "<main"); count != 1 {
 		t.Fatalf("want one main landmark with a feature page main, got %d", count)
@@ -153,8 +156,8 @@ func TestAuthTemplLayoutUsesCSPNonceAndFileBackedAssets(t *testing.T) {
 	for _, want := range []string{
 		`data-nonce="auth_nonce_456"`,
 		`href="/brand/logo-icon-blue.svg"`,
-		`href="/css/terrascale.css"`,
-		`type="module" src="/js/datastar.js" nonce="auth_nonce_456"`,
+		`href="/css/terrascale.css?v=`,
+		`type="module" src="` + datastarURL + `" integrity="sha384-`,
 		`href="#ts-auth-main"`,
 		`<title>Sign in · TerraScale</title>`,
 	} {
@@ -201,25 +204,16 @@ func TestEmbeddedStaticAssetsContainOneBundledStylesheetAndBrand(t *testing.T) {
 		"brand/region-map.svg",
 		"fonts/oxanium-latin-wght-normal.woff2",
 		"fonts/jetbrains-mono-latin-wght-normal.woff2",
-		"js/datastar.js",
 	} {
 		if _, err := fs.Stat(static.Assets, path); err != nil {
 			t.Errorf("public asset %q is missing: %v", path, err)
 		}
 	}
-	scripts, err := fs.Glob(static.Assets, "js/*.js")
-	if err != nil {
-		t.Fatal(err)
+	if scripts, _ := fs.Glob(static.Assets, "*/*.js"); len(scripts) != 0 {
+		t.Fatalf("scripts must not be served from the dashboard, got %v", scripts)
 	}
-	if len(scripts) != 1 || scripts[0] != "js/datastar.js" {
-		t.Fatalf("the vendored Datastar bundle must be the only script, got %v", scripts)
-	}
-	datastar, err := fs.ReadFile(static.Assets, "js/datastar.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(datastar, []byte("Datastar v1.0.4")) {
-		t.Fatal("vendored Datastar browser bundle is not v1.0.4")
+	if !strings.Contains(datastarURL, "@v1.0.4/bundles/datastar-rocket.js") {
+		t.Fatalf("Datastar CDN bundle is not the pinned v1.0.4 Rocket build: %s", datastarURL)
 	}
 	regionMap, err := fs.ReadFile(static.Assets, "brand/region-map.svg")
 	if err != nil {
@@ -245,4 +239,20 @@ func renderTempl(t *testing.T, component templ.Component) string {
 		t.Fatal(err)
 	}
 	return rendered.String()
+}
+
+func TestSpeculationRulesAreValidAndSkipSideEffectRoutes(t *testing.T) {
+	var rules struct {
+		Prefetch []struct {
+			Eagerness string `json:"eagerness"`
+		} `json:"prefetch"`
+	}
+	if err := json.Unmarshal([]byte(speculationRules), &rules); err != nil || len(rules.Prefetch) != 1 || rules.Prefetch[0].Eagerness != "moderate" {
+		t.Fatalf("speculation rules = %v, %+v", err, rules)
+	}
+	for _, route := range []string{"/api/*", "/billing/*", "/checkout/*", "/audit/export*", "/invitations/*"} {
+		if !strings.Contains(speculationRules, `"`+route+`"`) {
+			t.Errorf("speculation rules prefetch side-effect route %s", route)
+		}
+	}
 }

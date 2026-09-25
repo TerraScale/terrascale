@@ -23,8 +23,8 @@ details.ts-menu > .ts-menu-panel {
   min-width: 14rem;
   max-width: min(90vw, 22rem);
   padding: var(--ts-s1);
-  border-radius: var(--ts-radius-lg);
-  background: var(--ts-surface-2);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface);
   box-shadow: var(--ts-shadow-overlay);
 }
 
@@ -125,7 +125,6 @@ dialog.ts-dialog[open] {
 
 dialog.ts-dialog::backdrop {
   background: var(--ts-scrim);
-  backdrop-filter: blur(3px);
 }
 
 .ts-dialog-content {
@@ -194,7 +193,7 @@ dialog.ts-dialog::backdrop {
   overflow: hidden;
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-lg);
-  background: radial-gradient(circle at 50% 40%, rgb(79 124 255 / 0.12), transparent 70%), var(--ts-canvas);
+  background: var(--ts-surface);
 }
 
 .ts-region-map-image,
@@ -246,7 +245,7 @@ dialog.ts-dialog::backdrop {
 
 .ts-region-node-core {
   background: #8aa8ff;
-  box-shadow: 0 0 0 2px var(--ts-canvas), 0 0 14px rgb(106 145 255 / 0.9);
+  box-shadow: 0 0 0 2px var(--ts-canvas);
 }
 
 .ts-region-node-ring {

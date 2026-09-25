@@ -9,6 +9,7 @@ import templruntime "github.com/a-h/templ/runtime"
 
 import "terrascale.tech/dashboard/internal/ui"
 
+// loginView pairs a full-bleed region map with the sign-in column.
 func loginView(data loginPageData, csrfToken string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -30,7 +31,7 @@ func loginView(data loginPageData, csrfToken string) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<main class=\"ts-login\"><section class=\"ts-login-hero\" aria-hidden=\"true\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-white.svg\" alt=\"\" decoding=\"async\"><div class=\"ts-login-pitch\"><p class=\"ts-eyebrow\">Globally distributed data</p><p class=\"ts-login-headline\">One control plane for every region your users are in.</p></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<main class=\"ts-login\"><section class=\"ts-login-hero\" aria-hidden=\"true\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -38,7 +39,7 @@ func loginView(data loginPageData, csrfToken string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<ul class=\"ts-login-regions\"><li data-tone=\"sky\"><span class=\"ts-dot\"></span>San Francisco</li><li data-tone=\"emerald\"><span class=\"ts-dot\"></span>São Paulo</li><li data-tone=\"violet\"><span class=\"ts-dot\"></span>Frankfurt</li></ul></section><div class=\"ts-login-column\"><div class=\"ts-auth-card\"><img class=\"ts-brand-logo ts-login-mobile-logo\" src=\"/brand/logo-terrascale-white.svg\" alt=\"TerraScale\" decoding=\"async\"><div class=\"ts-auth-heading\"><h1 class=\"ts-auth-title\" id=\"login-title\">Sign in</h1><p class=\"ts-auth-subtitle\">Access your databases and cloud operations.</p></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<ul class=\"ts-login-regions\"><li><span class=\"ts-dot\"></span>San Francisco</li><li><span class=\"ts-dot\"></span>São Paulo</li><li><span class=\"ts-dot\"></span>Frankfurt</li></ul></section><div class=\"ts-login-column\"><div class=\"ts-login-panel\"><img class=\"ts-login-logo\" src=\"/brand/logo-terrascale-blue.svg\" alt=\"TerraScale\" decoding=\"async\"><div class=\"ts-auth-heading\"><h1 class=\"ts-auth-title\" id=\"login-title\">Sign in</h1><p class=\"ts-auth-subtitle\">Access your databases and cloud operations.</p></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -55,7 +56,7 @@ func loginView(data loginPageData, csrfToken string) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 31, Col: 56}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 27, Col: 56}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var2)
 		if templ_7745c5c3_Err != nil {
@@ -68,7 +69,7 @@ func loginView(data loginPageData, csrfToken string) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.ResolveAttributeValue(data.RedirectTo)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 32, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 28, Col: 67}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var3)
 		if templ_7745c5c3_Err != nil {
@@ -90,7 +91,7 @@ func loginView(data loginPageData, csrfToken string) templ.Component {
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<input class=\"ts-input\" type=\"email\" id=\"email\" name=\"email\" autocomplete=\"email\" placeholder=\"name@company.com\" required>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<input class=\"ts-input ts-input-lg\" type=\"email\" id=\"email\" name=\"email\" autocomplete=\"email\" placeholder=\"name@company.com\" required>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -108,7 +109,7 @@ func loginView(data loginPageData, csrfToken string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</div><button class=\"ts-btn ts-btn-primary ts-btn-lg ts-btn-block\" type=\"submit\">Sign in</button></form><div class=\"ts-auth-divider\" aria-hidden=\"true\">Other sign-in options</div><div class=\"ts-auth-providers\"><button class=\"ts-btn ts-btn-secondary\" type=\"button\" disabled aria-label=\"Passkey sign-in unavailable in the in-memory demo\" title=\"Unavailable in the in-memory demo\">Passkey</button> <button class=\"ts-btn ts-btn-secondary\" type=\"button\" disabled aria-label=\"Google sign-in unavailable in the in-memory demo\" title=\"Unavailable in the in-memory demo\"><img src=\"/brand/google.svg\" alt=\"\" aria-hidden=\"true\" width=\"18\" height=\"18\"></button> <button class=\"ts-btn ts-btn-secondary\" type=\"button\" disabled aria-label=\"GitHub sign-in unavailable in the in-memory demo\" title=\"Unavailable in the in-memory demo\"><img src=\"/brand/github.svg\" alt=\"\" aria-hidden=\"true\" width=\"18\" height=\"18\"></button></div><p class=\"ts-auth-footer\">New to TerraScale? <a class=\"ts-link\" href=\"/onboarding\">Create account</a></p></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</div><button class=\"ts-btn ts-btn-primary ts-btn-lg ts-btn-block\" type=\"submit\">Sign in</button></form><div class=\"ts-auth-divider\" aria-hidden=\"true\">Other sign-in options</div><div class=\"ts-auth-providers\"><button class=\"ts-btn ts-btn-secondary\" type=\"button\" disabled aria-label=\"Passkey sign-in unavailable in the in-memory demo\" title=\"Unavailable in the in-memory demo\">Passkey</button> <button class=\"ts-btn ts-btn-secondary\" type=\"button\" disabled aria-label=\"Google sign-in unavailable in the in-memory demo\" title=\"Unavailable in the in-memory demo\"><img src=\"/brand/google.svg\" alt=\"\" aria-hidden=\"true\" width=\"18\" height=\"18\"></button> <button class=\"ts-btn ts-btn-secondary\" type=\"button\" disabled aria-label=\"GitHub sign-in unavailable in the in-memory demo\" title=\"Unavailable in the in-memory demo\"><img src=\"/brand/github.svg\" alt=\"\" aria-hidden=\"true\" width=\"18\" height=\"18\"></button></div><p class=\"ts-auth-footer\">New to TerraScale? <a class=\"ts-link\" href=\"/onboarding\">Create account</a></p></div><footer class=\"ts-login-footer\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -116,7 +117,7 @@ func loginView(data loginPageData, csrfToken string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</div></main>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</footer></div></main>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -182,7 +183,7 @@ func authStatusView(data authStatusPageData, csrfToken string) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(data.Title)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 75, Col: 44}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 73, Col: 44}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -195,7 +196,7 @@ func authStatusView(data authStatusPageData, csrfToken string) templ.Component {
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(data.Description)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 76, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 74, Col: 52}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
@@ -214,14 +215,14 @@ func authStatusView(data authStatusPageData, csrfToken string) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<main class=\"ts-auth\"><div class=\"ts-auth-card\"><div class=\"ts-auth-brand\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-white.svg\" alt=\"TerraScale\" decoding=\"async\"></div><div class=\"ts-auth-heading\"><h1 class=\"ts-auth-title\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<main class=\"ts-auth\"><div class=\"ts-auth-card\"><div class=\"ts-auth-brand\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-blue.svg\" alt=\"TerraScale\" decoding=\"async\"></div><div class=\"ts-auth-heading\"><h1 class=\"ts-auth-title\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(data.Title)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 90, Col: 43}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 88, Col: 43}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
@@ -234,7 +235,7 @@ func authStatusView(data authStatusPageData, csrfToken string) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(data.Description)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 91, Col: 51}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 89, Col: 51}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
@@ -247,7 +248,7 @@ func authStatusView(data authStatusPageData, csrfToken string) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(data.Message)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 94, Col: 44}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 92, Col: 44}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -265,7 +266,7 @@ func authStatusView(data authStatusPageData, csrfToken string) templ.Component {
 				var templ_7745c5c3_Var12 string
 				templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 98, Col: 57}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/auth/login.templ`, Line: 96, Col: 57}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var12)
 				if templ_7745c5c3_Err != nil {

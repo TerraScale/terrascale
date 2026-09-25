@@ -9,7 +9,7 @@
 }
 
 .ts-home-activity-total > .ts-dot {
-  color: var(--tone);
+  color: var(--ts-accent);
 }
 
 .ts-home-steps {
@@ -49,11 +49,9 @@
 .ts-home-connect-item {
   display: grid;
   align-content: start;
-  gap: var(--ts-s4);
-  padding: var(--ts-s5);
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-lg);
-  background: linear-gradient(160deg, color-mix(in oklab, var(--tone) 10%, var(--ts-surface)), var(--ts-surface) 60%);
+  gap: var(--ts-s3);
+  padding-top: var(--ts-s4);
+  border-top: 2px solid var(--ts-accent);
 }
 
 .ts-home-connect-icon {
@@ -62,6 +60,6 @@
   width: 40px;
   height: 40px;
   border-radius: var(--ts-radius);
-  background: color-mix(in oklab, var(--tone) 18%, transparent);
-  color: var(--tone);
+  background: var(--ts-accent-soft);
+  color: var(--ts-link);
 }

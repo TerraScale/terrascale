@@ -1,14 +1,6 @@
 /* Standalone pages outside the signed-in shell: sign-in, onboarding,
    approvals, invitations, checkout simulators, and error pages. */
 
-/* Painted on the root so the glow also covers the scrollbar gutter. */
-html:has(> body.ts-auth-body) {
-  background:
-    radial-gradient(circle at 12% -8%, rgb(167 139 250 / 0.16), transparent 42rem),
-    radial-gradient(circle at 92% 4%, rgb(34 211 238 / 0.08), transparent 36rem),
-    var(--ts-canvas) fixed;
-}
-
 /* Centered single-card pages. */
 .ts-auth,
 .ts-flow-root,
@@ -28,10 +20,8 @@ html:has(> body.ts-auth-body) {
   width: min(28rem, calc(100vw - 2 * var(--ts-s4)));
   padding: var(--ts-s8);
   border: 1px solid var(--ts-line);
-  border-radius: 18px;
-  background: rgb(18 21 29 / 0.82);
-  box-shadow: var(--ts-shadow-overlay);
-  backdrop-filter: blur(16px);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
 }
 
 .ts-flow-panel {

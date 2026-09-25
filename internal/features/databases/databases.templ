@@ -56,17 +56,7 @@ templ databasesContent(page core.Page, d pageData) {
 }
 
 templ createDatabase(page core.Page, d pageData) {
-	<details id="create-database" class="ts-card ts-db-create" open?={ d.OpenCreate }>
-		<summary class="ts-db-create-summary">
-			<span class="ts-db-create-icon" aria-hidden="true">@icons.Plus(18)
-</span>
-			<span class="ts-card-heading">
-				<span class="ts-card-title">Create database</span>
-				<span class="ts-card-description">Pick a name and the region closest to your users.</span>
-			</span>
-			<span class="ts-db-create-chevron" aria-hidden="true">@icons.ChevronDown(18)
-</span>
-		</summary>
+	@ui.Disclosure(ui.DisclosureProps{ID: "create-database", Label: "New database", Icon: icons.Plus(16), Variant: "primary", Open: d.OpenCreate}) {
 		<form method="post" action="/api/v1/dashboard/databases" class="ts-db-create-form">
 			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 			<div class="ts-form">
@@ -86,7 +76,7 @@ templ createDatabase(page core.Page, d pageData) {
 			</div>
 			@ui.RegionMap("database-region")
 		</form>
-	</details>
+	}
 }
 
 templ databaseSearch(d pageData) {

@@ -89,10 +89,10 @@ templ gettingStartedStep(number int, title, description, href, cta string, done 
 
 templ connectView() {
 	<ul class="ts-grid ts-home-connect">
-		@connectOption("violet", icons.Bot(18), "AI assistants", "Connect Claude, Cursor, and other MCP-compatible assistants to your project.")
-		@connectOption("blue", icons.FileJson(18), "TypeScript SDK", "Install the SDK and query your databases directly from your application.")
-		@connectOption("emerald", icons.Globe(18), "REST API", "Call the project API from any language with a scoped credential.")
-		@connectOption("orange", icons.Terminal(18), "CLI and CI", "Manage databases and run queries from your terminal or pipeline.")
+		@connectOption(icons.Bot(18), "AI assistants", "Connect Claude, Cursor, and other MCP-compatible assistants to your project.")
+		@connectOption(icons.FileJson(18), "TypeScript SDK", "Install the SDK and query your databases directly from your application.")
+		@connectOption(icons.Globe(18), "REST API", "Call the project API from any language with a scoped credential.")
+		@connectOption(icons.Terminal(18), "CLI and CI", "Manage databases and run queries from your terminal or pipeline.")
 	</ul>
 	@ui.Card(ui.CardProps{ID: "mcp-config", Title: "MCP client configuration", Description: "Add this server to your assistant's MCP settings."}) {
 		<pre class="ts-code"><code>{ `{
@@ -105,8 +105,8 @@ templ connectView() {
 	}
 }
 
-templ connectOption(tone string, icon templ.Component, title, description string) {
-	<li class="ts-home-connect-item" data-tone={ tone }>
+templ connectOption(icon templ.Component, title, description string) {
+	<li class="ts-home-connect-item">
 		<span class="ts-home-connect-icon" aria-hidden="true">
 			@icon
 		</span>

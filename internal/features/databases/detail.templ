@@ -184,18 +184,10 @@ templ detailBranches(page core.Page, d pageData) {
 }
 
 templ detailDelete(page core.Page, d pageData) {
-	<details class="ts-card ts-db-danger">
-		<summary class="ts-db-danger-summary">
-			<span class="ts-db-danger-icon" aria-hidden="true">@icons.Trash2(16)
-</span>
-			<span class="ts-card-heading">
-				<span class="ts-card-title">Delete database</span>
-				<span class="ts-card-description">Permanently remove this database and its data.</span>
-			</span>
-			<span class="ts-db-create-chevron" aria-hidden="true">@icons.ChevronDown(18)
-</span>
-		</summary>
-		<div class="ts-card-body">
+	<section class="ts-db-danger ts-stack-sm" aria-labelledby="delete-database-title">
+		<h2 class="ts-section-title" id="delete-database-title">Danger zone</h2>
+		<p class="ts-meta">Permanently remove this database and its data.</p>
+		@ui.Disclosure(ui.DisclosureProps{Label: "Delete database", Icon: icons.Trash2(15), Variant: "danger"}) {
 			<p class="ts-muted">Type <strong>{ d.Detail.Name }</strong> to confirm.</p>
 			<form method="post" action="/api/v1/dashboard/databases/delete" class="ts-form ts-db-inline-form">
 				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
@@ -207,8 +199,8 @@ templ detailDelete(page core.Page, d pageData) {
 					<button class="ts-btn ts-btn-danger" type="submit">Delete database</button>
 				</div>
 			</form>
-		</div>
-	</details>
+		}
+	</section>
 }
 
 func detailTabs(d pageData) []ui.Tab {

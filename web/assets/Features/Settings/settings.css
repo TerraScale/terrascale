@@ -8,9 +8,8 @@
   padding: 0 var(--ts-s6) var(--ts-s5);
 }
 
-.ts-settings-danger > .ts-card {
-  border-color: color-mix(in oklab, var(--ts-danger) 35%, transparent);
-  background: linear-gradient(180deg, color-mix(in oklab, var(--ts-danger) 8%, var(--ts-surface-2)), var(--ts-surface) 120px);
+.ts-settings-danger .ts-card-title {
+  color: var(--ts-danger);
 }
 
 .ts-settings-summary .ts-stats {
