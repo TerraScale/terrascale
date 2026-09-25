@@ -105,7 +105,7 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := deps.Sessions.Principal(r)
 		if !ok {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			core.RedirectToLogin(w, r)
 			return
 		}
 		var err error

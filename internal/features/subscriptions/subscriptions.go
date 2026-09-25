@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -293,8 +292,7 @@ func requestPrincipal(deps core.Deps, w http.ResponseWriter, r *http.Request) (c
 	if ok {
 		return principal, true
 	}
-	target := r.URL.RequestURI()
-	http.Redirect(w, r, "/login?returnTo="+url.QueryEscape(target), http.StatusSeeOther)
+	core.RedirectToLogin(w, r)
 	return core.Principal{}, false
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -33,6 +34,16 @@ func WriteAccessError(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	return true
+}
+
+// RedirectToLogin sends a signed-out browser to the login page. Page requests
+// carry their URL so sign-in returns the visitor to it.
+func RedirectToLogin(w http.ResponseWriter, r *http.Request) {
+	location := "/login"
+	if r.Method == http.MethodGet {
+		location += "?returnTo=" + url.QueryEscape(r.URL.RequestURI())
+	}
+	http.Redirect(w, r, location, http.StatusSeeOther)
 }
 
 // WriteJSON encodes value as the response body with the given status.

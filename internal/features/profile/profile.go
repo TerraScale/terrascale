@@ -73,7 +73,7 @@ func getProfile(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := deps.Sessions.Principal(r)
 		if !ok {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			core.RedirectToLogin(w, r)
 			return
 		}
 		account, err := deps.Store.SnapshotAs(principal)

@@ -107,7 +107,7 @@ func accessPage(deps core.Deps, service organization.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := deps.Sessions.Principal(r)
 		if !ok {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			core.RedirectToLogin(w, r)
 			return
 		}
 		renderAccessPage(w, r, deps, service, p, "", r.URL.Query().Get("error"))

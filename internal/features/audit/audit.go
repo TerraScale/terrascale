@@ -122,7 +122,7 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 	}
 	p, ok := deps.Sessions.Principal(r)
 	if !ok {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		core.RedirectToLogin(w, r)
 		return core.Principal{}, core.Account{}, false
 	}
 	account, err := deps.Store.SnapshotAs(p)

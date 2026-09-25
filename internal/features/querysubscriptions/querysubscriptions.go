@@ -5,7 +5,6 @@ import (
 	"errors"
 	"maps"
 	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -33,11 +32,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		p, project, err := selected(deps, r)
 		if err != nil {
 			if errors.Is(err, core.ErrUnauthorized) {
-				returnTo := r.URL.RequestURI()
-				if len(returnTo) > 2048 {
-					returnTo = "/subscriptions"
-				}
-				http.Redirect(w, r, "/login?returnTo="+url.QueryEscape(returnTo), http.StatusSeeOther)
+				core.RedirectToLogin(w, r)
 				return
 			}
 			writeError(w, err)

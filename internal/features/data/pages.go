@@ -3,6 +3,7 @@ package data
 import (
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
+	"errors"
 	"maps"
 	"net/http"
 	"net/url"
@@ -90,6 +91,10 @@ type sqlPageResult struct {
 func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, databaseID, section string, result *sqlPageResult) {
 	p, a, project, err := selectedProject(deps, r)
 	if err != nil {
+		if errors.Is(err, core.ErrUnauthorized) {
+			core.RedirectToLogin(w, r)
+			return
+		}
 		writeError(w, err)
 		return
 	}
