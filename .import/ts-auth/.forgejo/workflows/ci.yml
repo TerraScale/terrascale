@@ -96,7 +96,7 @@ jobs:
           test "${source_commit}" = "${FORGEJO_SHA:?event SHA is required}"
           # Build against Debian's older glibc so the binary runs in the
           # distroless Debian 13 runtime even when the host runner is newer.
-          podman run --rm --userns=keep-id --security-opt label=disable \
+          podman run --rm --security-opt label=disable \
             --volume "$PWD:/work/ts-auth" \
             --volume "$(realpath ../ts-rust):/work/ts-rust:ro" \
             --workdir /work/ts-auth \
