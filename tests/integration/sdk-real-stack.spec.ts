@@ -8,7 +8,7 @@ import { startSDKFixture } from "./support/sdk-fixture-process";
 
 const sdkEntry = process.env.TERRASCALE_TYPESCRIPT_SDK_ENTRY
   ? pathToFileURL(process.env.TERRASCALE_TYPESCRIPT_SDK_ENTRY)
-  : new URL("./sdk/dist/index.js", import.meta.url);
+  : new URL("../../node_modules/.cache/ts-typescript/dist/index.js", import.meta.url);
 
 type SDKClient = {
   documents: {
@@ -30,7 +30,7 @@ type ProjectAPIKeySecret = {
 type Database = { id: string; name: string; status: string };
 
 test("account-created database works through issued credentials and the TypeScript SDK", async ({ browser }) => {
-  expect(existsSync(sdkEntry), `build the pinned TypeScript SDK at ${sdkEntry.href}`).toBe(true);
+  expect(existsSync(sdkEntry), `build the TypeScript SDK at ${sdkEntry.href}`).toBe(true);
   const { createTerraScaleClient } = await import(sdkEntry.href) as {
     createTerraScaleClient(config: {
       apiBaseUrl: string;

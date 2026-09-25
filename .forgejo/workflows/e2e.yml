@@ -16,6 +16,12 @@ jobs:
         run: scripts/setup-ci-toolchains.sh
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
+      - name: Check out pinned TypeScript SDK for the account journey
+        uses: actions/checkout@v4
+        with:
+          repository: TerraScale/ts-typescript
+          ref: d1021878d0d0dfeb5639ea3dd0f1ed7f0a9eee19
+          path: node_modules/.cache/ts-typescript
       # terrascale-builder already supplies the pinned, library-patched Chromium.
       - name: Check Chromium navigation in the runner
         env:

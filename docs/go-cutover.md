@@ -32,7 +32,7 @@ The demo integration boundary must remain clear. Both the former C# demo and
 the Go demo present sample external SDK credentials and preview MCP/SDK/API
 connection surfaces; these are not proof of live external connections. The Go
 home page's MCP configuration is preview UI. The real TypeScript SDK browser
-journey builds the pinned test-only `ts-typescript` snapshot and talks to a
+journey fetches and builds a pinned `ts-typescript` commit and talks to a
 loopback fixture under `tests/integration/fixture/`; it verifies the Go
 dashboard flow against that fixture, not against a deployed TerraScale API.
 
