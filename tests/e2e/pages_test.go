@@ -201,6 +201,49 @@ func TestPagesRouteStatesRenderAtDesktopAndMobile(t *testing.T) {
 	})
 }
 
+// publicPaths render for signed-out visitors, so they never redirect to login.
+var publicPaths = []string{"/agent/approve", "/cli/approve", "/reset-password"}
+
+func TestPagesSignedOutVisitorsRedirectToLogin(t *testing.T) {
+	t.Parallel()
+	context := newContext(t, baseURL)
+	paths := []string{"/databases/db_missing", "/databases/db_missing/backups", "/databases/db_missing/documents", "/databases/db_missing/sql"}
+	for _, route := range parityRouteStates {
+		if !route.anonymous && !slices.Contains(publicPaths, route.path) {
+			paths = append(paths, route.path)
+		}
+	}
+
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			page := watchedPage(t, context)
+			goTo(t, page, path+"?kind=key")
+			landed, err := url.Parse(page.URL())
+			must(t, err)
+			if landed.Path != "/login" || landed.Query().Get("returnTo") != path+"?kind=key" {
+				t.Fatalf("%s should redirect to login with its return path, got %s", path, landed.RequestURI())
+			}
+		})
+	}
+
+	t.Run("sign-in returns to the requested page", func(t *testing.T) {
+		t.Parallel()
+		page := newPage(t)
+		account := newAccount("return-to")
+		registerAndOnboard(t, page, account)
+		logout(t, page)
+
+		goTo(t, page, "/api-keys?kind=m2m")
+		form := page.Locator(`form[action="/api/v1/auth/password/login"]`)
+		fill(t, form.Locator(`[name="email"]`), account.Email)
+		fill(t, form.Locator(`[name="password"]`), account.Password)
+		click(t, byRole(form, *playwright.AriaRoleButton, "Sign in"))
+		waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/api-keys" && u.Query().Get("kind") == "m2m" })
+		visible(t, pageByRole(page, *playwright.AriaRoleHeading, "API keys").First())
+	})
+}
+
 func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 	t.Parallel()
 	page := newPage(t)

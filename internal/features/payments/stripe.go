@@ -869,8 +869,7 @@ func requestPrincipal(deps core.Deps, w http.ResponseWriter, r *http.Request) (c
 	if ok {
 		return principal, true
 	}
-	returnPath := r.URL.RequestURI()
-	http.Redirect(w, r, "/login?returnTo="+url.QueryEscape(returnPath), http.StatusSeeOther)
+	core.RedirectToLogin(w, r)
 	return core.Principal{}, false
 }
 

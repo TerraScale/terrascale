@@ -133,7 +133,7 @@ func principal(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Pri
 	}
 	p, ok := deps.Sessions.Principal(r)
 	if !ok {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		core.RedirectToLogin(w, r)
 		return core.Principal{}, false
 	}
 	return p, true

@@ -292,6 +292,10 @@ func statusTone(status string) string {
 func renderList(w http.ResponseWriter, r *http.Request, deps core.Deps) {
 	p, a, project, err := selected(deps, r)
 	if err != nil {
+		if errors.Is(err, core.ErrUnauthorized) {
+			core.RedirectToLogin(w, r)
+			return
+		}
 		writeError(w, err)
 		return
 	}

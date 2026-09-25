@@ -1,6 +1,7 @@
 package apikeys
 
 import (
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -206,6 +207,10 @@ func selectedPage(deps core.Deps, r *http.Request) (core.Principal, core.Project
 func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, secret string) {
 	p, project, a, err := selectedPage(deps, r)
 	if err != nil {
+		if errors.Is(err, core.ErrUnauthorized) {
+			core.RedirectToLogin(w, r)
+			return
+		}
 		writeError(w, err)
 		return
 	}
