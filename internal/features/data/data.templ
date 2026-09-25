@@ -57,18 +57,20 @@ templ collectionScope(d pageData, section string) {
 }
 
 templ documentsView(page core.Page, d pageData) {
-	<div class="ts-data-bar">
-		@collectionScope(d, "documents") {
-			<input class="ts-input ts-input-sm ts-data-search" type="search" name="q" value={ d.Search } placeholder="Search documents" aria-label="Search documents"/>
-			if d.Search != "" {
-				<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ templ.SafeURL(path(d, "documents")) }>Clear</a>
+	<div class="ts-data-head">
+		<div class="ts-data-bar">
+			@collectionScope(d, "documents") {
+				<input class="ts-input ts-input-sm ts-data-search" type="search" name="q" value={ d.Search } placeholder="Search documents" aria-label="Search documents"/>
+				if d.Search != "" {
+					<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ templ.SafeURL(path(d, "documents")) }>Clear</a>
+				}
 			}
-		}
-		if d.CanWrite {
-			@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "add-document", Label: "Add document", Icon: icons.Plus(16), Variant: "primary", Small: true})
-		}
+			if d.CanWrite {
+				@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "add-document", Label: "Add document", Icon: icons.Plus(16), Variant: "primary", Small: true})
+			}
+		</div>
+		<p class="ts-hint">Collection listing is unavailable in the published SDK, so enter a collection name explicitly.</p>
 	</div>
-	<p class="ts-hint">Collection listing is unavailable in the published SDK, so enter a collection name explicitly.</p>
 	@ui.Card(ui.CardProps{ID: "documents", Flush: true}) {
 		if len(d.Documents) > 0 {
 			<div class="ts-table-wrap">
@@ -77,36 +79,15 @@ templ documentsView(page core.Page, d pageData) {
 						<tr>
 							<th>ID</th>
 							<th>Document</th>
-							<th class="ts-table-actions">Actions</th>
+							<th class="ts-table-actions"><span class="ts-sr-only">Actions</span></th>
 						</tr>
 					</thead>
 					<tbody>
 						for _, doc := range d.Documents {
 							<tr>
-								<td class="ts-mono ts-strong">{ doc.ID }</td>
+								<td><a class="ts-data-doc-id" href={ templ.SafeURL(path(d, "documents", "edit", doc.ID)) }>{ doc.ID }</a></td>
 								<td><code class="ts-data-json">{ doc.Value.String() }</code></td>
-								<td class="ts-table-actions">
-									<div class="ts-row ts-row-end">
-										<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ templ.SafeURL(path(d, "history", "id", doc.ID)) }>@icons.History(14)<span>History</span></a>
-										<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ templ.SafeURL(path(d, "documents", "edit", doc.ID)) }>
-											if d.CanWrite {
-												@icons.Pencil(14)
-												<span>Edit</span>
-											} else {
-												@icons.Eye(14)
-												<span>View</span>
-											}
-										</a>
-										if d.CanWrite {
-											<form method="post" action="/api/v1/dashboard/data/documents">
-												@documentScope(page, d)
-												<input type="hidden" name="operation" value="delete"/>
-												<input type="hidden" name="id" value={ doc.ID }/>
-												<button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">Delete</button>
-											</form>
-										}
-									</div>
-								</td>
+								<td class="ts-table-actions">@documentMenu(page, d, doc.ID)</td>
 							</tr>
 						}
 					</tbody>
@@ -135,6 +116,26 @@ templ documentsView(page core.Page, d pageData) {
 	}
 	if d.EditJSON != "" {
 		@editDocument(page, d)
+	}
+}
+
+templ documentMenu(page core.Page, d pageData, id string) {
+	@ui.Dropdown(ui.DropdownProps{End: true, Label: "Actions for " + id, Trigger: icons.MoreHorizontal(16), TriggerClass: "ts-icon-btn"}) {
+		if d.CanWrite {
+			@ui.MenuItem(ui.MenuItemProps{Href: path(d, "documents", "edit", id), Icon: icons.Pencil(15), Label: "Edit"})
+		} else {
+			@ui.MenuItem(ui.MenuItemProps{Href: path(d, "documents", "edit", id), Icon: icons.Eye(15), Label: "View"})
+		}
+		@ui.MenuItem(ui.MenuItemProps{Href: path(d, "history", "id", id), Icon: icons.History(15), Label: "History"})
+		if d.CanWrite {
+			@ui.MenuSeparator()
+			<form method="post" action="/api/v1/dashboard/data/documents">
+				@documentScope(page, d)
+				<input type="hidden" name="operation" value="delete"/>
+				<input type="hidden" name="id" value={ id }/>
+				@ui.MenuItem(ui.MenuItemProps{Type: "submit", Icon: icons.Trash2(15), Label: "Delete", Danger: true})
+			</form>
+		}
 	}
 }
 
@@ -170,9 +171,7 @@ templ documentScope(page core.Page, d pageData) {
 }
 
 templ historyView(d pageData) {
-	<div class="ts-data-bar">
-		<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ templ.SafeURL(path(d, "documents")) }>@icons.ArrowLeft(15)<span>All documents</span></a>
-	</div>
+	<a class="ts-data-back" href={ templ.SafeURL(path(d, "documents")) }>@icons.ArrowLeft(15)<span>All documents</span></a>
 	@ui.Card(ui.CardProps{ID: "document-history", Title: historyTitle(d.DocumentID), Description: "Revisions of the document in " + d.Collection + ", oldest first."}) {
 		if len(d.History) > 0 {
 			<ol class="ts-data-history">
@@ -291,18 +290,22 @@ templ sqlCheck(d pageData) {
 				<li>@icons.Table(16)<span>Statement collection: { d.SQLAnalysis.Collection }</span></li>
 			}
 		</ul>
-		<p class="ts-meta">EXPLAIN statement preview:</p>
-		<pre class="ts-code">{ d.SQLAnalysis.Explain }</pre>
-		<h3 class="ts-section-title">Advisory index suggestions</h3>
-		if len(d.SQLAnalysis.Suggestions) == 0 {
-			<p class="ts-meta">No index hints found in WHERE or ORDER BY.</p>
-		} else {
-			<ul class="ts-list">
-				for _, suggestion := range d.SQLAnalysis.Suggestions {
-					<li class="ts-list-item"><strong class="ts-mono">{ suggestion.Field }</strong><span class="ts-meta">{ suggestion.Reason }</span></li>
-				}
-			</ul>
-		}
+		<div class="ts-stack-sm">
+			<p class="ts-meta">EXPLAIN statement preview</p>
+			<pre class="ts-code">{ d.SQLAnalysis.Explain }</pre>
+		</div>
+		<div class="ts-card-section">
+			<h3 class="ts-strong">Advisory index suggestions</h3>
+			if len(d.SQLAnalysis.Suggestions) == 0 {
+				<p class="ts-meta">No index hints found in WHERE or ORDER BY.</p>
+			} else {
+				<ul class="ts-list">
+					for _, suggestion := range d.SQLAnalysis.Suggestions {
+						<li class="ts-list-item"><strong class="ts-mono">{ suggestion.Field }</strong><span class="ts-meta">{ suggestion.Reason }</span></li>
+					}
+				</ul>
+			}
+		</div>
 	}
 }
 
@@ -354,7 +357,7 @@ templ indexesView(page core.Page, d pageData) {
 				}
 				if d.CanWrite {
 					<div class="ts-card-section">
-						<form method="post" action="/api/v1/dashboard/indexes" class="ts-filters">
+						<form method="post" action="/api/v1/dashboard/indexes" class="ts-filters ts-data-index-form">
 							@documentScope(page, d)
 							<label class="ts-filter-field ts-data-grow" for="index-field">
 								Field

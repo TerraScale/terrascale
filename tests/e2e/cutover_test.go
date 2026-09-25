@@ -380,6 +380,7 @@ func TestCutoverSeededDatabaseDetailTabsRetainControls(t *testing.T) {
 	click(t, pageByRole(page, *playwright.AriaRoleButton, "Open"))
 	documents := page.Locator("table.ts-data-documents tbody tr")
 	must(t, expect.Locator(documents).ToHaveCount(3))
+	click(t, documents.First().Locator(`details.ts-menu > summary[aria-label="Actions for ord_1001"]`))
 	click(t, byRole(documents.First(), *playwright.AriaRoleLink, "Edit"))
 	editor := pageByRole(page, *playwright.AriaRoleDialog, "ord_1001")
 	visible(t, editor)

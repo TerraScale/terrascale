@@ -15,15 +15,15 @@ import (
 
 // planView is one plan card, priced for the billing interval the page shows.
 type planView struct {
-	Key       string
-	Name      string
-	Tone      string
-	Price     string
-	Billed    string
-	Features  []string
-	Interval  string
-	Current   bool
-	Action    string
+	Key      string
+	Name     string
+	Tone     string
+	Price    string
+	Billed   string
+	Features []string
+	Interval string
+	Current  bool
+	Action   string
 }
 
 type subscriptionsPage struct {

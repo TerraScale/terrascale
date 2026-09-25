@@ -75,15 +75,19 @@
   grid-column: 1 / -1;
 }
 
+/* Danger zone: a flat section like its siblings, split by a hairline. */
 .ts-db-danger {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--ts-s4);
-  padding: var(--ts-s5);
-  border: 1px solid color-mix(in oklab, var(--ts-danger) 30%, transparent);
-  border-radius: var(--ts-radius-lg);
+  padding-top: var(--ts-s6);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-db-danger > .ts-list-main {
+  flex: 1 1 240px;
 }
 
 /* Inline restore form in the restore points table. */
@@ -97,17 +101,23 @@
   min-width: 160px;
 }
 
-/* Label/value tiles. */
+/* Label/value tiles split by vertical hairlines. Like .ts-stats, the grid is
+   shifted left and clipped so the first tile of each row hides its divider
+   and lines up with the section edge. */
 .ts-db-facts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
-  gap: var(--ts-s3);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  row-gap: var(--ts-s4);
+  margin-left: calc(-1 * var(--ts-s4));
+  overflow: hidden;
 }
 
 .ts-db-facts > div {
   display: grid;
+  align-content: start;
   gap: 2px;
-  padding-left: var(--ts-s3);
+  margin-left: -1px;
+  padding: 0 var(--ts-s4);
   border-left: 1px solid var(--ts-line);
 }
 

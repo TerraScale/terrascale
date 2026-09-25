@@ -4,6 +4,13 @@
   flex: 1 1 200px;
 }
 
+/* Tab head: the toolbar and its hint, kept tight above the section. */
+.ts-data-head {
+  display: grid;
+  gap: var(--ts-s2);
+  min-width: 0;
+}
+
 /* Tab toolbar: collection scope and view switches, actions on the right. */
 .ts-data-bar {
   display: flex;
@@ -46,10 +53,61 @@
   max-width: 320px;
 }
 
-/* Documents: one-line JSON preview that never widens the table. */
+/* View switches scroll sideways instead of widening the page. */
+.ts-data-bar > .ts-segmented {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* A text link back to the parent list, flush with the content edge. */
+.ts-data-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
+}
+
+.ts-data-back:hover {
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+@media (max-width: 47.99rem) {
+  .ts-data-bar > .ts-data-scope {
+    flex-wrap: wrap;
+  }
+
+  .ts-data-collection,
+  .ts-data-scope > .ts-data-search {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+}
+
+/* Documents: IDs stay on one line; the JSON preview takes the remaining
+   width and never widens the table. */
+.ts-data-documents td:first-child {
+  white-space: nowrap;
+}
+
 .ts-data-documents td:nth-child(2) {
   width: 100%;
   max-width: 0;
+}
+
+.ts-data-doc-id {
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+  font-weight: 600;
+}
+
+.ts-data-doc-id:hover {
+  color: var(--tone);
+  text-decoration: none;
 }
 
 .ts-data-json {
@@ -66,9 +124,14 @@
 /* SQL console: editor and results beside the saved queries. */
 .ts-data-sql {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
   align-items: start;
-  gap: var(--ts-s6);
+  gap: var(--ts-s10);
+}
+
+/* The narrow saved-queries column keeps its action beside the heading. */
+.ts-data-sql > .ts-card .ts-card-heading {
+  flex-basis: 0;
 }
 
 .ts-data-sql-input {
@@ -86,7 +149,7 @@
   display: flex;
   align-items: center;
   gap: var(--ts-s2);
-  padding: var(--ts-s2) var(--ts-s3) var(--ts-s2) var(--ts-s5);
+  padding: var(--ts-s3) 0;
   border-top: 1px solid var(--ts-line);
 }
 
@@ -116,9 +179,15 @@
   white-space: nowrap;
 }
 
-@media (max-width: 63.99rem) {
+@media (max-width: 79.99rem) {
   .ts-data-sql {
     grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s6);
+  }
+
+  .ts-data-sql > .ts-card {
+    padding-top: var(--ts-s6);
+    border-top: 1px solid var(--ts-line);
   }
 }
 
@@ -143,6 +212,11 @@
 
 .ts-data-checks > .ts-data-check-warn > svg {
   color: var(--ts-warning);
+}
+
+/* Create-index form: a field sized for a name, not the whole row. */
+.ts-data-index-form {
+  max-width: 560px;
 }
 
 /* Index fields. */

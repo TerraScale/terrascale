@@ -147,7 +147,7 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 	}
 	if section == "documents" && data.DocumentID != "" {
 		if i := slices.IndexFunc(data.Documents, func(d documentView) bool { return d.ID == data.DocumentID }); i >= 0 {
-			data.EditJSON = data.Documents[i].Value.String()
+			data.EditJSON = indented(data.Documents[i].Value)
 		}
 	}
 	if search := strings.ToLower(data.Search); search != "" && section == "documents" {
@@ -160,6 +160,16 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render database data", http.StatusInternalServerError)
 	}
+}
+
+// indented formats a document with two-space indentation for reading and
+// editing; values that cannot be formatted are shown as stored.
+func indented(value jsontext.Value) string {
+	formatted := value.Clone()
+	if err := formatted.Indent(jsontext.WithIndent("  ")); err != nil {
+		return value.String()
+	}
+	return formatted.String()
 }
 
 // loadDemo reads the selected collection from the in-memory demo database.
@@ -185,7 +195,7 @@ func loadDemo(data *pageData, a core.Account, p core.Principal, db core.Database
 	}
 	if data.Section == "history" && data.DocumentID != "" {
 		for i, version := range db.DocumentHistory[data.Collection][data.DocumentID] {
-			data.History = append(data.History, historyVersion{Number: strconv.Itoa(i + 1), Body: string(version), Deleted: jsontext.Value(version).Kind() == 'n'})
+			data.History = append(data.History, historyVersion{Number: strconv.Itoa(i + 1), Body: indented(version), Deleted: jsontext.Value(version).Kind() == 'n'})
 		}
 	}
 }

@@ -236,10 +236,11 @@
   height: 6px;
 }
 
-/* Tabs. */
+/* Tabs. Labels carry no side padding so the first one lines up with the
+   content edge; the underline spans the label. */
 .ts-tabs {
   display: flex;
-  gap: var(--ts-s1);
+  gap: var(--ts-s6);
   overflow-x: auto;
   border-bottom: 1px solid var(--ts-line);
   scrollbar-width: none;
@@ -255,7 +256,7 @@
   flex: none;
   align-items: center;
   gap: var(--ts-s2);
-  padding: var(--ts-s3) var(--ts-s3);
+  padding: var(--ts-s3) 0;
   color: var(--ts-ink-3);
   font-weight: 600;
   white-space: nowrap;
@@ -276,7 +277,7 @@
 .ts-tab[aria-selected="true"]::after {
   content: "";
   position: absolute;
-  inset: auto var(--ts-s3) -1px;
+  inset: auto 0 -1px;
   height: 2px;
   border-radius: 2px;
   background: var(--tone);
