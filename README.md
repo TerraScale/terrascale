@@ -73,6 +73,16 @@ the vendor tree, and runs it as a non-root user. CI runs lint, the Go test
 suite, and browser/SDK tests before a production deployment. Pull-request
 previews run the browser/SDK suite against the deployed preview app.
 
+The committed production Fly config targets one warm 512 MB / 2 shared CPU demo
+machine with 900 MB swap and a 1 GB machine-local volume. These settings have
+not been applied to the live production app by this PR; the volume would not
+persist process-memory accounts or sessions.
+Previews run one 256 MB machine that may stop while idle; their workflow checks
+for one machine and no volumes, but does not prevent manual Fly changes. See
+the [Go cutover checklist](docs/go-cutover.md) for demo UI parity, runtime
+limits, and release status. PR #74 remains open because merging triggers the
+production deploy workflow.
+
 The app can receive an optional TerraScale API endpoint and access token through
 `TS_API_BASE_URL` and `TS_API_ACCESS_TOKEN`. Current account and dashboard
 state still use the in-memory production-demo store; restarting the process

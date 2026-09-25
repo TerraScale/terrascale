@@ -8,10 +8,22 @@ import (
 	"unicode/utf8"
 
 	"terrascale.tech/dashboard/internal/core"
+	sdk "terrascale.tech/sdk"
 )
 
 var estateActionKinds = [...]string{
 	"pause", "resume", "guard", "spendCap", "trial", "refund", "reaperExemption", "flag", "viewAs",
+}
+
+type estateRegionDefinition struct {
+	Code     string
+	Location string
+}
+
+var estateRegionDefinitions = [...]estateRegionDefinition{
+	{Code: string(sdk.RegionGRU), Location: "São Paulo"},
+	{Code: string(sdk.RegionSFO), Location: "San Francisco"},
+	{Code: string(sdk.RegionFRA), Location: "Frankfurt"},
 }
 
 // Service applies platform administrator actions through the store's guarded
@@ -136,6 +148,7 @@ func (s Service) page(principal core.Principal, section, rawQuery string) (pageD
 		}
 	case "estate":
 		data.Title = "Estate"
+		data.EstateRegionCount = len(estateRegionDefinitions)
 		regions := make(map[string]*estateRow)
 		seenProjects := make(map[string]struct{})
 		seenDatabases := make(map[string]struct{})
@@ -167,6 +180,21 @@ func (s Service) page(principal core.Principal, section, rawQuery string) (pageD
 							continue
 						}
 						seenDatabases[database.ID] = struct{}{}
+						data.EstateDatabaseCount++
+						ownerAccountID := accountIDsByUser[org.OwnerUserID]
+						if ownerAccountID == "" {
+							ownerAccountID = account.ID
+						}
+						row := databaseRow{
+							AccountID: ownerAccountID, OrganizationID: org.ID, Organization: org.Name,
+							ProjectID: project.ID, Project: project.Name,
+							ID: database.ID, Name: database.Name,
+							Region: adminFallback(database.Region, "Not recorded"),
+							Status: adminFallback(database.Status, "Unknown"), CreatedAt: formatTime(database.CreatedAt),
+						}
+						if matching(query, row.ID, row.Name, row.Region, row.Status, row.Organization, row.Project) {
+							data.EstateDatabases = append(data.EstateDatabases, row)
+						}
 						region := normalizedObservedRegion(database.Region)
 						if region != "" {
 							observedRegion(regions, region).ObservedDatabases++
@@ -174,6 +202,14 @@ func (s Service) page(principal core.Principal, section, rawQuery string) (pageD
 					}
 				}
 			}
+		}
+		for _, definition := range estateRegionDefinitions {
+			region := observedRegion(regions, definition.Code)
+			region.Location = definition.Location
+			if matching(query, region.Region, region.Location) {
+				data.Regions = append(data.Regions, *region)
+			}
+			delete(regions, definition.Code)
 		}
 		for _, region := range regions {
 			if matching(query, region.Region) {
@@ -184,6 +220,7 @@ func (s Service) page(principal core.Principal, section, rawQuery string) (pageD
 		if err != nil {
 			return pageData{}, err
 		}
+		data.EstateActionCount = len(data.EstateActions)
 		slices.Reverse(data.EstateActions)
 	case "usage":
 		data.Title = "Usage"

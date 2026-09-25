@@ -21,6 +21,8 @@ type pageData struct {
 	AccountID            string
 	UserID               string
 	Role                 string
+	Roles                []string
+	Permissions          []string
 	OrganizationName     string
 	ActiveOrganizationID string
 	ActiveProjectID      string
@@ -104,10 +106,13 @@ func getProfile(deps core.Deps) http.HandlerFunc {
 		if org, ok := account.Organizations[account.ActiveOrganizationID]; ok {
 			organizationName = org.Name
 		}
+		role, roles, permissions := profileAuthorization(account, principal)
 		data := pageData{
 			AccountID:            account.ID,
 			UserID:               account.User.ID,
-			Role:                 principal.Role,
+			Role:                 role,
+			Roles:                roles,
+			Permissions:          permissions,
 			OrganizationName:     organizationName,
 			ActiveOrganizationID: account.ActiveOrganizationID,
 			ActiveProjectID:      account.ActiveProjectID,
@@ -152,6 +157,42 @@ func getProfile(deps core.Deps) http.HandlerFunc {
 			http.Error(w, "could not render profile page", http.StatusInternalServerError)
 		}
 	}
+}
+
+func profileAuthorization(account core.Account, principal core.Principal) (string, []string, []string) {
+	organization, err := account.OrganizationFor(principal, principal.OrganizationID)
+	if err != nil {
+		return "", nil, nil
+	}
+
+	role := ""
+	if organization.OwnerUserID == principal.UserID {
+		role = "owner"
+	} else if member, ok := organization.Members[principal.UserID]; ok {
+		role = member.Role
+	}
+	var roles []string
+	if role != "" {
+		roles = append(roles, role)
+	}
+
+	var permissions []string
+	if principal.ProjectID != "" {
+		if _, err := account.ProjectFor(principal, organization.ID, principal.ProjectID); err == nil {
+			permissions = append(permissions, "Access selected project")
+			if organization.CanWrite(principal.UserID) {
+				permissions = append(permissions, "Write selected project data")
+			}
+		}
+	}
+	if organization.CanManage(principal.UserID) {
+		permissions = append(permissions, "Manage organization resources")
+	}
+	if organization.CanProvisionResources(principal.UserID) {
+		permissions = append(permissions, "Provision organization resources")
+	}
+
+	return role, roles, permissions
 }
 
 func updateProfile(deps core.Deps) http.HandlerFunc {

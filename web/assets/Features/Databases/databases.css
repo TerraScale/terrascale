@@ -97,6 +97,13 @@
 
 /* Database detail keeps identity visible while secondary lifecycle views
    are linkable tabs. Each view is a flat section with scrollable tables. */
+.ts-db-detail-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
 .ts-db-detail-page > .ts-section {
   gap: var(--ts-lg);
   min-width: 0;
@@ -135,6 +142,31 @@
   padding-block: var(--ts-lg);
   border-top: 1px solid var(--ts-line);
   border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-db-detail-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-sm) var(--ts-lg);
+  font-size: var(--ts-fs-ui);
+}
+
+.ts-db-detail-danger,
+.ts-db-branch-custom {
+  border-top: 1px solid var(--ts-line);
+  padding-top: var(--ts-lg);
+}
+
+.ts-db-detail-danger > summary,
+.ts-db-branch-custom > summary {
+  cursor: pointer;
+  font-weight: var(--ts-fw-medium);
+}
+
+.ts-db-detail-danger > form,
+.ts-db-branch-custom > form {
+  max-width: 24rem;
+  margin-top: var(--ts-md);
 }
 
 @media (max-width: 40rem) {

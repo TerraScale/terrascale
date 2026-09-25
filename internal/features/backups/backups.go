@@ -164,6 +164,10 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if wantsHTML(r) {
+			if r.FormValue("returnTo") == "databaseDetail" {
+				http.Redirect(w, r, "/databases/"+url.PathEscape(db.ID)+"?tab=backups", http.StatusSeeOther)
+				return
+			}
 			http.Redirect(w, r, "/backups?databaseId="+url.QueryEscape(db.ID), http.StatusSeeOther)
 			return
 		}

@@ -3,7 +3,8 @@
 //
 //   node scripts/build-css.mjs [output]   minified, default web/static/css/terrascale.css
 //   node scripts/build-css.mjs --dev      readable development bundle
-//   node scripts/build-css.mjs --watch    --dev, rebuilt on every source CSS change
+//   node scripts/build-css.mjs --watch    readable, rebuilt on every source CSS change
+//   node scripts/build-css.mjs --watch --minify  minified output with CSS watching
 import { watch } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -16,7 +17,8 @@ const source = resolve(repository, 'web/assets');
 const entry = resolve(source, 'css/terrascale.css');
 const args = process.argv.slice(2);
 const watchMode = args.includes('--watch');
-const dev = watchMode || args.includes('--dev');
+const devMode = watchMode || args.includes('--dev');
+const minify = args.includes('--minify') || !devMode;
 const output = resolve(args.find(arg => !arg.startsWith('--')) ?? resolve(repository, 'web/static/css/terrascale.css'));
 
 // Resolve the checked-in Browserslist query through the locked caniuse-lite
@@ -26,7 +28,7 @@ const targets = browserslistToTargets(browserslist(undefined, { path: repository
 async function build() {
   const { code, warnings } = bundle({
     filename: entry,
-    minify: !dev,
+    minify,
     targets,
     errorRecovery: false,
   });
@@ -47,7 +49,7 @@ async function build() {
 }
 
 const bytes = await build();
-console.log(`CSS: ${bytes} bytes${dev ? ' (dev)' : ''} → ${output}`);
+console.log(`CSS: ${bytes} bytes${minify ? '' : ' (dev)'} → ${output}`);
 
 if (watchMode) {
   let timer;

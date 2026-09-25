@@ -35,6 +35,7 @@ type pageData struct {
 	Indexes         []string
 	IndexBuilds     []core.IndexBuild
 	Recommendations []core.IndexRecommendation
+	Migration       *demoIndexMigration
 	Queries         []core.SavedQuery
 	DocumentID      string
 	EditorJSON      string
@@ -120,6 +121,9 @@ func renderPageWithSQLResult(w http.ResponseWriter, r *http.Request, deps core.D
 			return
 		}
 		if deps.Demo {
+			if mode == "indexes" && data.IndexTab == "migration" {
+				data.Migration = marioIndexMigration(a, p, db, data.Collection)
+			}
 			for id, body := range db.Documents[data.Collection] {
 				data.Documents = append(data.Documents, documentView{ID: id, Value: body})
 			}

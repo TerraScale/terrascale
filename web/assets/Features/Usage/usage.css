@@ -118,6 +118,23 @@
 
 .ts-usage-allowance > .ts-stats { flex: 1 1 16rem; }
 
+.ts-usage-sample-panel {
+  display: grid;
+  gap: var(--ts-lg);
+  padding-top: var(--ts-lg);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-usage-sample-panel > p { margin: 0; }
+
+.ts-usage-sample-gauges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-xl);
+}
+
+.ts-usage-sample-gauges > .ts-usage-gauge { flex: 1 1 15rem; }
+
 .ts-usage-divided {
   display: grid;
   gap: var(--ts-xl);

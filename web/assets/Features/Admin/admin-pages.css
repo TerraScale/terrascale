@@ -43,6 +43,10 @@
   }
 
   .ts-admin-action-form button { grid-column: auto; }
+
+  .ts-admin-action-form.ts-admin-estate-action-form {
+    grid-template-columns: minmax(9rem, 1fr) minmax(12rem, 1.25fr) minmax(18rem, 1.75fr) auto;
+  }
 }
 
 .ts-admin-action-form label {

@@ -1,6 +1,10 @@
 package notifications
 
-import "fmt"
+import (
+	"fmt"
+
+	"terrascale.tech/dashboard/internal/ui/aria"
+)
 
 templ notificationsView(data pageData, csrfToken string) {
 	<main class="ts-page">
@@ -20,8 +24,8 @@ templ notificationsView(data pageData, csrfToken string) {
 				· { fmt.Sprint(data.Total) } total
 			</p>
 			<nav aria-label="Notification filter">
-				<a href="/notifications" aria-current={ templ.KV("page", data.Status == "all") }>All</a>
-				<a href="/notifications?status=unread" aria-current={ templ.KV("page", data.Status == "unread") }>Unread</a>
+				<a href="/notifications" aria-current={ aria.CurrentPage(data.Status == "all") }>All</a>
+				<a href="/notifications?status=unread" aria-current={ aria.CurrentPage(data.Status == "unread") }>Unread</a>
 			</nav>
 		</section>
 		if len(data.Notifications) > 0 {

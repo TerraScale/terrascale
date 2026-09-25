@@ -22,6 +22,8 @@ templ profileView(data pageData, csrfToken string) {
 				</p>
 			</div>
 			<dl class="ts-summary-terms ts-profile-summary">
+				<div class="ts-summary-term"><dt>Roles</dt><dd>{ fmt.Sprint(len(data.Roles)) }</dd></div>
+				<div class="ts-summary-term"><dt>Listed capabilities</dt><dd>{ fmt.Sprint(len(data.Permissions)) }</dd></div>
 				<div class="ts-summary-term"><dt>Sessions</dt><dd>{ fmt.Sprint(len(data.Sessions)) }</dd></div>
 				<div class="ts-summary-term"><dt>Passkey records</dt><dd>{ fmt.Sprint(len(data.Passkeys)) }</dd></div>
 				<div class="ts-summary-term">
@@ -131,7 +133,14 @@ templ profileView(data pageData, csrfToken string) {
 						<p class="ts-panel-subtitle">Current account and demo security records.</p>
 					</div>
 					<dl class="ts-stack-12 ts-padded ts-profile-posture">
-						<div class="ts-posture-row"><dt class="ts-posture-label">Account role</dt><dd class="ts-badge ts-badge-info">{ data.Role }</dd></div>
+						<div class="ts-posture-row">
+							<dt class="ts-posture-label">Active organization role</dt>
+							if data.Role != "" {
+								<dd class="ts-badge ts-badge-info">{ data.Role }</dd>
+							} else {
+								<dd class="ts-badge ts-badge-neutral">Unavailable</dd>
+							}
+						</div>
 						<div class="ts-posture-row">
 							<dt class="ts-posture-label">Multi-factor record</dt>
 							if data.MFAEnabled {
@@ -143,6 +152,44 @@ templ profileView(data pageData, csrfToken string) {
 						<div class="ts-posture-row"><dt class="ts-posture-label">Passkey records</dt><dd class="ts-badge ts-badge-neutral">{ fmt.Sprint(len(data.Passkeys)) }</dd></div>
 						<div class="ts-posture-row"><dt class="ts-posture-label">Active sessions</dt><dd class="ts-badge ts-badge-neutral">{ fmt.Sprint(len(data.Sessions)) }</dd></div>
 					</dl>
+				</section>
+				<section class="ts-panel ts-grid-two-span" aria-labelledby="profile-roles-title">
+					<div class="ts-panel-header">
+						<h2 class="ts-panel-title" id="profile-roles-title">Roles and permissions</h2>
+						<p class="ts-panel-subtitle">Common resource capabilities for your current organization and project scope. Billing, platform-admin, and other routes may apply separate checks.</p>
+					</div>
+					<div class="ts-claims-grid">
+						<section class="ts-claim-list" aria-labelledby="profile-role-list-title">
+							<h3 class="ts-claim-title" id="profile-role-list-title">Roles</h3>
+							if len(data.Roles) == 0 {
+								<div class="ts-empty" role="status">
+									<span class="ts-empty-title">No active organization role</span>
+									<p class="ts-meta">No role is available for the current organization membership.</p>
+								</div>
+							} else {
+								<div class="ts-claim-values">
+									for _, role := range data.Roles {
+										<span class="ts-badge ts-badge-neutral">{ role }</span>
+									}
+								</div>
+							}
+						</section>
+						<section class="ts-claim-list" aria-labelledby="profile-permission-list-title">
+							<h3 class="ts-claim-title" id="profile-permission-list-title">Common capabilities</h3>
+							if len(data.Permissions) == 0 {
+								<div class="ts-empty" role="status">
+									<span class="ts-empty-title">No scoped permissions</span>
+									<p class="ts-meta">No resource capabilities are available for the current organization and project scope.</p>
+								</div>
+							} else {
+								<div class="ts-claim-values">
+									for _, permission := range data.Permissions {
+										<span class="ts-badge ts-badge-neutral">{ permission }</span>
+									}
+								</div>
+							}
+						</section>
+					</div>
 				</section>
 			</div>
 		} else if data.Tab == "security" {

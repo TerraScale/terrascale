@@ -3,7 +3,8 @@ package home
 import (
 	"fmt"
 
-	"terrascale.tech/dashboard/internal/ui/icons"
+	"terrascale.tech/dashboard/internal/ui/aria"
+	"terrascale.tech/dashboard/internal/ui/charts"
 )
 
 templ homeView(data pageData) {
@@ -93,9 +94,9 @@ templ homeView(data pageData) {
 						<div class="ts-section-head">
 							<div>
 								<h2 class="ts-panel-title" id="home-activity-title">Activity</h2>
-								<p class="ts-meta">Persisted project audit activity</p>
+								<p class="ts-meta">{ data.ActivityNote }</p>
 							</div>
-							<span class="ts-home-activity-total"><span class="ts-activity-total-dot" aria-hidden="true"></span> Events <strong>{ fmt.Sprint(data.ActivityEvents) }</strong></span>
+							<span class="ts-home-activity-total"><span class="ts-activity-total-dot" aria-hidden="true"></span> { data.ActivityTotalLabel } <strong>{ fmt.Sprint(data.ActivityEvents) }</strong></span>
 						</div>
 						<div class="ts-home-range-picker">
 							<span class="ts-sr-only" id="home-range-label">Activity range</span>
@@ -103,21 +104,18 @@ templ homeView(data pageData) {
 								<details class="ts-menu ts-menu-end">
 									<summary class="ts-select" aria-labelledby="home-range-label home-range-value"><span id="home-range-value">{ data.ActivityRange }</span></summary>
 									<div class="ts-menu-panel">
-										<a class="ts-menu-item" aria-current={ templ.KV("page", data.ActivityRange == "24h") } href="/?range=24h">24h</a>
-										<a class="ts-menu-item" aria-current={ templ.KV("page", data.ActivityRange == "7d") } href="/?range=7d">7d</a>
-										<a class="ts-menu-item" aria-current={ templ.KV("page", data.ActivityRange == "30d") } href="/?range=30d">30d</a>
+										<a class="ts-menu-item" aria-current={ aria.CurrentPage(data.ActivityRange == "24h") } href="/?range=24h">24h</a>
+										<a class="ts-menu-item" aria-current={ aria.CurrentPage(data.ActivityRange == "7d") } href="/?range=7d">7d</a>
+										<a class="ts-menu-item" aria-current={ aria.CurrentPage(data.ActivityRange == "30d") } href="/?range=30d">30d</a>
 									</div>
 								</details>
 							</ts-menu>
 						</div>
 						<div class="ts-chart-body">
-							<div class="ts-chart ts-chart-empty" role="status" aria-label="No timestamped workload chart samples are available">
-								<div class="ts-empty">
-									<span class="ts-empty-icon" aria-hidden="true">@icons.Activity(18)</span>
-									<span class="ts-empty-title">No time-series activity samples are available yet.</span>
-									<span class="ts-meta">Persisted audit events are counted above and available in the <a href="/audit">audit log</a>.</span>
-								</div>
+							<div class="ts-chart-shell ts-home-chart-shell" role="region" aria-label="Activity chart. Scroll horizontally for the full plot." tabindex="0">
+								@charts.Line(data.ActivityChart)
 							</div>
+							<a class="ts-meta" href="/audit">View persisted audit events</a>
 						</div>
 					</section>
 				</div>

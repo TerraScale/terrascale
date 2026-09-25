@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -90,6 +91,74 @@ func (rig profileTestRig) get(path string) *httptest.ResponseRecorder {
 	response := httptest.NewRecorder()
 	rig.handler.ServeHTTP(response, request)
 	return response
+}
+
+func TestProfileAuthorizationUsesPersistedMembershipAndSelectedProject(t *testing.T) {
+	rig := newProfileTestRig(t)
+	principal := rig.account.Principal()
+
+	role, roles, permissions := profileAuthorization(rig.account, principal)
+	if role != "owner" || len(roles) != 1 || roles[0] != "owner" {
+		t.Fatalf("persisted owner role = %q, %v", role, roles)
+	}
+	for _, permission := range []string{
+		"Access selected project",
+		"Write selected project data",
+		"Manage organization resources",
+		"Provision organization resources",
+	} {
+		if !slices.Contains(permissions, permission) {
+			t.Errorf("owner permissions %v do not include %q", permissions, permission)
+		}
+	}
+	response := rig.get("/profile")
+	if response.Code != http.StatusOK {
+		t.Fatalf("profile page returned %d", response.Code)
+	}
+	for _, visible := range []string{
+		"Roles and permissions",
+		"Common capabilities",
+		"owner",
+		"Access selected project",
+		"Write selected project data",
+		"Manage organization resources",
+		"Provision organization resources",
+	} {
+		if !strings.Contains(response.Body.String(), visible) {
+			t.Errorf("profile page does not render %q", visible)
+		}
+	}
+
+	organizationOnly := principal
+	organizationOnly.ProjectID = ""
+	_, _, permissions = profileAuthorization(rig.account, organizationOnly)
+	if slices.Contains(permissions, "Access selected project") || slices.Contains(permissions, "Write selected project data") {
+		t.Fatalf("project permissions were granted without a selected project: %v", permissions)
+	}
+	if !slices.Contains(permissions, "Manage organization resources") || !slices.Contains(permissions, "Provision organization resources") {
+		t.Fatalf("organization permissions were lost without a selected project: %v", permissions)
+	}
+
+	account, ok := rig.store.Snapshot(rig.account.ID)
+	if !ok {
+		t.Fatal("profile account snapshot is missing")
+	}
+	organization := account.Organizations[principal.OrganizationID]
+	member := organization.Members[principal.UserID]
+	member.Role = "viewer"
+	organization.Members[principal.UserID] = member
+	organization.OwnerUserID = "another-user"
+	account.Organizations[organization.ID] = organization
+
+	stalePrincipal := principal
+	stalePrincipal.Role = "owner"
+	role, roles, permissions = profileAuthorization(account, stalePrincipal)
+	if role != "viewer" || len(roles) != 1 || roles[0] != "viewer" {
+		t.Fatalf("role did not follow saved membership: %q, %v", role, roles)
+	}
+	if len(permissions) != 1 || permissions[0] != "Access selected project" {
+		t.Fatalf("viewer permissions = %v", permissions)
+	}
 }
 
 func TestEmailChangeUpdatesLookupAndMembershipAtomically(t *testing.T) {

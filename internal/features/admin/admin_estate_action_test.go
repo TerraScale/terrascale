@@ -19,20 +19,30 @@ func TestAdminEstateActionRecordsAuditOnly(t *testing.T) {
 	mux := adminTestMux(t, store, account.Principal(), adminTestCSRF{valid: true})
 
 	page := httptest.NewRecorder()
-	mux.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/admin/estate", nil))
+	mux.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/admin/estate?tab=operations", nil))
 	if page.Code != http.StatusOK {
 		t.Fatalf("GET /admin/estate status = %d, want 200", page.Code)
 	}
+	body := page.Body.String()
 	for _, expected := range []string{
 		"Product actions", "Recorded actions", "Record only: this demo does not change infrastructure, billing, tenant state, or access.",
-		`action="/api/v1/admin/estate/action"`, `name="targetId" required`, `name="reason" rows="3" minlength="3" maxlength="1000" required`,
+		`action="/api/v1/admin/estate/action"`,
 	} {
-		if !strings.Contains(page.Body.String(), expected) {
+		if !strings.Contains(body, expected) {
 			t.Errorf("estate page is missing %q", expected)
 		}
 	}
+	if !adminControlHasAttributes(body, "select", "action", "required") {
+		t.Error("estate action selector is not required")
+	}
+	if !adminControlHasAttributes(body, "input", "targetId", "required") {
+		t.Error("estate target input is not required")
+	}
+	if !adminControlHasAttributes(body, "textarea", "reason", "rows=3", "minlength=3", "maxlength=1000", "required") {
+		t.Error("estate reason field is missing its required 3–1000 character constraints")
+	}
 	for _, action := range estateActionKinds {
-		if !strings.Contains(page.Body.String(), `value="`+action+`"`) {
+		if !strings.Contains(body, `value="`+action+`"`) {
 			t.Errorf("estate action form is missing allowlisted action %q", action)
 		}
 	}
@@ -50,9 +60,9 @@ func TestAdminEstateActionRecordsAuditOnly(t *testing.T) {
 	if response.Code != http.StatusSeeOther {
 		t.Fatalf("record action status = %d, body=%s", response.Code, response.Body.String())
 	}
-	location, err := url.Parse(response.Header.Get("Location"))
-	if err != nil || location.Path != "/admin/estate" || location.Query().Get("notice") == "" {
-		t.Fatalf("record action redirect = %q, want estate notice; parse error=%v", response.Header.Get("Location"), err)
+	location, err := url.Parse(response.Header().Get("Location"))
+	if err != nil || location.Path != "/admin/estate" || location.Query().Get("tab") != "operations" || location.Query().Get("notice") == "" {
+		t.Fatalf("record action redirect = %q, want estate notice; parse error=%v", response.Header().Get("Location"), err)
 	}
 
 	actions, err := store.PlatformAdminActions(account.Principal())
@@ -92,6 +102,134 @@ func TestAdminEstateActionRecordsAuditOnly(t *testing.T) {
 		if loggedPage.Code != http.StatusOK || !strings.Contains(loggedPage.Body.String(), expected) {
 			t.Fatalf("GET %s status/body missing %q: status=%d body=%s", location.RequestURI(), expected, loggedPage.Code, loggedPage.Body.String())
 		}
+	}
+}
+
+func adminControlHasAttributes(body, element, name string, requiredAttributes ...string) bool {
+	firstFragment := true
+	for fragment := range strings.SplitSeq(body, "<"+element) {
+		if firstFragment {
+			firstFragment = false
+			continue
+		}
+		tag, _, found := strings.Cut(fragment, ">")
+		if !found {
+			continue
+		}
+		attributes := make(map[string]string)
+		for _, field := range strings.Fields(tag) {
+			key, value, hasValue := strings.Cut(field, "=")
+			if hasValue {
+				attributes[key] = strings.Trim(value, `"'`)
+			} else {
+				attributes[key] = ""
+			}
+		}
+		if attributes["name"] != name {
+			continue
+		}
+		for _, required := range requiredAttributes {
+			key, value, hasValue := strings.Cut(required, "=")
+			got, found := attributes[key]
+			if !found || hasValue && got != value {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func TestAdminEstateTabsUseLocalInventoryAndAllowlistedQueries(t *testing.T) {
+	store := core.NewStore()
+	account := newAdminAccount(t, store, "estate-tabs-admin@example.test", true)
+	seedAdminDatabase(t, store, account, "Estate database", "GRU")
+	mux := adminTestMux(t, store, account.Principal(), adminTestCSRF{valid: true})
+
+	for _, test := range []struct {
+		name        string
+		query       string
+		wantCurrent string
+		wantContent []string
+		wantAbsent  []string
+	}{
+		{
+			name:        "default regions tab",
+			query:       "/admin/estate",
+			wantCurrent: `href="/admin/estate?tab=regions" aria-current="page"`,
+			wantContent: []string{"São Paulo", "San Francisco", "Frankfurt", "GRU", "SFO", "FRA", "Provider availability", "Not reported"},
+			wantAbsent:  []string{`action="/api/v1/admin/estate/action"`},
+		},
+		{
+			name:        "hosts tab shows only local records",
+			query:       "/admin/estate?tab=hosts",
+			wantCurrent: `href="/admin/estate?tab=hosts" aria-current="page"`,
+			wantContent: []string{"Provider host inventory and host health are unavailable", "not provider hosts or host telemetry", "Estate database", "db-admin-fixture", "Recorded status"},
+			wantAbsent:  []string{`action="/api/v1/admin/estate/action"`, "Version"},
+		},
+		{
+			name:        "operations tab retains recorded actions",
+			query:       "/admin/estate?tab=operations",
+			wantCurrent: `href="/admin/estate?tab=operations" aria-current="page"`,
+			wantContent: []string{`action="/api/v1/admin/estate/action"`, "Product actions", "Recorded actions", "Record only:"},
+			wantAbsent:  []string{`id="admin-estate-regions-title"`, `id="admin-estate-hosts-title"`},
+		},
+		{
+			name:        "unrecognized tab falls back to regions",
+			query:       "/admin/estate?tab=health",
+			wantCurrent: `href="/admin/estate?tab=regions" aria-current="page"`,
+			wantContent: []string{"Regions", "GRU", "SFO", "FRA"},
+			wantAbsent:  []string{`id="admin-estate-hosts-title"`, `id="admin-estate-actions-title"`},
+		},
+		{
+			name:        "host filter keeps its tab selected",
+			query:       "/admin/estate?tab=hosts&q=not-a-database",
+			wantCurrent: `href="/admin/estate?tab=hosts" aria-current="page"`,
+			wantContent: []string{`name="tab" value="hosts"`, "No matching database records"},
+			wantAbsent:  []string{"db-admin-fixture"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.query, nil))
+			body := response.Body.String()
+			if response.Code != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want 200; body=%s", test.query, response.Code, body)
+			}
+			if !strings.Contains(body, test.wantCurrent) {
+				t.Errorf("GET %s did not mark tab current: missing %q", test.query, test.wantCurrent)
+			}
+			for _, expected := range test.wantContent {
+				if !strings.Contains(body, expected) {
+					t.Errorf("GET %s is missing %q", test.query, expected)
+				}
+			}
+			for _, unexpected := range test.wantAbsent {
+				if strings.Contains(body, unexpected) {
+					t.Errorf("GET %s unexpectedly contains %q", test.query, unexpected)
+				}
+			}
+		})
+	}
+
+	data, err := NewService(store).page(account.Principal(), "estate", "")
+	if err != nil {
+		t.Fatalf("load estate local inventory: %v", err)
+	}
+	if data.EstateRegionCount != 3 || len(data.Regions) != 3 || data.EstateDatabaseCount != 1 {
+		t.Fatalf("estate local inventory = region count %d, rows %d, database count %d; want 3/3/1", data.EstateRegionCount, len(data.Regions), data.EstateDatabaseCount)
+	}
+	regions := make(map[string]estateRow, len(data.Regions))
+	for _, region := range data.Regions {
+		regions[region.Region] = region
+	}
+	for _, code := range []string{"GRU", "SFO", "FRA"} {
+		if _, ok := regions[code]; !ok {
+			t.Errorf("supported demo region %q missing from local inventory", code)
+		}
+	}
+	if regions["GRU"].ObservedDatabases != 1 {
+		t.Errorf("GRU recorded database count = %d, want 1", regions["GRU"].ObservedDatabases)
 	}
 }
 

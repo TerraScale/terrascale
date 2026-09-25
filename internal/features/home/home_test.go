@@ -2,16 +2,18 @@ package home
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/demovisuals"
 	"terrascale.tech/dashboard/internal/platform/render"
 )
 
-func TestOverviewRendersScopedCountsAndAnHonestEmptyChart(t *testing.T) {
+func TestOverviewRendersScopedCountsAndAnHonestZeroChart(t *testing.T) {
 	store := core.NewStore()
 	account, err := store.CreateAccount(core.User{
 		ID: "home-owner", Name: "Home Owner", Email: "home@example.test", PasswordHash: "unused",
@@ -68,7 +70,8 @@ func TestOverviewRendersScopedCountsAndAnHonestEmptyChart(t *testing.T) {
 		"Databases</dt><dd><span class=\"ts-kpi-value\">2</span>",
 		"Organization members</dt><dd><span class=\"ts-kpi-value\">2</span>",
 		"Unread alerts</dt><dd><span class=\"ts-kpi-value\">1</span>",
-		"2 notifications loaded", "Events <strong>2</strong>", "No time-series activity samples are available yet.",
+		"2 notifications loaded", "Plotted operations <strong>0</strong>", "Illustrative zero baseline",
+		"ts-home-chart-shell", "ts-chart-line ts-chart-series-1", "30d ago",
 		"href=\"/?range=30d\"", "aria-current=\"page\"",
 	} {
 		if !strings.Contains(body, expected) {
@@ -82,11 +85,58 @@ func TestOverviewRendersScopedCountsAndAnHonestEmptyChart(t *testing.T) {
 	if strings.Contains(body, "other-database") || strings.Contains(body, "other-project-event") || strings.Contains(body, "other-project-unread") {
 		t.Fatal("overview exposed records scoped to another project")
 	}
+	if strings.Contains(body, "Sample organization activity") {
+		t.Fatal("fresh account received seeded Mario sample activity")
+	}
 	if !strings.Contains(body, "Create first database") || !strings.Contains(body, "Create an Application credential") {
 		t.Fatal("overview is missing the getting-started steps")
 	}
 	if strings.Count(body, "ts-badge-success\">Done") < 2 {
 		t.Fatal("completed database and credential steps were not reflected in the overview")
+	}
+}
+
+func TestOverviewSeededMarioSampleChartChangesWithRange(t *testing.T) {
+	store := core.NewStore()
+	account, err := store.CreateAccount(core.User{ID: demovisuals.MarioUserID, Name: "Mario Demo", Email: "mario@example.test", PasswordHash: "unused"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(account.ID, func(current *core.Account) error {
+		original := current.Organizations[current.ActiveOrganizationID]
+		project := original.Projects[current.ActiveProjectID]
+		organization := original
+		organization.ID = demovisuals.MarioOrganizationID
+		organization.Slug = "terrascale-labs"
+		organization.Name = "TerraScale Labs"
+		organization.Projects = map[string]core.Project{project.ID: project}
+		project.OrganizationID = organization.ID
+		organization.Projects[project.ID] = project
+		current.Organizations[organization.ID] = organization
+		current.ActiveOrganizationID = organization.ID
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	account, _ = store.Snapshot(account.ID)
+	csrf := homeTestCSRF{}
+	mux := http.NewServeMux()
+	Mount(mux, core.Deps{Store: store, Sessions: homeTestSessions{principal: account.Principal()}, CSRF: csrf, Render: render.New(store, csrf), Demo: true})
+	for _, rangeName := range []string{"24h", "7d", "30d"} {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/?range="+rangeName, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s overview returned %d", rangeName, response.Code)
+		}
+		body := response.Body.String()
+		for _, expected := range []string{
+			"Sample organization activity", "not measured provider traffic", "ts-chart-line ts-chart-series-1",
+			fmt.Sprintf("Sample operations <strong>%d</strong>", demovisuals.Sum(demovisuals.Workload(rangeName))),
+		} {
+			if !strings.Contains(body, expected) {
+				t.Errorf("%s overview missing %q", rangeName, expected)
+			}
+		}
 	}
 }
 

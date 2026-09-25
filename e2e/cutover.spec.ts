@@ -129,6 +129,8 @@ test("profile email and language persist, password change ends the session, and 
   const credentials = account("profile");
   await registerAndOnboard(page, credentials);
   expect((await page.goto("/profile?tab=profile"))?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Roles and permissions" })).toBeVisible();
+  await expect(page.getByText("Access selected project", { exact: true })).toBeVisible();
   const newEmail = account("renamed").email;
   const email = page.locator('form[action="/api/v1/dashboard/profile/email-change"]');
   await email.locator('[name="newEmail"]').fill(newEmail);
@@ -214,7 +216,7 @@ test("sample index recommendation records a demo build", async ({ page }) => {
       recommendation.getByRole("button", { name: "Apply" }).click(),
     );
   }
-  await expect(page.getByRole("heading", { name: "Demo index builds" }).locator("..").locator("ul")).toContainText("total: building");
+  await expect(page.getByRole("heading", { name: "Demo index builds" }).locator("xpath=following-sibling::ul[1]")).toContainText("total: building");
   expect((await page.goto(`/indexes?databaseId=${encodeURIComponent(databaseID)}&collection=orders`))?.status()).toBe(200);
   await expect(page.getByRole("heading", { name: "Collection indexes" }).locator("..").locator("ul")).toContainText("total");
 });
@@ -242,10 +244,102 @@ test("sample payment history filters and paginates invoices", async ({ page }) =
   await expect(table.locator("tbody tr")).toHaveCount(10);
 });
 
+test("fresh account charts show a zero baseline without inventing usage", async ({ page }) => {
+  await registerAndOnboard(page, account("empty-charts"));
+  const activity = page.locator(".ts-home-chart-shell svg.ts-chart");
+  await expect(activity).toBeVisible();
+  await expect(activity).toHaveAttribute("aria-label", /Illustrative zero baseline/);
+  await expect(page.locator(".ts-home-activity-total")).toContainText("Plotted operations");
+  const path = await activity.locator("path.ts-chart-line").getAttribute("d");
+  expect(path).toBeTruthy();
+  const verticalCoordinates = [...path!.matchAll(/(?:M|L)\s+[\d.]+,([\d.]+)/g)].map((match) => match[1]);
+  expect(verticalCoordinates.length).toBeGreaterThan(1);
+  expect(new Set(verticalCoordinates).size).toBe(1);
+
+  expect((await page.goto("/usage"))?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Workload history" })).toBeVisible();
+  await expect(page.getByText("Workload history is unavailable.")).toBeVisible();
+  await expect(page.locator(".ts-usage-sample-gauges .ts-usage-ring")).toHaveCount(0);
+  await expect(page.locator(".ts-usage-chart-shell svg.ts-chart")).toHaveCount(0);
+});
+
+test("seeded demo charts render labelled samples and respond to the selected range", async ({ page, browser, baseURL }) => {
+  await login(page, sampleAccount.email, sampleAccount.password);
+  const activity7d = page.locator(".ts-home-chart-shell svg.ts-chart");
+  await expect(activity7d).toBeVisible();
+  await expect(activity7d).toHaveAttribute("aria-label", /Sample organization activity/);
+  const sevenDayPath = await activity7d.locator("path.ts-chart-line").getAttribute("d");
+  expect(sevenDayPath).toBeTruthy();
+  await expect(page.locator(".ts-home-activity-total")).toContainText("Sample operations");
+  expect((await page.goto("/?range=24h"))?.status()).toBe(200);
+  await expect(page.locator(".ts-home-chart-shell svg.ts-chart")).toHaveAttribute("aria-label", /Last 24 hours/);
+  expect(await page.locator(".ts-home-chart-shell path.ts-chart-line").getAttribute("d")).not.toBe(sevenDayPath);
+
+  expect((await page.goto("/usage?tab=overview&range=7d"))?.status()).toBe(200);
+  const rings = page.locator(".ts-usage-sample-gauges .ts-usage-ring svg[role='img']");
+  await expect(rings).toHaveCount(2);
+  await expect(rings.nth(0)).toHaveAttribute("aria-label", /81% of illustrative demo capacity/);
+  await expect(rings.nth(1)).toHaveAttribute("aria-label", /163% of illustrative demo capacity/);
+  await expect(page.getByText("Illustrative demo capacity").first()).toBeVisible();
+  const workload = page.locator(".ts-usage-chart-shell svg.ts-chart");
+  await expect(workload).toBeVisible();
+  for (const series of ["ts-cat-1", "ts-cat-2", "ts-cat-3"]) {
+    await expect(workload.locator(`path.${series}`)).toHaveCount(1);
+  }
+  const history7d = await workload.locator("path.ts-cat-1").getAttribute("d");
+  const shareBars = page.locator(".ts-usage-share svg.ts-svg-sharebar");
+  await expect(shareBars).toHaveCount(3);
+  const shareWidths = await shareBars.locator("rect.ts-svg-sharebar-fill").evaluateAll((rects) =>
+    rects.map((rect) => Number(rect.getAttribute("width"))),
+  );
+  expect(shareWidths.some((width) => width > 0)).toBe(true);
+  await page.locator("#usage-range").selectOption("30d");
+  await page.getByRole("search", { name: "Filter usage" }).getByRole("button", { name: "Apply" }).click();
+  await expect(page.locator("#usage-range")).toHaveValue("30d");
+  await expect(page.locator(".ts-usage-chart-shell svg.ts-chart")).toHaveAttribute("aria-label", /Last 30 days/);
+  expect(await page.locator(".ts-usage-chart-shell path.ts-cat-1").getAttribute("d")).not.toBe(history7d);
+
+  const context = await browser.newContext({ baseURL, storageState: await page.context().storageState(), javaScriptEnabled: false });
+  try {
+    const noJS = await context.newPage();
+    expect((await noJS.goto("/usage?tab=overview&range=7d"))?.status()).toBe(200);
+    await expect(noJS.locator(".ts-usage-sample-gauges .ts-usage-ring svg[role='img']")).toHaveCount(2);
+    await expect(noJS.locator(".ts-usage-chart-shell path.ts-cat-1")).toHaveCount(1);
+    await expect(noJS.locator(".ts-usage-share svg.ts-svg-sharebar rect.ts-svg-sharebar-fill")).toHaveCount(3);
+  } finally {
+    await context.close();
+  }
+  expect((await page.goto("/usage?tab=billing"))?.status()).toBe(200);
+  await expect(page.getByText("Next recorded invoice", { exact: true })).toBeVisible();
+  await expect(page.getByText("Billing period", { exact: true })).toBeVisible();
+  await expect(page.getByText("Outstanding balance", { exact: true })).toBeVisible();
+  const periodFill = page.locator('.ts-usage-billing-kpis svg.ts-svg-sharebar[aria-label*="recorded billing period"] rect.ts-svg-sharebar-fill');
+  await expect(periodFill).toHaveCount(1);
+  expect(Number(await periodFill.getAttribute("width"))).toBeGreaterThan(0);
+});
+
+test("Mario migration progress is scoped to its seeded orders collection", async ({ page }) => {
+  await login(page, sampleAccount.email, sampleAccount.password);
+  const databaseID = "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC";
+  expect((await page.goto(`/indexes?tab=migration&databaseId=${databaseID}&collection=orders`))?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Migration progress" })).toBeVisible();
+  await expect(page.getByText("Static sample from the Mario in-memory demo", { exact: false })).toBeVisible();
+  const progress = page.getByRole("progressbar", { name: "Sample index migration progress" });
+  await expect(progress).toHaveAttribute("value", "8640");
+  await expect(progress).toHaveAttribute("max", "12480");
+  await expect(page.locator(".ts-data-migration")).toContainText("69%");
+  await expect(page.locator(".ts-data-migration")).toContainText("watermark");
+  expect((await page.goto(`/indexes?tab=migration&databaseId=${databaseID}&collection=other`))?.status()).toBe(200);
+  await expect(page.getByRole("progressbar", { name: "Sample index migration progress" })).toHaveCount(0);
+  await expect(page.getByText("Index migration state is unavailable in the current provider contract.")).toBeVisible();
+});
+
 test("admin Estate action records an audit entry without claiming an infrastructure change", async ({ page }) => {
   await login(page, adminAccount.email, adminAccount.password);
   expect((await page.goto("/admin/estate"))?.status()).toBe(200);
-  await expect(page.getByRole("heading", { name: "Observed region placement" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Regions", exact: true })).toBeVisible();
+  await page.locator('a[href="/admin/estate?tab=operations"]').click();
+  await expect(page.getByRole("heading", { name: "Operations", exact: true })).toBeVisible();
   const form = page.locator('form[action="/api/v1/admin/estate/action"]');
   const target = `db_cutover_${Date.now()}`;
   const reason = `E2E audit record ${Date.now()}`;
@@ -258,6 +352,47 @@ test("admin Estate action records an audit entry without claiming an infrastruct
   await expect(page.getByRole("status").filter({ hasText: "Action completed and recorded" })).toContainText("No infrastructure action was taken");
   const log = page.getByRole("table", { name: "Recorded platform administrator estate actions, newest first" });
   await expect(log.locator("tbody tr").filter({ hasText: target })).toContainText(reason);
+});
+
+test("seeded database detail tabs retain placement, backup, branch, and import controls", async ({ page }) => {
+  await login(page, sampleAccount.email, sampleAccount.password);
+  expect((await page.goto("/databases"))?.status()).toBe(200);
+  const databaseHref = await page.getByRole("link", { name: "core-primary" }).getAttribute("href");
+  expect(databaseHref).toBeTruthy();
+  expect((await page.goto(databaseHref!))?.status()).toBe(200);
+  const tabs = page.getByRole("navigation", { name: "Database detail sections" });
+  await expect(tabs.getByRole("link")).toHaveCount(5);
+  await expect(tabs.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { name: "Placement and latency" })).toBeVisible();
+
+  await tabs.getByRole("link", { name: "Placement" }).click();
+  await expect(tabs.getByRole("link", { name: "Placement" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { name: "Placement and latency" })).toBeVisible();
+  await expect(page.getByText("0 ms · demo estimate")).toBeVisible();
+
+  await tabs.getByRole("link", { name: "Backups" }).click();
+  await expect(tabs.getByRole("link", { name: "Backups" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { name: "Backups" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Manage backups and restore points" })).toBeVisible();
+
+  await tabs.getByRole("link", { name: "Import and export" }).click();
+  await expect(tabs.getByRole("link", { name: "Import and export" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("button", { name: "Import JSONL / CSV" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Export lossless JSONL" })).toBeDisabled();
+
+  await tabs.getByRole("link", { name: "Branches" }).click();
+  await expect(tabs.getByRole("link", { name: "Branches" })).toHaveAttribute("aria-current", "page");
+  const branchName = `cutover-detail-${Date.now()}`;
+  await page.getByText("Choose a branch name").click();
+  const branch = page.locator('form[action="/api/v1/dashboard/databases/branch"]').filter({
+    has: page.locator('input[name="name"]'),
+  });
+  await branch.locator('input[name="name"]').fill(branchName);
+  await submitAndExpect(page, "/api/v1/dashboard/databases/branch", 303, () =>
+    branch.getByRole("button", { name: "Create branch" }).click(),
+  );
+  await page.waitForURL((url) => url.pathname.startsWith("/databases/db_") && url.pathname !== new URL(databaseHref!, url.origin).pathname);
+  await expect(page.getByRole("heading", { name: branchName })).toBeVisible();
 });
 
 test("unknown browser page loads the illustrated 404 while API requests receive a bare 404", async ({ browser, baseURL }) => {

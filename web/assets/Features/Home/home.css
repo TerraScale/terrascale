@@ -11,6 +11,9 @@
 
 .ts-home .ts-chart { height: 224px; }
 
+.ts-home-chart-shell { overflow-x: auto; }
+.ts-home-chart-shell .ts-chart { min-width: 32rem; }
+
 .ts-activity-total-dot {
   width: 4px;
   height: 4px;

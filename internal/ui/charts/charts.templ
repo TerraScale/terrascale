@@ -1,0 +1,39 @@
+package charts
+
+import "fmt"
+
+templ Line(data LineData) {
+	if len(data.Paths) > 0 {
+		<svg class="ts-chart" viewBox={ data.ViewBox } role="img" aria-label={ data.Label }>
+			for _, grid := range data.Grid {
+				<line class="ts-chart-grid" x1={ fmt.Sprint(data.PlotLeft) } y1={ grid.Y } x2={ fmt.Sprint(data.PlotEnd) } y2={ grid.Y }/>
+				if grid.Label != "" {
+					<text class="ts-chart-axis" x={ fmt.Sprint(data.PlotLeft - 8) } y={ grid.Y } text-anchor="end">{ grid.Label }</text>
+				}
+			}
+			for _, tick := range data.Ticks {
+				<text class="ts-chart-axis" x={ tick.X } y={ fmt.Sprint(data.Height - 7) } text-anchor={ tick.Anchor }>{ tick.Label }</text>
+			}
+			if data.AreaPath != "" {
+				<path d={ data.AreaPath } fill="var(--ts-chart-1)" opacity="0.08"/>
+			}
+			for _, path := range data.Paths {
+				<path class={ "ts-chart-line " + path.Class } d={ path.Data }/>
+			}
+		</svg>
+	}
+}
+
+templ Ring(data RingData) {
+	<svg class={ "ts-ring ts-ring-" + data.Tone } viewBox="0 0 120 120" role="img" aria-label={ data.Label }>
+		<circle class="ts-ring-track" cx="60" cy="60" r="52" pathLength="100"/>
+		<circle class="ts-ring-fill" cx="60" cy="60" r="52" pathLength="100" stroke-dasharray={ data.Dash }/>
+	</svg>
+}
+
+templ Bar(data BarData) {
+	<svg class="ts-svg-sharebar" viewBox="0 0 100 8" preserveAspectRatio="none" role="img" aria-label={ data.Label }>
+		<rect class="ts-svg-sharebar-track" x="0" y="0" width="100" height="8" rx="4"/>
+		<rect class="ts-svg-sharebar-fill" x="0" y="0" width={ data.Width } height="8" rx="4"/>
+	</svg>
+}

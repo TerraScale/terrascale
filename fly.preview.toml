@@ -1,4 +1,5 @@
-# The preview workflow supplies the per-PR app name with --app.
+# The preview workflow supplies the per-PR app name with --app. Keep this
+# config without swap_size_mb or [[mounts]]: previews use ephemeral rootfs.
 primary_region = "gru"
 
 [env]

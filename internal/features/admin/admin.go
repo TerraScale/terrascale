@@ -64,6 +64,7 @@ type databaseRow struct {
 
 type estateRow struct {
 	Region            string
+	Location          string
 	ObservedProjects  int
 	ObservedDatabases int
 }
@@ -76,20 +77,27 @@ type inventoryCounts struct {
 }
 
 type pageData struct {
-	Section       string
-	Title         string
-	Query         string
-	Notice        string
-	Error         string
-	Users         []userRow
-	Organizations []organizationRow
-	Projects      []projectRow
-	Databases     []databaseRow
-	Regions       []estateRow
-	EstateActions []core.AdminAction
-	Plans         []core.Plan
-	Inventory     inventoryCounts
+	Section             string
+	Title               string
+	Query               string
+	Notice              string
+	Error               string
+	Users               []userRow
+	Organizations       []organizationRow
+	Projects            []projectRow
+	Databases           []databaseRow
+	Regions             []estateRow
+	EstateTab           string
+	EstateDatabases     []databaseRow
+	EstateActions       []core.AdminAction
+	EstateRegionCount   int
+	EstateDatabaseCount int
+	EstateActionCount   int
+	Plans               []core.Plan
+	Inventory           inventoryCounts
 }
+
+var adminEstateTabs = [...]string{"regions", "hosts", "operations"}
 
 // Mount registers the in-memory platform administration pages and actions.
 func Mount(mux *http.ServeMux, deps core.Deps) {
@@ -144,6 +152,9 @@ func adminPage(deps core.Deps, service Service, section string) http.HandlerFunc
 			writeAdminError(w, err)
 			return
 		}
+		if section == "estate" {
+			data.EstateTab = adminEstateTab(r.URL.Query().Get("tab"))
+		}
 		data.Notice = r.URL.Query().Get("notice")
 		data.Error = r.URL.Query().Get("error")
 		page := core.Page{
@@ -160,6 +171,13 @@ func adminPage(deps core.Deps, service Service, section string) http.HandlerFunc
 			http.Error(w, "could not render admin page", http.StatusInternalServerError)
 		}
 	}
+}
+
+func adminEstateTab(tab string) string {
+	if slices.Contains(adminEstateTabs[:], tab) {
+		return tab
+	}
+	return "regions"
 }
 
 func updateUser(deps core.Deps, service Service) http.HandlerFunc {
@@ -238,13 +256,13 @@ func recordEstateAction(deps core.Deps, service Service) http.HandlerFunc {
 			r.FormValue("reason"),
 		); err != nil {
 			if errors.Is(err, core.ErrInvalid) {
-				redirectError(w, r, "/admin/estate", "Choose an allowed action, enter a target, and provide a reason between 3 and 1000 characters.")
+				redirectEstateAction(w, r, "error", "Choose an allowed action, enter a target, and provide a reason between 3 and 1000 characters.")
 				return
 			}
 			writeMutationError(w, r, "/admin/estate", err)
 			return
 		}
-		redirectNotice(w, r, "/admin/estate", "Action completed and recorded in the audit log. No infrastructure action was taken.")
+		redirectEstateAction(w, r, "notice", "Action completed and recorded in the audit log. No infrastructure action was taken.")
 	}
 }
 
@@ -385,6 +403,11 @@ func redirectError(w http.ResponseWriter, r *http.Request, path, message string)
 	http.Redirect(w, r, path+"?error="+url.QueryEscape(message), http.StatusSeeOther)
 }
 
+func redirectEstateAction(w http.ResponseWriter, r *http.Request, key, message string) {
+	query := url.Values{"tab": {"operations"}, key: {message}}
+	http.Redirect(w, r, "/admin/estate?"+query.Encode(), http.StatusSeeOther)
+}
+
 func nonNegativeInt64(value string) (int64, bool) {
 	parsed, err := strconv.ParseInt(value, 10, 64)
 	return parsed, err == nil && parsed >= 0
@@ -431,6 +454,7 @@ func sortRows(data *pageData) {
 	})
 	slices.SortFunc(data.Projects, func(a, b projectRow) int { return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
 	slices.SortFunc(data.Databases, func(a, b databaseRow) int { return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
+	slices.SortFunc(data.EstateDatabases, func(a, b databaseRow) int { return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
 	slices.SortFunc(data.Regions, func(a, b estateRow) int { return strings.Compare(strings.ToLower(a.Region), strings.ToLower(b.Region)) })
 	slices.SortFunc(data.Plans, func(a, b core.Plan) int { return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
 }

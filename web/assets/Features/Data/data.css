@@ -106,6 +106,31 @@
   max-width: 48rem;
 }
 
+.ts-data .ts-data-migration-progress {
+  display: block;
+  width: min(100%, 48rem);
+  height: 8px;
+  appearance: none;
+  border: 0;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-surface-muted);
+}
+
+.ts-data .ts-data-migration-progress::-webkit-progress-bar {
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-surface-muted);
+}
+
+.ts-data .ts-data-migration-progress::-webkit-progress-value {
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-accent);
+}
+
+.ts-data .ts-data-migration-progress::-moz-progress-bar {
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-accent);
+}
+
 .ts-data .ts-schema-changes {
   display: grid;
   gap: var(--ts-sm);

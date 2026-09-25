@@ -1,6 +1,10 @@
 package settings
 
-import "fmt"
+import (
+	"fmt"
+
+	"terrascale.tech/dashboard/internal/ui/aria"
+)
 
 templ settingsView(data pageData, csrfToken string) {
 	<main class="ts-page">
@@ -34,12 +38,12 @@ templ settingsView(data pageData, csrfToken string) {
 			</dl>
 		</section>
 		<nav aria-label="Settings sections">
-			<a href="/settings?tab=identity" aria-current={ templ.KV("page", data.Tab == "identity") }>Identity</a>
-			<a href="/settings?tab=credentials" aria-current={ templ.KV("page", data.Tab == "credentials") }>Credentials</a>
-			<a href="/settings?tab=webhooks" aria-current={ templ.KV("page", data.Tab == "webhooks") }>Webhooks</a>
-			<a href="/settings?tab=backups" aria-current={ templ.KV("page", data.Tab == "backups") }>Backups</a>
-			<a href="/settings?tab=audit" aria-current={ templ.KV("page", data.Tab == "audit") }>Audit retention</a>
-			<a href="/settings?tab=danger" aria-current={ templ.KV("page", data.Tab == "danger") }>Danger zone</a>
+			<a href="/settings?tab=identity" aria-current={ aria.CurrentPage(data.Tab == "identity") }>Identity</a>
+			<a href="/settings?tab=credentials" aria-current={ aria.CurrentPage(data.Tab == "credentials") }>Credentials</a>
+			<a href="/settings?tab=webhooks" aria-current={ aria.CurrentPage(data.Tab == "webhooks") }>Webhooks</a>
+			<a href="/settings?tab=backups" aria-current={ aria.CurrentPage(data.Tab == "backups") }>Backups</a>
+			<a href="/settings?tab=audit" aria-current={ aria.CurrentPage(data.Tab == "audit") }>Audit retention</a>
+			<a href="/settings?tab=danger" aria-current={ aria.CurrentPage(data.Tab == "danger") }>Danger zone</a>
 		</nav>
 		if data.Tab == "identity" {
 			<section aria-labelledby="identity-title">

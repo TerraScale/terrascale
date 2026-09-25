@@ -1,6 +1,10 @@
 package authentication
 
-import "fmt"
+import (
+	"fmt"
+
+	"terrascale.tech/dashboard/internal/ui/aria"
+)
 
 templ authenticationView(data pageData, projectName, csrfToken string) {
 	<main class="ts-page ts-auth-console">
@@ -15,7 +19,7 @@ templ authenticationView(data pageData, projectName, csrfToken string) {
 		<ts-tabs>
 			<nav class="ts-tabs" aria-label="Authentication areas">
 				for _, item := range data.Sections {
-					<a class="ts-tab" href={ "/auth/" + item.Key } aria-current={ templ.KV("page", item.Key == data.Section) }>{ item.Title }</a>
+					<a class="ts-tab" href={ "/auth/" + item.Key } aria-current={ aria.CurrentPage(item.Key == data.Section) }>{ item.Title }</a>
 				}
 			</nav>
 		</ts-tabs>

@@ -16,19 +16,24 @@ import (
 	"github.com/a-h/templ"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/demovisuals"
+	"terrascale.tech/dashboard/internal/ui/charts"
 	sdk "terrascale.tech/sdk"
 )
 
 var amountPattern = regexp.MustCompile(`^\d+(?:\.\d{1,2})?$`)
 
 type databaseRow struct {
-	ID        string
-	Name      string
-	Region    string
-	SpendCap  string
-	Effective string
-	Status    string
-	Documents int
+	ID           string
+	Name         string
+	Region       string
+	SpendCap     string
+	Effective    string
+	Status       string
+	Documents    int
+	StoredBytes  int64
+	StoredSize   string
+	SharePercent int
 }
 
 type databaseOption struct {
@@ -44,6 +49,34 @@ type projectRow struct {
 	SpendCap      string
 	Effective     string
 	Selected      bool
+	StoredBytes   int64
+	StoredSize    string
+	SharePercent  int
+}
+
+type sampleGauge struct {
+	Name     string
+	Used     string
+	Capacity string
+	Percent  int
+	Ring     charts.RingData
+}
+
+type historyTotal struct {
+	Name  string
+	Value int64
+	Class string
+}
+
+type billingSummary struct {
+	NextInvoice       string
+	NextDetail        string
+	Period            string
+	PeriodDetail      string
+	PeriodPercent     int
+	HasPeriod         bool
+	Outstanding       string
+	OutstandingDetail string
 }
 
 type invoiceRow struct {
@@ -77,36 +110,44 @@ type invoicePage struct {
 const invoicePageSize = 10
 
 type pageData struct {
-	Tab                  string
-	Projects             []projectRow
-	DatabaseOptions      []databaseOption
-	Databases            []databaseRow
-	SelectedProject      string
-	SelectedDatabase     string
-	OrganizationCap      string
-	PaidExcess           bool
-	EffectiveCap         string
-	PlanName             string
-	PlanStorageAllowance string
-	PlanRequestAllowance string
-	PlanUsageNote        string
-	BillingStatus        string
-	BillingRenewal       time.Time
-	Invoices             []invoiceRow
-	InvoicePage          invoicePage
-	Requests             int64
-	Reads                int64
-	Writes               int64
-	StorageByteSeconds   int64
-	UsageSource          string
-	UsageError           string
-	UsageAvailable       bool
-	Saved                string
-	CanManage            bool
-	CanManageBilling     bool
-	InvoiceCount         int
-	ActiveDatabases      int
-	RegionCount          int
+	Tab                   string
+	Projects              []projectRow
+	DatabaseOptions       []databaseOption
+	Databases             []databaseRow
+	SelectedProject       string
+	SelectedDatabase      string
+	ExplicitProjectFilter bool
+	OrganizationCap       string
+	PaidExcess            bool
+	EffectiveCap          string
+	PlanName              string
+	PlanStorageAllowance  string
+	PlanRequestAllowance  string
+	PlanUsageNote         string
+	HistoryRange          string
+	HistoryRangeLabel     string
+	HistoryChart          charts.LineData
+	HistoryTotals         []historyTotal
+	SampleGauges          []sampleGauge
+	SampleHistory         bool
+	BillingStatus         string
+	BillingRenewal        time.Time
+	BillingSummary        billingSummary
+	Invoices              []invoiceRow
+	InvoicePage           invoicePage
+	Requests              int64
+	Reads                 int64
+	Writes                int64
+	StorageByteSeconds    int64
+	UsageSource           string
+	UsageError            string
+	UsageAvailable        bool
+	Saved                 string
+	CanManage             bool
+	CanManageBilling      bool
+	InvoiceCount          int
+	ActiveDatabases       int
+	RegionCount           int
 }
 
 // Mount registers the usage page and spending controls.
@@ -140,6 +181,12 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			databaseFilter = ""
 		}
 		data := buildPage(r.Context(), deps, p, org, project, tab, databaseFilter)
+		data.ExplicitProjectFilter = r.URL.Query().Get("project") == project.ID
+		data.HistoryRange = demovisuals.NormalizeRange(r.URL.Query().Get("range"))
+		data.HistoryRangeLabel = demovisuals.RangeLabel(data.HistoryRange)
+		if demovisuals.IsSeededMarioAccount(deps.Demo, account, org) {
+			addMarioSampleVisuals(&data)
+		}
 		now := time.Now().UTC()
 		data.InvoicePage = makeInvoicePage(
 			data.Invoices,
@@ -260,6 +307,10 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 			region = "Not configured"
 		}
 		row := projectRow{ID: item.ID, Name: item.Name, Region: region, DatabaseCount: len(item.Databases), SpendCap: dollars(item.SpendCapCents), Selected: item.ID == project.ID}
+		for _, database := range item.Databases {
+			row.StoredBytes += storedDocumentBytes(database)
+		}
+		row.StoredSize = formatStoredBytes(row.StoredBytes)
 		row.Effective = effectiveCap(org.Billing.SpendCapCents, item.SpendCapCents)
 		projects = append(projects, row)
 	}
@@ -271,11 +322,25 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 		if databaseFilter != "" && database.ID != databaseFilter {
 			continue
 		}
+		storedBytes := storedDocumentBytes(database)
 		selectedDatabases = append(selectedDatabases, databaseRow{
 			ID: database.ID, Name: database.Name, Region: database.Region,
 			SpendCap: dollars(database.SpendCapCents), Effective: effectiveCap(org.Billing.SpendCapCents, project.SpendCapCents, database.SpendCapCents),
-			Status: database.Status, Documents: documentCount(database),
+			Status: database.Status, Documents: documentCount(database), StoredBytes: storedBytes, StoredSize: formatStoredBytes(storedBytes),
 		})
+	}
+	var projectStoredBytes, databaseStoredBytes int64
+	for _, item := range projects {
+		projectStoredBytes += item.StoredBytes
+	}
+	for i := range projects {
+		projects[i].SharePercent = sharePercent(projects[i].StoredBytes, projectStoredBytes)
+	}
+	for _, item := range selectedDatabases {
+		databaseStoredBytes += item.StoredBytes
+	}
+	for i := range selectedDatabases {
+		selectedDatabases[i].SharePercent = sharePercent(selectedDatabases[i].StoredBytes, databaseStoredBytes)
 	}
 	slices.SortFunc(projects, func(a, b projectRow) int { return strings.Compare(a.Name, b.Name) })
 	slices.SortFunc(databaseOptions, func(a, b databaseOption) int { return strings.Compare(a.Name, b.Name) })
@@ -307,7 +372,8 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 		PlanName: planName, PlanStorageAllowance: storageAllowance, PlanRequestAllowance: requestAllowance,
 		PlanUsageNote: "Provider totals have no billing-period attribution, so allowance utilization is unavailable.",
 		BillingStatus: org.BillingStatus, BillingRenewal: org.BillingRenewal,
-		Invoices: invoices, InvoiceCount: len(invoices),
+		BillingSummary: summarizeBilling(org.Billing.Invoices, time.Now().UTC()),
+		Invoices:       invoices, InvoiceCount: len(invoices),
 		ActiveDatabases: len(project.Databases), RegionCount: len(regions), CanManage: canManage(org, p.UserID),
 	}
 	if deps.Demo {
@@ -522,6 +588,128 @@ func documentCount(database core.Database) int {
 		count += len(collection)
 	}
 	return count
+}
+
+func storedDocumentBytes(database core.Database) int64 {
+	var total int64
+	for _, collection := range database.Documents {
+		for _, document := range collection {
+			total += int64(len(document))
+		}
+	}
+	return total
+}
+
+func formatStoredBytes(value int64) string {
+	if value < 1024 {
+		return fmt.Sprintf("%d B", value)
+	}
+	if value < 1024*1024 {
+		return fmt.Sprintf("%.1f KiB", float64(value)/1024)
+	}
+	return fmt.Sprintf("%.1f MiB", float64(value)/(1024*1024))
+}
+
+func sharePercent(part, total int64) int {
+	if part <= 0 || total <= 0 {
+		return 0
+	}
+	return max(1, int(float64(part)/float64(total)*100+0.5))
+}
+
+func addMarioSampleVisuals(data *pageData) {
+	values := demovisuals.Workload(data.HistoryRange)
+	reads, writes, replication := demovisuals.Operations(values)
+	data.SampleHistory = true
+	data.HistoryChart = charts.NewLine(
+		"Illustrative organization reads, writes, and replication, "+data.HistoryRangeLabel,
+		demovisuals.TickLabels(data.HistoryRange), 200,
+		charts.Series{Name: "Reads", Values: reads},
+		charts.Series{Name: "Writes", Values: writes},
+		charts.Series{Name: "Replication", Values: replication},
+	)
+	data.HistoryTotals = []historyTotal{
+		{Name: "Reads", Value: demovisuals.Sum(reads), Class: "ts-cat-1"},
+		{Name: "Writes", Value: demovisuals.Sum(writes), Class: "ts-cat-2"},
+		{Name: "Replication", Value: demovisuals.Sum(replication), Class: "ts-cat-3"},
+	}
+	storageRing := charts.NewRing("Sample storage", demovisuals.SampleStorageMiB, demovisuals.SampleStorageCapacity)
+	writeRing := charts.NewRing("Sample writes", demovisuals.SampleWrites, demovisuals.SampleWriteCapacity)
+	data.SampleGauges = []sampleGauge{
+		{Name: "Sample storage", Used: "6.5 GiB", Capacity: "8 GiB", Percent: storageRing.Percent, Ring: storageRing},
+		{Name: "Sample writes", Used: "8,140,200", Capacity: "5,000,000", Percent: writeRing.Percent, Ring: writeRing},
+	}
+}
+
+func summarizeBilling(invoices []core.Invoice, now time.Time) billingSummary {
+	summary := billingSummary{
+		NextInvoice: "Not recorded", NextDetail: "No upcoming invoice is recorded.",
+		Period: "Unavailable", PeriodDetail: "No current billing period is recorded.",
+		Outstanding: "Not recorded", OutstandingDetail: "No invoices are recorded.",
+	}
+	var current, upcoming *core.Invoice
+	var openCount int
+	var outstanding int64
+	openCurrency := ""
+	mixedCurrency := false
+	for i := range invoices {
+		invoice := &invoices[i]
+		if !invoice.PeriodStart.IsZero() && !invoice.PeriodEnd.IsZero() &&
+			!now.Before(invoice.PeriodStart) && now.Before(invoice.PeriodEnd) &&
+			(current == nil || invoice.PeriodStart.After(current.PeriodStart)) {
+			current = invoice
+		}
+		if !strings.EqualFold(invoice.Status, "open") {
+			continue
+		}
+		openCount++
+		if invoice.AmountCents > 0 {
+			outstanding += invoice.AmountCents
+		}
+		currency := strings.ToUpper(invoice.Currency)
+		if openCount == 1 {
+			openCurrency = currency
+		} else if openCurrency != currency {
+			mixedCurrency = true
+		}
+		if !invoice.CreatedAt.Before(now) && (upcoming == nil || invoice.CreatedAt.Before(upcoming.CreatedAt)) {
+			upcoming = invoice
+		}
+	}
+	if current != nil {
+		days := max(1, int(current.PeriodEnd.Sub(current.PeriodStart).Hours()/24))
+		elapsed := min(days, max(0, int(now.Sub(current.PeriodStart).Hours()/24)))
+		summary.Period = current.PeriodStart.UTC().Format("Jan 2") + " – " + current.PeriodEnd.UTC().Format("Jan 2, 2006")
+		summary.PeriodDetail = fmt.Sprintf("Day %d of %d · based on a recorded invoice period", elapsed, days)
+		summary.PeriodPercent = sharePercent(int64(elapsed), int64(days))
+		summary.HasPeriod = true
+	}
+	if upcoming != nil {
+		summary.NextInvoice = formatInvoiceMoney(upcoming.AmountCents, upcoming.Currency)
+		summary.NextDetail = "Recorded open invoice dated " + upcoming.CreatedAt.UTC().Format("Jan 2, 2006")
+	}
+	if len(invoices) > 0 {
+		summary.OutstandingDetail = fmt.Sprintf("%d open invoice(s) in recorded history", openCount)
+		if openCount == 0 {
+			summary.Outstanding = "0 open invoices"
+		} else if mixedCurrency {
+			summary.Outstanding = "Multiple currencies"
+		} else {
+			summary.Outstanding = formatInvoiceMoney(outstanding, openCurrency)
+		}
+	}
+	return summary
+}
+
+func formatInvoiceMoney(cents int64, currency string) string {
+	amount := fmt.Sprintf("%d.%02d", cents/100, cents%100)
+	if strings.EqualFold(currency, "USD") {
+		return "$" + amount
+	}
+	if currency == "" {
+		return amount + " (currency unreported)"
+	}
+	return strings.ToUpper(currency) + " " + amount
 }
 
 func localDocuments(project core.Project, databaseFilter string) int {

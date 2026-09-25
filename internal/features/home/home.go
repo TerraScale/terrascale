@@ -4,19 +4,23 @@ package home
 import (
 	"errors"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/a-h/templ"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/demovisuals"
 	"terrascale.tech/dashboard/internal/features/notfound"
+	"terrascale.tech/dashboard/internal/ui/charts"
 )
 
 type pageData struct {
 	Tab                       string
 	ProjectName               string
 	ActivityRange             string
+	ActivityNote              string
+	ActivityTotalLabel        string
+	ActivityChart             charts.LineData
 	DatabaseDetail            string
 	OrganizationMembersDetail string
 	NotificationsDetail       string
@@ -25,7 +29,7 @@ type pageData struct {
 	UnreadNotifications       int
 	TotalNotifications        int
 	ActiveCredentials         int
-	ActivityEvents            int
+	ActivityEvents            int64
 }
 
 // Mount registers the dashboard overview.
@@ -89,15 +93,31 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if r.URL.Query().Get("tab") == "connect" {
 			tab = "connect"
 		}
-		activityRange := r.URL.Query().Get("range")
-		if !slices.Contains([]string{"24h", "7d", "30d"}, activityRange) {
-			activityRange = "7d"
+		activityRange := demovisuals.NormalizeRange(r.URL.Query().Get("range"))
+		sample := demovisuals.IsSeededMarioAccount(deps.Demo, account, org)
+		var activity []int64
+		activityNote, totalLabel := "Illustrative zero baseline; timestamped workload telemetry is unavailable. Audit events are listed separately.", "Plotted operations"
+		if sample {
+			activity = demovisuals.Workload(activityRange)
+			activityNote, totalLabel = "Sample organization activity for this demo; not measured provider traffic.", "Sample operations"
+		} else {
+			count := 7
+			switch activityRange {
+			case "24h":
+				count = 24
+			case "30d":
+				count = 30
+			}
+			activity = make([]int64, count)
 		}
 		data := pageData{
 			Tab: tab, ProjectName: project.Name, ActivityRange: activityRange,
+			ActivityNote: activityNote, ActivityTotalLabel: totalLabel,
+			ActivityChart: charts.NewLine("Activity, "+demovisuals.RangeLabel(activityRange)+": "+activityNote,
+				demovisuals.TickLabels(activityRange), 180, charts.Series{Name: "Operations", Values: activity}),
 			DatabaseCount: len(project.Databases), OrganizationMembers: organizationMembers,
 			UnreadNotifications: unread, TotalNotifications: notificationCount,
-			ActiveCredentials: credentials, ActivityEvents: len(scopedEvents(account.AuditEvents, p)),
+			ActiveCredentials: credentials, ActivityEvents: demovisuals.Sum(activity),
 			DatabaseDetail: "saved project databases", OrganizationMembersDetail: "active organization members",
 			NotificationsDetail: "notifications loaded",
 		}
@@ -145,15 +165,4 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 func notificationVisible(p core.Principal, item core.Notification) bool {
 	return (item.OrganizationID == "" || item.OrganizationID == p.OrganizationID) &&
 		(item.ProjectID == "" || item.ProjectID == p.ProjectID)
-}
-
-func scopedEvents(events []core.AuditEvent, p core.Principal) []core.AuditEvent {
-	result := make([]core.AuditEvent, 0, len(events))
-	for _, event := range events {
-		if (event.OrganizationID == "" || event.OrganizationID == p.OrganizationID) &&
-			(event.ProjectID == "" || event.ProjectID == p.ProjectID) {
-			result = append(result, event)
-		}
-	}
-	return result
 }

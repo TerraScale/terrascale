@@ -282,6 +282,13 @@ templ dataContent(page core.Page, d pageData) {
 						</ul>
 					}
 				</section>
+			} else if d.IndexTab == "migration" && d.Migration != nil {
+				<section class="ts-card ts-section ts-data-migration" aria-labelledby="index-migration-title">
+					<div class="ts-section-head"><div><h2 id="index-migration-title">Migration progress</h2><p class="ts-meta">Static sample from the Mario in-memory demo. Applying an index recommendation does not advance this snapshot.</p></div><span class="ts-badge ts-badge-info">Sample · { d.Migration.State }</span></div>
+					<progress class="ts-data-migration-progress" value={ d.Migration.Completed } max={ d.Migration.Total } aria-label="Sample index migration progress">{ d.Migration.Percent }%</progress>
+					<p class="ts-meta">{ d.Migration.Completed } / { d.Migration.Total } · { d.Migration.Percent }% · watermark { d.Migration.Watermark }</p>
+					<p class="ts-meta">Pin and forbid controls are unavailable until the provider publishes lifecycle mutations.</p>
+				</section>
 			} else {
 				<section class="ts-card ts-section"><h2>{ indexTabTitle(d.IndexTab) }</h2><p role="status">{ indexUnavailable(d.IndexTab) }</p></section>
 			}

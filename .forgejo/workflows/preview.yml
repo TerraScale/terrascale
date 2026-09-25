@@ -26,6 +26,8 @@ jobs:
           PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
         run: |
           set -euo pipefail
+          node scripts/check-fly-deployment.mjs preview-config fly.preview.toml
+          fly config validate --strict -c fly.preview.toml -a "$PR_APP"
           # One ephemeral single-machine app per PR; provision idempotently so a
           # partially-created app (cancelled run, transient API error) self-heals.
           # NB: match table rows, not fly's "shared and dedicated" footer line.
@@ -49,9 +51,17 @@ jobs:
           # split accounts and sessions, so account creation would appear to
           # vanish between steps. --ha=false skips the spare machine and the
           # scale is mandatory (no best-effort fallback) so a preview can never
-          # silently run two stores.
+          # silently run two stores. Fly Proxy can start existing Machines but
+          # does not create them; the post-deploy check enforces this workflow's
+          # one-Machine cap (manual/API changes outside this workflow remain possible).
           fly deploy -a "$PR_APP" --config fly.preview.toml --strategy immediate --ha=false
           fly scale count 1 -a "$PR_APP" --yes
+          machines_json=$(mktemp)
+          volumes_json=$(mktemp)
+          trap 'rm -f "$machines_json" "$volumes_json"' EXIT
+          fly machine list -a "$PR_APP" --json > "$machines_json"
+          fly volumes list -a "$PR_APP" --json > "$volumes_json"
+          node scripts/check-fly-deployment.mjs preview "$machines_json" "$volumes_json"
       - name: Run browser E2E suite against the deployed preview
         env:
           PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}

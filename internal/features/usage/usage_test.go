@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/demovisuals"
 	"terrascale.tech/dashboard/internal/platform/render"
 )
 
@@ -415,7 +416,102 @@ func TestUsageOverviewShowsConfiguredAllowanceAndUnavailableWorkloadHonestly(t *
 			if got := usageMetricValue(body, "Write units"); got != test.writeCount {
 				t.Errorf("demo write units = %q, want selected-scope document count %q", got, test.writeCount)
 			}
+			if strings.Contains(body, "Illustrative demo capacity") || strings.Contains(body, "ts-usage-chart-shell") {
+				t.Fatal("ordinary demo account received seeded Mario charts")
+			}
 		})
+	}
+}
+
+func TestMarioDemoUsageChartsAndRecordedBillingSummary(t *testing.T) {
+	store := core.NewStore()
+	account, err := store.CreateAccount(core.User{ID: demovisuals.MarioUserID, Name: "Mario Demo", Email: "mario-usage@example.test", PasswordHash: "unused"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := store.Update(account.ID, func(current *core.Account) error {
+		original := current.Organizations[current.ActiveOrganizationID]
+		project := original.Projects[current.ActiveProjectID]
+		organization := original
+		organization.ID = demovisuals.MarioOrganizationID
+		organization.Slug = "terrascale-labs"
+		organization.Name = "TerraScale Labs"
+		organization.PlanID = "plan_pro"
+		project.OrganizationID = organization.ID
+		project.Databases["db-core"] = core.Database{
+			ID: "db-core", ProjectID: project.ID, Name: "core-primary",
+			Documents: map[string]map[string][]byte{"orders": {"one": []byte(`{"status":"paid"}`)}},
+		}
+		other := core.Project{
+			ID: "project-edge", OrganizationID: organization.ID, Name: "edge-analytics", Region: "FRA",
+			Databases: map[string]core.Database{
+				"db-edge": {ID: "db-edge", ProjectID: "project-edge", Name: "edge-events", Documents: map[string]map[string][]byte{"events": {"one": []byte(`{"event":"new"}`)}}},
+			},
+		}
+		organization.Projects = map[string]core.Project{project.ID: project, other.ID: other}
+		organization.Billing.Invoices = []core.Invoice{{
+			Number: "INV-DEMO", Status: "open", AmountCents: 1234, Currency: "USD",
+			PeriodStart: now.Add(-10 * 24 * time.Hour), PeriodEnd: now.Add(20 * 24 * time.Hour),
+			CreatedAt: now.Add(2 * 24 * time.Hour),
+		}}
+		current.Organizations[organization.ID] = organization
+		current.ActiveOrganizationID = organization.ID
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	account, _ = store.Snapshot(account.ID)
+	csrf := usageTestCSRF{}
+	mux := http.NewServeMux()
+	Mount(mux, core.Deps{Store: store, Sessions: usageTestSessions{account.Principal()}, CSRF: csrf, Render: render.New(store, csrf), Demo: true})
+
+	for _, rangeName := range []string{"24h", "7d", "30d"} {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/usage?range="+rangeName, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s usage returned %d: %s", rangeName, response.Code, response.Body.String())
+		}
+		body := response.Body.String()
+		for _, expected := range []string{
+			"Illustrative demo capacity", "Sample storage", "Sample writes", "81%", "163%",
+			"Sample organization operations", "ts-usage-chart-shell", "ts-cat-1", "ts-cat-2", "ts-cat-3",
+			"By project", "core-primary", "edge-analytics", "Stored dashboard document bytes",
+		} {
+			if !strings.Contains(body, expected) {
+				t.Errorf("%s usage missing %q", rangeName, expected)
+			}
+		}
+		if strings.Contains(body, "8192 MiB</dd>") || strings.Contains(body, "5000000 requests/month</dd>") {
+			t.Fatal("illustrative capacities replaced canonical plan allowances")
+		}
+	}
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/usage?project="+account.ActiveProjectID+"&range=30d", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "By database") || !strings.Contains(response.Body.String(), "core-primary") {
+		t.Fatalf("project-scoped breakdown returned %d: %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/usage?tab=billing", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("billing page returned %d: %s", response.Code, response.Body.String())
+	}
+	for _, expected := range []string{"Next recorded invoice", "$12.34", "Billing period", "Outstanding balance", "recorded invoice period"} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Errorf("billing summary missing %q", expected)
+		}
+	}
+}
+
+func TestBillingSummaryDistinguishesMissingInvoicesFromZeroOpenBalance(t *testing.T) {
+	now := time.Now().UTC()
+	missing := summarizeBilling(nil, now)
+	if missing.NextInvoice != "Not recorded" || missing.Period != "Unavailable" || missing.Outstanding != "Not recorded" || missing.HasPeriod {
+		t.Fatalf("missing invoice summary = %#v", missing)
+	}
+	paid := summarizeBilling([]core.Invoice{{Status: "paid", AmountCents: 1200, Currency: "USD"}}, now)
+	if paid.Outstanding != "0 open invoices" || paid.NextInvoice != "Not recorded" {
+		t.Fatalf("paid-only invoice summary = %#v", paid)
 	}
 }
 

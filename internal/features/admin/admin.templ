@@ -136,7 +136,7 @@ templ adminView(data pageData, csrfToken string) {
 				}
 			</nav>
 		</div>
-		if data.Section != "usage" {
+		if data.Section != "usage" && data.Section != "estate" {
 			<div class="ts-toolbar ts-admin-toolbar">
 				<form class="ts-filters ts-admin-filter-form" method="get" action={ "/admin/" + data.Section } role="search">
 					<label class="ts-sr-only" for="admin-query">Filter { data.Title }</label>
@@ -299,84 +299,151 @@ templ adminView(data pageData, csrfToken string) {
 				}
 			</section>
 		} else if data.Section == "estate" {
-			<dl class="ts-kpis ts-admin-kpis" aria-label="Observed placement summary">
-				<div><dt>Matching recorded regions</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(len(data.Regions)) }</span></dd><small class="ts-meta">Regions present on project or database records</small></div>
-				<div><dt>Project placements</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(adminObservedProjectCount(data.Regions)) }</span></dd><small class="ts-meta">Project-to-region records in matching regions</small></div>
-				<div><dt>Database region records</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(adminObservedDatabaseCount(data.Regions)) }</span></dd><small class="ts-meta">Database-to-region records in matching regions</small></div>
+			<dl class="ts-kpis ts-admin-kpis" aria-label="Estate inventory summary">
+				<div><dt>Demo region codes</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(data.EstateRegionCount) }</span></dd><small class="ts-meta">Supported local codes; availability is not reported</small></div>
+				<div><dt>Database records</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(data.EstateDatabaseCount) }</span></dd><small class="ts-meta">Unique databases in the dashboard store</small></div>
+				<div><dt>Recorded requests</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(data.EstateActionCount) }</span></dd><small class="ts-meta">Product-action audit entries in this process</small></div>
 			</dl>
-			<section class="ts-admin-section" aria-labelledby="admin-estate-title">
-				<div class="ts-section-head">
-					<div><h2 class="ts-panel-title" id="admin-estate-title">Observed region placement</h2><p class="ts-meta">Counts come from project and database region fields recorded in the in-memory store. Provider availability, host health, and infrastructure controls are not available here.</p></div>
-				</div>
-				if len(data.Regions) > 0 {
-					<div class="ts-table-wrap">
-						<table class="ts-table">
-							<caption class="ts-sr-only">Recorded regions matching the current filter</caption>
-							<thead><tr><th scope="col">Recorded region</th><th scope="col">Projects with placement recorded</th><th scope="col">Databases with region recorded</th><th scope="col">Provider availability</th></tr></thead>
-							<tbody>
-								for _, row := range data.Regions {
-									<tr><td><code class="ts-admin-cell-id">{ row.Region }</code></td><td>{ strconv.Itoa(row.ObservedProjects) }</td><td>{ strconv.Itoa(row.ObservedDatabases) }</td><td><span class="ts-badge ts-badge-neutral">Unknown</span></td></tr>
-								}
-							</tbody>
-						</table>
+			<div class="ts-toolbar ts-admin-tabs-toolbar">
+				<nav class="ts-tabs" aria-label="Estate sections">
+					if data.EstateTab == "regions" {
+						<a class="ts-tab" href="/admin/estate?tab=regions" aria-current="page">Regions</a>
+					} else {
+						<a class="ts-tab" href="/admin/estate?tab=regions">Regions</a>
+					}
+					if data.EstateTab == "hosts" {
+						<a class="ts-tab" href="/admin/estate?tab=hosts" aria-current="page">Hosts</a>
+					} else {
+						<a class="ts-tab" href="/admin/estate?tab=hosts">Hosts</a>
+					}
+					if data.EstateTab == "operations" {
+						<a class="ts-tab" href="/admin/estate?tab=operations" aria-current="page">Operations</a>
+					} else {
+						<a class="ts-tab" href="/admin/estate?tab=operations">Operations</a>
+					}
+				</nav>
+			</div>
+			if data.EstateTab == "regions" {
+				<section class="ts-admin-section" aria-labelledby="admin-estate-regions-title">
+					<div class="ts-section-head">
+						<div><h2 class="ts-panel-title" id="admin-estate-regions-title">Regions</h2><p class="ts-meta">Recorded database and project placements across the three supported demo region codes. Provider availability is not reported by this local store.</p></div>
 					</div>
-				} else {
-					<div class="ts-empty" role="status"><span class="ts-empty-title">No matching region placement</span><span class="ts-meta">The current in-memory accounts have no recorded region that matches this filter.</span></div>
-				}
-			</section>
-			<section class="ts-admin-section" aria-labelledby="admin-estate-actions-title">
-				<div class="ts-section-head">
-					<div><h2 class="ts-panel-title" id="admin-estate-actions-title">Product actions</h2><p class="ts-meta">Each request records the administrator, action, target, reason, and time.</p></div>
-				</div>
-				<p role="status" class="ts-alert ts-alert-warning">Record only: this demo does not change infrastructure, billing, tenant state, or access.</p>
-				<form class="ts-admin-action-form" method="post" action="/api/v1/admin/estate/action">
-					<input type="hidden" name="_csrf" value={ csrfToken }/>
-					<label for="admin-estate-action">Action</label>
-					<select class="ts-input" id="admin-estate-action" name="action" required>
-						<option value="pause">Pause database</option>
-						<option value="resume">Resume database</option>
-						<option value="guard">Set guard</option>
-						<option value="spendCap">Set spend cap</option>
-						<option value="trial">Adjust trial</option>
-						<option value="refund">Issue refund</option>
-						<option value="reaperExemption">Set reaper exemption</option>
-						<option value="flag">Set feature flag</option>
-						<option value="viewAs">View as tenant</option>
-					</select>
-					<label for="admin-estate-target">Target</label>
-					<input class="ts-input" id="admin-estate-target" name="targetId" placeholder="Tenant, database, or organization ID" required/>
-					<label for="admin-estate-reason">Reason</label>
-					<textarea class="ts-input" id="admin-estate-reason" name="reason" rows="3" minlength="3" maxlength="1000" required></textarea>
-					<button type="submit" class="ts-btn ts-btn-primary">Record action</button>
-				</form>
-				<p class="ts-meta" aria-live="polite">Accepted requests appear in this demo's in-memory audit log.</p>
-			</section>
-			<section class="ts-admin-section" aria-labelledby="admin-estate-action-log-title">
-				<div class="ts-section-head">
-					<div><h2 class="ts-panel-title" id="admin-estate-action-log-title">Recorded actions</h2><p class="ts-meta">Platform-wide entries for this in-memory demo.</p></div>
-				</div>
-				if len(data.EstateActions) > 0 {
-					<div class="ts-table-wrap">
-						<table class="ts-table">
-							<caption class="ts-sr-only">Recorded platform administrator estate actions, newest first</caption>
-							<thead><tr><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Reason</th><th scope="col">Actor user ID</th><th scope="col">Recorded</th></tr></thead>
-							<tbody>
-								for _, row := range data.EstateActions {
-									<tr>
-										<td>{ row.Action }</td>
-										<td><code class="ts-admin-cell-id">{ row.Target }</code></td>
-										<td>{ row.Reason }</td>
-										<td><code class="ts-admin-cell-id">{ row.ActorUserID }</code></td>
-										<td><time datetime={ row.RecordedAt.Format("2006-01-02T15:04:05Z07:00") }>{ formatTime(row.RecordedAt) }</time></td>
-									</tr>
-								}
-							</tbody>
-						</table>
+					if len(data.Regions) > 0 {
+						<div class="ts-table-wrap">
+							<table class="ts-table">
+								<caption class="ts-sr-only">Database and project placements recorded for demo region codes</caption>
+								<thead><tr><th scope="col">Region</th><th scope="col">Project placements</th><th scope="col">Database records</th><th scope="col">Provider availability</th></tr></thead>
+								<tbody>
+									for _, row := range data.Regions {
+										<tr>
+											<td><strong class="ts-table-strong">{ adminFallback(row.Location, row.Region) }</strong><br/><code class="ts-admin-cell-id">{ row.Region }</code></td>
+											<td>{ strconv.Itoa(row.ObservedProjects) }</td><td>{ strconv.Itoa(row.ObservedDatabases) }</td>
+											<td><span class="ts-badge ts-badge-neutral">Not reported</span></td>
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					} else {
+						<div class="ts-empty" role="status"><span class="ts-empty-title">No recorded region matches this filter</span><span class="ts-meta">Clear the filter to see all supported demo codes.</span></div>
+					}
+				</section>
+			} else if data.EstateTab == "hosts" {
+				<section class="ts-admin-section" aria-labelledby="admin-estate-hosts-title">
+					<div class="ts-section-head">
+						<div><h2 class="ts-panel-title" id="admin-estate-hosts-title">Hosts</h2><p class="ts-meta">Provider host inventory and host health are unavailable from this local dashboard store.</p></div>
 					</div>
-				} else {
-					<div class="ts-empty" role="status"><span class="ts-empty-title">No actions recorded</span><span class="ts-meta">Submitted product actions will appear here with their audit details.</span></div>
-				}
-			</section>
+					<p role="status" class="ts-alert ts-alert-warning">The rows below are recorded database records and placement values. They are not provider hosts or host telemetry.</p>
+					<form class="ts-filters ts-admin-filter-form" method="get" action="/admin/estate" role="search">
+						<input type="hidden" name="tab" value="hosts"/>
+						<label class="ts-sr-only" for="admin-estate-host-query">Filter recorded database records</label>
+						<input class="ts-input ts-admin-filter-input" id="admin-estate-host-query" name="q" type="search" maxlength="200" value={ data.Query } placeholder="Filter database records"/>
+						<button class="ts-btn ts-btn-secondary" type="submit">Filter</button>
+						if data.Query != "" {
+							<a class="ts-btn ts-btn-ghost" href="/admin/estate?tab=hosts">Clear</a>
+						}
+					</form>
+					if len(data.EstateDatabases) > 0 {
+						<div class="ts-table-wrap">
+							<table class="ts-table">
+								<caption class="ts-sr-only">Dashboard database records and recorded placements</caption>
+								<thead><tr><th scope="col">Database record</th><th scope="col">Recorded region</th><th scope="col">Recorded status</th><th scope="col">Created</th></tr></thead>
+								<tbody>
+									for _, row := range data.EstateDatabases {
+										<tr>
+											<td><strong class="ts-table-strong">{ row.Name }</strong><br/><code class="ts-admin-cell-id">{ row.ID }</code></td>
+											<td>{ row.Region }</td><td><span class="ts-badge ts-badge-neutral">{ row.Status }</span></td><td>{ row.CreatedAt }</td>
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					} else {
+						<div class="ts-empty" role="status"><span class="ts-empty-title">No matching database records</span><span class="ts-meta">Try another database, project, organization, region, or status.</span></div>
+					}
+				</section>
+			} else {
+				<div class="ts-admin-dashboard-root">
+					<header class="ts-admin-dashboard-intro">
+						<div class="ts-section-head">
+							<div><h2 class="ts-panel-title" id="estate-operations-title">Operations</h2><p class="ts-meta">Demo product-action requests are recorded for review. This page has no provider operation or live estate telemetry contract.</p></div>
+						</div>
+					</header>
+					<section class="ts-admin-section" aria-labelledby="admin-estate-actions-title">
+						<div class="ts-section-head">
+							<div><h3 class="ts-panel-title" id="admin-estate-actions-title">Product actions</h3><p class="ts-meta">Each request records the administrator, action, target, reason, and time.</p></div>
+						</div>
+						<p role="status" class="ts-alert ts-alert-warning">Record only: this demo does not change infrastructure, billing, tenant state, or access.</p>
+						<form class="ts-admin-action-form ts-admin-estate-action-form" method="post" action="/api/v1/admin/estate/action">
+							<input type="hidden" name="_csrf" value={ csrfToken }/>
+							<label for="admin-estate-action">Action</label>
+							<select class="ts-input" id="admin-estate-action" name="action" required>
+								<option value="pause">Pause database</option>
+								<option value="resume">Resume database</option>
+								<option value="guard">Set guard</option>
+								<option value="spendCap">Set spend cap</option>
+								<option value="trial">Adjust trial</option>
+								<option value="refund">Issue refund</option>
+								<option value="reaperExemption">Set reaper exemption</option>
+								<option value="flag">Set feature flag</option>
+								<option value="viewAs">View as tenant</option>
+							</select>
+							<label for="admin-estate-target">Target</label>
+							<input class="ts-input" id="admin-estate-target" name="targetId" placeholder="Tenant, database, or organization ID" required/>
+							<label for="admin-estate-reason">Reason</label>
+							<textarea class="ts-input" id="admin-estate-reason" name="reason" rows="3" minlength="3" maxlength="1000" required></textarea>
+							<button type="submit" class="ts-btn ts-btn-primary">Record action</button>
+						</form>
+						<p class="ts-meta" aria-live="polite">Accepted requests appear in this demo's in-memory audit log.</p>
+					</section>
+					<section class="ts-admin-section" aria-labelledby="admin-estate-action-log-title">
+						<div class="ts-section-head">
+							<div><h3 class="ts-panel-title" id="admin-estate-action-log-title">Recorded actions</h3><p class="ts-meta">Platform-wide entries for this in-memory demo.</p></div>
+						</div>
+						if len(data.EstateActions) > 0 {
+							<div class="ts-table-wrap">
+								<table class="ts-table">
+									<caption class="ts-sr-only">Recorded platform administrator estate actions, newest first</caption>
+									<thead><tr><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Reason</th><th scope="col">Actor user ID</th><th scope="col">Recorded</th></tr></thead>
+									<tbody>
+										for _, row := range data.EstateActions {
+											<tr>
+												<td>{ row.Action }</td>
+												<td><code class="ts-admin-cell-id">{ row.Target }</code></td>
+												<td>{ row.Reason }</td>
+												<td><code class="ts-admin-cell-id">{ row.ActorUserID }</code></td>
+												<td><time datetime={ row.RecordedAt.Format("2006-01-02T15:04:05Z07:00") }>{ formatTime(row.RecordedAt) }</time></td>
+											</tr>
+										}
+									</tbody>
+								</table>
+							</div>
+						} else {
+							<div class="ts-empty" role="status"><span class="ts-empty-title">No actions recorded</span><span class="ts-meta">Submitted product actions will appear here with their audit details.</span></div>
+						}
+					</section>
+				</div>
+			}
 		} else if data.Section == "usage" {
 			<dl class="ts-kpis ts-admin-kpis" aria-label="In-memory inventory totals">
 				<div><dt>Accounts</dt><dd><span class="ts-kpi-value">{ strconv.Itoa(data.Inventory.Accounts) }</span></dd><small class="ts-meta">Registered demo accounts</small></div>

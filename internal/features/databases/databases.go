@@ -235,6 +235,7 @@ type pageData struct {
 	ProjectID    string
 	Databases    []databaseView
 	Detail       *databaseView
+	DetailInfo   detailInfo
 	Region       string
 	Error        string
 	Search       string
@@ -267,6 +268,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, detailID
 		if db.ID == detailID {
 			v := view(db)
 			data.Detail = &v
+			data.DetailInfo = makeDetailInfo(deps.Demo, p, a, project, db, r.URL.Query().Get("tab"), data.CanProvision && data.CanManage)
 		}
 	}
 	if detailID != "" && data.Detail == nil {

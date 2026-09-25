@@ -7,6 +7,8 @@
   grid-template-columns: none;
   grid-auto-flow: column;
   grid-auto-columns: minmax(4.5rem, auto);
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .ts-cat-1 { --ts-series: var(--ts-cat-1); }
@@ -18,6 +20,13 @@
 
 /* Keep axis text legible on phones: scroll the plot instead of shrinking it. */
 .ts-chart-shell:has(> .ts-tschart) { overflow-x: auto; }
+
+.ts-usage-chart-shell { overflow-x: auto; }
+.ts-usage-chart-shell .ts-chart { min-width: 36rem; }
+
+.ts-svg-sharebar { display: block; width: 100%; height: 8px; }
+.ts-svg-sharebar-track { fill: var(--ts-surface-muted); }
+.ts-svg-sharebar-fill { fill: var(--ts-accent); }
 
 .ts-tschart {
   position: relative;
