@@ -12,7 +12,7 @@ templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
 		if data.PaymentNotice != "" {
 			@ui.Alert("info", "", data.PaymentNotice)
 		}
-		@ui.Card(ui.CardProps{ID: "billing-summary", Title: "Current plan", Description: "Your plan and billing status for this organization.", Actions: manageBilling()}) {
+		@ui.Card(ui.CardProps{ID: "billing-summary", Title: "Current plan", Description: "Your plan and billing status for this organization.", Actions: manageBilling(data.HasSubscription)}) {
 			<dl class="ts-kv">
 				<div>
 					<dt>Plan</dt>
@@ -41,6 +41,11 @@ templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
 				</div>
 			</dl>
 		}
+		if data.HasSubscription {
+			@ui.Card(ui.CardProps{ID: "available-plans", Title: "Change your plan", Description: "Choose and review plan changes in Usage → Billing."}) {
+				<a class="ts-btn ts-btn-primary" href="/usage?tab=billing">Open Billing</a>
+			}
+		} else {
 		@ui.Card(ui.CardProps{ID: "available-plans", Title: "Available plans", Description: "Choose a billing interval to continue."}) {
 			if len(data.Plans) == 0 {
 				@ui.Empty("No paid plans are available right now.", "")
@@ -58,7 +63,7 @@ templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
 									<p class="ts-meta">{ plan.TrialDays } day trial</p>
 								}
 								if plan.ShowLimits {
-									<p class="ts-meta">{ plan.StorageMiB } MiB storage · { plan.MonthlyRequests } requests per month</p>
+									<p class="ts-meta">{ plan.Limits }</p>
 								}
 							</div>
 							<div class="ts-stack-sm">
@@ -72,11 +77,14 @@ templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
 				</div>
 			}
 		}
+		}
 	</main>
 }
 
-templ manageBilling() {
-	<a class="ts-btn ts-btn-secondary" href="/billing/portal">Manage billing</a>
+templ manageBilling(hasSubscription bool) {
+	if hasSubscription {
+		<a class="ts-btn ts-btn-secondary" href="/billing/portal">Manage payment</a>
+	}
 }
 
 templ checkoutButton(csrfToken, plan, interval, variant, label string) {

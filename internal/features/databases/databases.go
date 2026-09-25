@@ -15,6 +15,7 @@ import (
 )
 
 var namePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+var errPlanDatabaseLimit = errors.New("plan database limit reached")
 
 type databaseView struct {
 	ID        string    `json:"id"`
@@ -74,14 +75,36 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if deps.Demo {
 			db.Status = "ready"
 		}
-		err = deps.Store.UpdateAs(p, func(a *core.Account) error {
+		account, err := deps.Store.SnapshotAs(p)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		selectedOrg, exists := account.Organizations[p.OrganizationID]
+		if !exists {
+			writeError(w, core.ErrNotFound)
+			return
+		}
+		err = deps.Store.UpdateAsWithPlan(p, selectedOrg.PlanID, func(a *core.Account, plan core.Plan) error {
 			project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 			if err != nil {
 				return err
 			}
 			org := a.Organizations[p.OrganizationID]
+			if org.PlanID != plan.ID {
+				return core.ErrConflict
+			}
 			if !org.CanProvisionResources(p.UserID) {
 				return core.ErrForbidden
+			}
+			if plan.MaxDatabases > 0 {
+				count := 0
+				for _, item := range org.Projects {
+					count += len(item.Databases)
+				}
+				if count >= plan.MaxDatabases {
+					return errPlanDatabaseLimit
+				}
 			}
 			for _, existing := range project.Databases {
 				if existing.Name == name {
@@ -364,6 +387,8 @@ func setStatus(deps core.Deps, p core.Principal, databaseID, status string) erro
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, errPlanDatabaseLimit):
+		http.Error(w, "plan database limit reached", http.StatusConflict)
 	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)

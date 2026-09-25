@@ -19,6 +19,7 @@ import (
 
 type pageData struct {
 	Registration    bool
+	Demo            bool
 	DisplayName     string
 	Email           string
 	Error           string
@@ -225,7 +226,13 @@ func saveStep(deps core.Deps) http.HandlerFunc {
 					return nil
 				})
 			} else if !deps.Demo {
-				message = "Payment setup is unavailable. Continue without payment."
+				organization, ok := account.Organizations[principal.OrganizationID]
+				if !ok || organization.Kind != "personal" || account.ActiveOrganizationID != organization.ID {
+					message = "Return to your Personal workspace to finish account setup."
+				} else {
+					http.Redirect(w, r, "/billing/checkout", http.StatusTemporaryRedirect)
+					return
+				}
 			} else {
 				organization, ok := account.Organizations[principal.OrganizationID]
 				if !ok || organization.Kind != "personal" || account.ActiveOrganizationID != organization.ID {
@@ -344,6 +351,7 @@ func steps(current string) []stepView {
 }
 
 func render(w http.ResponseWriter, r *http.Request, deps core.Deps, data pageData) {
+	data.Demo = deps.Demo
 	if data.Registration {
 		data.Step = "account-information"
 	}

@@ -204,11 +204,15 @@ type PortalSession struct {
 // current price, status, and period end are authoritative when events arrive
 // out of order or the customer changes their plan in Stripe's portal.
 type SubscriptionSnapshot struct {
-	ID               string
-	CustomerID       string
-	Status           string
-	PriceID          string
-	CurrentPeriodEnd time.Time
+	ID                string
+	CustomerID        string
+	Status            string
+	PriceID           string
+	ItemID            string
+	ScheduleID        string
+	CancelAtPeriodEnd bool
+	PendingUpdate     bool
+	CurrentPeriodEnd  time.Time
 }
 
 // BillingEvent contains only provider fields used by the billing state
@@ -230,7 +234,9 @@ type BillingEvent struct {
 	SubscriptionState string
 	PeriodEnd         time.Time
 	ProviderCurrent   bool
+	PendingUpdate     bool
 	ObservedAt        time.Time
+	Invoice           *core.Invoice
 }
 
 // BillingFlow is implemented by the subscriptions slice. It keeps provider
@@ -329,9 +335,10 @@ func (provider *stripeProvider) CreateCheckoutSession(ctx context.Context, reque
 		"interval":          request.Interval,
 	}
 	params := &stripe.CheckoutSessionCreateParams{
-		Mode:              new("subscription"),
-		Customer:          new(request.CustomerID),
-		ClientReferenceID: new(request.OrganizationID),
+		Mode:                    new("subscription"),
+		PaymentMethodCollection: new("always"),
+		Customer:                new(request.CustomerID),
+		ClientReferenceID:       new(request.OrganizationID),
 		LineItems: []*stripe.CheckoutSessionCreateLineItemParams{{
 			Price:    new(priceID),
 			Quantity: new(int64(1)),
@@ -340,13 +347,15 @@ func (provider *stripeProvider) CreateCheckoutSession(ctx context.Context, reque
 		CancelURL:  new(cancelURL),
 		Metadata:   metadata,
 		SubscriptionData: &stripe.CheckoutSessionCreateSubscriptionDataParams{
-			TrialPeriodDays: new(int64(request.TrialDays)),
 			Metadata: map[string]string{
 				"organization_id": request.OrganizationID,
 				"plan_key":        planKey,
 				"interval":        request.Interval,
 			},
 		},
+	}
+	if request.TrialDays > 0 {
+		params.SubscriptionData.TrialPeriodDays = new(int64(request.TrialDays))
 	}
 	params.SetIdempotencyKey(request.IdempotencyKey)
 	created, err := provider.client.V1CheckoutSessions.Create(ctx, params)
@@ -389,8 +398,14 @@ func (provider *stripeProvider) RetrieveSubscription(ctx context.Context, subscr
 	var priceID string
 	if subscription.Items != nil && len(subscription.Items.Data) == 1 && subscription.Items.Data[0] != nil && subscription.Items.Data[0].Price != nil {
 		priceID = subscription.Items.Data[0].Price.ID
+		snapshot.ItemID = subscription.Items.Data[0].ID
 	}
 	snapshot.PriceID = priceID
+	if subscription.Schedule != nil {
+		snapshot.ScheduleID = subscription.Schedule.ID
+	}
+	snapshot.CancelAtPeriodEnd = subscription.CancelAtPeriodEnd
+	snapshot.PendingUpdate = subscription.PendingUpdate != nil
 	if subscription.Items != nil {
 		for _, item := range subscription.Items.Data {
 			if item != nil && item.CurrentPeriodEnd > 0 && (snapshot.CurrentPeriodEnd.IsZero() || time.Unix(item.CurrentPeriodEnd, 0).Before(snapshot.CurrentPeriodEnd)) {
@@ -479,6 +494,7 @@ func Mount(mux *http.ServeMux, deps core.Deps, flow BillingFlow) {
 }
 
 func mount(mux *http.ServeMux, deps core.Deps, flow BillingFlow, config StripeConfig, provider BillingProvider, configErr error) {
+	mountPlanChanges(mux, deps, flow, config, provider, configErr)
 	mux.HandleFunc("POST /billing/checkout", func(w http.ResponseWriter, r *http.Request) {
 		if !billingForm(w, r) {
 			return
@@ -605,9 +621,13 @@ func mount(mux *http.ServeMux, deps core.Deps, flow BillingFlow, config StripeCo
 		} else {
 			cancelURL += "?payment=canceled"
 		}
+		trialDays := 0
+		if !organization.Billing.TrialUsed {
+			trialDays = plan.TrialDays
+		}
 		created, err := provider.CreateCheckoutSession(r.Context(), CheckoutRequest{
 			CustomerID: customerID, OrganizationID: organization.ID, OrganizationName: organization.Name,
-			PlanKey: plan.Key, Interval: interval, TrialDays: plan.TrialDays,
+			PlanKey: plan.Key, Interval: interval, TrialDays: trialDays,
 			SuccessURL: checkoutURL, CancelURL: cancelURL, IdempotencyKey: core.NewID("checkout"),
 		})
 		if err != nil {
@@ -769,6 +789,7 @@ func mount(mux *http.ServeMux, deps core.Deps, flow BillingFlow, config StripeCo
 				projection.PeriodEnd = snapshot.CurrentPeriodEnd
 				projection.PlanKey, projection.Interval, _ = config.planFromPriceID(snapshot.PriceID)
 				projection.ProviderCurrent = true
+				projection.PendingUpdate = snapshot.PendingUpdate
 				projection.ObservedAt = time.Now().UTC()
 			}
 			if err := flow.ApplyStripeEvent(projection); err != nil && !errors.Is(err, core.ErrAlreadyProcessed) && !errors.Is(err, core.ErrNotFound) {
@@ -785,6 +806,26 @@ func billingEventFromStripe(event stripe.Event) (BillingEvent, bool, error) {
 	typeName := string(event.Type)
 	projection := BillingEvent{ID: event.ID, Type: typeName, CreatedAt: time.Unix(event.Created, 0).UTC()}
 	switch typeName {
+	case "invoice.finalized", "invoice.paid", "invoice.payment_failed", "invoice.voided":
+		var invoice stripe.Invoice
+		if event.Data == nil || len(event.Data.Raw) == 0 || json.Unmarshal(event.Data.Raw, &invoice) != nil {
+			return BillingEvent{}, false, errors.New("invalid invoice object")
+		}
+		projection.CustomerID = stripeCustomerID(invoice.Customer)
+		if invoice.Parent != nil && invoice.Parent.SubscriptionDetails != nil {
+			projection.SubscriptionID = stripeSubscriptionID(invoice.Parent.SubscriptionDetails.Subscription)
+		}
+		if projection.CustomerID == "" || projection.SubscriptionID == "" || invoice.ID == "" {
+			// Other Stripe products can send one-off invoices to this endpoint.
+			return BillingEvent{}, false, nil
+		}
+		projection.Invoice = &core.Invoice{
+			ID: invoice.ID, Number: invoice.Number, Status: string(invoice.Status), AmountCents: invoice.AmountDue,
+			Currency: string(invoice.Currency), CreatedAt: time.Unix(invoice.Created, 0).UTC(),
+			PeriodStart: time.Unix(invoice.PeriodStart, 0).UTC(), PeriodEnd: time.Unix(invoice.PeriodEnd, 0).UTC(),
+			HostedURL: invoice.HostedInvoiceURL, PDFURL: invoice.InvoicePDF,
+		}
+		return projection, true, nil
 	case "checkout.session.completed", "checkout.session.async_payment_succeeded":
 		var session stripe.CheckoutSession
 		if event.Data == nil || len(event.Data.Raw) == 0 || json.Unmarshal(event.Data.Raw, &session) != nil {

@@ -32,10 +32,10 @@ func NewStore() *Store {
 		accounts: make(map[string]Account), byEmail: make(map[string]string),
 		organizations: make(map[string]Organization), billingEvents: make(map[string]struct{}),
 		plans: map[string]Plan{
-			"plan_free":     {ID: "plan_free", Key: "free", Name: "Free", Visible: true},
-			"plan_starter":  {ID: "plan_starter", Key: "starter", Name: "Starter", PriceCents: 500, AnnualPriceCents: 5000, TrialDays: 30, Visible: true},
-			"plan_pro":      {ID: "plan_pro", Key: "pro", Name: "Pro", PriceCents: 5000, AnnualPriceCents: 50000, TrialDays: 30, Visible: true},
-			"plan_business": {ID: "plan_business", Key: "business", Name: "Business", PriceCents: 9900, AnnualPriceCents: 99000, TrialDays: 30, Visible: true},
+			"plan_free":     {ID: "plan_free", Key: "free", Name: "Free", Visible: true, MaxDatabases: 1},
+			"plan_starter":  {ID: "plan_starter", Key: "starter", Name: "Starter", PriceCents: 500, AnnualPriceCents: 5000, TrialDays: 30, Visible: true, MaxDatabases: 5, MaxMembers: 5, OperationsPerMonth: 1_000_000, StorageLabel: "5 GB-region storage"},
+			"plan_pro":      {ID: "plan_pro", Key: "pro", Name: "Pro", PriceCents: 5000, AnnualPriceCents: 50000, TrialDays: 30, Visible: true, MaxDatabases: 25, MaxMembers: 25, OperationsPerMonth: 100_000_000, StorageLabel: "25 GB-region storage"},
+			"plan_business": {ID: "plan_business", Key: "business", Name: "Business", PriceCents: 9900, AnnualPriceCents: 99000, TrialDays: 30, Visible: true, MaxDatabases: 100, MaxMembers: 100, OperationsPerMonth: 50_000_000, StorageLabel: "5 TB-region storage"},
 		},
 	}
 }

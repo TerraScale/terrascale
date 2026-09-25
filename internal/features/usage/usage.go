@@ -18,6 +18,7 @@ import (
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/demovisuals"
+	"terrascale.tech/dashboard/internal/features/payments"
 	"terrascale.tech/dashboard/internal/ui/charts"
 	sdk "terrascale.tech/sdk"
 )
@@ -122,6 +123,18 @@ type pageData struct {
 	PaidExcess            bool
 	EffectiveCap          string
 	PlanName              string
+	BillingPlanKey        string
+	BillingInterval       string
+	BillingPrice          string
+	BillingNotice         string
+	BillingSubscription   bool
+	Personal              bool
+	Demo                  bool
+	ScheduledPlan         string
+	PendingPlan           string
+	ScheduledAt           time.Time
+	BillingPlans          []billingPlanChoice
+	Review                billingPlanReview
 	PlanStorageAllowance  string
 	PlanRequestAllowance  string
 	PlanUsageNote         string
@@ -151,6 +164,15 @@ type pageData struct {
 	RegionCount           int
 }
 
+type billingPlanChoice struct {
+	Key, Name, MonthlyPrice, AnnualPrice, Storage, Requests, Databases, Members string
+}
+
+type billingPlanReview struct {
+	Open, Ready, Immediate                                                                     bool
+	Key, Name, Interval, Price, Effect, Estimate, Storage, Requests, Databases, Members, Error string
+}
+
 // Mount registers the usage page and spending controls.
 func Mount(mux *http.ServeMux, deps core.Deps) {
 	mux.HandleFunc("GET /usage", func(w http.ResponseWriter, r *http.Request) {
@@ -163,19 +185,19 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "selected organization is unavailable", http.StatusForbidden)
 			return
 		}
+		tab := r.URL.Query().Get("tab")
+		if !slices.Contains([]string{"overview", "billing", "settings"}, tab) {
+			tab = "overview"
+		}
 		projectID := r.URL.Query().Get("project")
 		project, valid := org.Projects[projectID]
 		if projectID == "" || !valid || project.OrganizationID != org.ID {
 			projectID = p.ProjectID
 			project = org.Projects[projectID]
 		}
-		if project.ID == "" {
+		if project.ID == "" && tab != "billing" {
 			http.Error(w, "selected project is unavailable", http.StatusNotFound)
 			return
-		}
-		tab := r.URL.Query().Get("tab")
-		if !slices.Contains([]string{"overview", "billing", "settings"}, tab) {
-			tab = "overview"
 		}
 		databaseFilter := r.URL.Query().Get("database")
 		if _, exists := project.Databases[databaseFilter]; !exists {
@@ -197,7 +219,52 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			now,
 		)
 		data.CanManageBilling = org.OwnerUserID == p.UserID
+		data.Personal = org.Kind == "personal"
+		data.Demo = deps.Demo
+		data.BillingPlanKey = org.Billing.PlanKey
+		data.BillingInterval = org.Billing.Interval
+		data.BillingSubscription = org.Billing.SubscriptionID != "" && org.Billing.Status != "canceled" && org.Billing.Status != "incomplete_expired"
+		data.ScheduledPlan = org.Billing.ScheduledPlanKey
+		data.PendingPlan = org.Billing.PendingPlanKey
+		data.ScheduledAt = org.Billing.ScheduledAt
+		if data.BillingPlanKey == "" && org.PlanID == "plan_free" {
+			data.BillingPlanKey = "free"
+		}
+		for _, key := range []string{"starter", "pro", "business"} {
+			plan, exists := deps.Store.Plan(key)
+			if !exists || !plan.Visible || plan.PriceCents <= 0 {
+				continue
+			}
+			data.BillingPlans = append(data.BillingPlans, billingPlanChoice{
+				Key: key, Name: plan.Name, MonthlyPrice: priceUSD(plan.PriceCents), AnnualPrice: priceUSD(plan.AnnualPriceCents),
+				Storage: plan.StorageAllowance(), Requests: plan.OperationsAllowance(), Databases: plan.DatabaseAllowance(), Members: plan.MemberAllowance(),
+			})
+		}
+		if plan, exists := deps.Store.Plan(org.PlanID); exists {
+			cents := plan.PriceCents
+			if org.Billing.Interval == "annual" {
+				cents = plan.AnnualPriceCents
+			}
+			if cents > 0 {
+				data.BillingPrice = priceUSD(cents)
+			}
+		}
+		if tab == "billing" && data.CanManageBilling && r.URL.Query().Get("review") == "1" {
+			data.Review = reviewBillingPlan(r, deps, org, data)
+		}
 		data.Saved = r.URL.Query().Get("saved")
+		if tab == "billing" {
+			switch r.URL.Query().Get("billing") {
+			case "pending":
+				data.BillingNotice = "Waiting for Stripe to confirm the plan change and payment."
+			case "scheduled":
+				data.BillingNotice = "Your plan change is scheduled for renewal."
+			case "changed":
+				data.BillingNotice = "Your demo plan is now active."
+			case "undone":
+				data.BillingNotice = "The scheduled change was undone."
+			}
+		}
 		page := core.Page{
 			Layout: "shell", Title: "Usage", Principal: p,
 			View: func(view core.Page) templ.Component {
@@ -296,6 +363,89 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 }
 
+func priceUSD(cents int64) string {
+	if cents < 0 {
+		return "-" + priceUSD(-cents)
+	}
+	return fmt.Sprintf("US$ %d.%02d", cents/100, cents%100)
+}
+
+func reviewBillingPlan(r *http.Request, deps core.Deps, org core.Organization, data pageData) billingPlanReview {
+	key, interval := strings.ToLower(r.URL.Query().Get("plan")), strings.ToLower(r.URL.Query().Get("interval"))
+	review := billingPlanReview{Open: true, Key: key, Interval: interval}
+	if key == "free" {
+		if !data.Personal || !data.BillingSubscription {
+			review.Error = "Free is available after a Personal paid subscription."
+			return review
+		}
+		review.Name, review.Price, review.Effect, review.Estimate = "Free", "US$ 0.00", "At the current renewal date", "No charge today"
+		if free, exists := deps.Store.Plan("free"); exists {
+			review.Storage, review.Requests, review.Databases, review.Members = free.StorageAllowance(), free.OperationsAllowance(), free.DatabaseAllowance(), free.MemberAllowance()
+		}
+		review.Ready = true
+		return review
+	}
+	if interval != "monthly" && interval != "annual" {
+		review.Error = "Choose monthly or annual billing."
+		return review
+	}
+	plan, ok := deps.Store.Plan(key)
+	if !ok || !plan.Visible || plan.PriceCents <= 0 || interval == "annual" && plan.AnnualPriceCents <= 0 {
+		review.Error = "Choose an available plan."
+		return review
+	}
+	review.Name = plan.Name
+	cents := plan.PriceCents
+	if interval == "annual" {
+		cents = plan.AnnualPriceCents
+	}
+	review.Price = priceUSD(cents)
+	review.Storage, review.Requests, review.Databases, review.Members = plan.StorageAllowance(), plan.OperationsAllowance(), plan.DatabaseAllowance(), plan.MemberAllowance()
+	if !data.BillingSubscription {
+		review.Effect = "After Stripe confirms checkout"
+		if !org.Billing.TrialUsed && plan.TrialDays > 0 {
+			review.Effect = fmt.Sprintf("After Stripe confirms the %d-day trial", plan.TrialDays)
+		}
+		review.Estimate, review.Ready = "Stripe shows the final amount in Checkout", true
+		return review
+	}
+	if key == data.BillingPlanKey && interval == data.BillingInterval {
+		review.Error = "This is your current plan."
+		return review
+	}
+	review.Immediate = billingRank(key) > billingRank(data.BillingPlanKey)
+	if review.Immediate {
+		review.Effect = "After Stripe confirms the change and payment"
+		if deps.Demo {
+			review.Estimate, review.Ready = "Demo only; no Stripe charge", true
+		} else {
+			quote, err := payments.PreviewOrganizationChange(r.Context(), org.Billing.CustomerID, org.Billing.SubscriptionID, key, interval)
+			if err != nil {
+				review.Error = "Stripe could not calculate the estimated charge. Try again."
+			} else {
+				review.Estimate = priceUSD(quote.AmountDueCents) + " estimated by Stripe (including " + priceUSD(quote.ProrationCents) + " in prorations)"
+				review.Ready = true
+			}
+		}
+	} else {
+		review.Effect = "At renewal on " + org.BillingRenewal.UTC().Format("Jan 2, 2006")
+		review.Estimate, review.Ready = "No charge today", true
+	}
+	return review
+}
+
+func billingRank(key string) int {
+	switch key {
+	case "starter":
+		return 1
+	case "pro":
+		return 2
+	case "business":
+		return 3
+	}
+	return 0
+}
+
 func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.Organization, project core.Project, tab, databaseFilter string) pageData {
 	projects := make([]projectRow, 0, len(org.Projects))
 	databaseOptions := make([]databaseOption, 0, len(project.Databases))
@@ -348,12 +498,8 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 	planName, storageAllowance, requestAllowance := "No billing plan", "Not configured", "Not configured"
 	if plan, ok := deps.Store.Plan(org.PlanID); ok {
 		planName = plan.Name
-		if plan.StorageMiB > 0 {
-			storageAllowance = fmt.Sprintf("%d MiB", plan.StorageMiB)
-		}
-		if plan.MonthlyRequests > 0 {
-			requestAllowance = fmt.Sprintf("%d requests/month", plan.MonthlyRequests)
-		}
+		storageAllowance = plan.StorageAllowance()
+		requestAllowance = plan.OperationsAllowance()
 	}
 	invoices := make([]invoiceRow, 0, len(org.Billing.Invoices))
 	for _, invoice := range org.Billing.Invoices {
@@ -381,6 +527,9 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 		data.PlanUsageNote = "Demo mode has no measured usage feed, so allowance utilization is unavailable."
 		data.Writes = int64(localDocuments(project, databaseFilter))
 		data.UsageAvailable = true
+		return data
+	}
+	if project.ID == "" {
 		return data
 	}
 	if deps.SDK == nil {

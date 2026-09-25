@@ -49,6 +49,17 @@ func (s *Store) AcceptInvitation(p Principal, tokenHash string) (Organization, e
 				return Organization{}, ErrForbidden
 			}
 			org := cloneOrganization(canonical)
+			if plan, ok := s.plans[org.PlanID]; ok && plan.MaxMembers > 0 {
+				active := 0
+				for _, member := range org.Members {
+					if member.Status == "active" {
+						active++
+					}
+				}
+				if active >= plan.MaxMembers {
+					return Organization{}, ErrConflict
+				}
+			}
 			if org.Members == nil {
 				org.Members = make(map[string]Member)
 			}

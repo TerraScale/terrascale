@@ -162,6 +162,13 @@ dialog.ts-dialog::backdrop {
   gap: var(--ts-s1);
 }
 
+.ts-billing-dialog-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--ts-s3);
+}
+
 .ts-dialog-title {
   font-size: var(--ts-fs-xl);
   font-weight: 700;

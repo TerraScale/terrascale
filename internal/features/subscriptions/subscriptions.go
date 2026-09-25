@@ -22,6 +22,7 @@ type planView struct {
 	TrialDays       int
 	StorageMiB      int64
 	MonthlyRequests int64
+	Limits          string
 	ShowLimits      bool
 }
 
@@ -33,6 +34,7 @@ type subscriptionsPage struct {
 	BillingInterval  string
 	Renewal          string
 	PaymentValidated bool
+	HasSubscription  bool
 	Demo             bool
 	PaymentNotice    string
 	Plans            []planView
@@ -73,6 +75,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			BillingInterval:  strings.ToUpper(view.Organization.Billing.Interval),
 			Renewal:          formatRenewal(view.Organization.BillingRenewal),
 			PaymentValidated: view.Organization.PaymentMethodValidated,
+			HasSubscription:  view.Organization.Billing.SubscriptionID != "" && view.Organization.Billing.Status != "canceled" && view.Organization.Billing.Status != "incomplete_expired",
 			Demo:             deps.Demo,
 			PaymentNotice:    paymentNotice(r.URL.Query().Get("payment")),
 			Plans:            make([]planView, 0, len(view.Plans)),
@@ -83,7 +86,8 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 				MonthlyPrice: formatUSD(plan.PriceCents), AnnualPrice: formatUSD(plan.AnnualPriceCents),
 				AnnualAvailable: plan.AnnualPriceCents > 0,
 				TrialDays:       plan.TrialDays, StorageMiB: plan.StorageMiB, MonthlyRequests: plan.MonthlyRequests,
-				ShowLimits: plan.StorageMiB > 0 && plan.MonthlyRequests > 0,
+				ShowLimits: plan.StorageMiB > 0 || plan.MonthlyRequests > 0 || plan.MaxDatabases > 0,
+				Limits:     plan.DatabaseAllowance() + " · " + plan.StorageAllowance() + " · " + plan.OperationsAllowance() + " · " + plan.MemberAllowance(),
 			})
 		}
 		if err := deps.Render.Page(w, r, core.Page{
