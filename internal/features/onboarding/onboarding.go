@@ -1,9 +1,11 @@
 package onboarding
 
 import (
+	"cmp"
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -12,18 +14,21 @@ import (
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/auth"
+	"terrascale.tech/dashboard/internal/features/subscriptions"
 )
 
 type pageData struct {
-	Registration bool
-	DisplayName  string
-	Email        string
-	Error        string
-	Step         string
-	Steps        []stepView
-	CurrentStep  int
-	TotalSteps   int
-	Progress     int
+	Registration    bool
+	DisplayName     string
+	Email           string
+	Error           string
+	PaymentCanceled bool
+	Plans           []core.Plan
+	Step            string
+	Steps           []stepView
+	CurrentStep     int
+	TotalSteps      int
+	Progress        int
 }
 
 type stepView struct {
@@ -58,13 +63,66 @@ func getOnboarding(deps core.Deps) http.HandlerFunc {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
-		data := pageData{
-			DisplayName: account.User.Name,
-			Email:       account.User.Email,
-			Error:       r.URL.Query().Get("error"),
-			Step:        account.OnboardingStep,
-			Steps:       steps(account.OnboardingStep),
+		paymentOutcome := r.URL.Query().Get("payment")
+		if paymentOutcome == "success" && account.OnboardingStep == "payment-method" {
+			if err := deps.Store.UpdateAs(principal, func(current *core.Account) error {
+				if current.OnboardingStep != "payment-method" || current.ActiveOrganizationID != principal.OrganizationID {
+					return core.ErrConflict
+				}
+				organization, ok := current.Organizations[principal.OrganizationID]
+				if !ok || organization.Kind != "personal" || !organization.PaymentMethodValidated {
+					return core.ErrForbidden
+				}
+				for _, checkout := range organization.CheckoutSessions {
+					if checkout.OwnerUserID == principal.UserID && checkout.OrganizationID == organization.ID &&
+						checkout.Status == "complete" && checkout.ReturnPath == "/onboarding" {
+						current.OnboardingStep = "project"
+						return nil
+					}
+				}
+				return core.ErrForbidden
+			}); err == nil {
+				account, err = deps.Store.SnapshotAs(principal)
+				if err != nil {
+					http.Error(w, "account not found", http.StatusUnauthorized)
+					return
+				}
+			} else if !errors.Is(err, core.ErrForbidden) && !errors.Is(err, core.ErrConflict) {
+				http.Error(w, "could not confirm payment setup", http.StatusInternalServerError)
+				return
+			}
 		}
+		data := pageData{
+			DisplayName:     account.User.Name,
+			Email:           account.User.Email,
+			Error:           r.URL.Query().Get("error"),
+			PaymentCanceled: paymentOutcome == "canceled",
+			Step:            account.OnboardingStep,
+			Steps:           steps(account.OnboardingStep),
+		}
+		if paymentOutcome == "success" && data.Step == "payment-method" {
+			data.Error = "Payment setup could not be confirmed. Finish checkout or continue without payment."
+		}
+		for _, plan := range deps.Store.Plans() {
+			if plan.Visible && plan.PriceCents > 0 {
+				data.Plans = append(data.Plans, plan)
+			}
+		}
+		planRank := map[string]int{"starter": 0, "pro": 1, "business": 2}
+		slices.SortFunc(data.Plans, func(a, b core.Plan) int {
+			aRank, aKnown := planRank[a.Key]
+			bRank, bKnown := planRank[b.Key]
+			if !aKnown {
+				aRank = len(planRank)
+			}
+			if !bKnown {
+				bRank = len(planRank)
+			}
+			if order := cmp.Compare(aRank, bRank); order != 0 {
+				return order
+			}
+			return cmp.Compare(a.Key, b.Key)
+		})
 		render(w, r, deps, data)
 	}
 }
@@ -151,13 +209,34 @@ func saveStep(deps core.Deps) http.HandlerFunc {
 		case "payment-method":
 			if account.OnboardingStep != "payment-method" {
 				message = "Complete the current setup step first."
-			} else if r.Form.Get("bypass") != "1" {
-				message = "Payment setup is optional. Continue without adding a payment method."
-			} else {
+			} else if r.Form.Get("bypass") == "1" {
 				err = deps.Store.UpdateAs(principal, func(account *core.Account) error {
+					if account.OnboardingStep != "payment-method" {
+						return core.ErrConflict
+					}
 					account.OnboardingStep = "project"
 					return nil
 				})
+			} else if !deps.Demo {
+				message = "Payment setup is unavailable. Continue without payment."
+			} else {
+				organization, ok := account.Organizations[principal.OrganizationID]
+				if !ok || organization.Kind != "personal" || account.ActiveOrganizationID != organization.ID {
+					message = "Return to your Personal workspace to finish account setup."
+				} else {
+					checkout, checkoutErr := subscriptions.NewBillingService(deps.Store).BeginDemoCheckout(
+						principal, r.Form.Get("plan"), r.Form.Get("interval"), "/onboarding",
+					)
+					if checkoutErr == nil {
+						http.Redirect(w, r, "/checkout/"+url.PathEscape(checkout.ID), http.StatusSeeOther)
+						return
+					}
+					if errors.Is(checkoutErr, subscriptions.ErrPlanUnavailable) || errors.Is(checkoutErr, core.ErrInvalid) {
+						message = "Choose an available plan and billing interval."
+					} else {
+						err = checkoutErr
+					}
+				}
 			}
 		case "project":
 			name := strings.TrimSpace(r.Form.Get("name"))
@@ -316,14 +395,14 @@ func onboardingProgressValue(value int) string {
 }
 
 func onboardingRootClass(step string) string {
-	if step == "project" {
+	if step == "payment-method" || step == "project" {
 		return "ts-onboarding-root ts-onboarding-root-wide"
 	}
 	return "ts-onboarding-root"
 }
 
 func onboardingContainerClass(step string) string {
-	if step == "project" {
+	if step == "payment-method" || step == "project" {
 		return "ts-onboarding-container ts-onboarding-container-wide"
 	}
 	return "ts-onboarding-container"

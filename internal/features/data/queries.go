@@ -13,6 +13,47 @@ import (
 )
 
 func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
+	mux.HandleFunc("POST /api/v1/dashboard/data/sql/check", func(w http.ResponseWriter, r *http.Request) {
+		if err := deps.CSRF.Verify(r); err != nil {
+			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxSQLCheckBytes+4096)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		_, _, err := selectedProject(deps, r)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		databaseID := r.FormValue("databaseId")
+		if databaseID != "" {
+			_, db, err := selectedDB(deps, r, databaseID)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			databaseID = db.ID
+		}
+		statement := r.FormValue("sql")
+		if len(statement) > maxSQLCheckBytes {
+			http.Error(w, "SQL must be 16 KiB or less", http.StatusBadRequest)
+			return
+		}
+		collection := strings.TrimSpace(r.FormValue("collection"))
+		if !validCollection(collection) {
+			http.Error(w, "invalid collection", http.StatusBadRequest)
+			return
+		}
+		renderPageWithSQLResult(w, r, deps, "sql", &sqlPageResult{
+			DatabaseID: databaseID,
+			Collection: collection,
+			Statement:  statement,
+			CheckOnly:  true,
+		})
+	})
 	mux.HandleFunc("POST /api/v1/dashboard/data/sql", func(w http.ResponseWriter, r *http.Request) {
 		if err := deps.CSRF.Verify(r); err != nil {
 			http.Error(w, "invalid CSRF token", http.StatusForbidden)

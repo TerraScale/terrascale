@@ -684,11 +684,7 @@ func mount(mux *http.ServeMux, deps core.Deps, flow BillingFlow, config StripeCo
 		if !ok {
 			return
 		}
-		if deps.Demo {
-			http.Redirect(w, r, "/billing/portal/local", http.StatusSeeOther)
-			return
-		}
-		if configErr != nil || provider == nil {
+		if !deps.Demo && (configErr != nil || provider == nil) {
 			http.Error(w, "Billing is not configured.", http.StatusServiceUnavailable)
 			return
 		}
@@ -700,6 +696,10 @@ func mount(mux *http.ServeMux, deps core.Deps, flow BillingFlow, config StripeCo
 		organization, err := account.OrganizationFor(principal, principal.OrganizationID)
 		if err != nil || organization.OwnerUserID != principal.UserID || organization.Archived || organization.DeletionRequested {
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		if deps.Demo {
+			http.Redirect(w, r, "/billing/portal/local", http.StatusSeeOther)
 			return
 		}
 		if organization.Billing.CustomerID == "" || config.PublicOrigin == "" {

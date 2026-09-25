@@ -80,6 +80,7 @@ type organizationPageData struct {
 	NewOrganization     string
 	NewOrganizationID   string
 	Error               string
+	PaymentCanceled     bool
 	OwnershipRequested  bool
 	CanConfirmOwnership bool
 }
@@ -90,6 +91,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	mux.HandleFunc("GET /organization", organizationPage(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/new-organization", newOrganization(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/switch-organization", switchOrganization(deps, service))
+	mux.HandleFunc("POST /api/v1/dashboard/organization/switch", switchOrganization(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/switch-project", switchProject(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/rename", renameOrganization(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/projects", createProject(deps, service))
@@ -109,6 +111,13 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
+		var err error
+		var paymentVerified bool
+		p, paymentVerified, err = resumeCheckoutOrganization(deps, service, w, r, p)
+		if err != nil {
+			writeProblem(w, err)
+			return
+		}
 		account, org, err := service.Snapshot(p)
 		if err != nil {
 			writeProblem(w, err)
@@ -116,6 +125,7 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 		}
 		data := makeOrganizationPage(account, org, p, r.URL.Query().Get("newOrganization"), r.URL.Query().Get("error"))
 		data.NewOrganizationID = org.ID
+		data.PaymentCanceled = paymentVerified && r.URL.Query().Get("payment") == "canceled" && data.NewOrganization == "payment"
 		data.OpenCreateProject = r.URL.Query().Get("newProject") == "1"
 		for _, plan := range deps.Store.Plans() {
 			if plan.Visible && plan.PriceCents > 0 {
@@ -138,6 +148,55 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 			http.Error(w, "could not render organization page", http.StatusInternalServerError)
 		}
 	}
+}
+
+func resumeCheckoutOrganization(deps core.Deps, service Service, w http.ResponseWriter, r *http.Request, p core.Principal) (core.Principal, bool, error) {
+	outcome := r.URL.Query().Get("payment")
+	if (outcome != "success" && outcome != "canceled") || r.URL.Query().Get("newOrganization") == "" {
+		return p, false, nil
+	}
+	organizationID := r.URL.Query().Get("organizationID")
+	if organizationID == "" {
+		return p, false, nil
+	}
+	target, err := service.ForOrganization(p, organizationID)
+	if err != nil {
+		return p, false, nil
+	}
+	_, organization, err := service.Snapshot(target)
+	if err != nil || organization.Kind != kindBusiness || organization.OwnerUserID != p.UserID {
+		return p, false, nil
+	}
+	checkoutStatus := "complete"
+	if outcome == "canceled" {
+		checkoutStatus = "canceled"
+	}
+	returnPath := "/organization?newOrganization=project&organizationID=" + url.QueryEscape(organizationID)
+	verified := false
+	for _, checkout := range organization.CheckoutSessions {
+		if checkout.OwnerUserID == p.UserID && checkout.OrganizationID == organizationID &&
+			checkout.Status == checkoutStatus && checkout.ReturnPath == returnPath {
+			verified = true
+			break
+		}
+	}
+	if !verified {
+		return p, false, nil
+	}
+	if p.OrganizationID == organizationID {
+		return p, true, nil
+	}
+	if err := service.SwitchOrganization(p, organizationID); err != nil {
+		return core.Principal{}, false, err
+	}
+	if err := refreshPrincipal(deps, w, r, p); err != nil {
+		return core.Principal{}, false, err
+	}
+	account, ok := deps.Store.Snapshot(p.AccountID)
+	if !ok || account.User.ID != p.UserID {
+		return core.Principal{}, false, core.ErrForbidden
+	}
+	return account.Principal(), true, nil
 }
 
 func makeOrganizationPage(account core.Account, active core.Organization, p core.Principal, step, pageError string) organizationPageData {
@@ -275,8 +334,10 @@ func newOrganization(deps core.Deps, service Service) http.HandlerFunc {
 				writeProblem(w, err)
 				return
 			}
-			returnPath := "/organization?newOrganization=project&payment=success"
-			http.Redirect(w, r, "/billing/checkout?plan="+url.QueryEscape(planKey)+"&interval="+url.QueryEscape(interval)+"&return="+url.QueryEscape(returnPath), http.StatusSeeOther)
+			// Checkout accepts POST. Preserve this validated form body and the
+			// refreshed organization session when forwarding it to billing.
+			returnPath := "/organization?newOrganization=project&organizationID=" + url.QueryEscape(organizationID)
+			http.Redirect(w, r, "/billing/checkout?return="+url.QueryEscape(returnPath), http.StatusTemporaryRedirect)
 		case "project":
 			organizationID := form.Get("organizationID")
 			if organizationID == "" {
@@ -297,11 +358,13 @@ func newOrganization(deps core.Deps, service Service) http.HandlerFunc {
 				redirectWithError(w, r, "/organization?newOrganization=project", err)
 				return
 			}
-			if account, ok := deps.Store.Snapshot(p.AccountID); ok && account.ActiveOrganizationID == target.OrganizationID {
-				if err := refreshPrincipal(deps, w, r, p); err != nil {
-					writeProblem(w, err)
-					return
-				}
+			if err := service.SwitchOrganization(p, target.OrganizationID); err != nil {
+				writeProblem(w, err)
+				return
+			}
+			if err := refreshPrincipal(deps, w, r, p); err != nil {
+				writeProblem(w, err)
+				return
 			}
 			http.Redirect(w, r, "/organization", http.StatusSeeOther)
 		default:
@@ -324,7 +387,11 @@ func switchOrganization(deps core.Deps, service Service) http.HandlerFunc {
 			writeProblem(w, err)
 			return
 		}
-		http.Redirect(w, r, safeReturnURL(form.Get("returnUrl"), "/organization"), http.StatusSeeOther)
+		fallback := "/organization"
+		if r.URL.Path == "/api/v1/dashboard/organization/switch" {
+			fallback = "/"
+		}
+		http.Redirect(w, r, safeReturnURL(form.Get("returnUrl"), fallback), http.StatusSeeOther)
 	}
 }
 

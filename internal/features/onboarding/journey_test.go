@@ -18,6 +18,7 @@ import (
 	"terrascale.tech/dashboard/internal/features/auth"
 	"terrascale.tech/dashboard/internal/features/onboarding"
 	"terrascale.tech/dashboard/internal/features/profile"
+	"terrascale.tech/dashboard/internal/features/subscriptions"
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
@@ -40,6 +41,7 @@ func newJourney(t *testing.T) journey {
 	auth.Mount(mux, deps)
 	onboarding.Mount(mux, deps)
 	profile.Mount(mux, deps)
+	subscriptions.Mount(mux, deps)
 	server := httptest.NewServer(guard.Protect(mux))
 	t.Cleanup(server.Close)
 	return journey{server: server, store: store, sessions: sessions}
@@ -425,9 +427,10 @@ func TestPasswordChangeRevokesSessionsAndCSRFProtectsCookieFlows(t *testing.T) {
 		"password": {"After-change-password-456!"},
 	})
 	newPassword.Body.Close()
-	if newPassword.StatusCode != http.StatusSeeOther || newPassword.Header.Get("Location") != "/" {
+	if newPassword.StatusCode != http.StatusSeeOther || newPassword.Header.Get("Location") != "/onboarding" {
 		t.Fatalf("new password login status/location = %d %q", newPassword.StatusCode, newPassword.Header.Get("Location"))
 	}
+	assertOnboardingProgress(t, newPasswordClient, app.server, 2, 66)
 }
 
 func TestProfileRejectsAnonymousAccess(t *testing.T) {
@@ -440,5 +443,83 @@ func TestProfileRejectsAnonymousAccess(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/login" {
 		t.Fatalf("anonymous profile status/location = %d %q", response.StatusCode, response.Header.Get("Location"))
+	}
+}
+
+func TestPersonalPaymentCheckoutReturnsToVerifiedOnboardingStep(t *testing.T) {
+	for _, outcome := range []string{"complete", "cancel"} {
+		t.Run(outcome, func(t *testing.T) {
+			app := newJourney(t)
+			client := newClient(t, app.server)
+			registerAccount(t, client, app.server, "Checkout User", outcome+"@example.test", "Checkout-password-123!")
+
+			forged, err := client.Get(app.server.URL + "/onboarding?payment=success")
+			if err != nil {
+				t.Fatal(err)
+			}
+			forged.Body.Close()
+			if forged.StatusCode != http.StatusOK {
+				t.Fatalf("forged checkout return status = %d, want 200", forged.StatusCode)
+			}
+			account, _ := app.store.FindByEmail(outcome + "@example.test")
+			if account.OnboardingStep != "payment-method" {
+				t.Fatalf("forged success advanced onboarding to %q", account.OnboardingStep)
+			}
+
+			invalid := postForm(t, client, app.server, "/onboarding/step", url.Values{
+				"step": {"payment-method"}, "plan": {"unknown"}, "interval": {"monthly"},
+			})
+			invalid.Body.Close()
+			if invalid.StatusCode != http.StatusSeeOther || !strings.HasPrefix(invalid.Header.Get("Location"), "/onboarding?error=") {
+				t.Fatalf("invalid plan status/location = %d %q", invalid.StatusCode, invalid.Header.Get("Location"))
+			}
+
+			start := postForm(t, client, app.server, "/onboarding/step", url.Values{
+				"step": {"payment-method"}, "plan": {"pro"}, "interval": {"annual"},
+			})
+			start.Body.Close()
+			checkoutPath := start.Header.Get("Location")
+			if start.StatusCode != http.StatusSeeOther || !strings.HasPrefix(checkoutPath, "/checkout/cs_local_") {
+				t.Fatalf("paid setup status/location = %d %q", start.StatusCode, checkoutPath)
+			}
+			checkout, err := client.Get(app.server.URL + checkoutPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkout.Body.Close()
+			if checkout.StatusCode != http.StatusOK {
+				t.Fatalf("GET checkout status = %d, want 200", checkout.StatusCode)
+			}
+
+			finishResponse, err := client.PostForm(app.server.URL+checkoutPath+"/"+outcome, url.Values{
+				"_csrf": {csrfToken(t, client, app.server, checkoutPath)},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			finishResponse.Body.Close()
+			returnPath := finishResponse.Header.Get("Location")
+			if finishResponse.StatusCode != http.StatusSeeOther || returnPath != "/onboarding?payment="+map[string]string{"complete": "success", "cancel": "canceled"}[outcome] {
+				t.Fatalf("checkout result status/location = %d %q", finishResponse.StatusCode, returnPath)
+			}
+
+			returned, err := client.Get(app.server.URL + returnPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			returned.Body.Close()
+			if returned.StatusCode != http.StatusOK {
+				t.Fatalf("checkout return status = %d, want 200", returned.StatusCode)
+			}
+			account, _ = app.store.FindByEmail(outcome + "@example.test")
+			organization := account.Organizations[account.ActiveOrganizationID]
+			if outcome == "complete" {
+				if account.OnboardingStep != "project" || !organization.PaymentMethodValidated || organization.PlanID != "plan_pro" {
+					t.Fatalf("successful checkout state = step %q, paid %v, plan %q", account.OnboardingStep, organization.PaymentMethodValidated, organization.PlanID)
+				}
+			} else if account.OnboardingStep != "payment-method" || organization.PaymentMethodValidated {
+				t.Fatalf("canceled checkout state = step %q, paid %v", account.OnboardingStep, organization.PaymentMethodValidated)
+			}
+		})
 	}
 }

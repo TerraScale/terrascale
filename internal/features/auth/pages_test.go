@@ -195,6 +195,98 @@ func TestLoginPreservesOnlySafeReturnTargets(t *testing.T) {
 	}
 }
 
+func TestSuccessfulFormLoginDefaultsToOnboardingOnlyWhenIncomplete(t *testing.T) {
+	const password = "a sufficiently long password"
+
+	for _, test := range []struct {
+		name                string
+		onboardingCompleted bool
+		wantLocation        string
+	}{
+		{name: "incomplete account", wantLocation: "/onboarding"},
+		{name: "complete account", onboardingCompleted: true, wantLocation: "/"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := core.NewStore()
+			hash, err := HashPassword(password)
+			if err != nil {
+				t.Fatal(err)
+			}
+			account, err := store.CreateAccount(core.User{
+				Email: "resume@example.test", Name: "Resume User", PasswordHash: hash,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.onboardingCompleted {
+				if err := store.Update(account.ID, func(account *core.Account) error {
+					account.OnboardingCompleted = true
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			form := url.Values{
+				"email":      {account.User.Email},
+				"password":   {password},
+				"redirectTo": {"/"},
+			}
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password/login", strings.NewReader(form.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+			authPageMux(store, session.New(store, session.Options{})).ServeHTTP(response, request)
+			if response.Code != http.StatusSeeOther || response.Header().Get("Location") != test.wantLocation {
+				t.Fatalf("form login redirect = (%d, %q), want %q", response.Code, response.Header().Get("Location"), test.wantLocation)
+			}
+		})
+	}
+}
+
+func TestAuthenticatedLoginRedirectsBasedOnOnboardingCompletion(t *testing.T) {
+	for _, test := range []struct {
+		name                string
+		onboardingCompleted bool
+		wantLocation        string
+	}{
+		{name: "incomplete account", wantLocation: "/onboarding"},
+		{name: "complete account", onboardingCompleted: true, wantLocation: "/"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := core.NewStore()
+			account, err := store.CreateAccount(core.User{
+				Email: "resume@example.test", Name: "Resume User", PasswordHash: "test-password-hash",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.onboardingCompleted {
+				if err := store.Update(account.ID, func(account *core.Account) error {
+					account.OnboardingCompleted = true
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			sessions := session.New(store, session.Options{})
+			loginResponse := httptest.NewRecorder()
+			if err := sessions.Start(loginResponse, httptest.NewRequest(http.MethodGet, "/login", nil), account.Principal()); err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodGet, "/login", nil)
+			for _, cookie := range loginResponse.Result().Cookies() {
+				request.AddCookie(cookie)
+			}
+			response := httptest.NewRecorder()
+			authPageMux(store, sessions).ServeHTTP(response, request)
+			if response.Code != http.StatusSeeOther || response.Header().Get("Location") != test.wantLocation {
+				t.Fatalf("authenticated GET /login redirect = (%d, %q), want %q", response.Code, response.Header().Get("Location"), test.wantLocation)
+			}
+		})
+	}
+}
+
 func TestFailedFormLoginPreservesSafeReturnTargetForRetry(t *testing.T) {
 	const password = "a sufficiently long password"
 	const checkoutReturn = "/billing/checkout/return?session_id=cs_test_123"
@@ -204,32 +296,37 @@ func TestFailedFormLoginPreservesSafeReturnTargetForRetry(t *testing.T) {
 		password                string
 		returnTo                string
 		wantReturnTo            string
+		wantRetryLocation       string
 		failCredentialStartOnce bool
 	}{
 		{
-			name:         "invalid credentials retain checkout return",
-			password:     "wrong password",
-			returnTo:     checkoutReturn,
-			wantReturnTo: checkoutReturn,
+			name:              "invalid credentials retain checkout return",
+			password:          "wrong password",
+			returnTo:          checkoutReturn,
+			wantReturnTo:      checkoutReturn,
+			wantRetryLocation: checkoutReturn,
 		},
 		{
 			name:                    "credential race retains checkout return",
 			password:                password,
 			returnTo:                checkoutReturn,
 			wantReturnTo:            checkoutReturn,
+			wantRetryLocation:       checkoutReturn,
 			failCredentialStartOnce: true,
 		},
 		{
-			name:         "network path is rejected",
-			password:     "wrong password",
-			returnTo:     "//attacker.example/path",
-			wantReturnTo: "/",
+			name:              "network path is rejected",
+			password:          "wrong password",
+			returnTo:          "//attacker.example/path",
+			wantReturnTo:      "/",
+			wantRetryLocation: "/onboarding",
 		},
 		{
-			name:         "absolute URL is rejected",
-			password:     "wrong password",
-			returnTo:     "https://attacker.example/path",
-			wantReturnTo: "/",
+			name:              "absolute URL is rejected",
+			password:          "wrong password",
+			returnTo:          "https://attacker.example/path",
+			wantReturnTo:      "/",
+			wantRetryLocation: "/onboarding",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -283,8 +380,8 @@ func TestFailedFormLoginPreservesSafeReturnTargetForRetry(t *testing.T) {
 			retryRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			retry := httptest.NewRecorder()
 			mux.ServeHTTP(retry, retryRequest)
-			if retry.Code != http.StatusSeeOther || retry.Header().Get("Location") != test.wantReturnTo {
-				t.Fatalf("retry login location = (%d, %q), want %q", retry.Code, retry.Header().Get("Location"), test.wantReturnTo)
+			if retry.Code != http.StatusSeeOther || retry.Header().Get("Location") != test.wantRetryLocation {
+				t.Fatalf("retry login location = (%d, %q), want %q", retry.Code, retry.Header().Get("Location"), test.wantRetryLocation)
 			}
 		})
 	}

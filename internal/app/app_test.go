@@ -8,8 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"terrascale.tech/dashboard/internal/features/auth"
 	"terrascale.tech/dashboard/internal/platform/config"
 )
+
+const originalDemoPassword = "terrascale"
 
 func TestMountedCallerAndAssets(t *testing.T) {
 	application, err := New(config.Config{Demo: true})
@@ -108,7 +111,7 @@ func TestRegistrationToOverviewThroughMountedApp(t *testing.T) {
 		t.Fatalf("project step: %d %s", project.Code, project.Header().Get("Location"))
 	}
 	account, exists := application.Store.FindByEmail("user@example.com")
-	if !exists || !account.OnboardingCompleted || account.ActiveProjectID == "" {
+	if !exists || !account.OnboardingCompleted || account.ActiveProjectID == "" || account.User.PlatformAdmin {
 		t.Fatal("onboarding did not commit account/project")
 	}
 	overviewRequest := httptest.NewRequest(http.MethodGet, "http://dashboard.test/", nil)
@@ -171,5 +174,132 @@ func TestDemoAdminRequiresExplicitCredentials(t *testing.T) {
 	seeded.Handler.ServeHTTP(adminResponse, adminRequest)
 	if adminResponse.Code != http.StatusOK || !strings.Contains(adminResponse.Body.String(), "admin@example.com") {
 		t.Fatalf("mounted admin users page: %d %s", adminResponse.Code, adminResponse.Body.String())
+	}
+}
+
+func TestDemoAccountUsesOriginalCredentialThroughMountedLogin(t *testing.T) {
+	application, err := New(config.Config{Demo: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, ok := application.Store.FindByEmail(demoAccountEmail)
+	if !ok {
+		t.Fatal("original demo account is missing")
+	}
+	if account.User.Name != "Mario Kraus" || account.User.Role != "owner" || !account.User.PlatformAdmin ||
+		!account.OnboardingCompleted || account.OnboardingStep != "complete" {
+		t.Fatal("original demo account profile or setup is incorrect")
+	}
+	org, ok := account.Organizations[account.ActiveOrganizationID]
+	if !ok || org.Name != "TerraScale Labs" || org.Kind != "business" || org.BillingStatus != "active" ||
+		org.OwnerUserID != account.User.ID || org.Projects[account.ActiveProjectID].Name != "core-platform" {
+		t.Fatal("original demo organization or project is unavailable")
+	}
+	if account.User.PasswordHash == originalDemoPassword ||
+		!auth.VerifyPassword(account.User.PasswordHash, originalDemoPassword) ||
+		auth.VerifyPassword(account.User.PasswordHash, "incorrect-password") {
+		t.Fatal("original demo credential was not securely provisioned")
+	}
+
+	loginPage := httptest.NewRecorder()
+	application.Handler.ServeHTTP(loginPage, httptest.NewRequest(http.MethodGet, "http://dashboard.test/login", nil))
+	if loginPage.Code != http.StatusOK {
+		t.Fatalf("login page returned %d", loginPage.Code)
+	}
+	match := regexp.MustCompile(`name="_csrf" value="([^"]+)"`).FindStringSubmatch(loginPage.Body.String())
+	if len(match) != 2 {
+		t.Fatal("login form lacks CSRF token")
+	}
+	var csrfCookie *http.Cookie
+	for _, cookie := range loginPage.Result().Cookies() {
+		if cookie.Name == "ts_dashboard_csrf" {
+			csrfCookie = cookie
+		}
+	}
+	if csrfCookie == nil {
+		t.Fatal("login did not issue CSRF cookie")
+	}
+	login := func(password string) *httptest.ResponseRecorder {
+		t.Helper()
+		values := url.Values{"email": {demoAccountEmail}, "password": {password}, "_csrf": {match[1]}}
+		request := httptest.NewRequest(http.MethodPost, "http://dashboard.test/api/v1/auth/password/login", strings.NewReader(values.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.Header.Set("Origin", "http://dashboard.test")
+		request.AddCookie(csrfCookie)
+		response := httptest.NewRecorder()
+		application.Handler.ServeHTTP(response, request)
+		return response
+	}
+	wrong := login("incorrect-password")
+	if wrong.Code != http.StatusSeeOther || !strings.HasPrefix(wrong.Header().Get("Location"), "/login") {
+		t.Fatalf("wrong password login returned %d at %q", wrong.Code, wrong.Header().Get("Location"))
+	}
+	for _, cookie := range wrong.Result().Cookies() {
+		if cookie.Name == "ts_dashboard_session" {
+			t.Fatal("wrong password issued a session")
+		}
+	}
+	correct := login(originalDemoPassword)
+	if correct.Code != http.StatusSeeOther || correct.Header().Get("Location") != "/" {
+		t.Fatalf("original password login returned %d at %q", correct.Code, correct.Header().Get("Location"))
+	}
+	var sessionCookie *http.Cookie
+	for _, cookie := range correct.Result().Cookies() {
+		if cookie.Name == "ts_dashboard_session" {
+			sessionCookie = cookie
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("original password login did not issue a session")
+	}
+	overviewRequest := httptest.NewRequest(http.MethodGet, "http://dashboard.test/", nil)
+	overviewRequest.AddCookie(sessionCookie)
+	overview := httptest.NewRecorder()
+	application.Handler.ServeHTTP(overview, overviewRequest)
+	if overview.Code != http.StatusOK {
+		t.Fatalf("seeded account overview returned %d", overview.Code)
+	}
+	adminRequest := httptest.NewRequest(http.MethodGet, "http://dashboard.test/admin/users", nil)
+	adminRequest.AddCookie(sessionCookie)
+	admin := httptest.NewRecorder()
+	application.Handler.ServeHTTP(admin, adminRequest)
+	if admin.Code != http.StatusOK {
+		t.Fatalf("seeded owner admin page returned %d", admin.Code)
+	}
+}
+
+func TestDemoAccountSeedPreservesExistingCredentials(t *testing.T) {
+	application, err := New(config.Config{Demo: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, ok := application.Store.FindByEmail(demoAccountEmail)
+	if !ok {
+		t.Fatal("original demo account is missing")
+	}
+	if err := seedDemoAccount(application.Store); err != nil {
+		t.Fatal(err)
+	}
+	after, ok := application.Store.FindByEmail(demoAccountEmail)
+	if !ok || after.ID != before.ID || after.User.PasswordHash != before.User.PasswordHash ||
+		after.ActiveOrganizationID != before.ActiveOrganizationID || after.ActiveProjectID != before.ActiveProjectID {
+		t.Fatal("second demo seed changed the existing account")
+	}
+
+	const configuredPassword = "configured-strong-password"
+	configured, err := New(config.Config{
+		Demo: true, AdminEmail: demoAccountEmail, AdminPassword: configuredPassword,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, ok := configured.Store.FindByEmail(demoAccountEmail)
+	if !ok || !admin.User.PlatformAdmin || admin.User.Name != "Demo administrator" ||
+		!auth.VerifyPassword(admin.User.PasswordHash, configuredPassword) ||
+		auth.VerifyPassword(admin.User.PasswordHash, originalDemoPassword) {
+		t.Fatal("demo seed overrode explicitly configured administrator")
+	}
+	if _, err := New(config.Config{}); err == nil {
+		t.Fatal("non-demo mode unexpectedly started with a seeded account")
 	}
 }

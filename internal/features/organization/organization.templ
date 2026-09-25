@@ -162,71 +162,7 @@ templ organizationPageView(page core.Page, data organizationPageData) {
 			</section>
 		</div>
 		if data.NewOrganization != "" {
-			<section class="ts-section ts-onboarding-card" data-signals="{ organizationName: '', selectedPlan: 'starter', interval: 'monthly' }">
-				<p class="ts-meta">NEW ORGANIZATION · { organizationStepCount(data.NewOrganization) }</p>
-				<h2 class="ts-panel-title">{ organizationStepTitle(data.NewOrganization) }</h2>
-				if data.NewOrganization == "payment" {
-					<p class="ts-meta">Business organizations need their own billing before they can provision projects.</p>
-					<form method="post" action="/api/v1/dashboard/organization/new-organization" class="ts-form">
-						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-						<input type="hidden" name="step" value="payment-method"/>
-						<input type="hidden" name="organizationID" value={ data.NewOrganizationID }/>
-						<div class="ts-field">
-							<label class="ts-label" for="organization-plan">Plan</label>
-							<select class="ts-select" id="organization-plan" name="plan" required>
-								for _, plan := range data.Plans {
-									<option value={ plan.Key }>{ plan.Name } · { plan.MonthlyPrice } / month</option>
-								}
-							</select>
-						</div>
-						<div class="ts-field"><label class="ts-label" for="organization-interval">Billing interval</label><select class="ts-select" id="organization-interval" name="interval"><option value="monthly">Monthly</option><option value="annual">Annual</option></select></div>
-						<button class="ts-btn ts-btn-primary" type="submit">Continue to checkout</button>
-					</form>
-				} else if data.NewOrganization == "project" {
-					<form method="post" action="/api/v1/dashboard/organization/new-organization" class="ts-form">
-						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-						<input type="hidden" name="step" value="project"/>
-						<input type="hidden" name="organizationID" value={ data.NewOrganizationID }/>
-						<div class="ts-field"><label class="ts-label" for="wizard-project-name">Project name</label><input class="ts-input" id="wizard-project-name" name="name" maxlength="128" required/></div>
-						<div class="ts-field">
-							<label class="ts-label" for="wizard-project-regions">Project regions</label>
-							<select class="ts-select" id="wizard-project-regions" name="regions" multiple required>
-								for _, region := range data.Regions {
-									<option value={ region } selected>{ region }</option>
-								}
-							</select>
-							<ts-region-map data-src="/brand/region-map.svg" data-select-id="wizard-project-regions" aria-hidden="true"></ts-region-map>
-						</div>
-						<div class="ts-field">
-							<label class="ts-label" for="wizard-project-region">Primary region</label>
-							<select class="ts-select" id="wizard-project-region" name="region">
-								for _, region := range data.Regions {
-									<option value={ region }>{ region }</option>
-								}
-							</select>
-							<ts-region-map data-src="/brand/region-map.svg" data-select-id="wizard-project-region" aria-hidden="true"></ts-region-map>
-						</div>
-						<div class="ts-field">
-							<label class="ts-label" for="wizard-project-backup">Backup region</label>
-							<select class="ts-select" id="wizard-project-backup" name="backupRegion">
-								for _, region := range data.Regions {
-									<option value={ region }>{ region }</option>
-								}
-							</select>
-							<ts-region-map data-src="/brand/region-map.svg" data-select-id="wizard-project-backup" aria-hidden="true"></ts-region-map>
-						</div>
-						<button class="ts-btn ts-btn-primary" type="submit">Create project</button>
-					</form>
-				} else {
-					<form method="post" action="/api/v1/dashboard/organization/new-organization">
-						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-						<input type="hidden" name="step" value="organization"/>
-						<label for="new-organization-name">Organization name</label>
-						<input id="new-organization-name" name="name" maxlength="128" required data-bind:organizationName/>
-						<button class="ts-btn ts-btn-primary" type="submit">Create organization</button>
-					</form>
-				}
-			</section>
+			@newOrganizationDialog(page, data)
 		}
 		<section class="ts-section ts-org-team-summary" aria-labelledby="organization-team-title">
 			<div class="ts-section-head">
@@ -390,26 +326,4 @@ templ organizationMemberRow(page core.Page, member memberView) {
 			}
 		</td>
 	</tr>
-}
-
-func organizationStepCount(step string) string {
-	switch step {
-	case "organization":
-		return "STEP 1 OF 3"
-	case "payment":
-		return "STEP 2 OF 3"
-	default:
-		return "STEP 3 OF 3"
-	}
-}
-
-func organizationStepTitle(step string) string {
-	switch step {
-	case "organization":
-		return "Create organization"
-	case "payment":
-		return "Set up billing"
-	default:
-		return "Create the first project"
-	}
 }

@@ -36,6 +36,9 @@ func mountBranch(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		name := strings.TrimSpace(r.FormValue("name"))
+		if _, hasName := r.Form["name"]; !hasName {
+			name = previewBranchName(source.Name)
+		}
 		if !namePattern.MatchString(name) || source.Status != "ready" {
 			http.Error(w, "valid branch name and ready source database are required", http.StatusBadRequest)
 			return
@@ -107,6 +110,15 @@ func mountBranch(mux *http.ServeMux, deps core.Deps) {
 		}
 		writeJSON(w, http.StatusCreated, view(branch))
 	})
+}
+
+func previewBranchName(sourceName string) string {
+	const suffix = "-preview-branch"
+	const maxNameLength = 63
+	if len(sourceName) > maxNameLength-len(suffix) {
+		sourceName = strings.TrimRight(sourceName[:maxNameLength-len(suffix)], "-")
+	}
+	return sourceName + suffix
 }
 
 func cloneDocuments(input map[string]map[string][]byte) map[string]map[string][]byte {

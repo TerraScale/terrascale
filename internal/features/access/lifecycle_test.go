@@ -345,17 +345,55 @@ func TestOrganizationProjectRegionControlsKeepNativeSelectsAndRenderMaps(t *test
 	if status != http.StatusOK {
 		t.Fatalf("GET /organization project wizard: status = %d", status)
 	}
-	wizardControlIDs := []string{"wizard-project-regions", "wizard-project-region", "wizard-project-backup"}
-	for _, id := range wizardControlIDs {
-		if !strings.Contains(body, `id="`+id+`"`) || !strings.Contains(body, `for="`+id+`"`) {
-			t.Errorf("wizard region select %q is missing or has no associated label", id)
-		}
-		if !strings.Contains(body, `data-select-id="`+id+`" aria-hidden="true"`) {
-			t.Errorf("wizard region map for select %q is missing or exposed to assistive technology", id)
+	wizardControlIDs := []string{
+		"wizard-project-regions-modal", "wizard-project-region-modal", "wizard-project-backup-modal",
+	}
+	fallbackControlIDs := []string{
+		"wizard-project-regions-fallback", "wizard-project-region-fallback", "wizard-project-backup-fallback",
+	}
+	dialogMarker := `<dialog id="create-organization"`
+	_, afterDialogOpen, found := strings.Cut(body, dialogMarker)
+	if !found {
+		t.Fatal("organization wizard dialog is missing")
+	}
+	dialogContent, _, found := strings.Cut(afterDialogOpen, "</dialog>")
+	if !found {
+		t.Fatal("organization wizard dialog is not closed")
+	}
+	dialogHTML := dialogMarker + dialogContent + "</dialog>"
+	beforeNoscript, afterNoscriptOpen, found := strings.Cut(body, "<noscript>")
+	if !found {
+		t.Fatal("organization wizard no-script fallback is missing")
+	}
+	fallbackContent, afterNoscriptEnd, found := strings.Cut(afterNoscriptOpen, "</noscript>")
+	if !found {
+		t.Fatal("organization wizard no-script fallback is not closed")
+	}
+	noscriptHTML := "<noscript>" + fallbackContent + "</noscript>"
+
+	assertWizardRegionControls := func(scope, label string, ids []string) {
+		t.Helper()
+		for _, id := range ids {
+			if !strings.Contains(scope, `<select class="ts-select" id="`+id+`"`) {
+				t.Errorf("%s region control %q is missing its native select", label, id)
+			}
+			if !strings.Contains(scope, `for="`+id+`"`) {
+				t.Errorf("%s region select %q is missing its associated label", label, id)
+			}
+			if !strings.Contains(scope, `data-select-id="`+id+`" aria-hidden="true"`) {
+				t.Errorf("%s region map for select %q is missing or exposed to assistive technology", label, id)
+			}
 		}
 	}
-	if got, want := strings.Count(body, "<ts-region-map "), len(projectControlIDs)+len(wizardControlIDs); got != want {
-		t.Errorf("wizard region map count = %d, want %d", got, want)
+	assertWizardRegionControls(dialogHTML, "modal", wizardControlIDs)
+	assertWizardRegionControls(noscriptHTML, "no-script fallback", fallbackControlIDs)
+
+	activeWizardHTML := beforeNoscript + afterNoscriptEnd
+	if got, want := strings.Count(activeWizardHTML, "<ts-region-map "), len(projectControlIDs)+len(wizardControlIDs); got != want {
+		t.Errorf("active wizard region map count = %d, want %d", got, want)
+	}
+	if got, want := strings.Count(noscriptHTML, "<ts-region-map "), len(fallbackControlIDs); got != want {
+		t.Errorf("no-script fallback region map count = %d, want %d", got, want)
 	}
 }
 

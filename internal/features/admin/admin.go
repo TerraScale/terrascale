@@ -13,6 +13,7 @@ import (
 
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/notfound"
 )
 
 type userRow struct {
@@ -85,6 +86,7 @@ type pageData struct {
 	Projects      []projectRow
 	Databases     []databaseRow
 	Regions       []estateRow
+	EstateActions []core.AdminAction
 	Plans         []core.Plan
 	Inventory     inventoryCounts
 }
@@ -106,10 +108,17 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 		http.Redirect(w, r, "/admin/plans", http.StatusFound)
 	})
+	mux.HandleFunc("GET /admin/", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := requireAdminRoute(deps, w, r); !ok {
+			return
+		}
+		notfound.Render(w, r)
+	})
 
 	mux.HandleFunc("POST /api/v1/admin/users/{accountID}", updateUser(deps, service))
 	mux.HandleFunc("POST /api/v1/admin/organizations/{accountID}/{organizationID}", renameOrganization(deps, service))
 	mux.HandleFunc("POST /api/v1/admin/projects/{accountID}/{organizationID}/{projectID}", renameProject(deps, service))
+	mux.HandleFunc("POST /api/v1/admin/estate/action", recordEstateAction(deps, service))
 	mux.HandleFunc("POST /api/v1/admin/plans", savePlan(deps, service))
 	mux.HandleFunc("POST /api/v1/admin/plans/{planID}/visibility", setPlanVisibility(deps, service))
 	mux.HandleFunc("POST /api/v1/admin/plans/{planID}/delete", deletePlan(deps, service))
@@ -209,6 +218,33 @@ func renameProject(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		redirectNotice(w, r, "/admin/projects", "Project updated.")
+	}
+}
+
+func recordEstateAction(deps core.Deps, service Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := authorizeAdminPost(deps, w, r)
+		if !ok {
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid admin form", http.StatusBadRequest)
+			return
+		}
+		if err := service.RecordEstateAction(
+			principal,
+			r.FormValue("action"),
+			r.FormValue("targetId"),
+			r.FormValue("reason"),
+		); err != nil {
+			if errors.Is(err, core.ErrInvalid) {
+				redirectError(w, r, "/admin/estate", "Choose an allowed action, enter a target, and provide a reason between 3 and 1000 characters.")
+				return
+			}
+			writeMutationError(w, r, "/admin/estate", err)
+			return
+		}
+		redirectNotice(w, r, "/admin/estate", "Action completed and recorded in the audit log. No infrastructure action was taken.")
 	}
 }
 

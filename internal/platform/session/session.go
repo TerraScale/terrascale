@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -161,4 +163,30 @@ func (m *Manager) RevokeUser(accountID, userID string) {
 			delete(m.items, token)
 		}
 	}
+}
+
+// SessionsForUser exposes only this principal's live local sessions. The ID is
+// an opaque display identifier derived from the stored token digest.
+func (m *Manager) SessionsForUser(p core.Principal, r *http.Request) []core.SessionInfo {
+	currentToken, hasCurrent := m.Token(r)
+	var currentHash [32]byte
+	if hasCurrent {
+		currentHash = sha256.Sum256([]byte(currentToken))
+	}
+	now := time.Now()
+	m.mu.RLock()
+	result := make([]core.SessionInfo, 0)
+	for hash, item := range m.items {
+		if item.accountID == p.AccountID && item.userID == p.UserID && item.authVersion == p.AuthVersion && now.Before(item.expiresAt) {
+			result = append(result, core.SessionInfo{
+				ID: hex.EncodeToString(hash[:6]), Current: hasCurrent && hash == currentHash,
+				ExpiresAt: item.expiresAt,
+			})
+		}
+	}
+	m.mu.RUnlock()
+	slices.SortFunc(result, func(a, b core.SessionInfo) int {
+		return b.ExpiresAt.Compare(a.ExpiresAt)
+	})
+	return result
 }

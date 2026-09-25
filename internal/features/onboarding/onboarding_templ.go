@@ -7,6 +7,8 @@ package onboarding
 import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
+import "fmt"
+
 func onboardingView(data pageData, csrfToken string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -68,72 +70,72 @@ func onboardingView(data pageData, csrfToken string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\"><header class=\"ts-onboarding-header\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-blue.svg\" alt=\"TerraScale\" decoding=\"async\"><h1 class=\"ts-sr-only\">Activate your TerraScale account</h1></header><div class=\"ts-onboarding-progress\"><div class=\"ts-onboarding-progress-meta\"><span>ACTIVATION STEP ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\"><header class=\"ts-onboarding-header\"><img class=\"ts-brand-logo\" src=\"/brand/logo-terrascale-blue.svg\" alt=\"TerraScale\" decoding=\"async\"><h1 class=\"ts-sr-only\">Activate your TerraScale account</h1></header><div class=\"ts-onboarding-progress\" role=\"progressbar\" aria-label=\"Account setup progress\" aria-valuenow=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var6 string
-		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(onboardingProgressValue(data.CurrentStep))
+		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.ResolveAttributeValue(onboardingProgressValue(data.Progress))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 12, Col: 70}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 12, Col: 148}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var6)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, " OF ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\" aria-valuemin=\"0\" aria-valuemax=\"100\" data-progress=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var7 string
-		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(onboardingProgressValue(data.TotalSteps))
+		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.ResolveAttributeValue(onboardingProgressValue(data.Progress))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 12, Col: 118}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 12, Col: 243}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var7)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</span> <span>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "\"><span>ACTIVATION STEP ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var8 string
-		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(onboardingProgressValue(data.Progress))
+		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(onboardingProgressValue(data.CurrentStep))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 13, Col: 51}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 13, Col: 69}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "%</span></div><div class=\"ts-onboarding-progress-frame\"><div class=\"ts-progress\" role=\"progressbar\" aria-label=\"Account setup progress\" aria-valuenow=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, " OF ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var9 string
-		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.ResolveAttributeValue(onboardingProgressValue(data.Progress))
+		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(onboardingProgressValue(data.TotalSteps))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 16, Col: 139}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 13, Col: 117}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var9)
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"ts-progress-bar\" data-progress=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</span> <span class=\"ts-tabular\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var10 string
-		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.ResolveAttributeValue(onboardingProgressValue(data.Progress))
+		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(onboardingProgressValue(data.Progress))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 17, Col: 89}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 14, Col: 69}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var10)
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\"></div></div></div></div><nav aria-label=\"Onboarding progress\"><ol class=\"ts-onboarding-steps ts-onboarding-steps-compact\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "%</span></div><ol class=\"ts-onboarding-steps\" aria-label=\"Onboarding progress\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -163,7 +165,7 @@ func onboardingView(data pageData, csrfToken string) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.ResolveAttributeValue(onboardingStepCurrent(step))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 24, Col: 88}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 18, Col: 87}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var13)
 			if templ_7745c5c3_Err != nil {
@@ -176,7 +178,7 @@ func onboardingView(data pageData, csrfToken string) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(onboardingStepGlyph(step))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 25, Col: 91}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 19, Col: 90}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -189,20 +191,20 @@ func onboardingView(data pageData, csrfToken string) templ.Component {
 			var templ_7745c5c3_Var15 string
 			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(step.Label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 26, Col: 25}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 20, Col: 24}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</span> <span class=\"ts-onboarding-step-state\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</span> <span class=\"ts-sr-only\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(step.State)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 27, Col: 58}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 21, Col: 43}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -213,142 +215,251 @@ func onboardingView(data pageData, csrfToken string) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "</ol></nav>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "</ol>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		if data.Step == "payment-method" && data.PaymentCanceled {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "<div class=\"ts-alert ts-alert-warning ts-onboarding-feedback\" role=\"alert\"><span class=\"ts-onboarding-alert-icon\" aria-hidden=\"true\">!</span><div class=\"ts-onboarding-alert-stack\"><span class=\"ts-alert-title\">Payment setup canceled</span> <span class=\"ts-alert-body\">Your earlier account progress is still saved. No payment method was changed; you can continue on the Free plan or try the demo checkout again.</span></div></div>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
 		if data.Error != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "<div role=\"alert\" class=\"ts-alert ts-alert-danger\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "<div role=\"alert\" class=\"ts-alert ts-alert-danger ts-onboarding-feedback\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(data.Error)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 33, Col: 67}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 35, Col: 90}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if data.Registration {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "<section class=\"ts-onboarding-card\" aria-labelledby=\"create-account-title\"><h2 class=\"ts-sr-only\" id=\"create-account-title\">Create your account</h2><form class=\"ts-onboarding-form\" method=\"post\" action=\"/onboarding/register\" novalidate><input type=\"hidden\" name=\"_csrf\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "<section class=\"ts-onboarding-section\" aria-labelledby=\"create-account-title\"><header class=\"ts-section-head\"><div><h2 class=\"ts-panel-title\" id=\"create-account-title\">Create your account</h2><p class=\"ts-meta\">Your Personal workspace is ready as soon as you save.</p></div></header><form class=\"ts-onboarding-form\" method=\"post\" action=\"/onboarding/register\"><input type=\"hidden\" name=\"_csrf\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var18 string
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 39, Col: 57}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 46, Col: 57}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var18)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "\"><div class=\"ts-field\"><label class=\"ts-label\" for=\"displayName\">Full name</label> <input class=\"ts-input\" id=\"displayName\" name=\"displayName\" autocomplete=\"name\" maxlength=\"128\" required></div><div class=\"ts-field\"><label class=\"ts-label\" for=\"email\">Email</label> <input class=\"ts-input\" id=\"email\" name=\"email\" type=\"email\" autocomplete=\"email\" placeholder=\"name@company.com\" required></div><div class=\"ts-field\"><label class=\"ts-label\" for=\"password\">Password</label> <ts-password-control><div class=\"ts-input-group\"><input class=\"ts-input\" id=\"password\" name=\"password\" type=\"password\" autocomplete=\"new-password\" placeholder=\"Enter your password\" required> <button class=\"ts-input-adornment\" type=\"button\" data-password-toggle aria-controls=\"password\" aria-pressed=\"false\" aria-label=\"Show password\" hidden><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><path d=\"M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z\"></path><circle cx=\"12\" cy=\"12\" r=\"3\"></circle></svg></button></div></ts-password-control></div><div class=\"ts-field\"><label class=\"ts-label\" for=\"confirmPassword\">Confirm password</label> <ts-password-control><div class=\"ts-input-group\"><input class=\"ts-input\" id=\"confirmPassword\" name=\"confirmPassword\" type=\"password\" autocomplete=\"new-password\" placeholder=\"Confirm your password\" required> <button class=\"ts-input-adornment\" type=\"button\" data-password-toggle aria-controls=\"confirmPassword\" aria-pressed=\"false\" aria-label=\"Show password\" hidden><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><path d=\"M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z\"></path><circle cx=\"12\" cy=\"12\" r=\"3\"></circle></svg></button></div></ts-password-control></div><div class=\"ts-onboarding-terms\"><label class=\"ts-onboarding-terms-label\"><input class=\"ts-checkbox\" type=\"checkbox\" name=\"terms\" value=\"true\" required> <span>I accept the Terms of Service</span></label></div><div class=\"ts-onboarding-form-footer\"><button class=\"ts-btn ts-btn-primary ts-btn-lg\" type=\"submit\">Save</button><p class=\"ts-onboarding-secondary\">Already have an account? <a class=\"ts-link\" href=\"/login\">Sign in</a></p></div></form></section>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "\"><div class=\"ts-field\"><label class=\"ts-label\" for=\"displayName\">Full name</label> <input class=\"ts-input\" id=\"displayName\" name=\"displayName\" autocomplete=\"name\" maxlength=\"128\" required></div><div class=\"ts-field\"><label class=\"ts-label\" for=\"email\">Email</label> <input class=\"ts-input\" id=\"email\" name=\"email\" type=\"email\" autocomplete=\"email\" placeholder=\"name@company.com\" required></div><div class=\"ts-field\"><label class=\"ts-label\" for=\"password\">Password</label> <ts-password-control><div class=\"ts-input-group\"><input class=\"ts-input\" id=\"password\" name=\"password\" type=\"password\" autocomplete=\"new-password\" placeholder=\"Enter your password\" required> <button class=\"ts-input-adornment\" type=\"button\" data-password-toggle aria-controls=\"password\" aria-pressed=\"false\" aria-label=\"Show password\" hidden><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><path d=\"M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z\"></path><circle cx=\"12\" cy=\"12\" r=\"3\"></circle></svg></button></div></ts-password-control></div><div class=\"ts-field\"><label class=\"ts-label\" for=\"confirmPassword\">Confirm password</label> <ts-password-control><div class=\"ts-input-group\"><input class=\"ts-input\" id=\"confirmPassword\" name=\"confirmPassword\" type=\"password\" autocomplete=\"new-password\" required> <button class=\"ts-input-adornment\" type=\"button\" data-password-toggle aria-controls=\"confirmPassword\" aria-pressed=\"false\" aria-label=\"Show password\" hidden><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><path d=\"M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z\"></path><circle cx=\"12\" cy=\"12\" r=\"3\"></circle></svg></button></div></ts-password-control></div><div class=\"ts-onboarding-terms\"><label class=\"ts-onboarding-terms-label\"><input class=\"ts-checkbox\" type=\"checkbox\" name=\"terms\" value=\"true\" required> <span>I accept the Terms of Service</span></label></div><div class=\"ts-onboarding-form-footer\"><p class=\"ts-onboarding-secondary\">Already have an account? <a class=\"ts-link\" href=\"/login\">Sign in</a></p><button class=\"ts-btn ts-btn-primary ts-btn-lg\" type=\"submit\">Save <span aria-hidden=\"true\">→</span></button></div></form></section>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else if data.Step == "account-information" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<section class=\"ts-onboarding-card\" aria-labelledby=\"account-information-title\"><header class=\"ts-onboarding-step-header\"><h2 class=\"ts-onboarding-step-title\" id=\"account-information-title\">Review your account information</h2><p class=\"ts-onboarding-step-subtitle\">Signed in as ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<section class=\"ts-onboarding-section\" aria-labelledby=\"account-information-title\"><header class=\"ts-section-head\"><div><h2 class=\"ts-panel-title\" id=\"account-information-title\">Review your account information</h2><p class=\"ts-meta\">Signed in as ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var19 string
 			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(data.Email)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 86, Col: 70}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 94, Col: 50}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "</p></header><form class=\"ts-onboarding-content\" method=\"post\" action=\"/onboarding/step\"><input type=\"hidden\" name=\"_csrf\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</p></div></header><form class=\"ts-onboarding-form\" method=\"post\" action=\"/onboarding/step\"><input type=\"hidden\" name=\"_csrf\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var20 string
 			templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 89, Col: 57}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 98, Col: 57}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var20)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "\"> <input type=\"hidden\" name=\"step\" value=\"account-information\"><div class=\"ts-onboarding-field-list\"><div class=\"ts-field\"><label class=\"ts-label\" for=\"displayName\">Full name</label> <input class=\"ts-input\" id=\"displayName\" name=\"displayName\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "\"> <input type=\"hidden\" name=\"step\" value=\"account-information\"><div class=\"ts-field\"><label class=\"ts-label\" for=\"displayName\">Full name</label> <input class=\"ts-input\" id=\"displayName\" name=\"displayName\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var21 string
 			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.ResolveAttributeValue(data.DisplayName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 94, Col: 92}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 102, Col: 91}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var21)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "\" maxlength=\"128\" autocomplete=\"name\" required></div><div class=\"ts-field\"><label class=\"ts-label\" for=\"accountEmail\">Email</label> <input class=\"ts-input\" id=\"accountEmail\" type=\"email\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "\" maxlength=\"128\" autocomplete=\"name\" required></div><div class=\"ts-field ts-onboarding-form-full\"><label class=\"ts-label\" for=\"accountEmail\">Email</label> <input class=\"ts-input\" id=\"accountEmail\" type=\"email\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var22 string
 			templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.ResolveAttributeValue(data.Email)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 98, Col: 81}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 106, Col: 80}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var22)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "\" readonly> <span class=\"ts-hint\">Your sign-in email cannot be changed during account setup.</span></div></div><div class=\"ts-onboarding-form-footer\"><button class=\"ts-btn ts-btn-primary ts-btn-lg\" type=\"submit\">Save and continue</button></div></form></section>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "\" readonly> <span class=\"ts-hint\">Your sign-in email cannot be changed during account setup.</span></div><div class=\"ts-onboarding-form-footer\"><button class=\"ts-btn ts-btn-primary ts-btn-lg\" type=\"submit\">Save and continue <span aria-hidden=\"true\">→</span></button></div></form></section>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else if data.Step == "payment-method" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "<section class=\"ts-onboarding-card\" aria-labelledby=\"payment-method-title\"><header class=\"ts-onboarding-step-header\"><h2 class=\"ts-onboarding-step-title\" id=\"payment-method-title\">Payment setup</h2><p class=\"ts-onboarding-step-subtitle\">Your Personal workspace is ready. Payment setup is optional in this in-memory demo.</p></header><div class=\"ts-onboarding-content\"><p class=\"ts-onboarding-step-subtitle\">No payment method is collected here. Continue on the demo allowance and add billing in a configured deployment.</p><form method=\"post\" action=\"/onboarding/step\"><input type=\"hidden\" name=\"_csrf\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<section class=\"ts-onboarding-section ts-onboarding-section-payment\" aria-labelledby=\"payment-method-title\"><form class=\"ts-onboarding-form ts-onboarding-payment-form\" method=\"post\" action=\"/onboarding/step\"><input type=\"hidden\" name=\"_csrf\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var23 string
 			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 116, Col: 58}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 117, Col: 57}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var23)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "\"> <input type=\"hidden\" name=\"step\" value=\"payment-method\"> <input type=\"hidden\" name=\"bypass\" value=\"1\"> <button class=\"ts-btn ts-btn-primary ts-btn-lg\" type=\"submit\">Continue without adding a payment method</button></form></div></section>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "\"> <input type=\"hidden\" name=\"step\" value=\"payment-method\"><header class=\"ts-section-head ts-onboarding-payment-head\"><div><h2 class=\"ts-panel-title\" id=\"payment-method-title\">Choose your plan</h2><p class=\"ts-meta\">Payment setup is optional for your Personal workspace. No real payment details or charges are used in this demo.</p></div><fieldset class=\"ts-onboarding-interval\" aria-label=\"Billing interval\"><legend class=\"ts-sr-only\">Billing interval</legend> <label class=\"ts-onboarding-interval-option\"><input type=\"radio\" name=\"interval\" value=\"monthly\" checked required> <span>Monthly</span></label> <label class=\"ts-onboarding-interval-option\"><input type=\"radio\" name=\"interval\" value=\"annual\"> <span>Annual</span> <span class=\"ts-onboarding-interval-badge\">2 months free</span></label></fieldset></header><fieldset class=\"ts-onboarding-plans ts-onboarding-form-full\"><legend class=\"ts-label\">Select a plan</legend> ")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			for i, plan := range data.Plans {
+				var templ_7745c5c3_Var24 = []any{"ts-onboarding-plan ts-onboarding-plan-" + plan.Key}
+				templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var24...)
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "<label class=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var25 string
+				templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.ResolveAttributeValue(templ.CSSClasses(templ_7745c5c3_Var24).String())
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 1, Col: 0}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var25)
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "\"><input class=\"ts-onboarding-plan-radio\" type=\"radio\" name=\"plan\" value=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var26 string
+				templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.ResolveAttributeValue(plan.Key)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 141, Col: 90}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var26)
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				if i == 0 {
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, " checked")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, " required> <span class=\"ts-onboarding-plan-header\"><span class=\"ts-onboarding-plan-name\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var27 string
+				templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(plan.Name)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 143, Col: 59}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "</span> <span class=\"ts-onboarding-plan-check\" aria-hidden=\"true\">✓</span></span> <span class=\"ts-onboarding-plan-price-row\"><span>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var28 string
+				templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("$%.2f", float64(plan.PriceCents)/100))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 146, Col: 110}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "</span><span>/ month</span></span> <span class=\"ts-onboarding-plan-price-row\"><span>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var29 string
+				templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("$%.2f", float64(plan.AnnualPriceCents)/100))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 147, Col: 116}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "</span><span>/ year</span></span> <span class=\"ts-onboarding-plan-trial\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var30 string
+				templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d-day trial", plan.TrialDays))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 148, Col: 93}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "</span></label>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "</fieldset><p class=\"ts-meta ts-onboarding-demo-note\">Continue to a local checkout simulation to test the flow. You can also continue on the Free plan without payment.</p><div class=\"ts-onboarding-form-footer\"><button class=\"ts-btn ts-btn-secondary ts-btn-lg\" type=\"submit\" name=\"bypass\" value=\"1\" formnovalidate>Continue on Free</button> <button class=\"ts-btn ts-btn-primary ts-btn-lg\" type=\"submit\">Continue to demo checkout <span aria-hidden=\"true\">→</span></button></div></form></section>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "<section class=\"ts-onboarding-card\" aria-labelledby=\"project-title\"><header class=\"ts-onboarding-step-header\"><h2 class=\"ts-onboarding-step-title\" id=\"project-title\">Create your first project</h2><p class=\"ts-onboarding-step-subtitle\">Your Personal workspace is ready for a project.</p></header><form class=\"ts-onboarding-content\" method=\"post\" action=\"/onboarding/step\"><input type=\"hidden\" name=\"_csrf\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "<section class=\"ts-onboarding-section\" aria-labelledby=\"project-title\"><header class=\"ts-section-head\"><div><h2 class=\"ts-panel-title\" id=\"project-title\">Create your first project</h2><p class=\"ts-meta\">Choose where your project's data will live.</p></div></header><form class=\"ts-onboarding-form\" method=\"post\" action=\"/onboarding/step\"><input type=\"hidden\" name=\"_csrf\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var24 string
-			templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
+			var templ_7745c5c3_Var31 string
+			templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrfToken)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 130, Col: 57}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/onboarding/onboarding.templ`, Line: 168, Col: 57}
 			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var24)
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var31)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "\"> <input type=\"hidden\" name=\"step\" value=\"project\"><div class=\"ts-onboarding-field-list\"><div class=\"ts-field\"><label class=\"ts-label\" for=\"projectName\">Project name</label> <input class=\"ts-input\" id=\"projectName\" name=\"name\" maxlength=\"100\" value=\"Personal\" autocomplete=\"organization\" required></div><div class=\"ts-field\"><label class=\"ts-label\" for=\"region\">Region</label> <ts-region-map data-src=\"/brand/region-map.svg\" data-select-id=\"region\" aria-hidden=\"true\"></ts-region-map> <select class=\"ts-select\" id=\"region\" name=\"region\" required><option value=\"GRU\" selected>GRU · São Paulo</option> <option value=\"SFO\">SFO · San Francisco</option> <option value=\"FRA\">FRA · Frankfurt</option></select></div></div><div class=\"ts-onboarding-form-footer\"><button class=\"ts-btn ts-btn-primary ts-btn-lg\" type=\"submit\">Create project</button></div></form></section>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "\"> <input type=\"hidden\" name=\"step\" value=\"project\"><div class=\"ts-field ts-onboarding-form-full\"><label class=\"ts-label\" for=\"projectName\">Project name</label> <input class=\"ts-input\" id=\"projectName\" name=\"name\" maxlength=\"100\" value=\"Personal\" autocomplete=\"organization\" required></div><div class=\"ts-field ts-onboarding-form-full\"><label class=\"ts-label\" for=\"region\">Primary region</label> <ts-region-map data-src=\"/brand/region-map.svg\" data-select-id=\"region\" aria-hidden=\"true\"></ts-region-map> <select class=\"ts-select\" id=\"region\" name=\"region\" required><option value=\"GRU\" selected>GRU · São Paulo</option> <option value=\"SFO\">SFO · San Francisco</option> <option value=\"FRA\">FRA · Frankfurt</option></select> <span class=\"ts-hint\">You can add regions to your project later.</span></div><div class=\"ts-onboarding-form-footer\"><button class=\"ts-btn ts-btn-primary ts-btn-lg\" type=\"submit\">Create project and open Dashboard <span aria-hidden=\"true\">→</span></button></div></form></section>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "</div></main>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "</div></main>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

@@ -14,7 +14,7 @@ export async function registerAndOnboard(
   await registerAndOpenPaymentStep(page, opts);
 
   const payment = await onboardingStep(page, "payment-method");
-  await payment.getByRole("button", { name: "Continue without adding a payment method" }).click();
+  await payment.getByRole("button", { name: "Continue on Free" }).click();
 
   const project = await onboardingStep(page, "project");
   await project.locator('[name="name"]').fill("Personal");

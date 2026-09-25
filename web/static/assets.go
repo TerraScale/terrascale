@@ -2,7 +2,7 @@ package static
 
 import "embed"
 
-// Assets contains public brand, stylesheet, font, and script files.
+// Assets contains public brand, stylesheet, font, image, and script files.
 //
-//go:embed brand css fonts js
+//go:embed brand css fonts img js
 var Assets embed.FS

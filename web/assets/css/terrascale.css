@@ -76,6 +76,7 @@
 @import "../Features/Organization/modal.css" layer(features);
 @import "../Features/Auth/console.css" layer(features);
 @import "../Features/Notifications/notifications-core.css" layer(features);
+@import "../Features/Shared/NotFound/not-found.css" layer(features);
 
 /* Helpers intentionally load last so utility classes win predictably. */
 @import "core/utilities.css" layer(utilities);

@@ -8,5 +8,3 @@ obj/
 .env
 .env.local
 .env.*.local
-# Build output of scripts/build-css.mjs (source: src/TerraScale.Dashboard/Styles).
-src/TerraScale.Dashboard/wwwroot/css/terrascale.css

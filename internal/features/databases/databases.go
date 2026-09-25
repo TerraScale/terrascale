@@ -11,6 +11,7 @@ import (
 
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/notfound"
 	sdk "terrascale.tech/sdk"
 )
 
@@ -46,12 +47,12 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		slices.SortFunc(list, func(a, b databaseView) int { return strings.Compare(a.Name, b.Name) })
 		writeJSON(w, http.StatusOK, list)
 	})
-	mux.HandleFunc("POST /api/v1/dashboard/databases", func(w http.ResponseWriter, r *http.Request) {
+	createDatabase := func(w http.ResponseWriter, r *http.Request) {
 		if err := deps.CSRF.Verify(r); err != nil {
 			http.Error(w, "invalid CSRF token", http.StatusForbidden)
 			return
 		}
-		p, _, err := selected(deps, r)
+		p, project, err := selected(deps, r)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -61,7 +62,12 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		name := strings.TrimSpace(r.FormValue("name"))
-		region, err := sdk.ParseRegionCode(r.FormValue("region"))
+		regionValue := r.FormValue("region")
+		_, hasRegion := r.Form["region"]
+		if r.URL.Path == "/api/v1/dashboard/databases/create" && !hasRegion {
+			regionValue = project.Region
+		}
+		region, err := sdk.ParseRegionCode(regionValue)
 		if !namePattern.MatchString(name) || err != nil {
 			http.Error(w, "valid database name and region are required", http.StatusBadRequest)
 			return
@@ -134,7 +140,9 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, view(db))
-	})
+	}
+	mux.HandleFunc("POST /api/v1/dashboard/databases", createDatabase)
+	mux.HandleFunc("POST /api/v1/dashboard/databases/create", createDatabase)
 	deleteDatabase := func(w http.ResponseWriter, r *http.Request) {
 		if err := deps.CSRF.Verify(r); err != nil {
 			http.Error(w, "invalid CSRF token", http.StatusForbidden)
@@ -162,9 +170,15 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, core.ErrNotFound)
 			return
 		}
-		if r.Method == http.MethodPost && r.FormValue("confirmName") != db.Name {
-			http.Error(w, "type the database name to confirm deletion", http.StatusBadRequest)
-			return
+		if r.Method == http.MethodPost {
+			confirmation := r.FormValue("confirmName")
+			if _, hasConfirmName := r.Form["confirmName"]; !hasConfirmName {
+				confirmation = strings.TrimSpace(r.FormValue("confirm"))
+			}
+			if confirmation != db.Name {
+				http.Error(w, "type the database name to confirm deletion", http.StatusBadRequest)
+				return
+			}
 		}
 		if db.Status == "provisioning" || db.Status == "accepted" || db.Status == "pending" {
 			http.Error(w, "database provisioning is in progress", http.StatusConflict)
@@ -256,7 +270,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, detailID
 		}
 	}
 	if detailID != "" && data.Detail == nil {
-		writeError(w, core.ErrNotFound)
+		notfound.Render(w, r)
 		return
 	}
 	slices.SortFunc(data.Databases, func(a, b databaseView) int { return strings.Compare(a.Name, b.Name) })

@@ -200,3 +200,19 @@
   font-size: var(--ts-fs-meta);
   color: var(--ts-ink-muted);
 }
+
+@media (max-width: 22rem) {
+  .ts-usage .ts-toolbar > .ts-tabs {
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    overflow: visible;
+  }
+
+  .ts-usage .ts-toolbar > .ts-tabs > .ts-tab {
+    height: auto;
+    min-width: 0;
+    white-space: normal;
+  }
+}

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"unicode"
@@ -8,6 +9,10 @@ import (
 
 	"terrascale.tech/dashboard/internal/core"
 )
+
+var estateActionKinds = [...]string{
+	"pause", "resume", "guard", "spendCap", "trial", "refund", "reaperExemption", "flag", "viewAs",
+}
 
 // Service applies platform administrator actions through the store's guarded
 // cross-account operations. Authorization always comes from persisted state.
@@ -175,6 +180,11 @@ func (s Service) page(principal core.Principal, section, rawQuery string) (pageD
 				data.Regions = append(data.Regions, *region)
 			}
 		}
+		data.EstateActions, err = s.store.PlatformAdminActions(principal)
+		if err != nil {
+			return pageData{}, err
+		}
+		slices.Reverse(data.EstateActions)
 	case "usage":
 		data.Title = "Usage"
 	case "plans":
@@ -276,6 +286,27 @@ func (s Service) UpdateUser(principal core.Principal, accountID, name string, pl
 		}
 		return nil
 	})
+}
+
+// RecordEstateAction validates and records a product action without changing
+// estate, billing, tenant, or infrastructure state.
+func (s Service) RecordEstateAction(principal core.Principal, action, target, reason string) error {
+	if err := s.requireAdmin(principal); err != nil {
+		return err
+	}
+	if !slices.Contains(estateActionKinds[:], action) {
+		return core.ErrInvalid
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return core.ErrInvalid
+	}
+	reason = strings.TrimSpace(reason)
+	reasonLength := utf8.RuneCountInString(reason)
+	if reasonLength < 3 || reasonLength > 1000 {
+		return core.ErrInvalid
+	}
+	return s.store.RecordPlatformAdminAction(principal, action, target, reason)
 }
 
 func (s Service) RenameOrganization(principal core.Principal, accountID, organizationID, name string) error {

@@ -50,6 +50,9 @@ func New(cfg config.Config) (*Application, error) {
 	if err := seedAdmin(store, cfg.AdminEmail, cfg.AdminPassword); err != nil {
 		return nil, err
 	}
+	if err := seedDemoAccount(store); err != nil {
+		return nil, err
+	}
 	sessions := session.New(store, session.Options{Secure: cfg.SecureCookies})
 	guard := csrf.New(sessions, csrf.Options{Secure: cfg.SecureCookies})
 	renderer := render.New(store, guard)
@@ -107,6 +110,32 @@ func seedAdmin(store *core.Store, email, password string) error {
 	return store.Update(a.ID, func(a *core.Account) error {
 		a.OnboardingCompleted = true
 		a.OnboardingStep = "complete"
+		return nil
+	})
+}
+
+const (
+	demoAccountEmail    = "mario@terrascale.tech"
+	demoAccountPassword = "terrascale"
+)
+
+func seedDemoAccount(store *core.Store) error {
+	if _, exists := store.FindByEmail(demoAccountEmail); exists {
+		return nil
+	}
+	hash, err := auth.HashPassword(demoAccountPassword)
+	if err != nil {
+		return err
+	}
+	account, err := store.CreateAccount(core.User{
+		ID: "usr_01JC9Q7T4N8Y2M3P5R7V9X1ZAB", Name: "Mario Kraus",
+		Email: demoAccountEmail, PasswordHash: hash, Role: "owner", PlatformAdmin: true,
+	})
+	if err != nil {
+		return err
+	}
+	return store.Update(account.ID, func(current *core.Account) error {
+		seedMarioDemoFixture(current)
 		return nil
 	})
 }

@@ -94,7 +94,7 @@
   color: color-mix(in oklab, var(--ts-ink) 60%, transparent);
 }
 
-.ts-profile-tabs .ts-tab[aria-selected="true"] {
+.ts-profile-tabs .ts-tab[aria-current="page"] {
   background-color: var(--ts-input-fill);
   color: var(--ts-ink);
   box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
@@ -272,3 +272,45 @@
 }
 
 .ts-recovery-wide { align-self: stretch; }
+
+/* Server-rendered profile sections. */
+.ts-profile {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.ts-profile-header {
+  align-items: flex-start;
+  gap: 20px;
+  padding: 20px;
+}
+
+.ts-profile-heading-group { min-width: 0; }
+
+.ts-profile-summary {
+  width: 100%;
+}
+
+.ts-profile-posture { margin: 0; }
+
+.ts-profile-passkey-list {
+  display: grid;
+  gap: var(--ts-md);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+@media (min-width: 64rem) {
+  .ts-profile-header {
+    align-items: center;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .ts-profile-summary {
+    max-width: 36rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

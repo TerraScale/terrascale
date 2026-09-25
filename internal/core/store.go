@@ -19,6 +19,7 @@ type Store struct {
 	organizations map[string]Organization
 	billingEvents map[string]struct{}
 	plans         map[string]Plan
+	adminActions  []AdminAction
 }
 
 func NewStore() *Store {
@@ -158,6 +159,51 @@ func (s *Store) UpdateAs(p Principal, mutate func(*Account) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.updateAsLocked(p, mutate)
+}
+
+// ChangeEmailAs updates the account email and its lookup index in one scoped
+// transaction. The expected hash binds the change to the password verified by
+// the caller even if that credential changes between verification and commit.
+func (s *Store) ChangeEmailAs(p Principal, email, expectedPasswordHash string) error {
+	email = NormalizeEmail(email)
+	if email == "" || expectedPasswordHash == "" {
+		return ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.accounts[p.AccountID]
+	if !ok {
+		return ErrNotFound
+	}
+	next := s.materialize(current)
+	if err := authorize(next, p); err != nil {
+		return err
+	}
+	if next.User.PasswordHash != expectedPasswordHash {
+		return ErrConflict
+	}
+	if accountID, exists := s.byEmail[email]; exists && accountID != next.ID {
+		return ErrConflict
+	}
+	oldEmail := next.User.Email
+	if oldEmail == email {
+		return nil
+	}
+	next.User.Email = email
+	for id, org := range next.Organizations {
+		if member, ok := org.Members[p.UserID]; ok {
+			member.Email = email
+			org.Members[p.UserID] = member
+			next.Organizations[id] = org
+		}
+	}
+	s.accounts[next.ID] = cloneAccount(next)
+	for id, org := range next.Organizations {
+		s.organizations[id] = cloneOrganization(org)
+	}
+	delete(s.byEmail, oldEmail)
+	s.byEmail[email] = next.ID
+	return nil
 }
 
 // UpdateAsWithPlan resolves a canonical plan under the same lock as the scoped
@@ -347,6 +393,8 @@ func authorize(a Account, p Principal) error {
 
 func cloneAccount(a Account) Account {
 	n := a
+	n.DemoSecurity.PendingRecoveryCodes = append([]string(nil), a.DemoSecurity.PendingRecoveryCodes...)
+	n.DemoSecurity.Passkeys = append([]DemoPasskey(nil), a.DemoSecurity.Passkeys...)
 	n.Notifications = append([]Notification(nil), a.Notifications...)
 	n.AuditEvents = append([]AuditEvent(nil), a.AuditEvents...)
 	n.Organizations = make(map[string]Organization, len(a.Organizations))
@@ -393,6 +441,12 @@ func cloneOrganization(org Organization) Organization {
 		p.Databases = make(map[string]Database, len(project.Databases))
 		for dbID, database := range project.Databases {
 			db := database
+			db.IndexRecommendations = make([]IndexRecommendation, len(database.IndexRecommendations))
+			for i, recommendation := range database.IndexRecommendations {
+				recommendation.Fields = append([]string(nil), recommendation.Fields...)
+				db.IndexRecommendations[i] = recommendation
+			}
+			db.IndexBuilds = append([]IndexBuild(nil), database.IndexBuilds...)
 			db.Backups = make([]Backup, len(database.Backups))
 			for i, backup := range database.Backups {
 				copyBackup := backup

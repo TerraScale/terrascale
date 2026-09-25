@@ -85,8 +85,12 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 
 	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
 		if principal, ok := currentPrincipal(deps.Sessions, r); ok {
-			if _, err := deps.Store.SnapshotAs(principal); err == nil {
-				http.Redirect(w, r, "/", http.StatusSeeOther)
+			if account, err := deps.Store.SnapshotAs(principal); err == nil {
+				location := "/"
+				if !account.OnboardingCompleted {
+					location = "/onboarding"
+				}
+				http.Redirect(w, r, location, http.StatusSeeOther)
 				return
 			}
 		}
@@ -352,7 +356,11 @@ func login(deps core.Deps) http.HandlerFunc {
 			return
 		}
 		if isForm {
-			http.Redirect(w, r, safeRedirectTarget(input.RedirectTo), http.StatusSeeOther)
+			location := safeRedirectTarget(input.RedirectTo)
+			if location == "/" && !account.OnboardingCompleted {
+				location = "/onboarding"
+			}
+			http.Redirect(w, r, location, http.StatusSeeOther)
 			return
 		}
 		writeJSON(w, http.StatusOK, loginResponse{User: loginUser{

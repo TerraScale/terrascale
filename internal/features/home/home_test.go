@@ -90,6 +90,143 @@ func TestOverviewRendersScopedCountsAndAnHonestEmptyChart(t *testing.T) {
 	}
 }
 
+func TestOverviewResumesProjectlessBusinessOrganizationForOwner(t *testing.T) {
+	for _, billingStatus := range []string{"billing_required", "active"} {
+		t.Run(billingStatus, func(t *testing.T) {
+			store, principal, _ := projectlessBusinessAccount(t)
+			if err := store.Update(principal.AccountID, func(account *core.Account) error {
+				org := account.Organizations[principal.OrganizationID]
+				org.BillingStatus = billingStatus
+				account.Organizations[org.ID] = org
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			response := serveOverview(t, store, principal)
+			if response.Code != http.StatusSeeOther {
+				t.Fatalf("overview returned %d: %s", response.Code, response.Body.String())
+			}
+			if got := response.Header().Get("Location"); got != "/organization?newOrganization=project" {
+				t.Fatalf("redirect location = %q", got)
+			}
+		})
+	}
+}
+
+func TestOverviewDeniesOtherMissingProjectSelections(t *testing.T) {
+	tests := []struct {
+		name      string
+		change    func(*core.Account, string)
+		principal func(*core.Principal)
+		want      int
+	}{
+		{
+			name: "nonowner",
+			change: func(account *core.Account, id string) {
+				org := account.Organizations[id]
+				org.OwnerUserID = "another-user"
+				account.Organizations[id] = org
+			},
+		},
+		{
+			name: "stale account project selection",
+			change: func(account *core.Account, _ string) {
+				account.ActiveProjectID = "missing-project"
+			},
+		},
+		{
+			name: "inconsistent active organization",
+			change: func(account *core.Account, _ string) {
+				for id, org := range account.Organizations {
+					if org.Kind == "personal" {
+						account.ActiveOrganizationID = id
+					}
+				}
+			},
+		},
+		{
+			name: "personal organization",
+			change: func(account *core.Account, id string) {
+				org := account.Organizations[id]
+				org.Kind = "personal"
+				account.Organizations[id] = org
+			},
+		},
+		{
+			name: "archived organization",
+			change: func(account *core.Account, id string) {
+				org := account.Organizations[id]
+				org.Archived = true
+				account.Organizations[id] = org
+			},
+		},
+		{
+			name: "deletion requested",
+			change: func(account *core.Account, id string) {
+				org := account.Organizations[id]
+				org.DeletionRequested = true
+				account.Organizations[id] = org
+			},
+		},
+		{
+			name: "inactive organization",
+			change: func(account *core.Account, id string) {
+				org := account.Organizations[id]
+				org.Status = "pending"
+				account.Organizations[id] = org
+			},
+		},
+		{
+			name: "unsupported billing state",
+			change: func(account *core.Account, id string) {
+				org := account.Organizations[id]
+				org.BillingStatus = "past_due"
+				account.Organizations[id] = org
+			},
+		},
+		{
+			name: "existing project without selection",
+			change: func(account *core.Account, id string) {
+				org := account.Organizations[id]
+				org.Projects["other-project"] = core.Project{ID: "other-project", OrganizationID: id}
+				account.Organizations[id] = org
+			},
+		},
+		{
+			name: "explicit nonexistent project remains not found",
+			principal: func(principal *core.Principal) {
+				principal.ProjectID = "missing-project"
+			},
+			want: http.StatusNotFound,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, principal, businessID := projectlessBusinessAccount(t)
+			if test.change != nil {
+				if err := store.Update(principal.AccountID, func(account *core.Account) error {
+					test.change(account, businessID)
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.principal != nil {
+				test.principal(&principal)
+			}
+			response := serveOverview(t, store, principal)
+			want := test.want
+			if want == 0 {
+				want = http.StatusForbidden
+			}
+			if response.Code != want {
+				t.Fatalf("overview returned %d, want %d: %s", response.Code, want, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestConnectQueryRendersEscapedMCPConfiguration(t *testing.T) {
 	store := core.NewStore()
 	account, err := store.CreateAccount(core.User{
@@ -117,6 +254,49 @@ func TestConnectQueryRendersEscapedMCPConfiguration(t *testing.T) {
 			t.Errorf("connect page is missing %q", expected)
 		}
 	}
+}
+
+func projectlessBusinessAccount(t *testing.T) (*core.Store, core.Principal, string) {
+	t.Helper()
+	store := core.NewStore()
+	account, err := store.CreateAccount(core.User{
+		ID: "home-business-owner", Name: "Business Owner", Email: "business@example.test", PasswordHash: "unused",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const businessID = "home-business"
+	if err := store.Update(account.ID, func(current *core.Account) error {
+		current.Organizations[businessID] = core.Organization{
+			ID: businessID, Kind: "business", Status: "active", OwnerUserID: current.User.ID,
+			BillingStatus: "billing_required", Projects: make(map[string]core.Project),
+			Members: map[string]core.Member{
+				current.User.ID: {UserID: current.User.ID, Role: "owner", Status: "active"},
+			},
+		}
+		current.ActiveOrganizationID = businessID
+		current.ActiveProjectID = ""
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	updated, ok := store.Snapshot(account.ID)
+	if !ok {
+		t.Fatal("business account is unavailable")
+	}
+	return store, updated.Principal(), businessID
+}
+
+func serveOverview(t *testing.T, store *core.Store, principal core.Principal) *httptest.ResponseRecorder {
+	t.Helper()
+	csrf := homeTestCSRF{}
+	mux := http.NewServeMux()
+	Mount(mux, core.Deps{
+		Store: store, Sessions: homeTestSessions{principal: principal}, CSRF: csrf, Render: render.New(store, csrf),
+	})
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	return response
 }
 
 type homeTestSessions struct{ principal core.Principal }

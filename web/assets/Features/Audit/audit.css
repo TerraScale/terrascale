@@ -127,6 +127,51 @@
   height: 6px;
 }
 
+.ts-audit-meter {
+  display: block;
+  width: 100%;
+  height: 6px;
+  appearance: none;
+  border: 0;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-surface-muted);
+}
+
+.ts-audit-meter::-webkit-meter-bar {
+  height: 6px;
+  border: 0;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-surface-muted);
+}
+
+.ts-audit-meter::-webkit-meter-optimum-value,
+.ts-audit-meter::-webkit-meter-suboptimum-value,
+.ts-audit-meter::-webkit-meter-even-less-good-value,
+.ts-audit-meter::-moz-meter-bar {
+  border-radius: var(--ts-radius-pill);
+}
+
+.ts-audit-meter-info::-webkit-meter-optimum-value,
+.ts-audit-meter-info::-webkit-meter-suboptimum-value,
+.ts-audit-meter-info::-webkit-meter-even-less-good-value,
+.ts-audit-meter-info::-moz-meter-bar {
+  background-color: var(--ts-accent);
+}
+
+.ts-audit-meter-warning::-webkit-meter-optimum-value,
+.ts-audit-meter-warning::-webkit-meter-suboptimum-value,
+.ts-audit-meter-warning::-webkit-meter-even-less-good-value,
+.ts-audit-meter-warning::-moz-meter-bar {
+  background-color: var(--ts-warning);
+}
+
+.ts-audit-meter-danger::-webkit-meter-optimum-value,
+.ts-audit-meter-danger::-webkit-meter-suboptimum-value,
+.ts-audit-meter-danger::-webkit-meter-even-less-good-value,
+.ts-audit-meter-danger::-moz-meter-bar {
+  background-color: var(--ts-danger);
+}
+
 .ts-audit-bar-warning {
   background: var(--ts-warning);
 }
@@ -158,7 +203,6 @@
   }
 
   .ts-audit-toolbar-title {
-    height: 52px;
     min-height: 52px;
   }
 

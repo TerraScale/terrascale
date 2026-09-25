@@ -6,13 +6,67 @@ import (
 )
 
 templ usageView(data pageData, projectName, csrfToken string) {
-	<main class="ts-page">
-		<header class="ts-page-header"><div><p class="ts-eyebrow">Organization billing</p><h1>Usage</h1><p>Current project: { projectName }</p></div></header>
-		<nav aria-label="Usage sections">
-			<a href={ "/usage?tab=overview&project=" + url.QueryEscape(data.SelectedProject) } aria-current={ templ.KV("page", data.Tab == "overview") }>Overview</a>
-			<a href={ "/usage?tab=billing&project=" + url.QueryEscape(data.SelectedProject) } aria-current={ templ.KV("page", data.Tab == "billing") }>Billing</a>
-			<a href={ "/usage?tab=settings&project=" + url.QueryEscape(data.SelectedProject) } aria-current={ templ.KV("page", data.Tab == "settings") }>Spending controls</a>
-		</nav>
+	<main class="ts-page ts-usage">
+		<header class="ts-page-header">
+			<div>
+				<p class="ts-eyebrow">Organization billing</p>
+				<h1>Usage</h1>
+				<p class="ts-meta">Current project: { projectName }</p>
+			</div>
+		</header>
+		<div class="ts-toolbar">
+			<nav class="ts-tabs" aria-label="Usage sections">
+				<a class="ts-tab" href={ "/usage?tab=overview&project=" + url.QueryEscape(data.SelectedProject) } aria-current={ templ.KV("page", data.Tab == "overview") } aria-selected={ templ.KV("true", data.Tab == "overview") }>Overview</a>
+				<a class="ts-tab" href={ "/usage?tab=billing&project=" + url.QueryEscape(data.SelectedProject) } aria-current={ templ.KV("page", data.Tab == "billing") } aria-selected={ templ.KV("true", data.Tab == "billing") }>Billing</a>
+				<a class="ts-tab" href={ "/usage?tab=settings&project=" + url.QueryEscape(data.SelectedProject) } aria-current={ templ.KV("page", data.Tab == "settings") } aria-selected={ templ.KV("true", data.Tab == "settings") }>Spending controls</a>
+			</nav>
+			if data.Tab == "overview" {
+				<form class="ts-filters" method="get" action="/usage" role="search" aria-label="Filter usage">
+					<input type="hidden" name="tab" value="overview"/>
+					<label class="ts-filter-field" for="usage-project">Project
+						<select class="ts-select" id="usage-project" name="project">
+							for _, project := range data.Projects {
+								<option value={ project.ID } selected?={ project.ID == data.SelectedProject }>{ project.Name }</option>
+							}
+						</select>
+					</label>
+					<label class="ts-filter-field" for="usage-database">Database
+						<select class="ts-select" id="usage-database" name="database">
+							<option value="">All databases</option>
+							for _, database := range data.DatabaseOptions {
+								<option value={ database.ID } selected?={ database.ID == data.SelectedDatabase }>{ database.Name }</option>
+							}
+						</select>
+					</label>
+					<button class="ts-btn ts-btn-secondary" type="submit">Apply</button>
+				</form>
+			} else if data.Tab == "billing" {
+				<form class="ts-filters" method="get" action="/usage" role="search" aria-label="Filter payment history">
+					<input type="hidden" name="tab" value="billing"/>
+					<input type="hidden" name="project" value={ data.SelectedProject }/>
+					<label class="ts-filter-field" for="invoice-status">Invoice status
+						<select class="ts-select" id="invoice-status" name="status">
+							<option value="" selected?={ data.InvoicePage.Status == "" }>All statuses</option>
+							for _, option := range data.InvoicePage.StatusOptions {
+								<option value={ option.Value } selected?={ data.InvoicePage.Status == option.Value }>{ option.Label }</option>
+							}
+						</select>
+					</label>
+					<label class="ts-filter-field" for="invoice-issued">Issued
+						<select class="ts-select" id="invoice-issued" name="issued">
+							<option value="" selected?={ data.InvoicePage.Issued == "" }>Any time</option>
+							for _, option := range data.InvoicePage.IssuedOptions {
+								<option value={ option.Value } selected?={ data.InvoicePage.Issued == option.Value }>{ option.Label }</option>
+							}
+						</select>
+					</label>
+					<button class="ts-btn ts-btn-secondary" type="submit">Apply</button>
+					if data.InvoicePage.Status != "" || data.InvoicePage.Issued != "" {
+						<a class="ts-btn ts-btn-ghost" href={ billingTabHref(data.SelectedProject) }>Clear</a>
+					}
+				</form>
+			}
+		</div>
 		if data.Saved == "ok" {
 			<p role="status" class="ts-alert ts-alert-success">Spending controls saved.</p>
 		}
@@ -20,7 +74,7 @@ templ usageView(data pageData, projectName, csrfToken string) {
 			<p role="alert" class="ts-alert ts-alert-danger">Enter a non-negative dollar amount with at most two decimal places.</p>
 		}
 		if data.Tab == "overview" {
-			<section class="ts-usage-section" aria-labelledby="usage-allowance-title">
+			<section class="ts-usage-section ts-section" aria-labelledby="usage-allowance-title">
 				<div class="ts-section-head">
 					<div>
 						<h2 class="ts-panel-title" id="usage-allowance-title">Plan allowance</h2>
@@ -35,7 +89,7 @@ templ usageView(data pageData, projectName, csrfToken string) {
 					<p class="ts-meta">{ data.PlanUsageNote }</p>
 				</div>
 			</section>
-			<section class="ts-usage-section" aria-labelledby="usage-history-title">
+			<section class="ts-usage-section ts-section" aria-labelledby="usage-history-title">
 				<div class="ts-section-head">
 					<div>
 						<h2 class="ts-panel-title" id="usage-history-title">Workload history</h2>
@@ -47,7 +101,7 @@ templ usageView(data pageData, projectName, csrfToken string) {
 					<p class="ts-meta">This deployment has no timestamped workload source. Aggregate database totals cannot be shown as time-series history.</p>
 				</div>
 			</section>
-			<section class="ts-usage-section" aria-labelledby="usage-by-project-title">
+			<section class="ts-usage-section ts-section" aria-labelledby="usage-by-project-title">
 				<div class="ts-section-head">
 					<div>
 						<h2 class="ts-panel-title" id="usage-by-project-title">By project</h2>
@@ -59,7 +113,7 @@ templ usageView(data pageData, projectName, csrfToken string) {
 						for _, project := range data.Projects {
 							<li>
 								<div class="ts-usage-share-head">
-									<a class="ts-usage-drill" href={ "/usage?project=" + url.QueryEscape(project.ID) } aria-current={ templ.KV("page", project.Selected) }>{ project.Name }</a>
+									<a class="ts-usage-drill" href={ "/usage?tab=overview&project=" + url.QueryEscape(project.ID) } aria-current={ templ.KV("page", project.Selected) }>{ project.Name }</a>
 									<span class="ts-meta">{ fmt.Sprint(project.DatabaseCount) } databases</span>
 								</div>
 								<span class="ts-meta">Region: { project.Region }</span>
@@ -72,16 +126,20 @@ templ usageView(data pageData, projectName, csrfToken string) {
 					<div class="ts-empty" role="status"><span class="ts-empty-title">No projects are saved in this organization.</span></div>
 				}
 			</section>
-			<section aria-labelledby="usage-summary">
-				<h2 id="usage-summary">Project usage summary</h2>
-				<p>{ data.UsageSource }</p>
+			<section class="ts-usage-section ts-section" aria-labelledby="usage-summary">
+				<div class="ts-section-head">
+					<div>
+						<h2 class="ts-panel-title" id="usage-summary">Project usage summary</h2>
+						<p class="ts-meta">{ data.UsageSource }</p>
+					</div>
+				</div>
 				if data.UsageError != "" {
 					<p role="status" class="ts-alert ts-alert-warning">{ data.UsageError }</p>
 				}
 				if data.UsageAvailable {
 					<dl class="ts-stats">
-						<div><dt>Databases</dt><dd>{ fmt.Sprint(data.ActiveDatabases) }</dd></div>
-						<div><dt>Distinct database regions</dt><dd>{ fmt.Sprint(data.RegionCount) }</dd></div>
+						<div><dt>Databases in project</dt><dd>{ fmt.Sprint(data.ActiveDatabases) }</dd></div>
+						<div><dt>Regions in project</dt><dd>{ fmt.Sprint(data.RegionCount) }</dd></div>
 						<div><dt>Read operations</dt><dd>{ fmt.Sprint(data.Reads) }</dd></div>
 						<div><dt>Write units</dt><dd>{ fmt.Sprint(data.Writes) }</dd></div>
 						<div><dt>Read and write operations</dt><dd>{ fmt.Sprint(data.Requests) }</dd></div>
@@ -96,50 +154,56 @@ templ usageView(data pageData, projectName, csrfToken string) {
 					</div>
 				}
 			</section>
-			<section aria-labelledby="database-usage">
-				<h2 id="database-usage">Project databases</h2>
-				<form method="get" action="/usage">
-					<input type="hidden" name="tab" value="overview"/><input type="hidden" name="project" value={ data.SelectedProject }/>
-					<label>
-						Database filter 
-						<select name="database">
-							<option value="">All databases</option>
-							for _, database := range data.Databases {
-								<option value={ database.ID } selected?={ database.ID == data.SelectedDatabase }>{ database.Name }</option>
-							}
-						</select>
-					</label><button type="submit">Apply</button>
-				</form>
+			<section class="ts-usage-section ts-section" aria-labelledby="database-usage">
+				<div class="ts-section-head">
+					<div>
+						<h2 class="ts-panel-title" id="database-usage">Project databases</h2>
+						<p class="ts-meta">Database state and configured spending limits</p>
+					</div>
+				</div>
 				if len(data.Databases) > 0 {
-					<table>
-						<thead><tr><th>Database</th><th>Region</th><th>Status</th><th>Documents</th><th>Spend cap</th><th>Effective limit</th></tr></thead>
-						<tbody>
-							for _, database := range data.Databases {
-								<tr>
-									<td>{ database.Name }</td>
-									<td>{ database.Region }</td>
-									<td>{ database.Status }</td>
-									<td>{ fmt.Sprint(database.Documents) }</td>
-									<td>
-										if database.SpendCap != "" {
-											${ database.SpendCap }
-										} else {
-											No database cap
-										}
-									</td>
-									<td>{ database.Effective }</td>
-								</tr>
-							}
-						</tbody>
-					</table>
+					<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Project databases table. Scroll horizontally to see all columns.">
+						<table class="ts-table">
+							<caption class="ts-sr-only">Databases in the selected project and their configured spending limits</caption>
+							<thead><tr><th scope="col">Database</th><th scope="col">Region</th><th scope="col">Status</th><th scope="col">Documents</th><th scope="col">Spend cap</th><th scope="col">Effective limit</th></tr></thead>
+							<tbody>
+								for _, database := range data.Databases {
+									<tr>
+										<td class="ts-table-strong">{ database.Name }</td>
+										<td>{ database.Region }</td>
+										<td>{ database.Status }</td>
+										<td class="ts-table-num">{ fmt.Sprint(database.Documents) }</td>
+										<td>
+											if database.SpendCap != "" {
+												${ database.SpendCap }
+											} else {
+												No database cap
+											}
+										</td>
+										<td>{ database.Effective }</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
 				} else {
-					<p>No databases match this project filter.</p>
+					<div class="ts-empty" role="status"><span class="ts-empty-title">No databases match this project filter.</span></div>
 				}
 			</section>
 		} else if data.Tab == "billing" {
-			<section aria-labelledby="billing-summary">
-				<h2 id="billing-summary">Billing summary</h2>
-				<dl>
+			<section class="ts-section ts-usage-section" aria-labelledby="billing-summary">
+				<div class="ts-section-head">
+					<div>
+						<h2 class="ts-panel-title" id="billing-summary">Billing summary</h2>
+						<p class="ts-meta">Plan and invoice information reported for this organization</p>
+					</div>
+					if data.CanManageBilling {
+						<a class="ts-btn ts-btn-primary" href="/billing/portal">Manage subscription</a>
+					} else {
+						<p class="ts-meta">Only the organization owner can manage billing.</p>
+					}
+				</div>
+				<dl class="ts-stats">
 					<div><dt>Plan</dt><dd>{ data.PlanName }</dd></div>
 					<div>
 						<dt>Billing status</dt>
@@ -157,41 +221,104 @@ templ usageView(data pageData, projectName, csrfToken string) {
 						<div><dt>Renewal</dt><dd>{ data.BillingRenewal.UTC().Format("Jan 2, 2006") }</dd></div>
 					}
 				</dl>
-				if len(data.Invoices) > 0 {
-					<h3>Recent invoices</h3>
-					<table>
-						<thead><tr><th>Invoice</th><th>Status</th><th>Amount</th><th>Date</th></tr></thead>
-						<tbody>
-							for _, invoice := range data.Invoices {
-								<tr><td>{ invoice.Number }</td><td>{ invoice.Status }</td><td>{ invoice.Amount }</td><td>{ invoice.CreatedAt.UTC().Format("Jan 2, 2006") }</td></tr>
-							}
-						</tbody>
-					</table>
+			</section>
+			<section class="ts-section ts-usage-section" aria-labelledby="recent-invoices">
+				<div class="ts-section-head">
+					<div>
+						<h2 class="ts-panel-title" id="recent-invoices">Payment history</h2>
+						<p class="ts-meta">Invoices recorded for this organization, newest first</p>
+					</div>
+				</div>
+				if data.InvoicePage.Total > 0 {
+					<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Recent invoices table. Scroll horizontally to see all columns.">
+						<table class="ts-table">
+							<caption class="ts-sr-only">Invoices for this organization matching the current filters</caption>
+							<thead><tr><th scope="col">Invoice</th><th scope="col">Issued</th><th scope="col">Period</th><th scope="col">Amount</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+							<tbody>
+								for _, invoice := range data.InvoicePage.Rows {
+									<tr>
+										<td class="ts-table-strong">{ invoice.Number }</td>
+										<td>
+											if !invoice.CreatedAt.IsZero() {
+												<time datetime={ invoice.CreatedAt.UTC().Format("2006-01-02") }>{ invoiceDate(invoice.CreatedAt) }</time>
+											} else {
+												-
+											}
+										</td>
+										<td class="ts-meta">{ invoiceDate(invoice.PeriodStart) } – { invoiceDate(invoice.PeriodEnd) }</td>
+										<td class="ts-table-num">{ invoice.Amount }</td>
+										<td>{ invoice.Status }</td>
+										<td>
+											<div class="ts-row ts-row-tight">
+												if invoice.HostedURL != "" {
+													<a class="ts-link" href={ invoice.HostedURL } target="_blank" rel="noopener noreferrer">Open</a>
+												}
+												if invoice.PDFURL != "" {
+													<a class="ts-link" href={ invoice.PDFURL } target="_blank" rel="noopener noreferrer">PDF</a>
+												}
+											</div>
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+					<nav class="ts-pager" aria-label="Payment history pages">
+						<span class="ts-meta">Showing { fmt.Sprint(data.InvoicePage.First) }–{ fmt.Sprint(data.InvoicePage.First + len(data.InvoicePage.Rows) - 1) } of { fmt.Sprint(data.InvoicePage.Total) }</span>
+						if data.InvoicePage.PageCount > 1 {
+							<div class="ts-row ts-row-tight">
+								if data.InvoicePage.Page > 1 {
+									<a class="ts-btn ts-btn-ghost" href={ data.InvoicePage.Href(data.SelectedProject, data.InvoicePage.Page - 1) } rel="prev">Previous</a>
+								}
+								for pageNumber := 1; pageNumber <= data.InvoicePage.PageCount; pageNumber++ {
+									<a class="ts-btn ts-btn-ghost ts-pager-page" href={ data.InvoicePage.Href(data.SelectedProject, pageNumber) } aria-current={ templ.KV("page", pageNumber == data.InvoicePage.Page) }>{ fmt.Sprint(pageNumber) }</a>
+								}
+								if data.InvoicePage.Page < data.InvoicePage.PageCount {
+									<a class="ts-btn ts-btn-ghost" href={ data.InvoicePage.Href(data.SelectedProject, data.InvoicePage.Page + 1) } rel="next">Next</a>
+								}
+							</div>
+						}
+					</nav>
 				} else {
-					<p>No invoices are available for this organization.</p>
+					<div class="ts-empty" role="status"><span class="ts-empty-title">No invoices match these filters</span><p>Change the status or issued date, or clear the filters.</p></div>
 				}
 			</section>
 		} else {
-			<section aria-labelledby="spending-controls">
-				<h2 id="spending-controls">Spending controls</h2>
-				<p>Organization, project, and database caps work together. The tightest configured limit applies to each database.</p>
+			<section class="ts-section ts-usage-section" aria-labelledby="spending-controls">
+				<div class="ts-section-head">
+					<div>
+						<h2 class="ts-panel-title" id="spending-controls">Spending controls</h2>
+						<p class="ts-meta">The tightest configured limit applies to each database.</p>
+					</div>
+				</div>
 				if data.CanManage {
-					<form method="post" action="/api/v1/dashboard/usage/spending-controls">
+					<form class="ts-form" method="post" action="/api/v1/dashboard/usage/spending-controls">
 						<input type="hidden" name="_csrf" value={ csrfToken }/>
-						<label>Monthly organization spending cap in USD <input name="spendCap" inputmode="decimal" pattern="\d+(\.\d{1,2})?" value={ data.OrganizationCap }/></label>
-						<label><input type="checkbox" name="paidExcess" value="true" checked?={ data.PaidExcess }/> Allow usage beyond included plan resources</label>
-						<h3>Project caps</h3>
+						<label class="ts-field" for="organization-spend-cap">
+							<span class="ts-label">Monthly organization spending cap in USD</span>
+							<input class="ts-input" id="organization-spend-cap" name="spendCap" inputmode="decimal" pattern="\d+(\.\d{1,2})?" value={ data.OrganizationCap }/>
+						</label>
+						<label class="ts-checkbox-row"><input class="ts-checkbox" type="checkbox" name="paidExcess" value="true" checked?={ data.PaidExcess }/><span>Allow usage beyond included plan resources</span></label>
+						<div class="ts-section-head"><h3 class="ts-panel-title">Project caps</h3></div>
 						for _, project := range data.Projects {
-							<label>{ project.Name } project cap in USD <input name={ "projCap_" + project.ID } inputmode="decimal" pattern="\d+(\.\d{1,2})?" value={ project.SpendCap }/> <small>Effective: { project.Effective }</small></label>
+							<label class="ts-field" for={ "project-spend-cap-" + project.ID }>
+								<span class="ts-label">{ project.Name } project cap in USD</span>
+								<input class="ts-input" id={ "project-spend-cap-" + project.ID } name={ "projCap_" + project.ID } inputmode="decimal" pattern="\d+(\.\d{1,2})?" value={ project.SpendCap }/>
+								<small class="ts-meta">Effective: { project.Effective }</small>
+							</label>
 						}
-						<h3>Database caps</h3>
+						<div class="ts-section-head"><h3 class="ts-panel-title">Database caps</h3></div>
 						for _, database := range data.Databases {
-							<label>{ database.Name } database cap in USD <input name={ "dbCap_" + database.ID } inputmode="decimal" pattern="\d+(\.\d{1,2})?" value={ database.SpendCap }/> <small>Effective: { database.Effective }</small></label>
+							<label class="ts-field" for={ "database-spend-cap-" + database.ID }>
+								<span class="ts-label">{ database.Name } database cap in USD</span>
+								<input class="ts-input" id={ "database-spend-cap-" + database.ID } name={ "dbCap_" + database.ID } inputmode="decimal" pattern="\d+(\.\d{1,2})?" value={ database.SpendCap }/>
+								<small class="ts-meta">Effective: { database.Effective }</small>
+							</label>
 						}
-						<button type="submit">Save spending controls</button>
+						<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save spending controls</button></div>
 					</form>
 				} else {
-					<p>Only organization owners and admins can change spending controls.</p>
+					<p class="ts-meta">Only organization owners and admins can change spending controls.</p>
 				}
 			</section>
 		}

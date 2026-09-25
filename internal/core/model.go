@@ -52,9 +52,33 @@ type Account struct {
 	OnboardingCompleted  bool
 	OnboardingStep       string
 	AuthVersion          uint64
+	DemoSecurity         DemoProfileSecurity
 	Notifications        []Notification
 	AuditEvents          []AuditEvent
 	CreatedAt            time.Time
+}
+
+// DemoProfileSecurity records profile controls displayed by the in-memory
+// dashboard. These records never authenticate a sign-in request.
+type DemoProfileSecurity struct {
+	MFAEnabled           bool
+	PendingTOTPToken     string
+	PendingTOTPSecret    string
+	PendingRecoveryCodes []string
+	Passkeys             []DemoPasskey
+}
+
+type DemoPasskey struct {
+	ID        string
+	Name      string
+	CreatedAt time.Time
+}
+
+// SessionInfo is a safe, read-only view of a local dashboard session.
+type SessionInfo struct {
+	ID        string
+	Current   bool
+	ExpiresAt time.Time
 }
 
 type Organization struct {
@@ -125,21 +149,47 @@ type Project struct {
 }
 
 type Database struct {
-	ID                  string
-	ProjectID           string
-	Name                string
-	Status              string
-	Region              string
-	Endpoint            string
-	CreatedAt           time.Time
-	Documents           map[string]map[string][]byte   // collection -> document ID -> JSON bytes
-	DocumentHistory     map[string]map[string][][]byte // collection -> document ID -> revisions
-	Schemas             map[string][]byte              // collection -> schema JSON
-	Indexes             map[string][]string            // collection -> indexed fields
-	Backups             []Backup
-	BackupSchedule      string
-	BackupRetentionDays int
-	SpendCapCents       int64
+	ID                   string
+	ProjectID            string
+	Name                 string
+	Status               string
+	Region               string
+	Endpoint             string
+	CreatedAt            time.Time
+	Documents            map[string]map[string][]byte   // collection -> document ID -> JSON bytes
+	DocumentHistory      map[string]map[string][][]byte // collection -> document ID -> revisions
+	Schemas              map[string][]byte              // collection -> schema JSON
+	Indexes              map[string][]string            // collection -> indexed fields
+	IndexRecommendations []IndexRecommendation
+	IndexBuilds          []IndexBuild
+	Backups              []Backup
+	BackupSchedule       string
+	BackupRetentionDays  int
+	SpendCapCents        int64
+}
+
+type IndexRecommendation struct {
+	ID         string
+	DatabaseID string
+	Collection string
+	Fields     []string
+	Reason     string
+	State      string
+}
+
+type IndexBuild struct {
+	ID         string
+	Collection string
+	Field      string
+	Status     string
+}
+
+type AdminAction struct {
+	ActorUserID string
+	Action      string
+	Target      string
+	Reason      string
+	RecordedAt  time.Time
 }
 
 type SavedQuery struct {
@@ -257,6 +307,10 @@ type Invoice struct {
 	AmountCents int64
 	Currency    string
 	CreatedAt   time.Time
+	PeriodStart time.Time
+	PeriodEnd   time.Time
+	HostedURL   string
+	PDFURL      string
 }
 
 type Plan struct {

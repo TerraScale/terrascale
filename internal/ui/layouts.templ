@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/ui/icons"
 )
 
 func Auth(page core.Page, body templ.Component) templ.Component {
@@ -82,7 +83,7 @@ templ signedInDocument(page core.Page, body templ.Component, admin bool) {
 				@shellSidebar(page, admin)
 				<div class="ts-inset">
 					<button type="button" class="ts-fab ts-fab-nav" aria-label="Open navigation" aria-controls="ts-navigation" aria-expanded="false" data-on:click="$navOpen=!$navOpen" data-attr:aria-expanded="$navOpen ? 'true' : 'false'">
-						<span aria-hidden="true">☰</span>
+						@icons.PanelLeft(18)
 					</button>
 					<div id="ts-main" class="ts-main" tabindex="-1">
 						@body
@@ -107,8 +108,9 @@ templ shellSidebar(page core.Page, admin bool) {
 					<ts-menu>
 						<details class="ts-menu ts-project-menu ts-organization-menu">
 							<summary class="ts-btn ts-btn-secondary ts-project-trigger" aria-label={ projectTriggerLabel("organization", page.Shell.OrganizationName) }>
+								@icons.Building(16)
 								<span class="ts-project-trigger-label">{ displayName(page.Shell.OrganizationName, "Choose organization") }</span>
-								<span aria-hidden="true">⌄</span>
+								@icons.ChevronDown(15)
 								for _, organization := range page.Shell.Organizations {
 									if organization.Selected {
 										<span class="ts-sr-only" data-active-organization-id={ organization.ID }>Current organization: { organization.Name }</span>
@@ -156,8 +158,9 @@ templ shellSidebar(page core.Page, admin bool) {
 					<ts-menu>
 						<details class="ts-menu ts-project-menu">
 							<summary class="ts-btn ts-btn-secondary ts-project-trigger" aria-label={ projectTriggerLabel("project", page.Shell.ProjectName) }>
+								@icons.FolderKanban(16)
 								<span class="ts-project-trigger-label">{ displayName(page.Shell.ProjectName, "Choose project") }</span>
-								<span aria-hidden="true">⌄</span>
+								@icons.ChevronDown(15)
 							</summary>
 							<div class="ts-menu-panel ts-project-panel">
 								<div class="ts-project-panel-scroll">
@@ -221,7 +224,7 @@ templ shellSidebar(page core.Page, admin bool) {
 				}
 			</div>
 			<button type="button" class="ts-sidebar-close ts-icon-btn" aria-label="Close navigation" data-on:click="$navOpen=false">
-				<span aria-hidden="true">×</span>
+				@icons.X(18)
 			</button>
 		</div>
 		<nav class="ts-sidebar-content" aria-label={ navSectionsLabel(admin) }>
@@ -250,7 +253,7 @@ templ shellSidebar(page core.Page, admin bool) {
 							<span class="ts-account-name">{ displayName(page.Shell.UserName, "TerraScale user") }</span>
 							<span class="ts-account-email">{ page.Shell.UserEmail }</span>
 						</span>
-						<span class="ts-account-chevron" aria-hidden="true">⌃</span>
+						<span class="ts-account-chevron" aria-hidden="true">@icons.ChevronUp(15)</span>
 					</summary>
 					<div class="ts-menu-panel">
 						<a class="ts-menu-item" href="/profile"><span class="ts-menu-label">Profile</span></a>
@@ -287,6 +290,7 @@ templ sidebarNavigation(items []core.NavItem) {
 					}
 				>
 					<span class="ts-nav-indicator" aria-hidden="true"></span>
+					@navigationIcon(item)
 					<span>{ item.Label }</span>
 					if item.BadgeCount > 0 {
 						<span class={ navBadgeClass(item.Active) } aria-hidden="true">{ strconv.Itoa(item.BadgeCount) }</span>
@@ -295,4 +299,45 @@ templ sidebarNavigation(items []core.NavItem) {
 			</li>
 		}
 	</ul>
+}
+
+templ navigationIcon(item core.NavItem) {
+	<span class="ts-nav-icon" aria-hidden="true">
+		switch item.URL {
+			case "/", "/admin":
+				@icons.Home(18)
+			case "/databases":
+				@icons.Database(18)
+			case "/data":
+				@icons.Table(18)
+			case "/api-keys":
+				@icons.KeyRound(18)
+			case "/access":
+				@icons.Users(18)
+			case "/auth":
+				@icons.ShieldCheck(18)
+			case "/usage":
+				@icons.Gauge(18)
+			case "/audit":
+				@icons.ScrollText(18)
+			case "/organization":
+				@icons.Building(18)
+			case "/backups":
+				@icons.Archive(18)
+			case "/engine":
+				@icons.Terminal(18)
+			case "/subscriptions", "/billing", "/admin/plans":
+				@icons.CreditCard(18)
+			case "/settings":
+				@icons.Settings(18)
+			case "/admin/users":
+				@icons.Fingerprint(18)
+			case "/admin/organizations":
+				@icons.Building2(18)
+			case "/admin/projects":
+				@icons.Boxes(18)
+			default:
+				@icons.Circle(18)
+		}
+	</span>
 }

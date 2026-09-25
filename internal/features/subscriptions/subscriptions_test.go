@@ -1,12 +1,15 @@
 package subscriptions
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/organization"
 )
 
 func TestSubscriptionPagesRenderTypedTemplViewsWithEscapingAndFinalCSRF(t *testing.T) {
@@ -93,6 +96,54 @@ func TestSubscriptionPagesRenderTypedTemplViewsWithEscapingAndFinalCSRF(t *testi
 		if page.View == nil || page.CSRFToken != `renderer-token<&"` || page.Nonce != "renderer-nonce" || page.Shell.OrganizationName != "canonical shell" {
 			t.Errorf("renderer did not supply the canonical page context before invoking the view: %#v", page)
 		}
+	}
+}
+
+func TestDemoBillingPortalRequiresPersistedOrganizationOwner(t *testing.T) {
+	store, owner := newBusinessAccount(t)
+	member, err := store.CreateAccount(core.User{
+		Email: "billing-member@example.test", Name: "Billing Member", PasswordHash: "test-hash",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, token, err := organization.NewService(store).CreateInvitation(owner, member.User.Email, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte(token))
+	if _, err := store.AcceptInvitation(member.Principal(), hex.EncodeToString(digest[:])); err != nil {
+		t.Fatal(err)
+	}
+	member, ok := store.Snapshot(member.ID)
+	if !ok || member.ActiveOrganizationID != owner.OrganizationID {
+		t.Fatal("invited member did not select the billing organization")
+	}
+
+	get := func(principal core.Principal, path string) *httptest.ResponseRecorder {
+		t.Helper()
+		mux := http.NewServeMux()
+		Mount(mux, core.Deps{
+			Store: store, Sessions: subscriptionPageSessions{principal: principal},
+			Render: &subscriptionPageRenderer{}, Demo: true,
+		})
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		return response
+	}
+	if response := get(member.Principal(), "/billing"); response.Code != http.StatusOK {
+		t.Fatalf("member billing page = %d", response.Code)
+	}
+	for _, path := range []string{"/billing/portal", "/billing/portal/local"} {
+		if response := get(member.Principal(), path); response.Code != http.StatusForbidden {
+			t.Errorf("member GET %s = %d, want forbidden", path, response.Code)
+		}
+	}
+	if response := get(owner, "/billing/portal"); response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/billing/portal/local" {
+		t.Fatalf("owner portal entry = %d at %q", response.Code, response.Header().Get("Location"))
+	}
+	if response := get(owner, "/billing/portal/local"); response.Code != http.StatusOK {
+		t.Fatalf("owner local portal = %d", response.Code)
 	}
 }
 

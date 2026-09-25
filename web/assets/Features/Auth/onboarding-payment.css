@@ -1,95 +1,79 @@
-/* Onboarding payment step and plan cards.
-   Used by onboarding payment pages. Keep page-specific rules in Features/. */
+/* Native plan and billing interval controls for standalone onboarding. */
 
-/* Payment step: billing interval segmented control (v1 intervalSegmented). */
-.ts-onboarding-interval {
+.ts-onboarding-root .ts-onboarding-interval {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 2px;
+  min-width: 0;
+  margin: 0;
   padding: 2px;
   border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-pill);
+  border-radius: var(--ts-radius-control);
   background-color: var(--ts-surface-muted);
 }
 
-.ts-onboarding-interval-header { display: none; }
-
-@media (min-width: 64rem) {
-  .ts-onboarding-interval-header { display: inline-flex; }
-}
-
-.ts-onboarding-interval-switch {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ts-md);
-}
-
-@media (min-width: 64rem) {
-  .ts-onboarding-interval-switch { display: none; }
-}
-
-.ts-onboarding-interval-switch-label {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-ui);
-  font-weight: var(--ts-fw-medium);
-}
-
-.ts-onboarding-interval-option {
+.ts-onboarding-root .ts-onboarding-interval-option {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: var(--ts-gap-cozy);
-  padding: 6px var(--ts-md);
-  border: 0;
-  border-radius: var(--ts-radius-pill);
-  background-color: transparent;
+  gap: var(--ts-sm);
+  min-height: 36px;
+  padding: 0 var(--ts-md);
+  border-radius: var(--ts-radius-badge);
   color: var(--ts-ink-muted);
   font-size: var(--ts-fs-ui);
-  font-weight: var(--ts-fw-medium);
   cursor: pointer;
 }
 
-.ts-onboarding-interval-option:hover {
+.ts-onboarding-root .ts-onboarding-interval-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.ts-onboarding-root .ts-onboarding-interval-option:has(input:checked) {
   background-color: var(--ts-surface);
   color: var(--ts-ink);
 }
 
-.ts-onboarding-interval-option[aria-pressed="true"] {
-  background-color: var(--ts-surface);
-  color: var(--ts-ink);
-}
-
-.ts-onboarding-interval-option:focus-visible {
+.ts-onboarding-root .ts-onboarding-interval-option:has(input:focus-visible) {
   outline: 2px solid var(--ts-accent);
   outline-offset: 2px;
 }
 
-.ts-onboarding-interval-badge {
-  padding: 2px var(--ts-sm);
-  border-radius: var(--ts-radius-pill);
-  background-color: color-mix(in oklab, var(--ts-accent) 16%, transparent);
+.ts-onboarding-root .ts-onboarding-interval-badge {
   color: var(--ts-accent-soft);
   font-size: var(--ts-fs-meta);
-  font-weight: var(--ts-fw-semibold);
+  white-space: nowrap;
 }
 
-/* Payment step plan cards (v1 PlanCard) with pricing-page tone accents. */
-.ts-onboarding-plans {
+.ts-onboarding-root .ts-onboarding-plans {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--ts-md);
-  align-items: stretch;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
+
+.ts-onboarding-root .ts-onboarding-plans > legend { margin-bottom: var(--ts-sm); }
 
 @media (min-width: 48rem) {
-  .ts-onboarding-plans { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ts-onboarding-root .ts-onboarding-plans { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-.ts-onboarding-plan {
+.ts-onboarding-root .ts-onboarding-plan {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--ts-md);
   align-items: stretch;
-  width: 100%;
+  min-width: 0;
   padding: var(--ts-lg);
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-panel);
@@ -104,134 +88,101 @@
     box-shadow var(--ts-t-base) var(--ts-ease);
 }
 
-.ts-onboarding-plan:hover {
-  border-color: color-mix(in oklab, var(--ts-plan-tone, var(--ts-accent)) 50%, transparent);
-  box-shadow: 0 12px 32px color-mix(in oklab, var(--ts-plan-tone, var(--ts-accent)) 12%, transparent);
+.ts-onboarding-root .ts-onboarding-plan:hover {
+  border-color: color-mix(in oklab, var(--ts-accent) 55%, transparent);
 }
 
-.ts-onboarding-plan[aria-checked="true"] {
-  border-color: var(--ts-plan-tone, var(--ts-accent));
-  background-color: color-mix(in oklab, var(--ts-plan-tone, var(--ts-accent)) 8%, var(--ts-surface));
-  box-shadow:
-    0 0 0 1px var(--ts-plan-tone, var(--ts-accent)),
-    0 12px 32px color-mix(in oklab, var(--ts-plan-tone, var(--ts-accent)) 18%, transparent);
+.ts-onboarding-root .ts-onboarding-plan:has(.ts-onboarding-plan-radio:checked) {
+  border-color: var(--ts-accent);
+  background-color: color-mix(in oklab, var(--ts-accent) 7%, var(--ts-surface));
+  box-shadow: 0 0 0 1px var(--ts-accent);
 }
 
-.ts-onboarding-plan:focus-visible {
+.ts-onboarding-root .ts-onboarding-plan:has(.ts-onboarding-plan-radio:focus-visible) {
   outline: 2px solid var(--ts-accent);
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
 
-/* Pricing-page tones: Starter emerald, Pro blue, Business violet. */
-.ts-onboarding-plan-starter { --ts-plan-tone: #10B981; --ts-plan-price: #34D399; }
-.ts-onboarding-plan-pro { --ts-plan-tone: #2563EB; --ts-plan-price: #60A5FA; }
-.ts-onboarding-plan-business { --ts-plan-tone: #8B5CF6; --ts-plan-price: #A78BFA; }
+.ts-onboarding-root .ts-onboarding-plan-radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 
-.ts-onboarding-plan-header {
+.ts-onboarding-root .ts-onboarding-plan-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: var(--ts-md);
 }
 
-.ts-onboarding-plan-name {
-  color: var(--ts-ink);
+.ts-onboarding-root .ts-onboarding-plan-name {
   font-size: var(--ts-fs-body);
   font-weight: var(--ts-fw-semibold);
 }
 
-.ts-onboarding-plan-description {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-ui);
-  line-height: 1.5;
-}
-
-.ts-onboarding-plan-check {
+.ts-onboarding-root .ts-onboarding-plan-check {
   display: grid;
   place-items: center;
-  flex-shrink: 0;
-  height: 20px;
+  flex: 0 0 20px;
   width: 20px;
+  height: 20px;
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-pill);
   background-color: var(--ts-surface);
   color: var(--ts-on-accent);
+  font-size: var(--ts-fs-meta);
+  opacity: 0.55;
 }
 
-.ts-onboarding-plan-check svg { display: none; }
-
-.ts-onboarding-plan[aria-checked="true"] .ts-onboarding-plan-check {
-  border-color: var(--ts-plan-tone, var(--ts-accent));
-  background-color: var(--ts-plan-tone, var(--ts-accent));
+.ts-onboarding-root .ts-onboarding-plan:has(.ts-onboarding-plan-radio:checked) .ts-onboarding-plan-check {
+  border-color: var(--ts-accent);
+  background-color: var(--ts-accent);
+  opacity: 1;
 }
 
-.ts-onboarding-plan[aria-checked="true"] .ts-onboarding-plan-check svg { display: block; }
-
-.ts-onboarding-plan-price-row {
+.ts-onboarding-root .ts-onboarding-plan-price-row {
   display: flex;
   align-items: baseline;
   gap: var(--ts-gap-cozy);
-}
-
-.ts-onboarding-plan-strike {
-  color: var(--ts-plan-price, var(--ts-accent-soft));
-  font-family: var(--ts-font-mono);
-  font-size: 32px;
-  font-weight: var(--ts-fw-bold);
-  letter-spacing: -0.025em;
-  line-height: 1;
-  opacity: 0.75;
-  text-decoration: line-through;
-  text-decoration-thickness: 2px;
-}
-
-.ts-onboarding-plan-per {
   color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-ui);
-  font-weight: var(--ts-fw-medium);
+  font-size: var(--ts-fs-meta);
 }
 
-.ts-onboarding-plan-trial {
-  color: var(--ts-plan-price, var(--ts-accent-soft));
-  font-family: var(--ts-font-mono);
-  font-size: 38px;
-  font-weight: var(--ts-fw-bold);
-  letter-spacing: -0.025em;
-  line-height: 1;
-}
-
-.ts-onboarding-plan-divider {
-  width: 100%;
-  height: 1px;
-  background-color: var(--ts-line);
-}
-
-.ts-onboarding-plan-features {
-  display: grid;
-  gap: 10px;
-  margin-top: auto;
-}
-
-.ts-onboarding-plan-feature {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.ts-onboarding-root .ts-onboarding-plan-price-row span:first-child {
   color: var(--ts-ink);
-  font-size: var(--ts-fs-ui);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-body);
+  font-weight: var(--ts-fw-semibold);
 }
 
-.ts-onboarding-plan-feature-check {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  height: 18px;
-  width: 18px;
-  border-radius: 4px;
-  background-color: color-mix(in oklab, var(--ts-plan-tone, var(--ts-accent)) 16%, transparent);
-  color: var(--ts-plan-price, var(--ts-accent-soft));
+.ts-onboarding-root .ts-onboarding-plan-trial {
+  margin-top: auto;
+  padding-top: var(--ts-sm);
+  border-top: 1px solid var(--ts-line);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
 }
 
+.ts-onboarding-root .ts-onboarding-demo-note {
+  color: var(--ts-ink-muted);
+  line-height: 1.5;
+}
+
+.ts-onboarding-root .ts-onboarding-payment-form .ts-onboarding-form-footer {
+  gap: var(--ts-md);
+}
+
+@media (min-width: 40rem) {
+  .ts-onboarding-root .ts-onboarding-payment-form .ts-onboarding-form-footer .ts-btn:first-child { margin-inline-end: auto; }
+}
+
+/* Keep the shared provider notice and legacy selectable cards available to
+   other account flows that still use their original markup. */
 .ts-onboarding-provider-notice {
   margin: 0;
   padding: var(--ts-lg);
@@ -242,6 +193,13 @@
   font-size: var(--ts-fs-ui);
 }
 
-@media (min-width: 64rem) {
-  .ts-onboarding-provider-notice { padding: var(--ts-sm); }
+button.ts-onboarding-plan[aria-checked="true"] {
+  border-color: var(--ts-accent);
+  background-color: color-mix(in oklab, var(--ts-accent) 7%, var(--ts-surface));
+  box-shadow: 0 0 0 1px var(--ts-accent);
+}
+
+button.ts-onboarding-plan:focus-visible {
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
 }

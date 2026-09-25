@@ -1,7 +1,111 @@
-/* Onboarding signed-in step cards and navigation actions.
-   Used by onboarding pages. Keep page-specific rules in Features/. */
+/* Flat onboarding sections, responsive forms, and footer actions. */
 
-/* v1 Panel: glass card, no border, children carry their own insets. */
+.ts-onboarding-root .ts-onboarding-section {
+  display: grid;
+  gap: var(--ts-xl);
+  min-width: 0;
+}
+
+.ts-onboarding-root .ts-onboarding-section > .ts-section-head .ts-meta {
+  max-width: 52rem;
+  margin: var(--ts-xs) 0 0;
+  line-height: 1.5;
+}
+
+.ts-onboarding-root .ts-onboarding-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ts-lg);
+  align-items: start;
+  min-width: 0;
+}
+
+@media (min-width: 40rem) {
+  .ts-onboarding-root .ts-onboarding-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.ts-onboarding-root .ts-onboarding-form-full { grid-column: 1 / -1; }
+.ts-onboarding-root .ts-onboarding-form > p.ts-meta { margin: 0; }
+
+.ts-onboarding-root .ts-onboarding-terms {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  min-height: var(--ts-control-h-lg);
+}
+
+.ts-onboarding-root .ts-onboarding-terms-label {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  line-height: 1.5;
+}
+
+.ts-onboarding-root .ts-onboarding-form-footer {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-direction: column-reverse;
+  gap: var(--ts-md);
+  padding-top: var(--ts-lg);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-onboarding-root .ts-onboarding-form-footer .ts-btn { width: 100%; }
+
+@media (min-width: 40rem) {
+  .ts-onboarding-root .ts-onboarding-form-footer {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .ts-onboarding-root .ts-onboarding-form-footer .ts-btn { width: auto; }
+  .ts-onboarding-root .ts-onboarding-form-footer .ts-onboarding-secondary { margin-inline-end: auto; }
+}
+
+.ts-onboarding-root .ts-onboarding-secondary {
+  margin: 0;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  text-align: center;
+}
+
+.ts-onboarding-root .ts-onboarding-secondary .ts-link { font-weight: var(--ts-fw-semibold); }
+
+.ts-onboarding-alert-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.ts-onboarding-alert-stack {
+  display: grid;
+  gap: var(--ts-xs);
+  min-width: 0;
+}
+
+.ts-onboarding-root .ts-alert-warning .ts-onboarding-alert-icon,
+.ts-dialog-content-wizard .ts-alert-warning .ts-onboarding-alert-icon { color: var(--ts-warning); }
+.ts-onboarding-root .ts-alert-danger .ts-onboarding-alert-icon,
+.ts-dialog-content-wizard .ts-alert-danger .ts-onboarding-alert-icon { color: var(--ts-danger); }
+.ts-onboarding-root .ts-alert-success .ts-onboarding-alert-icon,
+.ts-dialog-content-wizard .ts-alert-success .ts-onboarding-alert-icon { color: var(--ts-success); }
+.ts-onboarding-root .ts-alert-info .ts-onboarding-alert-icon,
+.ts-dialog-content-wizard .ts-alert-info .ts-onboarding-alert-icon { color: var(--ts-info); }
+
+.ts-onboarding-root .ts-onboarding-section-payment { gap: var(--ts-lg); }
+
+.ts-onboarding-root .ts-onboarding-payment-form { gap: var(--ts-xl); }
+
+.ts-onboarding-root .ts-onboarding-payment-head {
+  grid-column: 1 / -1;
+  align-items: center;
+}
+
+.ts-onboarding-root .ts-onboarding-payment-head .ts-meta { max-width: 42rem; }
+
+/* The organization wizard still uses this shared card/content anatomy. */
 .ts-onboarding-card {
   display: flex;
   flex-direction: column;
@@ -11,69 +115,29 @@
   margin-inline: auto;
   padding: 20px 0;
   border: 0;
-  border-radius: 11.2px;
+  border-radius: var(--ts-radius-panel);
   background-color: var(--ts-glass-bg);
   backdrop-filter: blur(var(--ts-blur));
   box-shadow: var(--ts-card-edge);
   overflow: hidden;
 }
 
-@media (min-width: 64rem) {
-  .ts-onboarding-card { gap: var(--ts-md); padding-block: var(--ts-xs); }
-}
-
-.ts-onboarding-form {
-  display: grid;
-  gap: var(--ts-lg);
-  align-items: stretch;
-  padding: 20px;
-}
-
-@media (min-width: 48rem) {
-  .ts-onboarding-form {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
-  }
-}
-
-@media (min-width: 64rem) {
-  .ts-onboarding-form { padding: var(--ts-lg); }
-}
-
-.ts-onboarding-form-full { grid-column: 1 / -1; }
-
-/* Signed-in step body (v1 Panel content). */
 .ts-onboarding-content {
   display: grid;
   gap: var(--ts-lg);
   padding: 20px;
 }
 
-@media (min-width: 64rem) {
-  .ts-onboarding-content { gap: var(--ts-sm); padding: var(--ts-lg); }
-}
+.ts-onboarding-field-list { display: grid; gap: var(--ts-lg); }
 
-.ts-onboarding-content-wide { gap: 20px; }
-
-.ts-onboarding-field-list {
-  display: grid;
-  gap: var(--ts-lg);
-  align-content: start;
-}
-
-/* Signed-in step header (v1 centered PanelHeader). */
 .ts-onboarding-step-header {
   position: relative;
   display: grid;
-  gap: 4px;
+  gap: var(--ts-xs);
   justify-items: center;
-  text-align: center;
   padding: 20px;
   border-bottom: 1px solid var(--ts-line);
-}
-
-@media (min-width: 64rem) {
-  .ts-onboarding-step-header { padding: 16px; }
+  text-align: center;
 }
 
 .ts-onboarding-step-title {
@@ -93,103 +157,16 @@
 
 .ts-onboarding-step-actions {
   position: absolute;
-  top: 20px;
+  inset-block-start: 20px;
   inset-inline-end: 20px;
   display: flex;
   align-items: center;
   gap: var(--ts-sm);
 }
 
-@media (min-width: 64rem) {
-  .ts-onboarding-step-actions { top: 16px; inset-inline-end: 16px; }
-}
-
 .ts-onboarding-step-icon { color: var(--ts-accent); }
 
-/* v1 alert anatomy: tone icon outside the title, stacked text column. */
-.ts-onboarding-alert-icon {
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.ts-onboarding-alert-stack {
-  display: grid;
-  gap: var(--ts-sm);
-  min-width: 0;
-}
-
-/* The create-organization modal reuses the onboarding alert anatomy without
-   .ts-onboarding-root, so the tone colors must cover both scopes. */
-.ts-onboarding-root .ts-alert-warning .ts-onboarding-alert-icon,
-.ts-dialog-content-wizard .ts-alert-warning .ts-onboarding-alert-icon { color: var(--ts-warning); }
-.ts-onboarding-root .ts-alert-danger .ts-onboarding-alert-icon,
-.ts-dialog-content-wizard .ts-alert-danger .ts-onboarding-alert-icon { color: var(--ts-danger); }
-.ts-onboarding-root .ts-alert-success .ts-onboarding-alert-icon,
-.ts-dialog-content-wizard .ts-alert-success .ts-onboarding-alert-icon { color: var(--ts-success); }
-.ts-onboarding-root .ts-alert-info .ts-onboarding-alert-icon,
-.ts-dialog-content-wizard .ts-alert-info .ts-onboarding-alert-icon { color: var(--ts-info); }
-
-.ts-onboarding-terms {
-  display: grid;
-  gap: var(--ts-sm);
-  justify-items: end;
-  grid-column: 1 / -1;
-}
-
-.ts-onboarding-terms-label {
-  display: flex;
-  align-items: center;
-  gap: var(--ts-gap-cozy);
-  min-height: var(--ts-control-h-lg);
-  color: var(--ts-ink);
-  line-height: 1.375;
-}
-
-/* v1 navigation row: separator + right-aligned buttons, full-width mobile. */
-.ts-onboarding-form-footer {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--ts-md);
-  border-top: 1px solid var(--ts-line);
-  padding-top: var(--ts-lg);
-}
-
-.ts-onboarding-form-footer .ts-btn { width: 100%; }
-
-@media (min-width: 40rem) {
-  /* Navigation actions share one horizontal row, right-aligned. */
-  .ts-onboarding-form-footer {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-  }
-
-  .ts-onboarding-form-footer .ts-btn { width: auto; }
-
-  /* The sign-in prompt keeps its own line under the row, right-aligned. */
-  .ts-onboarding-form-footer .ts-onboarding-secondary {
-    flex-basis: 100%;
-    text-align: end;
-  }
-}
-
 @media (min-width: 64rem) {
-  .ts-onboarding-form-footer { padding-top: var(--ts-sm); }
-}
-
-.ts-onboarding-secondary {
-  margin: var(--ts-md) 0 0;
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-ui);
-  line-height: 1.625;
-  text-align: center;
-}
-
-.ts-onboarding-secondary .ts-link {
-  font-weight: var(--ts-fw-semibold);
-  text-decoration: underline;
-  text-underline-offset: 4px;
+  .ts-onboarding-content { gap: var(--ts-sm); padding: var(--ts-lg); }
+  .ts-onboarding-step-header { padding: var(--ts-lg); }
 }

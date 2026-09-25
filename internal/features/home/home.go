@@ -10,6 +10,7 @@ import (
 	"github.com/a-h/templ"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/notfound"
 )
 
 type pageData struct {
@@ -31,7 +32,7 @@ type pageData struct {
 func Mount(mux *http.ServeMux, deps core.Deps) {
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
-			http.NotFound(w, r)
+			notfound.Render(w, r)
 			return
 		}
 		p, account, ok := signedIn(deps, w, r)
@@ -45,6 +46,15 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 		project, ok := org.Projects[p.ProjectID]
 		if !ok {
+			if p.ProjectID == "" && account.ActiveProjectID == "" &&
+				p.OrganizationID == account.ActiveOrganizationID &&
+				org.Kind == "business" && org.Status == "active" &&
+				!org.Archived && !org.DeletionRequested && len(org.Projects) == 0 &&
+				org.OwnerUserID == p.UserID &&
+				(org.BillingStatus == "billing_required" || org.BillingStatus == "active") {
+				http.Redirect(w, r, "/organization?newOrganization=project", http.StatusSeeOther)
+				return
+			}
 			http.Error(w, "selected project is unavailable", http.StatusForbidden)
 			return
 		}

@@ -327,6 +327,111 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 		writeJSON(w, http.StatusOK, page.Indexes)
 	})
+	mux.HandleFunc("POST /api/v1/dashboard/indexes/recommendations/apply", func(w http.ResponseWriter, r *http.Request) {
+		if err := deps.CSRF.Verify(r); err != nil {
+			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		p, _, err := selectedProject(deps, r)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if !canManage(deps, p) {
+			writeError(w, core.ErrForbidden)
+			return
+		}
+		requestedDatabaseID := strings.TrimSpace(r.FormValue("databaseId"))
+		requestedCollection := strings.TrimSpace(r.FormValue("collection"))
+		recommendationID := strings.TrimSpace(r.FormValue("recommendationId"))
+		if (requestedCollection != "" && !validCollection(requestedCollection)) || recommendationID == "" || len(recommendationID) > 128 {
+			writeError(w, core.ErrInvalid)
+			return
+		}
+		if !deps.Demo {
+			http.Error(w, "index recommendations are only available in the in-memory demo", http.StatusNotImplemented)
+			return
+		}
+		status := "applied"
+		resolvedDatabaseID, resolvedCollection := "", ""
+		err = deps.Store.UpdateAs(p, func(a *core.Account) error {
+			project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
+			if err != nil {
+				return err
+			}
+			if !a.Organizations[p.OrganizationID].CanManage(p.UserID) {
+				return core.ErrForbidden
+			}
+			var current core.Database
+			recommendationIndex, matches := -1, 0
+			for databaseID, database := range project.Databases {
+				if database.ProjectID != project.ID || (requestedDatabaseID != "" && databaseID != requestedDatabaseID) {
+					continue
+				}
+				for i, recommendation := range database.IndexRecommendations {
+					if recommendation.ID != recommendationID || recommendation.DatabaseID != databaseID || (requestedCollection != "" && recommendation.Collection != requestedCollection) {
+						continue
+					}
+					matches++
+					resolvedDatabaseID, resolvedCollection = databaseID, recommendation.Collection
+					current, recommendationIndex = database, i
+				}
+			}
+			if matches == 0 {
+				return core.ErrNotFound
+			}
+			if matches > 1 {
+				return core.ErrConflict
+			}
+			if !validCollection(resolvedCollection) {
+				return core.ErrInvalid
+			}
+			recommendation := current.IndexRecommendations[recommendationIndex]
+			if recommendation.State == "applied" {
+				status = "already-applied"
+				return nil
+			}
+			if recommendation.State != "recommended" || len(recommendation.Fields) == 0 {
+				return core.ErrConflict
+			}
+			for _, field := range recommendation.Fields {
+				if field == "" || len(field) > 128 || strings.ContainsAny(field, "/\\\x00\n\r") {
+					return core.ErrInvalid
+				}
+			}
+			if current.Indexes == nil {
+				current.Indexes = make(map[string][]string)
+			}
+			for _, field := range recommendation.Fields {
+				if slices.Contains(current.Indexes[resolvedCollection], field) {
+					continue
+				}
+				current.Indexes[resolvedCollection] = append(current.Indexes[resolvedCollection], field)
+				current.IndexBuilds = append(current.IndexBuilds, core.IndexBuild{ID: core.NewID("index"), Collection: resolvedCollection, Field: field, Status: "building"})
+			}
+			current.IndexRecommendations[recommendationIndex].State = "applied"
+			project.Databases[resolvedDatabaseID] = current
+			org := a.Organizations[p.OrganizationID]
+			org.Projects[p.ProjectID] = project
+			a.Organizations[p.OrganizationID] = org
+			return nil
+		})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if wantsHTML(r) {
+			query := url.Values{"tab": {"recommendations"}, "databaseId": {resolvedDatabaseID}, "collection": {resolvedCollection}}
+			http.Redirect(w, r, "/indexes?"+query.Encode(), http.StatusSeeOther)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"recommendationId": recommendationID, "status": status})
+	})
 	mux.HandleFunc("POST /api/v1/dashboard/indexes", func(w http.ResponseWriter, r *http.Request) {
 		if err := deps.CSRF.Verify(r); err != nil {
 			http.Error(w, "invalid CSRF token", http.StatusForbidden)

@@ -77,3 +77,18 @@ The app can receive an optional TerraScale API endpoint and access token through
 `TS_API_BASE_URL` and `TS_API_ACCESS_TOKEN`. Current account and dashboard
 state still use the in-memory production-demo store; restarting the process
 resets that state.
+
+## Go cutover and C# retirement
+
+Retirement is still in progress. The Go runtime requires in-memory demo mode,
+so a cutover forces a fresh login and does not migrate C# account or session
+state. The seeded Mario test administrator is shared and mutable across demo
+users; it does not provide private tenant isolation. The Go demo intentionally
+does not reproduce the C# anonymous-admin passkey shortcut, and demo MFA or
+passkey profile records cannot authenticate. See the
+[Go cutover checklist](docs/go-cutover.md) for implementation and release
+gates, rollback preparation, and the authentication limitations.
+
+`AGENTS.md` still contains C#/RazorSlice/ts-dotnet stack guidance. A human
+maintainer should update it separately; it does not block this Go work, and
+agents must not edit that file.

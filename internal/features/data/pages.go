@@ -18,26 +18,32 @@ type databaseChoice struct {
 }
 
 type pageData struct {
-	Mode       string
-	CanWrite   bool
-	Search     string
-	Create     bool
-	SchemaTab  string
-	IndexTab   string
-	ProjectID  string
-	Databases  []databaseChoice
-	DatabaseID string
-	Collection string
-	Documents  []documentView
-	Schema     string
-	Indexes    []string
-	Queries    []core.SavedQuery
-	DocumentID string
-	EditorJSON string
-	SQL        string
-	SQLResult  string
-	History    []historyVersion
-	Error      string
+	Mode            string
+	CanWrite        bool
+	CanManage       bool
+	Demo            bool
+	Search          string
+	Create          bool
+	SchemaTab       string
+	IndexTab        string
+	ProjectID       string
+	Databases       []databaseChoice
+	DatabaseID      string
+	Collection      string
+	Documents       []documentView
+	Schema          string
+	Indexes         []string
+	IndexBuilds     []core.IndexBuild
+	Recommendations []core.IndexRecommendation
+	Queries         []core.SavedQuery
+	DocumentID      string
+	EditorJSON      string
+	SQL             string
+	SQLResult       string
+	SQLAnalysis     sqlAnalysis
+	SQLChecked      bool
+	History         []historyVersion
+	Error           string
 }
 
 type historyVersion struct {
@@ -57,7 +63,8 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, mode str
 }
 
 type sqlPageResult struct {
-	DatabaseID, Statement, JSON string
+	DatabaseID, Collection, Statement, JSON string
+	CheckOnly                               bool
 }
 
 func renderPageWithSQLResult(w http.ResponseWriter, r *http.Request, deps core.Deps, mode string, result *sqlPageResult) {
@@ -73,11 +80,17 @@ func renderPageWithSQLResult(w http.ResponseWriter, r *http.Request, deps core.D
 		return
 	}
 	a, _ := deps.Store.SnapshotAs(p)
-	data := pageData{Mode: mode, ProjectID: project.ID, DatabaseID: r.URL.Query().Get("databaseId"), Collection: r.URL.Query().Get("collection"), DocumentID: r.URL.Query().Get("id"), Error: r.URL.Query().Get("error"), Search: strings.TrimSpace(r.URL.Query().Get("q")), Create: r.URL.Query().Get("create") == "1", SchemaTab: r.URL.Query().Get("tab"), IndexTab: r.URL.Query().Get("tab")}
+	data := pageData{Mode: mode, Demo: deps.Demo, ProjectID: project.ID, DatabaseID: r.URL.Query().Get("databaseId"), Collection: r.URL.Query().Get("collection"), DocumentID: r.URL.Query().Get("id"), Error: r.URL.Query().Get("error"), Search: strings.TrimSpace(r.URL.Query().Get("q")), Create: r.URL.Query().Get("create") == "1", SchemaTab: r.URL.Query().Get("tab"), IndexTab: r.URL.Query().Get("tab")}
 	if result != nil {
-		data.DatabaseID = result.DatabaseID
+		if result.DatabaseID != "" {
+			data.DatabaseID = result.DatabaseID
+		}
+		if result.Collection != "" {
+			data.Collection = result.Collection
+		}
 	}
 	data.CanWrite = a.Organizations[p.OrganizationID].CanWrite(p.UserID)
+	data.CanManage = a.Organizations[p.OrganizationID].CanManage(p.UserID)
 	if mode == "editor" {
 		data.DocumentID = r.URL.Query().Get("edit")
 	}
@@ -113,6 +126,16 @@ func renderPageWithSQLResult(w http.ResponseWriter, r *http.Request, deps core.D
 			slices.SortFunc(data.Documents, func(a, b documentView) int { return strings.Compare(a.ID, b.ID) })
 			data.Schema = string(db.Schemas[data.Collection])
 			data.Indexes = slices.Clone(db.Indexes[data.Collection])
+			for _, build := range db.IndexBuilds {
+				if build.Collection == data.Collection {
+					data.IndexBuilds = append(data.IndexBuilds, build)
+				}
+			}
+			for _, recommendation := range db.IndexRecommendations {
+				if recommendation.DatabaseID == db.ID && recommendation.Collection == data.Collection {
+					data.Recommendations = append(data.Recommendations, recommendation)
+				}
+			}
 			if mode == "history" && data.DocumentID != "" {
 				for i, version := range db.DocumentHistory[data.Collection][data.DocumentID] {
 					data.History = append(data.History, historyVersion{Number: strconv.Itoa(i + 1), Body: string(version), Deleted: jsontext.Value(version).Kind() == 'n'})
@@ -180,10 +203,15 @@ func renderPageWithSQLResult(w http.ResponseWriter, r *http.Request, deps core.D
 		if query, ok := project.SavedQueries[r.URL.Query().Get("savedQueryId")]; ok {
 			data.SQL = query.SQL
 		}
+		if _, supplied := r.URL.Query()["sql"]; supplied {
+			data.SQL = r.URL.Query().Get("sql")
+		}
 		if result != nil {
 			data.SQL = result.Statement
 			data.SQLResult = result.JSON
 		}
+		data.SQLAnalysis = analyzeSQL(data.SQL)
+		data.SQLChecked = result != nil && result.CheckOnly && data.SQLAnalysis.OK
 	}
 	if mode == "editor" && data.DocumentID != "" {
 		for _, document := range data.Documents {

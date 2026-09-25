@@ -153,7 +153,7 @@ func TestDataPagesRenderDistinctViews(t *testing.T) {
 		{"/data?view=editor", "Document editor", "Apply document operation"},
 		{"/data?view=sql", "SQL console", "Run query"},
 		{"/schema?tab=diff", "Schema", "no diff can be calculated"},
-		{"/indexes?tab=recommendations", "Indexes", "unavailable without provider analysis data"},
+		{"/indexes?tab=recommendations", "Indexes", "No demo recommendations for this collection"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			w := httptest.NewRecorder()
@@ -162,6 +162,45 @@ func TestDataPagesRenderDistinctViews(t *testing.T) {
 				t.Fatalf("status %d, view %q: %s", w.Code, tc.path, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestSQLCheckRendersPrivatelyAndHonorsSDKRestrictions(t *testing.T) {
+	deps, p := dataFixture(t, "viewer")
+	deps.Render = renderingRenderer{}
+	mux := http.NewServeMux()
+	Mount(mux, deps)
+	postCheck := func(statement string) *httptest.ResponseRecorder {
+		form := url.Values{"collection": {"users"}, "sql": {statement}}
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/dashboard/data/sql/check", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w
+	}
+	privateSQL := "SELECT * FROM users WHERE name = 'private-token-42' LIMIT 10"
+	checked := postCheck(privateSQL)
+	if checked.Code != http.StatusOK || checked.Header().Get("Location") != "" || !strings.Contains(checked.Body.String(), "Server check passed.") {
+		t.Fatalf("SQL check should render in POST without redirect: status=%d location=%q body=%s", checked.Code, checked.Header().Get("Location"), checked.Body.String())
+	}
+	if !strings.Contains(checked.Body.String(), "private-token-42") {
+		t.Fatal("checked statement was not preserved on the rendered page")
+	}
+	unsafe := postCheck("SELECT load_extension('/tmp/x')")
+	if unsafe.Code != http.StatusOK || strings.Contains(unsafe.Body.String(), "Server check passed.") || !strings.Contains(unsafe.Body.String(), "SQL runtime check rejected") {
+		t.Fatalf("SDK-rejected function was accepted: status=%d body=%s", unsafe.Code, unsafe.Body.String())
+	}
+	forged := httptest.NewRecorder()
+	mux.ServeHTTP(forged, httptest.NewRequest(http.MethodGet, "/data?view=sql&checked=1", nil))
+	if strings.Contains(forged.Body.String(), "Server check passed.") {
+		t.Fatal("GET query string forged SQL check state")
+	}
+	account, err := deps.Store.SnapshotAs(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(account.Organizations[p.OrganizationID].Projects[p.ProjectID].Databases["db-1"].Documents) != 0 {
+		t.Fatal("SQL check changed database documents")
 	}
 }
 

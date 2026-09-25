@@ -68,7 +68,7 @@ func TestAdminRoutesAndActionsUsePersistedAdminAuthorization(t *testing.T) {
 	databaseSearch := httptest.NewRecorder()
 	mux.ServeHTTP(databaseSearch, httptest.NewRequest(http.MethodGet, "/admin/databases?q=Tenant", nil))
 	if databaseSearch.Code != http.StatusOK || !strings.Contains(databaseSearch.Body.String(), "Tenant database") ||
-		!strings.Contains(databaseSearch.Body.String(), "Not available") {
+		!strings.Contains(databaseSearch.Body.String(), "Version details are unavailable here.") {
 		t.Fatalf("database inventory search did not show unavailable version details: status=%d body=%s", databaseSearch.Code, databaseSearch.Body.String())
 	}
 

@@ -146,7 +146,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		view, err := service.Snapshot(principal)
-		if err != nil {
+		if err != nil || view.Account.ActiveOrganizationID != principal.OrganizationID || view.Organization.OwnerUserID != principal.UserID || view.Organization.Archived || view.Organization.DeletionRequested {
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}

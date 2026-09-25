@@ -2,6 +2,7 @@ package data
 
 import (
 	"net/url"
+	"strings"
 	"terrascale.tech/dashboard/internal/core"
 )
 
@@ -173,7 +174,7 @@ templ dataContent(page core.Page, d pageData) {
 		} else if d.Mode == "sql" {
 			<section class="ts-section">
 				<h1>SQL console</h1>
-				<p class="ts-meta">Run a read-only query against the selected database.</p>
+				<p class="ts-meta">Check read-only SQL and run queries against the selected database.</p>
 				@databaseSelection(d, "sql")
 				<form method="get" action="/data">
 					<input type="hidden" name="view" value="sql"/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><input type="hidden" name="collection" value={ d.Collection }/><label class="ts-label" for="saved-query">Load a saved query</label>
@@ -185,7 +186,41 @@ templ dataContent(page core.Page, d pageData) {
 					</select><button class="ts-btn ts-btn-secondary" type="submit">Load</button>
 				</form>
 				if d.DatabaseID != "" {
-					<form method="post" action="/api/v1/dashboard/data/sql" class="ts-form ts-data-form"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><label class="ts-label" for="sql">SQL</label><textarea class="ts-input" id="sql" name="sql" rows="6">{ d.SQL }</textarea><button class="ts-btn ts-btn-primary" type="submit">Run query</button></form>
+					<form method="post" action="/api/v1/dashboard/data/sql/check" class="ts-form ts-data-form">
+						<input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><input type="hidden" name="collection" value={ d.Collection }/><label class="ts-label" for="sql-check">SQL</label><textarea class="ts-input" id="sql-check" name="sql" rows="6">{ d.SQL }</textarea><button class="ts-btn ts-btn-secondary" type="submit">Check SQL</button>
+					</form>
+					if d.SQLAnalysis.OK {
+						<section class="ts-card ts-section"><h2>SQL check</h2><p role="status">Read-only statement accepted. { d.SQLAnalysis.ParameterSlots } parameter slot(s).</p>
+							if d.SQLAnalysis.HasLimit {
+								<p>Bounded with LIMIT.</p>
+							} else {
+								<p>Add LIMIT to bound results.</p>
+							}
+							if d.SQLChecked {
+								<p role="status">Server check passed.</p>
+							}
+							if d.SQLAnalysis.Collection != "" {
+								<p>Statement collection: { d.SQLAnalysis.Collection }</p>
+							}
+							<p>EXPLAIN statement preview:</p><pre class="ts-snippet-body">{ d.SQLAnalysis.Explain }</pre>
+							<h3>Advisory index suggestions</h3>
+							if len(d.SQLAnalysis.Suggestions) == 0 {
+								<p>No index hints found in WHERE or ORDER BY.</p>
+							} else {
+								<ul>
+									for _, suggestion := range d.SQLAnalysis.Suggestions {
+										<li><strong>{ suggestion.Field }</strong>: { suggestion.Reason }</li>
+									}
+								</ul>
+							}
+							</section>
+					} else {
+						<p class="ts-alert ts-alert-danger" role="alert">{ d.SQLAnalysis.Error }</p>
+					}
+					if d.Demo {
+						<p class="ts-meta">Demo execution supports SELECT * FROM collection [LIMIT n]. The SQL check does not run the statement.</p>
+					}
+					<form method="post" action="/api/v1/dashboard/data/sql" class="ts-form ts-data-form"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><label class="ts-label" for="sql">Run SQL</label><textarea class="ts-input" id="sql" name="sql" rows="6">{ d.SQL }</textarea><button class="ts-btn ts-btn-primary" type="submit">Run query</button></form>
 				}
 				if d.SQLResult != "" {
 					<section class="ts-card ts-section" aria-labelledby="sql-result-title"><h2 id="sql-result-title">Query result</h2><pre class="ts-snippet-body">{ d.SQLResult }</pre></section>
@@ -222,6 +257,29 @@ templ dataContent(page core.Page, d pageData) {
 					}
 					if d.CanWrite && d.DatabaseID != "" {
 						<form method="post" action="/api/v1/dashboard/indexes" class="ts-stack-12"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><input type="hidden" name="collection" value={ d.Collection }/><label class="ts-label" for="index-field">Field</label><input class="ts-input" id="index-field" name="field" required/><button class="ts-btn ts-btn-primary" type="submit">Create index</button></form>
+					}
+				</section>
+			} else if d.IndexTab == "recommendations" && d.Demo {
+				<section class="ts-card ts-section"><h2>Recommendations</h2><p class="ts-meta">Sample recommendations for the in-memory demo. Applying one starts a simulated index build.</p>
+					if len(d.Recommendations) == 0 {
+						<p role="status">No demo recommendations for this collection.</p>
+					} else {
+						<ul>
+							for _, recommendation := range d.Recommendations {
+								<li><strong>{ strings.Join(recommendation.Fields, ", ") }</strong> — { recommendation.Reason } <span class="ts-badge">{ recommendation.State }</span>
+									if recommendation.State == "recommended" && d.CanManage {
+										<form method="post" action="/api/v1/dashboard/indexes/recommendations/apply"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="databaseId" value={ d.DatabaseID }/><input type="hidden" name="collection" value={ d.Collection }/><input type="hidden" name="recommendationId" value={ recommendation.ID }/><button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Apply</button></form>
+									}
+								</li>
+							}
+						</ul>
+					}
+					if len(d.IndexBuilds) > 0 {
+						<h3>Demo index builds</h3><ul>
+							for _, build := range d.IndexBuilds {
+								<li>{ build.Field }: { build.Status }</li>
+							}
+						</ul>
 					}
 				</section>
 			} else {

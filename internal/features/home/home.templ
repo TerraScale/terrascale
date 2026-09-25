@@ -1,6 +1,10 @@
 package home
 
-import "fmt"
+import (
+	"fmt"
+
+	"terrascale.tech/dashboard/internal/ui/icons"
+)
 
 templ homeView(data pageData) {
 	<main class="ts-page ts-home">
@@ -109,7 +113,7 @@ templ homeView(data pageData) {
 						<div class="ts-chart-body">
 							<div class="ts-chart ts-chart-empty" role="status" aria-label="No timestamped workload chart samples are available">
 								<div class="ts-empty">
-									<span class="ts-empty-icon" aria-hidden="true">⌕</span>
+									<span class="ts-empty-icon" aria-hidden="true">@icons.Activity(18)</span>
 									<span class="ts-empty-title">No time-series activity samples are available yet.</span>
 									<span class="ts-meta">Persisted audit events are counted above and available in the <a href="/audit">audit log</a>.</span>
 								</div>

@@ -31,6 +31,11 @@ type databaseRow struct {
 	Documents int
 }
 
+type databaseOption struct {
+	ID   string
+	Name string
+}
+
 type projectRow struct {
 	ID            string
 	Name          string
@@ -42,15 +47,39 @@ type projectRow struct {
 }
 
 type invoiceRow struct {
-	Number    string
-	Status    string
-	Amount    string
-	CreatedAt time.Time
+	Number      string
+	Status      string
+	Amount      string
+	CreatedAt   time.Time
+	PeriodStart time.Time
+	PeriodEnd   time.Time
+	HostedURL   string
+	PDFURL      string
 }
+
+type invoiceFilterOption struct {
+	Value string
+	Label string
+}
+
+type invoicePage struct {
+	Rows          []invoiceRow
+	Status        string
+	Issued        string
+	StatusOptions []invoiceFilterOption
+	IssuedOptions []invoiceFilterOption
+	Page          int
+	PageCount     int
+	Total         int
+	First         int
+}
+
+const invoicePageSize = 10
 
 type pageData struct {
 	Tab                  string
 	Projects             []projectRow
+	DatabaseOptions      []databaseOption
 	Databases            []databaseRow
 	SelectedProject      string
 	SelectedDatabase     string
@@ -64,6 +93,7 @@ type pageData struct {
 	BillingStatus        string
 	BillingRenewal       time.Time
 	Invoices             []invoiceRow
+	InvoicePage          invoicePage
 	Requests             int64
 	Reads                int64
 	Writes               int64
@@ -73,6 +103,7 @@ type pageData struct {
 	UsageAvailable       bool
 	Saved                string
 	CanManage            bool
+	CanManageBilling     bool
 	InvoiceCount         int
 	ActiveDatabases      int
 	RegionCount          int
@@ -109,6 +140,15 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			databaseFilter = ""
 		}
 		data := buildPage(r.Context(), deps, p, org, project, tab, databaseFilter)
+		now := time.Now().UTC()
+		data.InvoicePage = makeInvoicePage(
+			data.Invoices,
+			r.URL.Query().Get("status"),
+			r.URL.Query().Get("issued"),
+			r.URL.Query().Get("page"),
+			now,
+		)
+		data.CanManageBilling = org.OwnerUserID == p.UserID
 		data.Saved = r.URL.Query().Get("saved")
 		page := core.Page{
 			Layout: "shell", Title: "Usage", Principal: p,
@@ -211,6 +251,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 
 func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.Organization, project core.Project, tab, databaseFilter string) pageData {
 	projects := make([]projectRow, 0, len(org.Projects))
+	databaseOptions := make([]databaseOption, 0, len(project.Databases))
 	selectedDatabases := make([]databaseRow, 0, len(project.Databases))
 	regions := make(map[string]struct{})
 	for _, item := range org.Projects {
@@ -226,6 +267,7 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 		if database.Region != "" {
 			regions[database.Region] = struct{}{}
 		}
+		databaseOptions = append(databaseOptions, databaseOption{ID: database.ID, Name: database.Name})
 		if databaseFilter != "" && database.ID != databaseFilter {
 			continue
 		}
@@ -236,6 +278,7 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 		})
 	}
 	slices.SortFunc(projects, func(a, b projectRow) int { return strings.Compare(a.Name, b.Name) })
+	slices.SortFunc(databaseOptions, func(a, b databaseOption) int { return strings.Compare(a.Name, b.Name) })
 	slices.SortFunc(selectedDatabases, func(a, b databaseRow) int { return strings.Compare(a.Name, b.Name) })
 	planName, storageAllowance, requestAllowance := "No billing plan", "Not configured", "Not configured"
 	if plan, ok := deps.Store.Plan(org.PlanID); ok {
@@ -252,12 +295,13 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 		invoices = append(invoices, invoiceRow{
 			Number: invoice.Number, Status: invoice.Status,
 			Amount:    fmt.Sprintf("%s %d.%02d", strings.ToUpper(invoice.Currency), invoice.AmountCents/100, invoice.AmountCents%100),
-			CreatedAt: invoice.CreatedAt,
+			CreatedAt: invoice.CreatedAt, PeriodStart: invoice.PeriodStart, PeriodEnd: invoice.PeriodEnd,
+			HostedURL: httpsInvoiceURL(invoice.HostedURL), PDFURL: httpsInvoiceURL(invoice.PDFURL),
 		})
 	}
-	slices.SortFunc(invoices, func(a, b invoiceRow) int { return b.CreatedAt.Compare(a.CreatedAt) })
+	slices.SortStableFunc(invoices, func(a, b invoiceRow) int { return b.CreatedAt.Compare(a.CreatedAt) })
 	data := pageData{
-		Tab: tab, Projects: projects, Databases: selectedDatabases, SelectedProject: project.ID,
+		Tab: tab, Projects: projects, DatabaseOptions: databaseOptions, Databases: selectedDatabases, SelectedProject: project.ID,
 		SelectedDatabase: databaseFilter, OrganizationCap: dollars(org.Billing.SpendCapCents),
 		PaidExcess: org.Billing.PaidExcessEnabled, EffectiveCap: effectiveCap(org.Billing.SpendCapCents, project.SpendCapCents),
 		PlanName: planName, PlanStorageAllowance: storageAllowance, PlanRequestAllowance: requestAllowance,
@@ -269,7 +313,7 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 	if deps.Demo {
 		data.UsageSource = "Sample dashboard data; these values are not provider-metered usage."
 		data.PlanUsageNote = "Demo mode has no measured usage feed, so allowance utilization is unavailable."
-		data.Writes = int64(localDocuments(project))
+		data.Writes = int64(localDocuments(project, databaseFilter))
 		data.UsageAvailable = true
 		return data
 	}
@@ -330,6 +374,122 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 	return data
 }
 
+func makeInvoicePage(invoices []invoiceRow, rawStatus, rawIssued, rawPage string, now time.Time) invoicePage {
+	statusOptions := []invoiceFilterOption{
+		{Value: "paid", Label: "Paid"},
+		{Value: "open", Label: "Open"},
+		{Value: "void", Label: "Void"},
+	}
+	status := ""
+	for _, option := range statusOptions {
+		if option.Value == rawStatus {
+			status = rawStatus
+			break
+		}
+	}
+
+	issuedOptions := invoiceIssuedOptions(now)
+	issued := ""
+	for _, option := range issuedOptions {
+		if option.Value == rawIssued {
+			issued = rawIssued
+			break
+		}
+	}
+
+	cutoff := time.Time{}
+	issuedYear := 0
+	switch issued {
+	case "3m":
+		cutoff = now.AddDate(0, -3, 0)
+	case "6m":
+		cutoff = now.AddDate(0, -6, 0)
+	case "12m":
+		cutoff = now.AddDate(0, -12, 0)
+	case "":
+	default:
+		issuedYear, _ = strconv.Atoi(issued)
+	}
+
+	filtered := slices.DeleteFunc(slices.Clone(invoices), func(invoice invoiceRow) bool {
+		if status != "" && invoice.Status != status {
+			return true
+		}
+		if issued == "" {
+			return false
+		}
+		if issuedYear != 0 {
+			return invoice.CreatedAt.UTC().Year() != issuedYear
+		}
+		return invoice.CreatedAt.Before(cutoff)
+	})
+	slices.SortStableFunc(filtered, func(a, b invoiceRow) int { return b.CreatedAt.Compare(a.CreatedAt) })
+
+	pageCount := max(1, (len(filtered)+invoicePageSize-1)/invoicePageSize)
+	page, err := strconv.Atoi(rawPage)
+	if err != nil || page < 1 {
+		page = 1
+	}
+	page = min(page, pageCount)
+	start := (page - 1) * invoicePageSize
+	end := min(start+invoicePageSize, len(filtered))
+	first := 0
+	if len(filtered) > 0 {
+		first = start + 1
+	}
+	return invoicePage{
+		Rows: filtered[start:end], Status: status, Issued: issued,
+		StatusOptions: statusOptions, IssuedOptions: issuedOptions,
+		Page: page, PageCount: pageCount, Total: len(filtered), First: first,
+	}
+}
+
+func invoiceIssuedOptions(now time.Time) []invoiceFilterOption {
+	return []invoiceFilterOption{
+		{Value: "3m", Label: "Last 3 months"},
+		{Value: "6m", Label: "Last 6 months"},
+		{Value: "12m", Label: "Last 12 months"},
+		{Value: strconv.Itoa(now.Year()), Label: strconv.Itoa(now.Year())},
+		{Value: strconv.Itoa(now.Year() - 1), Label: strconv.Itoa(now.Year() - 1)},
+	}
+}
+
+func (page invoicePage) Href(project string, number int) string {
+	query := url.Values{"tab": {"billing"}}
+	if project != "" {
+		query.Set("project", project)
+	}
+	if page.Status != "" {
+		query.Set("status", page.Status)
+	}
+	if page.Issued != "" {
+		query.Set("issued", page.Issued)
+	}
+	if number > 1 {
+		query.Set("page", strconv.Itoa(number))
+	}
+	return "/usage?" + query.Encode()
+}
+
+func billingTabHref(project string) string {
+	return (invoicePage{}).Href(project, 1)
+}
+
+func invoiceDate(value time.Time) string {
+	if value.IsZero() {
+		return "-"
+	}
+	return value.UTC().Format("Jan 2, 2006")
+}
+
+func httpsInvoiceURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
+		return ""
+	}
+	return parsed.String()
+}
+
 func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Principal, core.Account, bool) {
 	if deps.Sessions == nil {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
@@ -364,9 +524,12 @@ func documentCount(database core.Database) int {
 	return count
 }
 
-func localDocuments(project core.Project) int {
+func localDocuments(project core.Project, databaseFilter string) int {
 	count := 0
 	for _, database := range project.Databases {
+		if databaseFilter != "" && database.ID != databaseFilter {
+			continue
+		}
 		count += documentCount(database)
 	}
 	return count
