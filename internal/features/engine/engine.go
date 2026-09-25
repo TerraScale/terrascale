@@ -147,3 +147,14 @@ func writeError(w http.ResponseWriter, err error) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
 }
+
+// flagURL returns the flagcdn image for an ISO 3166-1 alpha-2 country code,
+// or "" when the catalog country is not a two-letter code.
+func flagURL(country string) string {
+	if len(country) != 2 || !isLetter(country[0]) || !isLetter(country[1]) {
+		return ""
+	}
+	return "https://flagcdn.com/" + strings.ToLower(country) + ".svg"
+}
+
+func isLetter(c byte) bool { return 'a' <= c|0x20 && c|0x20 <= 'z' }

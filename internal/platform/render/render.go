@@ -72,7 +72,7 @@ func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) er
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'nonce-"+page.Nonce+"'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'nonce-"+page.Nonce+"'; style-src 'self'; img-src 'self' data: https://flagcdn.com; font-src 'self'; connect-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'")
 	_, err := w.Write(output.Bytes())
 	return err
 }
