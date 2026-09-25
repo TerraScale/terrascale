@@ -25,7 +25,7 @@ templ organizationPageView(page core.Page, data organizationPageData) {
 			@ui.Stat("Invitations", fmt.Sprint(data.InvitationCount), "Current and historical invitations")
 			@ui.Stat("Created", organizationDay(data.Organization.CreatedAt), "Organization record")
 		}
-		@ui.Card(ui.CardProps{ID: "projects", Title: "Projects", Description: organizationKindLabel(data.Organization.Kind) + " · Projects returned by the TerraScale Dashboard API", Flush: true}) {
+		@ui.Card(ui.CardProps{ID: "projects", Title: "Projects", Description: organizationKindLabel(data.Organization.Kind) + " · Projects returned by the TerraScale Dashboard API", Actions: createProjectAction(data), Flush: true}) {
 			if len(data.Projects) == 0 {
 				@ui.Empty("No projects returned", "The API did not return projects for this organization.")
 			} else {
@@ -40,22 +40,23 @@ templ organizationPageView(page core.Page, data organizationPageData) {
 					</table>
 				</div>
 			}
-			if data.CanProvision {
-				<details id="create-project" class="ts-disclosure ts-org-create-project" open?={ data.OpenCreateProject }>
-					<summary class="ts-btn ts-btn-primary">@icons.Plus(16)<span>Create project</span></summary>
-					<form method="post" action="/api/v1/dashboard/organization/projects" class="ts-form">
-						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-						@ui.Field(ui.FieldProps{ID: "project-name", Label: "New project"}) {
-							<input class="ts-input" id="project-name" name="name" placeholder="Analytics" maxlength="128" required/>
-						}
-						@regionPlacement(placement{
-							RegionsID: "project-regions", PrimaryID: "project-region", BackupID: "project-backup",
-							Regions: allSelected(data.Regions), All: data.Regions, RequireRegions: true,
-							Hint: "Databases and authentication inherit this placement.",
-						})
-						<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Create project</button></div>
-					</form>
-				</details>
+		}
+		if data.CanProvision {
+			@ui.Dialog(ui.DialogProps{ID: "create-project", Title: "Create project", Description: "Name the project and choose where its data lives.", Open: data.OpenCreateProject, Wide: true}) {
+				<form method="post" action="/api/v1/dashboard/organization/projects" class="ts-form">
+					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+					@ui.Field(ui.FieldProps{ID: "project-name", Label: "Project name"}) {
+						<input class="ts-input" id="project-name" name="name" placeholder="Analytics" maxlength="128" required/>
+					}
+					@regionPlacement(placement{
+						RegionsID: "project-regions", PrimaryID: "project-region", BackupID: "project-backup",
+						Regions: allSelected(data.Regions), All: data.Regions, RequireRegions: true,
+						Hint: "Databases and authentication inherit this placement.",
+					})
+					@ui.DialogActions("create-project") {
+						<button class="ts-btn ts-btn-primary" type="submit">Create project</button>
+					}
+				</form>
 			}
 		}
 		<div class="ts-split">
@@ -78,16 +79,18 @@ templ organizationPageView(page core.Page, data organizationPageData) {
 				</dl>
 				@ui.Alert("success", "", "Organization access is enforced by the API session and project context.")
 				if data.CanManage {
-					<details class="ts-disclosure">
-						<summary class="ts-btn ts-btn-secondary ts-btn-sm">@icons.Pencil(14)<span>Edit name</span></summary>
+					@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "rename-organization", Label: "Edit name", Icon: icons.Pencil(14), Small: true})
+					@ui.Dialog(ui.DialogProps{ID: "rename-organization", Title: "Rename organization"}) {
 						<form method="post" action="/api/v1/dashboard/organization/rename" class="ts-form">
 							<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 							@ui.Field(ui.FieldProps{ID: "organizationName", Label: "Organization name"}) {
 								<input class="ts-input" id="organizationName" name="name" value={ data.Organization.Name } required/>
 							}
-							<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Save name</button></div>
+							@ui.DialogActions("rename-organization") {
+								<button class="ts-btn ts-btn-primary" type="submit">Save name</button>
+							}
 						</form>
-					</details>
+					}
 				}
 			}
 			<div class="ts-stack">
@@ -143,17 +146,20 @@ templ organizationOwnership(page core.Page, data organizationPageData) {
 			<p class="ts-meta">Invite another member before transferring ownership.</p>
 		}
 		if data.Organization.Kind != "personal" {
-			<details class="ts-disclosure ts-card-section">
-				<summary class="ts-btn ts-btn-danger ts-btn-sm">@icons.Trash2(14)<span>Organization deletion</span></summary>
+			<div class="ts-card-section">
+				@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "delete-organization", Label: "Organization deletion", Icon: icons.Trash2(14), Variant: "danger", Small: true})
+			</div>
+			@ui.Dialog(ui.DialogProps{ID: "delete-organization", Title: "Delete organization", Description: "Deletion preserves linked projects and data until the operation completes."}) {
 				<form method="post" action="/api/v1/dashboard/organization/deletion" class="ts-form">
-					<p class="ts-meta">Deletion preserves linked projects and data until the operation completes.</p>
 					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 					@ui.Field(ui.FieldProps{ID: "deletion-confirmation", Label: "Enter “" + data.Organization.Name + "” to confirm"}) {
 						<input class="ts-input" id="deletion-confirmation" name="confirmation" autocomplete="off" required disabled?={ data.Organization.DeletionRequested }/>
 					}
-					<div class="ts-form-actions"><button class="ts-btn ts-btn-danger ts-btn-sm" type="submit" disabled?={ data.Organization.DeletionRequested }>{ deletionActionLabel(data.Organization.DeletionRequested) }</button></div>
+					@ui.DialogActions("delete-organization") {
+						<button class="ts-btn ts-btn-danger" type="submit" disabled?={ data.Organization.DeletionRequested }>{ deletionActionLabel(data.Organization.DeletionRequested) }</button>
+					}
 				</form>
-			</details>
+			}
 		}
 	} else if data.CanConfirmOwnership {
 		<h3 class="ts-section-title">Confirm ownership transfer</h3>
@@ -194,25 +200,33 @@ templ organizationProjectRow(page core.Page, data organizationPageData, project 
 					</form>
 				}
 				if data.CanManage {
-						<details { ui.MenuBehavior... } class="ts-menu ts-rename">
-							<summary class="ts-btn ts-btn-ghost ts-btn-sm">@icons.Pencil(14)<span>Rename</span></summary>
-							<form method="post" action={ "/api/v1/dashboard/organization/projects/" + project.ID + "/rename" } class="ts-menu-panel ts-form ts-org-rename-panel">
-								<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-								@ui.Field(ui.FieldProps{ID: "rename-" + project.ID, Label: "Rename project"}) {
-									<input class="ts-input" id={ "rename-" + project.ID } name="name" value={ project.Name } required/>
-								}
-								@regionPlacement(placement{
-									RegionsID: "project-regions-" + project.ID, PrimaryID: "project-region-" + project.ID, BackupID: "project-backup-" + project.ID,
-									Regions: project.RegionOptions, All: data.Regions, Primary: project.Region, Backup: project.BackupRegion,
-									Hint: "Placement changes are applied asynchronously to every project resource.",
-								})
-								<div class="ts-form-actions"><button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Save project</button></div>
-							</form>
-						</details>
+					@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "rename-project-" + project.ID, Label: "Rename", Icon: icons.Pencil(14), Variant: "ghost", Small: true})
+					@ui.Dialog(ui.DialogProps{ID: "rename-project-" + project.ID, Title: "Edit " + project.Name, Description: "Rename the project or change where its resources run.", Wide: true}) {
+						<form method="post" action={ "/api/v1/dashboard/organization/projects/" + project.ID + "/rename" } class="ts-form">
+							<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+							@ui.Field(ui.FieldProps{ID: "rename-" + project.ID, Label: "Project name"}) {
+								<input class="ts-input" id={ "rename-" + project.ID } name="name" value={ project.Name } required/>
+							}
+							@regionPlacement(placement{
+								RegionsID: "project-regions-" + project.ID, PrimaryID: "project-region-" + project.ID, BackupID: "project-backup-" + project.ID,
+								Regions: project.RegionOptions, All: data.Regions, Primary: project.Region, Backup: project.BackupRegion,
+								Hint: "Placement changes are applied asynchronously to every project resource.",
+							})
+							@ui.DialogActions("rename-project-" + project.ID) {
+								<button class="ts-btn ts-btn-primary" type="submit">Save project</button>
+							}
+						</form>
+					}
 				}
 			</div>
 		</td>
 	</tr>
+}
+
+templ createProjectAction(data organizationPageData) {
+	if data.CanProvision {
+		@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-project", Label: "Create project", Icon: icons.Plus(16), Variant: "primary", Small: true})
+	}
 }
 
 // placement configures the shared project-region fieldset used by project

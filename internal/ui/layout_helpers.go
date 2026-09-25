@@ -22,7 +22,6 @@ type navDestination struct {
 var navDestinations = map[string]navDestination{
 	"/":                    {icons.LayoutDashboard, "violet"},
 	"/databases":           {icons.Database, "blue"},
-	"/data":                {icons.Table, "cyan"},
 	"/api-keys":            {icons.KeyRound, "amber"},
 	"/access":              {icons.Users, "pink"},
 	"/auth":                {icons.Fingerprint, "emerald"},

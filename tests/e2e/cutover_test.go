@@ -3,7 +3,6 @@ package e2e
 import (
 	"fmt"
 	"net/url"
-	"path"
 	"regexp"
 	"strings"
 	"testing"
@@ -147,12 +146,12 @@ func TestCutoverSQLCheckExplainsQueryAndCollectionIndexIsCreated(t *testing.T) {
 	selectOption(t, database.Locator(`[name="region"]`), "GRU")
 	submitAndExpect(t, page, "/api/v1/dashboard/databases", 303, byRole(database, *playwright.AriaRoleButton, "Create database").Click)
 	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
-	databaseID := url.QueryEscape(path.Base(currentPath(t, page)))
+	databasePath := currentPath(t, page)
 
-	goToOK(t, page, "/data?view=sql&databaseId="+databaseID+"&collection=orders")
-	check := page.Locator(`form[action="/api/v1/dashboard/data/sql/check"]`)
-	fill(t, check.Locator(`[name="sql"]`), "SELECT * FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 10")
-	submitAndExpect(t, page, "/api/v1/dashboard/data/sql/check", 200, byRole(check, *playwright.AriaRoleButton, "Check SQL").Click)
+	goToOK(t, page, databasePath+"/sql?collection=orders")
+	query := page.Locator(`form[action="/api/v1/dashboard/data/sql"]`)
+	fill(t, query.Locator(`[name="sql"]`), "SELECT * FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 10")
+	submitAndExpect(t, page, "/api/v1/dashboard/data/sql/check", 200, byRole(query, *playwright.AriaRoleButton, "Check SQL").Click)
 	current, err := url.Parse(page.URL())
 	must(t, err)
 	if current.Query().Has("sql") {
@@ -163,7 +162,7 @@ func TestCutoverSQLCheckExplainsQueryAndCollectionIndexIsCreated(t *testing.T) {
 	visible(t, page.GetByText("Statement collection: orders"))
 	visible(t, page.GetByText("customer_id", playwright.PageGetByTextOptions{Exact: new(true)}))
 
-	goToOK(t, page, "/indexes?databaseId="+databaseID+"&collection=orders")
+	goToOK(t, page, databasePath+"/indexes?collection=orders")
 	createIndex := page.Locator(`form[action="/api/v1/dashboard/indexes"]`)
 	fill(t, createIndex.Locator(`[name="field"]`), "customer_id")
 	submitAndExpect(t, page, "/api/v1/dashboard/indexes", 303, byRole(createIndex, *playwright.AriaRoleButton, "Create index").Click)
@@ -177,9 +176,9 @@ func TestCutoverSampleIndexRecommendationRecordsDemoBuild(t *testing.T) {
 	goToOK(t, page, "/databases")
 	databaseLink := pageByRole(page, *playwright.AriaRoleLink, "core-primary")
 	visible(t, databaseLink)
-	databaseID := url.QueryEscape(path.Base(linkPath(t, page, databaseLink)))
+	databasePath := linkPath(t, page, databaseLink)
 
-	goToOK(t, page, "/indexes?tab=recommendations&databaseId="+databaseID+"&collection=orders")
+	goToOK(t, page, databasePath+"/indexes?view=recommendations&collection=orders")
 	recommendation := page.Locator(`form[action="/api/v1/dashboard/indexes/recommendations/apply"]`).First()
 	count, err := recommendation.Count()
 	must(t, err)
@@ -190,7 +189,7 @@ func TestCutoverSampleIndexRecommendationRecordsDemoBuild(t *testing.T) {
 	}
 	builds := pageByRole(page, *playwright.AriaRoleHeading, "Demo index builds").Locator("xpath=following-sibling::ul[1]")
 	must(t, expect.Locator(builds).ToContainText("total: building"))
-	goToOK(t, page, "/indexes?databaseId="+databaseID+"&collection=orders")
+	goToOK(t, page, databasePath+"/indexes?collection=orders")
 	must(t, expect.Locator(page.Locator("#collection-indexes ul")).ToContainText("total"))
 }
 
@@ -321,7 +320,7 @@ func TestCutoverMarioMigrationProgressIsScopedToOrders(t *testing.T) {
 	t.Parallel()
 	page := newPage(t)
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
-	const migration = "/indexes?tab=migration&databaseId=db_01JC9Q8Y5N7P9R3T5V7X9Z2AC&collection="
+	const migration = "/databases/db_01JC9Q8Y5N7P9R3T5V7X9Z2AC/indexes?view=migration&collection="
 	goToOK(t, page, migration+"orders")
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Migration progress"))
 	visible(t, page.GetByText("Static sample from the Mario in-memory demo", playwright.PageGetByTextOptions{Exact: new(false)}))
@@ -363,20 +362,43 @@ func TestCutoverSeededDatabaseDetailTabsRetainControls(t *testing.T) {
 	goToOK(t, page, "/databases")
 	databasePath := linkPath(t, page, pageByRole(page, *playwright.AriaRoleLink, "core-primary"))
 	goToOK(t, page, databasePath)
-	tabs := pageByRole(page, *playwright.AriaRoleNavigation, "Database detail sections")
-	must(t, expect.Locator(tabs.GetByRole(*playwright.AriaRoleLink)).ToHaveCount(5))
+	tabs := pageByRole(page, *playwright.AriaRoleNavigation, "Database sections")
+	must(t, expect.Locator(tabs.GetByRole(*playwright.AriaRoleLink)).ToHaveCount(8))
 	tab := func(name string) playwright.Locator { return byRole(tabs, *playwright.AriaRoleLink, name) }
 	current := func(name string) {
 		t.Helper()
 		must(t, expect.Locator(tab(name)).ToHaveAttribute("aria-current", "page"))
 	}
 	current("Overview")
-	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Placement and latency"))
-
-	click(t, tab("Placement"))
-	current("Placement")
+	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "core-primary"))
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Placement and latency"))
 	visible(t, page.GetByText("0 ms · demo estimate"))
+
+	click(t, tab("Documents"))
+	current("Documents")
+	fill(t, page.Locator("#collection"), "orders")
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "Open"))
+	documents := page.Locator("table.ts-data-documents tbody tr")
+	must(t, expect.Locator(documents).ToHaveCount(3))
+	click(t, byRole(documents.First(), *playwright.AriaRoleLink, "Edit"))
+	editor := pageByRole(page, *playwright.AriaRoleDialog, "ord_1001")
+	visible(t, editor)
+	must(t, expect.Locator(editor.Locator("#document-json")).ToHaveValue(regexp.MustCompile(`"cus_1001"`)))
+	must(t, page.Keyboard().Press("Escape"))
+	must(t, expect.Locator(editor).ToBeHidden())
+
+	click(t, tab("SQL"))
+	current("SQL")
+	must(t, expect.Locator(page.Locator("#sql")).ToHaveValue("SELECT * FROM orders LIMIT 20"))
+	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Saved queries"))
+
+	click(t, tab("Schema"))
+	current("Schema")
+	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Collection schema"))
+
+	click(t, tab("Indexes"))
+	current("Indexes")
+	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Collection indexes"))
 
 	click(t, tab("Backups"))
 	current("Backups")
@@ -392,7 +414,7 @@ func TestCutoverSeededDatabaseDetailTabsRetainControls(t *testing.T) {
 	click(t, tab("Branches"))
 	current("Branches")
 	branchName := uniqueName("cutover-detail")
-	click(t, page.GetByText("Choose a branch name"))
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "Choose a branch name"))
 	branch := page.Locator(`form[action="/api/v1/dashboard/databases/branch"]`).Filter(playwright.LocatorFilterOptions{
 		Has: page.Locator(`input[name="name"]`),
 	})

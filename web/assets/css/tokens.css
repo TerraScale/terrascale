@@ -73,7 +73,9 @@
   /* Depth. */
   /* Overlays separate by a hairline; the faint drop only lifts them off content. */
   --ts-shadow-overlay: 0 0 0 1px var(--ts-line-strong), 0 12px 24px -16px rgb(0 0 0 / 0.6);
-  --ts-scrim: rgb(5 6 10 / 0.72);
+  --ts-scrim: rgb(5 6 10 / 0.6);
+  /* Translucent overlay fill, blurred over the content behind it. */
+  --ts-glass: rgb(17 20 28 / 0.72);
 
   /* Motion. */
   --ts-fast: 120ms;

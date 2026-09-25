@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"terrascale.tech/dashboard/internal/ui"
-	"terrascale.tech/dashboard/internal/ui/aria"
 	"terrascale.tech/dashboard/internal/ui/charts"
 	"terrascale.tech/dashboard/internal/ui/icons"
 )
@@ -53,14 +52,15 @@ templ overviewView(data pageData) {
 
 templ activityRange(data pageData) {
 	<span class="ts-sr-only" id="home-range-label">Activity range</span>
-		<details { ui.MenuBehavior... } class="ts-menu ts-menu-end">
-			<summary class="ts-select ts-input-sm" aria-labelledby="home-range-label home-range-value"><span id="home-range-value">{ data.ActivityRange }</span></summary>
-			<div class="ts-menu-panel">
-				for _, r := range []string{"24h", "7d", "30d"} {
-					<a class="ts-menu-item" aria-current={ aria.CurrentPage(data.ActivityRange == r) } href={ templ.SafeURL("/?range=" + r) }>{ r }</a>
-				}
-			</div>
-		</details>
+	@ui.Dropdown(ui.DropdownProps{End: true, LabelledBy: "home-range-label home-range-value", Trigger: rangeTrigger(data.ActivityRange), TriggerClass: "ts-select ts-input-sm"}) {
+		for _, r := range []string{"24h", "7d", "30d"} {
+			@ui.MenuItem(ui.MenuItemProps{Href: "/?range=" + r, Label: r, Current: data.ActivityRange == r})
+		}
+	}
+}
+
+templ rangeTrigger(activityRange string) {
+	<span id="home-range-value">{ activityRange }</span>
 }
 
 templ gettingStartedStep(number int, title, description, href, cta string, done bool) {

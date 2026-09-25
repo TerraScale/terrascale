@@ -23,7 +23,7 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 	proPlan := page.Locator("article").Filter(playwright.LocatorFilterOptions{
 		Has: pageByRole(page, *playwright.AriaRoleHeading, "Pro", true),
 	})
-	click(t, byRole(proPlan, *playwright.AriaRoleButton, "Choose monthly"))
+	click(t, byRole(proPlan, *playwright.AriaRoleButton, "Upgrade to Pro"))
 	must(t, page.WaitForURL(regexp.MustCompile(`/checkout/cs_local_`)))
 
 	status := page.GetByRole(*playwright.AriaRoleStatus)
@@ -40,6 +40,12 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 	for _, text := range []string{"Pro", "Active", "On file"} {
 		must(t, expect.Locator(currentPlan).ToContainText(text))
 	}
+	must(t, expect.Locator(byRole(proPlan, *playwright.AriaRoleButton, "Current plan")).ToBeDisabled())
+
+	click(t, byRole(pageByRole(page, *playwright.AriaRoleNavigation, "Billing interval"), *playwright.AriaRoleLink, "Annual"))
+	waitForPath(t, page, func(u *url.URL) bool { return u.Query().Get("interval") == "annual" })
+	must(t, expect.Locator(proPlan).ToContainText("billed annually"))
+	visible(t, byRole(proPlan, *playwright.AriaRoleButton, "Switch to annual billing"))
 
 	click(t, pageByRole(page, *playwright.AriaRoleLink, "Manage billing"))
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Local billing portal"))

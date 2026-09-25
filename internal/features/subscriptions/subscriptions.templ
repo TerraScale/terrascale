@@ -1,90 +1,108 @@
 package subscriptions
 
-import "terrascale.tech/dashboard/internal/ui"
+import (
+	"fmt"
+
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
+)
 
 templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
-	<main class="ts-page">
+	<main class="ts-page ts-billing">
 		@ui.PageHeader("Plans and billing") {
 			if data.Demo {
 				@ui.Badge("info", "Demo billing")
 			}
+			<a class="ts-btn ts-btn-secondary" href="/billing/portal">@icons.ExternalLink(15)<span>Manage billing</span></a>
 		}
 		if data.PaymentNotice != "" {
 			@ui.Alert("info", "", data.PaymentNotice)
 		}
-		@ui.Card(ui.CardProps{ID: "billing-summary", Title: "Current plan", Description: "Your plan and billing status for this organization.", Actions: manageBilling()}) {
-			<dl class="ts-kv">
-				<div>
-					<dt>Plan</dt>
-					<dd class="ts-strong">
-						if data.PlanName != "" {
-							{ data.PlanName }
-						} else {
-							Free
-						}
-					</dd>
+		@ui.Card(ui.CardProps{ID: "billing-summary", Title: "Current plan", Description: data.OrganizationName + " is billed on this plan."}) {
+			<div class="ts-billing-current">
+				<div class="ts-billing-plan">
+					<span class="ts-billing-plan-icon" aria-hidden="true">@icons.CreditCard(20)</span>
+					<span class="ts-billing-plan-name">{ data.PlanName }</span>
+					@ui.StatusBadge(data.StatusTone, data.BillingStatus)
 				</div>
-				<div><dt>Status</dt><dd>{ data.BillingStatus }</dd></div>
-				if data.BillingInterval != "" {
-					<div><dt>Interval</dt><dd>{ data.BillingInterval }</dd></div>
-				}
-				<div><dt>Renewal</dt><dd>{ data.Renewal }</dd></div>
-				<div>
-					<dt>Payment method</dt>
-					<dd>
-						if data.PaymentValidated {
-							On file
-						} else {
-							Not set
-						}
-					</dd>
-				</div>
-			</dl>
+				<dl class="ts-billing-facts">
+					<div><dt>Billing interval</dt><dd>{ data.BillingInterval }</dd></div>
+					<div><dt>Renewal</dt><dd>{ data.Renewal }</dd></div>
+					<div>
+						<dt>Payment method</dt>
+						<dd>
+							if data.PaymentValidated {
+								On file
+							} else {
+								Not set
+							}
+						</dd>
+					</div>
+				</dl>
+			</div>
 		}
-		@ui.Card(ui.CardProps{ID: "available-plans", Title: "Available plans", Description: "Choose a billing interval to continue."}) {
+		<section class="ts-billing-plans" aria-labelledby="available-plans-title">
+			<header class="ts-billing-plans-head">
+				<div>
+					<h2 class="ts-card-title" id="available-plans-title">Available plans</h2>
+					<p class="ts-card-description">Pick the capacity your organization needs.</p>
+				</div>
+				<nav class="ts-segmented" aria-label="Billing interval">
+					@intervalOption(data.Interval, intervalMonthly, "Monthly", 0)
+					@intervalOption(data.Interval, intervalAnnual, "Annual", data.AnnualSavings)
+				</nav>
+			</header>
 			if len(data.Plans) == 0 {
 				@ui.Empty("No paid plans are available right now.", "")
 			} else {
-				<div class="ts-grid">
+				<div class="ts-billing-grid">
 					for _, plan := range data.Plans {
-						<article class="ts-plan" aria-labelledby={ "plan-" + plan.Key }>
-							<div class="ts-stack-sm">
-								<h3 id={ "plan-" + plan.Key } class="ts-section-title">{ plan.Name }</h3>
-								<p class="ts-plan-price">{ plan.MonthlyPrice } <small>/ month</small></p>
-								if plan.AnnualAvailable {
-									<p class="ts-meta">{ plan.AnnualPrice } billed annually</p>
-								}
-								if plan.TrialDays > 0 {
-									<p class="ts-meta">{ plan.TrialDays } day trial</p>
-								}
-								if plan.ShowLimits {
-									<p class="ts-meta">{ plan.StorageMiB } MiB storage · { plan.MonthlyRequests } requests per month</p>
-								}
-							</div>
-							<div class="ts-stack-sm">
-								@checkoutButton(csrfToken, plan.Key, "monthly", "ts-btn-primary", "Choose monthly")
-								if plan.AnnualAvailable {
-									@checkoutButton(csrfToken, plan.Key, "annual", "ts-btn-secondary", "Choose annual")
-								}
-							</div>
-						</article>
+						@planCard(csrfToken, plan)
 					}
 				</div>
 			}
-		}
+		</section>
 	</main>
 }
 
-templ manageBilling() {
-	<a class="ts-btn ts-btn-secondary" href="/billing/portal">Manage billing</a>
+templ intervalOption(active, interval, label string, savings int) {
+	<a
+		class="ts-segment"
+		href={ templ.SafeURL("/billing?interval=" + interval) }
+		if active == interval {
+			aria-current="page"
+		}
+	>
+		{ label }
+		if savings > 0 {
+			<span class="ts-segment-note">Save up to { fmt.Sprint(savings) }%</span>
+		}
+	</a>
 }
 
-templ checkoutButton(csrfToken, plan, interval, variant, label string) {
-	<form method="post" action="/billing/checkout">
-		<input type="hidden" name="_csrf" value={ csrfToken }/>
-		<input type="hidden" name="plan" value={ plan }/>
-		<input type="hidden" name="interval" value={ interval }/>
-		<input type="hidden" name="return" value="/billing"/>
-		<button class={ "ts-btn", variant, "ts-btn-block" } type="submit">{ label }</button>
-	</form>
+templ planCard(csrfToken string, plan planView) {
+	<article class={ "ts-plan", templ.KV("ts-plan-current", plan.Current) } data-tone={ plan.Tone } aria-labelledby={ "plan-" + plan.Key }>
+		<header class="ts-plan-head">
+			<h3 id={ "plan-" + plan.Key } class="ts-plan-name">{ plan.Name }</h3>
+			if plan.Current {
+				@ui.StatusBadge("emerald", "Current")
+			}
+		</header>
+		<div>
+			<p class="ts-plan-price">{ plan.Price }<small>/ month</small></p>
+			<p class="ts-meta">{ plan.Billed }</p>
+		</div>
+		<ul class="ts-plan-features">
+			for _, feature := range plan.Features {
+				<li>@icons.Check(15)<span>{ feature }</span></li>
+			}
+		</ul>
+		<form method="post" action="/billing/checkout">
+			<input type="hidden" name="_csrf" value={ csrfToken }/>
+			<input type="hidden" name="plan" value={ plan.Key }/>
+			<input type="hidden" name="interval" value={ plan.Interval }/>
+			<input type="hidden" name="return" value="/billing"/>
+			<button class={ "ts-btn", "ts-btn-block", templ.KV("ts-btn-primary", !plan.Current), templ.KV("ts-btn-secondary", plan.Current) } type="submit" disabled?={ plan.Current }>{ plan.Action }</button>
+		</form>
+	</article>
 }

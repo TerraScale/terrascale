@@ -120,7 +120,6 @@ var (
 	shellNavigation = []core.NavGroup{
 		{Label: "Build", Items: []core.NavItem{
 			{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
-			{Label: "Tables", URL: "/data"},
 		}},
 		{Label: "Secure", Items: []core.NavItem{
 			{Label: "API keys", URL: "/api-keys"}, {Label: "Team", URL: "/access"},
@@ -146,7 +145,7 @@ var (
 
 // navAliases lists pages that belong to a navigation section without being
 // nested under its URL.
-var navAliases = map[string][]string{"/data": {"/schema", "/indexes", "/history"}, "/auth/overview": {"/auth"}}
+var navAliases = map[string][]string{"/auth/overview": {"/auth"}}
 
 func shellFor(account core.Account, p core.Principal, layout string, r *http.Request) core.Shell {
 	shell := core.Shell{UserName: account.User.Name, UserEmail: account.User.Email}

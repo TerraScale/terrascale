@@ -1,0 +1,207 @@
+package ui
+
+import "terrascale.tech/dashboard/internal/ui/icons"
+
+// Overlays: the dropdown menu and the modal dialog every page shares. The
+// matching styles live in web/assets/css/overlays.css.
+
+// DropdownProps configures a Dropdown. Trigger is the content of the toggle;
+// TriggerClass styles it and defaults to a secondary button.
+type DropdownProps struct {
+	// Class adds classes to the <details> element, e.g. a sidebar variant.
+	Class string
+	// End aligns the panel to the trigger's right edge; Up opens it above.
+	End bool
+	Up  bool
+	// Label or LabelledBy name the trigger for assistive technology.
+	Label        string
+	LabelledBy   string
+	Trigger      templ.Component
+	TriggerClass string
+	PanelClass   string
+	PanelLabel   string
+	// Attrs are spread onto the <details> element, e.g. data-signals.
+	Attrs templ.Attributes
+}
+
+// Dropdown is the one popover menu of the dashboard: a <details> element
+// that closes on outside clicks and on Escape, returning focus to its
+// trigger. Children are the panel content, typically MenuItem entries.
+templ Dropdown(p DropdownProps) {
+	<details
+		class={ "ts-menu", templ.KV("ts-menu-end", p.End), templ.KV("ts-menu-up", p.Up), p.Class }
+		data-on:click__outside="el.open = false"
+		data-on:keydown__window="evt.key === 'Escape' && el.open && (el.open = false, el.querySelector('summary').focus())"
+		{ p.Attrs... }
+	>
+		<summary
+			class={ displayName(p.TriggerClass, "ts-btn ts-btn-secondary") }
+			if p.Label != "" {
+				aria-label={ p.Label }
+			}
+			if p.LabelledBy != "" {
+				aria-labelledby={ p.LabelledBy }
+			}
+		>
+			@p.Trigger
+		</summary>
+		<div
+			class={ "ts-menu-panel", p.PanelClass }
+			if p.PanelLabel != "" {
+				role="group"
+				aria-label={ p.PanelLabel }
+			}
+		>
+			{ children... }
+		</div>
+	</details>
+}
+
+// MenuItemProps is one Dropdown entry. With Href it renders a link;
+// otherwise a button, which submits Name=Value when Type is "submit".
+type MenuItemProps struct {
+	Href  string
+	Type  string
+	Name  string
+	Value string
+	// Icon leads the label; Tone tints it (see tokens.css).
+	Icon    templ.Component
+	Tone    string
+	Label   string
+	Current bool
+	Danger  bool
+	Attrs   templ.Attributes
+}
+
+templ MenuItem(p MenuItemProps) {
+	if p.Href != "" {
+		<a
+			class={ "ts-menu-item", templ.KV("ts-menu-item-danger", p.Danger) }
+			href={ templ.SafeURL(p.Href) }
+			if p.Tone != "" {
+				data-tone={ p.Tone }
+			}
+			if p.Current {
+				aria-current="page"
+			}
+			{ p.Attrs... }
+		>
+			@menuItemContent(p)
+		</a>
+	} else {
+		<button
+			class={ "ts-menu-item", templ.KV("ts-menu-item-danger", p.Danger) }
+			type={ displayName(p.Type, "button") }
+			if p.Name != "" {
+				name={ p.Name }
+				value={ p.Value }
+			}
+			if p.Tone != "" {
+				data-tone={ p.Tone }
+			}
+			if p.Current {
+				aria-current="true"
+			}
+			{ p.Attrs... }
+		>
+			@menuItemContent(p)
+		</button>
+	}
+}
+
+templ menuItemContent(p MenuItemProps) {
+	if p.Icon != nil {
+		@p.Icon
+	}
+	<span class="ts-menu-label">{ p.Label }</span>
+	if p.Current {
+		<span class="ts-menu-check" aria-hidden="true">@icons.Check(15)</span>
+	}
+}
+
+// MenuHeading labels a group of MenuItem entries.
+templ MenuHeading(text string) {
+	<div class="ts-menu-heading">{ text }</div>
+}
+
+// MenuSeparator divides groups of MenuItem entries.
+templ MenuSeparator() {
+	<hr class="ts-menu-separator"/>
+}
+
+// DialogProps configures a modal Dialog. Open shows it on load, for dialogs
+// a link opens through the query string; otherwise a DialogTrigger does.
+type DialogProps struct {
+	ID          string
+	Title       string
+	Description string
+	Open        bool
+	Wide        bool
+	Class       string
+}
+
+// Dialog is a native modal <dialog> with a titled header and a close
+// button; children are its body, typically a form ending in DialogActions.
+// It closes on Escape and on a click outside it.
+templ Dialog(p DialogProps) {
+	<dialog
+		id={ p.ID }
+		class={ "ts-dialog", templ.KV("ts-dialog-wide", p.Wide), p.Class }
+		closedby="any"
+		aria-labelledby={ p.ID + "-title" }
+		if p.Description != "" {
+			aria-describedby={ p.ID + "-description" }
+		}
+		if p.Open {
+			data-init="el.showModal()"
+		}
+	>
+		<div class="ts-dialog-content">
+			<header class="ts-dialog-head">
+				<div class="ts-dialog-header">
+					<h2 class="ts-dialog-title" id={ p.ID + "-title" }>{ p.Title }</h2>
+					if p.Description != "" {
+						<p class="ts-dialog-description" id={ p.ID + "-description" }>{ p.Description }</p>
+					}
+				</div>
+				<button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor={ p.ID }>
+					@icons.X(18)
+				</button>
+			</header>
+			{ children... }
+		</div>
+	</dialog>
+}
+
+// DialogTriggerProps configures the button that opens a Dialog. Variant is a
+// button style: primary, secondary, ghost, or danger.
+type DialogTriggerProps struct {
+	Dialog  string
+	Label   string
+	Icon    templ.Component
+	Variant string
+	Small   bool
+}
+
+templ DialogTrigger(p DialogTriggerProps) {
+	<button
+		class={ "ts-btn", "ts-btn-" + displayName(p.Variant, "secondary"), templ.KV("ts-btn-sm", p.Small) }
+		type="button"
+		command="show-modal"
+		commandfor={ p.Dialog }
+	>
+		if p.Icon != nil {
+			@p.Icon
+		}
+		<span>{ p.Label }</span>
+	</button>
+}
+
+// DialogActions ends a dialog form: a cancel button that closes dialog, then
+// the submit controls passed as children.
+templ DialogActions(dialog string) {
+	<div class="ts-dialog-footer">
+		<button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor={ dialog }>Cancel</button>
+		{ children... }
+	</div>
+}

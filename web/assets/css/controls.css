@@ -365,3 +365,42 @@ legend {
   font-weight: 400;
   letter-spacing: 0;
 }
+
+/* Segmented control: links that switch between sibling views. */
+.ts-segmented {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface);
+}
+
+.ts-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  height: calc(var(--ts-control-h-sm) - 8px);
+  padding: 0 var(--ts-s3);
+  border-radius: var(--ts-radius-sm);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ts-segment:hover {
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+.ts-segment[aria-current="page"] {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+}
+
+.ts-segment-note {
+  color: var(--ts-success);
+  font-size: var(--ts-fs-xs);
+}

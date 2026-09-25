@@ -1,5 +1,5 @@
-/* Databases list and detail: create disclosure, name cell, facts grid,
-   tool links, backup switch, and the danger zone. */
+/* Databases list and detail: name cell, detail header, create dialog,
+   facts grid, backup switch, and the danger zone. */
 
 .ts-db-name {
   display: inline-flex;
@@ -8,8 +8,7 @@
   color: var(--ts-ink);
 }
 
-.ts-db-icon,
-.ts-db-tool-icon {
+.ts-db-icon {
   display: grid;
   flex: none;
   place-items: center;
@@ -20,28 +19,71 @@
   color: var(--tone);
 }
 
+.ts-db-icon-lg {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--ts-radius-lg);
+}
+
 .ts-db-name:hover .ts-strong {
   color: var(--tone);
 }
 
+/* Detail header: breadcrumb above the database identity. */
+.ts-db-head {
+  display: grid;
+  gap: var(--ts-s3);
+}
+
+.ts-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-breadcrumb > a {
+  color: var(--ts-ink-2);
+}
+
+.ts-breadcrumb > [aria-current] {
+  color: var(--ts-ink);
+}
+
+.ts-db-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s3);
+}
+
+.ts-db-title {
+  font-size: var(--ts-fs-xl);
+  font-weight: 700;
+}
+
+/* Create dialog: fields beside the region map, actions across both. */
 .ts-db-create-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
   align-items: start;
-  gap: var(--ts-s8);
+  gap: var(--ts-s6);
+}
+
+.ts-db-create-form > .ts-dialog-footer {
+  grid-column: 1 / -1;
 }
 
 .ts-db-danger {
-  padding-top: var(--ts-s6);
-  border-top: 1px solid var(--ts-line);
-}
-
-.ts-db-danger .ts-disclosure-body {
-  border-left-color: var(--ts-danger);
-}
-
-.ts-db-inline-form {
-  max-width: 28rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s4);
+  padding: var(--ts-s5);
+  border: 1px solid color-mix(in oklab, var(--ts-danger) 30%, transparent);
+  border-radius: var(--ts-radius-lg);
 }
 
 /* Inline restore form in the restore points table. */
@@ -76,30 +118,6 @@
 
 .ts-db-facts dd {
   font-weight: 600;
-}
-
-.ts-db-tools {
-  display: grid;
-  gap: var(--ts-s2);
-}
-
-.ts-db-tool {
-  display: flex;
-  align-items: center;
-  gap: var(--ts-s3);
-  padding: var(--ts-s2);
-  border-radius: var(--ts-radius);
-  color: var(--ts-ink-3);
-  transition: background-color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease);
-}
-
-.ts-db-tool > .ts-strong {
-  flex: 1;
-}
-
-.ts-db-tool:hover {
-  background: var(--ts-surface-2);
-  text-decoration: none;
 }
 
 .ts-db-setting {

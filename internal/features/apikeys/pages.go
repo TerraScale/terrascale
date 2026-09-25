@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
@@ -20,7 +19,6 @@ type pageData struct {
 	DatabaseID    string
 	Search        string
 	Create        string
-	Summary       []summaryFigure
 	Keys          []keyView
 	Databases     []databaseChoice
 	CreatedSecret string
@@ -45,8 +43,6 @@ var (
 	readOnlyKey   = credentialType{Label: "Read-only key", Tone: "sky", Icon: icons.Eye}
 	fullAccessKey = credentialType{Label: "Full-access key", Tone: "rose", Icon: icons.ShieldAlert}
 	machineClient = credentialType{Label: "M2M client", Tone: "violet", Icon: icons.Bot}
-	// credentialTypes fixes the order of the per-type summary figures.
-	credentialTypes = []credentialType{readWriteKey, readOnlyKey, fullAccessKey, machineClient}
 )
 
 func typeOf(kind string, scopes []string) credentialType {
@@ -60,15 +56,6 @@ func typeOf(kind string, scopes []string) credentialType {
 	default:
 		return readOnlyKey
 	}
-}
-
-// summaryFigure is one compact count in the credential summary row. Figures
-// with an icon count a credential type; the others mark status with a dot.
-type summaryFigure struct {
-	Label string
-	Value int
-	Tone  string
-	Icon  func(size int) templ.Component
 }
 
 type databaseChoice struct{ ID, Name string }
@@ -237,33 +224,12 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, secret s
 		data.Search = data.Search[:256]
 	}
 	search := strings.ToLower(data.Search)
-	now := time.Now()
-	expiringBy := now.Add(14 * 24 * time.Hour)
-	var active, expiring int
-	byType := map[string]int{}
 	for _, key := range project.APIKeys {
 		item := keyView{ProjectAPIKey: publicKey(key, a.User.Email), Type: typeOf(key.Kind, key.Scopes)}
-		byType[item.Type.Label]++
-		if item.Active {
-			active++
-			if !key.ExpiresAt.IsZero() && !key.ExpiresAt.After(expiringBy) {
-				expiring++
-			}
-		}
 		if data.Kind == "key" && key.Kind != "api-key" || data.Kind == "m2m" && key.Kind != "m2m" || data.Status == "active" && !item.Active || data.Status == "inactive" && item.Active || data.DatabaseID != "" && item.DatabaseID != data.DatabaseID || data.Search != "" && !strings.Contains(strings.ToLower(item.Name+" "+item.Prefix), search) {
 			continue
 		}
 		data.Keys = append(data.Keys, item)
-	}
-	total := len(project.APIKeys)
-	data.Summary = []summaryFigure{
-		{Label: "Total", Value: total, Tone: "blue"},
-		{Label: "Active", Value: active, Tone: "emerald"},
-		{Label: "Expiring soon", Value: expiring, Tone: "orange"},
-		{Label: "Inactive", Value: total - active, Tone: "slate"},
-	}
-	for _, kind := range credentialTypes {
-		data.Summary = append(data.Summary, summaryFigure{Label: kind.Label + "s", Value: byType[kind.Label], Tone: kind.Tone, Icon: kind.Icon})
 	}
 	for _, db := range project.Databases {
 		data.Databases = append(data.Databases, databaseChoice{ID: db.ID, Name: db.Name})
