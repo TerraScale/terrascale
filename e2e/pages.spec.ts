@@ -148,7 +148,7 @@ test("original route and data-mode states render at desktop and mobile sizes", a
   page.on("console", (message) => {
     if (message.type() !== "error") return;
     const expectedDeniedDocumentError =
-      message.text() === "Failed to load resource: the server responded with a status of 403 (Forbidden)" &&
+      /^Failed to load resource: the server responded with a status of 403 \((?:Forbidden)?\)$/.test(message.text()) &&
       activeDeniedURL !== null && message.location().url === activeDeniedURL;
     if (!expectedDeniedDocumentError) authenticatedBrowserErrors.push(`console: ${message.text()}`);
   });
