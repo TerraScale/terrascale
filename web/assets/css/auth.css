@@ -1,0 +1,65 @@
+/* Standalone pages outside the signed-in shell: sign-in, onboarding,
+   approvals, and error pages. */
+
+.ts-auth-body {
+  background:
+    radial-gradient(900px 520px at 15% -10%, rgb(167 139 250 / 0.16), transparent 65%),
+    radial-gradient(800px 520px at 100% 10%, rgb(34 211 238 / 0.1), transparent 60%),
+    var(--ts-canvas);
+}
+
+.ts-auth {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: var(--ts-s10) var(--ts-s4);
+}
+
+.ts-auth-card {
+  display: grid;
+  gap: var(--ts-s6);
+  width: min(28rem, 100%);
+  padding: var(--ts-s8);
+  border: 1px solid var(--ts-line);
+  border-radius: 18px;
+  background: rgb(18 21 29 / 0.82);
+  box-shadow: var(--ts-shadow-overlay);
+  backdrop-filter: blur(16px);
+}
+
+.ts-auth-brand {
+  display: flex;
+  justify-content: center;
+}
+
+.ts-brand-logo {
+  width: auto;
+  height: 28px;
+}
+
+.ts-auth-heading {
+  display: grid;
+  gap: var(--ts-s1);
+  text-align: center;
+}
+
+.ts-auth-title {
+  font-size: var(--ts-fs-2xl);
+  font-weight: 700;
+}
+
+.ts-auth-subtitle {
+  color: var(--ts-ink-2);
+}
+
+.ts-auth-footer {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+  text-align: center;
+}
+
+@media (max-width: 30rem) {
+  .ts-auth-card {
+    padding: var(--ts-s6) var(--ts-s5);
+  }
+}

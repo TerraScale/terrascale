@@ -66,19 +66,19 @@ func TestOverviewRendersScopedCountsAndAnHonestZeroChart(t *testing.T) {
 	}
 	body := response.Body.String()
 	for _, expected := range []string{
-		"class=\"ts-home-overview\"", "class=\"ts-home-primary\"", "ts-home-getting-started\"",
-		"Databases</dt><dd><span class=\"ts-kpi-value\">2</span>",
-		"Organization members</dt><dd><span class=\"ts-kpi-value\">2</span>",
-		"Unread alerts</dt><dd><span class=\"ts-kpi-value\">1</span>",
+		`id="home-activity"`, `id="getting-started"`,
+		`Databases</dt><dd class="ts-stat-value">2</dd>`,
+		`Organization members</dt><dd class="ts-stat-value">2</dd>`,
+		`Unread alerts</dt><dd class="ts-stat-value">1</dd>`,
 		"2 notifications loaded", "Plotted operations <strong>0</strong>", "Illustrative zero baseline",
-		"ts-home-chart-shell", "ts-chart-line ts-chart-series-1", "30d ago",
+		"ts-chart-shell", "ts-chart-line ts-chart-series-1", "30d ago",
 		"href=\"/?range=30d\"", "aria-current=\"page\"",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("overview is missing %q", expected)
 		}
 	}
-	rangePicker := strings.Index(body, `class="ts-home-range-picker"`)
+	rangePicker := strings.Index(body, `id="home-range-label"`)
 	if rangePicker < 0 || !strings.Contains(body[rangePicker:], `<ts-menu><details class="ts-menu ts-menu-end">`) {
 		t.Fatal("activity range is not wrapped in the Rocket-enhanced menu")
 	}
@@ -298,7 +298,7 @@ func TestConnectQueryRendersEscapedMCPConfiguration(t *testing.T) {
 	body := response.Body.String()
 	for _, expected := range []string{
 		"Connect your AI or platform", "AI assistants", "TypeScript SDK", "REST API", "CLI and CI",
-		"https://&lt;your-terrascale-host&gt;/mcp", "Back to overview",
+		"https://&lt;your-terrascale-host&gt;/mcp", `href="/"><span>Overview</span>`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("connect page is missing %q", expected)

@@ -150,32 +150,36 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 		}
 	}
 	if layout == "admin" {
-		shell.Navigation = []core.NavItem{
+		shell.Navigation = []core.NavGroup{{Items: []core.NavItem{
 			{Label: "Overview", URL: "/admin"}, {Label: "Users", URL: "/admin/users"},
 			{Label: "Organizations", URL: "/admin/organizations"}, {Label: "Projects", URL: "/admin/projects"},
 			{Label: "Plans", URL: "/admin/plans"},
-		}
+		}}}
 	} else {
-		shell.Navigation = []core.NavItem{
-			{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
-			{Label: "Tables", URL: "/data"}, {Label: "API keys", URL: "/api-keys"},
-			{Label: "Team", URL: "/access"}, {Label: "Authentication", URL: "/auth"},
-			{Label: "Usage", URL: "/usage"}, {Label: "Audit", URL: "/audit"},
-			{Label: "Organization", URL: "/organization", BadgeCount: len(shell.Organizations)},
-		}
-		shell.SecondaryNavigation = []core.NavItem{
-			{Label: "Backups", URL: "/backups"}, {Label: "Engine", URL: "/engine"},
-			{Label: "Subscriptions", URL: "/subscriptions"},
-			{Label: "Billing", URL: "/billing"}, {Label: "Settings", URL: "/settings"},
+		shell.Navigation = []core.NavGroup{
+			{Label: "Build", Items: []core.NavItem{
+				{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
+				{Label: "Tables", URL: "/data"}, {Label: "Backups", URL: "/backups"},
+				{Label: "Engine", URL: "/engine"},
+			}},
+			{Label: "Secure", Items: []core.NavItem{
+				{Label: "API keys", URL: "/api-keys"}, {Label: "Team", URL: "/access"},
+				{Label: "Authentication", URL: "/auth"}, {Label: "Audit", URL: "/audit"},
+			}},
+			{Label: "Manage", Items: []core.NavItem{
+				{Label: "Usage", URL: "/usage"}, {Label: "Subscriptions", URL: "/subscriptions"},
+				{Label: "Billing", URL: "/billing"},
+				{Label: "Organization", URL: "/organization", BadgeCount: len(shell.Organizations)},
+				{Label: "Settings", URL: "/settings"},
+			}},
 		}
 	}
-	for i := range shell.Navigation {
-		url := shell.Navigation[i].URL
-		shell.Navigation[i].Active = r.URL.Path == url || (url != "/" && strings.HasPrefix(r.URL.Path, url+"/"))
-	}
-	for i := range shell.SecondaryNavigation {
-		url := shell.SecondaryNavigation[i].URL
-		shell.SecondaryNavigation[i].Active = r.URL.Path == url || strings.HasPrefix(r.URL.Path, url+"/")
+	for _, group := range shell.Navigation {
+		for i := range group.Items {
+			url := group.Items[i].URL
+			root := url == "/" || url == "/admin"
+			group.Items[i].Active = r.URL.Path == url || (!root && strings.HasPrefix(r.URL.Path, url+"/"))
+		}
 	}
 	return shell
 }

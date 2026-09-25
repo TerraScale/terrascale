@@ -1,0 +1,335 @@
+/* Buttons and form controls. */
+
+.ts-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ts-s2);
+  height: var(--ts-control-h);
+  padding: 0 var(--ts-s4);
+  border: 1px solid transparent;
+  border-radius: var(--ts-radius);
+  font-size: var(--ts-fs-md);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease), box-shadow var(--ts-fast) var(--ts-ease);
+}
+
+.ts-btn:hover {
+  text-decoration: none;
+}
+
+.ts-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--ts-focus-ring);
+}
+
+.ts-btn:disabled,
+.ts-btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ts-btn-primary {
+  background: linear-gradient(180deg, var(--ts-accent-hover), var(--ts-accent));
+  color: var(--ts-on-accent);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.18) inset, 0 6px 16px -8px var(--ts-accent);
+}
+
+.ts-btn-primary:hover {
+  background: var(--ts-accent-hover);
+}
+
+.ts-btn-secondary,
+.ts-btn-outline {
+  border-color: var(--ts-line-strong);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink);
+}
+
+.ts-btn-secondary:hover,
+.ts-btn-outline:hover {
+  border-color: rgb(148 163 184 / 0.34);
+  background: var(--ts-surface-3);
+}
+
+.ts-btn-ghost {
+  background: transparent;
+  color: var(--ts-ink-2);
+}
+
+.ts-btn-ghost:hover {
+  background: var(--ts-surface-2);
+  color: var(--ts-ink);
+}
+
+.ts-btn-danger,
+.ts-btn-destructive {
+  border-color: color-mix(in oklab, var(--ts-danger) 35%, transparent);
+  background: color-mix(in oklab, var(--ts-danger) 14%, transparent);
+  color: var(--ts-danger);
+}
+
+.ts-btn-danger:hover,
+.ts-btn-destructive:hover {
+  background: var(--ts-danger);
+  color: #1a0707;
+}
+
+.ts-btn-sm {
+  height: var(--ts-control-h-sm);
+  padding: 0 var(--ts-s3);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-btn-lg {
+  height: var(--ts-control-h-lg);
+  padding: 0 var(--ts-s5);
+}
+
+.ts-btn-block {
+  width: 100%;
+}
+
+.ts-icon-btn {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: var(--ts-control-h-sm);
+  height: var(--ts-control-h-sm);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--ts-radius);
+  background: transparent;
+  color: var(--ts-ink-2);
+  cursor: pointer;
+}
+
+.ts-icon-btn:hover {
+  background: var(--ts-surface-2);
+  color: var(--ts-ink);
+}
+
+/* Forms: a form is a vertical stack of fields. */
+.ts-form {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s4);
+}
+
+.ts-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: var(--ts-s4);
+}
+
+.ts-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ts-s2);
+}
+
+.ts-field {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ts-label {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-sm);
+  font-weight: 600;
+}
+
+.ts-hint {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-field-error {
+  color: var(--ts-danger);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-input,
+.ts-select {
+  width: 100%;
+  min-width: 0;
+  height: var(--ts-control-h);
+  padding: 0 var(--ts-s3);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius);
+  background: var(--ts-canvas);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-md);
+  transition: border-color var(--ts-fast) var(--ts-ease), box-shadow var(--ts-fast) var(--ts-ease);
+}
+
+textarea.ts-input {
+  height: auto;
+  min-height: 96px;
+  padding: var(--ts-s2) var(--ts-s3);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.ts-input::placeholder {
+  color: var(--ts-ink-3);
+}
+
+.ts-input:hover,
+.ts-select:hover {
+  border-color: rgb(148 163 184 / 0.34);
+}
+
+.ts-input:focus,
+.ts-input:focus-visible,
+.ts-select:focus-visible {
+  border-color: var(--ts-accent);
+  outline: none;
+  box-shadow: var(--ts-focus-ring);
+}
+
+.ts-input[aria-invalid="true"],
+.ts-input:user-invalid {
+  border-color: var(--ts-danger);
+}
+
+.ts-input:disabled,
+.ts-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ts-input-sm {
+  height: var(--ts-control-h-sm);
+  font-size: var(--ts-fs-sm);
+}
+
+select.ts-input,
+.ts-select {
+  appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236c7589' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 10px center;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+/* Select-shaped menu triggers. */
+summary.ts-select {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  list-style: none;
+}
+
+summary.ts-select::-webkit-details-marker {
+  display: none;
+}
+
+/* Input with a trailing button (password reveal, copy). */
+.ts-input-group {
+  position: relative;
+  display: flex;
+}
+
+.ts-input-group > .ts-input {
+  padding-right: 44px;
+}
+
+.ts-input-adornment {
+  position: absolute;
+  inset: 3px 3px 3px auto;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  border: 0;
+  border-radius: var(--ts-radius-sm);
+  background: transparent;
+  color: var(--ts-ink-3);
+  cursor: pointer;
+}
+
+.ts-input-adornment:hover {
+  color: var(--ts-ink);
+}
+
+ts-password-control {
+  display: block;
+}
+
+.ts-checkbox,
+input[type="checkbox"],
+input[type="radio"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ts-accent);
+}
+
+.ts-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ts-s2);
+  color: var(--ts-ink-2);
+  cursor: pointer;
+}
+
+.ts-check > input {
+  margin-top: 3px;
+}
+
+fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+legend {
+  padding: 0;
+  margin-bottom: var(--ts-s2);
+  font-weight: 600;
+}
+
+/* Filter forms: a wrapping row of compact labelled controls. */
+.ts-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ts-s2) var(--ts-s3);
+}
+
+.ts-filters > .ts-input,
+.ts-filters > input[type="search"] {
+  flex: 1 1 220px;
+  width: auto;
+}
+
+.ts-filter-field {
+  display: grid;
+  gap: var(--ts-s1);
+  min-width: 150px;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ts-filter-field .ts-input,
+.ts-filter-field .ts-select {
+  height: var(--ts-control-h-sm);
+  font-size: var(--ts-fs-sm);
+  font-weight: 400;
+  letter-spacing: 0;
+}

@@ -1,0 +1,271 @@
+/* Cards, stats, empty states, alerts, badges, and tabs. */
+
+.ts-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: linear-gradient(180deg, var(--ts-surface-2), var(--ts-surface) 120px);
+  box-shadow: var(--ts-shadow);
+}
+
+.ts-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ts-s3);
+  padding: var(--ts-s5) var(--ts-s6) 0;
+}
+
+.ts-card-heading {
+  display: grid;
+  flex: 1 1 280px;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ts-card-title {
+  font-size: var(--ts-fs-lg);
+  font-weight: 600;
+}
+
+.ts-card-description {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-card-body {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s4);
+  min-width: 0;
+  padding: var(--ts-s5) var(--ts-s6) var(--ts-s6);
+}
+
+.ts-card-flush > .ts-card-body {
+  padding: var(--ts-s4) 0 0;
+}
+
+.ts-card-flush > .ts-card-body > .ts-empty {
+  margin: 0 var(--ts-s6) var(--ts-s6);
+}
+
+.ts-card-flush > .ts-card-body > .ts-pager {
+  padding: var(--ts-s3) var(--ts-s6);
+  border-top: 1px solid var(--ts-line);
+}
+
+/* A card section divided by a hairline, for long cards. */
+.ts-card-section {
+  display: grid;
+  gap: var(--ts-s3);
+  padding-top: var(--ts-s4);
+  border-top: 1px solid var(--ts-line);
+}
+
+/* Headline numbers. */
+.ts-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: var(--ts-s4);
+}
+
+.ts-stat {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s1);
+  padding: var(--ts-s4) var(--ts-s5);
+  overflow: hidden;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-stat::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(90deg, var(--tone), transparent);
+  opacity: 0.8;
+}
+
+.ts-stat-label {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ts-stat-value {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-2xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.ts-stat-detail {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+/* Empty states. */
+.ts-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--ts-s2);
+  padding: var(--ts-s8) var(--ts-s6);
+  border: 1px dashed var(--ts-line-strong);
+  border-radius: var(--ts-radius-lg);
+  background: rgb(255 255 255 / 0.015);
+  text-align: center;
+}
+
+.ts-empty-title {
+  color: var(--ts-ink);
+  font-weight: 600;
+}
+
+.ts-empty-detail {
+  max-width: 52ch;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-empty > .ts-btn,
+.ts-empty > .ts-row {
+  margin-top: var(--ts-s2);
+}
+
+/* Alerts. */
+.ts-alert {
+  --alert: var(--ts-info);
+  display: grid;
+  gap: 2px;
+  padding: var(--ts-s3) var(--ts-s4);
+  border: 1px solid color-mix(in oklab, var(--alert) 30%, transparent);
+  border-left: 3px solid var(--alert);
+  border-radius: var(--ts-radius);
+  background: color-mix(in oklab, var(--alert) 9%, var(--ts-surface));
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-alert-success { --alert: var(--ts-success); }
+.ts-alert-warning { --alert: var(--ts-warning); }
+.ts-alert-danger { --alert: var(--ts-danger); }
+
+.ts-alert-title {
+  font-weight: 600;
+}
+
+.ts-alert-body {
+  color: var(--ts-ink-2);
+}
+
+/* Badges. */
+.ts-badge {
+  --badge: var(--ts-ink-2);
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 var(--ts-s2);
+  border: 1px solid color-mix(in oklab, var(--badge) 28%, transparent);
+  border-radius: var(--ts-radius-pill);
+  background: color-mix(in oklab, var(--badge) 12%, transparent);
+  color: var(--badge);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ts-badge-info { --badge: var(--ts-info); }
+.ts-badge-success { --badge: var(--ts-success); }
+.ts-badge-warning { --badge: var(--ts-warning); }
+.ts-badge-danger { --badge: var(--ts-danger); }
+.ts-badge-violet { --badge: #c4b5fd; }
+.ts-badge-tone { --badge: var(--tone); }
+
+/* A leading status dot. */
+.ts-dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 20%, transparent);
+}
+
+/* Tabs. */
+ts-tabs {
+  display: block;
+  min-width: 0;
+}
+
+.ts-tabs {
+  display: flex;
+  gap: var(--ts-s1);
+  overflow-x: auto;
+  border-bottom: 1px solid var(--ts-line);
+  scrollbar-width: none;
+}
+
+.ts-tab {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--ts-s2);
+  padding: var(--ts-s3) var(--ts-s3);
+  color: var(--ts-ink-3);
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-tab:hover {
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+.ts-tab[aria-current="page"],
+.ts-tab[aria-selected="true"] {
+  color: var(--ts-ink);
+}
+
+.ts-tab[aria-current="page"]::after,
+.ts-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto var(--ts-s3) -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--tone);
+}
+
+.ts-tab-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-surface-3);
+  color: var(--ts-ink-2);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}

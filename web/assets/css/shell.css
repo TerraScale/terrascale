@@ -1,0 +1,380 @@
+/* Signed-in shell: sidebar, context switchers, colorful navigation, account
+   menu, and the mobile drawer. */
+
+ts-mobile-nav {
+  display: block;
+}
+
+.ts-shell {
+  display: grid;
+  grid-template-columns: var(--ts-sidebar-width) minmax(0, 1fr);
+  min-height: 100dvh;
+  /* Paint the sidebar column to the bottom of long pages. */
+  background: linear-gradient(90deg, var(--ts-sidebar) var(--ts-sidebar-width), transparent 0);
+}
+
+/* The sidebar stays pinned at full viewport height while the page scrolls. */
+.ts-sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-s4);
+  height: 100dvh;
+  padding: var(--ts-s5) var(--ts-s3) var(--ts-s3);
+  background: radial-gradient(420px 260px at 0 0, rgb(167 139 250 / 0.08), transparent 70%);
+  overflow: hidden;
+}
+
+.ts-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  padding-inline: var(--ts-s2);
+}
+
+.ts-sidebar-brand img {
+  height: 22px;
+  width: auto;
+}
+
+.ts-sidebar-brand:hover {
+  text-decoration: none;
+}
+
+.ts-sidebar .ts-sidebar-close {
+  display: none;
+  margin-left: auto;
+}
+
+/* Organization and project switchers. */
+.ts-context {
+  display: grid;
+  gap: var(--ts-s1);
+  padding: var(--ts-s1);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: rgb(255 255 255 / 0.02);
+}
+
+.ts-context-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s2);
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-3);
+  cursor: pointer;
+  list-style: none;
+  transition: background-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-context-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.ts-context-trigger:hover,
+details[open] > .ts-context-trigger {
+  background: var(--ts-surface-2);
+}
+
+.ts-context-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--ts-radius);
+  background: color-mix(in oklab, var(--tone) 18%, transparent);
+  color: var(--tone);
+}
+
+.ts-context-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.ts-context-kind {
+  color: var(--ts-ink-3);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ts-context-name {
+  overflow: hidden;
+  color: var(--ts-ink);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-context-menu > .ts-menu-panel {
+  left: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.ts-context-list {
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+/* Navigation: every destination carries its own tone ([data-tone]). */
+.ts-sidebar-content {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: var(--ts-s4);
+  min-height: 0;
+  margin-inline: calc(-1 * var(--ts-s1));
+  padding-inline: var(--ts-s1);
+  overflow-y: auto;
+}
+
+.ts-nav-group {
+  display: grid;
+  gap: var(--ts-s1);
+}
+
+.ts-nav-group-label {
+  padding: 0 var(--ts-s3);
+  color: var(--ts-ink-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ts-nav {
+  display: grid;
+  gap: 2px;
+  list-style: none;
+}
+
+.ts-nav-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  min-height: 36px;
+  padding: var(--ts-s1) var(--ts-s2);
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-2);
+  font-weight: 500;
+  transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-nav-link:hover {
+  background: color-mix(in oklab, var(--tone) 9%, transparent);
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+.ts-nav-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--tone) 14%, transparent);
+  color: var(--tone);
+  transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease), box-shadow var(--ts-fast) var(--ts-ease);
+}
+
+.ts-nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-nav-link[aria-current="page"] {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--tone) 20%, transparent), color-mix(in oklab, var(--tone) 6%, transparent));
+  color: var(--ts-ink);
+  font-weight: 600;
+}
+
+.ts-nav-link[aria-current="page"] .ts-nav-icon {
+  background: var(--tone);
+  color: #0a0b10;
+  box-shadow: 0 4px 14px -4px color-mix(in oklab, var(--tone) 80%, transparent);
+}
+
+.ts-nav-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--ts-radius-pill);
+  background: color-mix(in oklab, var(--tone) 18%, transparent);
+  color: var(--tone);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+/* Account. */
+.ts-sidebar-footer {
+  display: grid;
+  gap: var(--ts-s2);
+  padding-top: var(--ts-s3);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-account-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s2);
+  border-radius: var(--ts-radius);
+  cursor: pointer;
+  list-style: none;
+}
+
+.ts-account-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.ts-account-trigger:hover,
+details[open] > .ts-account-trigger {
+  background: var(--ts-surface-2);
+}
+
+.ts-account-avatar,
+.ts-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #a78bfa, #60a5fa);
+  color: #0a0b10;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ts-account-meta {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.ts-account-name,
+.ts-account-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-account-name {
+  font-weight: 600;
+}
+
+.ts-account-email,
+.ts-account-chevron {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-account > .ts-menu-panel {
+  left: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+/* Page area. */
+.ts-inset {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-left: 1px solid var(--ts-line);
+}
+
+.ts-topbar {
+  display: none;
+}
+
+.ts-main {
+  flex: 1;
+  outline: none;
+  background: radial-gradient(900px 360px at 30% -120px, color-mix(in oklab, var(--tone) 9%, transparent), transparent 70%);
+}
+
+.ts-nav-backdrop {
+  display: none;
+}
+
+/* Admin: a violet wash marks the elevated area. */
+.ts-admin-sidebar {
+  background: radial-gradient(420px 300px at 0 0, rgb(232 121 249 / 0.12), transparent 70%);
+}
+
+/* Mobile drawer (ts-mobile-nav switches at 48rem). */
+@media (max-width: 47.99rem) {
+  .ts-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-shell {
+    background: none;
+  }
+
+  .ts-inset {
+    border-left: 0;
+  }
+
+  .ts-sidebar {
+    position: fixed;
+    background-color: var(--ts-sidebar);
+    inset: 0 auto 0 0;
+    z-index: var(--ts-z-modal);
+    width: min(86vw, 300px);
+    box-shadow: var(--ts-shadow-overlay);
+    transform: translateX(-102%);
+    transition: transform var(--ts-base) var(--ts-ease);
+  }
+
+  .ts-shell.nav-open .ts-sidebar {
+    transform: none;
+  }
+
+  .ts-sidebar .ts-sidebar-close {
+    display: inline-grid;
+  }
+
+  .ts-shell.nav-open .ts-nav-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--ts-z-overlay);
+    display: block;
+    background: var(--ts-scrim);
+    backdrop-filter: blur(2px);
+  }
+
+  .ts-topbar {
+    position: sticky;
+    top: 0;
+    z-index: var(--ts-z-sticky);
+    display: flex;
+    align-items: center;
+    gap: var(--ts-s3);
+    height: 56px;
+    padding-inline: var(--ts-s4);
+    border-bottom: 1px solid var(--ts-line);
+    background: color-mix(in oklab, var(--ts-canvas) 85%, transparent);
+    backdrop-filter: blur(12px);
+  }
+
+  .ts-topbar-brand {
+    height: 20px;
+    width: auto;
+  }
+}

@@ -34,15 +34,17 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 				{ID: "project-5", Name: "Project 5"},
 				{ID: "project-6", Name: "Project 6"},
 			},
-			Navigation: []core.NavItem{
-				{Label: "Overview", URL: "/", Active: true},
-				{Label: "Organization", URL: "/organization", BadgeCount: 6},
-			},
-			SecondaryNavigation: []core.NavItem{
-				{Label: "Backups", URL: "/backups"},
-				{Label: "Engine", URL: "/engine"},
-				{Label: "Billing", URL: "/billing"},
-				{Label: "Settings", URL: "/settings"},
+			Navigation: []core.NavGroup{
+				{Label: "Build", Items: []core.NavItem{
+					{Label: "Overview", URL: "/", Active: true},
+					{Label: "Backups", URL: "/backups"},
+					{Label: "Engine", URL: "/engine"},
+				}},
+				{Label: "Manage", Items: []core.NavItem{
+					{Label: "Billing", URL: "/billing"},
+					{Label: "Organization", URL: "/organization", BadgeCount: 6},
+					{Label: "Settings", URL: "/settings"},
+				}},
 			},
 			ReturnURL: "/?tab=overview&sort=name",
 		},
@@ -55,10 +57,13 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 		`aria-label="Primary navigation"`,
 		`aria-label="Account menu"`,
 		`aria-current="page"`,
-		`class="ts-sidebar-group-label">Workspace</div>`,
-		`class="ts-sidebar-group-label">More</div>`,
-		`href="/organization"`,
-		`class="ts-nav-count ts-nav-count-neutral" aria-hidden="true">6</span>`,
+		`class="ts-nav-group-label">Build</div>`,
+		`class="ts-nav-group-label">Manage</div>`,
+		`class="ts-nav-link" href="/organization" data-tone="indigo"`,
+		`class="ts-nav-link" href="/" data-tone="violet" aria-current="page"`,
+		`class="ts-nav-count" aria-hidden="true">6</span>`,
+		`data-tone="violet"><main`,
+		`rel="preload" href="/fonts/oxanium-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin`,
 		`href="/billing"`,
 		`data-active-project-id="project-1"`,
 		`data-active-organization-id="org-1"`,
@@ -68,21 +73,22 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 		`data-show="$projectSearch === '' || el.dataset.projectName.toLowerCase().includes($projectSearch.toLowerCase())"`,
 		`data-organization-name="Org &lt;script&gt;"`,
 		`data-project-name="Production"`,
-		`href="/organization?newProject=1#projects">Create new project</a>`,
-		`href="/settings?tab=identity">Project settings</a>`,
-		`href="/organization">All workspaces</a>`,
+		`href="/organization?newProject=1#projects">`,
+		`href="/settings?tab=identity">`,
+		`<span>Create new project</span></a>`,
+		`<span>All workspaces</span></a>`,
 		`action="/api/v1/dashboard/switch-project"`,
 		`name="returnUrl" value="/?tab=overview&amp;sort=name"`,
 		`action="/api/v1/dashboard/switch-organization"`,
 		`action="/api/v1/auth/logout"`,
 		`name="_csrf" value="csrf_test_123"`,
-		`src="/brand/logo-terrascale-blue.svg"`,
+		`src="/brand/logo-terrascale-white.svg"`,
 		`<span class="ts-account-avatar" aria-hidden="true">AE</span>`,
 		`nonce="nonce_test_123"`,
 		`<script type="module" src="/js/rocket-components.js" defer nonce="nonce_test_123"></script>`,
 		`<ts-mobile-nav class="ts-shell" data-signals="{navOpen:false}" data-class:nav-open="$navOpen">`,
-		`<ts-menu><details class="ts-menu ts-project-menu ts-organization-menu">`,
-		`<div id="ts-main" class="ts-main" tabindex="-1">`,
+		`<ts-menu><details class="ts-menu ts-context-menu ts-organization-menu">`,
+		`<div id="ts-main" class="ts-main" tabindex="-1" data-tone="violet">`,
 		`<h1>Overview</h1>`,
 		`Org &lt;script&gt;`,
 		`Avery &lt;script&gt;alert(1)&lt;/script&gt;`,
@@ -114,23 +120,24 @@ func TestSignedInTemplLayoutRendersAccessibleShellAndEscapesData(t *testing.T) {
 func TestAdminTemplLayoutUsesAdminNavigationSemantics(t *testing.T) {
 	page := core.Page{
 		Title: "Users", Nonce: "admin_nonce_123",
-		Shell: core.Shell{Navigation: []core.NavItem{{Label: "Users", URL: "/admin/users", Active: true}}},
+		Shell: core.Shell{Navigation: []core.NavGroup{{Items: []core.NavItem{{Label: "Users", URL: "/admin/users", Active: true}}}}},
 	}
 	html := renderTempl(t, Admin(page, templ.Raw(`<section>Admin page</section>`)))
 	for _, want := range []string{
 		`class="ts-sidebar ts-admin-sidebar"`,
 		`aria-label="Admin navigation"`,
 		`aria-label="Admin sections"`,
-		`Administration</div>`,
-		`href="/">Back to dashboard</a>`,
+		`class="ts-badge ts-badge-violet">Admin</span>`,
+		`Back to dashboard</span>`,
+		`data-tone="pink" aria-current="page"`,
 		`aria-current="page"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered admin shell is missing %q", want)
 		}
 	}
-	if strings.Count(html, `src="/brand/logo-terrascale-blue.svg"`) != 1 {
-		t.Fatal("admin sidebar should render one file-backed brand logo")
+	if strings.Count(html, `src="/brand/logo-terrascale-white.svg"`) != 2 {
+		t.Fatal("admin shell should render the file-backed brand logo in the sidebar and mobile top bar")
 	}
 }
 
@@ -182,7 +189,7 @@ func TestEmbeddedStaticAssetsContainOneBundledStylesheetAndBrand(t *testing.T) {
 		}
 	}
 	for _, path := range []string{
-		"brand/logo-terrascale-blue.svg",
+		"brand/logo-terrascale-white.svg",
 		"brand/logo-terrascale-auth.svg",
 		"brand/logo-icon-blue.svg",
 		"brand/region-map.svg",
