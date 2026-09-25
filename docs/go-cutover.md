@@ -31,9 +31,8 @@ account or session migration is part of this work.
 The demo integration boundary must remain clear. Both the former C# demo and
 the Go demo present sample external SDK credentials and preview MCP/SDK/API
 connection surfaces; these are not proof of live external connections. The Go
-home page's MCP configuration is preview UI. The real TypeScript SDK browser
-journey fetches and builds a pinned `ts-typescript` commit and talks to a
-loopback fixture under `tests/integration/fixture/`; it verifies the Go
+home page's MCP configuration is preview UI. The browser journey uses `ts-go`
+against a loopback fixture under `tests/integration/fixture/`; it verifies the Go
 dashboard flow against that fixture, not against a deployed TerraScale API.
 
 Authentication parity is intentionally limited in demo mode. The former C#
@@ -68,7 +67,7 @@ claimed here until the operator reports it.
 | Index views | Overview, Templates, Recommendations, and Migration are implemented. Mario's seeded `core-primary.orders` view shows a static sample snapshot at 8,640 / 12,480 (69%); it is not provider progress and cannot be advanced. Other accounts and collections show migration state as unavailable. |
 | Profile and roles | Profile, Security, and Sessions are three tabs. The Profile view summarizes the active organization role and listed common capabilities; it is not an exhaustive authorization matrix. MFA and passkey entries remain non-authenticating demo records. |
 | Invoices | The Billing view supports invoice filters and pagination over the dashboard's local records. The demo has no live Stripe invoices or provider-backed checkout. |
-| SQL and SDK fixture | SQL analysis and index operations use the vendored `ts-go` adapter contract. The real TypeScript SDK journey uses the pinned test-only SDK and a loopback fixture, not a deployed TerraScale API. |
+| SQL and SDK fixture | SQL analysis and index operations use the vendored `ts-go` adapter contract. The account-to-database journey uses `ts-go` and a loopback fixture, not a deployed TerraScale API. |
 | 404 handling | Public and dashboard not-found routes render the Go-owned not-found page; compatibility routes remain in the Go server. |
 
 ## Final runtime and visual gate

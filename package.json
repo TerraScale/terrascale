@@ -11,10 +11,9 @@
   },
   "scripts": {
     "build:css": "node scripts/build-css.mjs",
-    "build:test-sdk": "bash scripts/build-test-sdk.sh",
     "watch:css": "node scripts/build-css.mjs --watch --dev",
-    "e2e": "npm run build:test-sdk && playwright test",
-    "e2e:headed": "npm run build:test-sdk && playwright test --headed",
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed",
     "perf": "node scripts/performance.mjs"
   }
 }
