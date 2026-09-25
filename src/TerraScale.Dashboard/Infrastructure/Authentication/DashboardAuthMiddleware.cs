@@ -35,6 +35,15 @@ public sealed class DashboardAuthMiddleware(
         var stateConflict = false;
         store.ResetRequestActivation();
 
+        // Unknown public routes can show the 404 without a session. Unknown
+        // admin paths still go through the authorization gate.
+        if (context.GetEndpoint() is null && !IsAdminPath(path))
+        {
+            ReportAuthenticationTiming();
+            await next(context);
+            return;
+        }
+
         try
         {
             var isPublic = PublicPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));

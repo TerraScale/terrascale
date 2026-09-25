@@ -30,6 +30,9 @@
   --ts-accent-rgb: 59, 130, 246;
   --ts-nav-accent: #3B82F6; /* per-destination override on nav links */
 
+  --ts-notfound-canvas: #0d1729;
+  --ts-notfound-grid: rgba(43, 106, 211, 0.22);
+
   /* Status — state only, never decorative. */
   --ts-success: #34D399;
   --ts-warning: #FBBF24;
