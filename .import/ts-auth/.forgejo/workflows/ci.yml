@@ -17,7 +17,6 @@ jobs:
       FORGEJO_TOKEN: ${{ forgejo.token }}
       TS_RUST_REV: c590cd41eabf05bbd5982a1580c1bb01880c346a
       RUSTUP_TOOLCHAIN: 1.98.1
-      PLAYWRIGHT_VERSION: 1.62.0
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -40,7 +39,7 @@ jobs:
           test -x "${rustup_bin}"
           toolchain_file_version="$(sed -nE 's/^channel = "([^"]+)"$/\1/p' rust-toolchain.toml)"
           test "${toolchain_file_version}" = "${RUSTUP_TOOLCHAIN}"
-          "${rustup_bin}" toolchain install "${RUSTUP_TOOLCHAIN}" --profile minimal --component rustfmt --component clippy
+          "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" rustc --version
           active_toolchain_output="$("${rustup_bin}" show active-toolchain)"
           printf '%s\n' "${active_toolchain_output}"
           active_toolchain="$(printf '%s\n' "${active_toolchain_output}" | awk 'NR == 1 {print $1}')"
@@ -88,10 +87,7 @@ jobs:
           # keys in security_vectors.rs only create test signatures. Guard that
           # production boundary before keeping this single-advisory exception.
           bash scripts/check-rsa-private-usage.sh
-          audit_root="${RUNNER_TEMP:-/tmp}/ts-auth-cargo-audit"
-          CARGO_TARGET_DIR="${RUNNER_TEMP:-/tmp}/ts-auth-cargo-audit-target" \
-            "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo install cargo-audit --version 0.22.2 --locked --root "${audit_root}"
-          "${audit_root}/bin/cargo-audit" audit --file Cargo.lock --ignore RUSTSEC-2023-0071
+          cargo-audit audit --file Cargo.lock --ignore RUSTSEC-2023-0071
 
       - name: Build and inspect the release image
         run: |
@@ -152,23 +148,12 @@ jobs:
           curl --silent --fail "http://127.0.0.1:${port}/openapi/v1.json" | jq -e '.info.title == "TerraScale Auth API" and .paths["/healthz"] != null'
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/readyz")" = 503
 
-      - name: Set up Node.js for admin browser acceptance
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22.14.0
-
-      - name: Cache Playwright Chromium
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ env.PLAYWRIGHT_VERSION }}-linux-amd64-chromium
-
-      - name: Install pinned Playwright and Chromium
+      - name: Check baked Playwright and Chromium
         run: |
           set -euo pipefail
-          browser_root="${RUNNER_TEMP:-/tmp}/ts-auth-playwright"
-          npm install --prefix "${browser_root}" --no-save --no-audit --no-fund "playwright@${PLAYWRIGHT_VERSION}"
-          "${browser_root}/node_modules/.bin/playwright" install --with-deps chromium
+          test -f /usr/lib/node_modules/playwright/index.mjs
+          chromium_path="$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')"
+          test -x "${chromium_path}"
 
       - name: Run admin browser acceptance
         run: |
@@ -176,9 +161,8 @@ jobs:
           rustup_bin="${CARGO_HOME:-${HOME}/.cargo}/bin/rustup"
           if ! test -x "${rustup_bin}"; then rustup_bin="$(command -v rustup)"; fi
           test -x "${rustup_bin}"
-          browser_root="${RUNNER_TEMP:-/tmp}/ts-auth-playwright"
-          playwright_module="${browser_root}/node_modules/playwright/index.mjs"
-          chromium_path="$(node -e 'process.stdout.write(require(process.argv[1]).chromium.executablePath())' "${browser_root}/node_modules/playwright")"
+          playwright_module=/usr/lib/node_modules/playwright/index.mjs
+          chromium_path="$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')"
           test -f "${playwright_module}"
           test -x "${chromium_path}"
           TS_AUTH_PLAYWRIGHT_MODULE="${playwright_module}" \
