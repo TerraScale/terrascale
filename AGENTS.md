@@ -9,10 +9,10 @@ Everything must work in memory account creation and etc
 - Never add "Generated", "Co-Author" and similar to the PR or descript or commits
 
 ## Stack
-- We need to use C#, RazorSlice and datastar
-- The Dashboard must not depend on terrabase(project) it should depend on ts-dotnet instead
+- We need to use GO and datastar
+- The Dashboard must not depend on terrabase(project) it should depend on ts-go instead
 - We deploy to fly.io
-- We use Stripe and its nuget package for payment
+- We need to use the official stripe lib for payment
 
 
 ## Preview
@@ -34,10 +34,9 @@ Everything must work in memory account creation and etc
 - Regions like available regions their latency and etc (This comes from terrabase)
 
 # State 
-- Stateless all state must live in the database via ts-dotnet
+- Stateless all state must live in the database via ts-go
 
 # Test
-
 - We need to have a test that tests the whole flow from creating the account and then using the ts-typescript sdk to interact with the database and make sure it is working correctly
 
 
