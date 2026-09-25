@@ -6,7 +6,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
+
+	sdk "github.com/starfederation/datastar-go/datastar"
 
 	static "terrascale.tech/dashboard/web/static"
 )
@@ -16,13 +20,13 @@ func Mount(mux *http.ServeMux, dev bool) error {
 	if dev {
 		root = os.DirFS("web/static")
 	}
-	for _, name := range []string{"brand", "css", "fonts", "img", "js"} {
+	for _, name := range []string{"brand", "css", "fonts", "img"} {
 		files, err := fs.Sub(root, name)
 		if err != nil {
 			return err
 		}
 		prefix := "/" + name + "/"
-		mux.Handle("GET "+prefix, http.StripPrefix(prefix, http.FileServerFS(files)))
+		mux.Handle("GET "+prefix, cached(dev, http.StripPrefix(prefix, http.FileServerFS(files))))
 	}
 	if dev {
 		mux.HandleFunc("GET /__dev/events", devEvents)
@@ -30,15 +34,36 @@ func Mount(mux *http.ServeMux, dev bool) error {
 	return nil
 }
 
+// cached sets the static cache policy. Embedded files have no modification
+// time, so the content hash doubles as the ETag; a request for the current
+// hash (static.URL) is immutable, anything else revalidates within an hour.
+func cached(dev bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		version := static.Version(strings.TrimPrefix(r.URL.Path, "/"))
+		switch {
+		case dev || version == "":
+			w.Header().Set("Cache-Control", "no-cache")
+		case r.URL.Query().Get("v") == version:
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		default:
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+		}
+		if !dev && version != "" {
+			w.Header().Set("ETag", `"`+version+`"`)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// devBoot identifies this process; a page that sees a new boot after the
+// stream reconnects reloads, so template and Go changes appear on their own.
+var devBoot = strconv.FormatInt(time.Now().UnixNano(), 36)
+
+// devEvents streams Datastar events to pages in development: the boot ID on
+// connect, then a stylesheet patch whenever the CSS bundle is rebuilt.
 func devEvents(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
-	controller := http.NewResponseController(w)
-	if _, err := fmt.Fprint(w, ": connected\n\n"); err != nil {
-		return
-	}
-	if err := controller.Flush(); err != nil {
+	sse := sdk.NewSSE(w, r)
+	if err := sse.PatchSignals([]byte(`{"_devBoot":"` + devBoot + `"}`)); err != nil {
 		return
 	}
 	path := filepath.Join("web", "static", "css", "terrascale.css")
@@ -55,14 +80,13 @@ func devEvents(w http.ResponseWriter, r *http.Request) {
 				last = current
 				continue
 			}
-			if !current.ModTime().Equal(last.ModTime()) || current.Size() != last.Size() {
-				last = current
-				if _, err := fmt.Fprint(w, "event: css\ndata: reload\n\n"); err != nil {
-					return
-				}
-				if err := controller.Flush(); err != nil {
-					return
-				}
+			if current.ModTime().Equal(last.ModTime()) && current.Size() == last.Size() {
+				continue
+			}
+			last = current
+			link := fmt.Sprintf(`<link id="ts-css" rel="stylesheet" href="/css/terrascale.css?v=%d" data-dashboard-css/>`, current.ModTime().UnixNano())
+			if err := sse.PatchElements(link); err != nil {
+				return
 			}
 		}
 	}

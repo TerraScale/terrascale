@@ -364,18 +364,6 @@ func render(w http.ResponseWriter, r *http.Request, deps core.Deps, data pageDat
 	}
 }
 
-func onboardingStepClass(step stepView) string {
-	class := "ts-onboarding-step"
-	switch {
-	case step.Current:
-		return class + " ts-onboarding-step-current"
-	case step.Completed:
-		return class + " ts-onboarding-step-complete"
-	default:
-		return class
-	}
-}
-
 func onboardingStepCurrent(step stepView) string {
 	if step.Current {
 		return "step"
@@ -394,16 +382,7 @@ func onboardingProgressValue(value int) string {
 	return strconv.Itoa(value)
 }
 
-func onboardingRootClass(step string) string {
-	if step == "payment-method" || step == "project" {
-		return "ts-onboarding-root ts-onboarding-root-wide"
-	}
-	return "ts-onboarding-root"
-}
-
-func onboardingContainerClass(step string) string {
-	if step == "payment-method" || step == "project" {
-		return "ts-onboarding-container ts-onboarding-container-wide"
-	}
-	return "ts-onboarding-container"
+// planTone gives each paid plan card its own accent.
+func planTone(index int) string {
+	return [...]string{"blue", "violet", "fuchsia", "emerald"}[index%4]
 }

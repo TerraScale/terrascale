@@ -348,17 +348,21 @@ type NavItem struct {
 	BadgeCount int
 }
 
+type NavGroup struct {
+	Label string
+	Items []NavItem
+}
+
 type Shell struct {
-	UserName            string
-	UserInitials        string
-	UserEmail           string
-	OrganizationName    string
-	ProjectName         string
-	Organizations       []OrganizationOption
-	Projects            []ProjectOption
-	Navigation          []NavItem
-	SecondaryNavigation []NavItem
-	ReturnURL           string
+	UserName         string
+	UserInitials     string
+	UserEmail        string
+	OrganizationName string
+	ProjectName      string
+	Organizations    []OrganizationOption
+	Projects         []ProjectOption
+	Navigation       []NavGroup
+	ReturnURL        string
 }
 
 type OrganizationOption struct {

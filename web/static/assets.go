@@ -1,8 +1,44 @@
 package static
 
-import "embed"
+import (
+	"crypto/sha256"
+	"embed"
+	"encoding/hex"
+	"io/fs"
+	"sync"
+)
 
-// Assets contains public brand, stylesheet, font, image, and script files.
+// Assets contains public brand, stylesheet, font, and image files.
 //
-//go:embed brand css fonts img js
+//go:embed brand css fonts img
 var Assets embed.FS
+
+// versions maps every embedded file to a short hash of its content.
+var versions = sync.OnceValue(func() map[string]string {
+	hashes := map[string]string{}
+	_ = fs.WalkDir(Assets, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := Assets.ReadFile(name)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(data)
+		hashes[name] = hex.EncodeToString(sum[:6])
+		return nil
+	})
+	return hashes
+})
+
+// Version returns the content hash of an embedded file such as
+// "css/terrascale.css", or "" when the file does not exist.
+func Version(name string) string {
+	return versions()[name]
+}
+
+// URL returns the public path of an embedded file with its content hash as a
+// cache-busting query, so the file can be cached as immutable.
+func URL(name string) string {
+	return "/" + name + "?v=" + Version(name)
+}

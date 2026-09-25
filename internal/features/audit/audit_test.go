@@ -51,20 +51,20 @@ func TestAuditViewEscapesUntrustedContent(t *testing.T) {
 	}
 }
 
-func TestAuditExportActionsUseRocketEnhancedNativeMenu(t *testing.T) {
+func TestAuditExportActionsUseNativeMenu(t *testing.T) {
 	data := pageData{Action: "api_key.created", Severity: "critical", Range: "30d", Search: "user@example.test"}
 	response := httptest.NewRecorder()
 	if err := auditView(data).Render(context.Background(), response); err != nil {
 		t.Fatalf("render audit view: %v", err)
 	}
 	body := response.Body.String()
-	if !strings.Contains(body, `<ts-menu><details class="ts-menu ts-menu-end">`) {
-		t.Fatalf("audit export is not wrapped in the Rocket-enhanced native menu: %s", body)
+	if !strings.Contains(body, `data-on:click__outside="el.open = false"`) || !strings.Contains(body, `class="ts-menu ts-menu-end"`) {
+		t.Fatalf("audit export is not a Datastar-enhanced native menu: %s", body)
 	}
 	for _, expected := range []string{
-		`<main class="ts-page ts-audit-page">`, `<header class="ts-toolbar">`,
+		`<main class="ts-page ts-audit-page">`, `<header class="ts-page-header">`,
 		`class="ts-filters ts-audit-filters"`, `class="ts-filter-field ts-audit-search-field"`,
-		`class="ts-input"`, `class="ts-select"`, `class="ts-btn ts-btn-primary"`,
+		`class="ts-input"`, `class="ts-select"`, `class="ts-btn ts-btn-primary ts-btn-sm"`,
 		`aria-label="Export audit events"`,
 		`href="/audit/export?format=csv&amp;range=30d&amp;severity=critical&amp;action=api_key.created&amp;search=user%40example.test"`,
 		`href="/audit/export?format=json&amp;range=30d&amp;severity=critical&amp;action=api_key.created&amp;search=user%40example.test"`,

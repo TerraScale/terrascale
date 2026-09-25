@@ -1,123 +1,21 @@
-/* Subscription page styles.
-   Used by the subscription page styles. feature. Keep page-specific rules in Features/. */
+/* Plans and billing: plan cards. */
 
-/* ===== Feature: Subscriptions ============================================ */
-.ts-sub-stats {
+.ts-plan {
   display: grid;
-  gap: var(--ts-md);
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  grid-template-rows: 1fr auto;
+  gap: var(--ts-s5);
+  padding: var(--ts-s5) 0 0;
+  border-top: 2px solid var(--ts-line-strong);
 }
 
-.ts-sub-stat {
-  display: grid;
-  gap: var(--ts-xs);
-  padding: var(--ts-lg);
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-panel);
-  background-color: var(--ts-surface-muted);
+.ts-plan-price {
+  font-size: var(--ts-fs-2xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
-.ts-sub-stat-label { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
-
-.ts-sub-stat-value {
-  color: var(--ts-ink);
-  font-size: var(--ts-fs-panel-title);
-  font-weight: var(--ts-fw-semibold);
-}
-
-.ts-sub-stat-detail { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
-
-.ts-sub-desc {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-body);
-  line-height: 1.6;
-  max-width: 56rem;
-  margin: 0;
-}
-
-.ts-sub-subtitle { font-size: var(--ts-fs-body); line-height: 1.6; }
-
-.ts-sub-form { gap: var(--ts-md); }
-
-.ts-sub-form .ts-label {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-meta);
-}
-
-.ts-sub-form .ts-select {
-  font-size: var(--ts-fs-body);
-  min-height: var(--ts-control-h-lg);
-  /* v1 NativeSelect wrapper: fit-content width, 50% fade when disabled. */
-  width: fit-content;
-}
-
-.ts-sub-form .ts-select:disabled {
-  opacity: 0.5;
-}
-
-.ts-sub-form .ts-textarea {
-  font-size: var(--ts-fs-body);
-  min-height: 112px;
-}
-
-.ts-sub-form-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--ts-sm);
-}
-
-/* v1 shows the WebSocket note only when the websocket transport is chosen. */
-.ts-sub-note {
-  display: none;
-  margin: 0;
-  line-height: 1.5;
-}
-
-.ts-sub-form:has(#subscription-transport option:checked[value="websocket"]) + .ts-sub-note {
-  display: block;
-}
-
-.ts-sub-view .ts-pip { width: 8px; height: 8px; }
-
-.ts-sub-view-title {
-  color: var(--ts-ink);
-  font-family: var(--ts-font-mono);
-  font-size: var(--ts-fs-ui);
-  font-weight: var(--ts-fw-bold);
-}
-
-.ts-subscriptions-grid {
-  display: grid;
-  gap: var(--ts-lg);
-  grid-template-columns: minmax(0, 1fr) minmax(17rem, 0.75fr);
-}
-
-@media (max-width: 48rem) {
-  .ts-subscriptions-grid { grid-template-columns: minmax(0, 1fr); }
-}
-
-.ts-sub-view { display: grid; gap: var(--ts-lg); }
-
-.ts-sub-metadata {
-  display: grid;
-  gap: var(--ts-sm);
-  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-  margin: 0;
-}
-
-.ts-sub-metadata-item { display: grid; gap: var(--ts-xs); }
-
-.ts-sub-metadata-item dt {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-meta);
-}
-
-.ts-sub-metadata-item dd {
-  margin: 0;
-  color: var(--ts-ink);
-  font-family: var(--ts-font-mono);
-  font-size: var(--ts-fs-ui);
-  font-weight: var(--ts-fw-bold);
-  overflow-wrap: anywhere;
+.ts-plan-price small {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
 }

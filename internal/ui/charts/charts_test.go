@@ -38,3 +38,24 @@ func TestBarClampsProgressForCSPCompatibleSVG(t *testing.T) {
 		t.Fatalf("overage progress = %#v", got)
 	}
 }
+
+func TestLineHoverColumnsListEverySeriesValue(t *testing.T) {
+	chart := NewLine("Hover", nil, 200,
+		Series{Name: "Reads", Values: []int64{1, 4, 2}},
+		Series{Name: "Writes", Values: []int64{2, 1, 1500}},
+	)
+	if len(chart.Columns) != 3 || chart.Columns[2].Title != "Reads: 2 · Writes: 1.5k" || len(chart.Columns[2].Dots) != 2 {
+		t.Fatalf("hover columns = %#v", chart.Columns)
+	}
+	if !strings.Contains(chart.Paths[0].Data, " C ") || chart.GradientID == "" {
+		t.Fatalf("line is not a smooth curve with a named fill: %#v", chart.Paths[0])
+	}
+}
+
+func TestDenseLineSharesHoverColumns(t *testing.T) {
+	values := make([]int64, 168)
+	chart := NewLine("Dense", nil, 200, Series{Name: "Reads", Values: values})
+	if len(chart.Columns) > maxColumns || len(chart.Columns) < maxColumns/2 {
+		t.Fatalf("dense chart rendered %d hover columns", len(chart.Columns))
+	}
+}

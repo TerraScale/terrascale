@@ -6,6 +6,7 @@ import (
 	"net/mail"
 	"strings"
 
+	"github.com/CAFxX/httpcompression"
 	"terrascale.tech/dashboard/internal/adapters/tsgo"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/access"
@@ -88,7 +89,26 @@ func New(cfg config.Config) (*Application, error) {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/health/ready", http.StatusTemporaryRedirect)
 	})
-	return &Application{Handler: guard.Protect(mux), Store: store, Deps: deps}, nil
+	compress, err := httpcompression.DefaultAdapter(httpcompression.ContentTypes([]string{
+		// Datastar streams must flush every event, and these are already compressed.
+		"text/event-stream", "font/woff2", "image/png", "image/webp",
+	}, true))
+	if err != nil {
+		return nil, err
+	}
+	return &Application{Handler: compress(invalidatePrefetch(guard.Protect(mux))), Store: store, Deps: deps}, nil
+}
+
+// invalidatePrefetch drops pages the browser prefetched through the layout's
+// speculation rules whenever a request may have changed state, so a later
+// navigation never shows data from before the change.
+func invalidatePrefetch(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Clear-Site-Data", `"prefetchCache"`)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func seedAdmin(store *core.Store, email, password string) error {

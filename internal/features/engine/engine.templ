@@ -3,69 +3,56 @@ package engine
 import (
 	"fmt"
 	"strconv"
+
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
 )
 
 templ engineContent(d pageData) {
 	<main class="ts-page">
-		<header class="ts-page-header">
-			<div><p class="ts-eyebrow">TerraBase</p><h1>Engine</h1><p>Live member health and the provider's available region catalog.</p></div>
+		@ui.PageHeader(ui.Header{Eyebrow: "TerraBase", Title: "Engine", Description: "Live member health and the provider's available region catalog."}) {
 			if d.Configured {
-				<a class="ts-btn ts-btn-ghost" href="/engine">Refresh</a>
+				<a class="ts-btn ts-btn-secondary" href="/engine">@icons.RefreshCw(16)
+<span>Refresh</span></a>
 			}
-		</header>
+		}
 		if !d.Configured {
-			<section class="ts-section" aria-labelledby="engine-config-title">
-				<h2 id="engine-config-title">Engine provider unavailable</h2>
-				<p role="status" class="ts-alert ts-alert-warning">{ d.ConfigMessage }</p>
-				<p>Connect the dashboard to the scoped ts-go provider before viewing live engine status.</p>
-			</section>
+			@ui.Card(ui.CardProps{ID: "engine-config", Title: "Engine provider unavailable", Description: "Connect the dashboard to the scoped ts-go provider before viewing live engine status."}) {
+				@ui.Alert("warning", "", d.ConfigMessage)
+			}
 		} else {
-			<section class="ts-section" aria-labelledby="engine-health-title">
-				<h2 id="engine-health-title">Member health</h2>
+			@ui.Card(ui.CardProps{ID: "engine-health", Title: "Member health", Description: "Readiness reported by the serving member."}) {
 				if d.Health != nil {
-					<dl>
-						<div><dt>Serving region</dt><dd>{ d.Health.Region }</dd></div>
-						<div><dt>Version</dt><dd>{ d.Health.Version }</dd></div>
-						<div>
-							<dt>Readiness</dt>
-							<dd>
-								if d.Health.Healthy {
-									Healthy
-								} else {
-									Unhealthy
-								}
-							</dd>
-						</div>
-					</dl>
-				} else {
-					<p role="status" class="ts-alert ts-alert-warning">{ d.HealthError }</p>
-				}
-			</section>
-			<section class="ts-section" aria-labelledby="engine-regions-title">
-				<div class="ts-section-head">
-					<div><h2 id="engine-regions-title">Region catalog</h2><p>Provider-advertised regions and member hosts.</p></div>
-					if d.CatalogError == "" {
-						<span class="ts-badge ts-badge-neutral">{ strconv.Itoa(d.RegionCount) } regions · { strconv.Itoa(d.HostCount) } hosts</span>
+					@ui.Stats("Member health") {
+						@ui.Stat("Serving region", d.Health.Region, "")
+						@ui.Stat("Version", d.Health.Version, "")
+						@ui.Stat("Readiness", readiness(d.Health.Healthy), "")
 					}
-				</div>
+				} else {
+					@ui.Alert("warning", "", d.HealthError)
+				}
+			}
+			@ui.Card(ui.CardProps{ID: "engine-regions", Title: "Region catalog", Description: "Provider-advertised regions and member hosts.", Actions: catalogCount(d), Flush: true}) {
 				if d.CatalogError != "" {
-					<p role="status" class="ts-alert ts-alert-warning">{ d.CatalogError }</p>
+					<div class="ts-engine-inset">
+						@ui.Alert("warning", "", d.CatalogError)
+					</div>
 				} else if len(d.Regions) > 0 {
 					<div class="ts-table-wrap">
 						<table class="ts-table">
-							<thead><tr><th>Code</th><th>Name</th><th>Country</th><th>Coordinates</th><th>Availability</th></tr></thead>
+							<thead><tr><th>Code</th><th>Name</th><th>Country</th><th class="ts-num">Coordinates</th><th>Availability</th></tr></thead>
 							<tbody>
 								for _, region := range d.Regions {
 									<tr>
 										<td><code>{ region.Code }</code></td>
-										<td>{ region.Name }</td>
+										<td class="ts-strong">{ region.Name }</td>
 										<td>{ region.Country }</td>
-										<td>{ fmt.Sprintf("%.2f, %.2f", region.Latitude, region.Longitude) }</td>
+										<td class="ts-num ts-mono">{ fmt.Sprintf("%.2f, %.2f", region.Latitude, region.Longitude) }</td>
 										<td>
 											if region.Available {
-												Available
+												@ui.Badge("success", "Available")
 											} else {
-												Unavailable
+												@ui.Badge("neutral", "Unavailable")
 											}
 										</td>
 									</tr>
@@ -76,18 +63,33 @@ templ engineContent(d pageData) {
 					if d.PageCount > 1 {
 						<nav class="ts-pager" aria-label="Region catalog pages">
 							<span>Page { strconv.Itoa(d.Page) } of { strconv.Itoa(d.PageCount) }</span>
-							if d.HasPrevious {
-								<a href={ "/engine?page=" + strconv.Itoa(d.Previous) } rel="prev">Previous</a>
-							}
-							if d.HasNext {
-								<a href={ "/engine?page=" + strconv.Itoa(d.Next) } rel="next">Next</a>
-							}
+							<div class="ts-row">
+								if d.HasPrevious {
+									<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ templ.SafeURL("/engine?page=" + strconv.Itoa(d.Previous)) } rel="prev">Previous</a>
+								}
+								if d.HasNext {
+									<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ templ.SafeURL("/engine?page=" + strconv.Itoa(d.Next)) } rel="next">Next</a>
+								}
+							</div>
 						</nav>
 					}
 				} else {
-					<p>The provider returned no available regions.</p>
+					@ui.Empty("No available regions.", "The provider returned no available regions.")
 				}
-			</section>
+			}
 		}
 	</main>
+}
+
+templ catalogCount(d pageData) {
+	if d.CatalogError == "" {
+		@ui.Badge("neutral", strconv.Itoa(d.RegionCount)+" regions · "+strconv.Itoa(d.HostCount)+" hosts")
+	}
+}
+
+func readiness(healthy bool) string {
+	if healthy {
+		return "Healthy"
+	}
+	return "Unhealthy"
 }

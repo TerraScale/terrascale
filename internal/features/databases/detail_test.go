@@ -39,7 +39,7 @@ func TestDatabaseDetailTabsAndScopedLookup(t *testing.T) {
 			response := httptest.NewRecorder()
 			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/databases/db-1?tab="+tc.tab, nil))
 			body := response.Body.String()
-			if response.Code != http.StatusOK || !strings.Contains(body, tc.content) || !strings.Contains(body, `aria-current="page" aria-selected="true"`) || !strings.Contains(body, `aria-current="false" aria-selected="false"`) {
+			if response.Code != http.StatusOK || !strings.Contains(body, tc.content) || strings.Count(body, `class="ts-tab" href="/databases/db-1?tab=`) != 5 || strings.Count(body, `aria-current="page"`) != 1 {
 				t.Fatalf("tab %s: status %d, body %s", tc.tab, response.Code, body)
 			}
 			if !strings.Contains(body, "Not measured") && tc.tab == "placement" {

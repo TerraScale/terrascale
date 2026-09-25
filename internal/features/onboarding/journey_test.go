@@ -163,7 +163,7 @@ func assertOnboardingProgress(t *testing.T, client *http.Client, server *httptes
 		t.Fatalf("read onboarding page: %v", err)
 	}
 	content := string(body)
-	stepLabel := "ACTIVATION STEP " + strconv.Itoa(currentStep) + " OF 3"
+	stepLabel := "Step " + strconv.Itoa(currentStep) + " of 3"
 	progress := strconv.Itoa(percent) + "%"
 	ariaValue := `aria-valuenow="` + strconv.Itoa(percent) + `"`
 	progressData := `data-progress="` + strconv.Itoa(percent) + `"`

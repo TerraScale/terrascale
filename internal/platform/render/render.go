@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -117,6 +118,10 @@ func (e *Engine) Fragment(w http.ResponseWriter, r *http.Request, fragment core.
 	return err
 }
 
+// navAliases lists routes that belong to a navigation section without being
+// nested under its URL.
+var navAliases = map[string][]string{"/data": {"/schema", "/indexes", "/history"}}
+
 func shellFor(account core.Account, p core.Principal, layout string, r *http.Request) core.Shell {
 	shell := core.Shell{UserName: account.User.Name, UserEmail: account.User.Email}
 	nameParts := strings.Fields(account.User.Name)
@@ -149,33 +154,45 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 			}
 		}
 	}
+	byName := func(a, b string) int { return strings.Compare(strings.ToLower(a), strings.ToLower(b)) }
+	slices.SortFunc(shell.Organizations, func(a, b core.OrganizationOption) int { return byName(a.Name, b.Name) })
+	slices.SortFunc(shell.Projects, func(a, b core.ProjectOption) int { return byName(a.Name, b.Name) })
 	if layout == "admin" {
-		shell.Navigation = []core.NavItem{
-			{Label: "Overview", URL: "/admin"}, {Label: "Users", URL: "/admin/users"},
-			{Label: "Organizations", URL: "/admin/organizations"}, {Label: "Projects", URL: "/admin/projects"},
-			{Label: "Plans", URL: "/admin/plans"},
+		shell.Navigation = []core.NavGroup{
+			{Label: "Accounts", Items: []core.NavItem{
+				{Label: "Users", URL: "/admin/users"}, {Label: "Organizations", URL: "/admin/organizations"},
+				{Label: "Projects", URL: "/admin/projects"},
+			}},
+			{Label: "Platform", Items: []core.NavItem{
+				{Label: "Databases", URL: "/admin/databases"}, {Label: "Estate", URL: "/admin/estate"},
+				{Label: "Usage", URL: "/admin/usage"}, {Label: "Plans", URL: "/admin/plans"},
+			}},
 		}
 	} else {
-		shell.Navigation = []core.NavItem{
-			{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
-			{Label: "Tables", URL: "/data"}, {Label: "API keys", URL: "/api-keys"},
-			{Label: "Team", URL: "/access"}, {Label: "Authentication", URL: "/auth"},
-			{Label: "Usage", URL: "/usage"}, {Label: "Audit", URL: "/audit"},
-			{Label: "Organization", URL: "/organization", BadgeCount: len(shell.Organizations)},
-		}
-		shell.SecondaryNavigation = []core.NavItem{
-			{Label: "Backups", URL: "/backups"}, {Label: "Engine", URL: "/engine"},
-			{Label: "Subscriptions", URL: "/subscriptions"},
-			{Label: "Billing", URL: "/billing"}, {Label: "Settings", URL: "/settings"},
+		shell.Navigation = []core.NavGroup{
+			{Label: "Build", Items: []core.NavItem{
+				{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
+				{Label: "Tables", URL: "/data"}, {Label: "Backups", URL: "/backups"},
+				{Label: "Engine", URL: "/engine"},
+			}},
+			{Label: "Secure", Items: []core.NavItem{
+				{Label: "API keys", URL: "/api-keys"}, {Label: "Team", URL: "/access"},
+				{Label: "Authentication", URL: "/auth"}, {Label: "Audit", URL: "/audit"},
+			}},
+			{Label: "Manage", Items: []core.NavItem{
+				{Label: "Usage", URL: "/usage"}, {Label: "Subscriptions", URL: "/subscriptions"},
+				{Label: "Billing", URL: "/billing"},
+				{Label: "Organization", URL: "/organization", BadgeCount: len(shell.Organizations)},
+				{Label: "Settings", URL: "/settings"},
+			}},
 		}
 	}
-	for i := range shell.Navigation {
-		url := shell.Navigation[i].URL
-		shell.Navigation[i].Active = r.URL.Path == url || (url != "/" && strings.HasPrefix(r.URL.Path, url+"/"))
-	}
-	for i := range shell.SecondaryNavigation {
-		url := shell.SecondaryNavigation[i].URL
-		shell.SecondaryNavigation[i].Active = r.URL.Path == url || strings.HasPrefix(r.URL.Path, url+"/")
+	for _, group := range shell.Navigation {
+		for i := range group.Items {
+			group.Items[i].Active = slices.ContainsFunc(append([]string{group.Items[i].URL}, navAliases[group.Items[i].URL]...), func(url string) bool {
+				return r.URL.Path == url || (url != "/" && strings.HasPrefix(r.URL.Path, url+"/"))
+			})
+		}
 	}
 	return shell
 }

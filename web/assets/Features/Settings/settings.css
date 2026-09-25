@@ -1,0 +1,23 @@
+/* Settings: narrow single-field forms and the danger zone accent. */
+
+.ts-settings-narrow {
+  grid-template-columns: minmax(0, 360px);
+}
+
+.ts-card-flush .ts-settings-footnote {
+  padding: 0 var(--ts-s6) var(--ts-s5);
+}
+
+.ts-settings-danger .ts-card-title {
+  color: var(--ts-danger);
+}
+
+.ts-settings-summary .ts-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 47.99rem) {
+  .ts-settings-summary .ts-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

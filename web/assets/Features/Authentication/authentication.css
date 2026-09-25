@@ -1,0 +1,21 @@
+/* Authentication console: inline add/edit disclosures inside flush cards. */
+
+.ts-card-flush .ts-auth-add,
+.ts-card-flush .ts-auth-inset {
+  margin: 0 var(--ts-s6) var(--ts-s4);
+}
+
+.ts-auth-add[open] {
+  padding-bottom: var(--ts-s4);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-auth-branding {
+  max-width: 560px;
+}
+
+/* Row editor dialogs are left-aligned even though they live in the actions cell. */
+.ts-table-actions .ts-dialog {
+  text-align: left;
+  white-space: normal;
+}

@@ -1,279 +1,168 @@
-/* Data explorer and schema page styles.
-   Used by the data explorer and schema page styles. feature. Keep page-specific rules in Features/. */
+/* Data views (saved queries, documents, editor, SQL, schema, indexes,
+   history) and query subscriptions. */
 
-/* ===== Feature: Data ===== */
-
-/* Bare table shell inside a panel: scroll wide tables on narrow viewports. */
-.ts-table-frame {
+.ts-data-filter {
+  flex: 1 1 140px;
   width: auto;
-  overflow-x: auto;
-  margin-inline: 20px;
-}
-
-@media (min-width: 64rem) {
-  .ts-table-frame { margin-inline: 16px; }
-}
-
-/* Data workspace pages use the shared toolbar, flat sections and table
-   primitives. Collection-specific controls stay in this feature partial. */
-.ts-data > .ts-section {
-  gap: var(--ts-lg);
-}
-
-.ts-data > .ts-section + .ts-section {
-  padding-top: var(--ts-xl);
-  border-top: 1px solid var(--ts-line);
-}
-
-.ts-data .ts-toolbar {
-  align-items: flex-end;
-}
-
-.ts-data-tabs {
-  display: flex;
-  gap: var(--ts-xl);
   min-width: 0;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--ts-line);
 }
 
-.ts-data-tabs .ts-tab {
-  flex: 0 0 auto;
-  height: 44px;
-  padding: 0 2px;
-  border-radius: 0;
-  box-shadow: inset 0 -2px 0 transparent;
-  font-size: var(--ts-fs-ui);
-}
-
-.ts-data-tabs .ts-tab:hover {
-  box-shadow: inset 0 -2px 0 var(--ts-line);
-}
-
-.ts-data-tabs .ts-tab[aria-selected="true"] {
-  color: var(--ts-ink);
-  font-weight: var(--ts-fw-semibold);
-  box-shadow: inset 0 -2px 0 var(--ts-accent);
-}
-
-.ts-data .ts-filters {
-  flex: 1 1 20rem;
+.ts-data .ts-toolbar > .ts-filters {
+  flex: 1 1 320px;
   justify-content: flex-end;
 }
 
-.ts-data .ts-filter-field {
-  min-width: 10rem;
+.ts-data-grow {
+  flex: 1 1 200px;
 }
 
-.ts-data .ts-data-search {
-  flex: 1 1 14rem;
+/* Database + collection scope bar. */
+.ts-data-scope {
+  flex-direction: row;
+  align-items: flex-end;
+  padding: var(--ts-s4) var(--ts-s5);
 }
 
-.ts-data .ts-filters .ts-input,
-.ts-data .ts-filters .ts-select {
-  width: 100%;
-}
-
-.ts-data .ts-table-wrap {
-  overflow-x: auto;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.ts-data .ts-table {
-  min-width: 640px;
-}
-
-.ts-data .ts-table tbody td {
-  vertical-align: top;
-}
-
-.ts-data .ts-data-form {
-  width: min(100%, 52rem);
-}
-
-.ts-data.ts-schema .ts-textarea {
-  field-sizing: fixed;
-  height: 16rem;
-  min-height: 16rem;
-}
-
-.ts-data .ts-data-progress {
+.ts-data-scope-icon {
   display: grid;
-  gap: var(--ts-sm);
-  max-width: 48rem;
+  flex: none;
+  place-items: center;
+  width: var(--ts-control-h);
+  height: var(--ts-control-h);
+  border-radius: var(--ts-radius);
+  background: color-mix(in oklab, var(--tone) 16%, transparent);
+  color: var(--tone);
 }
 
-.ts-data .ts-data-migration-progress {
-  display: block;
-  width: min(100%, 48rem);
-  height: 8px;
-  appearance: none;
-  border: 0;
-  border-radius: var(--ts-radius-pill);
-  background-color: var(--ts-surface-muted);
+.ts-data-scope .ts-filter-field .ts-input,
+.ts-data-scope .ts-filter-field .ts-select {
+  height: var(--ts-control-h);
 }
 
-.ts-data .ts-data-migration-progress::-webkit-progress-bar {
-  border-radius: var(--ts-radius-pill);
-  background-color: var(--ts-surface-muted);
+.ts-data-scope > .ts-btn {
+  height: var(--ts-control-h);
 }
 
-.ts-data .ts-data-migration-progress::-webkit-progress-value {
-  border-radius: var(--ts-radius-pill);
-  background-color: var(--ts-accent);
+.ts-data-query {
+  display: inline-block;
+  max-width: 48ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
 }
 
-.ts-data .ts-data-migration-progress::-moz-progress-bar {
-  border-radius: var(--ts-radius-pill);
-  background-color: var(--ts-accent);
-}
-
-.ts-data .ts-schema-changes {
-  display: grid;
-  gap: var(--ts-sm);
-  margin: 0;
-  padding: 0;
+.ts-data-json > summary {
+  width: fit-content;
+  cursor: pointer;
   list-style: none;
 }
 
-.ts-data .ts-schema-changes li {
+.ts-data-json > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ts-data-json[open] > .ts-code {
+  max-width: 56ch;
+  margin-top: var(--ts-s2);
+}
+
+/* SQL check results. */
+.ts-data-checks {
+  display: grid;
+  gap: var(--ts-s2);
+  list-style: none;
+}
+
+.ts-data-checks > li {
   display: flex;
-  align-items: center;
-  gap: var(--ts-sm);
-  min-width: 0;
+  align-items: flex-start;
+  gap: var(--ts-s2);
 }
 
-.ts-data .ts-schema-changes .ts-code-meta {
-  overflow-wrap: anywhere;
-}
-
-.ts-data .ts-history-filters {
-  flex-basis: 32rem;
-}
-
-.ts-data .ts-history-filters .ts-filter-field {
-  flex: 1 1 8rem;
-  min-width: 8rem;
-}
-
-/* The current data and database pages use these shared form and alert
-   refinements. Keep page-specific layout in the feature rules above. */
-.ts-data .ts-panel-title,
-.ts-db-page .ts-panel-title {
-  line-height: 1.375;
-}
-
-.ts-data .ts-input,
-.ts-data .ts-select,
-.ts-db-page .ts-input {
-  font-size: var(--ts-fs-body);
-}
-
-.ts-data .ts-hint {
-  font-size: var(--ts-fs-ui);
-  line-height: 1.6;
-}
-
-.ts-data .ts-textarea {
-  font-size: var(--ts-fs-body);
-  line-height: 1.6;
-  min-height: 112px;
-  padding: var(--ts-md) var(--ts-pad-inline);
-  field-sizing: content;
-}
-
-.ts-data .ts-ua-p {
-  margin: 1em 0;
-}
-
-.ts-data .ts-alert,
-.ts-db-page .ts-alert {
-  padding: 14px var(--ts-lg);
-  font-size: var(--ts-fs-body);
-}
-
-.ts-data .ts-alert > svg,
-.ts-db-page .ts-alert > svg {
+.ts-data-checks > li > svg {
+  flex: none;
   margin-top: 2px;
+  color: var(--ts-success);
 }
 
-.ts-data .ts-alert-title,
-.ts-db-page .ts-alert-title {
-  font-weight: var(--ts-fw-medium);
+.ts-data-checks > .ts-data-check-warn > svg {
+  color: var(--ts-warning);
 }
 
-.ts-data .ts-alert-body,
-.ts-db-page .ts-alert-body {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-ui);
-}
-
-.ts-data .ts-btn,
-.ts-db-page .ts-btn {
-  font-weight: var(--ts-fw-semibold);
-}
-
-.ts-data .ts-icon-btn,
-.ts-db-page .ts-icon-btn {
-  width: var(--ts-control-h-lg);
-  height: var(--ts-control-h-lg);
-}
-
-.ts-data .ts-empty .ts-ui {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-ui);
-  line-height: 1.5;
-}
-
-.ts-data .ts-empty-content {
+/* Index fields. */
+.ts-data-chips {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--ts-sm);
-  max-width: 24rem;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+  list-style: none;
 }
 
-@media (max-width: 40rem) {
-  .ts-data .ts-toolbar {
-    align-items: stretch;
-    gap: var(--ts-md);
-    padding-block: var(--ts-md);
-  }
+.ts-data-chips > li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--ts-s1) var(--ts-s3);
+  border: 1px solid color-mix(in oklab, var(--tone) 30%, transparent);
+  border-radius: var(--ts-radius-pill);
+  background: color-mix(in oklab, var(--tone) 10%, transparent);
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+}
 
-  .ts-data .ts-toolbar .ts-tabs {
-    width: 100%;
-    overflow-x: auto;
-  }
+.ts-data-chips > li > svg {
+  color: var(--tone);
+}
 
-  .ts-data .ts-toolbar .ts-tab {
-    flex: 0 0 auto;
-  }
+/* Native progress styled to match .ts-progress. */
+.ts-data-progress {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-surface-3);
+  appearance: none;
+}
 
-  .ts-data-tabs {
-    gap: var(--ts-lg);
-  }
+.ts-data-progress::-webkit-progress-bar {
+  background: var(--ts-surface-3);
+}
 
-  .ts-data .ts-filters {
-    width: 100%;
-    flex-basis: 100%;
-    justify-content: stretch;
-  }
+.ts-data-progress::-webkit-progress-value {
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-accent);
+}
 
-  .ts-data .ts-filters .ts-filter-field,
-  .ts-data .ts-filters .ts-btn {
-    flex: 1 1 100%;
-    min-width: 0;
-  }
+.ts-data-progress::-moz-progress-bar {
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-accent);
+}
 
-  .ts-data .ts-section-head > .ts-btn,
-  .ts-data .ts-section-head > .ts-badge {
-    align-self: flex-start;
-  }
+/* Document revisions as a timeline. */
+.ts-data-history {
+  display: grid;
+  gap: var(--ts-s4);
+  padding-left: var(--ts-s5);
+  border-left: 2px solid var(--ts-line-strong);
+  list-style: none;
+}
 
-  .ts-data .ts-page-desc {
-    margin-top: 0;
-  }
+.ts-data-history > li {
+  position: relative;
+  display: grid;
+  gap: var(--ts-s2);
+}
+
+.ts-data-history > li::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: calc(-1 * var(--ts-s5) - 6px);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--tone);
+  box-shadow: 0 0 0 3px var(--ts-surface);
 }

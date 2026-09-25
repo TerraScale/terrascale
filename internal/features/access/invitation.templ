@@ -1,27 +1,37 @@
 package access
 
-import "terrascale.tech/dashboard/internal/core"
+import (
+	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/ui"
+)
 
 templ invitationPageView(page core.Page, data invitationPageData) {
-	<main class="ts-inv-root">
-		<section class="ts-flow-panel" aria-labelledby="invitation-title">
-			<p class="ts-meta">ORGANIZATION INVITATION</p>
-			<h1 class="ts-panel-title" id="invitation-title">Join { data.OrganizationName }</h1>
-			<p>You have been invited to join this organization as a { data.Role }.</p>
-			<p class="ts-meta">Invitation for { data.Email } · expires { data.ExpiresAt }</p>
+	<main class="ts-auth">
+		<section class="ts-auth-card" aria-labelledby="invitation-title">
+			<div class="ts-auth-brand">
+				<img class="ts-brand-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async"/>
+			</div>
+			<div class="ts-auth-heading">
+				<p class="ts-eyebrow">Organization invitation</p>
+				<h1 class="ts-auth-title" id="invitation-title">Join { data.OrganizationName }</h1>
+				<p class="ts-auth-subtitle">You have been invited to join this organization as a { data.Role }.</p>
+				<p class="ts-meta">Invitation for { data.Email } · expires { data.ExpiresAt }</p>
+			</div>
 			if data.CanRespond {
-				<form method="post" action={ "/invitations/" + data.Token + "/respond" } class="ts-flow-form">
+				<form method="post" action={ "/invitations/" + data.Token + "/respond" } class="ts-stack-sm">
 					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-					<button class="ts-btn ts-btn-primary" type="submit" name="action" value="accept">Accept invitation</button>
-					<button class="ts-btn ts-btn-secondary" type="submit" name="action" value="decline">Decline</button>
+					<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit" name="action" value="accept">Accept invitation</button>
+					<button class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" type="submit" name="action" value="decline">Decline</button>
 				</form>
 			} else if data.HasSession {
-				<p class="ts-alert ts-alert-danger" role="alert">Sign in using { data.Email } to accept or decline this invitation. You are currently signed in as { data.CurrentEmail }.</p>
-				<a class="ts-btn ts-btn-secondary" href="/login">Switch account</a>
+				@ui.Alert("danger", "", "Sign in using "+data.Email+" to accept or decline this invitation. You are currently signed in as "+data.CurrentEmail+".")
+				<a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/login">Switch account</a>
 			} else {
-				<p>Sign in or create an account with { data.Email } to accept this invitation.</p>
-				<a class="ts-btn ts-btn-primary" href="/login">Sign in</a>
-				<a class="ts-btn ts-btn-secondary" href="/onboarding">Create account</a>
+				<p class="ts-muted">Sign in or create an account with { data.Email } to accept this invitation.</p>
+				<div class="ts-stack-sm">
+					<a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="/login">Sign in</a>
+					<a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/onboarding">Create account</a>
+				</div>
 			}
 		</section>
 	</main>

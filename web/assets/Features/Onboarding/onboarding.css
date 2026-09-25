@@ -1,0 +1,229 @@
+/* Account activation: progress stepper, step card, and plan picker. */
+
+.ts-onboarding {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s6);
+  width: min(32rem, 100%);
+  margin-inline: auto;
+  padding: var(--ts-s10) var(--ts-s4) var(--ts-s12);
+}
+
+.ts-onboarding-wide {
+  width: min(52rem, 100%);
+}
+
+.ts-onboarding-header {
+  display: flex;
+  justify-content: center;
+}
+
+.ts-onboarding-progress {
+  display: grid;
+  gap: var(--ts-s3);
+}
+
+.ts-onboarding-progress .ts-eyebrow {
+  color: var(--ts-link);
+}
+
+.ts-onboarding-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ts-s2);
+  list-style: none;
+}
+
+.ts-onboarding-step {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+  font-weight: 600;
+}
+
+.ts-onboarding-step-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: 50%;
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-onboarding-step-current {
+  color: var(--ts-ink);
+}
+
+.ts-onboarding-step-current .ts-onboarding-step-icon {
+  border-color: transparent;
+  background: var(--ts-accent);
+  color: var(--ts-on-accent);
+}
+
+.ts-onboarding-step-complete {
+  color: var(--ts-ink-2);
+}
+
+.ts-onboarding-step-complete .ts-onboarding-step-icon {
+  border-color: transparent;
+  background: color-mix(in oklab, var(--ts-success) 20%, transparent);
+  color: var(--ts-success);
+}
+
+.ts-onboarding-card {
+  display: grid;
+  gap: var(--ts-s5);
+  padding: var(--ts-s8);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-onboarding-heading {
+  display: grid;
+  flex: 1 1 20rem;
+  gap: var(--ts-s1);
+}
+
+.ts-onboarding-payment-head {
+  align-items: flex-start;
+}
+
+.ts-onboarding-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s3);
+  padding-top: var(--ts-s4);
+  border-top: 1px solid var(--ts-line);
+}
+
+/* Segmented radio control (billing interval). */
+.ts-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius);
+  background: var(--ts-canvas);
+}
+
+.ts-segmented label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  padding: var(--ts-s1) var(--ts-s3);
+  border-radius: var(--ts-radius-sm);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ts-segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ts-segmented label:has(input:checked) {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+}
+
+.ts-segmented label:has(input:focus-visible) {
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
+}
+
+/* Plan cards: the radio is visually hidden, the whole card is the target. */
+.ts-onboarding-plans {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: var(--ts-s3);
+}
+
+.ts-onboarding-plan {
+  position: relative;
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: var(--ts-s2);
+  padding: var(--ts-s4);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius-lg);
+  background: transparent;
+  cursor: pointer;
+  transition: border-color var(--ts-fast) var(--ts-ease), background-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-onboarding-plan > .ts-row-between {
+  width: 100%;
+}
+
+.ts-onboarding-plan:hover {
+  border-color: color-mix(in oklab, var(--tone) 50%, transparent);
+}
+
+.ts-onboarding-plan-radio {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ts-onboarding-plan:has(:checked) {
+  border-color: var(--ts-accent);
+  background: var(--ts-accent-soft);
+}
+
+.ts-onboarding-plan:has(:focus-visible) {
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
+}
+
+.ts-onboarding-plan-name {
+  color: var(--tone);
+  font-weight: 700;
+}
+
+.ts-onboarding-plan-check {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: 50%;
+  color: transparent;
+  font-size: 12px;
+}
+
+.ts-onboarding-plan:has(:checked) .ts-onboarding-plan-check {
+  border-color: transparent;
+  background: var(--tone);
+  color: var(--ts-canvas);
+}
+
+.ts-onboarding-plan-price {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ts-s1);
+  font-size: var(--ts-fs-xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 30rem) {
+  .ts-onboarding-card {
+    padding: var(--ts-s6) var(--ts-s5);
+  }
+
+  .ts-onboarding-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}

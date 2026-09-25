@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -159,30 +160,52 @@ func TestShellNavigationMatchesDashboardRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	shell := shellFor(account, account.Principal(), "shell", httptest.NewRequest(http.MethodGet, "/billing/portal", nil))
-	for i, want := range []core.NavItem{
-		{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
-		{Label: "Tables", URL: "/data"}, {Label: "API keys", URL: "/api-keys"},
-		{Label: "Team", URL: "/access"}, {Label: "Authentication", URL: "/auth"},
-		{Label: "Usage", URL: "/usage"}, {Label: "Audit", URL: "/audit"},
-		{Label: "Organization", URL: "/organization", BadgeCount: 1},
-	} {
-		if len(shell.Navigation) <= i || shell.Navigation[i] != want {
-			t.Fatalf("primary navigation[%d] = %+v, want %+v", i, shell.Navigation, want)
+	want := []core.NavGroup{
+		{Label: "Build", Items: []core.NavItem{
+			{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
+			{Label: "Tables", URL: "/data"}, {Label: "Backups", URL: "/backups"},
+			{Label: "Engine", URL: "/engine"},
+		}},
+		{Label: "Secure", Items: []core.NavItem{
+			{Label: "API keys", URL: "/api-keys"}, {Label: "Team", URL: "/access"},
+			{Label: "Authentication", URL: "/auth"}, {Label: "Audit", URL: "/audit"},
+		}},
+		{Label: "Manage", Items: []core.NavItem{
+			{Label: "Usage", URL: "/usage"}, {Label: "Subscriptions", URL: "/subscriptions"},
+			{Label: "Billing", URL: "/billing", Active: true},
+			{Label: "Organization", URL: "/organization", BadgeCount: 1},
+			{Label: "Settings", URL: "/settings"},
+		}},
+	}
+	if !reflect.DeepEqual(shell.Navigation, want) {
+		t.Fatalf("navigation = %+v, want %+v", shell.Navigation, want)
+	}
+}
+
+func TestAdminNavigationActivatesOnlyTheCurrentSection(t *testing.T) {
+	store := core.NewStore()
+	account, err := store.CreateAccount(core.User{Name: "Avery Example", Email: "avery@example.test", PasswordHash: "hash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell := shellFor(account, account.Principal(), "admin", httptest.NewRequest(http.MethodGet, "/admin/users", nil))
+	for _, item := range shell.Navigation[0].Items {
+		if item.Active != (item.URL == "/admin/users") {
+			t.Fatalf("admin item %s active = %v", item.URL, item.Active)
 		}
 	}
-	if len(shell.Navigation) != 9 {
-		t.Fatalf("primary navigation count = %d, want 9", len(shell.Navigation))
+}
+
+func TestDataToolRoutesHighlightTables(t *testing.T) {
+	store := core.NewStore()
+	account, err := store.CreateAccount(core.User{Name: "Avery Example", Email: "avery@example.test", PasswordHash: "hash"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	for i, want := range []core.NavItem{
-		{Label: "Backups", URL: "/backups"}, {Label: "Engine", URL: "/engine"},
-		{Label: "Subscriptions", URL: "/subscriptions"},
-		{Label: "Billing", URL: "/billing", Active: true}, {Label: "Settings", URL: "/settings"},
-	} {
-		if len(shell.SecondaryNavigation) <= i || shell.SecondaryNavigation[i] != want {
-			t.Fatalf("secondary navigation[%d] = %+v, want %+v", i, shell.SecondaryNavigation, want)
+	for _, path := range []string{"/data", "/schema", "/indexes", "/history"} {
+		shell := shellFor(account, account.Principal(), "shell", httptest.NewRequest(http.MethodGet, path, nil))
+		if tables := shell.Navigation[0].Items[2]; tables.URL != "/data" || !tables.Active {
+			t.Fatalf("%s: Tables item = %+v, want active", path, tables)
 		}
-	}
-	if len(shell.SecondaryNavigation) != 5 {
-		t.Fatalf("secondary navigation count = %d, want 5", len(shell.SecondaryNavigation))
 	}
 }

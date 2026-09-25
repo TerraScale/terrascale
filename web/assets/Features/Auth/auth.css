@@ -1,0 +1,96 @@
+/* Sign-in page: a full-bleed region map beside the credential column. */
+
+.ts-login {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(24rem, 1fr);
+  min-height: 100dvh;
+}
+
+.ts-login-hero {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: var(--ts-s10);
+  overflow: hidden;
+}
+
+.ts-login-hero .ts-region-map {
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+
+.ts-login-regions {
+  position: absolute;
+  bottom: var(--ts-s8);
+  left: var(--ts-s10);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s5);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+  list-style: none;
+}
+
+.ts-login-regions li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-login-regions .ts-dot {
+  width: 6px;
+  height: 6px;
+  color: var(--ts-accent);
+}
+
+.ts-login-column {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  border-left: 1px solid color-mix(in oklab, var(--ts-accent) 45%, transparent);
+  background: var(--ts-canvas);
+}
+
+.ts-login-panel {
+  display: grid;
+  align-content: center;
+  gap: var(--ts-s5);
+  width: min(20rem, 100%);
+  margin-inline: auto;
+  padding: var(--ts-s10) 0;
+}
+
+.ts-login-logo {
+  justify-self: center;
+  width: auto;
+  height: 68px;
+}
+
+.ts-login-footer {
+  display: flex;
+  justify-content: center;
+  padding: var(--ts-s4);
+  border-top: 1px solid var(--ts-line);
+}
+
+@media (max-width: 64rem) {
+  .ts-login {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-login-hero {
+    display: none;
+  }
+
+  .ts-login-column {
+    border-left: 0;
+  }
+
+  .ts-login-panel {
+    width: min(22rem, calc(100% - 2 * var(--ts-s4)));
+  }
+
+  .ts-login-logo {
+    height: 52px;
+  }
+}

@@ -1,25 +1,42 @@
-/* Access page summary styles.
-   Used by the access page summary styles. feature. Keep page-specific rules in Features/. */
+/* Team page: invite forms, member search, and inline role editing. */
 
-/* ===== Feature: Access ===== */
-
-.ts-panel-20 {
-  padding: 20px;
+.ts-access-invite {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ts-s3);
 }
 
-.ts-stack-20 {
-  gap: 20px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+.ts-access-invite > .ts-field {
+  flex: 1 1 220px;
 }
 
-/* Three-column grid collapsing to one column on narrow screens. Declared
-   after .ts-grid so its tighter gap wins on shared elements. */
-.ts-grid-3 {
-  gap: var(--ts-md);
-  grid-template-columns: minmax(0, 1fr);
+.ts-access-member {
+  flex-wrap: nowrap;
+  min-width: 220px;
 }
 
-@media (min-width: 48rem) {
-  .ts-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ts-access-role {
+  width: auto;
+  min-width: 112px;
+}
+
+/* Member filters sit on the tab row, right-aligned. */
+.ts-access-filters {
+  flex: 1 1 360px;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.ts-access-filters .ts-filter-field {
+  min-width: 0;
+}
+
+.ts-access-search {
+  flex: 1 1 220px;
+  max-width: 280px;
+}
+
+.ts-access-filters .ts-filter-field:has(ts-menu) {
+  flex: 0 0 170px;
 }

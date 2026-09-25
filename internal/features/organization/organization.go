@@ -53,14 +53,11 @@ type planView struct {
 }
 
 type memberView struct {
-	ID       string
-	Name     string
-	Email    string
-	Role     string
-	IsOwner  bool
-	IsSelf   bool
-	CanEdit  bool
-	JoinedAt string
+	ID      string
+	Name    string
+	Email   string
+	Role    string
+	IsOwner bool
 }
 
 type organizationPageData struct {
@@ -245,8 +242,6 @@ func makeOrganizationPage(account core.Account, active core.Organization, p core
 		data.Members = append(data.Members, memberView{
 			ID: member.UserID, Name: member.Name, Email: member.Email, Role: member.Role,
 			IsOwner: member.UserID == active.OwnerUserID || member.Role == roleOwner,
-			IsSelf:  member.UserID == p.UserID, CanEdit: data.CanManage && member.UserID != p.UserID && member.UserID != active.OwnerUserID,
-			JoinedAt: member.CreatedAt.UTC().Format("2006-01-02"),
 		})
 	}
 	slices.SortFunc(data.Members, func(a, b memberView) int { return strings.Compare(a.Name, b.Name) })

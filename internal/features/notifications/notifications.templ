@@ -2,80 +2,107 @@ package notifications
 
 import (
 	"fmt"
+	"strings"
 
-	"terrascale.tech/dashboard/internal/ui/aria"
+	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/ui"
 )
 
 templ notificationsView(data pageData, csrfToken string) {
 	<main class="ts-page">
-		<header class="ts-page-header">
-			<div><p class="ts-eyebrow">Account activity</p><h1>Notifications</h1><p>Review updates for your selected organization and project.</p></div>
+		@ui.PageHeader(ui.Header{Eyebrow: "Account activity", Title: "Notifications", Description: "Review updates for your selected organization and project."}) {
 			<form method="post" action="/api/v1/notifications/read-all">
 				<input type="hidden" name="_csrf" value={ csrfToken }/>
-				<button type="submit" disabled?={ data.Unread == 0 }>Mark all read</button>
+				<button class="ts-btn ts-btn-secondary" type="submit" disabled?={ data.Unread == 0 }>Mark all read</button>
 			</form>
-		</header>
-		<section aria-label="Inbox summary">
-			<p>
+		}
+		<div class="ts-toolbar">
+			@ui.Tabs("Notification filter", []ui.Tab{
+				{Label: "All", URL: "/notifications", Active: data.Status == "all", Count: data.Total},
+				{Label: "Unread", URL: "/notifications?status=unread", Active: data.Status == "unread", Count: data.Unread},
+			})
+			<p class="ts-meta ts-notifications-summary">
 				{ fmt.Sprint(data.Unread) } unread
 				if data.Critical > 0 {
 					<span>· { fmt.Sprint(data.Critical) } critical</span>
 				}
 				· { fmt.Sprint(data.Total) } total
 			</p>
-			<nav aria-label="Notification filter">
-				<a href="/notifications" aria-current={ aria.CurrentPage(data.Status == "all") }>All</a>
-				<a href="/notifications?status=unread" aria-current={ aria.CurrentPage(data.Status == "unread") }>Unread</a>
-			</nav>
-		</section>
+		</div>
 		if len(data.Notifications) > 0 {
 			<ol class="ts-notification-list">
 				for _, item := range data.Notifications {
 					<li>
-						<article aria-label={ item.Severity + " notification" }>
-							<p><strong>{ item.Title }</strong> <span>{ item.Severity }</span></p>
-							<p>{ item.Body }</p>
-							<p><time datetime={ item.CreatedAt.Format("2006-01-02T15:04:05Z07:00") }>{ item.CreatedAt.UTC().Format("Jan 2, 2006 15:04 UTC") }</time> · { item.Status }</p>
-							if item.Status == "Unread" {
-								<form method="post" action={ "/api/v1/notifications/" + item.ID + "/read" }>
-									<input type="hidden" name="_csrf" value={ csrfToken }/>
-									<button type="submit">Mark read</button>
-								</form>
-							}
-						</article>
+						@notificationItem(item, csrfToken)
 					</li>
 				}
 			</ol>
+		} else if data.Status == "unread" {
+			@ui.Empty("You're all caught up", "No unread notifications in this scope.")
 		} else {
-			<section class="ts-empty-state">
-				<h2>You're all caught up</h2>
-				<p>
-					No
-					if data.Status == "unread" {
-						<span>unread </span>
-					}
-					notifications in this scope.
-				</p>
-			</section>
+			@ui.Empty("You're all caught up", "No notifications in this scope.")
 		}
 		if data.PageCount > 1 {
-			<nav aria-label="Notification pages">
+			<nav class="ts-pager" aria-label="Notification pages">
 				<span>Page { fmt.Sprint(data.Page) } of { fmt.Sprint(data.PageCount) }</span>
-				if data.HasPrevious {
-					if data.Status == "unread" {
-						<a href={ fmt.Sprintf("/notifications?page=%d&status=unread", data.Previous) }>Previous</a>
-					} else {
-						<a href={ fmt.Sprintf("/notifications?page=%d", data.Previous) }>Previous</a>
+				<div class="ts-row">
+					if data.HasPrevious {
+						<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ pageHref(data.Previous, data.Status) } rel="prev">Previous</a>
 					}
-				}
-				if data.HasNext {
-					if data.Status == "unread" {
-						<a href={ fmt.Sprintf("/notifications?page=%d&status=unread", data.Next) }>Next</a>
-					} else {
-						<a href={ fmt.Sprintf("/notifications?page=%d", data.Next) }>Next</a>
+					if data.HasNext {
+						<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ pageHref(data.Next, data.Status) } rel="next">Next</a>
 					}
-				}
+				</div>
 			</nav>
 		}
 	</main>
+}
+
+templ notificationItem(item core.Notification, csrfToken string) {
+	<article
+		class={ "ts-notification", templ.KV("ts-notification-unread", unread(item)) }
+		data-tone={ severityTone(item.Severity) }
+		aria-label={ item.Severity + " notification" }
+	>
+		<span class="ts-notification-marker" aria-hidden="true"></span>
+		<div class="ts-stack-sm">
+			<div class="ts-row">
+				<strong class="ts-strong">{ item.Title }</strong>
+				@ui.Badge("tone", item.Severity)
+			</div>
+			<p class="ts-muted">{ item.Body }</p>
+			<p class="ts-meta"><time datetime={ item.CreatedAt.Format("2006-01-02T15:04:05Z07:00") }>{ item.CreatedAt.UTC().Format("Jan 2, 2006 15:04 UTC") }</time> · { item.Status }</p>
+		</div>
+		if unread(item) {
+			<form method="post" action={ "/api/v1/notifications/" + item.ID + "/read" }>
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				<button class="ts-btn ts-btn-ghost ts-btn-sm" type="submit">Mark read</button>
+			</form>
+		}
+	</article>
+}
+
+// unread matches the status case-insensitively; stored notifications use
+// both "Unread" and "unread".
+func unread(item core.Notification) bool {
+	return strings.EqualFold(item.Status, "unread")
+}
+
+func pageHref(page int, status string) string {
+	if status == "unread" {
+		return fmt.Sprintf("/notifications?page=%d&status=unread", page)
+	}
+	return fmt.Sprintf("/notifications?page=%d", page)
+}
+
+func severityTone(severity string) string {
+	switch severity {
+	case "critical":
+		return "rose"
+	case "warning":
+		return "amber"
+	case "success":
+		return "emerald"
+	}
+	return "sky"
 }

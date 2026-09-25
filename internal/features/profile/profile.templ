@@ -3,404 +3,313 @@ package profile
 import (
 	"fmt"
 	"strings"
+
+	"terrascale.tech/dashboard/internal/ui"
 )
 
 templ profileView(data pageData, csrfToken string) {
-	<main class="ts-page ts-profile">
-		<header class="ts-panel ts-profile-header">
-			<div class="ts-profile-heading-group">
-				<p class="ts-eyebrow">Account</p>
-				<h1 class="ts-profile-heading">{ data.Name }</h1>
-				<p class="ts-muted ts-ui ts-break-words">
-					{ data.Email }
-					if data.Role != "" {
-						<span aria-hidden="true">&nbsp;·&nbsp;</span>{ data.Role }
-					}
-					if data.OrganizationName != "" {
-						<span aria-hidden="true">&nbsp;·&nbsp;</span>{ data.OrganizationName }
-					}
-				</p>
-			</div>
-			<dl class="ts-summary-terms ts-profile-summary">
-				<div class="ts-summary-term"><dt>Roles</dt><dd>{ fmt.Sprint(len(data.Roles)) }</dd></div>
-				<div class="ts-summary-term"><dt>Listed capabilities</dt><dd>{ fmt.Sprint(len(data.Permissions)) }</dd></div>
-				<div class="ts-summary-term"><dt>Sessions</dt><dd>{ fmt.Sprint(len(data.Sessions)) }</dd></div>
-				<div class="ts-summary-term"><dt>Passkey records</dt><dd>{ fmt.Sprint(len(data.Passkeys)) }</dd></div>
-				<div class="ts-summary-term">
-					<dt>Demo MFA</dt>
-					if data.MFAEnabled {
-						<dd>On</dd>
-					} else {
-						<dd>Off</dd>
-					}
-				</div>
-			</dl>
-		</header>
+	<main class="ts-page">
+		@ui.PageHeader(ui.Header{Eyebrow: "Account", Title: data.Name, Description: profileSubtitle(data)})
 		if data.Error != "" {
-			<p role="alert" class="ts-alert ts-alert-danger">{ data.Error }</p>
+			@ui.Alert("danger", "", data.Error)
 		}
 		if data.Status != "" {
 			<p role="status" aria-live="polite" class="ts-alert ts-alert-success">{ data.Status }</p>
 		}
-		<div class="ts-profile-tabs">
-			<nav class="ts-tabs" aria-label="Profile sections">
-				if data.Tab == "profile" {
-					<a class="ts-tab" href="/profile?tab=profile" aria-current="page">Profile</a>
-				} else {
-					<a class="ts-tab" href="/profile?tab=profile">Profile</a>
-				}
-				if data.Tab == "security" {
-					<a class="ts-tab" href="/profile?tab=security" aria-current="page">Security</a>
-				} else {
-					<a class="ts-tab" href="/profile?tab=security">Security</a>
-				}
-				if data.Tab == "sessions" {
-					<a class="ts-tab" href="/profile?tab=sessions" aria-current="page">Sessions</a>
-				} else {
-					<a class="ts-tab" href="/profile?tab=sessions">Sessions</a>
-				}
-			</nav>
-		</div>
-		if data.Tab == "profile" {
-			<div class="ts-grid-two-pane">
-				<section class="ts-panel ts-panel-wide" aria-labelledby="profile-email-title">
-					<div class="ts-panel-header">
-						<h2 class="ts-panel-title" id="profile-email-title">Email and contact</h2>
-						<p class="ts-panel-subtitle">Change your sign-in email after confirming your current password. Changes are stored in this demo account.</p>
-					</div>
-					<div class="ts-padded">
-						<div class="ts-email-form">
-							<h3 class="ts-email-heading">Email change</h3>
-							<form method="post" action="/api/v1/dashboard/profile/email-change" class="ts-form">
-								<input type="hidden" name="_csrf" value={ csrfToken }/>
-								<div class="ts-field">
-									<label class="ts-label" for="newEmail">New email</label>
-									<input class="ts-input" id="newEmail" name="newEmail" type="email" autocomplete="email" required/>
-								</div>
-								<div class="ts-field">
-									<label class="ts-label" for="emailPassword">Current password</label>
-									<input class="ts-input" id="emailPassword" name="password" type="password" autocomplete="current-password" required/>
-								</div>
-								<div class="ts-form-actions">
-									<button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit">Change email</button>
-								</div>
-							</form>
-						</div>
-					</div>
-				</section>
-				<section class="ts-panel" aria-labelledby="profile-details-title">
-					<div class="ts-panel-header">
-						<h2 class="ts-panel-title" id="profile-details-title">Profile details</h2>
-						<p class="ts-panel-subtitle">Update the account information shown across TerraScale.</p>
-					</div>
-					<form class="ts-form ts-padded" method="post" action="/api/v1/dashboard/profile">
-						<input type="hidden" name="_csrf" value={ csrfToken }/>
-						<div class="ts-field">
-							<label class="ts-label" for="displayName">Display name</label>
-							<input class="ts-input" id="displayName" name="name" value={ data.Name } autocomplete="name" maxlength="128" required/>
-						</div>
-						<div class="ts-field">
-							<label class="ts-label" for="phoneNumber">Phone number (optional)</label>
-							<input class="ts-input" id="phoneNumber" name="phoneNumber" type="tel" value={ data.Phone } autocomplete="tel" inputmode="tel"/>
-						</div>
-						<div class="ts-form-actions">
-							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save profile</button>
-						</div>
-					</form>
-				</section>
-				<section class="ts-panel" aria-labelledby="profile-language-title">
-					<div class="ts-panel-header">
-						<h2 class="ts-panel-title" id="profile-language-title">Language</h2>
-						<p class="ts-panel-subtitle">Choose the language used by onboarding and the Dashboard.</p>
-					</div>
-					<form method="post" action="/api/v1/dashboard/profile/language" class="ts-form ts-padded">
-						<input type="hidden" name="_csrf" value={ csrfToken }/>
-						<div class="ts-field ts-field-narrow">
-							<label class="ts-label" for="interfaceLanguage">Interface language</label>
-							<select class="ts-select" id="interfaceLanguage" name="locale">
-								<option value="en" selected?={ data.Locale == "en" }>English</option>
-								<option value="pt-BR" selected?={ data.Locale == "pt-BR" }>Português</option>
-							</select>
-						</div>
-						<div class="ts-form-actions">
-							<button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit">Save language</button>
-						</div>
-					</form>
-				</section>
-				<section class="ts-panel" aria-labelledby="profile-posture-title">
-					<div class="ts-panel-header">
-						<h2 class="ts-panel-title" id="profile-posture-title">Security posture</h2>
-						<p class="ts-panel-subtitle">Current account and demo security records.</p>
-					</div>
-					<dl class="ts-stack-12 ts-padded ts-profile-posture">
-						<div class="ts-posture-row">
-							<dt class="ts-posture-label">Active organization role</dt>
-							if data.Role != "" {
-								<dd class="ts-badge ts-badge-info">{ data.Role }</dd>
-							} else {
-								<dd class="ts-badge ts-badge-neutral">Unavailable</dd>
-							}
-						</div>
-						<div class="ts-posture-row">
-							<dt class="ts-posture-label">Multi-factor record</dt>
-							if data.MFAEnabled {
-								<dd class="ts-badge ts-badge-neutral">Enabled in demo</dd>
-							} else {
-								<dd class="ts-badge ts-badge-neutral">Not enabled</dd>
-							}
-						</div>
-						<div class="ts-posture-row"><dt class="ts-posture-label">Passkey records</dt><dd class="ts-badge ts-badge-neutral">{ fmt.Sprint(len(data.Passkeys)) }</dd></div>
-						<div class="ts-posture-row"><dt class="ts-posture-label">Active sessions</dt><dd class="ts-badge ts-badge-neutral">{ fmt.Sprint(len(data.Sessions)) }</dd></div>
-					</dl>
-				</section>
-				<section class="ts-panel ts-grid-two-span" aria-labelledby="profile-roles-title">
-					<div class="ts-panel-header">
-						<h2 class="ts-panel-title" id="profile-roles-title">Roles and permissions</h2>
-						<p class="ts-panel-subtitle">Common resource capabilities for your current organization and project scope. Billing, platform-admin, and other routes may apply separate checks.</p>
-					</div>
-					<div class="ts-claims-grid">
-						<section class="ts-claim-list" aria-labelledby="profile-role-list-title">
-							<h3 class="ts-claim-title" id="profile-role-list-title">Roles</h3>
-							if len(data.Roles) == 0 {
-								<div class="ts-empty" role="status">
-									<span class="ts-empty-title">No active organization role</span>
-									<p class="ts-meta">No role is available for the current organization membership.</p>
-								</div>
-							} else {
-								<div class="ts-claim-values">
-									for _, role := range data.Roles {
-										<span class="ts-badge ts-badge-neutral">{ role }</span>
-									}
-								</div>
-							}
-						</section>
-						<section class="ts-claim-list" aria-labelledby="profile-permission-list-title">
-							<h3 class="ts-claim-title" id="profile-permission-list-title">Common capabilities</h3>
-							if len(data.Permissions) == 0 {
-								<div class="ts-empty" role="status">
-									<span class="ts-empty-title">No scoped permissions</span>
-									<p class="ts-meta">No resource capabilities are available for the current organization and project scope.</p>
-								</div>
-							} else {
-								<div class="ts-claim-values">
-									for _, permission := range data.Permissions {
-										<span class="ts-badge ts-badge-neutral">{ permission }</span>
-									}
-								</div>
-							}
-						</section>
-					</div>
-				</section>
-			</div>
-		} else if data.Tab == "security" {
-			<div class="ts-grid-two">
-				<section class="ts-security-stack">
-					<section class="ts-panel" aria-labelledby="profile-password-title">
-						<div class="ts-panel-header">
-							<h2 class="ts-panel-title" id="profile-password-title">Change password</h2>
-							<p class="ts-panel-subtitle">All active sessions are terminated after the password changes.</p>
-						</div>
-						<form method="post" action="/api/v1/dashboard/profile/password" class="ts-form ts-padded">
-							<input type="hidden" name="_csrf" value={ csrfToken }/>
-							<div class="ts-field">
-								<label class="ts-label" for="currentPassword">Current password</label>
-								<input class="ts-input" id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" required/>
-							</div>
-							<div class="ts-field">
-								<label class="ts-label" for="newPassword">New password</label>
-								<input class="ts-input" id="newPassword" name="newPassword" type="password" autocomplete="new-password" minlength="12" required/>
-								<span class="ts-hint">Use at least 12 characters.</span>
-							</div>
-							<div class="ts-field">
-								<label class="ts-label" for="confirmPassword">Confirm new password</label>
-								<input class="ts-input" id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required/>
-							</div>
-							<div class="ts-form-actions">
-								<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Change password and sign out</button>
-							</div>
-						</form>
-					</section>
-					<section class="ts-panel" aria-labelledby="profile-mfa-title">
-						<div class="ts-panel-header">
-							<h2 class="ts-panel-title" id="profile-mfa-title">Multi-factor authentication</h2>
-							<p class="ts-panel-subtitle">Demo simulation only. These records do not verify sign-ins or protect your account.</p>
-						</div>
-						<div class="ts-stack-16 ts-padded">
-							if data.Demo {
-								<div class="ts-alert ts-alert-warning" role="note">
-									<span class="ts-alert-title">Demo-only security simulation</span>
-									<span class="ts-alert-body">Authenticator secrets and recovery codes shown here are demonstration values. They are not usable authentication factors and do not secure sign-in.</span>
-								</div>
-								if data.MFAEnabled {
-									<div class="ts-well">
-										<p class="ts-text-medium">A demo authenticator record is enabled.</p>
-										<p class="ts-notice-description">It is stored only for this demo and is never checked during sign-in.</p>
-									</div>
-									<form method="post" action="/api/v1/dashboard/profile/mfa/remove" class="ts-form">
-										<input type="hidden" name="_csrf" value={ csrfToken }/>
-										<input type="hidden" name="factor" value="totp"/>
-										<div class="ts-field">
-											<label class="ts-label" for="mfaDisablePassword">Current password</label>
-											<input class="ts-input" id="mfaDisablePassword" name="password" type="password" autocomplete="current-password" required/>
-										</div>
-										<div class="ts-form-actions">
-											<button class="ts-btn ts-btn-destructive ts-btn-lg" type="submit">Remove demo MFA record</button>
-										</div>
-									</form>
-									<form method="post" action="/api/v1/dashboard/profile/mfa/recovery-codes" class="ts-form">
-										<input type="hidden" name="_csrf" value={ csrfToken }/>
-										<div class="ts-field">
-											<label class="ts-label" for="recoveryPassword">Current password</label>
-											<input class="ts-input" id="recoveryPassword" name="password" type="password" autocomplete="current-password" required/>
-										</div>
-										<div class="ts-form-actions">
-											<button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit">Generate demo recovery codes</button>
-										</div>
-									</form>
-								} else if data.TOTPSecret != "" {
-									<form method="post" action="/api/v1/dashboard/profile/mfa/verify" class="ts-form">
-										<input type="hidden" name="_csrf" value={ csrfToken }/>
-										<input type="hidden" name="enrollment" value={ data.TOTPEnrollmentToken }/>
-										<div class="ts-alert ts-alert-info">
-											<span class="ts-alert-title">One-time demo secret</span>
-											<code class="ts-code-secret">{ data.TOTPSecret }</code>
-											<span class="ts-alert-body">This secret is displayed once for this simulation. It is not a real authenticator secret and cannot be used to protect sign-in.</span>
-										</div>
-										<div class="ts-field ts-field-narrow">
-											<label class="ts-label" for="mfaCode">Six-digit demo verification code</label>
-											<input class="ts-input" id="mfaCode" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required/>
-										</div>
-										<div class="ts-form-actions">
-											<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Verify demo code</button>
-										</div>
-									</form>
-								} else {
-									<div class="ts-well">
-										<p class="ts-text-medium">No demo MFA record is enabled.</p>
-										<p class="ts-notice-description">The enrollment flow is for previewing the profile interface only.</p>
-									</div>
-									<form method="post" action="/api/v1/dashboard/profile/mfa/enroll" class="ts-form">
-										<input type="hidden" name="_csrf" value={ csrfToken }/>
-										<div class="ts-field">
-											<label class="ts-label" for="mfaPassword">Current password</label>
-											<input class="ts-input" id="mfaPassword" name="password" type="password" autocomplete="current-password" required/>
-										</div>
-										<div class="ts-form-actions">
-											<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Start demo MFA enrollment</button>
-										</div>
-									</form>
-								}
-								if len(data.RecoveryCodes) > 0 {
-									<div class="ts-alert ts-alert-warning ts-recovery-wide" role="status">
-										<span class="ts-alert-title">One-time demo recovery codes</span>
-										<span class="ts-alert-body">These values are revealed once, are not accepted at sign-in, and do not protect your account.</span>
-										<pre class="ts-recovery-codes">{ strings.Join(data.RecoveryCodes, "\n") }</pre>
-									</div>
-								}
-							} else {
-								<p class="ts-alert ts-alert-info" role="status">Demo MFA enrollment is unavailable in this deployment.</p>
-							}
-						</div>
-					</section>
-				</section>
-				<section class="ts-panel ts-profile-passkeys" aria-labelledby="profile-passkeys-title">
-					<div class="ts-panel-header">
-						<h2 class="ts-panel-title" id="profile-passkeys-title">Passkeys</h2>
-						<p class="ts-panel-subtitle">Demo records only. No passkey is registered with a browser or security key, and these records cannot sign you in.</p>
-					</div>
-					<div class="ts-stack-16 ts-padded">
-						if data.Demo {
-							if len(data.Passkeys) == 0 {
-								<div class="ts-empty" role="status">
-									<span class="ts-empty-icon-box" aria-hidden="true">—</span>
-									<span class="ts-empty-title">No demo passkey records</span>
-									<p class="ts-meta">You can add a placeholder record to preview this interface.</p>
-								</div>
-							} else {
-								<ul class="ts-profile-passkey-list">
-									for _, passkey := range data.Passkeys {
-										<li class="ts-well-row">
-											<div class="ts-row-content">
-												<p class="ts-passkey-name">{ passkey.Name }</p>
-												<p class="ts-meta">Demo record · Added { passkey.CreatedAt }</p>
-											</div>
-											<form method="post" action="/api/v1/dashboard/profile/passkeys/remove">
-												<input type="hidden" name="_csrf" value={ csrfToken }/>
-												<input type="hidden" name="passkeyId" value={ passkey.ID }/>
-												<button class="ts-btn ts-btn-destructive ts-btn-lg" type="submit">Remove demo record</button>
-											</form>
-										</li>
-									}
-								</ul>
-							}
-							<form method="post" action="/api/v1/dashboard/profile/passkeys/register" class="ts-form-end">
-								<input type="hidden" name="_csrf" value={ csrfToken }/>
-								<div class="ts-field ts-row-content">
-									<label class="ts-label" for="passkeyName">Demo record name</label>
-									<input class="ts-input" id="passkeyName" name="name" maxlength="128" placeholder="Work laptop" required/>
-								</div>
-								<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Add demo passkey record</button>
-							</form>
-						} else {
-							<p class="ts-alert ts-alert-info" role="status">Demo passkey records are unavailable in this deployment.</p>
-						}
-					</div>
-				</section>
-			</div>
-		} else {
-			<section class="ts-panel" aria-labelledby="profile-sessions-title">
-				<div class="ts-panel-header">
-					<h2 class="ts-panel-title" id="profile-sessions-title">Active sessions</h2>
-					<p class="ts-panel-subtitle">Read-only local dashboard sessions. Session details are limited to the values available here.</p>
-				</div>
-				if len(data.Sessions) == 0 {
-					<div class="ts-padded">
-						<div class="ts-empty" role="status">
-							<span class="ts-empty-icon-box" aria-hidden="true">—</span>
-							<span class="ts-empty-title">No active sessions</span>
-							<p class="ts-meta">No active local dashboard sessions were returned.</p>
-						</div>
-					</div>
-				} else {
-					<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Active sessions table. Scroll horizontally to see all columns.">
-						<table class="ts-table">
-							<caption class="ts-sr-only">Active local dashboard sessions with their current status and expiry.</caption>
-							<thead>
-								<tr><th scope="col">Status</th><th scope="col">Session ID</th><th scope="col">Expires</th></tr>
-							</thead>
-							<tbody>
-								for _, session := range data.Sessions {
-									<tr>
-										<td>
-											if session.Current {
-												<span class="ts-badge ts-badge-success">Current session</span>
-											} else {
-												<span class="ts-badge ts-badge-neutral">Active</span>
-											}
-										</td>
-										<td><code class="ts-mono">{ session.ID }</code></td>
-										<td>{ session.ExpiresAt }</td>
-									</tr>
-								}
-							</tbody>
-						</table>
-					</div>
-				}
-			</section>
+		@ui.Stats("Account summary") {
+			@ui.Stat("Roles", fmt.Sprint(len(data.Roles)), "")
+			@ui.Stat("Listed capabilities", fmt.Sprint(len(data.Permissions)), "")
+			@ui.Stat("Sessions", fmt.Sprint(len(data.Sessions)), "")
+			@ui.Stat("Passkey records", fmt.Sprint(len(data.Passkeys)), "")
+			@ui.Stat("Demo MFA", onOff(data.MFAEnabled), "")
 		}
-		<section class="ts-panel ts-profile-context" aria-labelledby="profile-context-title">
-			<div class="ts-panel-header">
-				<h2 class="ts-panel-title" id="profile-context-title">Session context</h2>
-				<p class="ts-panel-subtitle">Authenticated account and selected scope.</p>
-			</div>
-			<dl class="ts-grid-context ts-padded">
-				<div class="ts-context-term"><dt class="ts-context-label">User ID</dt><dd class="ts-context-value">{ data.UserID }</dd></div>
-				<div class="ts-context-term"><dt class="ts-context-label">Account ID</dt><dd class="ts-context-value">{ data.AccountID }</dd></div>
-				<div class="ts-context-term"><dt class="ts-context-label">Email</dt><dd class="ts-context-value">{ data.Email }</dd></div>
-				<div class="ts-context-term"><dt class="ts-context-label">Active organization</dt><dd class="ts-context-value">{ data.ActiveOrganizationID }</dd></div>
-				<div class="ts-context-term"><dt class="ts-context-label">Dashboard project</dt><dd class="ts-context-value">{ data.ActiveProjectID }</dd></div>
-				<div class="ts-context-term"><dt class="ts-context-label">Language</dt><dd class="ts-context-value">{ data.Locale }</dd></div>
+		@ui.Tabs("Profile sections", []ui.Tab{
+			{Label: "Profile", URL: "/profile?tab=profile", Active: data.Tab == "profile"},
+			{Label: "Security", URL: "/profile?tab=security", Active: data.Tab == "security"},
+			{Label: "Sessions", URL: "/profile?tab=sessions", Active: data.Tab == "sessions"},
+		})
+		switch data.Tab {
+			case "profile":
+				@profileTab(data, csrfToken)
+			case "security":
+				@securityTab(data, csrfToken)
+			default:
+				@sessionsTab(data)
+		}
+		@ui.Card(ui.CardProps{ID: "profile-context", Title: "Session context", Description: "Authenticated account and selected scope."}) {
+			<dl class="ts-kv">
+				<dt>User ID</dt>
+				<dd class="ts-mono">{ data.UserID }</dd>
+				<dt>Account ID</dt>
+				<dd class="ts-mono">{ data.AccountID }</dd>
+				<dt>Email</dt>
+				<dd>{ data.Email }</dd>
+				<dt>Active organization</dt>
+				<dd class="ts-mono">{ data.ActiveOrganizationID }</dd>
+				<dt>Dashboard project</dt>
+				<dd class="ts-mono">{ data.ActiveProjectID }</dd>
+				<dt>Language</dt>
+				<dd>{ data.Locale }</dd>
 			</dl>
-		</section>
+		}
 	</main>
+}
+
+templ profileTab(data pageData, csrfToken string) {
+	<div class="ts-grid-2">
+		@ui.Card(ui.CardProps{ID: "profile-details", Title: "Profile details", Description: "Update the account information shown across TerraScale."}) {
+			<form class="ts-form" method="post" action="/api/v1/dashboard/profile">
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				@ui.Field(ui.FieldProps{ID: "displayName", Label: "Display name"}) {
+					<input class="ts-input" id="displayName" name="name" value={ data.Name } autocomplete="name" maxlength="128" required/>
+				}
+				@ui.Field(ui.FieldProps{ID: "phoneNumber", Label: "Phone number (optional)"}) {
+					<input class="ts-input" id="phoneNumber" name="phoneNumber" type="tel" value={ data.Phone } autocomplete="tel" inputmode="tel"/>
+				}
+				<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save profile</button></div>
+			</form>
+		}
+		@ui.Card(ui.CardProps{ID: "profile-email", Title: "Email and contact", Description: "Change your sign-in email after confirming your current password. Changes are stored in this demo account."}) {
+			<form method="post" action="/api/v1/dashboard/profile/email-change" class="ts-form">
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				@ui.Field(ui.FieldProps{ID: "newEmail", Label: "New email"}) {
+					<input class="ts-input" id="newEmail" name="newEmail" type="email" autocomplete="email" required/>
+				}
+				@ui.Field(ui.FieldProps{ID: "emailPassword", Label: "Current password"}) {
+					@ui.PasswordInput(ui.PasswordProps{ID: "emailPassword", Name: "password", Autocomplete: "current-password"})
+				}
+				<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit">Change email</button></div>
+			</form>
+		}
+		@ui.Card(ui.CardProps{ID: "profile-language", Title: "Language", Description: "Choose the language used by onboarding and the Dashboard."}) {
+			<form method="post" action="/api/v1/dashboard/profile/language" class="ts-form">
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				@ui.Field(ui.FieldProps{ID: "interfaceLanguage", Label: "Interface language"}) {
+					<select class="ts-select" id="interfaceLanguage" name="locale">
+						<option value="en" selected?={ data.Locale == "en" }>English</option>
+						<option value="pt-BR" selected?={ data.Locale == "pt-BR" }>Português</option>
+					</select>
+				}
+				<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit">Save language</button></div>
+			</form>
+		}
+		@ui.Card(ui.CardProps{ID: "profile-posture", Title: "Security posture", Description: "Current account and demo security records."}) {
+			<dl class="ts-kv ts-profile-posture">
+				<dt>Active organization role</dt>
+				<dd>
+					if data.Role != "" {
+						@ui.Badge("info", data.Role)
+					} else {
+						@ui.Badge("neutral", "Unavailable")
+					}
+				</dd>
+				<dt>Multi-factor record</dt>
+				<dd>
+					if data.MFAEnabled {
+						@ui.Badge("success", "Enabled in demo")
+					} else {
+						@ui.Badge("neutral", "Not enabled")
+					}
+				</dd>
+				<dt>Passkey records</dt>
+				<dd>
+					@ui.Badge("neutral", fmt.Sprint(len(data.Passkeys)))
+				</dd>
+				<dt>Active sessions</dt>
+				<dd>
+					@ui.Badge("neutral", fmt.Sprint(len(data.Sessions)))
+				</dd>
+			</dl>
+		}
+	</div>
+	@ui.Card(ui.CardProps{ID: "profile-roles", Title: "Roles and permissions", Description: "Common resource capabilities for your current organization and project scope. Billing, platform-admin, and other routes may apply separate checks."}) {
+		<div class="ts-grid-2">
+			@claimList("profile-role-list-title", "Roles", data.Roles, "No active organization role", "No role is available for the current organization membership.")
+			@claimList("profile-permission-list-title", "Common capabilities", data.Permissions, "No scoped permissions", "No resource capabilities are available for the current organization and project scope.")
+		</div>
+	}
+}
+
+templ claimList(id, title string, values []string, emptyTitle, emptyDetail string) {
+	<section class="ts-stack-sm" aria-labelledby={ id }>
+		<h3 class="ts-label" id={ id }>{ title }</h3>
+		if len(values) == 0 {
+			@ui.Empty(emptyTitle, emptyDetail)
+		} else {
+			<div class="ts-row ts-profile-claims">
+				for _, value := range values {
+					@ui.Badge("neutral", value)
+				}
+			</div>
+		}
+	</section>
+}
+
+templ securityTab(data pageData, csrfToken string) {
+	<div class="ts-split">
+		<div class="ts-stack-lg">
+			@ui.Card(ui.CardProps{ID: "profile-password", Title: "Change password", Description: "All active sessions are terminated after the password changes."}) {
+				<form method="post" action="/api/v1/dashboard/profile/password" class="ts-form">
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					@passwordField("currentPassword", "currentPassword", "Current password", "current-password")
+					@ui.Field(ui.FieldProps{ID: "newPassword", Label: "New password", Hint: "Use at least 12 characters."}) {
+						@ui.PasswordInput(ui.PasswordProps{ID: "newPassword", Autocomplete: "new-password", MinLength: 12})
+					}
+					@ui.Field(ui.FieldProps{ID: "confirmPassword", Label: "Confirm new password"}) {
+						@ui.PasswordInput(ui.PasswordProps{ID: "confirmPassword", Autocomplete: "new-password", MinLength: 12})
+					}
+					<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Change password and sign out</button></div>
+				</form>
+			}
+			@ui.Card(ui.CardProps{ID: "profile-mfa", Title: "Multi-factor authentication", Description: "Demo simulation only. These records do not verify sign-ins or protect your account."}) {
+				@mfaBody(data, csrfToken)
+			}
+		</div>
+		@ui.Card(ui.CardProps{ID: "profile-passkeys", Title: "Passkeys", Description: "Demo records only. No passkey is registered with a browser or security key, and these records cannot sign you in."}) {
+			if data.Demo {
+				if len(data.Passkeys) == 0 {
+					@ui.Empty("No demo passkey records", "You can add a placeholder record to preview this interface.")
+				} else {
+					<ul class="ts-list">
+						for _, passkey := range data.Passkeys {
+							<li class="ts-list-item">
+								<div class="ts-list-main">
+									<span class="ts-strong">{ passkey.Name }</span>
+									<span class="ts-meta">Demo record · Added { passkey.CreatedAt }</span>
+								</div>
+								<form method="post" action="/api/v1/dashboard/profile/passkeys/remove">
+									<input type="hidden" name="_csrf" value={ csrfToken }/>
+									<input type="hidden" name="passkeyId" value={ passkey.ID }/>
+									<button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">Remove demo record</button>
+								</form>
+							</li>
+						}
+					</ul>
+				}
+				<form method="post" action="/api/v1/dashboard/profile/passkeys/register" class="ts-form ts-card-section">
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					@ui.Field(ui.FieldProps{ID: "passkeyName", Label: "Demo record name"}) {
+						<input class="ts-input" id="passkeyName" name="name" maxlength="128" placeholder="Work laptop" required/>
+					}
+					<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Add demo passkey record</button></div>
+				</form>
+			} else {
+				@ui.Alert("info", "", "Demo passkey records are unavailable in this deployment.")
+			}
+		}
+	</div>
+}
+
+templ mfaBody(data pageData, csrfToken string) {
+	if !data.Demo {
+		@ui.Alert("info", "", "Demo MFA enrollment is unavailable in this deployment.")
+	} else {
+		<div class="ts-alert ts-alert-warning" role="note">
+			<p class="ts-alert-title">Demo-only security simulation</p>
+			<p class="ts-alert-body">Authenticator secrets and recovery codes shown here are demonstration values. They are not usable authentication factors and do not secure sign-in.</p>
+		</div>
+		if data.MFAEnabled {
+			<div class="ts-alert">
+				<p class="ts-alert-title">A demo authenticator record is enabled.</p>
+				<p class="ts-alert-body">It is stored only for this demo and is never checked during sign-in.</p>
+			</div>
+			<form method="post" action="/api/v1/dashboard/profile/mfa/remove" class="ts-form">
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				<input type="hidden" name="factor" value="totp"/>
+				@passwordField("mfaDisablePassword", "password", "Current password", "current-password")
+				<div class="ts-form-actions"><button class="ts-btn ts-btn-danger" type="submit">Remove demo MFA record</button></div>
+			</form>
+			<form method="post" action="/api/v1/dashboard/profile/mfa/recovery-codes" class="ts-form ts-card-section">
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				@passwordField("recoveryPassword", "password", "Current password", "current-password")
+				<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit">Generate demo recovery codes</button></div>
+			</form>
+		} else if data.TOTPSecret != "" {
+			<form method="post" action="/api/v1/dashboard/profile/mfa/verify" class="ts-form">
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				<input type="hidden" name="enrollment" value={ data.TOTPEnrollmentToken }/>
+				<div class="ts-alert ts-alert-info">
+					<p class="ts-alert-title">One-time demo secret</p>
+					<code class="ts-mono ts-break">{ data.TOTPSecret }</code>
+					<p class="ts-alert-body">This secret is displayed once for this simulation. It is not a real authenticator secret and cannot be used to protect sign-in.</p>
+				</div>
+				@ui.Field(ui.FieldProps{ID: "mfaCode", Label: "Six-digit demo verification code"}) {
+					<input class="ts-input ts-profile-code" id="mfaCode" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required/>
+				}
+				<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Verify demo code</button></div>
+			</form>
+		} else {
+			<div class="ts-alert">
+				<p class="ts-alert-title">No demo MFA record is enabled.</p>
+				<p class="ts-alert-body">The enrollment flow is for previewing the profile interface only.</p>
+			</div>
+			<form method="post" action="/api/v1/dashboard/profile/mfa/enroll" class="ts-form">
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				@passwordField("mfaPassword", "password", "Current password", "current-password")
+				<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Start demo MFA enrollment</button></div>
+			</form>
+		}
+		if len(data.RecoveryCodes) > 0 {
+			<div class="ts-alert ts-alert-warning" role="status">
+				<p class="ts-alert-title">One-time demo recovery codes</p>
+				<p class="ts-alert-body">These values are revealed once, are not accepted at sign-in, and do not protect your account.</p>
+				<pre class="ts-code">{ strings.Join(data.RecoveryCodes, "\n") }</pre>
+			</div>
+		}
+	}
+}
+
+templ passwordField(id, name, label, autocomplete string) {
+	@ui.Field(ui.FieldProps{ID: id, Label: label}) {
+		@ui.PasswordInput(ui.PasswordProps{ID: id, Name: name, Autocomplete: autocomplete})
+	}
+}
+
+templ sessionsTab(data pageData) {
+	@ui.Card(ui.CardProps{ID: "profile-sessions", Title: "Active sessions", Description: "Read-only local dashboard sessions. Session details are limited to the values available here.", Flush: true}) {
+		if len(data.Sessions) == 0 {
+			@ui.Empty("No active sessions", "No active local dashboard sessions were returned.")
+		} else {
+			<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Active sessions table. Scroll horizontally to see all columns.">
+				<table class="ts-table">
+					<caption class="ts-sr-only">Active local dashboard sessions with their current status and expiry.</caption>
+					<thead>
+						<tr><th scope="col">Status</th><th scope="col">Session ID</th><th scope="col">Expires</th></tr>
+					</thead>
+					<tbody>
+						for _, session := range data.Sessions {
+							<tr>
+								<td>
+									if session.Current {
+										@ui.Badge("success", "Current session")
+									} else {
+										@ui.Badge("neutral", "Active")
+									}
+								</td>
+								<td class="ts-table-mono">{ session.ID }</td>
+								<td>{ session.ExpiresAt }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		}
+	}
+}
+
+func profileSubtitle(data pageData) string {
+	parts := []string{data.Email}
+	for _, part := range []string{data.Role, data.OrganizationName} {
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
+func onOff(on bool) string {
+	if on {
+		return "On"
+	}
+	return "Off"
 }

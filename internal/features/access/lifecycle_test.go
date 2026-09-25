@@ -161,7 +161,7 @@ func TestAccessOverviewRendersSummaryAndKeepsDatastarMemberFilters(t *testing.T)
 		t.Fatalf("GET /access: status = %d", status)
 	}
 	for _, expected := range []string{
-		"Team overview", `aria-label="Team totals"`, "Organization members",
+		`<h1 class="ts-page-title">Team</h1>`, `aria-label="Team totals"`, "Organization members",
 		`aria-label="Organization member summary"`, "member@example.test",
 		"Invitations and role changes", `aria-label="Invitation summary"`,
 		"pending@example.test", `action="/api/v1/access/invitations"`,
@@ -178,11 +178,17 @@ func TestAccessOverviewRendersSummaryAndKeepsDatastarMemberFilters(t *testing.T)
 	}
 	for _, expected := range []string{
 		`data-on:submit="@get('/access', {contentType:'form'})"`,
-		`<ts-menu>`, `data-filter-value="viewer"`,
+		`data-on:click__outside="el.open = false"`, `type="submit" name="role" value="viewer"`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("members filter is missing %q", expected)
 		}
+	}
+
+	// A chosen role option is submitted after the current-role field.
+	status, body = getBody(t, client, app.server.URL, "/access?tab=members&role=all&role=viewer")
+	if status != http.StatusOK || !strings.Contains(body, `value="viewer" aria-current="true"`) {
+		t.Fatalf("role option did not override the current role: status %d", status)
 	}
 }
 
@@ -208,9 +214,9 @@ func TestOrganizationOverviewAndProjectDisclosureIntent(t *testing.T) {
 		t.Fatalf("GET /organization: status = %d", status)
 	}
 	for _, expected := range []string{
-		`id="organization-overview-title"`, `class="ts-kpis ts-org-kpis"`,
+		`class="ts-page-title"`, `aria-label="Organization summary"`,
 		`id="activeOrganization"`, `id="projects"`, "Organization details",
-		"Signed-in user", `aria-label="Team summary"`, "Manage team",
+		"Signed-in user", "Manage team",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("organization overview is missing %q", expected)
@@ -333,11 +339,11 @@ func TestOrganizationProjectRegionControlsKeepNativeSelectsAndRenderMaps(t *test
 		if !strings.Contains(body, `id="`+id+`"`) || !strings.Contains(body, `for="`+id+`"`) {
 			t.Errorf("region select %q is missing or has no associated label", id)
 		}
-		if !strings.Contains(body, `data-select-id="`+id+`" aria-hidden="true"`) {
+		if !strings.Contains(body, `aria-hidden="true" data-select-id="`+id+`"`) {
 			t.Errorf("region map for select %q is missing or exposed to assistive technology", id)
 		}
 	}
-	if got := strings.Count(body, "<ts-region-map "); got != len(projectControlIDs) {
+	if got := strings.Count(body, `<div class="ts-region-map"`); got != len(projectControlIDs) {
 		t.Errorf("region map count = %d, want %d", got, len(projectControlIDs))
 	}
 
@@ -380,7 +386,7 @@ func TestOrganizationProjectRegionControlsKeepNativeSelectsAndRenderMaps(t *test
 			if !strings.Contains(scope, `for="`+id+`"`) {
 				t.Errorf("%s region select %q is missing its associated label", label, id)
 			}
-			if !strings.Contains(scope, `data-select-id="`+id+`" aria-hidden="true"`) {
+			if !strings.Contains(scope, `aria-hidden="true" data-select-id="`+id+`"`) {
 				t.Errorf("%s region map for select %q is missing or exposed to assistive technology", label, id)
 			}
 		}
@@ -389,10 +395,10 @@ func TestOrganizationProjectRegionControlsKeepNativeSelectsAndRenderMaps(t *test
 	assertWizardRegionControls(noscriptHTML, "no-script fallback", fallbackControlIDs)
 
 	activeWizardHTML := beforeNoscript + afterNoscriptEnd
-	if got, want := strings.Count(activeWizardHTML, "<ts-region-map "), len(projectControlIDs)+len(wizardControlIDs); got != want {
+	if got, want := strings.Count(activeWizardHTML, `<div class="ts-region-map"`), len(projectControlIDs)+len(wizardControlIDs); got != want {
 		t.Errorf("active wizard region map count = %d, want %d", got, want)
 	}
-	if got, want := strings.Count(noscriptHTML, "<ts-region-map "), len(fallbackControlIDs); got != want {
+	if got, want := strings.Count(noscriptHTML, `<div class="ts-region-map"`), len(fallbackControlIDs); got != want {
 		t.Errorf("no-script fallback region map count = %d, want %d", got, want)
 	}
 }

@@ -1,0 +1,308 @@
+package ui
+
+import "terrascale.tech/dashboard/internal/ui/icons"
+
+// Shared page building blocks. Feature pages compose these instead of
+// hand-writing header, card, stat, and empty-state markup; the matching
+// styles live in web/assets/css/components.css.
+
+// Header is the title block at the top of every page.
+type Header struct {
+	Eyebrow     string
+	Title       string
+	Description string
+}
+
+// PageHeader renders the page title; children render as right-aligned actions.
+templ PageHeader(h Header) {
+	<header class="ts-page-header">
+		<div class="ts-page-heading">
+			if h.Eyebrow != "" {
+				<p class="ts-eyebrow">{ h.Eyebrow }</p>
+			}
+			<h1 class="ts-page-title">{ h.Title }</h1>
+			if h.Description != "" {
+				<p class="ts-page-description">{ h.Description }</p>
+			}
+		</div>
+		<div class="ts-page-actions">
+			{ children... }
+		</div>
+	</header>
+}
+
+// CardProps describes a card. Actions render in the card header; Flush drops
+// the body padding so tables and lists run edge to edge.
+type CardProps struct {
+	ID          string
+	Title       string
+	Description string
+	Actions     templ.Component
+	Flush       bool
+}
+
+// Card is the one surface used for grouped content; children are its body.
+templ Card(p CardProps) {
+	<section
+		class={ "ts-card", templ.KV("ts-card-flush", p.Flush) }
+		if p.ID != "" {
+			id={ p.ID }
+		}
+		if p.ID != "" && p.Title != "" {
+			aria-labelledby={ p.ID + "-title" }
+		}
+	>
+		if p.Title != "" {
+			<header class="ts-card-head">
+				<div class="ts-card-heading">
+					<h2
+						class="ts-card-title"
+						if p.ID != "" {
+							id={ p.ID + "-title" }
+						}
+					>{ p.Title }</h2>
+					if p.Description != "" {
+						<p class="ts-card-description">{ p.Description }</p>
+					}
+				</div>
+				if p.Actions != nil {
+					<div class="ts-card-actions">
+						@p.Actions
+					</div>
+				}
+			</header>
+		}
+		<div class="ts-card-body">
+			{ children... }
+		</div>
+	</section>
+}
+
+// Stats is a row of headline numbers; children are Stat items.
+templ Stats(label string) {
+	<dl class="ts-stats" aria-label={ label }>
+		{ children... }
+	</dl>
+}
+
+// Stat is one headline number with an optional detail line.
+templ Stat(label, value, detail string) {
+	<div class="ts-stat">
+		<dt class="ts-stat-label">{ label }</dt>
+		<dd class="ts-stat-value">{ value }</dd>
+		if detail != "" {
+			<dd class="ts-stat-detail">{ detail }</dd>
+		}
+	</div>
+}
+
+// Empty is the placeholder for a list or chart with nothing to show;
+// children render below the text, typically as a call to action.
+templ Empty(title, detail string) {
+	<div class="ts-empty" role="status">
+		<p class="ts-empty-title">{ title }</p>
+		if detail != "" {
+			<p class="ts-empty-detail">{ detail }</p>
+		}
+		{ children... }
+	</div>
+}
+
+// Alert tones: info, success, warning, danger. Danger and warning interrupt
+// assistive technology; the others are polite status messages.
+templ Alert(tone, title, message string) {
+	<div class={ "ts-alert", "ts-alert-" + tone } role={ alertRole(tone) }>
+		if title != "" {
+			<p class="ts-alert-title">{ title }</p>
+		}
+		if message != "" {
+			<p class="ts-alert-body">{ message }</p>
+		}
+		{ children... }
+	</div>
+}
+
+// Badge tones: neutral, info, success, warning, danger, violet.
+templ Badge(tone, text string) {
+	<span class={ "ts-badge", "ts-badge-" + tone }>{ text }</span>
+}
+
+// Tab is one link in a Tabs bar.
+type Tab struct {
+	Label  string
+	URL    string
+	Active bool
+	Count  int
+}
+
+// Tabs renders underline tabs that switch page sections via links.
+templ Tabs(label string, tabs []Tab) {
+	<nav class="ts-tabs" aria-label={ label }>
+			for _, tab := range tabs {
+				<a
+					class="ts-tab"
+					href={ templ.SafeURL(tab.URL) }
+					if tab.Active {
+						aria-current="page"
+					}
+				>
+					<span>{ tab.Label }</span>
+					if tab.Count > 0 {
+						<span class="ts-tab-count">{ tab.Count }</span>
+					}
+				</a>
+			}
+	</nav>
+}
+
+// FieldProps labels one form control; children are the control itself.
+type FieldProps struct {
+	ID    string
+	Label string
+	Hint  string
+}
+
+templ Field(p FieldProps) {
+	<div class="ts-field">
+		<label class="ts-label" for={ p.ID }>{ p.Label }</label>
+		{ children... }
+		if p.Hint != "" {
+			<p class="ts-hint">{ p.Hint }</p>
+		}
+	</div>
+}
+
+func alertRole(tone string) string {
+	if tone == "danger" || tone == "warning" {
+		return "alert"
+	}
+	return "status"
+}
+
+// PasswordProps configures a password control. Name defaults to ID.
+type PasswordProps struct {
+	ID           string
+	Name         string
+	Autocomplete string
+	Placeholder  string
+	MinLength    int
+}
+
+// PasswordInput is a required password field whose reveal toggle appears once
+// the field has a value. Datastar keeps the state in local (_-prefixed)
+// signals, so nothing is sent to the server.
+templ PasswordInput(p PasswordProps) {
+	<div class="ts-input-group" data-signals={ passwordSignals(p.ID) }>
+		<input
+			class="ts-input"
+			type="password"
+			id={ p.ID }
+			name={ displayName(p.Name, p.ID) }
+			autocomplete={ p.Autocomplete }
+			if p.Placeholder != "" {
+				placeholder={ p.Placeholder }
+			}
+			if p.MinLength > 0 {
+				minlength={ p.MinLength }
+			}
+			required
+			data-attr:type={ "$" + passwordSignal(p.ID, "reveal") + " ? 'text' : 'password'" }
+			data-on:input={ "$" + passwordSignal(p.ID, "filled") + " = el.value !== ''; $" + passwordSignal(p.ID, "filled") + " || ($" + passwordSignal(p.ID, "reveal") + " = false)" }
+		/>
+		<button
+			class="ts-input-adornment"
+			type="button"
+			data-password-toggle
+			aria-controls={ p.ID }
+			aria-pressed="false"
+			aria-label="Show password"
+			hidden
+			data-attr:hidden={ "!$" + passwordSignal(p.ID, "filled") }
+			data-attr:aria-pressed={ "String($" + passwordSignal(p.ID, "reveal") + ")" }
+			data-attr:aria-label={ "$" + passwordSignal(p.ID, "reveal") + " ? 'Hide password' : 'Show password'" }
+			data-on:click={ "$" + passwordSignal(p.ID, "reveal") + " = !$" + passwordSignal(p.ID, "reveal") }
+		>
+			@icons.Eye(18)
+		</button>
+	</div>
+}
+
+// MenuBehavior makes a <details class="ts-menu"> popover close on outside
+// clicks and on Escape (returning focus to its summary). Spread it onto the
+// element: <details class="ts-menu" { ui.MenuBehavior... }>.
+var MenuBehavior = templ.Attributes{
+	"data-on:click__outside":  "el.open = false",
+	"data-on:keydown__window": "evt.key === 'Escape' && el.open && (el.open = false, el.querySelector('summary').focus())",
+}
+
+type regionPin struct {
+	code string
+	x, y float64
+}
+
+// regionPins are the hub positions in the 136×80 viewBox of brand/region-map.svg.
+var regionPins = []regionPin{{"SFO", 21, 28.58}, {"GRU", 50, 59.76}, {"FRA", 71.5, 20.78}}
+
+// RegionMap renders the decorative region map. With a selectID it highlights
+// the hubs chosen in that <select>; without one it shows the animated network.
+templ RegionMap(selectID string) {
+	<div
+		class="ts-region-map"
+		aria-hidden="true"
+		if selectID != "" {
+			data-select-id={ selectID }
+			data-init={ regionSync(selectID) }
+			data-on:change__window={ "evt.target.id === '" + selectID + "' && (" + regionSync(selectID) + ")" }
+		} else {
+			data-highlights="SFO,GRU,FRA"
+		}
+	>
+		<img class="ts-region-map-image" src="/brand/region-map.svg" alt="" loading="lazy" decoding="async"/>
+		if selectID == "" {
+			<svg class="ts-region-overlay" viewBox="0 0 136 80" preserveAspectRatio="xMidYMid meet">
+				for i := range regionPins {
+					<path class="ts-region-arc" d={ regionArc(regionPins[i], regionPins[(i+1)%len(regionPins)]) }></path>
+				}
+			</svg>
+		}
+		for _, pin := range regionPins {
+			<span class="ts-region-node" data-region={ pin.code }>
+				<span class="ts-region-node-ring"></span>
+				<span class="ts-region-node-core"></span>
+			</span>
+		}
+	</div>
+}
+
+// DisclosureProps configures an inline expanding form. Variant is a button
+// style: primary, secondary, or danger.
+type DisclosureProps struct {
+	ID      string
+	Label   string
+	Icon    templ.Component
+	Variant string
+	Open    bool
+}
+
+// Disclosure is a button that expands its children inline, used for create
+// and destructive forms instead of boxing them in a card.
+templ Disclosure(p DisclosureProps) {
+	<details
+		class="ts-disclosure"
+		if p.ID != "" {
+			id={ p.ID }
+		}
+		open?={ p.Open }
+	>
+		<summary class={ "ts-btn", "ts-btn-" + displayName(p.Variant, "secondary") }>
+			if p.Icon != nil {
+				@p.Icon
+			}
+			<span>{ p.Label }</span>
+			<span class="ts-disclosure-chevron" aria-hidden="true">@icons.ChevronDown(15)</span>
+		</summary>
+		<div class="ts-disclosure-body">
+			{ children... }
+		</div>
+	</details>
+}

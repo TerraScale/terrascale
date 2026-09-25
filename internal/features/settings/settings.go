@@ -123,7 +123,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		slices.SortFunc(identityProviders, func(a, b identityProviderRow) int { return strings.Compare(a.Name, b.Name) })
 		data := pageData{
 			ProjectName: project.Name, ProjectID: project.ID, Tab: tab,
-			Authentication: project.AuthenticationEnabled, UpdatedAt: project.SecuritySettingsUpdatedAt.Format(time.RFC3339),
+			Authentication: project.AuthenticationEnabled, UpdatedAt: changedAt(project.SecuritySettingsUpdatedAt),
 			IdentityProviders: identityProviders, ActiveCredentials: activeCredentials, ActiveM2MClients: activeM2MClients,
 			ConfiguredBackups: len(project.BackupPolicies), AuditRetention: normalizeRetention(org.AuditRetentionDays),
 			Databases: databases, SelectedDatabaseID: selectedID, SelectedBackups: selectedBackups,
@@ -603,4 +603,12 @@ func writeError(w http.ResponseWriter, err error) {
 	default:
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
+}
+
+// changedAt formats a settings timestamp; a zero time means never changed.
+func changedAt(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format("Jan 2, 2006 15:04 UTC")
 }

@@ -1,201 +1,121 @@
-/* Admin page foundations: flat headers, KPI rows, and section rhythm.
-   Used by all owner-only pages. Tables and forms stay in admin-pages.css. */
+/* Administration pages: identifiers, inline row forms, and plan editors. */
 
-.ts-admin-root {
+.ts-admin-id {
+  width: fit-content;
+  max-width: 14ch;
+  overflow: hidden;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-admin-action-form {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-admin-inline-field .ts-input {
+  width: 8rem;
+}
+
+.ts-admin-inline-field .ts-select {
+  width: 9.5rem;
+}
+
+.ts-admin-nowrap {
+  flex-wrap: nowrap;
+}
+
+.ts-admin-card-note {
+  padding: 0 var(--ts-s6) var(--ts-s4);
+}
+
+.ts-admin-plan-list {
   display: grid;
-  gap: var(--ts-xl);
-  min-width: 0;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
 }
 
-.ts-admin-page-head {
-  display: grid;
-  gap: var(--ts-xs);
+.ts-admin-plan {
+  border-bottom: 1px solid var(--ts-line);
 }
 
-.ts-admin-title {
-  color: var(--ts-ink);
-  font-size: var(--ts-fs-page-title);
-  font-weight: var(--ts-fw-semibold);
-  line-height: 1.25;
+.ts-admin-plan:last-child {
+  border-bottom: 0;
 }
 
-.ts-admin-subtitle {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-ui);
-  line-height: 1.5;
-}
-
-.ts-admin-title-with-icon {
+.ts-admin-plan > summary {
   display: flex;
   align-items: center;
-  gap: var(--ts-md);
-  color: var(--ts-accent);
-}
-
-.ts-admin-title-with-icon h2 { color: var(--ts-ink); }
-
-.ts-admin-kpis { padding-block: var(--ts-sm); }
-
-.ts-admin-section {
-  display: grid;
-  gap: var(--ts-lg);
-  min-width: 0;
-  padding-top: var(--ts-xl);
-  border-top: 1px solid var(--ts-line);
-}
-
-.ts-admin-section > .ts-section-head { margin: 0; }
-
-.ts-admin-section > .ts-section-head .ts-meta { max-width: 48rem; }
-
-.ts-admin-toolbar {
-  border-top: 1px solid var(--ts-line);
-}
-
-.ts-admin-tabs-toolbar {
-  justify-content: flex-start;
-}
-
-.ts-admin-root .ts-admin-tab-panel-hidden { display: none; }
-
-.ts-admin-filter-form {
-  position: relative;
-  display: flex;
-  align-items: center;
-  width: min(100%, 32rem);
-  gap: var(--ts-sm);
-}
-
-.ts-admin-filter-icon {
-  position: absolute;
-  left: var(--ts-md);
-  top: 50%;
-  display: inline-flex;
-  color: var(--ts-ink-muted);
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-.ts-admin-filter-input {
-  min-width: 0;
-  min-height: var(--ts-control-h);
-  padding-left: 40px;
-}
-
-.ts-admin-filter-form .ts-btn { flex: none; }
-
-.ts-admin-cell-id {
-  color: var(--ts-ink-muted);
-  font-family: var(--ts-font-mono);
-  font-size: var(--ts-fs-meta);
-  overflow-wrap: anywhere;
-}
-
-.ts-admin-database-name {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--ts-md);
-  color: var(--ts-accent);
-}
-
-.ts-admin-database-name > div {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.ts-admin-dashboard-root {
-  display: grid;
-  gap: var(--ts-xl);
-  min-width: 0;
-}
-
-.ts-admin-dashboard-intro {
-  display: grid;
-  gap: var(--ts-xs);
-}
-
-.ts-admin-facts {
-  display: grid;
-  gap: var(--ts-lg);
-  min-width: 0;
-  padding-top: var(--ts-xl);
-  border-top: 1px solid var(--ts-line);
-}
-
-.ts-admin-facts > summary {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--ts-md);
+  gap: var(--ts-s3);
+  padding: var(--ts-s3) var(--ts-s4);
   cursor: pointer;
   list-style: none;
 }
 
-.ts-admin-facts > summary::-webkit-details-marker { display: none; }
-
-.ts-admin-facts-chevron {
-  flex: none;
-  color: var(--ts-ink-muted);
-  transition: transform var(--ts-t-control) var(--ts-ease);
+.ts-admin-plan > summary::-webkit-details-marker {
+  display: none;
 }
 
-.ts-admin-facts[open] .ts-admin-facts-chevron { transform: rotate(180deg); }
+.ts-admin-plan > summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-right: 2px solid var(--ts-ink-3);
+  border-bottom: 2px solid var(--ts-ink-3);
+  transform: rotate(45deg);
+  transition: transform var(--ts-fast) var(--ts-ease);
+}
 
-.ts-admin-dashboard-sections {
-  display: grid;
-  gap: var(--ts-xl);
+.ts-admin-plan[open] > summary::after {
+  transform: rotate(-135deg);
+}
+
+.ts-admin-plan > summary:hover {
+  background: rgb(255 255 255 / 0.025);
+}
+
+.ts-admin-plan > .ts-form {
+  padding: var(--ts-s2) var(--ts-s4) var(--ts-s4);
+}
+
+.ts-admin-filters {
+  flex-wrap: nowrap;
+}
+
+.ts-admin-filters > input[type="search"] {
+  flex: 0 1 240px;
+}
+
+.ts-admin .ts-list-main > .ts-badge,
+.ts-admin .ts-list-main > code {
+  justify-self: start;
+}
+
+.ts-admin-date {
+  white-space: nowrap;
+}
+
+/* Keep wide tab bars and tables from widening the page on phones; the
+   positioned wrap also contains the sr-only labels inside scrolled rows. */
+.ts-admin {
   grid-template-columns: minmax(0, 1fr);
 }
 
-@media (min-width: 64rem) {
-  .ts-admin-dashboard-sections { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ts-admin .ts-table-wrap {
+  position: relative;
 }
 
-.ts-admin-dashboard-panel {
-  display: grid;
-  align-content: start;
-  gap: var(--ts-lg);
-  min-width: 0;
-  padding-top: var(--ts-xl);
-  border-top: 1px solid var(--ts-line);
-}
+@media (max-width: 47.99rem) {
+  .ts-admin-filters {
+    width: 100%;
+  }
 
-.ts-admin-fact-list {
-  display: grid;
-  gap: 0;
-}
-
-.ts-admin-fact-row {
-  display: grid;
-  grid-template-columns: minmax(6rem, 0.6fr) minmax(0, 1fr);
-  gap: var(--ts-md);
-  padding-block: var(--ts-md);
-  border-top: 1px solid var(--ts-line);
-}
-
-.ts-admin-fact-row:last-child { border-bottom: 1px solid var(--ts-line); }
-
-.ts-admin-fact-key {
-  color: var(--ts-ink-muted);
-  font-family: var(--ts-font-mono);
-  font-size: var(--ts-fs-meta);
-  overflow-wrap: anywhere;
-}
-
-.ts-admin-fact-value {
-  color: var(--ts-ink);
-  font-size: var(--ts-fs-ui);
-  overflow-wrap: anywhere;
-}
-
-.ts-admin-fact-detail {
-  display: block;
-  margin-top: var(--ts-xs);
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-meta);
-}
-
-@media (max-width: 40rem) {
-  .ts-admin-facts { padding-top: var(--ts-lg); }
+  .ts-admin-filters > input[type="search"] {
+    flex: 1 1 auto;
+  }
 }

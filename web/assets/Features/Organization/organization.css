@@ -1,323 +1,194 @@
-/* Organization overview hierarchy, project management and access controls.
-   Uses flat sections, shared KPI rows and tables; the onboarding wizard keeps
-   its own modal styles in modal.css. */
+/* Organization page: project placement, project rename popover, and the
+   create-organization wizard. */
 
-/* Shared layout helpers retained for profile, settings and subscription pages. */
-.ts-row-header {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+.ts-org-project-name {
+  gap: 2px;
+}
+
+.ts-org-create-project {
+  padding: var(--ts-s4) var(--ts-s6) var(--ts-s6);
+  border-top: 1px solid var(--ts-line);
+}
+
+/* Region placement: three map-backed selects side by side. */
+.ts-org-placement {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--ts-s4);
+}
+
+.ts-org-placement > legend {
+  margin-bottom: var(--ts-s3);
+}
+
+.ts-org-placement-hint {
+  grid-column: 1 / -1;
+}
+
+/* Rename opens as a centered panel so it escapes the scrolling table. */
+details.ts-rename > .ts-org-rename-panel {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ts-z-modal);
+  width: min(46rem, calc(100vw - 2 * var(--ts-s4)));
+  max-width: none;
+  height: fit-content;
+  max-height: calc(100dvh - 2 * var(--ts-s6));
+  margin: auto;
+  padding: var(--ts-s6);
+  overflow-y: auto;
+  gap: var(--ts-s4);
+  text-align: left;
+  white-space: normal;
+}
+
+/* Wizard dialog. */
+dialog.ts-org-wizard {
+  width: min(52rem, calc(100vw - 2 * var(--ts-s4)));
+}
+
+.ts-org-wizard-head {
+  flex-wrap: nowrap;
   align-items: flex-start;
 }
 
-@media (min-width: 64rem) {
-  .ts-row-header {
-    flex-direction: row;
-    justify-content: space-between;
-  }
-}
-
-.ts-row.ts-gap-16 { gap: var(--ts-lg); }
-.ts-row.ts-gap-12 { gap: var(--ts-md); }
-.ts-row.ts-gap-8 { gap: var(--ts-sm); }
-.ts-min-width { min-width: 0; }
-
-.ts-stack-12 { display: grid; gap: var(--ts-md); grid-template-columns: minmax(0, 1fr); }
-.ts-stack-16 { display: grid; gap: var(--ts-lg); grid-template-columns: minmax(0, 1fr); }
-.ts-stack-20 { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
-.ts-stack-8 { display: grid; gap: var(--ts-sm); grid-template-columns: minmax(0, 1fr); }
-.ts-break-words,
-.ts-break-all { overflow-wrap: anywhere; }
-
-.ts-title-22 {
-  color: var(--ts-ink);
-  font-size: var(--ts-fs-page-title);
-  font-weight: var(--ts-fw-bold);
-}
-
-.ts-page-desc {
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-ui);
-  line-height: 1.5;
-  margin-top: var(--ts-md);
-  max-width: 48rem;
-}
-
-.ts-actions-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.ts-query-cell {
-  display: block;
-  max-width: 36rem;
-  overflow: hidden;
-  color: var(--ts-ink-muted);
-  font-family: var(--ts-font-mono);
-  font-size: var(--ts-fs-meta);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ts-db-placement-note {
-  margin: 0;
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-control);
-  background-color: var(--ts-surface-muted);
-  color: var(--ts-ink-muted);
-  font-size: var(--ts-fs-ui);
-  line-height: 20px;
-  padding: var(--ts-sm) var(--ts-md);
-}
-
-.ts-dialog-form { display: grid; gap: 16px; }
-
-.ts-dialog-actions-between {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ts-md);
-}
-
-.ts-summary-field { display: grid; gap: var(--ts-xs); }
-.ts-summary-label { color: var(--ts-ink-muted); font-size: var(--ts-fs-meta); }
-.ts-text-strong { color: var(--ts-ink); font-weight: var(--ts-fw-medium); }
-.ts-grid-tight { display: grid; gap: 2px; }
-.ts-icon-label { display: inline-flex; align-items: center; gap: var(--ts-sm); }
-.ts-summary-grid { display: grid; gap: 1px; overflow: hidden; background-color: var(--ts-line); }
-.ts-summary-cell { padding: var(--ts-lg); gap: var(--ts-xs); background-color: var(--ts-surface); display: grid; }
-.ts-summary-value { color: var(--ts-ink); font-size: var(--ts-fs-ui); font-weight: var(--ts-fw-medium); }
-.ts-form-actions-start { justify-content: flex-start; }
-.ts-btn-full { width: 100%; }
-
-@media (min-width: 48rem) {
-  .ts-btn-full { width: auto; }
-}
-
-/* Organization page: sections share one rhythm and use hairlines as the only
-   grouping treatment. Inset the page slightly less than legacy panel pages. */
-.ts-org {
-  gap: 0;
-}
-
-.ts-org > .ts-alert {
-  margin-bottom: var(--ts-lg);
-}
-
-.ts-org > .ts-section,
-.ts-org > .ts-org-layout {
-  min-width: 0;
-  padding-block: var(--ts-xl);
-  border-top: 1px solid var(--ts-line);
-}
-
-.ts-org > .ts-section:first-of-type {
-  padding-top: 0;
-  border-top: 0;
-}
-
-.ts-org .ts-section {
+.ts-org-steps {
   display: grid;
-  gap: var(--ts-lg);
-  align-content: start;
-}
-
-.ts-org .ts-section-head {
-  align-items: center;
-}
-
-.ts-org-identity {
-  display: flex;
-  align-items: center;
-  gap: var(--ts-md);
-  min-width: 0;
-}
-
-.ts-avatar-org {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--ts-radius-control);
-  font-size: var(--ts-fs-ui);
-}
-
-.ts-org .ts-avatar-org svg { width: 22px; height: 22px; }
-
-.ts-org-kpis {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.ts-org-kpi-text {
-  display: block;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  font-size: var(--ts-fs-body);
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ts-org-kpis dd { min-width: 0; }
-
-.ts-org-switch-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: var(--ts-md);
-  padding-top: var(--ts-lg);
-  border-top: 1px solid var(--ts-line);
-}
-
-.ts-org-switch-form .ts-select { max-width: 34rem; }
-
-.ts-org .ts-table-wrap {
-  border: 0;
-  border-top: 1px solid var(--ts-line);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.ts-org .ts-table {
-  min-width: 760px;
-}
-
-.ts-org .ts-table thead th {
-  padding-block: var(--ts-md);
-}
-
-.ts-org .ts-table tbody td {
-  padding-block: var(--ts-md);
-  vertical-align: top;
-}
-
-.ts-org .ts-table tbody tr:hover {
-  background-color: color-mix(in oklab, var(--ts-surface-muted) 50%, transparent);
-}
-
-/* Form-heavy actions open in a local popover so the first screen stays about
-   the organization and project inventory. The complete form remains in the
-   document for keyboard and no-JS users. */
-.ts-disclosure {
-  position: relative;
-  min-width: 0;
-}
-
-.ts-disclosure > summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ts-s2);
   list-style: none;
+}
+
+.ts-org-step {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  padding: var(--ts-s2) var(--ts-s3);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+  font-weight: 600;
+}
+
+.ts-org-step-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--ts-surface-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-org-step-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-org-step-current {
+  border-color: color-mix(in oklab, var(--tone) 50%, transparent);
+  background: color-mix(in oklab, var(--tone) 10%, transparent);
+  color: var(--ts-ink);
+}
+
+.ts-org-step-current .ts-org-step-icon {
+  background: var(--tone);
+  color: var(--ts-canvas);
+}
+
+.ts-org-step-complete {
+  color: var(--ts-ink-2);
+}
+
+.ts-org-step-complete .ts-org-step-icon {
+  background: color-mix(in oklab, var(--ts-success) 20%, transparent);
+  color: var(--ts-success);
+}
+
+/* Plan and interval choices: radio cards. */
+.ts-org-plans {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: var(--ts-s3);
+}
+
+.ts-org-plan {
+  position: relative;
+  display: grid;
+  gap: var(--ts-s1);
+  padding: var(--ts-s4);
+  padding-right: var(--ts-s10);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius);
+  background: transparent;
+  cursor: pointer;
+  transition: border-color var(--ts-fast) var(--ts-ease), background-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-org-plan > input {
+  position: absolute;
+  top: var(--ts-s4);
+  right: var(--ts-s4);
+}
+
+.ts-org-plan:hover {
+  border-color: rgb(148 163 184 / 0.34);
+}
+
+.ts-org-plan:has(input:checked) {
+  border-color: var(--tone);
+  background: color-mix(in oklab, var(--tone) 10%, var(--ts-surface-2));
+}
+
+.ts-org-plan-price {
+  color: var(--ts-ink-2);
+}
+
+.ts-org-plan-price strong {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-xl);
+}
+
+.ts-org-intervals {
+  display: inline-flex;
+  gap: var(--ts-s1);
+  padding: var(--ts-s1);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius);
+  background: var(--ts-canvas);
+}
+
+.ts-org-interval {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  padding: var(--ts-s1) var(--ts-s3);
+  border-radius: var(--ts-radius-sm);
+  color: var(--ts-ink-2);
   cursor: pointer;
 }
 
-.ts-disclosure > summary::-webkit-details-marker { display: none; }
-
-.ts-org-create-project > .ts-org-project-form,
-.ts-rename > .ts-rename-form {
-  position: absolute;
-  z-index: var(--ts-z-dropdown);
-  right: 0;
-  top: calc(100% + var(--ts-sm));
-  width: min(38rem, calc(100vw - 2 * var(--ts-lg)));
-  padding: var(--ts-lg);
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-control);
-  background-color: var(--ts-surface);
-  box-shadow: var(--ts-shadow-overlay);
+.ts-org-interval:has(input:checked) {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
 }
 
-.ts-org-project-form { gap: var(--ts-lg); }
-.ts-org-project-form .ts-form-actions { justify-content: flex-start; }
-.ts-project-regions { gap: var(--ts-sm); }
-
-.ts-rename { display: inline-block; }
-.ts-rename > .ts-rename-form { width: min(30rem, calc(100vw - 2 * var(--ts-lg))); }
-.ts-rename-form { display: grid; gap: var(--ts-md); }
-
-.ts-org-layout {
-  display: block;
-}
-
-.ts-org-layout > .ts-section {
-  padding-block: 0;
-  border-top: 0;
-}
-
-.ts-org-layout > .ts-section + .ts-section {
-  padding-top: var(--ts-xl);
-  border-top: 1px solid var(--ts-line);
-}
-
-.ts-org-details {
-  margin: 0;
-}
-
-.ts-org-details dd {
-  max-width: 60%;
-  overflow-wrap: anywhere;
-  text-align: right;
-}
-
-.ts-org .ts-status-success {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--ts-sm);
-  padding: var(--ts-md);
-  color: var(--ts-success);
-  background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
-}
-
-.ts-org-management {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--ts-sm);
-}
-
-.ts-org-name-form {
-  display: grid;
-  gap: var(--ts-md);
-  margin-top: var(--ts-md);
-}
-
-.ts-danger-disclosure[open] {
-  display: grid;
-  gap: var(--ts-sm);
-  padding: var(--ts-md);
-  border: 1px solid color-mix(in oklab, var(--ts-danger) 35%, var(--ts-line));
-}
-
-.ts-org-deletion-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: var(--ts-md);
-}
-
-@media (min-width: 64rem) {
-  .ts-org-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
-
-@media (width < 64rem) {
-  .ts-org-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-@media (width < 40rem) {
-  .ts-org .ts-section-head { align-items: flex-start; }
-  .ts-org .ts-section-head > .ts-btn,
-  .ts-org .ts-section-head > .ts-disclosure { width: 100%; }
-  .ts-org .ts-section-head > .ts-disclosure > summary { width: 100%; }
-  .ts-org-kpis { grid-template-columns: minmax(0, 1fr); }
-  .ts-org-switch-form,
-  .ts-org-deletion-form { grid-template-columns: minmax(0, 1fr); }
-  .ts-org-switch-form .ts-btn,
-  .ts-org-deletion-form .ts-btn { width: 100%; }
-  .ts-org-create-project > .ts-org-project-form,
-  .ts-rename > .ts-rename-form {
-    position: static;
-    width: 100%;
-    margin-top: var(--ts-sm);
+@media (max-width: 47.99rem) {
+  .ts-org-placement {
+    grid-template-columns: minmax(0, 1fr);
   }
-  .ts-org-details dd { max-width: 100%; text-align: left; }
-  .ts-org-management { align-items: stretch; flex-direction: column; }
-  .ts-org-management > * { width: 100%; }
+}
+
+@media (max-width: 30rem) {
+  .ts-org-step:not(.ts-org-step-current) .ts-org-step-label {
+    display: none;
+  }
+
+  .ts-org-step {
+    justify-content: center;
+  }
 }
