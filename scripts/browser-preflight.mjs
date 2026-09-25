@@ -53,7 +53,8 @@ try {
   assert.equal(await page.locator("h1").textContent(), "data-ok");
   await page.goto(`http://127.0.0.1:${address.port}/`);
   assert.equal(await page.locator("h1").textContent(), "loopback-ok");
-  console.log("Browser preflight passed: data URL and loopback HTTP navigations");
+  assert((await page.screenshot()).length > 0);
+  console.log("Browser preflight passed: data URL, loopback HTTP, and frame capture");
 } catch (error) {
   console.error("Browser preflight failed:", error);
   process.exitCode = 1;

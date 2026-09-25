@@ -19,10 +19,15 @@ jobs:
         run: make lint css test-fast build
       - name: Check Chromium navigation in the runner
         env:
+          CI: "1"
           DEBUG: "pw:browser"
-        run: node scripts/browser-preflight.mjs
+        run: |
+          . scripts/prepare-ci-browser.sh || exit 1
+          node scripts/browser-preflight.mjs
       - name: Run slow browser and SDK contract tests
         env:
           CI: "1"
           DEBUG: "pw:browser"
-        run: make test-slow
+        run: |
+          . scripts/prepare-ci-browser.sh || exit 1
+          make test-slow
