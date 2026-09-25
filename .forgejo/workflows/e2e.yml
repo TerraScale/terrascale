@@ -1,13 +1,15 @@
 name: e2e
 on:
   pull_request:
+    types: [opened, reopened, synchronize, closed]
+concurrency:
+  group: dashboard-pr-${{ github.event.number }}
+  cancel-in-progress: true
 jobs:
   test:
+    if: github.event.action != 'closed'
     runs-on: terrascale-builder
-    timeout-minutes: 30
-    concurrency:
-      group: dashboard-tests-${{ github.ref }}
-      cancel-in-progress: true
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - name: Set up pinned Go and Node.js toolchains
@@ -16,7 +18,40 @@ jobs:
         run: npm ci --no-audit --no-fund
       # terrascale-builder already supplies the pinned, library-patched Chromium.
       - name: Check generated Templ, lint, bundle, and run fast Go tests
-        run: make lint css test-fast build
+        run: make lint test-fast build
+      - name: Deploy PR preview
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
+        run: |
+          set -euo pipefail
+          node scripts/check-fly-deployment.mjs preview-config fly.preview.toml
+          fly config validate --strict -c fly.preview.toml -a "$PR_APP"
+          # Provision idempotently so a cancelled run can recover on the next push.
+          fly apps create "$PR_APP" -o personal 2>/dev/null || true
+          fly ips list -a "$PR_APP" | grep -q " v6 " || fly ips allocate-v6 -a "$PR_APP"
+          fly ips list -a "$PR_APP" | grep -q "(shared)" || fly ips allocate-v4 -a "$PR_APP" --shared
+          ADMIN_EMAIL="e2e-admin-${GITHUB_RUN_ID}@example.test"
+          ADMIN_PASSWORD="$(node -p 'require("node:crypto").randomBytes(32).toString("hex")')"
+          printf '::add-mask::%s\n' "$ADMIN_PASSWORD"
+          {
+            printf 'DASHBOARD_E2E_ADMIN_EMAIL=%s\n' "$ADMIN_EMAIL"
+            printf 'DASHBOARD_E2E_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"
+          } >> "$GITHUB_ENV"
+          {
+            printf 'DASHBOARD_DEMO_ADMIN_EMAIL=%s\n' "$ADMIN_EMAIL"
+            printf 'DASHBOARD_DEMO_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"
+          } | fly secrets import --stage -a "$PR_APP"
+          # The demo stores accounts and sessions in one process. Enforce one
+          # Machine so requests cannot land in different in-memory stores.
+          fly deploy -a "$PR_APP" --config fly.preview.toml --strategy immediate --ha=false
+          fly scale count 1 -a "$PR_APP" --yes
+          machines_json=$(mktemp)
+          volumes_json=$(mktemp)
+          trap 'rm -f "$machines_json" "$volumes_json"' EXIT
+          fly machine list -a "$PR_APP" --json > "$machines_json"
+          fly volumes list -a "$PR_APP" --json > "$volumes_json"
+          node scripts/check-fly-deployment.mjs preview "$machines_json" "$volumes_json"
       - name: Check Chromium navigation in the runner
         env:
           CI: "1"
@@ -24,10 +59,38 @@ jobs:
         run: |
           . scripts/prepare-ci-browser.sh || exit 1
           node scripts/browser-preflight.mjs
-      - name: Run slow browser and SDK contract tests
+      - name: Run browser and account-to-TypeScript-SDK tests against the preview
         env:
+          DASHBOARD_E2E_BASE_URL: https://terra-scale-dashboard-pr-${{ github.event.number }}.fly.dev
           CI: "1"
           DEBUG: "pw:browser"
         run: |
           . scripts/prepare-ci-browser.sh || exit 1
           make test-slow
+      - name: Comment preview URL
+        if: success()
+        env:
+          FORGEJO_TOKEN: ${{ github.token }}
+          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
+        run: |
+          COMMENTS_URL="$GITHUB_API_URL/repos/${GITHUB_REPOSITORY}/issues/${{ github.event.number }}/comments"
+          COMMENTS_FILE="$(mktemp)"
+          trap 'rm -f "$COMMENTS_FILE"' EXIT
+          curl -sf -H "Authorization: token $FORGEJO_TOKEN" "$COMMENTS_URL" > "$COMMENTS_FILE"
+          if ! grep -Fq "PR preview:" "$COMMENTS_FILE"; then
+            curl -sf -X POST \
+              -H "Authorization: token $FORGEJO_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"body": "🚀 PR preview: https://'"$PR_APP"'.fly.dev"}' \
+              "$COMMENTS_URL"
+          fi
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: terrascale-builder
+    steps:
+      - name: Destroy PR preview
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
+        run: |
+          fly apps destroy "$PR_APP" --yes || ! fly status -a "$PR_APP" >/dev/null 2>&1
