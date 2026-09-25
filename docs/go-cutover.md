@@ -92,7 +92,9 @@ Static Fly configuration/workflow checks passed for the production target of one
 production setup remains commented out. The preview at
 <http://mariogk-dev.tail057f.ts.net:5624> passed health, login, CSS, and HMR SSE
 checks. No live Fly app was changed. Operator logs are under `/tmp`:
-`dsh198-final-{generate,css,check-generated,lint,test-fast-2,test-slow-2,build-5}.log`
+`dsh198-final-generate-3.log`, `dsh198-final-css.log`,
+`dsh198-final-check-generated.log`, `dsh198-final-lint-3.log`,
+`dsh198-final-{test-fast-2,test-slow-2,build-5}.log`
 and `dsh198-preview-final-*`. The final desktop capture covered 27 states at
 1440×900 with no image failures, JavaScript errors, failed requests, or
 horizontal overflow; the expected public not-found response was the only

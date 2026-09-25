@@ -14,8 +14,7 @@ jobs:
         run: scripts/setup-ci-toolchains.sh
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
-      - name: Install Chromium
-        run: npx playwright install chromium
+      # terrascale-builder already supplies the pinned, library-patched Chromium.
       - name: Check generated Templ, lint, bundle, and run fast Go tests
         run: make lint css test-fast build
       - name: Run slow browser and SDK contract tests
