@@ -1,9 +1,7 @@
 node_modules/
 test-results/
-playwright-report/
 .claude/worktrees/
 bin/
-obj/
 # Local sandbox secrets (Stripe test keys, webhook signing secret).
 .env
 .env.local

@@ -2,10 +2,8 @@
 package engine
 
 import (
-	"errors"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/a-h/templ"
@@ -53,7 +51,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		if _, err := deps.Store.SnapshotAs(p); err != nil {
+		if err := deps.Store.Authorize(p); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -104,7 +102,7 @@ func load(r *http.Request, deps core.Deps, p core.Principal) pageData {
 	data.RegionCount = len(all)
 	data.HostCount = len(catalog.Hosts)
 	data.PageCount = max(1, (len(all)+pageSize-1)/pageSize)
-	data.Page = clampPage(r.URL.Query().Get("page"), data.PageCount)
+	data.Page = core.ClampPage(r.URL.Query().Get("page"), data.PageCount)
 	start := (data.Page - 1) * pageSize
 	data.Regions = all[start:min(start+pageSize, len(all))]
 	data.Previous = max(1, data.Page-1)
@@ -127,23 +125,19 @@ func principal(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Pri
 	return p, true
 }
 
-func clampPage(raw string, pages int) int {
-	page, err := strconv.Atoi(raw)
-	if err != nil || page < 1 {
-		return 1
-	}
-	return min(page, pages)
-}
-
 func writeError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, core.ErrUnauthorized):
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
-	default:
+	if !core.WriteAccessError(w, err) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
 }
+
+// flagURL returns the flagcdn image for an ISO 3166-1 alpha-2 country code,
+// or "" when the catalog country is not a two-letter code.
+func flagURL(country string) string {
+	if len(country) != 2 || !isLetter(country[0]) || !isLetter(country[1]) {
+		return ""
+	}
+	return "https://flagcdn.com/" + strings.ToLower(country) + ".svg"
+}
+
+func isLetter(c byte) bool { return 'a' <= c|0x20 && c|0x20 <= 'z' }

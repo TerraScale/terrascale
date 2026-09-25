@@ -15,8 +15,9 @@ jobs:
         run: scripts/setup-ci-toolchains.sh
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
-      - name: Check generated Templ, lint, bundle, and run fast Go tests
-        run: make lint test-fast build
+      # Pull requests only merge after the e2e workflow passes.
+      - name: Check generated Templ, lint, and bundle
+        run: make lint build
       - name: Deploy production (one warm demo machine)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

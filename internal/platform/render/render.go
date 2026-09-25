@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/a-h/templ"
@@ -18,11 +19,24 @@ import (
 type Engine struct {
 	store *core.Store
 	csrf  core.CSRF
+	dev   bool
 }
 
 func New(store *core.Store, csrf core.CSRF) *Engine {
-	return &Engine{store: store, csrf: csrf}
+	return &Engine{store: store, csrf: csrf, dev: os.Getenv("DASHBOARD_DEV") == "1"}
 }
+
+// buffers holds render buffers across requests; a page is rendered fully
+// before any byte is written so a template error can still produce a 500.
+var buffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+// maxPooledBuffer keeps an unusually large page from pinning its buffer.
+const maxPooledBuffer = 1 << 20
+
+const (
+	cspPrefix = "default-src 'self'; script-src 'self' 'nonce-"
+	cspSuffix = "'; style-src 'self'; img-src 'self' data: https://flagcdn.com; font-src 'self'; connect-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+)
 
 func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) error {
 	if (page.Layout != "shell" && page.Layout != "auth" && page.Layout != "admin") || page.View == nil {
@@ -32,28 +46,26 @@ func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) er
 	if page.CSRFToken == "" && e.csrf != nil {
 		page.CSRFToken = e.csrf.Token(w, r)
 	}
-	page.DevMode = os.Getenv("DASHBOARD_DEV") == "1"
+	page.DevMode = e.dev
 	if page.Nonce == "" {
 		var nonce [24]byte
-		if _, err := rand.Read(nonce[:]); err != nil {
-			return err
-		}
+		rand.Read(nonce[:])
 		page.Nonce = base64.RawURLEncoding.EncodeToString(nonce[:])
 	}
 	if page.Layout != "auth" {
 		if e.store == nil {
 			return core.ErrUnauthorized
 		}
-		account, err := e.store.SnapshotAs(page.Principal)
-		if err != nil {
+		if err := e.store.ViewAs(page.Principal, func(account core.Account) error {
+			if page.Layout == "admin" && !account.User.PlatformAdmin {
+				return core.ErrForbidden
+			}
+			page.Shell = shellFor(account, page.Principal, page.Layout, r)
+			return nil
+		}); err != nil {
 			return err
 		}
-		if page.Layout == "admin" && !account.User.PlatformAdmin {
-			return core.ErrForbidden
-		}
-		page.Shell = shellFor(account, page.Principal, page.Layout, r)
 	}
-	var output bytes.Buffer
 	body := page.View(page)
 	if body == nil {
 		return core.ErrInvalid
@@ -67,12 +79,19 @@ func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) er
 	case "admin":
 		document = ui.Admin(page, body)
 	}
-	if err := document.Render(templ.WithNonce(r.Context(), page.Nonce), &output); err != nil {
+	output := buffers.Get().(*bytes.Buffer)
+	defer func() {
+		if output.Cap() <= maxPooledBuffer {
+			output.Reset()
+			buffers.Put(output)
+		}
+	}()
+	if err := document.Render(templ.WithNonce(r.Context(), page.Nonce), output); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'nonce-"+page.Nonce+"'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", cspPrefix+page.Nonce+cspSuffix)
 	_, err := w.Write(output.Bytes())
 	return err
 }
@@ -82,11 +101,11 @@ func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) er
 func documentTitle(title string) string {
 	title = strings.TrimSpace(title)
 	for {
-		trimmed := strings.TrimSuffix(title, " · TerraScale")
-		if trimmed == title {
-			trimmed = strings.TrimSuffix(title, " | TerraScale")
+		trimmed, ok := strings.CutSuffix(title, " · TerraScale")
+		if !ok {
+			trimmed, ok = strings.CutSuffix(title, " | TerraScale")
 		}
-		if trimmed == title {
+		if !ok {
 			break
 		}
 		title = strings.TrimSpace(trimmed)
@@ -97,26 +116,34 @@ func documentTitle(title string) string {
 	return title
 }
 
-func (e *Engine) Fragment(w http.ResponseWriter, r *http.Request, fragment core.Fragment) error {
-	if fragment.View == nil {
-		return core.ErrInvalid
+var (
+	shellNavigation = []core.NavGroup{
+		{Label: "Build", Items: []core.NavItem{
+			{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
+			{Label: "Tables", URL: "/data"}, {Label: "Backups", URL: "/backups"},
+			{Label: "Engine", URL: "/engine"},
+		}},
+		{Label: "Secure", Items: []core.NavItem{
+			{Label: "API keys", URL: "/api-keys"}, {Label: "Team", URL: "/access"},
+			{Label: "Authentication", URL: "/auth"}, {Label: "Audit", URL: "/audit"},
+		}},
+		{Label: "Manage", Items: []core.NavItem{
+			{Label: "Usage", URL: "/usage"}, {Label: "Subscriptions", URL: "/subscriptions"},
+			{Label: "Billing", URL: "/billing"}, {Label: "Organization", URL: "/organization"},
+			{Label: "Settings", URL: "/settings"},
+		}},
 	}
-	if fragment.CSRFToken == "" && e.csrf != nil {
-		fragment.CSRFToken = e.csrf.Token(w, r)
+	adminNavigation = []core.NavGroup{
+		{Label: "Accounts", Items: []core.NavItem{
+			{Label: "Users", URL: "/admin/users"}, {Label: "Organizations", URL: "/admin/organizations"},
+			{Label: "Projects", URL: "/admin/projects"},
+		}},
+		{Label: "Platform", Items: []core.NavItem{
+			{Label: "Databases", URL: "/admin/databases"}, {Label: "Estate", URL: "/admin/estate"},
+			{Label: "Usage", URL: "/admin/usage"}, {Label: "Plans", URL: "/admin/plans"},
+		}},
 	}
-	var output bytes.Buffer
-	body := fragment.View(core.Page{CSRFToken: fragment.CSRFToken})
-	if body == nil {
-		return core.ErrInvalid
-	}
-	if err := body.Render(r.Context(), &output); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "private, no-store")
-	_, err := w.Write(output.Bytes())
-	return err
-}
+)
 
 // navAliases lists routes that belong to a navigation section without being
 // nested under its URL.
@@ -157,42 +184,29 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 	byName := func(a, b string) int { return strings.Compare(strings.ToLower(a), strings.ToLower(b)) }
 	slices.SortFunc(shell.Organizations, func(a, b core.OrganizationOption) int { return byName(a.Name, b.Name) })
 	slices.SortFunc(shell.Projects, func(a, b core.ProjectOption) int { return byName(a.Name, b.Name) })
+	groups := shellNavigation
 	if layout == "admin" {
-		shell.Navigation = []core.NavGroup{
-			{Label: "Accounts", Items: []core.NavItem{
-				{Label: "Users", URL: "/admin/users"}, {Label: "Organizations", URL: "/admin/organizations"},
-				{Label: "Projects", URL: "/admin/projects"},
-			}},
-			{Label: "Platform", Items: []core.NavItem{
-				{Label: "Databases", URL: "/admin/databases"}, {Label: "Estate", URL: "/admin/estate"},
-				{Label: "Usage", URL: "/admin/usage"}, {Label: "Plans", URL: "/admin/plans"},
-			}},
-		}
-	} else {
-		shell.Navigation = []core.NavGroup{
-			{Label: "Build", Items: []core.NavItem{
-				{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
-				{Label: "Tables", URL: "/data"}, {Label: "Backups", URL: "/backups"},
-				{Label: "Engine", URL: "/engine"},
-			}},
-			{Label: "Secure", Items: []core.NavItem{
-				{Label: "API keys", URL: "/api-keys"}, {Label: "Team", URL: "/access"},
-				{Label: "Authentication", URL: "/auth"}, {Label: "Audit", URL: "/audit"},
-			}},
-			{Label: "Manage", Items: []core.NavItem{
-				{Label: "Usage", URL: "/usage"}, {Label: "Subscriptions", URL: "/subscriptions"},
-				{Label: "Billing", URL: "/billing"},
-				{Label: "Organization", URL: "/organization", BadgeCount: len(shell.Organizations)},
-				{Label: "Settings", URL: "/settings"},
-			}},
-		}
+		groups = adminNavigation
 	}
-	for _, group := range shell.Navigation {
-		for i := range group.Items {
-			group.Items[i].Active = slices.ContainsFunc(append([]string{group.Items[i].URL}, navAliases[group.Items[i].URL]...), func(url string) bool {
-				return r.URL.Path == url || (url != "/" && strings.HasPrefix(r.URL.Path, url+"/"))
-			})
+	shell.Navigation = make([]core.NavGroup, len(groups))
+	for i, group := range groups {
+		items := slices.Clone(group.Items)
+		for j := range items {
+			items[j].Active = navActive(items[j].URL, r.URL.Path)
+			if items[j].URL == "/organization" {
+				items[j].BadgeCount = len(shell.Organizations)
+			}
 		}
+		shell.Navigation[i] = core.NavGroup{Label: group.Label, Items: items}
 	}
 	return shell
+}
+
+// navActive reports whether path is the section at url, nested under it, or
+// one of its aliases.
+func navActive(url, path string) bool {
+	within := func(url string) bool {
+		return path == url || (url != "/" && strings.HasPrefix(path, url+"/"))
+	}
+	return within(url) || slices.ContainsFunc(navAliases[url], within)
 }

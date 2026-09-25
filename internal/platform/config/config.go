@@ -15,7 +15,6 @@ type Config struct {
 	AdminPassword  string
 	SDKBaseURL     string
 	SDKAccessToken string
-	TSAuthBaseURL  string
 }
 
 func Load() (Config, error) {
@@ -27,7 +26,6 @@ func Load() (Config, error) {
 		AdminPassword:  os.Getenv("DASHBOARD_DEMO_ADMIN_PASSWORD"),
 		SDKBaseURL:     strings.TrimSpace(os.Getenv("TS_API_BASE_URL")),
 		SDKAccessToken: os.Getenv("TS_API_ACCESS_TOKEN"),
-		TSAuthBaseURL:  strings.TrimSpace(os.Getenv("TS_AUTH_BASE_URL")),
 	}
 	if c.Addr == "" {
 		c.Addr = ":8080"

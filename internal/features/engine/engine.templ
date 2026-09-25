@@ -46,7 +46,14 @@ templ engineContent(d pageData) {
 									<tr>
 										<td><code>{ region.Code }</code></td>
 										<td class="ts-strong">{ region.Name }</td>
-										<td>{ region.Country }</td>
+										<td>
+											<span class="ts-engine-country">
+												if flag := flagURL(region.Country); flag != "" {
+													<img class="ts-engine-flag" src={ flag } alt="" width="20" height="15" loading="lazy" decoding="async"/>
+												}
+												{ region.Country }
+											</span>
+										</td>
 										<td class="ts-num ts-mono">{ fmt.Sprintf("%.2f, %.2f", region.Latitude, region.Longitude) }</td>
 										<td>
 											if region.Available {

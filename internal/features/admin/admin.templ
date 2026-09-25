@@ -46,22 +46,6 @@ func adminDatabaseRegionCount(rows []databaseRow) int {
 	return count
 }
 
-func adminObservedProjectCount(rows []estateRow) int {
-	count := 0
-	for _, row := range rows {
-		count += row.ObservedProjects
-	}
-	return count
-}
-
-func adminObservedDatabaseCount(rows []estateRow) int {
-	count := 0
-	for _, row := range rows {
-		count += row.ObservedDatabases
-	}
-	return count
-}
-
 func adminVisiblePlanCount(plans []core.Plan) int {
 	count := 0
 	for _, plan := range plans {

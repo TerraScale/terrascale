@@ -59,11 +59,10 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 				docs = append(docs, documentView{ID: row.ID, Value: jsontext.Value(row.Value)})
 			}
 		}
-		writeJSON(w, http.StatusOK, docs)
+		core.WriteJSON(w, http.StatusOK, docs)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/data/documents", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxDocumentBytes+4096)
@@ -76,7 +75,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if !canWrite(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanWrite) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -188,11 +187,11 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			}
 			return
 		}
-		if wantsHTML(r) {
+		if core.WantsHTML(r) {
 			http.Redirect(w, r, "/data?view=table&databaseId="+url.QueryEscape(db.ID)+"&collection="+url.QueryEscape(collection), http.StatusSeeOther)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"id": id, "operation": operation})
+		core.WriteJSON(w, http.StatusOK, map[string]string{"id": id, "operation": operation})
 	})
 	mux.HandleFunc("GET /api/v1/dashboard/schema", func(w http.ResponseWriter, r *http.Request) {
 		p, db, err := selectedDB(deps, r, r.URL.Query().Get("databaseId"))
@@ -211,7 +210,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 				writeError(w, core.ErrNotFound)
 				return
 			}
-			writeJSON(w, http.StatusOK, jsontext.Value(body))
+			core.WriteJSON(w, http.StatusOK, jsontext.Value(body))
 			return
 		}
 		client, err := client(deps, p)
@@ -224,11 +223,10 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "schema read failed: "+err.Error(), http.StatusBadGateway)
 			return
 		}
-		writeJSON(w, http.StatusOK, schema)
+		core.WriteJSON(w, http.StatusOK, schema)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/schema", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
@@ -241,7 +239,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -294,11 +292,11 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			}
 			return
 		}
-		if wantsHTML(r) {
+		if core.WantsHTML(r) {
 			http.Redirect(w, r, "/schema?databaseId="+url.QueryEscape(db.ID)+"&collection="+url.QueryEscape(collection), http.StatusSeeOther)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"collection": collection, "status": "applied"})
+		core.WriteJSON(w, http.StatusOK, map[string]string{"collection": collection, "status": "applied"})
 	})
 	mux.HandleFunc("GET /api/v1/dashboard/indexes", func(w http.ResponseWriter, r *http.Request) {
 		p, db, err := selectedDB(deps, r, r.URL.Query().Get("databaseId"))
@@ -312,7 +310,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		if deps.Demo {
-			writeJSON(w, http.StatusOK, db.Indexes[collection])
+			core.WriteJSON(w, http.StatusOK, db.Indexes[collection])
 			return
 		}
 		client, err := client(deps, p)
@@ -325,11 +323,10 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "index list failed: "+err.Error(), http.StatusBadGateway)
 			return
 		}
-		writeJSON(w, http.StatusOK, page.Indexes)
+		core.WriteJSON(w, http.StatusOK, page.Indexes)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/indexes/recommendations/apply", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
@@ -337,12 +334,12 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		p, _, err := selectedProject(deps, r)
+		p, _, _, err := selectedProject(deps, r)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -425,16 +422,15 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if wantsHTML(r) {
+		if core.WantsHTML(r) {
 			query := url.Values{"tab": {"recommendations"}, "databaseId": {resolvedDatabaseID}, "collection": {resolvedCollection}}
 			http.Redirect(w, r, "/indexes?"+query.Encode(), http.StatusSeeOther)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"recommendationId": recommendationID, "status": status})
+		core.WriteJSON(w, http.StatusOK, map[string]string{"recommendationId": recommendationID, "status": status})
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/indexes", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -446,7 +442,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -495,11 +491,11 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			}
 			return
 		}
-		if wantsHTML(r) {
+		if core.WantsHTML(r) {
 			http.Redirect(w, r, "/indexes?databaseId="+url.QueryEscape(db.ID)+"&collection="+url.QueryEscape(collection), http.StatusSeeOther)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"field": field, "status": "created"})
+		core.WriteJSON(w, http.StatusOK, map[string]string{"field": field, "status": "created"})
 	})
 }
 
@@ -527,23 +523,11 @@ func validCollection(collection string) bool {
 	return collection != "" && len(collection) <= 128 && !strings.ContainsAny(collection, "/\\\x00\n\r")
 }
 
-func wantsHTML(r *http.Request) bool { return strings.Contains(r.Header.Get("Accept"), "text/html") }
-
 func client(deps core.Deps, p core.Principal) (*sdk.Client, error) {
 	if deps.SDK == nil {
 		return nil, errors.New("live data plane unavailable")
 	}
 	return deps.SDK.ForScope(p.OrganizationID, p.ProjectID)
-}
-
-func canWrite(deps core.Deps, p core.Principal) bool {
-	a, err := deps.Store.SnapshotAs(p)
-	return err == nil && a.Organizations[p.OrganizationID].CanWrite(p.UserID)
-}
-
-func canManage(deps core.Deps, p core.Principal) bool {
-	a, err := deps.Store.SnapshotAs(p)
-	return err == nil && a.Organizations[p.OrganizationID].CanManage(p.UserID)
 }
 
 func mergePatch(original, patch []byte) ([]byte, error) {
@@ -582,12 +566,7 @@ func mergePatch(original, patch []byte) ([]byte, error) {
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, core.ErrUnauthorized):
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
+	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)
 	case errors.Is(err, core.ErrInvalid):
@@ -595,15 +574,4 @@ func writeError(w http.ResponseWriter, err error) {
 	default:
 		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, data any) {
-	encoded, err := json.Marshal(data)
-	if err != nil {
-		http.Error(w, "encode response failed", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(encoded)
 }

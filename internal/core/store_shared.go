@@ -1,6 +1,8 @@
 package core
 
 import (
+	"maps"
+	"slices"
 	"strings"
 	"time"
 )
@@ -56,12 +58,12 @@ func (s *Store) AcceptInvitation(p Principal, tokenHash string) (Organization, e
 			}
 			invitation.Status = "accepted"
 			org.Invitations[invitationID] = invitation
-			next := s.materialize(a)
-			next.Organizations[id] = cloneOrganization(org)
+			next := detachAccount(s.viewLocked(a))
+			next.Organizations[id] = Organization{ID: id}
 			next.ActiveOrganizationID = id
 			next.ActiveProjectID = ""
 			s.organizations[id] = org
-			s.accounts[a.ID] = cloneAccount(next)
+			s.accounts[a.ID] = next
 			return cloneOrganization(org), nil
 		}
 	}
@@ -97,17 +99,9 @@ func (s *Store) DeclineInvitation(p Principal, tokenHash string) (Organization, 
 	return Organization{}, ErrNotFound
 }
 
-// ApplyBillingEvent finds the canonical tenant by provider identity. It marks
-// an event processed only after the projection callback succeeds.
-func (s *Store) ApplyBillingEvent(eventID, customerID, subscriptionID string, mutate func(*Organization) error) error {
-	if mutate == nil {
-		return ErrInvalid
-	}
-	return s.applyBillingEvent(eventID, customerID, subscriptionID, mutate)
-}
-
-// ApplyBillingEventWithPlans supplies a detached plan catalog while holding
-// the event commit lock. Projection callbacks must use this snapshot instead
+// ApplyBillingEventWithPlans finds the canonical tenant by provider identity
+// and marks an event processed only after the projection callback succeeds.
+// It supplies a detached plan catalog while holding the event commit lock. Projection callbacks must use this snapshot instead
 // of calling Store.Plan or Store.Plans, which would acquire the lock again.
 func (s *Store) ApplyBillingEventWithPlans(eventID, customerID, subscriptionID string, mutate func(*Organization, map[string]Plan) error) error {
 	if mutate == nil {
@@ -165,11 +159,7 @@ func (s *Store) applyBillingEvent(eventID, customerID, subscriptionID string, mu
 func (s *Store) Plans() []Plan {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	plans := make([]Plan, 0, len(s.plans))
-	for _, plan := range s.plans {
-		plans = append(plans, plan)
-	}
-	return plans
+	return slices.AppendSeq(make([]Plan, 0, len(s.plans)), maps.Values(s.plans))
 }
 
 func (s *Store) Plan(idOrKey string) (Plan, bool) {

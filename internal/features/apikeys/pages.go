@@ -38,8 +38,7 @@ type databaseChoice struct{ ID, Name string }
 func mountPages(mux *http.ServeMux, deps core.Deps) {
 	mux.HandleFunc("GET /api-keys", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, "") })
 	mux.HandleFunc("POST /api/v1/dashboard/credentials/key", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, project, _, err := selectedPage(deps, r)
@@ -47,7 +46,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -59,7 +58,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		input := sdk.CreateProjectAPIKeyRequest{Name: r.FormValue("name"), DatabaseID: r.FormValue("databaseId"), Scopes: strings.FieldsFunc(r.FormValue("scopes"), func(char rune) bool { return char == ',' || char == ' ' || char == '\n' || char == '\t' })}
+		input := sdk.CreateProjectAPIKeyRequest{Name: r.FormValue("name"), DatabaseID: r.FormValue("databaseId"), Scopes: formScopes(r.FormValue("scopes"))}
 		if err := validateInput(project, input); err != nil {
 			writeError(w, err)
 			return
@@ -72,8 +71,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 		renderPage(w, r, deps, secret)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/credentials/m2m", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, project, _, err := selectedPage(deps, r)
@@ -81,7 +79,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -93,7 +91,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		input := sdk.CreateProjectAPIKeyRequest{Name: r.FormValue("name"), DatabaseID: r.FormValue("databaseId"), Scopes: strings.FieldsFunc(r.FormValue("scopes"), func(char rune) bool { return char == ',' || char == ' ' || char == '\n' || char == '\t' })}
+		input := sdk.CreateProjectAPIKeyRequest{Name: r.FormValue("name"), DatabaseID: r.FormValue("databaseId"), Scopes: formScopes(r.FormValue("scopes"))}
 		if err := validateInput(project, input); err != nil {
 			writeError(w, err)
 			return
@@ -106,8 +104,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 		renderPage(w, r, deps, secret)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/credentials/rotate", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, _, _, err := selectedPage(deps, r)
@@ -115,7 +112,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -135,8 +132,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 		renderPage(w, r, deps, secret)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/credentials/revoke", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, _, _, err := selectedPage(deps, r)
@@ -144,7 +140,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -162,6 +158,11 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 		}
 		http.Redirect(w, r, "/api-keys", http.StatusSeeOther)
 	})
+}
+
+// formScopes splits the scopes field on commas and whitespace.
+func formScopes(value string) []string {
+	return strings.FieldsFunc(value, func(char rune) bool { return char == ',' || char == ' ' || char == '\n' || char == '\t' })
 }
 
 func selectedPage(deps core.Deps, r *http.Request) (core.Principal, core.Project, core.Account, error) {
@@ -197,6 +198,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, secret s
 	if len(data.Search) > 256 {
 		data.Search = data.Search[:256]
 	}
+	search := strings.ToLower(data.Search)
 	now := time.Now()
 	expiringBy := now.Add(14 * 24 * time.Hour)
 	for _, key := range project.APIKeys {
@@ -212,7 +214,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, secret s
 				data.M2MClients++
 			}
 		}
-		if data.Kind == "key" && item.Kind != "api-key" || data.Kind == "m2m" && item.Kind != "m2m" || data.Status == "active" && !item.Active || data.Status == "inactive" && item.Active || data.DatabaseID != "" && item.DatabaseID != data.DatabaseID || data.Search != "" && !strings.Contains(strings.ToLower(item.Name+" "+item.Prefix), strings.ToLower(data.Search)) {
+		if data.Kind == "key" && item.Kind != "api-key" || data.Kind == "m2m" && item.Kind != "m2m" || data.Status == "active" && !item.Active || data.Status == "inactive" && item.Active || data.DatabaseID != "" && item.DatabaseID != data.DatabaseID || data.Search != "" && !strings.Contains(strings.ToLower(item.Name+" "+item.Prefix), search) {
 			continue
 		}
 		data.Keys = append(data.Keys, item)
@@ -222,8 +224,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, secret s
 	}
 	slices.SortFunc(data.Keys, func(a, b keyView) int { return strings.Compare(a.Name, b.Name) })
 	slices.SortFunc(data.Databases, func(a, b databaseChoice) int { return strings.Compare(a.Name, b.Name) })
-	org := a.Organizations[p.OrganizationID]
-	page := core.Page{Layout: "shell", Title: "API keys · TerraScale", Principal: p, View: func(page core.Page) templ.Component { return apiKeysContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r), Shell: core.Shell{UserName: a.User.Name, UserEmail: a.User.Email, OrganizationName: org.Name, ProjectName: project.Name}}
+	page := core.Page{Layout: "shell", Title: "API keys · TerraScale", Principal: p, View: func(page core.Page) templ.Component { return apiKeysContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r)}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render API keys", http.StatusInternalServerError)
 	}

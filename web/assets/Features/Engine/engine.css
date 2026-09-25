@@ -3,3 +3,14 @@
 .ts-engine-inset {
   padding: 0 var(--ts-s6) var(--ts-s6);
 }
+
+.ts-engine-country {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-engine-flag {
+  border-radius: var(--ts-radius-sm);
+  box-shadow: 0 0 0 1px var(--ts-line);
+}

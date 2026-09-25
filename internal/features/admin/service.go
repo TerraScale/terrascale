@@ -474,7 +474,7 @@ func (s Service) lockMutations() func() {
 
 func validName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
-	if name == "" || !utf8.ValidString(name) || strings.IndexFunc(name, unicode.IsControl) >= 0 || utf8.RuneCountInString(name) > 128 {
+	if name == "" || !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) || utf8.RuneCountInString(name) > 128 {
 		return "", core.ErrInvalid
 	}
 	return name, nil
@@ -498,13 +498,6 @@ func adminFallback(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func platformAdminLabel(platformAdmin bool) string {
-	if platformAdmin {
-		return "Platform administrator"
-	}
-	return "Standard account"
 }
 
 func planVisibilityValue(visible bool) string {

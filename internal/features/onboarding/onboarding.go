@@ -192,7 +192,7 @@ func saveStep(deps core.Deps) http.HandlerFunc {
 			name := strings.TrimSpace(r.Form.Get("displayName"))
 			if name == "" {
 				message = "This field is required."
-			} else if !utf8.ValidString(name) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+			} else if !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
 				message = "Enter a valid name."
 			} else if utf8.RuneCountInString(name) > 128 {
 				message = "Use a name with 128 characters or fewer."
@@ -249,7 +249,7 @@ func saveStep(deps core.Deps) http.HandlerFunc {
 			name := strings.TrimSpace(r.Form.Get("name"))
 			if account.OnboardingStep != "project" {
 				message = "Complete the current setup step first."
-			} else if !utf8.ValidString(name) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+			} else if !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
 				message = "Enter a valid project name."
 			} else if utf8.RuneCountInString(name) > 100 {
 				message = "Use a project name with 100 characters or fewer."

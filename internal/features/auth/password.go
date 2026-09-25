@@ -19,9 +19,7 @@ const (
 
 func HashPassword(password string) (string, error) {
 	salt := make([]byte, passwordSaltLength)
-	if _, err := rand.Read(salt); err != nil {
-		return "", err
-	}
+	rand.Read(salt)
 	key, err := pbkdf2.Key(sha256.New, password, salt, passwordIterations, passwordKeyLength)
 	if err != nil {
 		return "", err

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -53,30 +54,29 @@ func (m *Manager) StartIfPasswordHash(w http.ResponseWriter, r *http.Request, p 
 }
 
 func (m *Manager) start(w http.ResponseWriter, r *http.Request, p core.Principal, expectedHash string, checkHash bool) error {
-	a, err := m.store.SnapshotAs(p)
-	if err != nil {
+	var authVersion uint64
+	if err := m.store.ViewAs(p, func(a core.Account) error {
+		if checkHash && (expectedHash == "" || a.User.PasswordHash != expectedHash) {
+			return core.ErrConflict
+		}
+		authVersion = a.AuthVersion
+		return nil
+	}); err != nil {
 		return err
-	}
-	if checkHash && (expectedHash == "" || a.User.PasswordHash != expectedHash) {
-		return core.ErrConflict
 	}
 	var random [32]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		return err
-	}
+	rand.Read(random[:])
 	token := base64.RawURLEncoding.EncodeToString(random[:])
-	m.mu.Lock()
 	now := time.Now()
-	for key, item := range m.items {
-		if !now.Before(item.expiresAt) {
-			delete(m.items, key)
-		}
-	}
-	if old, ok := m.Token(r); ok {
+	key := sha256.Sum256([]byte(token))
+	old, hasOld := m.Token(r)
+	m.mu.Lock()
+	maps.DeleteFunc(m.items, func(_ [32]byte, item entry) bool { return !now.Before(item.expiresAt) })
+	if hasOld {
 		delete(m.items, sha256.Sum256([]byte(old)))
 	}
-	m.items[sha256.Sum256([]byte(token))] = entry{
-		accountID: p.AccountID, userID: p.UserID, authVersion: a.AuthVersion, expiresAt: now.Add(m.opts.Lifetime),
+	m.items[key] = entry{
+		accountID: p.AccountID, userID: p.UserID, authVersion: authVersion, expiresAt: now.Add(m.opts.Lifetime),
 	}
 	m.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
@@ -112,47 +112,42 @@ func (m *Manager) Token(r *http.Request) (string, bool) {
 }
 
 func (m *Manager) principalFor(token string) (core.Principal, bool) {
+	key := sha256.Sum256([]byte(token))
 	m.mu.RLock()
-	item, ok := m.items[sha256.Sum256([]byte(token))]
+	item, ok := m.items[key]
 	m.mu.RUnlock()
 	if !ok {
 		return core.Principal{}, false
 	}
 	if !time.Now().Before(item.expiresAt) {
 		m.mu.Lock()
-		delete(m.items, sha256.Sum256([]byte(token)))
+		delete(m.items, key)
 		m.mu.Unlock()
 		return core.Principal{}, false
 	}
-	a, ok := m.store.Snapshot(item.accountID)
-	if !ok || a.User.ID != item.userID || a.AuthVersion != item.authVersion {
-		return core.Principal{}, false
-	}
-	p := a.Principal()
-	current, err := m.store.SnapshotAs(p)
-	if err != nil || current.AuthVersion != item.authVersion {
-		return core.Principal{}, false
-	}
-	return p, true
+	return m.store.SessionPrincipal(item.accountID, item.userID, item.authVersion)
 }
 
 func (m *Manager) End(w http.ResponseWriter, r *http.Request) {
 	if scheme, bearer, ok := strings.Cut(r.Header.Get("Authorization"), " "); ok && strings.EqualFold(scheme, "Bearer") {
 		if _, valid := m.principalFor(bearer); valid {
-			m.mu.Lock()
-			delete(m.items, sha256.Sum256([]byte(bearer)))
-			m.mu.Unlock()
+			m.forget(bearer)
 		}
 	}
 	if token, ok := m.Token(r); ok {
-		m.mu.Lock()
-		delete(m.items, sha256.Sum256([]byte(token)))
-		m.mu.Unlock()
+		m.forget(token)
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: m.opts.CookieName, Path: "/", HttpOnly: true, Secure: m.opts.Secure,
 		SameSite: http.SameSiteLaxMode, MaxAge: -1,
 	})
+}
+
+func (m *Manager) forget(token string) {
+	key := sha256.Sum256([]byte(token))
+	m.mu.Lock()
+	delete(m.items, key)
+	m.mu.Unlock()
 }
 
 func (m *Manager) RevokeUser(accountID, userID string) {
@@ -174,8 +169,8 @@ func (m *Manager) SessionsForUser(p core.Principal, r *http.Request) []core.Sess
 		currentHash = sha256.Sum256([]byte(currentToken))
 	}
 	now := time.Now()
+	var result []core.SessionInfo
 	m.mu.RLock()
-	result := make([]core.SessionInfo, 0)
 	for hash, item := range m.items {
 		if item.accountID == p.AccountID && item.userID == p.UserID && item.authVersion == p.AuthVersion && now.Before(item.expiresAt) {
 			result = append(result, core.SessionInfo{

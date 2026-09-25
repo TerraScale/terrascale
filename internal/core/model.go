@@ -394,11 +394,6 @@ type Page struct {
 	DevMode   bool
 }
 
-type Fragment struct {
-	View      View
-	CSRFToken string
-}
-
 // View constructs a feature component after the renderer has populated the
 // request's CSRF token and, for full pages, the nonce and canonical shell.
 // Feature packages close over their own typed page data in this callback.
@@ -407,12 +402,11 @@ type View func(Page) templ.Component
 // Renderer renders feature components inside the shared document layouts.
 type Renderer interface {
 	Page(http.ResponseWriter, *http.Request, Page) error
-	Fragment(http.ResponseWriter, *http.Request, Fragment) error
 }
 
+// Events streams Datastar patches to the browser.
 type Events interface {
 	PatchElements(http.ResponseWriter, *http.Request, string) error
-	PatchSignals(http.ResponseWriter, *http.Request, any) error
 }
 
 // SDKFactory returns a new official SDK client after the handler has checked

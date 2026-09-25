@@ -209,7 +209,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, key stri
 		slices.SortFunc(rows, func(a, b resourceRow) int { return strings.Compare(a.Name, b.Name) })
 		data.Total = len(rows)
 		data.PageCount = max(1, (len(rows)+pageSize-1)/pageSize)
-		data.Page = clampPage(r.URL.Query().Get("page"), data.PageCount)
+		data.Page = core.ClampPage(r.URL.Query().Get("page"), data.PageCount)
 		start := (data.Page - 1) * pageSize
 		data.Resources = rows[start:min(start+pageSize, len(rows))]
 		data.Previous, data.Next = max(1, data.Page-1), min(data.PageCount, data.Page+1)
@@ -229,7 +229,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, key stri
 
 func saveResource(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !verifyCSRF(deps, w, r) {
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, account, ok := signedIn(deps, w, r)
@@ -318,7 +318,7 @@ func saveResource(deps core.Deps) http.HandlerFunc {
 
 func deleteResource(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !verifyCSRF(deps, w, r) {
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, account, ok := signedIn(deps, w, r)
@@ -374,7 +374,7 @@ func deleteResource(deps core.Deps) http.HandlerFunc {
 
 func resourceAction(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !verifyCSRF(deps, w, r) {
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, account, ok := signedIn(deps, w, r)
@@ -435,7 +435,7 @@ func resourceAction(deps core.Deps) http.HandlerFunc {
 
 func saveBranding(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !verifyCSRF(deps, w, r) {
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, account, ok := signedIn(deps, w, r)
@@ -507,14 +507,6 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 
 func canManage(org core.Organization, userID string) bool {
 	return org.OwnerUserID == userID || org.CanManage(userID)
-}
-
-func verifyCSRF(deps core.Deps, w http.ResponseWriter, r *http.Request) bool {
-	if deps.CSRF == nil || deps.CSRF.Verify(r) != nil {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
-		return false
-	}
-	return true
 }
 
 func findSection(key string) (section, bool) {
@@ -627,22 +619,9 @@ func redirect(w http.ResponseWriter, r *http.Request, key, status, value string)
 	http.Redirect(w, r, "/auth/"+url.PathEscape(key)+"?"+query.Encode(), http.StatusSeeOther)
 }
 
-func clampPage(raw string, pages int) int {
-	page, err := strconv.Atoi(raw)
-	if err != nil || page < 1 {
-		return 1
-	}
-	return min(page, pages)
-}
-
 func writeError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, core.ErrUnauthorized):
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
+	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)
 	default:
