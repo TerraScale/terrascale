@@ -12,11 +12,7 @@ import (
 
 templ organizationPageView(page core.Page, data organizationPageData) {
 	<main class="ts-page">
-		@ui.PageHeader(ui.Header{
-			Eyebrow:     organizationKindLabel(data.Organization.Kind),
-			Title:       data.Organization.Name,
-			Description: organizationStatusLabel(data.Organization.Status) + " · Projects, placement, and ownership for this organization.",
-		}) {
+		@ui.PageHeader(data.Organization.Name) {
 			<a class="ts-btn ts-btn-secondary" href="/access">@icons.Users(16)<span>Manage team</span></a>
 			<a class="ts-btn ts-btn-primary" href="/organization?newOrganization=organization">@icons.Plus(16)<span>Create organization</span></a>
 		}

@@ -239,6 +239,22 @@ type AuthInstance struct {
 	Resources                 []AuthResource
 	AuditEvents               []AuditEvent
 	Name, LogoURL, ThemeColor string
+	Settings                  AuthSettings
+}
+
+// AuthSettings are the instance-wide sign-in and multi-factor strategies a
+// ts-auth instance offers on its hosted pages. UpdatedAt is zero until an
+// administrator first saves them; until then ts-auth defaults apply.
+type AuthSettings struct {
+	EmailVerification bool // verify the email address at sign-up
+	EmailPasscode     bool // one-time email codes
+	MagicLink         bool // one-click email links
+	Password          bool
+	Username          bool
+	Passkeys          bool
+	TOTP              bool // authenticator-app second factor
+	RecoveryCodes     bool
+	UpdatedAt         time.Time
 }
 
 type Backup struct {
@@ -346,6 +362,39 @@ type NavItem struct {
 	URL        string
 	Active     bool
 	BadgeCount int
+	// Group names the run of sibling sub-navigation items this item starts
+	// or continues; the sidebar renders a label where the group changes.
+	Group string
+	// Children render as a collapsible sub-navigation under the item.
+	Children []NavItem
+}
+
+// AuthNavigation returns the authentication console sections for the sidebar
+// sub-navigation, grouped the way hosted identity consoles lay them out:
+// getting started, people, sign-in configuration, developer integrations,
+// then customization. Each call returns a fresh slice the caller may mark
+// active.
+func AuthNavigation() []NavItem {
+	return []NavItem{
+		{Label: "Overview", URL: "/auth/overview"},
+		{Label: "Quickstart", URL: "/auth/quickstart"},
+		{Label: "Users", URL: "/auth/users", Group: "Manage"},
+		{Label: "Organizations", URL: "/auth/organizations", Group: "Manage"},
+		{Label: "Memberships", URL: "/auth/memberships", Group: "Manage"},
+		{Label: "Invitations", URL: "/auth/invitations", Group: "Manage"},
+		{Label: "Enrollment domains", URL: "/auth/domains", Group: "Manage"},
+		{Label: "Sign-in methods", URL: "/auth/sign-in", Group: "User & authentication"},
+		{Label: "SSO connections", URL: "/auth/connections", Group: "User & authentication"},
+		{Label: "Multi-factor", URL: "/auth/mfa", Group: "User & authentication"},
+		{Label: "Sessions", URL: "/auth/sessions", Group: "User & authentication"},
+		{Label: "Directory sync", URL: "/auth/directories", Group: "User & authentication"},
+		{Label: "OAuth applications", URL: "/auth/clients", Group: "Developers"},
+		{Label: "JWT templates", URL: "/auth/templates", Group: "Developers"},
+		{Label: "Management keys", URL: "/auth/keys", Group: "Developers"},
+		{Label: "Webhooks", URL: "/auth/webhooks", Group: "Developers"},
+		{Label: "Audit log", URL: "/auth/audit", Group: "Developers"},
+		{Label: "Branding", URL: "/auth/branding", Group: "Customization"},
+	}
 }
 
 type NavGroup struct {

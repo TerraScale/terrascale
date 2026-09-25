@@ -120,12 +120,11 @@ var (
 	shellNavigation = []core.NavGroup{
 		{Label: "Build", Items: []core.NavItem{
 			{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
-			{Label: "Tables", URL: "/data"}, {Label: "Backups", URL: "/backups"},
-			{Label: "Engine", URL: "/engine"},
+			{Label: "Tables", URL: "/data"},
 		}},
 		{Label: "Secure", Items: []core.NavItem{
 			{Label: "API keys", URL: "/api-keys"}, {Label: "Team", URL: "/access"},
-			{Label: "Authentication", URL: "/auth"}, {Label: "Audit", URL: "/audit"},
+			{Label: "Authentication", URL: "/auth", Children: core.AuthNavigation()}, {Label: "Audit", URL: "/audit"},
 		}},
 		{Label: "Manage", Items: []core.NavItem{
 			{Label: "Usage", URL: "/usage"}, {Label: "Subscriptions", URL: "/subscriptions"},
@@ -145,9 +144,9 @@ var (
 	}
 )
 
-// navAliases lists routes that belong to a navigation section without being
+// navAliases lists pages that belong to a navigation section without being
 // nested under its URL.
-var navAliases = map[string][]string{"/data": {"/schema", "/indexes", "/history"}}
+var navAliases = map[string][]string{"/data": {"/schema", "/indexes", "/history"}, "/auth/overview": {"/auth"}}
 
 func shellFor(account core.Account, p core.Principal, layout string, r *http.Request) core.Shell {
 	shell := core.Shell{UserName: account.User.Name, UserEmail: account.User.Email}
@@ -190,23 +189,27 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 	}
 	shell.Navigation = make([]core.NavGroup, len(groups))
 	for i, group := range groups {
-		items := slices.Clone(group.Items)
-		for j := range items {
-			items[j].Active = navActive(items[j].URL, r.URL.Path)
-			if items[j].URL == "/organization" {
-				items[j].BadgeCount = len(shell.Organizations)
-			}
-		}
-		shell.Navigation[i] = core.NavGroup{Label: group.Label, Items: items}
+		shell.Navigation[i] = core.NavGroup{Label: group.Label, Items: navItems(group.Items, r.URL.Path, len(shell.Organizations))}
 	}
 	return shell
 }
 
-// navActive reports whether path is the section at url, nested under it, or
-// one of its aliases.
-func navActive(url, path string) bool {
-	within := func(url string) bool {
-		return path == url || (url != "/" && strings.HasPrefix(path, url+"/"))
+// navItems copies items for one request, flagging the sections that contain
+// path at every sub-navigation level.
+func navItems(items []core.NavItem, path string, organizations int) []core.NavItem {
+	items = slices.Clone(items)
+	for i := range items {
+		items[i].Active = navActive(items[i].URL, path)
+		items[i].Children = navItems(items[i].Children, path, organizations)
+		if items[i].URL == "/organization" {
+			items[i].BadgeCount = organizations
+		}
 	}
-	return within(url) || slices.ContainsFunc(navAliases[url], within)
+	return items
+}
+
+// navActive reports whether path is the section at url, nested under it, or
+// one of its aliases. Aliases name single pages, so they match exactly.
+func navActive(url, path string) bool {
+	return path == url || (url != "/" && strings.HasPrefix(path, url+"/")) || slices.Contains(navAliases[url], path)
 }

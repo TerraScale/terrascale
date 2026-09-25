@@ -9,7 +9,7 @@ import (
 
 templ profileView(data pageData, csrfToken string) {
 	<main class="ts-page">
-		@ui.PageHeader(ui.Header{Eyebrow: "Account", Title: data.Name, Description: profileSubtitle(data)})
+		@ui.PageHeader(data.Name)
 		if data.Error != "" {
 			@ui.Alert("danger", "", data.Error)
 		}
@@ -297,15 +297,6 @@ templ sessionsTab(data pageData) {
 	}
 }
 
-func profileSubtitle(data pageData) string {
-	parts := []string{data.Email}
-	for _, part := range []string{data.Role, data.OrganizationName} {
-		if part != "" {
-			parts = append(parts, part)
-		}
-	}
-	return strings.Join(parts, " · ")
-}
 
 func onOff(on bool) string {
 	if on {

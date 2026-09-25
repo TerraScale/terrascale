@@ -1,6 +1,8 @@
 package databases
 
 import (
+	"strconv"
+
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/ui"
 	"terrascale.tech/dashboard/internal/ui/icons"
@@ -13,7 +15,7 @@ type fact struct {
 }
 
 templ databaseDetailContent(page core.Page, d pageData) {
-	@ui.PageHeader(ui.Header{Eyebrow: "Database", Title: d.Detail.Name, Description: d.Detail.ID}) {
+	@ui.PageHeader(d.Detail.Name) {
 		<a class="ts-btn ts-btn-ghost" href="/databases">@icons.ArrowLeft(16)
 <span>All databases</span></a>
 		<a class="ts-btn ts-btn-secondary" href={ templ.SafeURL("/data?view=table&databaseId=" + d.Detail.ID) }>@icons.Table(16)
@@ -46,7 +48,7 @@ templ databaseDetailContent(page core.Page, d pageData) {
 						@toolLink("/data?view=table&databaseId="+d.Detail.ID, "cyan", icons.Table(16), "Data browser")
 						@toolLink("/schema?databaseId="+d.Detail.ID, "violet", icons.FileJson(16), "Schema")
 						@toolLink("/indexes?databaseId="+d.Detail.ID, "amber", icons.ListChecks(16), "Indexes")
-						@toolLink("/backups?databaseId="+d.Detail.ID, "teal", icons.Archive(16), "Manage backups")
+						@toolLink("/databases/"+d.Detail.ID+"?tab=backups", "teal", icons.Archive(16), "Backups")
 					</nav>
 				}
 			</div>
@@ -108,38 +110,98 @@ templ detailPlacement(d pageData) {
 }
 
 templ detailBackups(page core.Page, d pageData) {
-	@ui.Card(ui.CardProps{ID: "backups", Title: "Backups", Description: "Scheduled backup policy for this database"}) {
-		<div class="ts-db-setting">
-			<div class="ts-list-main">
-				<span class="ts-strong">Scheduled backups</span>
-				<span class="ts-meta">{ backupStatusDescription(d.DetailInfo) }</span>
+	<div class="ts-split">
+		@ui.Card(ui.CardProps{ID: "restore-points", Title: "Restore points", Description: "Restore a snapshot side by side as a new database.", Actions: createBackupAction(page, d), Flush: true}) {
+			if len(d.DetailInfo.Backups) > 0 {
+				<div class="ts-table-wrap">
+					<table class="ts-table">
+						<thead><tr><th>Created</th><th>Status</th><th class="ts-num">Size</th><th>Restore</th></tr></thead>
+						<tbody>
+							for _, backup := range d.DetailInfo.Backups {
+								<tr>
+									<td class="ts-mono">{ backup.CreatedAt.UTC().Format("2006-01-02 15:04 UTC") }</td>
+									<td>@ui.Badge(backupTone(backup.Status), backup.Status)
+</td>
+									<td class="ts-num">{ strconv.FormatInt(backup.SizeBytes, 10) } bytes</td>
+									<td>
+										if d.DetailInfo.CanRestoreBackups {
+											<form class="ts-db-restore" method="post" action="/api/v1/dashboard/backups/restore">
+												<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+												<input type="hidden" name="databaseId" value={ d.Detail.ID }/>
+												<input type="hidden" name="backupId" value={ backup.ID }/>
+												<label class="ts-sr-only" for={ "restore-name-" + backup.ID }>New database name</label>
+												<input class="ts-input ts-input-sm" id={ "restore-name-" + backup.ID } name="name" placeholder="New database name" required/>
+												<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Restore side by side</button>
+											</form>
+										} else {
+											<span class="ts-meta">Requires provisioning access</span>
+										}
+									</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			} else {
+				@ui.Empty("No restore points yet.", "Create a backup to capture the current state of this database.")
+			}
+		}
+		@ui.Card(ui.CardProps{ID: "backup-policy", Title: "Backup policy", Description: "Cron schedules and how long snapshots are kept."}) {
+			<div class="ts-db-setting">
+				<div class="ts-list-main">
+					<span class="ts-strong">Scheduled backups</span>
+					<span class="ts-meta">{ backupStatusDescription(d.DetailInfo) }</span>
+				</div>
+				if d.DetailInfo.CanToggleBackups {
+					<form method="post" action="/api/v1/dashboard/backups/policy">
+						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+						<input type="hidden" name="databaseId" value={ d.Detail.ID }/>
+						<input type="hidden" name="fullBackupCron" value={ d.DetailInfo.BackupPolicy.FullBackupCron }/>
+						<input type="hidden" name="incrementalBackupCron" value={ d.DetailInfo.BackupPolicy.IncrementalBackupCron }/>
+						<input type="hidden" name="retentionDays" value={ backupRetentionDays(d.DetailInfo.BackupPolicy.RetentionDays) }/>
+						<input type="hidden" name="disabled" value={ backupToggleDisabled(d.DetailInfo.BackupsEnabled) }/>
+						<button type="submit" class="ts-switch" role="switch" aria-checked={ backupChecked(d.DetailInfo.BackupsEnabled) } aria-label="Scheduled backups"></button>
+					</form>
+				} else {
+					<span class="ts-meta">{ backupAvailability(d.DetailInfo) }</span>
+				}
 			</div>
-			if d.DetailInfo.CanToggleBackups {
-				<form method="post" action="/api/v1/dashboard/backups/policy">
+			if d.DetailInfo.CanEditBackupPolicy {
+				<form method="post" action="/api/v1/dashboard/backups/policy" class="ts-form">
 					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 					<input type="hidden" name="databaseId" value={ d.Detail.ID }/>
-					<input type="hidden" name="fullBackupCron" value={ d.DetailInfo.BackupPolicy.FullBackupCron }/>
-					<input type="hidden" name="incrementalBackupCron" value={ d.DetailInfo.BackupPolicy.IncrementalBackupCron }/>
-					<input type="hidden" name="retentionDays" value={ backupRetentionDays(d.DetailInfo.BackupPolicy.RetentionDays) }/>
-					<input type="hidden" name="disabled" value={ backupToggleDisabled(d.DetailInfo.BackupsEnabled) }/>
-					<input type="hidden" name="returnTo" value="databaseDetail"/>
-					<button type="submit" class="ts-switch" role="switch" aria-checked={ backupChecked(d.DetailInfo.BackupsEnabled) } aria-label="Scheduled backups"></button>
+					<input type="hidden" name="disabled" value={ backupToggleDisabled(d.DetailInfo.BackupPolicy.Disabled) }/>
+					@ui.Field(ui.FieldProps{ID: "full-cron", Label: "Full backup schedule"}) {
+						<input class="ts-input ts-mono" id="full-cron" name="fullBackupCron" value={ d.DetailInfo.BackupPolicy.FullBackupCron } placeholder="0 2 * * *"/>
+					}
+					@ui.Field(ui.FieldProps{ID: "incremental-cron", Label: "Incremental schedule"}) {
+						<input class="ts-input ts-mono" id="incremental-cron" name="incrementalBackupCron" value={ d.DetailInfo.BackupPolicy.IncrementalBackupCron } placeholder="0 * * * *"/>
+					}
+					@ui.Field(ui.FieldProps{ID: "retention", Label: "Retention days"}) {
+						<input class="ts-input" id="retention" name="retentionDays" type="number" min="1" max="365" value={ backupRetentionDays(d.DetailInfo.BackupPolicy.RetentionDays) }/>
+					}
+					<div class="ts-form-actions">
+						<button class="ts-btn ts-btn-primary" type="submit">Save policy</button>
+					</div>
 				</form>
-			} else {
-				<span class="ts-meta">{ backupAvailability(d.DetailInfo) }</span>
+			} else if d.DetailInfo.HasBackupSchedule {
+				<p class="ts-meta">Schedule: <span class="ts-mono">{ d.DetailInfo.BackupPolicy.FullBackupCron }</span> · Retention: { backupRetentionDays(d.DetailInfo.BackupPolicy.RetentionDays) } days</p>
 			}
-		</div>
-		if d.DetailInfo.HasBackupSchedule {
-			<p class="ts-meta">Schedule: <span class="ts-mono">{ d.DetailInfo.BackupPolicy.FullBackupCron }</span> · Retention: { backupRetentionDays(d.DetailInfo.BackupPolicy.RetentionDays) } days</p>
-		} else {
-			<p class="ts-meta">No scheduled backup policy is configured.</p>
+			if d.DetailInfo.Demo {
+				<p class="ts-meta">The demo saves this policy, but does not run scheduled backups automatically.</p>
+			}
 		}
-		if d.DetailInfo.Demo {
-			<p class="ts-meta">The demo saves this policy, but does not run scheduled backups automatically.</p>
-		}
-		<div class="ts-row">
-			<a class="ts-btn ts-btn-secondary" href={ templ.SafeURL("/backups?databaseId=" + d.Detail.ID) }>Manage backups and restore points</a>
-		</div>
+	</div>
+}
+
+templ createBackupAction(page core.Page, d pageData) {
+	if d.DetailInfo.CanCreateBackups {
+		<form method="post" action="/api/v1/dashboard/backups">
+			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+			<input type="hidden" name="databaseId" value={ d.Detail.ID }/>
+			<button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">@icons.Archive(16)
+<span>Create backup</span></button>
+		</form>
 	}
 }
 

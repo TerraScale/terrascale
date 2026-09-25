@@ -118,7 +118,7 @@ func auditView(data pageData) templ.Component {
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = ui.PageHeader(ui.Header{Eyebrow: "Security and access", Title: "Audit", Description: "Recent activity for the selected organization and project."}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.PageHeader("Audit").Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

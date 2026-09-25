@@ -1,6 +1,7 @@
 package databases
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -14,8 +15,13 @@ type detailInfo struct {
 	HasBackupSchedule bool
 	BackupsEnabled    bool
 	CanToggleBackups  bool
-	CanBranch         bool
-	Demo              bool
+	// Backups are listed newest first.
+	Backups             []core.Backup
+	CanCreateBackups    bool
+	CanEditBackupPolicy bool
+	CanRestoreBackups   bool
+	CanBranch           bool
+	Demo                bool
 }
 
 type detailRegion struct {
@@ -24,17 +30,21 @@ type detailRegion struct {
 	Sample   bool
 }
 
-func makeDetailInfo(demo bool, principal core.Principal, account core.Account, project core.Project, db core.Database, tab string, canMutate bool) detailInfo {
+func makeDetailInfo(demo bool, principal core.Principal, account core.Account, project core.Project, db core.Database, tab string, canManage, canMutate bool) detailInfo {
 	policy := project.BackupPolicies[db.ID]
 	hasSchedule := policy.FullBackupCron != "" || policy.IncrementalBackupCron != ""
 	info := detailInfo{
-		Tab:               detailTab(tab),
-		BackupPolicy:      policy,
-		HasBackupSchedule: hasSchedule,
-		BackupsEnabled:    hasSchedule && !policy.Disabled,
-		CanToggleBackups:  demo && canMutate && hasSchedule,
-		CanBranch:         canMutate && db.Status == "ready",
-		Demo:              demo,
+		Tab:                 detailTab(tab),
+		BackupPolicy:        policy,
+		HasBackupSchedule:   hasSchedule,
+		BackupsEnabled:      hasSchedule && !policy.Disabled,
+		CanToggleBackups:    demo && canMutate && hasSchedule,
+		Backups:             slices.SortedFunc(slices.Values(db.Backups), func(a, b core.Backup) int { return b.CreatedAt.Compare(a.CreatedAt) }),
+		CanCreateBackups:    demo && canManage,
+		CanEditBackupPolicy: demo && canManage,
+		CanRestoreBackups:   canMutate,
+		CanBranch:           canMutate && db.Status == "ready",
+		Demo:                demo,
 	}
 
 	// The source dashboard's nearest-region 0 ms is illustrative fixture data,
@@ -122,6 +132,17 @@ func backupAvailability(info detailInfo) string {
 		return "Configure a schedule to enable backups."
 	default:
 		return "Only project managers can change this policy."
+	}
+}
+
+func backupTone(status string) string {
+	switch status {
+	case "completed", "ready", "succeeded":
+		return "success"
+	case "failed":
+		return "danger"
+	default:
+		return "neutral"
 	}
 }
 

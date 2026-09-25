@@ -44,6 +44,17 @@
   max-width: 28rem;
 }
 
+/* Inline restore form in the restore points table. */
+.ts-db-restore {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-db-restore > .ts-input {
+  min-width: 160px;
+}
+
 /* Label/value tiles. */
 .ts-db-facts {
   display: grid;

@@ -1,240 +1,93 @@
 package authentication
 
 import (
-	"fmt"
+	"unicode"
 
 	"terrascale.tech/dashboard/internal/ui"
 	"terrascale.tech/dashboard/internal/ui/icons"
 )
 
-templ authenticationView(data pageData, projectName, csrfToken string) {
-	<main class="ts-page">
-		@ui.PageHeader(ui.Header{Eyebrow: projectName, Title: "Authentication", Description: "Project-scoped ts-auth configuration."})
-		<div class="ts-alert ts-alert-warning" role="status">
-			<p class="ts-alert-title">Demo simulation.</p>
-			<p class="ts-alert-body">Changes on this page are stored in the dashboard's in-memory account and are not sent to ts-auth. Keys and connections created here are not usable external credentials.</p>
-		</div>
+templ authenticationView(data pageData, csrfToken string) {
+	<main class="ts-page ts-idp" data-tone={ data.Section.Tone } data-auth-section={ data.Section.Key }>
+		@ui.PageHeader(heading(data.Section))
 		if data.Saved {
-			@ui.Alert("success", "", "The demo configuration was saved.")
+			@ui.Alert("success", "", "Changes saved.")
 		}
 		if data.Error != "" {
 			@ui.Alert("danger", "", data.Error)
 		}
-		@ui.Tabs("Authentication areas", sectionTabs(data))
-		switch data.Section {
+		if !data.CanManage && data.Section.Key != "overview" && data.Section.Key != "quickstart" && data.Section.Key != "audit" {
+			@ui.Alert("info", "", "You can view this configuration. Organization owners and admins can change it.")
+		}
+		switch data.Section.Key {
 			case "overview":
-				@overviewSection(data, projectName)
-			case "settings":
-				@settingsSection(data, projectName, csrfToken)
+				@overviewSection(data)
 			case "quickstart":
-				@ui.Card(ui.CardProps{ID: "auth-quickstart", Title: "Connect in minutes", Description: data.Description}) {
-					@ui.Empty("Quickstart is unavailable", "Live discovery, credential issuance, and hosted sign-in are unavailable until a ts-auth provider contract is connected. Demo records on this page do not create a working issuer.")
-				}
+				@quickstartSection(data)
+			case "sign-in", "mfa":
+				@strategySection(data, csrfToken)
+			case "sessions":
+				@sessionsSection(data)
+			case "branding":
+				@brandingSection(data, csrfToken)
 			case "audit":
 				@auditSection(data)
+			case "connections":
+				@connectionsSection(data, csrfToken)
 			default:
 				@resourceSection(data, csrfToken)
 		}
 	</main>
 }
 
-templ overviewSection(data pageData, projectName string) {
-	@ui.Stats("Identity totals") {
-		@ui.Stat("Users", fmt.Sprint(data.ActiveUsers), "")
-		@ui.Stat("Organizations", fmt.Sprint(data.Organizations), "")
-		@ui.Stat("Connections", fmt.Sprint(data.Connections), "")
-		@ui.Stat("OAuth clients", fmt.Sprint(data.Clients), "")
-		@ui.Stat("Webhooks", fmt.Sprint(data.Webhooks), "")
-	}
-	@ui.Card(ui.CardProps{ID: "auth-overview", Title: "Identity workspace", Description: data.Description}) {
-		<dl class="ts-kv">
-			<dt>Workspace</dt>
-			<dd class="ts-strong">
-				if data.Instance.Name != "" {
-					{ data.Instance.Name }
-				} else {
-					{ projectName }
-				}
-			</dd>
-			<dt>Signed in as</dt>
-			<dd>{ data.ProfileName } ({ data.ProfileEmail })</dd>
-		</dl>
-		<p class="ts-meta">Dashboard permissions remain enforced by the dashboard account.</p>
-	}
+// tile is a small colored icon badge for a section, provider, or step.
+templ tile(icon func(int) templ.Component, tone string) {
+	<span class="ts-idp-tile" data-tone={ tone } aria-hidden="true">
+		@icon(16)
+	</span>
 }
 
-templ settingsSection(data pageData, projectName, csrfToken string) {
-	@ui.Card(ui.CardProps{ID: "auth-settings", Title: "Hosted UI branding", Description: data.Description}) {
-		if data.CanManage {
-			<form class="ts-form ts-auth-branding" method="post" action="/api/v1/auth-management/instance">
-				<input type="hidden" name="_csrf" value={ csrfToken }/>
-				@ui.Field(ui.FieldProps{ID: "auth-instance-name", Label: "Instance name"}) {
-					<input class="ts-input" id="auth-instance-name" name="name" required maxlength="128" value={ instanceName(data, projectName) }/>
-				}
-				@ui.Field(ui.FieldProps{ID: "auth-logo-url", Label: "Logo URL"}) {
-					<input class="ts-input" id="auth-logo-url" type="url" name="logo_url" value={ data.Instance.LogoURL } placeholder="https://assets.example.com/logo.svg"/>
-				}
-				@ui.Field(ui.FieldProps{ID: "auth-theme-color", Label: "Theme color"}) {
-					<input class="ts-input" id="auth-theme-color" name="theme_color" value={ data.Instance.ThemeColor } placeholder="#3B82F6"/>
-				}
-				<div class="ts-form-actions">
-					<button class="ts-btn ts-btn-primary" type="submit">Save demo branding</button>
-				</div>
-			</form>
-		} else {
-			@ui.Alert("info", "", "Only organization owners and admins can change this setting.")
+templ statusBadge(status string) {
+	@ui.StatusBadge(statusTone(status), status)
+}
+
+// copyValue shows a value in monospace with a Datastar copy button.
+templ copyValue(label, value string) {
+	<div class="ts-idp-copy">
+		<code class="ts-idp-copy-value" aria-label={ label }>{ value }</code>
+		<button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" aria-label={ "Copy " + label } data-signals={ "{" + copySignal(label) + ": false}" } data-on:click={ "navigator.clipboard.writeText(el.previousElementSibling.textContent).then(() => $" + copySignal(label) + " = true)" }>
+			@icons.Copy(14)
+			<span data-text={ "$" + copySignal(label) + " ? 'Copied' : 'Copy'" }>Copy</span>
+		</button>
+	</div>
+}
+
+// copySignal names a page-local Datastar signal after the copied value.
+func copySignal(label string) string {
+	name := []rune("_copy")
+	for _, r := range label {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			name = append(name, r)
 		}
 	}
+	return string(name)
 }
 
-templ auditSection(data pageData) {
-	@ui.Card(ui.CardProps{ID: "auth-audit", Title: "Audit log", Description: data.Description, Flush: len(data.Events) > 0}) {
-		if len(data.Events) > 0 {
-			<div class="ts-table-wrap">
-				<table class="ts-table">
-					<thead><tr><th>Action</th><th>Target</th><th>Actor</th><th>Time</th></tr></thead>
-					<tbody>
-						for _, event := range data.Events {
-							<tr><td class="ts-strong">{ event.Action }</td><td>{ event.Target }</td><td>{ event.Actor }</td><td class="ts-meta">{ event.At.UTC().Format("Jan 2, 2006 15:04 UTC") }</td></tr>
-						}
-					</tbody>
-				</table>
-			</div>
-		} else {
-			@ui.Empty("No authentication console changes are recorded for this project.", "")
-		}
+func heading(current section) string {
+	if current.Key == "overview" {
+		return "Authentication"
 	}
+	return "Authentication: " + current.Title
 }
 
-templ resourceSection(data pageData, csrfToken string) {
-	@ui.Card(ui.CardProps{ID: "auth-resource", Title: data.Title, Description: data.Description, Flush: len(data.Resources) > 0}) {
-		if data.CanManage && len(data.Fields) > 0 {
-			<details class="ts-disclosure ts-auth-add">
-				<summary class="ts-btn ts-btn-primary ts-btn-sm">@icons.Plus(15)<span>Add { data.Title }</span></summary>
-				<form class="ts-form" method="post" action={ "/api/v1/auth-management/" + data.Section }>
-					<input type="hidden" name="_csrf" value={ csrfToken }/>
-					<div class="ts-form-grid">
-						for _, item := range data.Fields {
-							@fieldInput(item, "")
-						}
-					</div>
-					<div class="ts-form-actions">
-						<button class="ts-btn ts-btn-primary" type="submit">Save demo { data.Title }</button>
-					</div>
-				</form>
-			</details>
-		} else if len(data.Fields) > 0 {
-			<p class="ts-meta ts-auth-inset">Only organization owners and admins can change authentication configuration.</p>
-		}
-		if data.Search != "" {
-			<p class="ts-meta ts-auth-inset">Search results for “{ data.Search }”</p>
-		}
-		if len(data.Resources) > 0 {
-			<div class="ts-table-wrap">
-				<table class="ts-table">
-					<thead><tr><th>Name</th><th>Details</th><th>Status</th><th class="ts-table-actions">Actions</th></tr></thead>
-					<tbody>
-						for _, resource := range data.Resources {
-							@resourceRowView(data, resource, csrfToken)
-						}
-					</tbody>
-				</table>
-			</div>
-			if data.PageCount > 1 {
-				<nav class="ts-pager" aria-label="Authentication resource pages">
-					<span>Page { fmt.Sprint(data.Page) } of { fmt.Sprint(data.PageCount) } · { fmt.Sprint(data.Total) } total</span>
-					<div class="ts-row">
-						if data.HasPrevious {
-							<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ fmt.Sprintf("/auth/%s?page=%d", data.Section, data.Previous) } rel="prev">Previous</a>
-						}
-						if data.HasNext {
-							<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ fmt.Sprintf("/auth/%s?page=%d", data.Section, data.Next) } rel="next">Next</a>
-						}
-					</div>
-				</nav>
-			}
-		} else {
-			@ui.Empty(fmt.Sprintf("No %s are configured for this project.", data.Title), "")
-		}
+func statusTone(status string) string {
+	switch status {
+	case "Active":
+		return "emerald"
+	case "Pending":
+		return "amber"
+	case "Blocked", "Revoked":
+		return "rose"
 	}
-}
-
-templ resourceRowView(data pageData, resource resourceRow, csrfToken string) {
-	<tr>
-		<td>
-			<div class="ts-list-main">
-				<span class="ts-strong">{ resource.Name }</span>
-				<span class="ts-meta ts-mono">{ resource.ID }</span>
-			</div>
-		</td>
-		<td>
-			<div class="ts-stack-sm ts-meta">
-				for _, detail := range resource.Details {
-					<span class="ts-break">{ detail }</span>
-				}
-			</div>
-		</td>
-		<td>@ui.Badge("neutral", resource.Status)</td>
-		<td class="ts-table-actions">
-			<div class="ts-row ts-row-end">
-				if resource.Editable {
-					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor={ "edit-" + resource.ID }>Edit</button>
-					<dialog id={ "edit-" + resource.ID } class="ts-dialog" aria-labelledby={ "edit-" + resource.ID + "-title" }>
-						<form class="ts-dialog-content" method="post" action={ "/api/v1/auth-management/" + data.Section }>
-							<div class="ts-dialog-header">
-								<h2 class="ts-dialog-title" id={ "edit-" + resource.ID + "-title" }>Edit { resource.Name }</h2>
-								<p class="ts-dialog-description">{ data.Description }</p>
-							</div>
-							<input type="hidden" name="_csrf" value={ csrfToken }/><input type="hidden" name="id" value={ resource.ID }/>
-							for _, value := range resource.Fields {
-								@fieldInput(value.Field, value.Value)
-							}
-							<div class="ts-dialog-footer">
-								<button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor={ "edit-" + resource.ID }>Cancel</button>
-								<button class="ts-btn ts-btn-primary" type="submit">Save demo changes</button>
-							</div>
-						</form>
-					</dialog>
-				}
-				if data.CanManage {
-					<form method="post" action={ fmt.Sprintf("/api/v1/auth-management/%s/%s/delete", data.Section, resource.ID) }>
-						<input type="hidden" name="_csrf" value={ csrfToken }/>
-						<button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">
-							if data.Section == "keys" || data.Section == "sessions" {
-								Revoke
-							} else {
-								Delete
-							}
-						</button>
-					</form>
-				}
-			</div>
-		</td>
-	</tr>
-}
-
-templ fieldInput(item field, value string) {
-	<label class="ts-field">
-		<span class="ts-label">{ item.Label }</span>
-		if item.Type == "textarea" {
-			<textarea class="ts-input" name={ item.Key } required?={ item.Required }>{ value }</textarea>
-		} else {
-			<input class="ts-input" type={ item.Type } name={ item.Key } value={ value } required?={ item.Required }/>
-		}
-	</label>
-}
-
-func sectionTabs(data pageData) []ui.Tab {
-	tabs := make([]ui.Tab, 0, len(data.Sections))
-	for _, item := range data.Sections {
-		tabs = append(tabs, ui.Tab{Label: item.Title, URL: "/auth/" + item.Key, Active: item.Key == data.Section})
-	}
-	return tabs
-}
-
-func instanceName(data pageData, projectName string) string {
-	if data.Instance.Name != "" {
-		return data.Instance.Name
-	}
-	return projectName
+	return "slate"
 }

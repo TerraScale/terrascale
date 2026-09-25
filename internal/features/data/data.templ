@@ -29,7 +29,7 @@ func dataTabPath(path, tab string, d pageData) string {
 
 templ dataContent(page core.Page, d pageData) {
 	<main class="ts-page ts-data" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
-		@ui.PageHeader(ui.Header{Title: modeTitle(d), Description: modeDescription(d)}) {
+		@ui.PageHeader(modeTitle(d)) {
 			if d.Mode == "queries" && d.CanWrite {
 				<a class="ts-btn ts-btn-primary" href="/data?view=queries&amp;create=1">@icons.Plus(16)
 <span>Save query</span></a>
@@ -524,24 +524,6 @@ func modeTitle(d pageData) string {
 	}
 }
 
-func modeDescription(d pageData) string {
-	switch d.Mode {
-	case "queries":
-		return "Project queries available to everyone with access to this project."
-	case "table":
-		return "Read rows from the selected database and collection."
-	case "editor":
-		return "Create, replace, merge, or delete a document in the selected collection."
-	case "sql":
-		return "Check read-only SQL and run queries against the selected database."
-	case "schema":
-		return "Inspect and apply the JSON schema of a collection."
-	case "indexes":
-		return "Manage secondary indexes and review recommendations."
-	default:
-		return "Inspect every revision of a document."
-	}
-}
 
 func runDescription(demo bool) string {
 	if demo {

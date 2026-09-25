@@ -1,0 +1,162 @@
+package authentication
+
+import (
+	"fmt"
+	"strings"
+
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
+)
+
+templ overviewSection(data pageData) {
+	@ui.Stats("Identity totals") {
+		@ui.ToneStat("pink", "Users", fmt.Sprint(data.Counts["users"]), blockedDetail(data.Blocked))
+		@ui.ToneStat("indigo", "Organizations", fmt.Sprint(data.Counts["organizations"]), plural(data.Counts["memberships"], "membership", "memberships"))
+		@ui.ToneStat("cyan", "SSO connections", fmt.Sprint(data.Counts["connections"]), plural(len(data.Connections), "enabled", "enabled"))
+		@ui.ToneStat("violet", "OAuth applications", fmt.Sprint(data.Counts["clients"]), "Authorization code + PKCE")
+		@ui.ToneStat("orange", "Webhooks", fmt.Sprint(data.Counts["webhooks"]), "Signed event endpoints")
+	}
+	<div class="ts-grid-2 ts-idp-overview">
+		@ui.Card(ui.CardProps{ID: "auth-checklist", Title: "Set up authentication", Description: fmt.Sprintf("%d of %d steps complete", data.completedSteps(), len(data.Checklist))}) {
+			<div class="ts-idp-progress" role="progressbar" aria-label="Setup progress" aria-valuemin="0" aria-valuemax={ fmt.Sprint(len(data.Checklist)) } aria-valuenow={ fmt.Sprint(data.completedSteps()) }>
+				for _, step := range data.Checklist {
+					<span class={ "ts-idp-progress-segment", templ.KV("ts-idp-progress-done", step.Done) } data-tone={ step.Tone }></span>
+				}
+			</div>
+			<ol class="ts-idp-checklist">
+				for _, step := range data.Checklist {
+					<li class={ "ts-idp-check", templ.KV("ts-idp-check-done", step.Done) }>
+						if step.Done {
+							<span class="ts-idp-check-icon" aria-label="Done">
+								@icons.CircleCheck(18)
+							</span>
+						} else {
+							@tile(step.Icon, step.Tone)
+						}
+						<div class="ts-list-main">
+							<span class="ts-strong">{ step.Title }</span>
+							<span class="ts-meta">{ step.Detail }</span>
+						</div>
+						if !step.Done {
+							<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ templ.SafeURL(step.URL) }>{ step.Action }</a>
+						}
+					</li>
+				}
+			</ol>
+		}
+		<div class="ts-stack">
+			@ui.Card(ui.CardProps{ID: "auth-experience", Title: "Sign-in experience", Description: "What users see on the hosted sign-in page.", Actions: linkButton("/auth/sign-in", "Configure")}) {
+				<div class="ts-idp-experience">
+					<p class="ts-label">Sign-in methods</p>
+					<div class="ts-idp-chips">
+						for _, label := range enabledStrategies(data.Settings, "sign-in") {
+							<span class="ts-idp-chip ts-idp-chip-on" data-tone="blue">{ label }</span>
+						}
+					</div>
+					<p class="ts-label">Multi-factor</p>
+					<div class="ts-idp-chips">
+						for _, label := range enabledStrategies(data.Settings, "mfa") {
+							<span class="ts-idp-chip ts-idp-chip-on" data-tone="lime">{ label }</span>
+						}
+						if len(enabledStrategies(data.Settings, "mfa")) == 0 {
+							<span class="ts-meta">Off</span>
+						}
+					</div>
+					<p class="ts-label">SSO</p>
+					<div class="ts-idp-chips">
+						for _, connection := range data.Connections {
+							<span class="ts-idp-chip ts-idp-chip-on" data-tone={ connection.Tone }>{ connection.Name }</span>
+						}
+						if len(data.Connections) == 0 {
+							<a class="ts-link ts-meta" href="/auth/connections">Add a connection</a>
+						}
+					</div>
+				</div>
+			}
+			@ui.Card(ui.CardProps{ID: "auth-instance", Title: "Instance", Description: "Share these with the applications that sign users in."}) {
+				<dl class="ts-kv ts-idp-endpoints">
+					<dt>Name</dt>
+					<dd class="ts-strong">{ data.InstanceName }</dd>
+					<dt>Issuer</dt>
+					<dd>
+						@copyValue("Issuer", data.issuer())
+					</dd>
+					<dt>Sign-in page</dt>
+					<dd>
+						@copyValue("Sign-in page", data.hosted("/sign-in"))
+					</dd>
+				</dl>
+			}
+		</div>
+	</div>
+	@ui.Card(ui.CardProps{ID: "auth-activity", Title: "Recent changes", Description: "The latest authentication changes in this project.", Actions: linkButton("/auth/audit", "Audit log")}) {
+		if len(data.Events) > 0 {
+			<ul class="ts-list">
+				for _, event := range data.Events {
+					<li class="ts-list-item">
+						@ui.Badge(eventTone(event.Action), eventVerb(event.Action))
+						<div class="ts-list-main">
+							<span class="ts-strong">{ eventSubject(event.Action) }</span>
+							<span class="ts-meta">{ event.Actor } · { event.At.UTC().Format("Jan 2, 15:04 UTC") }</span>
+						</div>
+					</li>
+				}
+			</ul>
+		} else {
+			@ui.Empty("No changes yet", "Configuration changes and record edits are listed here as they happen.")
+		}
+	}
+}
+
+func blockedDetail(blocked int) string {
+	if blocked == 0 {
+		return "None blocked"
+	}
+	return fmt.Sprintf("%d blocked", blocked)
+}
+
+// eventVerb, eventSubject, and eventTone read an auth.{section}.{verb}
+// action for display.
+func eventVerb(action string) string {
+	parts := strings.Split(action, ".")
+	verb := parts[len(parts)-1]
+	verb = strings.ReplaceAll(verb, "_", " ")
+	if len(parts) == 3 && parts[1] == "settings" {
+		if strings.HasSuffix(verb, "enabled") {
+			return "enabled"
+		}
+		return "disabled"
+	}
+	return verb
+}
+
+func eventSubject(action string) string {
+	parts := strings.Split(action, ".")
+	if len(parts) < 3 {
+		return action
+	}
+	if parts[1] == "settings" {
+		if current, _, ok := findStrategy(strings.TrimSuffix(strings.TrimSuffix(parts[2], "_enabled"), "_disabled")); ok {
+			return current.Label
+		}
+	}
+	if parts[1] == "instance" {
+		return "Branding"
+	}
+	if current, ok := findSection(parts[1]); ok && current.Noun != "" {
+		return strings.ToUpper(current.Noun[:1]) + current.Noun[1:]
+	}
+	return action
+}
+
+func eventTone(action string) string {
+	switch verb := eventVerb(action); {
+	case strings.HasSuffix(verb, "created"), verb == "enabled", verb == "unblocked":
+		return "success"
+	case strings.HasSuffix(verb, "removed"), verb == "revoked", verb == "blocked", verb == "disabled":
+		return "danger"
+	case strings.Contains(verb, "rotated"):
+		return "warning"
+	}
+	return "info"
+}

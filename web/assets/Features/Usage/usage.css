@@ -19,11 +19,13 @@
   place-items: center;
 }
 
+/* The centered value lets pointer events through to the ring's tooltip. */
 .ts-usage-ring-value {
   position: absolute;
   display: grid;
   justify-items: center;
   line-height: 1.1;
+  pointer-events: none;
 }
 
 .ts-usage-ring-value strong {

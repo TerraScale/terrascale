@@ -99,7 +99,7 @@ templ signedInDocument(page core.Page, body templ.Component, admin bool) {
 					<button type="button" id="ts-nav-toggle" class="ts-icon-btn ts-fab-nav" aria-label="Open navigation" aria-controls="ts-navigation" aria-expanded="false" data-on:click="$navOpen = true; setTimeout(() => document.getElementById('ts-nav-close').focus())" data-attr:aria-expanded="$navOpen ? 'true' : 'false'">
 						@icons.PanelLeft(18)
 					</button>
-					<img class="ts-topbar-brand" src="/brand/logo-terrascale-white.svg" alt="TerraScale" decoding="async"/>
+					<img class="ts-topbar-brand" src="/brand/logo-terrascale-principal.svg" alt="TerraScale" decoding="async"/>
 				</header>
 				<div id="ts-main" class="ts-main" tabindex="-1">
 					@body
@@ -112,9 +112,6 @@ templ signedInDocument(page core.Page, body templ.Component, admin bool) {
 templ shellSidebar(page core.Page, admin bool) {
 	<aside id="ts-navigation" class={ "ts-sidebar", templ.KV("ts-admin-sidebar", admin) } aria-label={ sidebarLabel(admin) } tabindex="-1">
 		<div class="ts-sidebar-header">
-			<a class="ts-sidebar-brand" href="/" aria-label="TerraScale dashboard">
-				<img src="/brand/logo-terrascale-white.svg" alt="" aria-hidden="true" decoding="async"/>
-			</a>
 			if admin {
 				<span class="ts-badge ts-badge-violet">Admin</span>
 			}
@@ -136,6 +133,9 @@ templ shellSidebar(page core.Page, admin bool) {
 			}
 		</nav>
 		<div class="ts-sidebar-footer">
+			<a class="ts-sidebar-brand" href="/" aria-label="TerraScale dashboard">
+				<img src="/brand/logo-terrascale-principal.svg" alt="" aria-hidden="true" decoding="async"/>
+			</a>
 			if admin {
 				<a class="ts-nav-link" href="/" data-tone="slate">
 					<span class="ts-nav-icon" aria-hidden="true">@icons.ArrowLeft(16)</span>
@@ -152,12 +152,15 @@ templ contextSwitcher(page core.Page) {
 	if len(page.Shell.Organizations) > 0 {
 		<details { MenuBehavior... } class="ts-menu ts-context-menu" data-signals="{organizationSearch: '', projectSearch: ''}">
 			<summary class="ts-context-trigger" aria-label={ contextTriggerLabel(page.Shell) }>
-				<span class="ts-context-icon" aria-hidden="true">@icons.Building(16)</span>
+				<span class="ts-context-icon" data-tone={ initialTone(page.Shell.OrganizationName) } aria-hidden="true">{ initial(page.Shell.OrganizationName) }</span>
 				<span class="ts-context-text">
 					<span class="ts-context-kind">{ displayName(page.Shell.OrganizationName, "Choose organization") }</span>
-					<span class="ts-context-name">{ displayName(page.Shell.ProjectName, "Choose project") }</span>
+					<span class="ts-context-name">
+						<span class="ts-context-dot" data-tone={ initialTone(page.Shell.ProjectName) } aria-hidden="true"></span>
+						<span class="ts-truncate">{ displayName(page.Shell.ProjectName, "Choose project") }</span>
+					</span>
 				</span>
-				@icons.ArrowUpDown(15)
+				<span class="ts-context-chevron" aria-hidden="true">@icons.ArrowUpDown(14)</span>
 				for _, organization := range page.Shell.Organizations {
 					if organization.Selected {
 						<span class="ts-sr-only" data-active-organization-id={ organization.ID }>Current organization: { organization.Name }</span>
@@ -203,9 +206,9 @@ templ contextSwitcher(page core.Page) {
 					</div>
 				}
 				<hr class="ts-menu-separator"/>
-				<a class="ts-menu-item" href="/organization?newProject=1#projects">@icons.Plus(15)<span>Create new project</span></a>
-				<a class="ts-menu-item" href="/settings?tab=identity">@icons.Settings(15)<span>Project settings</span></a>
-				<a class="ts-menu-item" href="/organization">@icons.Boxes(15)<span>All workspaces</span></a>
+				<a class="ts-menu-item" href="/organization?newProject=1#projects" data-tone="emerald">@icons.Plus(15)<span>Create new project</span></a>
+				<a class="ts-menu-item" href="/settings?tab=identity" data-tone="slate">@icons.Settings(15)<span>Project settings</span></a>
+				<a class="ts-menu-item" href="/organization" data-tone="indigo">@icons.Boxes(15)<span>All workspaces</span></a>
 			</div>
 		</details>
 	}
@@ -220,6 +223,7 @@ templ contextOption(name string, selected bool, attr, id string) {
 			aria-current="true"
 		}
 	>
+		<span class="ts-menu-tile" data-tone={ initialTone(name) } aria-hidden="true">{ initial(name) }</span>
 		<span class="ts-menu-label">{ name }</span>
 		if selected {
 			@icons.Check(15)
@@ -238,16 +242,24 @@ templ accountMenu(page core.Page) {
 				<span class="ts-account-chevron" aria-hidden="true">@icons.ChevronUp(15)</span>
 			</summary>
 			<div class="ts-menu-panel">
-				<a class="ts-menu-item" href="/profile">@icons.UserRound(15)<span>Profile</span></a>
-				<a class="ts-menu-item" href="/notifications">@icons.Bell(15)<span>Notifications</span></a>
-				<a class="ts-menu-item" href="/settings">@icons.Settings(15)<span>Settings</span></a>
+				<div class="ts-account-card">
+					<span class="ts-account-avatar ts-account-avatar-lg" aria-hidden="true">{ displayName(page.Shell.UserInitials, "TS") }</span>
+					<span class="ts-account-meta">
+						<span class="ts-account-name">{ displayName(page.Shell.UserName, "TerraScale user") }</span>
+						<span class="ts-account-email">{ page.Shell.UserEmail }</span>
+					</span>
+				</div>
+				<hr class="ts-menu-separator"/>
+				<a class="ts-menu-item" href="/profile" data-tone="pink">@icons.UserRound(15)<span>Profile</span></a>
+				<a class="ts-menu-item" href="/notifications" data-tone="amber">@icons.Bell(15)<span>Notifications</span></a>
+				<a class="ts-menu-item" href="/settings" data-tone="slate">@icons.Settings(15)<span>Settings</span></a>
 				if page.Principal.PlatformAdmin {
-					<a class="ts-menu-item" href="/admin">@icons.ShieldCheck(15)<span>Administration</span></a>
+					<a class="ts-menu-item" href="/admin" data-tone="violet">@icons.ShieldCheck(15)<span>Administration</span></a>
 				}
 				<hr class="ts-menu-separator"/>
 				<form method="post" action="/api/v1/auth/logout">
 					@formToken(page.CSRFToken)
-					<button type="submit" class="ts-menu-item">@icons.LogOut(15)<span>Sign out</span></button>
+					<button type="submit" class="ts-menu-item ts-menu-item-danger">@icons.LogOut(15)<span>Sign out</span></button>
 				</form>
 			</div>
 		</details>
@@ -261,23 +273,52 @@ templ sidebarNavigation(items []core.NavItem) {
 	<ul class="ts-nav">
 		for _, item := range items {
 			<li>
-				<a
-					class="ts-nav-link"
-					href={ item.URL }
-					data-tone={ navDestinations[item.URL].tone }
-					if item.Active {
-						aria-current="page"
-					}
-				>
-					<span class="ts-nav-icon" aria-hidden="true">
-						@navIcon(item.URL)
-					</span>
-					<span class="ts-nav-label">{ item.Label }</span>
-					if item.BadgeCount > 0 {
-						<span class="ts-nav-count" aria-hidden="true">{ strconv.Itoa(item.BadgeCount) }</span>
-					}
-				</a>
+				if len(item.Children) > 0 {
+					<details class="ts-nav-collapsible" data-tone={ navDestinations[item.URL].tone } open?={ item.Active }>
+						<summary class="ts-nav-link">
+							@navLinkContent(item)
+							<span class="ts-nav-chevron" aria-hidden="true">@icons.ChevronRight(14)</span>
+						</summary>
+						<ul class="ts-subnav" aria-label={ item.Label }>
+							for i, child := range item.Children {
+								if child.Group != "" && (i == 0 || item.Children[i-1].Group != child.Group) {
+									<li class="ts-subnav-group">{ child.Group }</li>
+								}
+								<li>
+									<a
+										class="ts-subnav-link"
+										href={ child.URL }
+										if child.Active {
+											aria-current="page"
+										}
+									>{ child.Label }</a>
+								</li>
+							}
+						</ul>
+					</details>
+				} else {
+					<a
+						class="ts-nav-link"
+						href={ item.URL }
+						data-tone={ navDestinations[item.URL].tone }
+						if item.Active {
+							aria-current="page"
+						}
+					>
+						@navLinkContent(item)
+					</a>
+				}
 			</li>
 		}
 	</ul>
+}
+
+templ navLinkContent(item core.NavItem) {
+	<span class="ts-nav-icon" aria-hidden="true">
+		@navIcon(item.URL)
+	</span>
+	<span class="ts-nav-label">{ item.Label }</span>
+	if item.BadgeCount > 0 {
+		<span class="ts-nav-count" aria-hidden="true">{ strconv.Itoa(item.BadgeCount) }</span>
+	}
 }

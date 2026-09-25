@@ -170,7 +170,7 @@ func dataContent(page core.Page, d pageData) templ.Component {
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = ui.PageHeader(ui.Header{Title: modeTitle(d), Description: modeDescription(d)}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var4), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.PageHeader(modeTitle(d)).Render(templ.WithChildren(ctx, templ_7745c5c3_Var4), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -2631,25 +2631,6 @@ func modeTitle(d pageData) string {
 		return "Indexes"
 	default:
 		return "Document history"
-	}
-}
-
-func modeDescription(d pageData) string {
-	switch d.Mode {
-	case "queries":
-		return "Project queries available to everyone with access to this project."
-	case "table":
-		return "Read rows from the selected database and collection."
-	case "editor":
-		return "Create, replace, merge, or delete a document in the selected collection."
-	case "sql":
-		return "Check read-only SQL and run queries against the selected database."
-	case "schema":
-		return "Inspect and apply the JSON schema of a collection."
-	case "indexes":
-		return "Manage secondary indexes and review recommendations."
-	default:
-		return "Inspect every revision of a document."
 	}
 }
 

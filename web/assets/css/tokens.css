@@ -90,7 +90,6 @@
 
   /* Shell. */
   --ts-sidebar-width: 264px;
-  --ts-page-max: 1240px;
 }
 
 /* Section tones: every navigation destination owns one, and the page it

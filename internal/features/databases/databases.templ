@@ -2,6 +2,7 @@ package databases
 
 import (
 	"fmt"
+	"strings"
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/ui"
@@ -13,9 +14,12 @@ templ databasesContent(page core.Page, d pageData) {
 		if d.Detail != nil {
 			@databaseDetailContent(page, d)
 		} else {
-			@ui.PageHeader(ui.Header{Title: "Databases", Description: "Create and manage databases in the selected project."})
+			@ui.PageHeader("Databases")
 			if d.Error != "" {
 				@ui.Alert("danger", "", d.Error)
+			}
+			if d.Summary.Total > 0 {
+				@databaseStats(d.Summary)
 			}
 			if d.CanProvision {
 				@createDatabase(page, d)
@@ -55,6 +59,19 @@ templ databasesContent(page core.Page, d pageData) {
 	</main>
 }
 
+templ databaseStats(s databaseSummary) {
+	@ui.Stats("Database totals") {
+		@ui.ToneStat("blue", "Databases", fmt.Sprint(s.Total), "In this project")
+		@ui.ToneStat("emerald", "Ready", fmt.Sprint(s.Ready), percentOf(s.Ready, s.Total)+" of databases")
+		@ui.ToneStat("amber", "Provisioning", fmt.Sprint(s.InProgress), "Being created")
+		if s.Failed > 0 {
+			@ui.ToneStat("rose", "Failed", fmt.Sprint(s.Failed), "Provisioning did not finish")
+		}
+		@ui.ToneStat("cyan", "Regions", fmt.Sprint(len(s.Regions)), strings.Join(s.Regions, " · "))
+		@ui.ToneStat("violet", "Documents", fmt.Sprint(s.Documents), fmt.Sprintf("Across %d %s", s.Collections, plural(s.Collections, "collection", "collections")))
+	}
+}
+
 templ createDatabase(page core.Page, d pageData) {
 	@ui.Disclosure(ui.DisclosureProps{ID: "create-database", Label: "New database", Icon: icons.Plus(16), Variant: "primary", Open: d.OpenCreate}) {
 		<form method="post" action="/api/v1/dashboard/databases" class="ts-db-create-form">
@@ -90,18 +107,25 @@ templ databaseSearch(d pageData) {
 }
 
 templ statusBadge(status string) {
-	if status == "ready" {
-		@ui.Badge("success", status)
-	} else {
-		@ui.Badge("neutral", status)
+	@ui.StatusBadge(statusTone(status), status)
+}
+
+func percentOf(part, total int) string {
+	if total == 0 {
+		return "0%"
 	}
+	return fmt.Sprintf("%d%%", part*100/total)
+}
+
+func plural(count int, one, many string) string {
+	if count == 1 {
+		return one
+	}
+	return many
 }
 
 func databaseCount(d pageData) string {
-	noun := "databases"
-	if len(d.Databases) == 1 {
-		noun = "database"
-	}
+	noun := plural(len(d.Databases), "database", "databases")
 	if d.Search != "" {
 		return fmt.Sprintf("%d %s matching %q", len(d.Databases), noun, d.Search)
 	}

@@ -111,7 +111,7 @@ func TestCutoverProfileSettingsPersistAndPasswordChangeEndsSession(t *testing.T)
 	fill(t, email.Locator(`[name="password"]`), account.Password)
 	submitAndExpect(t, page, "/api/v1/dashboard/profile/email-change", 303, byRole(email, *playwright.AriaRoleButton, "Change email").Click)
 	must(t, expect.Locator(page.GetByRole(*playwright.AriaRoleStatus)).ToContainText("Email changed in this demo"))
-	must(t, expect.Locator(page.Locator(".ts-page-header")).ToContainText(newEmail))
+	must(t, expect.Locator(page.Locator("#profile-context")).ToContainText(newEmail))
 
 	language := page.Locator(`form[action="/api/v1/dashboard/profile/language"]`)
 	selectOption(t, language.Locator(`[name="locale"]`), "pt-BR")
@@ -262,7 +262,7 @@ func TestCutoverSeededChartsRenderLabelledSamplesForSelectedRange(t *testing.T) 
 	}
 
 	goToOK(t, page, "/usage?tab=overview&range=7d")
-	rings := page.Locator(".ts-usage-sample-gauges .ts-usage-ring svg[role='img']")
+	rings := page.Locator(".ts-usage-sample-gauges .ts-usage-ring .ts-chart-meter[role='img']")
 	must(t, expect.Locator(rings).ToHaveCount(2))
 	must(t, expect.Locator(rings.Nth(0)).ToHaveAttribute("aria-label", regexp.MustCompile(`81% of illustrative demo capacity`)))
 	must(t, expect.Locator(rings.Nth(1)).ToHaveAttribute("aria-label", regexp.MustCompile(`163% of illustrative demo capacity`)))
@@ -301,7 +301,7 @@ func TestCutoverSeededChartsRenderLabelledSamplesForSelectedRange(t *testing.T) 
 	noJS, err := noJSContext.NewPage()
 	must(t, err)
 	goToOK(t, noJS, "/usage?tab=overview&range=7d")
-	must(t, expect.Locator(noJS.Locator(".ts-usage-sample-gauges .ts-usage-ring svg[role='img']")).ToHaveCount(2))
+	must(t, expect.Locator(noJS.Locator(".ts-usage-sample-gauges .ts-usage-ring .ts-chart-meter[role='img']")).ToHaveCount(2))
 	must(t, expect.Locator(noJS.Locator(".ts-usage-chart-shell path.ts-cat-1")).ToHaveCount(1))
 	must(t, expect.Locator(noJS.Locator(".ts-usage-share svg.ts-svg-sharebar rect.ts-svg-sharebar-fill")).ToHaveCount(3))
 
@@ -309,7 +309,7 @@ func TestCutoverSeededChartsRenderLabelledSamplesForSelectedRange(t *testing.T) 
 	for _, label := range []string{"Next recorded invoice", "Billing period", "Outstanding balance"} {
 		visible(t, page.GetByText(label, playwright.PageGetByTextOptions{Exact: new(true)}))
 	}
-	periodFill := page.Locator(`.ts-usage-billing-kpis svg.ts-svg-sharebar[aria-label*="recorded billing period"] rect.ts-svg-sharebar-fill`)
+	periodFill := page.Locator(`.ts-usage-billing-kpis .ts-chart-meter[aria-label*="recorded billing period"] rect.ts-svg-sharebar-fill`)
 	must(t, expect.Locator(periodFill).ToHaveCount(1))
 	var width float64
 	if _, err := fmt.Sscan(requiredAttribute(t, periodFill, "width", "billing period fill must have a width"), &width); err != nil || width <= 0 {
@@ -380,8 +380,9 @@ func TestCutoverSeededDatabaseDetailTabsRetainControls(t *testing.T) {
 
 	click(t, tab("Backups"))
 	current("Backups")
-	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Backups"))
-	visible(t, pageByRole(page, *playwright.AriaRoleLink, "Manage backups and restore points"))
+	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Restore points"))
+	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Backup policy"))
+	visible(t, pageByRole(page, *playwright.AriaRoleButton, "Create backup"))
 
 	click(t, tab("Import and export"))
 	current("Import and export")

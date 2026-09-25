@@ -230,6 +230,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 
 type pageData struct {
 	ProjectID    string
+	Summary      databaseSummary
 	Databases    []databaseView
 	Detail       *databaseView
 	DetailInfo   detailInfo
@@ -241,13 +242,63 @@ type pageData struct {
 	CanManage    bool
 }
 
+// databaseSummary holds the headline numbers for every database in the
+// project, independent of the list search.
+type databaseSummary struct {
+	Total       int
+	Ready       int
+	InProgress  int
+	Failed      int
+	Regions     []string
+	Collections int
+	Documents   int
+}
+
+func summarize(databases map[string]core.Database) databaseSummary {
+	var summary databaseSummary
+	for _, db := range databases {
+		summary.Total++
+		switch statusTone(db.Status) {
+		case "emerald":
+			summary.Ready++
+		case "amber":
+			summary.InProgress++
+		case "rose":
+			summary.Failed++
+		}
+		if db.Region != "" && !slices.Contains(summary.Regions, db.Region) {
+			summary.Regions = append(summary.Regions, db.Region)
+		}
+		summary.Collections += len(db.Documents)
+		for _, documents := range db.Documents {
+			summary.Documents += len(documents)
+		}
+	}
+	slices.Sort(summary.Regions)
+	return summary
+}
+
+// statusTone colors a database status: ready, in progress, failed, or other.
+func statusTone(status string) string {
+	switch status {
+	case "ready":
+		return "emerald"
+	case "provisioning", "accepted", "pending":
+		return "amber"
+	case "failed":
+		return "rose"
+	default:
+		return "slate"
+	}
+}
+
 func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, detailID string) {
 	p, a, project, err := selected(deps, r)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	data := pageData{ProjectID: project.ID, Region: project.Region, Error: r.URL.Query().Get("error"), Search: strings.TrimSpace(r.URL.Query().Get("q")), OpenCreate: r.URL.Query().Get("create") == "1"}
+	data := pageData{ProjectID: project.ID, Summary: summarize(project.Databases), Region: project.Region, Error: r.URL.Query().Get("error"), Search: strings.TrimSpace(r.URL.Query().Get("q")), OpenCreate: r.URL.Query().Get("create") == "1"}
 	if len(data.Search) > 256 {
 		data.Search = data.Search[:256]
 	}
@@ -265,7 +316,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, detailID
 		if db.ID == detailID {
 			v := view(db)
 			data.Detail = &v
-			data.DetailInfo = makeDetailInfo(deps.Demo, p, a, project, db, r.URL.Query().Get("tab"), data.CanProvision && data.CanManage)
+			data.DetailInfo = makeDetailInfo(deps.Demo, p, a, project, db, r.URL.Query().Get("tab"), data.CanManage, data.CanProvision && data.CanManage)
 		}
 	}
 	if detailID != "" && data.Detail == nil {

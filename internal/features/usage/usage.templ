@@ -9,9 +9,9 @@ import (
 	"terrascale.tech/dashboard/internal/ui/charts"
 )
 
-templ usageView(data pageData, projectName, csrfToken string) {
+templ usageView(data pageData, csrfToken string) {
 	<main class="ts-page ts-usage">
-		@ui.PageHeader(ui.Header{Eyebrow: "Organization billing", Title: "Usage", Description: "Current project: " + projectName})
+		@ui.PageHeader("Usage")
 		<div class="ts-toolbar">
 			@ui.Tabs("Usage sections", []ui.Tab{
 				{Label: "Overview", URL: usageTabHref("overview", data.SelectedProject), Active: data.Tab == "overview"},
@@ -149,7 +149,7 @@ templ overviewTab(data pageData) {
 					for _, database := range data.Databases {
 						<li>
 							<div class="ts-row-between"><span class="ts-strong">{ database.Name }</span><span class="ts-mono">{ database.StoredSize }</span></div>
-							@charts.Bar(charts.NewBar(fmt.Sprintf("%s: %d percent of stored document bytes in this scope", database.Name, database.SharePercent), database.SharePercent))
+							@charts.Bar(charts.NewBar(database.Name, database.SharePercent, "stored document bytes in this scope"))
 							<span class="ts-meta">{ fmt.Sprint(database.Documents) } saved documents</span>
 						</li>
 					}
@@ -164,7 +164,7 @@ templ overviewTab(data pageData) {
 								<a class="ts-strong" href={ usageTabHref("overview", project.ID) } aria-current={ aria.CurrentPage(project.Selected) }>{ project.Name }</a>
 								<span class="ts-mono">{ project.StoredSize }</span>
 							</div>
-							@charts.Bar(charts.NewBar(fmt.Sprintf("%s: %d percent of stored document bytes in this organization", project.Name, project.SharePercent), project.SharePercent))
+							@charts.Bar(charts.NewBar(project.Name, project.SharePercent, "stored document bytes in this organization"))
 							<span class="ts-meta">{ fmt.Sprint(project.DatabaseCount) } databases · Region: { project.Region } · Effective spending cap: { project.Effective }</span>
 						</li>
 					}
@@ -204,8 +204,9 @@ templ overviewTab(data pageData) {
 							<tr>
 								<td class="ts-table-strong">{ database.Name }</td>
 								<td>{ database.Region }</td>
-								<td>@ui.Badge(statusTone(database.Status), database.Status)
-</td>
+								<td>
+									@ui.Badge(statusTone(database.Status), database.Status)
+								</td>
 								<td class="ts-num">{ fmt.Sprint(database.Documents) }</td>
 								<td>
 									if database.SpendCap != "" {
@@ -261,7 +262,7 @@ templ billingTab(data pageData) {
 				<dd class="ts-stat-value">{ data.BillingSummary.Period }</dd>
 				if data.BillingSummary.HasPeriod {
 					<dd>
-						@charts.Bar(charts.NewBar(fmt.Sprintf("%d percent of recorded billing period elapsed", data.BillingSummary.PeriodPercent), data.BillingSummary.PeriodPercent))
+						@charts.Bar(charts.NewBar("Billing period elapsed", data.BillingSummary.PeriodPercent, "the recorded billing period"))
 					</dd>
 				}
 				<dd class="ts-stat-detail">{ data.BillingSummary.PeriodDetail }</dd>
@@ -289,8 +290,9 @@ templ billingTab(data pageData) {
 								</td>
 								<td class="ts-meta">{ invoiceDate(invoice.PeriodStart) } – { invoiceDate(invoice.PeriodEnd) }</td>
 								<td class="ts-num">{ invoice.Amount }</td>
-								<td>@ui.Badge(invoiceTone(invoice.Status), invoice.Status)
-</td>
+								<td>
+									@ui.Badge(invoiceTone(invoice.Status), invoice.Status)
+								</td>
 								<td class="ts-table-actions">
 									if invoice.HostedURL != "" {
 										<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ invoice.HostedURL } target="_blank" rel="noopener noreferrer">Open</a>

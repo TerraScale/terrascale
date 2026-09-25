@@ -38,7 +38,7 @@ func settingsView(data pageData, csrfToken string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = ui.PageHeader(ui.Header{Eyebrow: data.ProjectName, Title: "Settings", Description: "Manage security, data protection, and project controls."}).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.PageHeader("Settings").Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

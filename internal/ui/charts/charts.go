@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 type Series struct {
@@ -36,12 +37,32 @@ type ChartDot struct {
 	Class string
 }
 
-// ChartColumn is the hover target for one data point: the guide line, the
-// series dots, and a native tooltip listing every value, all without scripts.
+// ChartColumn is the hover and focus target for one data point: the guide
+// line, the series dots, and a tooltip listing every value, all without
+// scripts. Label is the accessible name, read when the column takes focus.
 type ChartColumn struct {
 	X, Left, Width string
-	Title          string
+	Label          string
 	Dots           []ChartDot
+	Tip            ChartTip
+}
+
+// ChartTip is the tooltip beside a hover column: the point label and one row
+// per series. It is placed in viewBox units, so it needs no inline style and
+// stays inside the chart instead of being clipped by a scrolling container.
+type ChartTip struct {
+	X, Y, Width, Height string
+	// SwatchX, NameX, and ValueX are the row columns; values end at ValueX.
+	SwatchX, NameX, ValueX   string
+	Header, HeaderX, HeaderY string
+	Rows                     []ChartTipRow
+}
+
+// ChartTipRow is one series value inside a ChartTip.
+type ChartTipRow struct {
+	Name, Value string
+	Class       string
+	Y           string
 }
 
 type LineData struct {
@@ -64,7 +85,9 @@ type LineData struct {
 
 // NewLine draws zero-based values and returns an empty view for inconsistent
 // series lengths, so chart paths cannot silently shift relative to each other.
-func NewLine(label string, rangeLabels []string, height int, series ...Series) LineData {
+// ticks label the five x-axis ticks; points, when given, name every sample in
+// its tooltip.
+func NewLine(label string, ticks, points []string, height int, series ...Series) LineData {
 	const width, left, right, top, bottom = 720, 48, 12, 14, 32
 	data := LineData{
 		Label: label, ViewBox: fmt.Sprintf("0 0 %d %d", width, height),
@@ -104,8 +127,8 @@ func NewLine(label string, rangeLabels []string, height int, series ...Series) L
 			index = int(math.Round(float64(step) * float64(count-1) / 4))
 		}
 		label := ""
-		if step < len(rangeLabels) {
-			label = rangeLabels[step]
+		if step < len(ticks) {
+			label = ticks[step]
 		}
 		anchor := "middle"
 		if step == 0 {
@@ -144,12 +167,23 @@ func NewLine(label string, rangeLabels []string, height int, series ...Series) L
 			Left:  coordinate(max(float64(left), x-columnWidth/2)),
 			Width: coordinate(min(float64(width-right), x+columnWidth/2) - max(float64(left), x-columnWidth/2)),
 		}
+		header := ""
+		if i < len(points) {
+			header = points[i]
+		}
+		rows := make([]ChartTipRow, 0, len(series))
 		values := make([]string, 0, len(series))
 		for index, item := range series {
-			values = append(values, fmt.Sprintf("%s: %s", item.Name, compact(item.Values[i])))
-			column.Dots = append(column.Dots, ChartDot{X: coordinate(x), Y: coordinate(yAt(item.Values[i])), Class: data.Paths[index].Class})
+			row := ChartTipRow{Name: item.Name, Value: grouped(item.Values[i]), Class: data.Paths[index].Class}
+			rows = append(rows, row)
+			values = append(values, row.Name+" "+row.Value)
+			column.Dots = append(column.Dots, ChartDot{X: coordinate(x), Y: coordinate(yAt(item.Values[i])), Class: row.Class})
 		}
-		column.Title = strings.Join(values, " · ")
+		column.Label = strings.Join(values, ", ")
+		if header != "" {
+			column.Label = header + ": " + column.Label
+		}
+		column.Tip = newTip(x, float64(top), float64(width-right), header, rows)
 		data.Columns = append(data.Columns, column)
 	}
 	return data
@@ -158,7 +192,56 @@ func NewLine(label string, rangeLabels []string, height int, series ...Series) L
 // maxColumns bounds the hover targets rendered per chart.
 const maxColumns = 60
 
+// Tooltip metrics in viewBox units. The text is monospaced, so its width is
+// the character count times a fixed advance.
+const (
+	tipCharWidth = 6.8
+	tipPadX      = 10
+	tipPadY      = 6
+	tipLine      = 17
+	tipSwatch    = 12
+	tipColumnGap = 16
+	tipOffset    = 10
+)
+
+// newTip sizes the tooltip to its text and places it right of the guide line
+// at x, flipping left when it would cross the plot end.
+func newTip(x, top, end float64, header string, rows []ChartTipRow) ChartTip {
+	var names, values int
+	for _, row := range rows {
+		names = max(names, utf8.RuneCountInString(row.Name))
+		values = max(values, utf8.RuneCountInString(row.Value))
+	}
+	content := max(float64(utf8.RuneCountInString(header))*tipCharWidth, tipSwatch+float64(names+values)*tipCharWidth+tipColumnGap)
+	width := content + 2*tipPadX
+	lines := len(rows)
+	if header != "" {
+		lines++
+	}
+	left := x + tipOffset
+	if left+width > end {
+		left = max(0, x-tipOffset-width)
+	}
+	tip := ChartTip{
+		X: coordinate(left), Y: coordinate(top), Width: coordinate(width), Height: coordinate(float64(2*tipPadY + lines*tipLine)),
+		SwatchX: coordinate(left + tipPadX + 3), NameX: coordinate(left + tipPadX + tipSwatch), ValueX: coordinate(left + width - tipPadX),
+		Header: header, HeaderX: coordinate(left + tipPadX),
+	}
+	lineY := func(line int) string { return coordinate(top + tipPadY + tipLine*(float64(line)+0.5)) }
+	first := 0
+	if header != "" {
+		tip.HeaderY, first = lineY(0), 1
+	}
+	for index, row := range rows {
+		row.Y = lineY(first + index)
+		tip.Rows = append(tip.Rows, row)
+	}
+	return tip
+}
+
 type RingData struct {
+	Name    string
+	Value   string
 	Label   string
 	Tone    string
 	Dash    string
@@ -166,19 +249,26 @@ type RingData struct {
 }
 
 type BarData struct {
+	Name  string
+	Value string
 	Label string
 	Width string
 }
 
 // NewBar keeps progress geometry in SVG attributes, which work with a strict
-// style-src CSP and remain readable without scripts.
-func NewBar(label string, percent int) BarData {
-	return BarData{Label: label, Width: strconv.Itoa(min(100, max(0, percent)))}
+// style-src CSP and remain readable without scripts. The tooltip shows name
+// and percent; of completes the accessible label ("name: n percent of …").
+func NewBar(name string, percent int, of string) BarData {
+	return BarData{
+		Name: name, Value: strconv.Itoa(percent) + "%",
+		Label: fmt.Sprintf("%s: %d percent of %s", name, percent, of),
+		Width: strconv.Itoa(min(100, max(0, percent))),
+	}
 }
 
 func NewRing(label string, used, capacity int64) RingData {
 	if capacity <= 0 {
-		return RingData{Label: label + ": capacity unavailable", Tone: "success", Dash: "0 100"}
+		return RingData{Name: label, Value: "Capacity unavailable", Label: label + ": capacity unavailable", Tone: "success", Dash: "0 100"}
 	}
 	percentage := int(math.Round(float64(used) / float64(capacity) * 100))
 	tone := "success"
@@ -188,6 +278,7 @@ func NewRing(label string, used, capacity int64) RingData {
 		tone = "warning"
 	}
 	return RingData{
+		Name: label, Value: strconv.Itoa(percentage) + "%",
 		Label: fmt.Sprintf("%s: %d%% of illustrative demo capacity", label, percentage),
 		Tone:  tone, Dash: strconv.Itoa(min(100, max(0, percentage))) + " 100", Percent: percentage,
 	}
@@ -252,6 +343,23 @@ func niceCeiling(value int64) int64 {
 		}
 	}
 	return 10 * magnitude
+}
+
+// grouped writes the exact value with thousands separators.
+func grouped(value int64) string {
+	digits := strconv.FormatInt(value, 10)
+	sign := ""
+	if value < 0 {
+		sign, digits = "-", digits[1:]
+	}
+	var out strings.Builder
+	for i, digit := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			out.WriteByte(',')
+		}
+		out.WriteRune(digit)
+	}
+	return sign + out.String()
 }
 
 func compact(value int64) string {

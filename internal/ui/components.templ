@@ -7,28 +7,13 @@ import "terrascale.tech/dashboard/internal/ui/icons"
 // styles live in web/assets/css/components.css.
 
 // Header is the title block at the top of every page.
-type Header struct {
-	Eyebrow     string
-	Title       string
-	Description string
-}
-
-// PageHeader renders the page title; children render as right-aligned actions.
-templ PageHeader(h Header) {
-	<header class="ts-page-header">
-		<div class="ts-page-heading">
-			if h.Eyebrow != "" {
-				<p class="ts-eyebrow">{ h.Eyebrow }</p>
-			}
-			<h1 class="ts-page-title">{ h.Title }</h1>
-			if h.Description != "" {
-				<p class="ts-page-description">{ h.Description }</p>
-			}
-		</div>
-		<div class="ts-page-actions">
-			{ children... }
-		</div>
-	</header>
+// PageHeader names the page for assistive technology; children render as
+// right-aligned page actions.
+templ PageHeader(title string) {
+	<h1 class="ts-sr-only">{ title }</h1>
+	<div class="ts-page-actions">
+		{ children... }
+	</div>
 }
 
 // CardProps describes a card. Actions render in the card header; Flush drops
@@ -87,8 +72,24 @@ templ Stats(label string) {
 
 // Stat is one headline number with an optional detail line.
 templ Stat(label, value, detail string) {
-	<div class="ts-stat">
-		<dt class="ts-stat-label">{ label }</dt>
+	@ToneStat("", label, value, detail)
+}
+
+// ToneStat is a Stat marked with a section tone (see tokens.css), shown as a
+// colored dot before the label. An empty tone renders a plain Stat.
+templ ToneStat(tone, label, value, detail string) {
+	<div
+		class="ts-stat"
+		if tone != "" {
+			data-tone={ tone }
+		}
+	>
+		<dt class="ts-stat-label">
+			if tone != "" {
+				<span class="ts-dot" aria-hidden="true"></span>
+			}
+			{ label }
+		</dt>
 		<dd class="ts-stat-value">{ value }</dd>
 		if detail != "" {
 			<dd class="ts-stat-detail">{ detail }</dd>
@@ -125,6 +126,12 @@ templ Alert(tone, title, message string) {
 // Badge tones: neutral, info, success, warning, danger, violet.
 templ Badge(tone, text string) {
 	<span class={ "ts-badge", "ts-badge-" + tone }>{ text }</span>
+}
+
+// StatusBadge is a badge with a leading dot, colored by a section tone
+// (see tokens.css) so states read by color as well as by text.
+templ StatusBadge(tone, text string) {
+	<span class="ts-badge ts-badge-tone" data-tone={ tone }><span class="ts-dot" aria-hidden="true"></span>{ text }</span>
 }
 
 // Tab is one link in a Tabs bar.

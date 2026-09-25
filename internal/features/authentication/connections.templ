@@ -1,0 +1,54 @@
+package authentication
+
+import "terrascale.tech/dashboard/internal/ui"
+
+// connectionsSection shows the provider gallery above the connection list;
+// each provider opens its own configuration dialog.
+templ connectionsSection(data pageData, csrfToken string) {
+	@ui.Card(ui.CardProps{ID: "auth-providers", Title: "Add a connection", Description: "Social providers sign in consumers; enterprise connections sign in an organization's workforce."}) {
+		<div class="ts-idp-provider-groups">
+			for _, kind := range []string{"Social", "Enterprise"} {
+				<div class="ts-idp-provider-group">
+					<h3 class="ts-idp-group-title">{ kind }</h3>
+					<ul class="ts-idp-providers">
+						for _, item := range providers {
+							if item.Kind == kind {
+								<li>
+									@providerTile(data, item)
+								</li>
+							}
+						}
+					</ul>
+				</div>
+			}
+		</div>
+	}
+	@ui.Card(ui.CardProps{ID: "auth-connections", Title: data.Section.Title, Description: data.Section.Description, Actions: listToolbar(data, ""), Flush: len(data.Rows) > 0}) {
+		@resourceList(data, csrfToken)
+	}
+	if data.CanManage {
+		for _, item := range providers {
+			@resourceDialog(data, "connect-"+item.Protocol, "Connect "+item.Protocol, item.Description, "", item.Protocol, item.Fields, nil, csrfToken)
+		}
+	}
+}
+
+templ providerTile(data pageData, item provider) {
+	if data.CanManage {
+		<button class="ts-idp-provider" type="button" data-tone={ item.Tone } command="show-modal" commandfor={ "connect-" + item.Protocol }>
+			@providerTileBody(item)
+		</button>
+	} else {
+		<div class="ts-idp-provider" data-tone={ item.Tone }>
+			@providerTileBody(item)
+		</div>
+	}
+}
+
+templ providerTileBody(item provider) {
+	@tile(item.Icon, item.Tone)
+	<span class="ts-idp-provider-text">
+		<span class="ts-strong">{ item.Protocol }</span>
+		<span class="ts-meta">{ item.Description }</span>
+	</span>
+}

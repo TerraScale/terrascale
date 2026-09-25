@@ -39,7 +39,7 @@ func profileView(data pageData, csrfToken string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = ui.PageHeader(ui.Header{Eyebrow: "Account", Title: data.Name, Description: profileSubtitle(data)}).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.PageHeader(data.Name).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1396,16 +1396,6 @@ func sessionsTab(data pageData) templ.Component {
 		}
 		return nil
 	})
-}
-
-func profileSubtitle(data pageData) string {
-	parts := []string{data.Email}
-	for _, part := range []string{data.Role, data.OrganizationName} {
-		if part != "" {
-			parts = append(parts, part)
-		}
-	}
-	return strings.Join(parts, " · ")
 }
 
 func onOff(on bool) string {

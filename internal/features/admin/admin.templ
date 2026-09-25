@@ -64,27 +64,10 @@ func estateTabs(active string) []ui.Tab {
 	}
 }
 
-func adminDescription(section string) string {
-	switch section {
-	case "users":
-		return "Review registered accounts and platform administrator access in the demo store."
-	case "organizations":
-		return "View organizations and their owner and project relationships."
-	case "projects":
-		return "Review projects, their recorded regions, and linked databases."
-	case "databases":
-		return "Review database inventory from the demo store. Version details are unavailable here."
-	case "estate":
-		return "Review region placement recorded on projects and databases. Provider availability is not reported."
-	case "usage":
-		return "View in-memory inventory totals. Provider-metered usage is unavailable."
-	}
-	return "Create and manage pricing plans stored in the dashboard demo."
-}
 
 templ adminView(data pageData, csrfToken string) {
 	<main class="ts-page ts-admin">
-		@ui.PageHeader(ui.Header{Eyebrow: "Administration", Title: data.Title, Description: adminDescription(data.Section)})
+		@ui.PageHeader(data.Title)
 		if data.Notice != "" {
 			@ui.Alert("success", "", data.Notice)
 		}
@@ -394,7 +377,7 @@ templ estateSection(data pageData, csrfToken string) {
 				}
 			}
 		default:
-			<div class="ts-page-heading">
+			<div class="ts-stack-sm">
 				<h2 class="ts-section-title" id="estate-operations-title">Operations</h2>
 				<p class="ts-meta">Demo product-action requests are recorded for review. This page has no provider operation or live estate telemetry contract.</p>
 			</div>

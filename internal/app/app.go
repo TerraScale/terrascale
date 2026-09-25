@@ -18,7 +18,6 @@ import (
 	"terrascale.tech/dashboard/internal/features/backups"
 	"terrascale.tech/dashboard/internal/features/data"
 	"terrascale.tech/dashboard/internal/features/databases"
-	"terrascale.tech/dashboard/internal/features/engine"
 	"terrascale.tech/dashboard/internal/features/home"
 	"terrascale.tech/dashboard/internal/features/notifications"
 	"terrascale.tech/dashboard/internal/features/onboarding"
@@ -75,7 +74,6 @@ func New(cfg config.Config) (*Application, error) {
 	access.Mount(mux, deps)
 	home.Mount(mux, deps)
 	databases.Mount(mux, deps)
-	engine.Mount(mux, deps)
 	apikeys.Mount(mux, deps)
 	data.Mount(mux, deps)
 	backups.Mount(mux, deps)
