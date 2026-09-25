@@ -7,20 +7,28 @@ contract for user, session, passkey, and OAuth grant documents.
 The service is written in Rust. `docs/parity.md` tracks its capabilities and
 the evidence still needed for live integrations.
 
+The consumer-app competitive review and remaining release gates are in
+[`docs/competitive-review.md`](docs/competitive-review.md). Guest accounts,
+verified conversion, browser-origin configuration, OAuth device authorization,
+and organization permission checks are documented in
+[`docs/consumer-integration.md`](docs/consumer-integration.md).
+
 ## Target feature inventory
 
 | Area | Capability to verify in Rust |
 | --- | --- |
 | Users | Email/password, usernames, profile + public/private metadata, blocking, soft delete, impersonation |
 | Sessions | Server-side sessions, httpOnly cookie, device list, revoke one/all, 14-day TTL |
+| Consumer guest accounts | Opt-in anonymous OAuth sign-in, verified email conversion preserving user ID/data, credential invalidation and quota accounting |
+| Browser clients | Exact-origin OAuth CORS, editable client origins/redirects and guest admission settings |
 | Passkeys | Full WebAuthn: registration (none + packed attestation), discoverable-credential sign-in, sign-count clone detection |
-| OAuth 2.1 / OIDC | Authorization code + PKCE (S256), refresh rotation with reuse detection, client credentials, discovery, JWKS, userinfo, introspection, revocation, RP-initiated logout; ES256 id/access tokens |
+| OAuth 2.0 / OIDC | Authorization code + PKCE (S256), refresh rotation with reuse detection, client credentials, RFC 8628 device authorization with Datastar approval, discovery, JWKS, userinfo, introspection, revocation, RP-initiated logout; ES256 id/access tokens |
 | MFA | TOTP (RFC 6238) enrollment + verification, recovery codes, step-up during sign-in |
 | Email flows | Verification, password reset, magic links, email passcodes (pluggable email sender; logs by default) |
 | Social SSO | Upstream OIDC connections (Microsoft, Google, any issuer) with JWKS-verified ID tokens; GitHub OAuth with verified email lookup |
 | Enterprise SSO | SAML 2.0 connections (HTTP-Redirect AuthnRequest, XML-DSig-verified assertions) |
 | Directory sync | SCIM 2.0 `/scim/{dir}` — users, groups, deprovisioning |
-| Organizations | Orgs, memberships, roles, invitations, enrollment domains |
+| Organizations | Orgs, memberships, invitations, enrollment domains, versioned role permission definitions and current-state authorization checks |
 | Admin portal | Dashboard-styled hosted page for org admins to configure GitHub, Microsoft, Google, custom OIDC and SAML connections, and view directories |
 | Management API | Full developer REST API with `sk_...` keys, per-family key scopes, pagination, rate limiting |
 | JWT templates | Custom-claim tokens (`{{user.email}}` substitution) minted on demand |

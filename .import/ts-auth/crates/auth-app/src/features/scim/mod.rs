@@ -4727,6 +4727,7 @@ mod tests {
 
     fn user(instance_id: &str, id: &str) -> User {
         User {
+            is_anonymous: false,
             id: id.to_owned(),
             instance_id: instance_id.to_owned(),
             email: Some("person@example.test".to_owned()),

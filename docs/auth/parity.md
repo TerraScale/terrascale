@@ -7,12 +7,16 @@ Git history for historical comparison only.
 
 | Capability | Rust surface | Current verification |
 | --- | --- | --- |
+| Consumer guest accounts and verified conversion | `features/oauth/anonymous`, `auth-store::upgrade_anonymous_user` | HTTP tests for stable identity/data, old credential rejection, proof isolation, attempt budgets and existing-mailbox protection |
+| Browser OAuth CORS and mutable client settings | `features/oauth/cors`, `features/oauth` | HTTP tests for exact origins, preflight, credential exclusion and disabling guest admission |
+| Device authorization | `features/oauth/device` | HTTP polling/approval/concurrency/expiry/revocation tests; explicit Chromium Datastar acceptance test |
+| Organization role permissions | `features/authorization` | HTTP tenant/scope/versioning/retirement and current-state authorization tests |
 | Hosted users, sessions, email links, password recovery | `features/users`, `features/email` | Real HTTP listener with a TerraBase contract fixture in `http_surface` and `hosted_identity_security` |
 | Passkeys, passcodes, MFA | `features/passkeys`, `features/passcodes`, `features/mfa`; `auth-security` WebAuthn/TOTP | Rust unit and security regressions; the full browser ceremony still needs live browser acceptance |
-| OAuth 2.1/OIDC provider, JWKS, JWT templates | `features/oauth`, `features/templates`, `auth-security` JWT | HTTP PKCE/code-consumption test and Rust token/template tests |
+| OAuth 2.0/OIDC provider, JWKS, JWT templates | `features/oauth`, `features/templates`, `auth-security` JWT | HTTP PKCE/code-consumption test and Rust token/template tests |
 | OIDC, GitHub, SAML federation | `features/connections`; `features/admin` setup | Signed SAML fixture tests and route tests; live upstream provider interoperability remains unverified |
 | Organizations, invitations, enrollment domains | `features/organizations` | HTTP contract-fixture regressions for invitation retry, membership scope, and verified-domain enrollment |
-| SCIM directories, users, groups | `features/scim` | HTTP contract-fixture token, rotation, and directory-scope tests; concurrent isolation corrections require a final rerun |
+| SCIM directories, users, groups | `features/scim` | Passing HTTP contract-fixture token, rotation, directory-scope and concurrent isolation regressions |
 | Management keys, scopes, user API, operator bootstrap | `features/management`, `features/instances` | HTTP scope/rate-limit tests and OpenAPI tests, including ambiguous-write reconciliation behavior |
 | Hosted admin portal and Datastar fragments | `features/admin`, embedded assets | HTTP SSE/escaping tests and focused admin tests; browser interaction remains a separate acceptance check |
 | Billing, quota seats, Stripe webhooks | `features/billing`, `auth-store` | HTTP checkout/webhook contract fixture and quota/store tests; live Stripe integration remains unverified |
