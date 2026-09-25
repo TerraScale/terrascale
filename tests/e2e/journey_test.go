@@ -121,14 +121,14 @@ func TestDatabaseAndProjectKeyStayInsideOwningAccount(t *testing.T) {
 	expectStatus(t, apiGet(t, newContext(t, baseURL).Request(), keyPath, ""), 401)
 }
 
-// createDatabaseFromUI submits the create-database disclosure form and waits
-// for the new database page.
+// createDatabaseFromUI submits the create-database dialog and waits for the
+// new database page.
 func createDatabaseFromUI(t *testing.T, page playwright.Page, name string) {
 	t.Helper()
-	disclosure := page.Locator("#create-database")
-	click(t, disclosure.Locator(":scope > summary"))
-	must(t, expect.Locator(disclosure).ToHaveAttribute("open", ""))
-	form := page.Locator(`form[action="/api/v1/dashboard/databases"]`)
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "New database").First())
+	dialog := pageByRole(page, *playwright.AriaRoleDialog, "New database")
+	visible(t, dialog)
+	form := dialog.Locator(`form[action="/api/v1/dashboard/databases"]`)
 	fill(t, form.Locator(`[name="name"]`), name)
 	selectOption(t, form.Locator(`[name="region"]`), "GRU")
 	click(t, byRole(form, *playwright.AriaRoleButton, "Create database"))

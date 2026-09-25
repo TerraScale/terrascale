@@ -1,0 +1,82 @@
+package databases
+
+import (
+	"net/url"
+
+	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
+)
+
+// FrameProps identifies the database a detail page shows and its open tab.
+// Collection carries the selected collection across the data tabs.
+type FrameProps struct {
+	Database   core.Database
+	Tab        string
+	Collection string
+}
+
+// Frame is the shell of every database detail page: the database identity
+// and the tabs that switch between its overview, data, and operations.
+// Children are the open tab's content.
+templ Frame(p FrameProps) {
+	<main class="ts-page ts-db-detail" data-database-id={ p.Database.ID }>
+		<header class="ts-db-head">
+			<nav class="ts-breadcrumb" aria-label="Breadcrumb">
+				<a href="/databases">Databases</a>
+				<span aria-hidden="true">/</span>
+				<span aria-current="page">{ p.Database.Name }</span>
+			</nav>
+			<div class="ts-db-identity">
+				<span class="ts-db-icon ts-db-icon-lg" aria-hidden="true">@icons.Database(20)</span>
+				<h1 class="ts-db-title">{ p.Database.Name }</h1>
+				@statusBadge(p.Database.Status)
+				<span class="ts-meta ts-mono">{ regionDisplay(p.Database.Region) }</span>
+			</div>
+		</header>
+		@ui.Tabs("Database sections", frameTabs(p))
+		{ children... }
+	</main>
+}
+
+type frameTab struct {
+	Key, Label string
+	// Scoped tabs keep the selected collection in their links.
+	Scoped bool
+}
+
+var frameTabList = []frameTab{
+	{Key: "overview", Label: "Overview"},
+	{Key: "documents", Label: "Documents", Scoped: true},
+	{Key: "sql", Label: "SQL", Scoped: true},
+	{Key: "schema", Label: "Schema", Scoped: true},
+	{Key: "indexes", Label: "Indexes", Scoped: true},
+	{Key: "backups", Label: "Backups"},
+	{Key: "branches", Label: "Branches"},
+	{Key: "import", Label: "Import and export"},
+}
+
+func frameTabs(p FrameProps) []ui.Tab {
+	tabs := make([]ui.Tab, len(frameTabList))
+	for i, tab := range frameTabList {
+		var query url.Values
+		if tab.Scoped && p.Collection != "" {
+			query = url.Values{"collection": {p.Collection}}
+		}
+		tabs[i] = ui.Tab{Label: tab.Label, URL: TabPath(p.Database.ID, tab.Key, query), Active: p.Tab == tab.Key}
+	}
+	return tabs
+}
+
+// TabPath is the URL of one database detail tab; the overview is the
+// database root.
+func TabPath(databaseID, tab string, query url.Values) string {
+	path := "/databases/" + url.PathEscape(databaseID)
+	if tab != "overview" {
+		path += "/" + tab
+	}
+	if len(query) > 0 {
+		path += "?" + query.Encode()
+	}
+	return path
+}

@@ -1,13 +1,7 @@
-/* Organization page: project placement, project rename popover, and the
-   create-organization wizard. */
+/* Organization page: project placement and the create-organization wizard. */
 
 .ts-org-project-name {
   gap: 2px;
-}
-
-.ts-org-create-project {
-  padding: var(--ts-s4) var(--ts-s6) var(--ts-s6);
-  border-top: 1px solid var(--ts-line);
 }
 
 /* Region placement: three map-backed selects side by side. */
@@ -24,23 +18,6 @@
 
 .ts-org-placement-hint {
   grid-column: 1 / -1;
-}
-
-/* Rename opens as a centered panel so it escapes the scrolling table. */
-details.ts-rename > .ts-org-rename-panel {
-  position: fixed;
-  inset: 0;
-  z-index: var(--ts-z-modal);
-  width: min(46rem, calc(100vw - 2 * var(--ts-s4)));
-  max-width: none;
-  height: fit-content;
-  max-height: calc(100dvh - 2 * var(--ts-s6));
-  margin: auto;
-  padding: var(--ts-s6);
-  overflow-y: auto;
-  gap: var(--ts-s4);
-  text-align: left;
-  white-space: normal;
 }
 
 /* Wizard dialog. */

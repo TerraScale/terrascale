@@ -1,4 +1,5 @@
-/* Menus (<details> popovers), dialogs, tooltips, and the region map. */
+/* Dropdown menus (ui.Dropdown), dialogs (ui.Dialog), tooltips, and the
+   region map. */
 
 details.ts-menu {
   position: relative;
@@ -23,9 +24,11 @@ details.ts-menu > .ts-menu-panel {
   min-width: 14rem;
   max-width: min(90vw, 22rem);
   padding: var(--ts-s1);
+  border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius-lg);
-  background: linear-gradient(180deg, var(--ts-surface-2), var(--ts-surface) 48px);
-  box-shadow: var(--ts-shadow-overlay), inset 0 1px 0 rgb(255 255 255 / 0.05), 0 24px 48px -24px rgb(0 0 0 / 0.7);
+  background: var(--ts-glass);
+  box-shadow: 0 16px 32px -20px rgb(0 0 0 / 0.8);
+  backdrop-filter: blur(20px) saturate(1.4);
 }
 
 details.ts-menu[open] > .ts-menu-panel {
@@ -72,7 +75,7 @@ details.ts-menu-up > .ts-menu-panel {
 
 .ts-menu-item:hover,
 .ts-menu-item:focus-visible {
-  background: var(--ts-surface-3);
+  background: rgb(255 255 255 / 0.06);
   color: var(--ts-ink);
   outline: none;
   text-decoration: none;
@@ -80,7 +83,7 @@ details.ts-menu-up > .ts-menu-panel {
 
 .ts-menu-item[aria-current="true"],
 .ts-menu-item[aria-current="page"] {
-  background: var(--ts-accent-soft);
+  background: rgb(255 255 255 / 0.04);
   color: var(--ts-ink);
   font-weight: 600;
 }
@@ -113,7 +116,9 @@ details.ts-menu-up > .ts-menu-panel {
   background: color-mix(in oklab, var(--ts-danger) 12%, transparent);
 }
 
-.ts-menu-item[aria-current] > svg:last-child {
+.ts-menu-check {
+  display: flex;
+  flex: none;
   margin-left: auto;
   color: var(--ts-success);
 }
@@ -127,7 +132,8 @@ details.ts-menu-up > .ts-menu-panel {
 }
 
 .ts-menu-separator {
-  margin: var(--ts-s1) 0;
+  margin: var(--ts-s1) calc(-1 * var(--ts-s1));
+  border-color: var(--ts-line);
 }
 
 /* Dialogs: native <dialog>, opened with command="show-modal" or data-init. */
@@ -136,11 +142,17 @@ dialog.ts-dialog {
   max-height: calc(100dvh - 2 * var(--ts-s6));
   padding: 0;
   overflow: auto;
-  border: 0;
+  border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius-lg);
   background: var(--ts-surface);
   color: var(--ts-ink);
-  box-shadow: var(--ts-shadow-overlay);
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 24px 48px -24px rgb(0 0 0 / 0.8);
+}
+
+dialog.ts-dialog-wide {
+  width: min(48rem, calc(100vw - 2 * var(--ts-s4)));
 }
 
 dialog.ts-dialog[open] {
@@ -149,6 +161,7 @@ dialog.ts-dialog[open] {
 
 dialog.ts-dialog::backdrop {
   background: var(--ts-scrim);
+  backdrop-filter: blur(4px);
 }
 
 .ts-dialog-content {
@@ -157,13 +170,25 @@ dialog.ts-dialog::backdrop {
   padding: var(--ts-s6);
 }
 
+/* Title block beside the close button (ui.Dialog). */
+.ts-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ts-s4);
+}
+
+.ts-dialog-head > .ts-icon-btn {
+  margin: calc(-1 * var(--ts-s1)) calc(-1 * var(--ts-s2)) 0 0;
+}
+
 .ts-dialog-header {
   display: grid;
   gap: var(--ts-s1);
 }
 
 .ts-dialog-title {
-  font-size: var(--ts-fs-xl);
+  font-size: var(--ts-fs-lg);
   font-weight: 700;
 }
 

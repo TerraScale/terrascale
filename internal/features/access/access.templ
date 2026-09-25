@@ -65,14 +65,11 @@ templ memberFilters(data pageData) {
 		</div>
 		<div class="ts-filter-field">
 			<span class="ts-sr-only" id="member-role-filter-label">Organization role</span>
-				<details { ui.MenuBehavior... } class="ts-menu ts-menu-end">
-					<summary class="ts-select" aria-labelledby="member-role-filter-label member-role-filter-value"><span id="member-role-filter-value">{ roleFilterLabel(data.RoleFilter) }</span></summary>
-					<div class="ts-menu-panel">
-						for _, role := range []string{"all", "owner", "member", "viewer"} {
-							<button class="ts-menu-item" type="submit" name="role" value={ roleFilterValue(role) } aria-current={ accessFilterCurrent(data.RoleFilter, role) }>{ roleFilterLabel(role) }</button>
-						}
-					</div>
-				</details>
+			@ui.Dropdown(ui.DropdownProps{End: true, LabelledBy: "member-role-filter-label member-role-filter-value", Trigger: roleFilterTrigger(data.RoleFilter), TriggerClass: "ts-select"}) {
+				for _, role := range []string{"all", "owner", "member", "viewer"} {
+					@ui.MenuItem(ui.MenuItemProps{Type: "submit", Name: "role", Value: roleFilterValue(role), Label: roleFilterLabel(role), Current: data.RoleFilter == role})
+				}
+			}
 		</div>
 		if data.Query != "" || data.RoleFilter != "all" {
 			<a class="ts-btn ts-btn-ghost ts-btn-sm" href="/access?tab=members">Clear</a>
@@ -358,11 +355,8 @@ func roleFilterLabel(role string) string {
 	}
 }
 
-func accessFilterCurrent(role, candidate string) string {
-	if role == candidate {
-		return "true"
-	}
-	return "false"
+templ roleFilterTrigger(role string) {
+	<span id="member-role-filter-value">{ roleFilterLabel(role) }</span>
 }
 
 func accessMemberDisplayName(member memberView) string {

@@ -1,6 +1,7 @@
 package subscriptions
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/url"
@@ -65,7 +66,7 @@ func (service BillingService) availablePlans() []core.Plan {
 		return !plan.Visible || plan.PriceCents <= 0 || normalizePlanKey(plan.Key) == ""
 	})
 	slices.SortFunc(plans, func(left, right core.Plan) int {
-		return strings.Compare(normalizePlanKey(left.Key), normalizePlanKey(right.Key))
+		return cmp.Or(cmp.Compare(left.PriceCents, right.PriceCents), strings.Compare(normalizePlanKey(left.Key), normalizePlanKey(right.Key)))
 	})
 	return plans
 }
