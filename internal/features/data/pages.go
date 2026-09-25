@@ -3,6 +3,7 @@ package data
 import (
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -75,12 +76,11 @@ func renderPageWithSQLResult(w http.ResponseWriter, r *http.Request, deps core.D
 			mode = r.URL.Query().Get("view")
 		}
 	}
-	p, project, err := selectedProject(deps, r)
+	p, a, project, err := selectedProject(deps, r)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	a, _ := deps.Store.SnapshotAs(p)
 	data := pageData{Mode: mode, Demo: deps.Demo, ProjectID: project.ID, DatabaseID: r.URL.Query().Get("databaseId"), Collection: r.URL.Query().Get("collection"), DocumentID: r.URL.Query().Get("id"), Error: r.URL.Query().Get("error"), Search: strings.TrimSpace(r.URL.Query().Get("q")), Create: r.URL.Query().Get("create") == "1", SchemaTab: r.URL.Query().Get("tab"), IndexTab: r.URL.Query().Get("tab")}
 	if result != nil {
 		if result.DatabaseID != "" {
@@ -198,9 +198,7 @@ func renderPageWithSQLResult(w http.ResponseWriter, r *http.Request, deps core.D
 			data.Error = "Live data plane unavailable."
 		}
 	}
-	for _, query := range project.SavedQueries {
-		data.Queries = append(data.Queries, query)
-	}
+	data.Queries = slices.Collect(maps.Values(project.SavedQueries))
 	slices.SortFunc(data.Queries, func(a, b core.SavedQuery) int { return strings.Compare(a.Name, b.Name) })
 	if mode == "sql" {
 		data.SQL = "SELECT * FROM " + data.Collection + " LIMIT 20"
@@ -225,18 +223,18 @@ func renderPageWithSQLResult(w http.ResponseWriter, r *http.Request, deps core.D
 			}
 		}
 	}
+	search := strings.ToLower(data.Search)
 	if data.Search != "" && mode == "queries" {
 		data.Queries = slices.DeleteFunc(data.Queries, func(query core.SavedQuery) bool {
-			return !strings.Contains(strings.ToLower(query.Name+" "+query.SQL), strings.ToLower(data.Search))
+			return !strings.Contains(strings.ToLower(query.Name+" "+query.SQL), search)
 		})
 	}
 	if data.Search != "" && mode == "table" {
 		data.Documents = slices.DeleteFunc(data.Documents, func(document documentView) bool {
-			return !strings.Contains(strings.ToLower(document.ID+" "+document.Value.String()), strings.ToLower(data.Search))
+			return !strings.Contains(strings.ToLower(document.ID+" "+document.Value.String()), search)
 		})
 	}
-	org := a.Organizations[p.OrganizationID]
-	page := core.Page{Layout: "shell", Title: strings.ToUpper(mode[:1]) + mode[1:] + " · TerraScale", Principal: p, View: func(page core.Page) templ.Component { return dataContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r), Shell: core.Shell{UserName: a.User.Name, UserEmail: a.User.Email, OrganizationName: org.Name, ProjectName: project.Name}}
+	page := core.Page{Layout: "shell", Title: strings.ToUpper(mode[:1]) + mode[1:] + " · TerraScale", Principal: p, View: func(page core.Page) templ.Component { return dataContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r)}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render data page", http.StatusInternalServerError)
 	}

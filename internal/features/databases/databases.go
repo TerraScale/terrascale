@@ -1,7 +1,6 @@
 package databases
 
 import (
-	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"regexp"
@@ -35,7 +34,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	mux.HandleFunc("GET /databases", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, "") })
 	mux.HandleFunc("GET /databases/{databaseID}", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, r.PathValue("databaseID")) })
 	mux.HandleFunc("GET /api/v1/dashboard/databases", func(w http.ResponseWriter, r *http.Request) {
-		_, project, err := selected(deps, r)
+		_, _, project, err := selected(deps, r)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -45,14 +44,13 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			list = append(list, view(db))
 		}
 		slices.SortFunc(list, func(a, b databaseView) int { return strings.Compare(a.Name, b.Name) })
-		writeJSON(w, http.StatusOK, list)
+		core.WriteJSON(w, http.StatusOK, list)
 	})
 	createDatabase := func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
-		p, project, err := selected(deps, r)
+		p, _, project, err := selected(deps, r)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -135,25 +133,24 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 				return
 			}
 		}
-		if wantsHTML(r) {
+		if core.WantsHTML(r) {
 			http.Redirect(w, r, "/databases/"+db.ID, http.StatusSeeOther)
 			return
 		}
-		writeJSON(w, http.StatusCreated, view(db))
+		core.WriteJSON(w, http.StatusCreated, view(db))
 	}
 	mux.HandleFunc("POST /api/v1/dashboard/databases", createDatabase)
 	mux.HandleFunc("POST /api/v1/dashboard/databases/create", createDatabase)
 	deleteDatabase := func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
-		p, project, err := selected(deps, r)
+		p, _, project, err := selected(deps, r)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -221,7 +218,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if wantsHTML(r) {
+		if core.WantsHTML(r) {
 			http.Redirect(w, r, "/databases", http.StatusSeeOther)
 			return
 		}
@@ -296,12 +293,11 @@ func statusTone(status string) string {
 }
 
 func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, detailID string) {
-	p, project, err := selected(deps, r)
+	p, a, project, err := selected(deps, r)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	a, _ := deps.Store.SnapshotAs(p)
 	data := pageData{ProjectID: project.ID, Summary: summarize(project.Databases), Region: project.Region, Error: r.URL.Query().Get("error"), Search: strings.TrimSpace(r.URL.Query().Get("q")), OpenCreate: r.URL.Query().Get("create") == "1"}
 	if len(data.Search) > 256 {
 		data.Search = data.Search[:256]
@@ -312,8 +308,9 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, detailID
 	if data.Region == "" {
 		data.Region = "GRU"
 	}
+	search := strings.ToLower(data.Search)
 	for _, db := range project.Databases {
-		if data.Search == "" || strings.Contains(strings.ToLower(db.Name), strings.ToLower(data.Search)) {
+		if data.Search == "" || strings.Contains(strings.ToLower(db.Name), search) {
 			data.Databases = append(data.Databases, view(db))
 		}
 		if db.ID == detailID {
@@ -327,25 +324,23 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, detailID
 		return
 	}
 	slices.SortFunc(data.Databases, func(a, b databaseView) int { return strings.Compare(a.Name, b.Name) })
-	page := core.Page{Layout: "shell", Title: "Databases · TerraScale", Principal: p, View: func(page core.Page) templ.Component { return databasesContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r), Shell: core.Shell{UserName: a.User.Name, UserEmail: a.User.Email, OrganizationName: org.Name, ProjectName: project.Name}}
+	page := core.Page{Layout: "shell", Title: "Databases · TerraScale", Principal: p, View: func(page core.Page) templ.Component { return databasesContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r)}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render databases", http.StatusInternalServerError)
 	}
 }
 
-func wantsHTML(r *http.Request) bool { return strings.Contains(r.Header.Get("Accept"), "text/html") }
-
-func selected(deps core.Deps, r *http.Request) (core.Principal, core.Project, error) {
+func selected(deps core.Deps, r *http.Request) (core.Principal, core.Account, core.Project, error) {
 	p, ok := deps.Sessions.Principal(r)
 	if !ok || p.ProjectID == "" {
-		return core.Principal{}, core.Project{}, core.ErrUnauthorized
+		return core.Principal{}, core.Account{}, core.Project{}, core.ErrUnauthorized
 	}
 	a, err := deps.Store.SnapshotAs(p)
 	if err != nil {
-		return core.Principal{}, core.Project{}, err
+		return core.Principal{}, core.Account{}, core.Project{}, err
 	}
 	project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-	return p, project, err
+	return p, a, project, err
 }
 
 func setStatus(deps core.Deps, p core.Principal, databaseID, status string) error {
@@ -367,33 +362,12 @@ func setStatus(deps core.Deps, p core.Principal, databaseID, status string) erro
 	})
 }
 
-func canManage(deps core.Deps, p core.Principal) bool {
-	a, err := deps.Store.SnapshotAs(p)
-	return err == nil && a.Organizations[p.OrganizationID].CanManage(p.UserID)
-}
-
 func writeError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, core.ErrUnauthorized):
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
+	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)
 	default:
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, data any) {
-	encoded, err := json.Marshal(data)
-	if err != nil {
-		http.Error(w, "encode response failed", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(encoded)
 }

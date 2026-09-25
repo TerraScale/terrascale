@@ -3,6 +3,7 @@ package settings
 
 import (
 	"errors"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -86,10 +87,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !policySaved {
 			policy = core.BackupPolicy{FullBackupCron: "0 2 * * *", IncrementalBackupCron: "0 */6 * * *", RetentionDays: 7}
 		}
-		credentials := make([]core.APIKey, 0, len(project.APIKeys))
-		for _, key := range project.APIKeys {
-			credentials = append(credentials, key)
-		}
+		credentials := slices.AppendSeq(make([]core.APIKey, 0, len(project.APIKeys)), maps.Values(project.APIKeys))
 		slices.SortFunc(credentials, func(a, b core.APIKey) int { return strings.Compare(a.Name, b.Name) })
 		now := time.Now().UTC()
 		activeCredentials, activeM2MClients := 0, 0
@@ -136,7 +134,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/v1/dashboard/settings/audit-retention", func(w http.ResponseWriter, r *http.Request) {
-		if !verifyCSRF(deps, w, r) {
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, account, _, ok := selected(deps, w, r)
@@ -177,7 +175,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/v1/dashboard/settings/authentication", func(w http.ResponseWriter, r *http.Request) {
-		if !verifyCSRF(deps, w, r) {
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, account, _, ok := selected(deps, w, r)
@@ -218,7 +216,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/v1/dashboard/settings/backup-policy", func(w http.ResponseWriter, r *http.Request) {
-		if !verifyCSRF(deps, w, r) {
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, account, project, ok := selected(deps, w, r)
@@ -278,7 +276,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/v1/dashboard/settings/backup-now", func(w http.ResponseWriter, r *http.Request) {
-		if !verifyCSRF(deps, w, r) {
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, account, project, ok := selected(deps, w, r)
@@ -334,7 +332,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/v1/dashboard/settings/restore", func(w http.ResponseWriter, r *http.Request) {
-		if !verifyCSRF(deps, w, r) {
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, account, project, ok := selected(deps, w, r)
@@ -403,7 +401,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/v1/dashboard/settings/delete-project", func(w http.ResponseWriter, r *http.Request) {
-		if !verifyCSRF(deps, w, r) {
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, account, project, ok := selected(deps, w, r)
@@ -459,10 +457,13 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		p.ProjectID = nextProject
-		updated, err := deps.Store.SnapshotAs(p)
+		var refreshed core.Principal
+		err = deps.Store.ViewAs(p, func(account core.Account) error {
+			refreshed = account.Principal()
+			return nil
+		})
 		if err == nil && deps.Sessions != nil {
-			principal := updated.Principal()
-			if err := deps.Sessions.Start(w, r, principal); err != nil {
+			if err := deps.Sessions.Start(w, r, refreshed); err != nil {
 				http.Error(w, "project deleted, but session could not be refreshed", http.StatusInternalServerError)
 				return
 			}
@@ -502,14 +503,6 @@ func render(w http.ResponseWriter, r *http.Request, deps core.Deps, p core.Princ
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render settings", http.StatusInternalServerError)
 	}
-}
-
-func verifyCSRF(deps core.Deps, w http.ResponseWriter, r *http.Request) bool {
-	if deps.CSRF == nil || deps.CSRF.Verify(r) != nil {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
-		return false
-	}
-	return true
 }
 
 func canManage(account core.Account, p core.Principal) bool {
@@ -592,12 +585,7 @@ func redirectSettings(w http.ResponseWriter, r *http.Request, tab, toast, databa
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, core.ErrUnauthorized):
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
+	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)
 	default:

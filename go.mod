@@ -5,6 +5,7 @@ go 1.27.0
 require (
 	github.com/CAFxX/httpcompression v0.0.9
 	github.com/a-h/templ v0.3.1020
+	github.com/mxschmitt/playwright-go v0.6201.1
 	github.com/starfederation/datastar-go v1.2.2
 	github.com/stripe/stripe-go/v86 v86.4.2
 	terrascale.tech/sdk v0.0.0-20260923161729-3088ef2e3bd0
@@ -16,8 +17,10 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cli/browser v1.3.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
+	github.com/deckarep/golang-set/v2 v2.8.0 // indirect
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
+	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.12 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect

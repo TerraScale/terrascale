@@ -2,6 +2,7 @@ package data
 
 import (
 	json "encoding/json/v2"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -14,8 +15,7 @@ import (
 
 func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 	mux.HandleFunc("POST /api/v1/dashboard/data/sql/check", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxSQLCheckBytes+4096)
@@ -23,7 +23,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		_, _, err := selectedProject(deps, r)
+		_, _, _, err := selectedProject(deps, r)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -55,8 +55,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 		})
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/data/sql", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
@@ -114,33 +113,29 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 		}{Rows: rows})
 	})
 	mux.HandleFunc("GET /api/v1/dashboard/data/saved-queries", func(w http.ResponseWriter, r *http.Request) {
-		_, project, err := selectedProject(deps, r)
+		_, _, project, err := selectedProject(deps, r)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		queries := make([]core.SavedQuery, 0, len(project.SavedQueries))
-		for _, query := range project.SavedQueries {
-			queries = append(queries, query)
-		}
+		queries := slices.AppendSeq(make([]core.SavedQuery, 0, len(project.SavedQueries)), maps.Values(project.SavedQueries))
 		slices.SortFunc(queries, func(a, b core.SavedQuery) int { return strings.Compare(a.Name, b.Name) })
-		writeJSON(w, http.StatusOK, queries)
+		core.WriteJSON(w, http.StatusOK, queries)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/data/saved-queries", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		p, _, err := selectedProject(deps, r)
+		p, _, _, err := selectedProject(deps, r)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if !canWrite(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanWrite) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -171,27 +166,26 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if wantsHTML(r) {
+		if core.WantsHTML(r) {
 			http.Redirect(w, r, "/data?view=queries", http.StatusSeeOther)
 			return
 		}
-		writeJSON(w, http.StatusCreated, query)
+		core.WriteJSON(w, http.StatusCreated, query)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/data/saved-queries/delete", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		p, _, err := selectedProject(deps, r)
+		p, _, _, err := selectedProject(deps, r)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if !canWrite(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanWrite) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -217,7 +211,7 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		if wantsHTML(r) {
+		if core.WantsHTML(r) {
 			http.Redirect(w, r, "/data?view=queries", http.StatusSeeOther)
 			return
 		}
@@ -226,8 +220,8 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 }
 
 func writeSQLResponse(w http.ResponseWriter, r *http.Request, deps core.Deps, databaseID, statement string, result any) {
-	if !wantsHTML(r) {
-		writeJSON(w, http.StatusOK, result)
+	if !core.WantsHTML(r) {
+		core.WriteJSON(w, http.StatusOK, result)
 		return
 	}
 	encoded, err := json.Marshal(result)
@@ -238,15 +232,15 @@ func writeSQLResponse(w http.ResponseWriter, r *http.Request, deps core.Deps, da
 	renderPageWithSQLResult(w, r, deps, "sql", &sqlPageResult{DatabaseID: databaseID, Statement: statement, JSON: string(encoded)})
 }
 
-func selectedProject(deps core.Deps, r *http.Request) (core.Principal, core.Project, error) {
+func selectedProject(deps core.Deps, r *http.Request) (core.Principal, core.Account, core.Project, error) {
 	p, ok := deps.Sessions.Principal(r)
 	if !ok || p.ProjectID == "" {
-		return core.Principal{}, core.Project{}, core.ErrUnauthorized
+		return core.Principal{}, core.Account{}, core.Project{}, core.ErrUnauthorized
 	}
 	a, err := deps.Store.SnapshotAs(p)
 	if err != nil {
-		return core.Principal{}, core.Project{}, err
+		return core.Principal{}, core.Account{}, core.Project{}, err
 	}
 	project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-	return p, project, err
+	return p, a, project, err
 }

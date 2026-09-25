@@ -3,7 +3,6 @@ package databases
 import (
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 	"time"
 
@@ -13,20 +12,19 @@ import (
 
 func mountBranch(mux *http.ServeMux, deps core.Deps) {
 	mux.HandleFunc("POST /api/v1/dashboard/databases/branch", func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.CSRF.Verify(r); err != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		p, project, err := selected(deps, r)
+		p, _, project, err := selected(deps, r)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if !canManage(deps, p) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			writeError(w, core.ErrForbidden)
 			return
 		}
@@ -66,10 +64,10 @@ func mountBranch(mux *http.ServeMux, deps core.Deps) {
 				}
 			}
 			if deps.Demo {
-				branch.Documents = cloneDocuments(current.Documents)
-				branch.Schemas = cloneSchemas(current.Schemas)
-				branch.Indexes = cloneIndexes(current.Indexes)
-				branch.DocumentHistory = cloneHistory(current.DocumentHistory)
+				branch.Documents = core.CloneDocuments(current.Documents)
+				branch.Schemas = core.CloneSchemas(current.Schemas)
+				branch.Indexes = core.CloneIndexes(current.Indexes)
+				branch.DocumentHistory = core.CloneHistory(current.DocumentHistory)
 			}
 			project.Databases[branch.ID] = branch
 			org.Projects[p.ProjectID] = project
@@ -104,11 +102,11 @@ func mountBranch(mux *http.ServeMux, deps core.Deps) {
 				return
 			}
 		}
-		if wantsHTML(r) {
+		if core.WantsHTML(r) {
 			http.Redirect(w, r, "/databases/"+url.PathEscape(branch.ID), http.StatusSeeOther)
 			return
 		}
-		writeJSON(w, http.StatusCreated, view(branch))
+		core.WriteJSON(w, http.StatusCreated, view(branch))
 	})
 }
 
@@ -119,45 +117,4 @@ func previewBranchName(sourceName string) string {
 		sourceName = strings.TrimRight(sourceName[:maxNameLength-len(suffix)], "-")
 	}
 	return sourceName + suffix
-}
-
-func cloneDocuments(input map[string]map[string][]byte) map[string]map[string][]byte {
-	out := make(map[string]map[string][]byte, len(input))
-	for collection, docs := range input {
-		out[collection] = make(map[string][]byte, len(docs))
-		for id, body := range docs {
-			out[collection][id] = slices.Clone(body)
-		}
-	}
-	return out
-}
-
-func cloneSchemas(input map[string][]byte) map[string][]byte {
-	out := make(map[string][]byte, len(input))
-	for collection, body := range input {
-		out[collection] = slices.Clone(body)
-	}
-	return out
-}
-
-func cloneIndexes(input map[string][]string) map[string][]string {
-	out := make(map[string][]string, len(input))
-	for collection, fields := range input {
-		out[collection] = slices.Clone(fields)
-	}
-	return out
-}
-
-func cloneHistory(input map[string]map[string][][]byte) map[string]map[string][][]byte {
-	out := make(map[string]map[string][][]byte, len(input))
-	for collection, docs := range input {
-		out[collection] = make(map[string][][]byte, len(docs))
-		for id, versions := range docs {
-			out[collection][id] = make([][]byte, len(versions))
-			for index, body := range versions {
-				out[collection][id][index] = slices.Clone(body)
-			}
-		}
-	}
-	return out
 }

@@ -413,8 +413,7 @@ func storedValues(fields []field, values, existing map[string]string) map[string
 
 // authorize verifies CSRF, the session, and manage rights, and parses the form.
 func authorize(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Principal, bool) {
-	if deps.CSRF == nil || deps.CSRF.Verify(r) != nil {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+	if !deps.VerifyCSRF(w, r) {
 		return core.Principal{}, false
 	}
 	p, account, ok := signedIn(deps, w, r)
@@ -473,12 +472,7 @@ func redirect(w http.ResponseWriter, r *http.Request, key string, query url.Valu
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, core.ErrUnauthorized):
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
+	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)
 	default:

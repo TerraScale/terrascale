@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -208,7 +209,7 @@ func updateProfile(deps core.Deps) http.HandlerFunc {
 		}
 		name := strings.TrimSpace(r.Form.Get("name"))
 		phone := strings.TrimSpace(r.Form.Get("phoneNumber"))
-		if !utf8.ValidString(name) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		if !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
 			http.Redirect(w, r, "/profile?error="+url.QueryEscape("Enter a valid name."), http.StatusSeeOther)
 			return
 		}
@@ -216,7 +217,7 @@ func updateProfile(deps core.Deps) http.HandlerFunc {
 			http.Redirect(w, r, "/profile?error="+url.QueryEscape("Use a name with 128 characters or fewer."), http.StatusSeeOther)
 			return
 		}
-		if !utf8.ValidString(phone) || len(phone) > 64 || strings.IndexFunc(phone, unicode.IsControl) >= 0 {
+		if !utf8.ValidString(phone) || len(phone) > 64 || strings.ContainsFunc(phone, unicode.IsControl) {
 			http.Redirect(w, r, "/profile?error="+url.QueryEscape("Enter a valid phone number."), http.StatusSeeOther)
 			return
 		}
@@ -365,10 +366,7 @@ func beginTOTP(deps core.Deps) http.HandlerFunc {
 			return
 		}
 		var random [10]byte
-		if _, err := rand.Read(random[:]); err != nil {
-			http.Error(w, "could not start demo enrollment", http.StatusInternalServerError)
-			return
-		}
+		rand.Read(random[:])
 		secret := strings.ToUpper(hex.EncodeToString(random[:]))
 		secret = strings.Join([]string{secret[:4], secret[4:8], secret[8:12], secret[12:16], secret[16:]}, " ")
 		token := core.NewID("enr")
@@ -397,7 +395,7 @@ func verifyTOTP(deps core.Deps) http.HandlerFunc {
 			return
 		}
 		code := strings.TrimSpace(r.Form.Get("code"))
-		if len(code) != 6 || strings.IndexFunc(code, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+		if len(code) != 6 || strings.ContainsFunc(code, func(r rune) bool { return r < '0' || r > '9' }) {
 			redirectProfileError(w, r, "security", "Enter a six-digit demo code.")
 			return
 		}
@@ -406,11 +404,7 @@ func verifyTOTP(deps core.Deps) http.HandlerFunc {
 			redirectProfileError(w, r, "security", "Demo enrollment is unavailable.")
 			return
 		}
-		codes, err := newDemoRecoveryCodes()
-		if err != nil {
-			http.Error(w, "could not create demo recovery codes", http.StatusInternalServerError)
-			return
-		}
+		codes := newDemoRecoveryCodes()
 		if err := deps.Store.UpdateAs(principal, func(account *core.Account) error {
 			if account.DemoSecurity.PendingTOTPToken != token || account.DemoSecurity.MFAEnabled {
 				return core.ErrNotFound
@@ -469,11 +463,7 @@ func regenerateRecoveryCodes(deps core.Deps) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		codes, err := newDemoRecoveryCodes()
-		if err != nil {
-			http.Error(w, "could not create demo recovery codes", http.StatusInternalServerError)
-			return
-		}
+		codes := newDemoRecoveryCodes()
 		if err := deps.Store.UpdateAs(principal, func(current *core.Account) error {
 			if current.User.PasswordHash != account.User.PasswordHash || !current.DemoSecurity.MFAEnabled {
 				return core.ErrConflict
@@ -495,7 +485,7 @@ func registerPasskey(deps core.Deps) http.HandlerFunc {
 			return
 		}
 		name := strings.TrimSpace(r.Form.Get("name"))
-		if name == "" || utf8.RuneCountInString(name) > 128 || !utf8.ValidString(name) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		if name == "" || utf8.RuneCountInString(name) > 128 || !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
 			redirectProfileError(w, r, "security", "Enter a valid passkey label.")
 			return
 		}
@@ -524,13 +514,12 @@ func removePasskey(deps core.Deps) http.HandlerFunc {
 			return
 		}
 		if err := deps.Store.UpdateAs(principal, func(account *core.Account) error {
-			for index, passkey := range account.DemoSecurity.Passkeys {
-				if passkey.ID == id {
-					account.DemoSecurity.Passkeys = append(account.DemoSecurity.Passkeys[:index], account.DemoSecurity.Passkeys[index+1:]...)
-					return nil
-				}
+			index := slices.IndexFunc(account.DemoSecurity.Passkeys, func(passkey core.DemoPasskey) bool { return passkey.ID == id })
+			if index < 0 {
+				return core.ErrNotFound
 			}
-			return core.ErrNotFound
+			account.DemoSecurity.Passkeys = slices.Delete(account.DemoSecurity.Passkeys, index, index+1)
+			return nil
 		}); err != nil {
 			redirectProfileError(w, r, "security", "Demo passkey record was not found.")
 			return
@@ -569,16 +558,14 @@ func verifiedProfilePassword(deps core.Deps, w http.ResponseWriter, r *http.Requ
 	return account, true
 }
 
-func newDemoRecoveryCodes() ([]string, error) {
+func newDemoRecoveryCodes() []string {
 	codes := make([]string, 8)
 	for index := range codes {
 		var random [5]byte
-		if _, err := rand.Read(random[:]); err != nil {
-			return nil, err
-		}
+		rand.Read(random[:])
 		codes[index] = hex.EncodeToString(random[:])
 	}
-	return codes, nil
+	return codes
 }
 
 func redirectProfileError(w http.ResponseWriter, r *http.Request, tab, message string) {

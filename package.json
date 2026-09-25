@@ -1,20 +1,14 @@
 {
-  "name": "terrascale-dashboard-e2e",
+  "name": "terrascale-dashboard",
   "private": true,
   "type": "module",
   "devDependencies": {
-    "@playwright/test": "1.63.0",
     "browserslist": "^4.29.0",
     "lightningcss": "1.33.0",
-    "playwright": "1.63.0",
-    "typescript": "^5.9.3"
+    "playwright-core": "1.62.1"
   },
   "scripts": {
     "build:css": "node scripts/build-css.mjs",
-    "build:test-sdk": "npm --prefix tests/integration/sdk ci --no-audit --no-fund && npm --prefix tests/integration/sdk run build",
-    "watch:css": "node scripts/build-css.mjs --watch --dev",
-    "e2e": "npm run build:test-sdk && playwright test",
-    "e2e:headed": "npm run build:test-sdk && playwright test --headed",
-    "perf": "node scripts/performance.mjs"
+    "watch:css": "node scripts/build-css.mjs --watch --dev"
   }
 }

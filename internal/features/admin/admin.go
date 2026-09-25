@@ -102,7 +102,7 @@ var adminEstateTabs = [...]string{"regions", "hosts", "operations"}
 // Mount registers the in-memory platform administration pages and actions.
 func Mount(mux *http.ServeMux, deps core.Deps) {
 	service := NewService(deps.Store)
-	mux.HandleFunc("GET /admin", adminRoot(deps, service))
+	mux.HandleFunc("GET /admin", adminRoot(deps))
 	mux.HandleFunc("GET /admin/users", adminPage(deps, service, "users"))
 	mux.HandleFunc("GET /admin/organizations", adminPage(deps, service, "organizations"))
 	mux.HandleFunc("GET /admin/projects", adminPage(deps, service, "projects"))
@@ -132,7 +132,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	mux.HandleFunc("POST /api/v1/admin/plans/{planID}/delete", deletePlan(deps, service))
 }
 
-func adminRoot(deps core.Deps, service Service) http.HandlerFunc {
+func adminRoot(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requireAdminRoute(deps, w, r); !ok {
 			return
@@ -360,8 +360,7 @@ func authorizeAdminPost(deps core.Deps, w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return core.Principal{}, false
 	}
-	if deps.CSRF == nil || deps.CSRF.Verify(r) != nil {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+	if !deps.VerifyCSRF(w, r) {
 		return core.Principal{}, false
 	}
 	return principal, true

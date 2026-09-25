@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -209,8 +210,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/v1/dashboard/usage/spending-controls", func(w http.ResponseWriter, r *http.Request) {
-		if deps.CSRF == nil || deps.CSRF.Verify(r) != nil {
-			http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		if !deps.VerifyCSRF(w, r) {
 			return
 		}
 		p, account, ok := signedIn(deps, w, r)
@@ -425,15 +425,14 @@ func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.O
 				}
 			}
 		}
-		const maxInt64 = int64(^uint64(0) >> 1)
-		if usage.Reads.TotalReads > uint64(maxInt64-data.Reads) {
+		if usage.Reads.TotalReads > uint64(math.MaxInt64-data.Reads) {
 			data.UsageError = "The provider reported more reads than this page can display."
 		} else {
 			data.Reads += int64(usage.Reads.TotalReads)
 		}
 	}
 	if !addUsage(&data.Requests, data.Reads) || !addUsage(&data.Requests, data.Writes) {
-		data.Requests = int64(^uint64(0) >> 1)
+		data.Requests = math.MaxInt64
 		data.UsageError = "The provider reported more operations than this page can display."
 	}
 	data.UsageAvailable = usageFetched
@@ -764,8 +763,7 @@ func capsFromForm(values url.Values, prefix string) (map[string]int64, bool) {
 }
 
 func addUsage(total *int64, value int64) bool {
-	const maxInt64 = int64(^uint64(0) >> 1)
-	if value < 0 || *total > maxInt64-value {
+	if value < 0 || *total > math.MaxInt64-value {
 		return false
 	}
 	*total += value
@@ -776,14 +774,13 @@ func parseCents(value string) (int64, bool) {
 	if !amountPattern.MatchString(value) {
 		return 0, false
 	}
-	parts := strings.SplitN(value, ".", 2)
-	whole, err := strconv.ParseInt(parts[0], 10, 64)
+	wholeText, fraction, hasFraction := strings.Cut(value, ".")
+	whole, err := strconv.ParseInt(wholeText, 10, 64)
 	if err != nil {
 		return 0, false
 	}
 	cents := int64(0)
-	if len(parts) == 2 {
-		fraction := parts[1]
+	if hasFraction {
 		if len(fraction) == 1 {
 			fraction += "0"
 		}
@@ -792,8 +789,7 @@ func parseCents(value string) (int64, bool) {
 			return 0, false
 		}
 	}
-	const maxInt64 = int64(^uint64(0) >> 1)
-	if whole > (maxInt64-cents)/100 {
+	if whole > (math.MaxInt64-cents)/100 {
 		return 0, false
 	}
 	return whole*100 + cents, true
@@ -834,12 +830,7 @@ func redirect(w http.ResponseWriter, r *http.Request, saved string) {
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, core.ErrUnauthorized):
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-	case errors.Is(err, core.ErrForbidden):
-		http.Error(w, "forbidden", http.StatusForbidden)
-	case errors.Is(err, core.ErrNotFound):
-		http.Error(w, "not found", http.StatusNotFound)
+	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)
 	default:

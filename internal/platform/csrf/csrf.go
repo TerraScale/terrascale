@@ -32,9 +32,7 @@ func New(sessions core.Sessions, opts Options) *Guard {
 		opts.CookieName = "ts_dashboard_csrf"
 	}
 	g := &Guard{sessions: sessions, opts: opts}
-	if _, err := rand.Read(g.secret[:]); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
-	}
+	rand.Read(g.secret[:])
 	return g
 }
 
@@ -43,9 +41,7 @@ func (g *Guard) Token(w http.ResponseWriter, r *http.Request) string {
 		return cookie.Value
 	}
 	var random [32]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
-	}
+	rand.Read(random[:])
 	mac := hmac.New(sha256.New, g.secret[:])
 	_, _ = mac.Write(random[:])
 	token := base64.RawURLEncoding.EncodeToString(append(random[:], mac.Sum(nil)...))
@@ -100,17 +96,20 @@ func (g *Guard) Protect(next http.Handler) http.Handler {
 	})
 }
 
+// validToken checks a 32-byte random value followed by its HMAC, encoded as
+// 86 unpadded base64url characters, decoding into fixed-size buffers.
 func (g *Guard) validToken(value string) bool {
+	var data [64]byte
 	if len(value) != 86 {
 		return false
 	}
-	data, err := base64.RawURLEncoding.DecodeString(value)
-	if err != nil || len(data) != 64 {
+	if n, err := base64.RawURLEncoding.Decode(data[:], []byte(value)); err != nil || n != len(data) {
 		return false
 	}
 	mac := hmac.New(sha256.New, g.secret[:])
 	_, _ = mac.Write(data[:32])
-	return subtle.ConstantTimeCompare(mac.Sum(nil), data[32:]) == 1
+	var sum [sha256.Size]byte
+	return hmac.Equal(mac.Sum(sum[:0]), data[32:])
 }
 
 func sameOrigin(r *http.Request, secure bool) bool {

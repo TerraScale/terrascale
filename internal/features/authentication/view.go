@@ -152,7 +152,7 @@ func buildPage(current section, project core.Project, manage bool, search, rawPa
 		matching := rows(current.Key, func(r core.AuthResource) bool { return matches(r, names, search) })
 		data.Total = len(matching)
 		data.PageCount = max(1, (len(matching)+pageSize-1)/pageSize)
-		data.Page = clampPage(rawPage, data.PageCount)
+		data.Page = core.ClampPage(rawPage, data.PageCount)
 		start := (data.Page - 1) * pageSize
 		data.Rows = matching[start:min(start+pageSize, len(matching))]
 	}
@@ -380,12 +380,4 @@ func claimCount(claims string) int {
 		return 0
 	}
 	return len(object)
-}
-
-func clampPage(raw string, pages int) int {
-	page, err := strconv.Atoi(raw)
-	if err != nil || page < 1 {
-		return 1
-	}
-	return min(page, pages)
 }
