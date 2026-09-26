@@ -5,7 +5,7 @@ GOFLAGS ?= -mod=vendor
 VERSION ?= $(shell git rev-parse HEAD 2>/dev/null || echo dev)
 export GOFLAGS
 
-.PHONY: build check-generated css dev generate js serve lint perf test-fast test-slow
+.PHONY: build check-css check-generated css dev generate js serve lint perf test-fast test-slow
 
 TEMPL_GENERATE_ARGS = -path internal -include-version=false -include-timestamp=false
 
@@ -17,6 +17,14 @@ check-generated:
 
 css:
 	$(NPM) run build:css
+
+# Tests serve the committed stylesheet while the image bundles web/assets, so
+# the two must not drift.
+check-css:
+	@bundle=$$(mktemp) && trap 'rm -f "$$bundle"' EXIT && \
+		$(NPM) run --silent build:css -- "$$bundle" >/dev/null && \
+		cmp -s "$$bundle" web/static/css/terrascale.css || \
+		{ echo 'web/static/css/terrascale.css is stale; run make css' >&2; exit 1; }
 
 # Browser scripts are generated (web/static/js is not committed) and embedded,
 # so every Go build, vet, and test needs them first.
