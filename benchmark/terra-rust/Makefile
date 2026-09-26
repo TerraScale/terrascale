@@ -2,10 +2,10 @@
 .PHONY: help lock check check-engine check-three-way lint lint-engine lint-three-way build build-guest build-guest-engine build-guest-launcher build-guest-three-way test-build test-build-launcher test-vm test fmt format
 
 MUSL_CC ?= x86_64-unknown-linux-musl-gcc
-# Local runs yield to interactive work (low priority, two jobs); CI (CI=true)
+# Local runs yield to interactive work (low priority, two jobs); only CI=true
 # builds at full priority with cargo's default parallelism.
-LOW_PRIORITY := $(if $(CI),,nice -n 19 ionice -c 3)
-JOBS := $(if $(CI),,-j 2)
+LOW_PRIORITY := $(if $(filter true,$(CI)),,nice -n 19 ionice -c 3)
+JOBS := $(if $(filter true,$(CI)),,-j 2)
 SUBJECT_REPO ?= $(abspath ../../terrabase)
 HARNESS_BINARY ?=
 GUEST_AGENT_BINARY ?=

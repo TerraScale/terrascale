@@ -43,7 +43,7 @@ jobs:
           repository: TerraScale/terrabase
           ref: ${{ vars.TERRABASE_CI_SHA }}
           path: terrabase
-          token: ${{ secrets.TERRABASE_READ_TOKEN || forgejo.token }}
+          token: ${{ secrets.ORG_READ_TOKEN }}
           persist-credentials: false
 
       - name: Verify paired source layout and revision

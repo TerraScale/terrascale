@@ -5,9 +5,9 @@ NICE ?= nice
 IONICE ?= ionice
 CARGO_BUILD_JOBS ?= 2
 # Local runs yield to interactive work (low priority, CARGO_BUILD_JOBS jobs);
-# CI (CI=true) builds at full priority with cargo's default parallelism.
-LOW_PRIORITY := $(if $(CI),,$(NICE) -n 19 $(IONICE) -c 3)
-JOBS := $(if $(CI),,--jobs $(CARGO_BUILD_JOBS))
+# only CI=true builds at full priority with cargo's default parallelism.
+LOW_PRIORITY := $(if $(filter true,$(CI)),,$(NICE) -n 19 $(IONICE) -c 3)
+JOBS := $(if $(filter true,$(CI)),,--jobs $(CARGO_BUILD_JOBS))
 MUSL_CC ?= $(shell command -v x86_64-unknown-linux-musl-gcc 2>/dev/null)
 TIMEOUT_SECONDS ?= 1800
 

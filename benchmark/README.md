@@ -60,11 +60,9 @@ Configure `TERRABASE_CI_SHA` as a full, published TerraBase commit SHA whose
 tree contains `crates/tb-core` and `crates/tb-storage`; CI checks the resolved
 commit and both manifests before compiling either driver mode. Even SQLite-only
 Cargo commands resolve those optional path dependencies, so the sibling
-checkout is required. The default job token must have read access to the
-TerraBase repository; when it does not, configure the read-only
-`TERRABASE_READ_TOKEN` secret. The current local engine source needs publication
-before a qualifying CI pair can be configured. CI compiles the engine-enabled
-caller and musl binaries. Its Firecracker job runs the harness, image-builder,
+checkout is required. CI reads the private TerraBase repository with the
+read-only `ORG_READ_TOKEN` secret. CI compiles the engine-enabled caller and
+musl binaries, then its Firecracker steps run the harness, image-builder,
 and engine unit binaries and a small real `run-terrabase` caller smoke inside
 verified guests. These checks establish runtime integration, not benchmark
 acceptance or performance results. CI never executes test binaries or
