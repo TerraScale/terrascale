@@ -4,7 +4,8 @@
 **/node_modules
 **/.env
 **/.env.*
+.claude
 .forgejo
 /tests/
-docs/screenshots
+docs
 test-results
