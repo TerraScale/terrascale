@@ -111,40 +111,25 @@ func (service BillingService) UndoDemoChange(principal core.Principal) error {
 	})
 }
 
-// ChangeDemoPlan keeps the in-memory preview usable without contacting Stripe.
+// ChangeDemoPlan applies an upgrade at once in the in-memory preview without
+// contacting Stripe. Downgrades, including Free, are scheduled instead.
 func (service BillingService) ChangeDemoPlan(principal core.Principal, planKey, interval string) error {
-	var target core.Plan
-	if planKey != "free" {
-		var err error
-		target, err = service.selectedPlan(planKey, interval)
-		if err != nil {
-			return err
-		}
+	target, err := service.selectedPlan(planKey, interval)
+	if err != nil {
+		return err
 	}
 	return service.store.UpdateAs(principal, func(account *core.Account) error {
 		org, ok := account.Organizations[principal.OrganizationID]
 		if !ok || account.ActiveOrganizationID != org.ID || org.OwnerUserID != principal.UserID || org.Archived || org.DeletionRequested {
 			return ErrBillingOwnerRequired
 		}
-		if planKey == "free" && org.Kind != "personal" {
-			return ErrPlanUnavailable
-		}
-		if org.Billing.SubscriptionID == "" && planKey != "free" {
+		if org.Billing.SubscriptionID == "" {
 			return ErrCheckoutUnavailable
 		}
-		if planKey == "free" {
-			org.PlanID = "plan_free"
-			org.Billing.PlanKey = "free"
-			org.Billing.Interval = ""
-			org.Billing.Status = "canceled"
-			org.Billing.SubscriptionID = ""
-			org.BillingRenewal = time.Time{}
-		} else {
-			org.PlanID = target.ID
-			org.Billing.PlanKey = planKey
-			org.Billing.Interval = interval
-			org.Billing.Status = "active"
-		}
+		org.PlanID = target.ID
+		org.Billing.PlanKey = planKey
+		org.Billing.Interval = interval
+		org.Billing.Status = "active"
 		org.Billing.ScheduledPlanKey = ""
 		org.Billing.ScheduledInterval = ""
 		org.Billing.ScheduledAt = time.Time{}
