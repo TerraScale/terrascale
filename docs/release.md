@@ -6,7 +6,7 @@ registries are not a distribution target.
 ## Current status
 
 Native CI is active for pushes to `develop` and `main`. The static contract
-gates, the Node.js `22.23.2` and `24.20.0` matrix, and the browser lane run on
+gates, the Node.js `22.23.2` and `24.21.0` matrix, and the browser lane run on
 the `terrascale-builder` Docker runner with the pinned Playwright image. The
 jobs check out the event revision without credentials and do not receive npm,
 release, or live API secrets.

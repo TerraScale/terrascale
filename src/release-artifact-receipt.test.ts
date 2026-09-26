@@ -15,7 +15,7 @@ const buildMediaType = "application/vnd.terrascale.candidate-build-receipt.v1+js
 const qualificationMediaType = "application/vnd.terrascale.npm-qualification.v1+json";
 const npmArchiveIntegrity = "sha512-T67M4L5wNm0cZ7EBLErcEkY1SmzEW/WJ+SADBzsFUY1UdAPfFHXFQtZ6SEXiK0+vzXysCvAsepbMaBTwnrAD+w==";
 const npmTreeDigestDomain = "terrascale/npm-cli-tree/v1";
-const nodeVersions = { 22: "v22.23.2", 24: "v24.20.0" } as const;
+const nodeVersions = { 22: "v22.23.2", 24: "v24.21.0" } as const;
 
 test("release qualification mode requires its exact clean two-runtime contract", async () => {
   const qualifier = path.join(repositoryRoot, "scripts", "qualify-npm-artifact.ts");

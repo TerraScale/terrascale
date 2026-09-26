@@ -102,7 +102,7 @@
   "devDependencies": {
     "@better-auth/core": "1.7.2",
     "@better-auth/test-utils": "1.7.2",
-    "@playwright/test": "^1.62.1",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^26.0.0",
     "better-auth": "1.7.2",
     "typescript": "^5.9.3",
