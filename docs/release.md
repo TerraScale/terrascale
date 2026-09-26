@@ -61,7 +61,8 @@ a passing result.
 
 ## Protected release when publication is restored
 
-Agents commit green changes directly to `develop`. There are no pull requests.
+Agents commit green changes directly to `develop`; pull requests to `main` run
+the same native CI.
 The owner may restore a main-only release graph after accepting a native receipt
 producer and promoting `develop` to `main`. That protected `main` run must:
 

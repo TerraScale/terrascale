@@ -131,6 +131,9 @@ jobs:
           echo "${NODE_SHA256}  ${archive}" | sha256sum --check --strict
           mkdir -p -- "${install_dir}"
           tar -xJf "${archive}" --strip-components=1 -C "${install_dir}"
+          # The job image's loader has no default /lib search path; tests
+          # spawn this node with a scrubbed environment, so bake the path in.
+          patchelf --set-rpath /lib "${install_dir}/bin/node"
           printf '%s/bin\n' "${install_dir}" >> "${GITHUB_PATH:?GITHUB_PATH is required}"
 
       - name: Confirm the selected Node.js runtime
