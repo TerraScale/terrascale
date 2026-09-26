@@ -106,7 +106,7 @@ templ documentsView(page core.Page, d pageData) {
 					<input class="ts-input ts-mono" id="new-document-id" name="id" maxlength="256"/>
 				}
 				@ui.Field(ui.FieldProps{ID: "new-document-json", Label: "JSON document"}) {
-					<textarea class="ts-input ts-mono" id="new-document-json" name="document" rows="10">{ "{}" }</textarea>
+					@ui.CodeEditor(ui.CodeEditorProps{ID: "new-document-json", Name: "document", Language: ui.CodeJSON, Value: "{}", Rows: 10})
 				}
 				@ui.DialogActions("add-document") {
 					<button class="ts-btn ts-btn-primary" type="submit">Add document</button>
@@ -152,7 +152,7 @@ templ editDocument(page core.Page, d pageData) {
 					</select>
 				}
 				@ui.Field(ui.FieldProps{ID: "document-json", Label: "JSON document or patch"}) {
-					<textarea class="ts-input ts-mono" id="document-json" name="document" rows="14">{ d.EditJSON }</textarea>
+					@ui.CodeEditor(ui.CodeEditorProps{ID: "document-json", Name: "document", Language: ui.CodeJSON, Value: d.EditJSON, Rows: 14})
 				}
 				@ui.DialogActions("edit-document") {
 					<button class="ts-btn ts-btn-primary" type="submit">Save document</button>
@@ -202,7 +202,7 @@ templ sqlView(page core.Page, d pageData) {
 				<form method="post" action="/api/v1/dashboard/data/sql" class="ts-form">
 					@documentScope(page, d)
 					<label class="ts-sr-only" for="sql">SQL</label>
-					<textarea class="ts-input ts-mono ts-data-sql-input" id="sql" name="sql" rows="8" spellcheck="false">{ d.SQL }</textarea>
+					@ui.CodeEditor(ui.CodeEditorProps{ID: "sql", Language: ui.CodeSQL, Value: d.SQL, Rows: 8})
 					<div class="ts-form-actions">
 						<button class="ts-btn ts-btn-secondary" type="submit" formaction="/api/v1/dashboard/data/sql/check">@icons.CircleCheck(16)<span>Check SQL</span></button>
 						<button class="ts-btn ts-btn-primary" type="submit">@icons.Play(16)<span>Run query</span></button>
@@ -258,7 +258,7 @@ templ savedQueries(page core.Page, d pageData) {
 					<input class="ts-input" id="query-name" name="name" required/>
 				}
 				@ui.Field(ui.FieldProps{ID: "saved-sql", Label: "SQL query"}) {
-					<textarea class="ts-input ts-mono" id="saved-sql" name="sql" rows="6" required>{ d.SQL }</textarea>
+					@ui.CodeEditor(ui.CodeEditorProps{ID: "saved-sql", Name: "sql", Language: ui.CodeSQL, Value: d.SQL, Rows: 6, Required: true})
 				}
 				@ui.DialogActions("save-query") {
 					<button class="ts-btn ts-btn-primary" type="submit">Save query</button>
@@ -317,7 +317,7 @@ templ schemaView(page core.Page, d pageData) {
 		<form method="post" action="/api/v1/dashboard/schema" class="ts-form">
 			@documentScope(page, d)
 			@ui.Field(ui.FieldProps{ID: "schema-json", Label: "Schema JSON"}) {
-				<textarea class="ts-input ts-mono" id="schema-json" name="schema" rows="14" required readonly?={ !d.CanWrite }>{ d.Schema }</textarea>
+				@ui.CodeEditor(ui.CodeEditorProps{ID: "schema-json", Name: "schema", Language: ui.CodeJSON, Value: d.Schema, Rows: 14, Required: true, ReadOnly: !d.CanWrite})
 			}
 			if d.CanWrite {
 				<div class="ts-form-actions">

@@ -1,0 +1,65 @@
+package ui
+
+import (
+	"context"
+	"io"
+	"strconv"
+
+	static "terrascale.tech/dashboard/web/static"
+)
+
+// CodeLanguage is a grammar the code editor bundles.
+type CodeLanguage string
+
+const (
+	CodeSQL  CodeLanguage = "sql"
+	CodeJSON CodeLanguage = "json"
+)
+
+// CodeEditorProps configures a code field. Name defaults to ID; Rows sets the
+// height.
+type CodeEditorProps struct {
+	ID       string
+	Name     string
+	Language CodeLanguage
+	Value    string
+	Rows     int
+	Required bool
+	ReadOnly bool
+}
+
+// CodeEditor renders a textarea that web/assets/js/code-editor upgrades into a
+// Monaco editor once the page has loaded. The textarea remains the submitted
+// form value and the control when JavaScript is unavailable.
+func CodeEditor(p CodeEditorProps) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		if features := pageFeaturesFrom(ctx); features != nil {
+			features.CodeEditor = true
+		}
+		return codeEditor(p).Render(ctx, w)
+	})
+}
+
+templ codeEditor(p CodeEditorProps) {
+	<ts-code-editor class="ts-code-editor" data-language={ string(p.Language) }>
+		<textarea
+			class="ts-input ts-mono"
+			id={ p.ID }
+			name={ displayName(p.Name, p.ID) }
+			rows={ strconv.Itoa(max(p.Rows, 3)) }
+			spellcheck="false"
+			autocapitalize="off"
+			autocomplete="off"
+			required?={ p.Required }
+			readonly?={ p.ReadOnly }
+		>{ p.Value }</textarea>
+	</ts-code-editor>
+}
+
+// codeEditorScript loads the editor once per page, after every CodeEditor in
+// the body has rendered.
+templ codeEditorScript(nonce string) {
+	if features := pageFeaturesFrom(ctx); features != nil && features.CodeEditor {
+		<script type="module" src={ static.URL("js/code-editor.js") } nonce={ nonce }></script>
+	}
+}

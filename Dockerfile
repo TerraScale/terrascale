@@ -1,12 +1,13 @@
 # syntax=docker/dockerfile:1
-FROM node:24-bookworm-slim AS css
+FROM node:24-bookworm-slim AS assets
 WORKDIR /src
-COPY package.json package-lock.json .browserslistrc ./
+COPY package.json package-lock.json .npmrc .browserslistrc ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
-COPY scripts/build-css.mjs ./scripts/build-css.mjs
+COPY scripts/build-css.mjs scripts/build-js.mjs ./scripts/
 COPY web/assets ./web/assets
-RUN npm run build:css
+# Release scripts ship brotli-precompressed siblings served in their place.
+RUN npm run build:css && npm run build:js -- --release
 
 FROM golang:1.27.1-bookworm AS build
 WORKDIR /src
@@ -18,10 +19,14 @@ COPY vendor ./vendor
 COPY cmd ./cmd
 COPY internal ./internal
 COPY web ./web
-# Compile against the committed stylesheet while the css stage runs, so only
-# the embedding package and the link step wait for the fresh bundle.
-RUN --mount=type=cache,target=/root/.cache/go-build go build ./...
-COPY --from=css /src/web/static/css/terrascale.css ./web/static/css/terrascale.css
+# Compile against the committed stylesheet and a throwaway script placeholder
+# while the assets stage runs, so only the embedding package and the link step
+# wait for the fresh bundles.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=tmpfs,target=/src/web/static/js \
+    touch web/static/js/placeholder && go build ./...
+COPY --from=assets /src/web/static/css/terrascale.css ./web/static/css/terrascale.css
+COPY --from=assets /src/web/static/js ./web/static/js
 RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -buildvcs=false -ldflags='-s -w' -o /out/dashboard ./cmd/dashboard
 

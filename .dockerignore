@@ -9,3 +9,5 @@
 /tests/
 docs
 test-results
+# Generated inside the image by scripts/build-js.mjs --release.
+web/static/js
