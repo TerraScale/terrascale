@@ -82,10 +82,11 @@ and `make build` verify generated-source freshness before proceeding. The Go
 build embeds `web/static/js/`, so `lint`, `build`, `serve`, and the test targets
 bundle the scripts first; run `make js` before plain `go build` or `go test`.
 
-All tests are Go integration tests in `tests/e2e/`. They drive Chromium with
-[playwright-go](https://github.com/mxschmitt/playwright-go) using the
-`playwright-core` driver pinned in `package.json`; no driver is downloaded at
-test time. When the driver's own Chromium revision is not installed, the suite
+`make test-fast` and `make test-slow` run the package unit tests under
+`internal/` and the Go integration tests in `tests/e2e/`. The integration tests
+drive Chromium with [playwright-go](https://github.com/mxschmitt/playwright-go)
+using the `playwright-core` driver pinned in `package.json`; no driver is
+downloaded at test time. When the driver's own Chromium revision is not installed, the suite
 falls back to the newest headless shell under `PLAYWRIGHT_BROWSERS_PATH`
 (the CI image ships one). Each test uses its own browser context and account,
 so tests run in parallel. Set `DASHBOARD_E2E_SCREENSHOTS=<dir>` to capture
@@ -108,6 +109,20 @@ accounts and sessions must remain on one machine and do not survive restarts.
 `fly.preview.toml` configures one machine per preview and allows it to stop
 while idle, so preview accounts are reset when it wakes. Both configurations
 probe `GET /health/ready` and set `TS_DASHBOARD_PRODUCTION_DEMO=1`.
+
+The health probes answer `{"status":"ok","version":"<commit>"}`; the status
+page records a deploy marker whenever the version changes. The deploy
+workflows pass the commit as the `VERSION` build argument, which the
+Dockerfile links into `internal/platform/buildinfo`; builds without it report
+Go's embedded VCS revision, or `dev`.
+
+The signed-in shell shows a banner for unresolved incidents and for
+maintenance in progress or starting within 24 hours, read from the status
+page's Statuspage-compatible summary
+(`https://status.terrascale.tech/api/v2/summary.json`). Set
+`DASHBOARD_STATUS_SUMMARY_URL` to read another summary, or to an empty value
+to disable the banner. The summary is fetched server-side with a two-second
+timeout and cached for 30 seconds; when it cannot be read, no banner is shown.
 
 The e2e workflow runs lint and the full Go browser and SDK suite on every pull
 request and push to `main`. The production and preview workflows build the

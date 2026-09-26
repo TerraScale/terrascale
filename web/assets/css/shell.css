@@ -466,6 +466,66 @@ details[open] > .ts-account-trigger {
   display: none;
 }
 
+/* Status page banner: unresolved incidents and maintenance above the page,
+   one hairline-divided row each, tinted by impact. */
+.ts-status-banner {
+  display: grid;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-status-notice {
+  --impact: var(--ts-info);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s3) var(--ts-s10);
+  border-left: 2px solid var(--impact);
+  background: color-mix(in oklab, var(--impact) 8%, transparent);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-status-notice + .ts-status-notice {
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-status-notice[data-impact="minor"] { --impact: var(--ts-warning); }
+.ts-status-notice[data-impact="major"] { --impact: var(--ts-severe); }
+.ts-status-notice[data-impact="critical"] { --impact: var(--ts-danger); }
+
+.ts-status-notice > .ts-dot {
+  color: var(--impact);
+}
+
+.ts-status-notice-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--ts-s2);
+  min-width: 0;
+}
+
+.ts-status-notice-label {
+  color: var(--impact);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ts-status-notice-title {
+  color: var(--ts-ink);
+  font-weight: 600;
+}
+
+.ts-status-notice-message {
+  color: var(--ts-ink-2);
+}
+
+.ts-status-notice-link {
+  white-space: nowrap;
+}
+
 /* Mobile drawer below 48rem. A closed drawer is hidden from focus and
    assistive technology; the open one locks page scrolling. */
 @media (max-width: 47.99rem) {
@@ -536,5 +596,9 @@ details[open] > .ts-account-trigger {
   .ts-topbar-brand {
     height: 20px;
     width: auto;
+  }
+
+  .ts-status-notice {
+    padding-inline: var(--ts-s4);
   }
 }

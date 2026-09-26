@@ -34,6 +34,7 @@ import (
 	"terrascale.tech/dashboard/internal/platform/datastar"
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
+	"terrascale.tech/dashboard/internal/platform/statuspage"
 )
 
 type Application struct {
@@ -53,7 +54,15 @@ func New(cfg config.Config) (*Application, error) {
 	}
 	sessions := session.New(store, session.Options{Secure: cfg.SecureCookies})
 	guard := csrf.New(sessions, csrf.Options{Secure: cfg.SecureCookies})
-	renderer := render.New(store, guard)
+	var notices render.StatusNotices
+	if cfg.StatusURL != "" {
+		client, err := statuspage.New(cfg.StatusURL)
+		if err != nil {
+			return nil, err
+		}
+		notices = client
+	}
+	renderer := render.New(store, guard, notices)
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo,

@@ -16,6 +16,7 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           PR_APP: terra-scale-dashboard-pr-${{ github.event.number }}
+          VERSION: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           node scripts/check-fly-deployment.mjs preview-config fly.preview.toml
@@ -47,7 +48,8 @@ jobs:
           # silently run two stores. Fly Proxy can start existing Machines but
           # does not create them; the post-deploy check enforces this workflow's
           # one-Machine cap (manual/API changes outside this workflow remain possible).
-          fly deploy -a "$PR_APP" --config fly.preview.toml --remote-only --strategy immediate --ha=false
+          fly deploy -a "$PR_APP" --config fly.preview.toml --remote-only --strategy immediate --ha=false \
+            --build-arg VERSION="$VERSION"
           fly scale count 1 -a "$PR_APP" --yes
           machines_json=$(mktemp)
           volumes_json=$(mktemp)

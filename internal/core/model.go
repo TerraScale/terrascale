@@ -425,6 +425,19 @@ type Shell struct {
 	Projects         []ProjectOption
 	Navigation       []NavGroup
 	ReturnURL        string
+	// Notices are the status page's active incidents and maintenance.
+	Notices []StatusNotice
+}
+
+// StatusNotice is one unresolved incident or current or upcoming maintenance
+// window from the public status page, shown as a banner in the shell.
+type StatusNotice struct {
+	// Impact is none, minor, major, critical, or maintenance.
+	Impact  string
+	Label   string
+	Title   string
+	Message string
+	URL     string
 }
 
 type OrganizationOption struct {

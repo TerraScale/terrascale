@@ -21,7 +21,8 @@ jobs:
         run: |
           set -euo pipefail
           fly config validate --strict -c fly.toml
-          fly deploy -c fly.toml --remote-only --strategy immediate --ha=false
+          fly deploy -c fly.toml --remote-only --strategy immediate --ha=false \
+            --build-arg VERSION="$GITHUB_SHA"
           # The in-memory demo has process-local account and session state.
           fly scale count 1 -a "$FLY_APP" -c fly.toml --yes
           machine_id=$(fly machine list -a "$FLY_APP" -q | xargs)

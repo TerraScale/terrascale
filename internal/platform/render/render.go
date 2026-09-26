@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
@@ -16,14 +17,22 @@ import (
 	"terrascale.tech/dashboard/internal/ui"
 )
 
-type Engine struct {
-	store *core.Store
-	csrf  core.CSRF
-	dev   bool
+// StatusNotices supplies the status page's active incidents and maintenance
+// for the signed-in shell banner.
+type StatusNotices interface {
+	Notices(context.Context) []core.StatusNotice
 }
 
-func New(store *core.Store, csrf core.CSRF) *Engine {
-	return &Engine{store: store, csrf: csrf, dev: os.Getenv("DASHBOARD_DEV") == "1"}
+type Engine struct {
+	store  *core.Store
+	csrf   core.CSRF
+	status StatusNotices
+	dev    bool
+}
+
+// New returns the page renderer. A nil status source renders no banner.
+func New(store *core.Store, csrf core.CSRF, status StatusNotices) *Engine {
+	return &Engine{store: store, csrf: csrf, status: status, dev: os.Getenv("DASHBOARD_DEV") == "1"}
 }
 
 // buffers holds render buffers across requests; a page is rendered fully
@@ -71,6 +80,9 @@ func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) er
 			return nil
 		}); err != nil {
 			return err
+		}
+		if e.status != nil {
+			page.Shell.Notices = e.status.Notices(r.Context())
 		}
 	}
 	body := page.View(page)
