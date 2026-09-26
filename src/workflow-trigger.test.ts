@@ -2,18 +2,19 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "vitest";
 
-test("develop and main pushes run native trunk verification", async () => {
-  const workflow = await readFile(
-    new URL("../.forgejo/workflows/ci.yml", import.meta.url),
-    "utf8",
-  );
+test("trunk pushes and pull requests to main run native verification", async () => {
+  const [workflow, nodeVersion] = await Promise.all([
+    readFile(new URL("../.forgejo/workflows/ci.yml", import.meta.url), "utf8"),
+    readFile(new URL("../.node-version", import.meta.url), "utf8"),
+  ]);
 
   assert.match(workflow, /^  push:\r?\n    branches: \[develop, main\]$/mu);
+  assert.match(workflow, /^  pull_request:\r?\n    branches: \[main\]$/mu);
   assert.match(workflow, /^  workflow_dispatch:\r?$/mu);
   assert.match(workflow, /^permissions:\r?\n  contents: read$/mu);
   assert.doesNotMatch(
     workflow,
-    /pull_request|schedule|workflow_call/u,
+    /pull_request_target|schedule|workflow_call/u,
   );
   assert.doesNotMatch(workflow, /(?:ts-deploy|TERRASCALE_DEPLOY|NPM_TOKEN|TERRASCALE_E2E_)/u);
   assert.match(workflow, /^  CONTRACT_SOURCE: contracts\/terrabase$/mu);
@@ -25,7 +26,7 @@ test("develop and main pushes run native trunk verification", async () => {
     assert.match(definition, /runs-on: terrascale-builder/u);
     assert.match(definition, /timeout-minutes: (?:45|60)/u);
     assert.doesNotMatch(definition, /container:\s*\n\s+image:/u);
-    assert.match(definition, /actions\/checkout@v6\.1\.0/u);
+    assert.match(definition, /actions\/checkout@[0-9a-f]{40} # v6\.1\.0/u);
     assert.match(definition, /ref: \$\{\{ forgejo\.sha \}\}/u);
     assert.match(definition, /token: "\$\{\{ secrets\.REGISTRY_TOKEN \}\}"/u);
     assert.match(definition, /persist-credentials: false/u);
@@ -52,23 +53,28 @@ test("develop and main pushes run native trunk verification", async () => {
     nodeJob,
     /strategy:\r?\n      fail-fast: false\r?\n      matrix:/u,
   );
-  assert.match(nodeJob, /node: \["22\.23\.2", "24\.20\.0"\]/u);
-  assert.match(nodeJob, /Install Node\.js \$\{\{ matrix\.node \}\}/u);
-  assert.match(nodeJob, /sha256sum --check --strict/u);
+  assert.match(nodeJob, /- node: "22\.23\.2"\r?\n            sha256: [0-9a-f]{64}$/mu);
   assert.match(
     nodeJob,
-    /test "\$\(node --version\)" = "v\$\{\{ matrix\.node \}\}"/u,
+    new RegExp(`- node: "${escapeRegExp(nodeVersion.trim())}"$`, "mu"),
   );
-  assert.match(nodeJob, /architecture: process\.arch/u);
-  assert.match(nodeJob, /uname -m/u);
+  assert.match(nodeJob, /Install Node\.js \$\{\{ matrix\.node \}\}/u);
+  assert.match(nodeJob, /if: \$\{\{ matrix\.sha256 \}\}/u);
+  assert.match(nodeJob, /sha256sum --check --strict/u);
+  assert.match(nodeJob, /test "\$\(node --version\)" = "v\$\{NODE_VERSION\}"/u);
+  assert.match(
+    nodeJob,
+    /"\$\{NODE_VERSION\}" != "\$\(cat \.node-version\)"/u,
+  );
   assert.match(nodeJob, /npm run build/u);
   assert.match(nodeJob, /npm test/u);
 
   const browserJob = jobDefinition(workflow, "browser");
-  assert.match(browserJob, /Install the repository Node\.js version/u);
-  assert.match(browserJob, /test "\$\(node --version\)" = v24\.20\.0/u);
-  assert.match(browserJob, /architecture: process\.arch/u);
-  assert.match(browserJob, /uname -m/u);
+  assert.match(browserJob, /Confirm the repository Node\.js version/u);
+  assert.match(
+    browserJob,
+    /test "\$\(node --version\)" = "v\$\(cat \.node-version\)"/u,
+  );
   assert.match(browserJob, /npm run build/u);
   assert.match(browserJob, /npx playwright install chromium firefox webkit/u);
   assert.match(browserJob, /npm run test:browser/u);
