@@ -174,6 +174,46 @@ async fn metrics_auth_and_exposition_keep_the_documented_contract() {
 }
 
 #[tokio::test]
+async fn health_and_readiness_bodies_report_the_service_version() {
+    let server = TestServer::start().await;
+    let client = server.client();
+    let expected = support::expected_version();
+
+    let health: serde_json::Value = client
+        .get(format!("{}/healthz", server.origin))
+        .send()
+        .await
+        .expect("liveness request should reach the app")
+        .json()
+        .await
+        .expect("liveness body is JSON");
+    assert_eq!(health["status"], "ok");
+    assert_eq!(health["version"], expected);
+
+    let ready = client
+        .get(format!("{}/readyz", server.origin))
+        .send()
+        .await
+        .expect("readiness request should reach the app");
+    assert_eq!(ready.status(), StatusCode::OK);
+    let ready: serde_json::Value = ready.json().await.expect("readiness body is JSON");
+    assert_eq!(ready["status"], "ready");
+    assert_eq!(ready["version"], expected);
+
+    server.fixture.set_health_healthy(false);
+    sleep(READY_CACHE_REFRESH).await;
+    let not_ready = client
+        .get(format!("{}/readyz", server.origin))
+        .send()
+        .await
+        .expect("readiness request should reach the app");
+    assert_eq!(not_ready.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let not_ready: serde_json::Value = not_ready.json().await.expect("readiness body is JSON");
+    assert_eq!(not_ready["status"], "not_ready");
+    assert_eq!(not_ready["version"], expected);
+}
+
+#[tokio::test]
 async fn metrics_fail_closed_when_no_key_is_configured() {
     let server = TestServer::start_with_metrics_key(None).await;
     let client = server.client();

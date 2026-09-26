@@ -3,7 +3,7 @@
 use std::{
     array,
     sync::{
-        Arc,
+        Arc, LazyLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -28,6 +28,17 @@ const METHODS: [&str; 8] = [
 ];
 const READINESS_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const READINESS_CACHE_TTL: Duration = Duration::from_secs(1);
+/// Service version reported by the health endpoints so probes can detect deploys.
+///
+/// The Cargo package version, with the build's git revision appended as
+/// `+<revision>` when `TS_AUTH_REVISION` is set at compile time.
+static VERSION: LazyLock<String> = LazyLock::new(|| {
+    let package = env!("CARGO_PKG_VERSION");
+    match option_env!("TS_AUTH_REVISION").filter(|revision| !revision.is_empty()) {
+        Some(revision) => format!("{package}+{revision}"),
+        None => package.to_owned(),
+    }
+});
 
 #[derive(Clone)]
 struct ReadinessObservation {
@@ -216,11 +227,15 @@ fn metric(output: &mut String, line: &str) {
 #[derive(Serialize, utoipa::ToSchema)]
 struct StatusBody {
     status: &'static str,
+    /// Service version of the running binary.
+    version: &'static str,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
 struct ReadyBody {
     status: &'static str,
+    /// Service version of the running binary.
+    version: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     region: Option<String>,
 }
@@ -236,6 +251,7 @@ impl ReadinessObservation {
             status_code,
             Json(ReadyBody {
                 status,
+                version: VERSION.as_str(),
                 region: self.region,
             }),
         )
@@ -253,7 +269,10 @@ pub fn router() -> Router<AppState> {
 #[utoipa::path(get, path = "/healthz", responses((status = 200, body = StatusBody)))]
 async fn healthz(State(state): State<AppState>) -> Json<StatusBody> {
     state.metrics.set_liveness(true);
-    Json(StatusBody { status: "ok" })
+    Json(StatusBody {
+        status: "ok",
+        version: VERSION.as_str(),
+    })
 }
 
 async fn readiness_observation(state: &AppState) -> ReadinessObservation {
