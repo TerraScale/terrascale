@@ -209,7 +209,7 @@ is represented or remotely cancellable.
 
 ## Supported versions
 
-- Toolchain: Rust `1.97.1`, pinned by `rust-toolchain.toml` and used for all
+- Toolchain: Rust `1.98.1`, pinned by `rust-toolchain.toml` and used for all
   formatting, lint (`clippy -D warnings`), and locked workspace tests.
 - Edition: 2021, declared in `Cargo.toml`. `cargo-audit` 0.22.2 runs the
   dependency advisory gate over the committed lockfile.
