@@ -5,9 +5,10 @@ registries are not a distribution target.
 
 ## Current status
 
-Native CI is active for pushes to `develop` and `main`. The static contract
-gates, the Node.js `22.23.2` and `24.20.0` matrix, and the browser lane run on
-the `terrascale-builder` Docker runner with the pinned Playwright image. The
+Native CI is active for pushes to `develop` and `main` and for pull requests
+to `main`. The static contract gates, the Node.js `22.23.2` and `24.21.0`
+matrix, and the browser lane run on the `terrascale-builder` job image, which
+bakes Node.js `24.21.0` and the pinned Playwright engines. The
 jobs check out the event revision without credentials and do not receive npm,
 release, or live API secrets.
 
@@ -60,7 +61,8 @@ a passing result.
 
 ## Protected release when publication is restored
 
-Agents commit green changes directly to `develop`. There are no pull requests.
+Agents commit green changes directly to `develop`; pull requests to `main` run
+the same native CI.
 The owner may restore a main-only release graph after accepting a native receipt
 producer and promoting `develop` to `main`. That protected `main` run must:
 
