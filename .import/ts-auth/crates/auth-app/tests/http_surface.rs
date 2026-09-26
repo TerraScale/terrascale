@@ -1510,6 +1510,7 @@ async fn liveness_and_metrics_authentication_work_over_the_application_socket() 
     assert_eq!(liveness.status(), StatusCode::OK);
     let body: serde_json::Value = liveness.json().await.expect("liveness body is JSON");
     assert_eq!(body["status"], "ok");
+    assert_eq!(body["version"], support::expected_version());
 
     let missing_key = client
         .get(format!("{}/metrics", server.origin))
@@ -1551,6 +1552,7 @@ async fn readiness_fails_closed_when_terrabase_cannot_be_reached() {
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     let body: serde_json::Value = response.json().await.expect("readiness body is JSON");
     assert_eq!(body["status"], "not_ready");
+    assert_eq!(body["version"], support::expected_version());
 }
 
 #[tokio::test]

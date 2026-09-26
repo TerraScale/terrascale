@@ -361,7 +361,10 @@ rotation.
   checks TerraBase management health. Readiness responses and gauges reflect
   the latest completed check, coalesced and cached per process for one second
   after completion. Each check is capped at two seconds, and readiness starts
-  at zero until a check completes.
+  at zero until a check completes. Both JSON bodies include `version`: the
+  Cargo package version, plus `+<revision>` when `TS_AUTH_REVISION` is set at
+  build time. CI release builds set it to the first 12 characters of the
+  source commit.
 - Private metrics: `GET /metrics` (`X-TerraScale-Metrics-Key`), with bounded request, uptime, build, and latest-observation readiness gauges.
 
 ## CI

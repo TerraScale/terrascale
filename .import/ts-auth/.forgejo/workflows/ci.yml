@@ -83,7 +83,8 @@ jobs:
           test "${source_commit}" = "${FORGEJO_SHA:?event SHA is required}"
           # Build against Debian's older glibc so the binary runs in the
           # distroless Debian 13 runtime even when the host runner is newer.
-          # The registry and target dir ride the shared cache.
+          # The registry and target dir ride the shared cache. TS_AUTH_REVISION
+          # is compiled into the version reported by /healthz and /readyz.
           mkdir -p /cache/cargo /cache/cargo-target/ts-auth-release
           podman run --rm --security-opt label=disable \
             --volume "$PWD:/work/ts-auth" \
@@ -93,6 +94,7 @@ jobs:
             --workdir /work/ts-auth \
             --env CARGO_HOME=/cargo-home \
             --env CARGO_TARGET_DIR=/cargo-target \
+            --env "TS_AUTH_REVISION=${source_commit:0:12}" \
             "docker.io/library/rust:${RUSTUP_TOOLCHAIN}-bookworm" \
             cargo build --release --locked -p auth-app
           mkdir -p artifacts/ci/container-publish
@@ -136,6 +138,8 @@ jobs:
             sleep 1
           done
           if test "${ready}" != 1; then podman logs "${container}"; exit 1; fi
+          curl --silent --fail "http://127.0.0.1:${port}/healthz" | \
+            jq -e --arg revision "${source_commit:0:12}" '.version | endswith("+" + $revision)'
           curl --silent --fail "http://127.0.0.1:${port}/openapi/v1.json" | jq -e '.info.title == "TerraScale Auth API" and .paths["/healthz"] != null'
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/readyz")" = 503
 
