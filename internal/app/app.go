@@ -71,7 +71,7 @@ func New(cfg config.Config) (*Application, error) {
 		}
 		notices = client
 	}
-	renderer := render.New(store, guard, notices)
+	renderer := render.New(store, guard, notices, cfg.Dev)
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo,

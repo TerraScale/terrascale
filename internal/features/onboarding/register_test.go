@@ -19,7 +19,7 @@ func newRegistrationMux() *http.ServeMux {
 	sessions := session.New(store, session.Options{})
 	guard := csrf.New(sessions, csrf.Options{})
 	mux := http.NewServeMux()
-	Mount(mux, core.Deps{Store: store, Sessions: sessions, CSRF: guard, Render: renderer.New(store, guard, nil), Demo: true})
+	Mount(mux, core.Deps{Store: store, Sessions: sessions, CSRF: guard, Render: renderer.New(store, guard, nil, false), Demo: true})
 	return mux
 }
 

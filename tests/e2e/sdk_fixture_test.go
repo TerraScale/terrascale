@@ -50,7 +50,7 @@ func startSDKFixture(t *testing.T) sdkFixture {
 	t.Cleanup(public.Close)
 
 	demo := core.Deps{
-		Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil),
+		Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil, false),
 		Throttle: throttle.New(throttle.Options{}), Demo: true,
 	}
 	live := demo

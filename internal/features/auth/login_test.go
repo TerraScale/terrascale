@@ -29,7 +29,7 @@ func newLoginMux(t *testing.T, limits throttle.Options) *http.ServeMux {
 	sessions := session.New(store, session.Options{})
 	guard := csrf.New(sessions, csrf.Options{})
 	deps := core.Deps{
-		Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil),
+		Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil, false),
 		Throttle: throttle.New(limits),
 	}
 	if _, err := RegisterAccount(deps, RegistrationInput{
