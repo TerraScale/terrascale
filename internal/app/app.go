@@ -110,7 +110,20 @@ func New(cfg config.Config) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Application{Handler: compress(invalidatePrefetch(dropForeignMessages(guard.Protect(mux))))}, nil
+	return &Application{Handler: compress(securityHeaders(cfg.SecureCookies, invalidatePrefetch(dropForeignMessages(guard.Protect(mux)))))}, nil
+}
+
+// securityHeaders sets the headers every response shares; rendered pages add
+// their own nonce-based Content-Security-Policy. HSTS is sent only when the
+// dashboard is served over HTTPS, which secure cookies already require.
+func securityHeaders(https bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if https {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // invalidatePrefetch drops pages the browser prefetched through the layout's
