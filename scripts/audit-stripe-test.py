@@ -4,6 +4,8 @@
 import argparse
 import json
 import os
+import pathlib
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -22,6 +24,7 @@ EXPECTED = {
 EVENTS = {
     "checkout.session.completed",
     "checkout.session.async_payment_succeeded",
+    "checkout.session.expired",
     "customer.subscription.created",
     "customer.subscription.updated",
     "customer.subscription.deleted",
@@ -30,6 +33,16 @@ EVENTS = {
     "invoice.payment_failed",
     "invoice.voided",
 }
+
+
+def library_api_version():
+    """The API version the vendored stripe-go decodes; webhook events must match it."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    for source in root.glob("vendor/github.com/stripe/stripe-go/v*/api_version.go"):
+        match = re.search(r'APIVersion\s+string\s*=\s*"([^"]+)"', source.read_text(encoding="utf-8"))
+        if match:
+            return match.group(1)
+    return ""
 
 
 def stripe_get(key, path, params=None):
@@ -53,17 +66,16 @@ def main():
                 if raw and not raw.startswith("#") and "=" in raw:
                     name, value = raw.split("=", 1)
                     values.setdefault(name.strip(), value.strip().strip('"').strip("'"))
-    def setting(primary, legacy):
-        return values.get(primary) or values.get(legacy, "")
-    key = setting("STRIPE_SECRET_KEY", "Payments__Stripe__SecretKey")
-    origin = setting("DASHBOARD_PUBLIC_ORIGIN", "Payments__Stripe__PublicOrigin").rstrip("/")
-    prices = {(plan, interval): setting(f"STRIPE_PRICE_{plan.upper()}_{interval.upper()}",
-                                       f"Payments__Stripe__{plan.title()}{interval.title()}PriceId")
-              for plan, interval in EXPECTED}
+    def setting(name):
+        return values.get(name, "").strip()
+    key = setting("STRIPE_SECRET_KEY")
+    origin = setting("DASHBOARD_PUBLIC_ORIGIN").rstrip("/")
+    prices = {(plan, interval): setting(f"STRIPE_PRICE_{plan.upper()}_{interval.upper()}") for plan, interval in EXPECTED}
+    api_version = library_api_version()
     checks = {
-        "test_key": key.startswith("sk_test_"),
-        "test_mode": setting("STRIPE_MODE", "Payments__Stripe__Mode") in ("", "test"),
-        "webhook_secret_present": setting("STRIPE_WEBHOOK_SECRET", "Payments__Stripe__WebhookSecret").startswith("whsec_"),
+        "test_key": key.startswith(("sk_test_", "rk_test_")),
+        "test_mode": setting("STRIPE_MODE") == "test",
+        "webhook_secret_present": setting("STRIPE_WEBHOOK_SECRET").startswith("whsec_"),
         "public_https_origin": origin.startswith("https://") and "/" not in origin[8:],
         "six_price_ids_present": all(value.startswith("price_") for value in prices.values()) and len(set(prices.values())) == 6,
     }
@@ -98,6 +110,8 @@ def main():
             for item in endpoints
         )
         checks["webhook_endpoint"] = len(matches) == 1 and matches[0].get("status") == "enabled" if matches else False
+        checks["webhook_api_version"] = bool(matches) and bool(api_version) and matches[0].get("api_version") == api_version
+        details["expected_webhook_api_version"] = api_version
         checks["webhook_events"] = bool(matches) and ("*" in matches[0].get("enabled_events", []) or EVENTS <= set(matches[0].get("enabled_events", [])))
         details["matching_webhook_endpoints"] = len(matches)
         if matches and "*" not in matches[0].get("enabled_events", []):

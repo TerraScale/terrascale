@@ -17,20 +17,7 @@ type planChangeFlow interface {
 	ChangeDemoPlan(core.Principal, string, string) error
 }
 
-func planRank(key string) int {
-	switch key {
-	case PlanStarter:
-		return 1
-	case PlanPro:
-		return 2
-	case PlanBusiness:
-		return 3
-	default:
-		return 0
-	}
-}
-
-func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, config StripeConfig, provider BillingProvider, configErr error) {
+func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, billing *Stripe) {
 	changes, ok := flow.(planChangeFlow)
 	if !ok {
 		return
@@ -82,7 +69,7 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 			return
 		}
 		if deps.Demo {
-			if planRank(key) > planRank(org.Billing.PlanKey) {
+			if PlanRank(key) > PlanRank(org.Billing.PlanKey) {
 				if err := changes.ChangeDemoPlan(principal, key, interval); err != nil {
 					writeBillingError(w, err)
 					return
@@ -97,23 +84,19 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 			http.Redirect(w, r, "/usage?tab=billing&billing=scheduled", http.StatusSeeOther)
 			return
 		}
-		if configErr != nil || provider == nil || config.Mode != "test" {
-			http.Error(w, "Billing is not configured.", http.StatusServiceUnavailable)
+		if billing == nil || !billing.config.PlanChangesEnabled() {
+			http.Error(w, "Plan changes are not available yet.", http.StatusServiceUnavailable)
 			return
 		}
-		changer, ok := provider.(PlanChangeProvider)
-		if !ok {
-			http.Error(w, "Plan changes are unavailable.", http.StatusServiceUnavailable)
-			return
-		}
-		current, err := provider.RetrieveSubscription(r.Context(), org.Billing.SubscriptionID)
+		config, changer := billing.config, billing.provider
+		current, err := changer.RetrieveSubscription(r.Context(), org.Billing.SubscriptionID)
 		if err != nil || current.ID != org.Billing.SubscriptionID || current.CustomerID != org.Billing.CustomerID || current.PriceID == "" || current.CurrentPeriodEnd.IsZero() {
-			slog.Error("verify subscription before plan change", "subscription_id", org.Billing.SubscriptionID, "error", err)
+			slog.Error("verify subscription before plan change", "subscription_id", org.Billing.SubscriptionID, "organization_id", org.ID, "error", err)
 			http.Error(w, "Could not verify the current subscription.", http.StatusBadGateway)
 			return
 		}
 		currentKey, currentInterval, mapped := config.planFromPriceID(current.PriceID)
-		if !mapped || !isEntitledStatus(current.Status) {
+		if !mapped || !IsEntitledStatus(current.Status) {
 			http.Error(w, "Current subscription needs billing attention.", http.StatusConflict)
 			return
 		}
@@ -128,7 +111,7 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 				return
 			}
 			if err := changer.SetCancelAtPeriodEnd(r.Context(), current.ID, true, idempotencyKey); err != nil {
-				slog.Error("schedule Personal Free", "error", err)
+				slog.Error("schedule Personal Free", "organization_id", org.ID, "error", err)
 				http.Error(w, "Could not schedule Free.", http.StatusBadGateway)
 				return
 			}
@@ -144,13 +127,13 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 			http.Error(w, "Selected Stripe price is not configured.", http.StatusServiceUnavailable)
 			return
 		}
-		if planRank(key) > planRank(currentKey) {
+		if PlanRank(key) > PlanRank(currentKey) {
 			if current.ScheduleID != "" || current.CancelAtPeriodEnd {
 				http.Error(w, "Undo the scheduled change first.", http.StatusConflict)
 				return
 			}
 			if err := changer.ChangePlanNow(r.Context(), current, nextPriceID, idempotencyKey); err != nil {
-				slog.Error("change Stripe subscription", "error", err)
+				slog.Error("change Stripe subscription", "organization_id", org.ID, "error", err)
 				http.Error(w, "Could not confirm the plan change.", http.StatusBadGateway)
 				return
 			}
@@ -165,9 +148,9 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 			http.Error(w, "Undo the scheduled cancellation first.", http.StatusConflict)
 			return
 		}
-		scheduleID, err := changer.SchedulePlanChange(r.Context(), current, nextPriceID, key, idempotencyKey)
+		scheduleID, err := changer.SchedulePlanChange(r.Context(), current, nextPriceID, idempotencyKey)
 		if err != nil {
-			slog.Error("schedule Stripe plan change", "error", err)
+			slog.Error("schedule Stripe plan change", "organization_id", org.ID, "error", err)
 			http.Error(w, "Could not schedule the plan change.", http.StatusBadGateway)
 			return
 		}
@@ -191,19 +174,19 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 			return
 		}
 		if !deps.Demo {
-			changer, ok := provider.(PlanChangeProvider)
-			if configErr != nil || !ok || config.Mode != "test" {
-				http.Error(w, "Billing is not configured.", http.StatusServiceUnavailable)
+			if billing == nil || !billing.config.PlanChangesEnabled() {
+				http.Error(w, "Plan changes are not available yet.", http.StatusServiceUnavailable)
 				return
 			}
-			current, err := provider.RetrieveSubscription(r.Context(), org.Billing.SubscriptionID)
+			config, changer := billing.config, billing.provider
+			current, err := changer.RetrieveSubscription(r.Context(), org.Billing.SubscriptionID)
 			if err != nil || current.ID != org.Billing.SubscriptionID || current.CustomerID != org.Billing.CustomerID {
 				http.Error(w, "Could not verify the current subscription.", http.StatusBadGateway)
 				return
 			}
 			key := fmt.Sprintf("undo:%s:%s:%d:%d", org.ID, org.Billing.ScheduledPlanKey, org.Billing.ScheduledAt.Unix(), org.Billing.ChangeVersion)
 			currentKey, currentInterval, mapped := config.planFromPriceID(current.PriceID)
-			alreadyUndone := mapped && isEntitledStatus(current.Status) && currentKey == org.Billing.PlanKey && currentInterval == org.Billing.Interval
+			alreadyUndone := mapped && IsEntitledStatus(current.Status) && currentKey == org.Billing.PlanKey && currentInterval == org.Billing.Interval
 			if org.Billing.ScheduledPlanKey == "free" {
 				if !current.CancelAtPeriodEnd && !alreadyUndone {
 					http.Error(w, "The scheduled cancellation changed in Stripe.", http.StatusConflict)
@@ -222,7 +205,7 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 				}
 			}
 			if err != nil {
-				slog.Error("undo Stripe plan change", "error", err)
+				slog.Error("undo Stripe plan change", "organization_id", org.ID, "error", err)
 				http.Error(w, "Could not undo the scheduled change.", http.StatusBadGateway)
 				return
 			}
@@ -234,8 +217,6 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 		http.Redirect(w, r, "/usage?tab=billing&billing=undone", http.StatusSeeOther)
 	})
 }
-
-func isEntitledStatus(status string) bool { return status == "active" || status == "trialing" }
 
 func validPlanChangeCSRF(deps core.Deps, w http.ResponseWriter, r *http.Request) bool {
 	if deps.CSRF != nil && deps.CSRF.Verify(r) != nil {

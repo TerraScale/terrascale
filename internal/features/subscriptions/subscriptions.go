@@ -56,7 +56,8 @@ type portalPage struct {
 	Demo             bool
 }
 
-func Mount(mux *http.ServeMux, deps core.Deps) {
+// Mount registers the billing pages. billing is nil in demo mode.
+func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 	service := NewBillingService(deps.Store)
 	mux.HandleFunc("GET /billing", func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := requestPrincipal(deps, w, r)
@@ -171,7 +172,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 	})
 
-	payments.Mount(mux, deps, service)
+	payments.Mount(mux, deps, service, billing)
 }
 
 // planTones color plan cards from the cheapest plan up.

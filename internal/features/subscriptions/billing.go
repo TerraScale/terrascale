@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
-	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -16,13 +15,12 @@ import (
 var (
 	ErrBillingOwnerRequired = errors.New("organization owner role required for billing")
 	ErrCheckoutUnavailable  = errors.New("checkout session is unavailable")
-	ErrInvalidReturnPath    = errors.New("return path must stay inside the dashboard")
 	ErrPlanUnavailable      = errors.New("selected billing plan is unavailable")
 )
 
 const (
-	intervalMonthly = "monthly"
-	intervalAnnual  = "annual"
+	intervalMonthly = payments.IntervalMonthly
+	intervalAnnual  = payments.IntervalAnnual
 	checkoutOpen    = "open"
 	checkoutDone    = "complete"
 	checkoutCancel  = "canceled"
@@ -208,7 +206,7 @@ func (service BillingService) BeginDemoCheckout(principal core.Principal, planKe
 	if err != nil {
 		return core.CheckoutSession{}, err
 	}
-	returnPath, err = NormalizeReturnPath(returnPath, "/billing")
+	returnPath, err = payments.NormalizeReturnPath(returnPath, "/billing")
 	if err != nil {
 		return core.CheckoutSession{}, err
 	}
@@ -325,7 +323,7 @@ func (service BillingService) CompleteDemoCheckout(principal core.Principal, ses
 		if !ok || session.ID != sessionID || session.OrganizationID != organization.ID || session.OwnerUserID != principal.UserID || session.Status != checkoutOpen || !session.ExpiresAt.After(service.now()) || organization.Billing.CheckoutID != sessionID {
 			return ErrCheckoutUnavailable
 		}
-		path, err := NormalizeReturnPath(session.ReturnPath, "/billing")
+		path, err := payments.NormalizeReturnPath(session.ReturnPath, "/billing")
 		if err != nil {
 			return err
 		}
@@ -356,7 +354,7 @@ func (service BillingService) CompleteDemoCheckout(principal core.Principal, ses
 		}
 		organization.CheckoutSessions[sessionID] = session
 		account.Organizations[organization.ID] = organization
-		returnTo = withOutcome(path, map[bool]string{true: "canceled", false: "success"}[canceled])
+		returnTo = payments.WithPaymentOutcome(path, map[bool]string{true: "canceled", false: "success"}[canceled])
 		return nil
 	}
 	if canceled {
@@ -406,18 +404,18 @@ func (service BillingService) RecordExternalCheckout(principal core.Principal, p
 	if err != nil {
 		return err
 	}
-	returnPath, err = NormalizeReturnPath(returnPath, "/billing")
+	returnPath, err = payments.NormalizeReturnPath(returnPath, "/billing")
 	if err != nil {
 		return err
 	}
-	if providerSession.ID == "" {
+	now := service.now()
+	if providerSession.ID == "" || !providerSession.ExpiresAt.After(now) {
 		return core.ErrInvalid
 	}
-	now := service.now()
 	localSession := core.CheckoutSession{
 		ID: providerSession.ID, OwnerUserID: principal.UserID, OrganizationID: principal.OrganizationID,
 		Interval: interval, ReturnPath: returnPath, Status: checkoutOpen,
-		CreatedAt: now, ExpiresAt: now.Add(24 * time.Hour),
+		CreatedAt: now, ExpiresAt: providerSession.ExpiresAt,
 	}
 	err = service.store.UpdateAsWithPlan(principal, planID, func(account *core.Account, plan core.Plan) error {
 		if err := validatePlanSelection(plan, planKey, interval); err != nil {
@@ -531,8 +529,11 @@ func (service BillingService) ApplyStripeEvent(event payments.BillingEvent) erro
 		return core.ErrInvalid
 	}
 	if event.Invoice != nil {
-		return service.store.ApplyBillingEventWithPlans(event.ID, event.CustomerID, event.SubscriptionID, func(organization *core.Organization, _ map[string]core.Plan) error {
-			if organization.Billing.CustomerID != event.CustomerID || organization.Billing.SubscriptionID != event.SubscriptionID {
+		// Each Stripe customer belongs to exactly one organization, so the
+		// customer alone binds an invoice. The first invoice of a new
+		// subscription may arrive before checkout completion records it.
+		return service.store.ApplyBillingEventWithPlans(event.ID, event.CustomerID, "", func(organization *core.Organization, _ map[string]core.Plan) error {
+			if event.CustomerID == "" || organization.Billing.CustomerID != event.CustomerID {
 				return nil
 			}
 			invoice := *event.Invoice
@@ -566,14 +567,18 @@ func (service BillingService) ApplyStripeEvent(event payments.BillingEvent) erro
 		if event.OrganizationID != organization.ID || orderAt.Before(organization.Billing.LastEventAt) {
 			return nil
 		}
-		if orderAt.Equal(organization.Billing.LastEventAt) && event.ProviderCurrent && isEntitledSubscriptionState(event.SubscriptionState) && !isEntitledSubscriptionState(organization.Billing.Status) {
+		if orderAt.Equal(organization.Billing.LastEventAt) && event.ProviderCurrent && payments.IsEntitledStatus(event.SubscriptionState) && !payments.IsEntitledStatus(organization.Billing.Status) {
 			// Stripe event timestamps are second-granular. If two provider
 			// snapshots tie exactly, keep the more restrictive state until a
 			// later observation resolves the subscription.
 			return nil
 		}
-		if event.Type == "checkout.session.completed" || event.Type == "checkout.session.async_payment_succeeded" {
+		switch event.Type {
+		case "checkout.session.completed", "checkout.session.async_payment_succeeded":
 			return applyCheckoutEvent(plans, organization, event, orderAt)
+		case "checkout.session.expired":
+			expireCheckout(organization, event)
+			return nil
 		}
 		return applySubscriptionEvent(plans, organization, event, orderAt)
 	})
@@ -620,6 +625,22 @@ func applyCheckoutEvent(plans map[string]core.Plan, organization *core.Organizat
 		organization.BillingRenewal = event.PeriodEnd
 	}
 	return nil
+}
+
+// expireCheckout releases the organization's pending checkout once Stripe
+// reports that its session expired, so the owner can start a new one.
+func expireCheckout(organization *core.Organization, event payments.BillingEvent) {
+	if event.CheckoutID == "" || event.CheckoutID != organization.Billing.CheckoutID || event.ClientReferenceID != organization.ID || event.CheckoutStatus != "expired" {
+		return
+	}
+	session, ok := organization.CheckoutSessions[event.CheckoutID]
+	if !ok || session.Status != checkoutOpen {
+		return
+	}
+	session.Status = checkoutCancel
+	organization.CheckoutSessions[session.ID] = session
+	organization.Billing.CheckoutID = ""
+	organization.Billing.ReturnPath = ""
 }
 
 func applySubscriptionEvent(plans map[string]core.Plan, organization *core.Organization, event payments.BillingEvent, orderAt time.Time) error {
@@ -734,10 +755,6 @@ func activateSubscription(organization *core.Organization, session core.Checkout
 	organization.CheckoutSessions[session.ID] = session
 }
 
-func isEntitledSubscriptionState(status string) bool {
-	return status == "active" || status == "trialing"
-}
-
 func (service BillingService) selectedPlan(planKey, interval string) (core.Plan, error) {
 	planID, planKey, err := service.planCandidate(planKey, interval)
 	if err != nil {
@@ -778,26 +795,6 @@ func validatePlanSelection(plan core.Plan, planKey, interval string) error {
 	return nil
 }
 
-// NormalizeReturnPath rejects absolute, protocol-relative, escaped authority,
-// and backslash paths so checkout cannot be used as an open redirect.
-func NormalizeReturnPath(value, fallback string) (string, error) {
-	if strings.TrimSpace(value) == "" {
-		value = fallback
-	}
-	value = strings.TrimSpace(value)
-	if strings.ContainsAny(value, "\\\r\n") {
-		return "", ErrInvalidReturnPath
-	}
-	parsed, err := url.ParseRequestURI(value)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.User != nil || parsed.Fragment != "" || !strings.HasPrefix(parsed.Path, "/") || strings.HasPrefix(parsed.Path, "//") {
-		return "", ErrInvalidReturnPath
-	}
-	if decoded, err := url.PathUnescape(parsed.EscapedPath()); err != nil || strings.HasPrefix(decoded, "//") || strings.Contains(decoded, "\\") {
-		return "", ErrInvalidReturnPath
-	}
-	return parsed.RequestURI(), nil
-}
-
 func normalizePlanKey(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if len(value) == 0 || len(value) > 64 {
@@ -811,12 +808,4 @@ func normalizePlanKey(value string) string {
 		}
 	}
 	return value
-}
-
-func withOutcome(returnPath, outcome string) string {
-	parsed, _ := url.Parse(returnPath)
-	query := parsed.Query()
-	query.Set("payment", outcome)
-	parsed.RawQuery = query.Encode()
-	return parsed.RequestURI()
 }

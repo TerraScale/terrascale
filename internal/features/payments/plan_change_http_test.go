@@ -55,18 +55,6 @@ func (sessions staleUndoSessions) BearerPrincipal(*http.Request) (core.Principal
 func (sessions staleUndoSessions) End(http.ResponseWriter, *http.Request) {}
 func (sessions staleUndoSessions) RevokeUser(string, string)              {}
 
-func (*staleUndoProvider) PreviewPlanChange(context.Context, SubscriptionSnapshot, string) (PlanChangeQuote, error) {
-	return PlanChangeQuote{}, nil
-}
-func (*staleUndoProvider) ChangePlanNow(context.Context, SubscriptionSnapshot, string, string) error {
-	return nil
-}
-func (*staleUndoProvider) SchedulePlanChange(context.Context, SubscriptionSnapshot, string, string, string) (string, error) {
-	return "", nil
-}
-func (*staleUndoProvider) SetCancelAtPeriodEnd(context.Context, string, bool, string) error {
-	return nil
-}
 func (provider *staleUndoProvider) ReleaseSchedule(context.Context, string, string) error {
 	provider.releaseCalls++
 	return nil
@@ -96,8 +84,8 @@ func TestUndoRecoversWhenStripeReleasedScheduleBeforeLocalWrite(t *testing.T) {
 		ID: "sub_retry", CustomerID: "cus_retry", Status: "active", PriceID: "price_pro_monthly",
 	}}
 	mux := http.NewServeMux()
-	mount(mux, core.Deps{Store: store, Sessions: staleUndoSessions{principal: principal}}, &staleUndoFlow{store: store},
-		StripeConfig{Production: true, Mode: "test", PriceIDs: map[PriceKey]string{{PlanKey: "pro", Interval: "monthly"}: "price_pro_monthly"}}, provider, nil)
+	billing := newStripe(StripeConfig{Mode: ModeTest, PriceIDs: map[PriceKey]string{{PlanKey: "pro", Interval: "monthly"}: "price_pro_monthly"}}, provider)
+	Mount(mux, core.Deps{Store: store, Sessions: staleUndoSessions{principal: principal}}, &staleUndoFlow{store: store}, billing)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/billing/change/undo", nil))
 	current, _ := store.SnapshotAs(principal)
