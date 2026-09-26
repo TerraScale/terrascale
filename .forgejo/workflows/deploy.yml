@@ -10,7 +10,11 @@ jobs:
     runs-on: terrascale-builder
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          persist-credentials: false
       # Pull requests only merge after the e2e workflow lints and tests them,
       # and Fly's remote builder compiles the image, so the runner needs no
       # Go or Node.js toolchain of its own.

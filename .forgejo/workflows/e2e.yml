@@ -11,17 +11,16 @@ jobs:
     runs-on: terrascale-builder
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up pinned Go and Node.js toolchains
-        run: scripts/setup-ci-toolchains.sh
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          persist-credentials: false
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
       - name: Check generated Templ and lint
         run: make lint
-      # terrascale-builder already supplies the pinned, library-patched Chromium.
+      # The ts-builder job image supplies the pinned Go and Node.js toolchains
+      # and a library-patched Chromium with fonts and a 1777 /tmp.
       - name: Run Go browser and account-to-ts-go tests
-        env:
-          CI: "1"
-        run: |
-          . scripts/prepare-ci-browser.sh || exit 1
-          make test-slow
+        run: make test-slow
