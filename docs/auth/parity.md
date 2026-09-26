@@ -18,7 +18,7 @@ Git history for historical comparison only.
 | Organizations, invitations, enrollment domains | `features/organizations` | HTTP contract-fixture regressions for invitation retry, membership scope, and verified-domain enrollment |
 | SCIM directories, users, groups | `features/scim` | Passing HTTP contract-fixture token, rotation, directory-scope and concurrent isolation regressions |
 | Management keys, scopes, user API, operator bootstrap | `features/management`, `features/instances` | HTTP scope/rate-limit tests and OpenAPI tests, including ambiguous-write reconciliation behavior |
-| Hosted admin portal and Datastar fragments | `features/admin`, embedded assets | HTTP SSE/escaping tests and focused admin tests; browser interaction remains a separate acceptance check |
+| Hosted admin portal and Datastar fragments | `features/admin`, embedded assets | HTTP SSE/escaping tests, focused admin tests, and the explicit Chromium `admin_browser` acceptance test run in CI |
 | Billing, quota seats, Stripe webhooks | `features/billing`, `auth-store` | HTTP checkout/webhook contract fixture and quota/store tests; live Stripe integration remains unverified |
 | Webhooks and audit integrity | `features/webhooks`, `auth-store` audit export | Rust store/unit tests for durable records, HMAC seals, and offline export verification |
 | Health, readiness, private metrics, OpenAPI, Scalar | `features/observability`, `app` | Real listener HTTP tests for authentication, fail-closed readiness, `/openapi/v1.json`, and `/scalar` |

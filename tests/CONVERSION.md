@@ -24,8 +24,11 @@ pass does not establish behavior against a deployed TerraBase database.
 ## Remaining acceptance work
 
 Review each Rust route family and its storage contract for authorization
-failures, persistence conflicts, and ambiguous commits. Browser-visible UI
-and Datastar behavior need browser coverage. The coverage map in
+failures, persistence conflicts, and ambiguous commits. The ignored
+`admin_browser` and `device_authorization` Chromium tests cover the admin
+portal and device approval Datastar flows; CI runs them explicitly with
+`TS_AUTH_PLAYWRIGHT_MODULE` and `TS_AUTH_CHROMIUM_PATH`. Other hosted pages
+still need browser coverage. The coverage map in
 `docs/parity.md` records which Rust tests exercise each family and which
 integrations still require a live external system.
 
