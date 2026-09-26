@@ -16,8 +16,8 @@ rebuilds or repacks source.
 
 Run `./run.sh --phase seed|verify|exercise|cleanup`. Output is bounded JSON
 observations and never includes credentials or response bodies. `verify`
-expects `${runId}-{typescript,go,rust,dotnet}` documents. `cleanup` deletes only
-all three dotnet-owned document IDs, attempts every deletion, and aggregates failures.
+expects `${runId}-{typescript,go,rust,dotnet,cli}` documents. `cleanup` deletes only
+the three dotnet-owned document IDs, attempts every deletion, and aggregates failures.
 Run IDs must match `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`. Missing inputs and any live failure are
 non-zero failures; local execution does not qualify a provider run until the
 coordinator retains its logs and package hash.

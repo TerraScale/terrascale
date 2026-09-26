@@ -1,6 +1,7 @@
 # TerraScale.DotNet
 
-The C#/.NET 11 client SDK for TerraScale. The workspace
+The C#/.NET client SDK for TerraScale, targeting .NET 10 LTS and .NET 11
+(`net11.0` is built when the toolchain supports it). The workspace
 [goal](../GOAL.md) defines the product and SDK responsibilities. Generated
 models and route metadata consume the pinned public contract published by
 terrabase; named clients implement customer operations against that contract.
@@ -65,10 +66,11 @@ and the loopback emulator keep direct routing exactly as before. Set
   tokens — the SCIM token also by its rotating call — are returned only by
 their creating (or rotating) call.
 - Named clients for document CRUD, collections, databases, database branches,
-  regions, backups, SQL, reactive views, usage, schemas, indexes, webhooks,
-  development operations, and durable exports. Provisioning creation distinguishes
-  immediate HTTP 201 records from HTTP 202 accepted operations; use
-  `Operations.GetAsync` to observe authoritative progress.
+  regions, backups, files, SQL, reactive views, operations, auth persistence,
+  authorization leases, and — under `Management` — usage, schemas, indexes,
+  webhooks, development operations, durable exports, and imports. Provisioning
+  creation distinguishes immediate HTTP 201 records from HTTP 202 accepted
+  operations; use `Operations.GetAsync` to observe authoritative progress.
 - `Documents.QueryAsync` runs bounded predicate queries
   (`POST .../documents/query`) with typed predicates (`equal`, `notEqual`,
   `exists`, ranges, `contains`, `startsWith`), optional projection paths,
@@ -81,7 +83,11 @@ their creating (or rotating) call.
   machine (bounded snapshots, atomic deltas, opaque checkpoints, typed resets,
   reversible optimistic presentation). `TerraScaleReactiveHttpClient` is the
   public reactive binding and supplies MessagePack snapshot bootstrap, HTTP log
-  delivery, and WebSocket delivery.
+  delivery, WebSocket delivery, and Server-Sent Events delivery.
+- `TerraScale.EntityFrameworkCore`: a separate package that maps EF Core
+  entity types onto TerraScale documents (`UseTerraScaleSource`,
+  `AsTerraScaleSource`, `TerraScaleSet<TEntity>`, and
+  `AddTerraScaleEntityFrameworkCore<TContext>`).
 
 Retired product concepts are deleted per the workspace decisions, not
 deprecated: this SDK documents only the current public SDK surface above.
@@ -154,16 +160,27 @@ retries; rotation and replay are not automatically retried.
 
 ## Verification
 
+Materialize the pinned contract bundle first; `CONTRACT_URL` (or
+`CONTRACT_SOURCE`) must be set explicitly:
+
 ```bash
+CONTRACT_ARCHIVE_SHA256="$(tr -d '[:space:]' < CONTRACT_ARCHIVE_SHA256)" \
+  dotnet run scripts/contracts.cs --version "$(tr -d '[:space:]' < CONTRACT_VERSION)"
 dotnet build TerraScale.DotNet.slnx --configuration Release
-dotnet test TerraScale.DotNet.slnx --configuration Release --no-build
+dotnet format style TerraScale.DotNet.slnx --verify-no-changes --no-restore
+dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj \
+  --framework net11.0 --configuration Release --no-build
+dotnet run --project tests/TerraScale.EntityFrameworkCore.Tests/TerraScale.EntityFrameworkCore.Tests.csproj \
+  --framework net11.0 --configuration Release --no-build
 ```
 
-The solution build and test verify the checked-in generated sources and
-formatting. Tests consume the producer OpenAPI,
-HTTP error corpus, reactive snapshot/delta/reset/timeout fixtures, and hostile
-MessagePack vectors. The package check then restores and runs a separate NuGet
-consumer with an isolated package directory and no SDK project reference.
+CI runs both test projects for `net10.0` and `net11.0` and fails closed on
+vulnerable NuGet packages (`dotnet run scripts/check-nuget-vulnerabilities.cs`).
+Tests consume the producer OpenAPI, HTTP error corpus, reactive
+snapshot/delta/reset/timeout fixtures, and hostile MessagePack vectors. After a
+Release build, `python3 scripts/check_package.py` packs the SDK and restores
+and runs a separate NuGet consumer with an isolated package directory and no
+SDK project reference.
 
 The installed `contracts/` directory is disposable input and is not tracked.
 Tests intentionally fail when their producer fixtures are missing. Local
