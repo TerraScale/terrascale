@@ -1,4 +1,4 @@
-name: Rust benchmark build and guest environment
+name: Rust benchmark build
 
 on:
   push:
@@ -13,9 +13,9 @@ concurrency:
 
 jobs:
   benchmark:
-    name: Check the Rust driver and run the pinned guest suite
+    name: Check and build the Rust driver, harness, and guest executables
     runs-on: terrascale-builder
-    timeout-minutes: 120
+    timeout-minutes: 45
     env:
       # The Makefiles lower priority only for local runs; CI builds at full
       # priority and parallelism.
@@ -58,69 +58,10 @@ jobs:
       - name: Check and build both driver modes and guest executables
         run: make -C ts-benchmark fmt check lint build check-engine lint-engine build-guest build-guest-engine
 
-      - name: Check harness and compile image-builder tests without executing them
+      - name: Check and lint the harness and image builder
         run: make -C ts-benchmark/firecracker-harness fmt check-controller lint-controller check-image-builder lint-image-builder
 
-      - name: Verify Firecracker, KVM, images, and effective guest limits
-        run: make -C ts-benchmark vm-preflight vm-smoke
-
-      - name: Compile musl test executables and the real TerraBase caller
+      - name: Compile musl test executables without running them
         run: |
           make -C ts-benchmark/firecracker-harness test-build test-build-image-builder
           make -C ts-benchmark test-build
-
-      - name: Run Rust tests and the real TerraBase caller in Firecracker
-        env:
-          RUN_BASE: ci-${{ forgejo.run_id }}-${{ forgejo.run_attempt }}
-        run: |
-          set -eu
-          packet="$(mktemp -d)"
-          cp -p ts-benchmark/firecracker-harness/target/release/fc-harness "$packet/fc-harness"
-          cp -p ts-benchmark/firecracker-harness/target/x86_64-unknown-linux-musl/release/fc-guest-agent "$packet/fc-guest-agent"
-          (cd "$packet" && sha256sum fc-harness fc-guest-agent > SHA256SUMS && sha256sum -c SHA256SUMS)
-          harness_sha="$(sha256sum "$packet/fc-harness" | cut -d ' ' -f 1)"
-          agent_sha="$(sha256sum "$packet/fc-guest-agent" | cut -d ' ' -f 1)"
-          printf 'Frozen controller SHA-256: %s\nFrozen agent SHA-256: %s\n' "$harness_sha" "$agent_sha"
-
-          pick_test_executable() {
-            found=
-            for candidate in "$@"; do
-              if [ -f "$candidate" ] && [ -x "$candidate" ]; then
-                test -z "$found" || { echo 'Multiple matching musl test executables' >&2; return 2; }
-                found="$candidate"
-              fi
-            done
-            test -n "$found" || { echo 'Musl test executable was not found' >&2; return 2; }
-            printf '%s\n' "$found"
-          }
-
-          harness_tests="$(pick_test_executable "$PWD"/ts-benchmark/firecracker-harness/target/x86_64-unknown-linux-musl/debug/deps/fc_harness-*)"
-          builder_tests="$(pick_test_executable "$PWD"/ts-benchmark/firecracker-harness/target/x86_64-unknown-linux-musl/debug/deps/fc_image_builder-*)"
-          engine_tests="$(pick_test_executable "$PWD"/ts-benchmark/terra-rust/target/x86_64-unknown-linux-musl/debug/deps/terrabase_sqlite_baseline-*)"
-
-          (cd "$packet" && sha256sum -c SHA256SUMS)
-          make -C ts-benchmark/firecracker-harness test-vm \
-            TEST_BINARY="$harness_tests" RUN_ID="$RUN_BASE-harness" SUBJECT_REPO="$PWD/terrabase" \
-            HARNESS_BINARY="$packet/fc-harness" GUEST_AGENT_BINARY="$packet/fc-guest-agent"
-          (cd "$packet" && sha256sum -c SHA256SUMS)
-          make -C ts-benchmark/firecracker-harness test-vm \
-            TEST_BINARY="$builder_tests" RUN_ID="$RUN_BASE-image-builder" SUBJECT_REPO="$PWD/terrabase" \
-            HARNESS_BINARY="$packet/fc-harness" GUEST_AGENT_BINARY="$packet/fc-guest-agent"
-          make -C ts-benchmark test-vm \
-            TEST_BINARY="$engine_tests" RUN_ID="$RUN_BASE-engine-unit" SUBJECT_REPO="$PWD/terrabase" \
-            HARNESS_BINARY="$packet/fc-harness" GUEST_AGENT_BINARY="$packet/fc-guest-agent" \
-            HARNESS_SHA256="$harness_sha" GUEST_AGENT_SHA256="$agent_sha"
-
-          (cd "$packet" && sha256sum -c SHA256SUMS)
-          FC_GUEST_AGENT_PATH="$packet/fc-guest-agent" "$packet/fc-harness" run \
-            --benchmark-repo "$PWD/ts-benchmark" --subject-repo "$PWD/terrabase" \
-            --program "$PWD/ts-benchmark/terra-rust/target/x86_64-unknown-linux-musl/release/terrabase-sqlite-baseline" \
-            --run-id "$RUN_BASE-terrabase" --timeout-seconds 120 -- \
-            run-terrabase --case point-hit-random --rows 1024 --operations 4 \
-            --body-bytes 16 --seed 1 --trial 1 \
-            --database /root/fc-bench-data/ci-terrabase.tbdb \
-            --samples /root/fc-harness-output/samples.jsonl \
-            --receipt /root/fc-harness-output/receipt.json \
-            --guest-manifest /root/fc-harness-output/guest-manifest.json \
-            --benchmark-revision "$(git -C ts-benchmark rev-parse HEAD)" \
-            --engine-revision "$(git -C terrabase rev-parse HEAD)"

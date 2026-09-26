@@ -61,13 +61,16 @@ tree contains `crates/tb-core` and `crates/tb-storage`; CI checks the resolved
 commit and both manifests before compiling either driver mode. Even SQLite-only
 Cargo commands resolve those optional path dependencies, so the sibling
 checkout is required. CI reads the private TerraBase repository with the
-read-only `ORG_READ_TOKEN` secret. CI compiles the engine-enabled caller and
-musl binaries, then its Firecracker steps run the harness, image-builder,
-and engine unit binaries and a small real `run-terrabase` caller smoke inside
-verified guests. These checks establish runtime integration, not benchmark
-acceptance or performance results. CI never executes test binaries or
-measurements on the host. CI selects the same pinned Rust toolchain through
-rustup proxies; it does not require mise on the runner.
+read-only `ORG_READ_TOKEN` secret. CI formats, checks, lints, and builds both
+driver modes, the harness, the image builder, and the musl guest and test
+executables. It never executes test binaries or measurements: the
+`terrascale-builder` runner has no KVM, Firecracker, or pinned guest images.
+Guest execution runs locally on a KVM host with `firecracker` on `PATH` and the
+pinned kernel and rootfs at `/tmp/vm-inputs` (see
+[`firecracker-harness/pins.toml`](firecracker-harness/pins.toml)): run
+`make vm-preflight vm-smoke`, then `make test-vm` for the harness,
+image-builder, and engine unit binaries. CI selects the same pinned Rust
+toolchain through rustup proxies; it does not require mise on the runner.
 
 `build` is a host artifact. `build-guest` produces the statically linked
 `terra-rust/target/x86_64-unknown-linux-musl/release/terrabase-sqlite-baseline`
