@@ -2965,8 +2965,8 @@ fn decode_hex_lower(value: &str, out: &mut [u8]) -> bool {
     if value.len() != out.len() * 2 {
         return false;
     }
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
-        match (hex_digit(pair[0]), hex_digit(pair[1])) {
+    for (index, [high, low]) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
+        match (hex_digit(*high), hex_digit(*low)) {
             (Some(high), Some(low)) => out[index] = high << 4 | low,
             _ => return false,
         }

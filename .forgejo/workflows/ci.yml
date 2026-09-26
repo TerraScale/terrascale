@@ -7,45 +7,26 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ts-rust-${{ forgejo.workflow }}-${{ forgejo.ref }}
+  cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
+
 jobs:
   ci:
     name: Run ts-rust checks
     runs-on: terrascale-builder
     timeout-minutes: 30
     env:
-      FORGEJO_SHA: ${{ forgejo.sha }}
+      # Incremental build state survives across jobs on the shared cache.
+      CARGO_TARGET_DIR: /cache/cargo-target/ts-rust
     steps:
       - name: Check out the source revision
-        uses: https://data.forgejo.org/actions/checkout@v6.1.0
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
           ref: ${{ forgejo.sha }}
           fetch-depth: 1
           persist-credentials: false
-
-      - name: Verify the checked out source revision
-        run: |
-          set -eu
-          test "$(git rev-parse HEAD)" = "${FORGEJO_SHA:?event SHA is required}"
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
-
-      - name: Install the pinned Rust formatting and lint components
-        run: |
-          set -euo pipefail
-          if ! rustup --version >/dev/null 2>&1; then
-            curl --fail --location --retry 3 https://sh.rustup.rs \
-              | sh -s -- -y --profile minimal --default-toolchain none
-          fi
-          export PATH="${HOME}/.cargo/bin:${PATH}"
-          rustup toolchain install 1.97.1 \
-            --profile minimal \
-            --component rustfmt \
-            --component clippy \
-            --no-self-update
-          cargo install cargo-audit --locked --version 0.22.2
-          printf '%s\n' "${HOME}/.cargo/bin" >> "${GITHUB_PATH:?GITHUB_PATH is required}"
-          rustfmt +1.97.1 --version
-          cargo +1.97.1 clippy --version
 
       - name: Verify the pinned contract bundle
         run: |
@@ -53,21 +34,9 @@ jobs:
           dotnet run scripts/contracts.cs --version v1 --source contracts/v1
           git diff --exit-code -- contracts/v1 src/generated_contract.rs
 
-      - name: Verify the pinned Rust toolchain
-        run: |
-          set -eu
-          case "$(rustc --version)" in
-            "rustc 1.97.1 "*) ;;
-            *) echo "unexpected Rust toolchain: $(rustc --version)" >&2; exit 1 ;;
-          esac
-          host="$(rustc -vV | awk '/^host:/ { print $2 }')"
-          case "${host}" in
-            x86_64-*|aarch64-*) printf 'rust=%s host=%s\n' "$(rustc --version)" "${host}" ;;
-            *) echo "unsupported Rust host: ${host}" >&2; exit 1 ;;
-          esac
-
-      # cargo-audit is baked into the job image and verify.sh-asserted.
-      - name: Audit Rust dependencies with the pinned advisory scanner
+      # The toolchain (rust-toolchain.toml) and cargo-audit are baked into
+      # the ts-builder job image.
+      - name: Audit Rust dependencies
         run: cargo audit
 
       - name: Check Rust formatting
