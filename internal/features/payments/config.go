@@ -39,6 +39,15 @@ type StripeConfig struct {
 	WebhookSecret string
 	PublicOrigin  string
 	PriceIDs      map[PriceKey]string
+	State         StateScope
+}
+
+// StateScope locates the dashboard's own TerraBase database, where synced
+// Stripe state is stored.
+type StateScope struct {
+	TenantID   string
+	ProjectID  string
+	DatabaseID string
 }
 
 // LoadStripeConfig reads and validates every setting the live billing flow
@@ -51,6 +60,11 @@ func LoadStripeConfig(lookup func(string) string) (StripeConfig, error) {
 		SecretKey:     get("STRIPE_SECRET_KEY"),
 		WebhookSecret: get("STRIPE_WEBHOOK_SECRET"),
 		PriceIDs:      make(map[PriceKey]string, len(paidPlans)*len(intervals)),
+		State: StateScope{
+			TenantID:   get("TS_BILLING_TENANT_ID"),
+			ProjectID:  get("TS_BILLING_PROJECT_ID"),
+			DatabaseID: get("TS_BILLING_DATABASE_ID"),
+		},
 	}
 	var problems []error
 	if config.Mode != ModeTest && config.Mode != ModeLive {
@@ -60,6 +74,18 @@ func LoadStripeConfig(lookup func(string) string) (StripeConfig, error) {
 	}
 	if !strings.HasPrefix(config.WebhookSecret, "whsec_") {
 		problems = append(problems, errors.New("STRIPE_WEBHOOK_SECRET must be the endpoint signing secret (whsec_…)"))
+	}
+	for _, setting := range []struct{ name, value string }{
+		{"TS_BILLING_TENANT_ID", config.State.TenantID},
+		{"TS_BILLING_PROJECT_ID", config.State.ProjectID},
+		{"TS_BILLING_DATABASE_ID", config.State.DatabaseID},
+	} {
+		if setting.value == "" {
+			problems = append(problems, fmt.Errorf("%s must name the TerraBase scope that stores Stripe state", setting.name))
+		}
+	}
+	if config.State.DatabaseID != "" && !validDatabaseName(config.State.DatabaseID) {
+		problems = append(problems, errors.New("TS_BILLING_DATABASE_ID must be a TerraBase database name: 1-63 lowercase letters, digits, or dashes"))
 	}
 	origin, err := publicOrigin(get("DASHBOARD_PUBLIC_ORIGIN"))
 	if err != nil {
@@ -92,6 +118,20 @@ func LoadStripeConfig(lookup func(string) string) (StripeConfig, error) {
 // PriceEnvName is the environment variable holding a plan's Stripe Price ID.
 func PriceEnvName(planKey, interval string) string {
 	return "STRIPE_PRICE_" + strings.ToUpper(planKey) + "_" + strings.ToUpper(interval)
+}
+
+// validDatabaseName mirrors TerraBase's database identifier rule, which ts-go
+// enforces on schema calls.
+func validDatabaseName(name string) bool {
+	if len(name) == 0 || len(name) > 63 || name[0] == '-' || name[len(name)-1] == '-' {
+		return false
+	}
+	for _, char := range name {
+		if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func validSecretKey(key, mode string) bool {

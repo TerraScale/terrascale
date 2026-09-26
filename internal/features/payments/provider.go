@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"terrascale.tech/dashboard/internal/core"
+
 	stripe "github.com/stripe/stripe-go/v86"
 )
 
@@ -51,20 +53,33 @@ type PortalSession struct {
 	URL string
 }
 
-// SubscriptionSnapshot is retrieved from Stripe after a signed event. Its
-// current price, status, and period end are authoritative when events arrive
-// out of order or the customer changes their plan in Stripe's portal.
+// SubscriptionSnapshot is one subscription as Stripe reports it now.
 type SubscriptionSnapshot struct {
-	ID                string
-	CustomerID        string
-	OrganizationID    string
-	Status            string
-	PriceID           string
-	ItemID            string
-	ScheduleID        string
-	CancelAtPeriodEnd bool
-	PendingUpdate     bool
-	CurrentPeriodEnd  time.Time
+	ID                 string
+	CustomerID         string
+	OrganizationID     string
+	Status             string
+	PriceID            string
+	ItemID             string
+	ScheduleID         string
+	ScheduledPriceID   string
+	PendingPriceID     string
+	CancelAtPeriodEnd  bool
+	TrialStarted       bool
+	CreatedAt          time.Time
+	CurrentPeriodStart time.Time
+	CurrentPeriodEnd   time.Time
+	PaymentMethod      *PaymentMethod
+}
+
+// StripeCustomer is everything SyncCustomer reads about one customer.
+type StripeCustomer struct {
+	ID                   string
+	OrganizationID       string
+	Deleted              bool
+	DefaultPaymentMethod *PaymentMethod
+	Subscriptions        []SubscriptionSnapshot
+	Invoices             []core.Invoice
 }
 
 type PlanChangeQuote struct {
@@ -82,6 +97,7 @@ type BillingProvider interface {
 	ExpireCheckoutSession(context.Context, string) error
 	RetrieveCheckoutSession(context.Context, string) (CheckoutSession, error)
 	RetrieveSubscription(context.Context, string) (SubscriptionSnapshot, error)
+	FetchCustomer(context.Context, string) (StripeCustomer, error)
 	CreatePortalSession(context.Context, string, string, string) (PortalSession, error)
 	PreviewPlanChange(context.Context, SubscriptionSnapshot, string) (PlanChangeQuote, error)
 	ChangePlanNow(context.Context, SubscriptionSnapshot, string, string) error
@@ -154,8 +170,11 @@ func (provider *stripeProvider) CreateCheckoutSession(ctx context.Context, reque
 	params := &stripe.CheckoutSessionCreateParams{
 		Mode:                    new("subscription"),
 		PaymentMethodCollection: new("always"),
-		Customer:                new(request.CustomerID),
-		ClientReferenceID:       new(request.OrganizationID),
+		// Cards (including Apple Pay and Google Pay) and Link only; methods
+		// such as Cash App Pay cause most abandoned and disputed payments.
+		PaymentMethodTypes: []*string{new("card"), new("link")},
+		Customer:           new(request.CustomerID),
+		ClientReferenceID:  new(request.OrganizationID),
 		LineItems: []*stripe.CheckoutSessionCreateLineItemParams{{
 			Price:    new(priceID),
 			Quantity: new(int64(1)),
@@ -204,23 +223,61 @@ func (provider *stripeProvider) RetrieveSubscription(ctx context.Context, subscr
 	if err != nil {
 		return SubscriptionSnapshot{}, err
 	}
-	snapshot := SubscriptionSnapshot{
-		ID:                subscription.ID,
-		CustomerID:        stripeCustomerID(subscription.Customer),
-		OrganizationID:    subscription.Metadata["organization_id"],
-		Status:            string(subscription.Status),
-		CancelAtPeriodEnd: subscription.CancelAtPeriodEnd,
-		PendingUpdate:     subscription.PendingUpdate != nil,
-		CurrentPeriodEnd:  currentPeriodEnd(subscription.Items),
+	return subscriptionSnapshot(subscription), nil
+}
+
+// customerSubscriptionLimit bounds the subscriptions read per sync. Checkout
+// allows one current subscription, so older entries only inform TrialUsed.
+const (
+	customerSubscriptionLimit = 10
+	customerInvoiceLimit      = 24
+)
+
+func (provider *stripeProvider) FetchCustomer(ctx context.Context, customerID string) (StripeCustomer, error) {
+	if customerID == "" {
+		return StripeCustomer{}, ErrInvalidBillingInput
 	}
-	if subscription.Items != nil && len(subscription.Items.Data) == 1 && subscription.Items.Data[0] != nil && subscription.Items.Data[0].Price != nil {
-		snapshot.PriceID = subscription.Items.Data[0].Price.ID
-		snapshot.ItemID = subscription.Items.Data[0].ID
+	customerParams := &stripe.CustomerRetrieveParams{}
+	customerParams.AddExpand("invoice_settings.default_payment_method")
+	customer, err := provider.client.V1Customers.Retrieve(ctx, customerID, customerParams)
+	if err != nil {
+		return StripeCustomer{}, err
 	}
-	if subscription.Schedule != nil {
-		snapshot.ScheduleID = subscription.Schedule.ID
+	result := StripeCustomer{ID: customer.ID, OrganizationID: customer.Metadata["organization_id"], Deleted: customer.Deleted}
+	if customer.InvoiceSettings != nil {
+		result.DefaultPaymentMethod = paymentMethod(customer.InvoiceSettings.DefaultPaymentMethod)
 	}
-	return snapshot, nil
+
+	subscriptionParams := &stripe.SubscriptionListParams{Customer: new(customerID), Status: new("all")}
+	subscriptionParams.Limit = new(int64(customerSubscriptionLimit))
+	subscriptionParams.AddExpand("data.default_payment_method")
+	subscriptionParams.AddExpand("data.schedule")
+	subscriptions := provider.client.V1Subscriptions.List(ctx, subscriptionParams)
+	for _, subscription := range subscriptions.Data() {
+		result.Subscriptions = append(result.Subscriptions, subscriptionSnapshot(subscription))
+	}
+	if err := subscriptions.Err(); err != nil {
+		return StripeCustomer{}, err
+	}
+
+	invoiceParams := &stripe.InvoiceListParams{Customer: new(customerID)}
+	invoiceParams.Limit = new(int64(customerInvoiceLimit))
+	invoices := provider.client.V1Invoices.List(ctx, invoiceParams)
+	for _, invoice := range invoices.Data() {
+		if invoice.Status == stripe.InvoiceStatusDraft {
+			continue
+		}
+		result.Invoices = append(result.Invoices, core.Invoice{
+			ID: invoice.ID, Number: invoice.Number, Status: string(invoice.Status), AmountCents: invoice.AmountDue,
+			Currency: string(invoice.Currency), CreatedAt: fromUnix(invoice.Created),
+			PeriodStart: fromUnix(invoice.PeriodStart), PeriodEnd: fromUnix(invoice.PeriodEnd),
+			HostedURL: invoice.HostedInvoiceURL, PDFURL: invoice.InvoicePDF,
+		})
+	}
+	if err := invoices.Err(); err != nil {
+		return StripeCustomer{}, err
+	}
+	return result, nil
 }
 
 func (provider *stripeProvider) CreatePortalSession(ctx context.Context, customerID, returnURL, idempotencyKey string) (PortalSession, error) {
@@ -367,6 +424,66 @@ func (provider *stripeProvider) ReleaseSchedule(ctx context.Context, scheduleID,
 	params.SetIdempotencyKey(idempotencyKey)
 	_, err := provider.client.V1SubscriptionSchedules.Release(ctx, scheduleID, params)
 	return err
+}
+
+func subscriptionSnapshot(subscription *stripe.Subscription) SubscriptionSnapshot {
+	snapshot := SubscriptionSnapshot{
+		ID:                subscription.ID,
+		CustomerID:        stripeCustomerID(subscription.Customer),
+		OrganizationID:    subscription.Metadata["organization_id"],
+		Status:            string(subscription.Status),
+		CancelAtPeriodEnd: subscription.CancelAtPeriodEnd,
+		TrialStarted:      subscription.TrialStart > 0,
+		CreatedAt:         fromUnix(subscription.Created),
+		PaymentMethod:     paymentMethod(subscription.DefaultPaymentMethod),
+	}
+	if subscription.Items != nil {
+		for _, item := range subscription.Items.Data {
+			if item == nil {
+				continue
+			}
+			if start := fromUnix(item.CurrentPeriodStart); !start.IsZero() && (snapshot.CurrentPeriodStart.IsZero() || start.Before(snapshot.CurrentPeriodStart)) {
+				snapshot.CurrentPeriodStart = start
+			}
+		}
+		snapshot.CurrentPeriodEnd = currentPeriodEnd(subscription.Items)
+		if len(subscription.Items.Data) == 1 && subscription.Items.Data[0] != nil && subscription.Items.Data[0].Price != nil {
+			snapshot.PriceID = subscription.Items.Data[0].Price.ID
+			snapshot.ItemID = subscription.Items.Data[0].ID
+		}
+	}
+	if pending := subscription.PendingUpdate; pending != nil && len(pending.SubscriptionItems) == 1 && pending.SubscriptionItems[0] != nil && pending.SubscriptionItems[0].Price != nil {
+		snapshot.PendingPriceID = pending.SubscriptionItems[0].Price.ID
+	}
+	if schedule := subscription.Schedule; schedule != nil {
+		snapshot.ScheduleID = schedule.ID
+		snapshot.ScheduledPriceID = nextPhasePrice(schedule)
+	}
+	return snapshot
+}
+
+// nextPhasePrice returns the single price of the schedule phase after the
+// current one, which is how the dashboard schedules downgrades.
+func nextPhasePrice(schedule *stripe.SubscriptionSchedule) string {
+	if schedule.CurrentPhase == nil {
+		return ""
+	}
+	for _, phase := range schedule.Phases {
+		if phase != nil && phase.StartDate >= schedule.CurrentPhase.EndDate && len(phase.Items) == 1 && phase.Items[0] != nil && phase.Items[0].Price != nil {
+			return phase.Items[0].Price.ID
+		}
+	}
+	return ""
+}
+
+func paymentMethod(method *stripe.PaymentMethod) *PaymentMethod {
+	if method == nil || method.Card == nil || method.Card.Last4 == "" {
+		return nil
+	}
+	return &PaymentMethod{
+		Brand: string(method.Card.Brand), Last4: method.Card.Last4,
+		ExpMonth: method.Card.ExpMonth, ExpYear: method.Card.ExpYear,
+	}
 }
 
 func planMetadata(organizationID, planKey, interval string) map[string]string {

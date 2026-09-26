@@ -10,11 +10,12 @@ import (
 	"terrascale.tech/dashboard/internal/core"
 )
 
+// planChangeFlow is the demo counterpart of the Stripe plan-change calls.
+// Live changes are applied in Stripe and then synced like any other change.
 type planChangeFlow interface {
-	RecordScheduledChange(core.Principal, string, string, string, string, time.Time) error
-	RecordPendingChange(core.Principal, string, string, string) error
-	ClearScheduledChange(core.Principal, string) error
 	ChangeDemoPlan(core.Principal, string, string) error
+	ScheduleDemoChange(core.Principal, string, string, time.Time) error
+	UndoDemoChange(core.Principal) error
 }
 
 func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, billing *Stripe) {
@@ -77,7 +78,7 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, bill
 				http.Redirect(w, r, "/usage?tab=billing&billing=changed", http.StatusSeeOther)
 				return
 			}
-			if err := changes.RecordScheduledChange(principal, org.Billing.SubscriptionID, key, interval, "", org.BillingRenewal); err != nil {
+			if err := changes.ScheduleDemoChange(principal, key, interval, org.BillingRenewal); err != nil {
 				writeBillingError(w, err)
 				return
 			}
@@ -115,11 +116,9 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, bill
 				http.Error(w, "Could not schedule Free.", http.StatusBadGateway)
 				return
 			}
-			if err := changes.RecordScheduledChange(principal, current.ID, key, "", "", current.CurrentPeriodEnd); err != nil {
-				writeBillingError(w, err)
-				return
+			if billing.syncAfterChange(w, r, flow, org) {
+				http.Redirect(w, r, "/usage?tab=billing&billing=scheduled", http.StatusSeeOther)
 			}
-			http.Redirect(w, r, "/usage?tab=billing&billing=scheduled", http.StatusSeeOther)
 			return
 		}
 		nextPriceID, configured := config.PriceID(key, interval)
@@ -137,28 +136,23 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, bill
 				http.Error(w, "Could not confirm the plan change.", http.StatusBadGateway)
 				return
 			}
-			if err := changes.RecordPendingChange(principal, current.ID, key, interval); err != nil {
-				writeBillingError(w, err)
-				return
+			if billing.syncAfterChange(w, r, flow, org) {
+				http.Redirect(w, r, "/usage?tab=billing&billing=pending", http.StatusSeeOther)
 			}
-			http.Redirect(w, r, "/usage?tab=billing&billing=pending", http.StatusSeeOther)
 			return
 		}
 		if current.CancelAtPeriodEnd {
 			http.Error(w, "Undo the scheduled cancellation first.", http.StatusConflict)
 			return
 		}
-		scheduleID, err := changer.SchedulePlanChange(r.Context(), current, nextPriceID, idempotencyKey)
-		if err != nil {
+		if _, err := changer.SchedulePlanChange(r.Context(), current, nextPriceID, idempotencyKey); err != nil {
 			slog.Error("schedule Stripe plan change", "organization_id", org.ID, "error", err)
 			http.Error(w, "Could not schedule the plan change.", http.StatusBadGateway)
 			return
 		}
-		if err := changes.RecordScheduledChange(principal, current.ID, key, interval, scheduleID, current.CurrentPeriodEnd); err != nil {
-			writeBillingError(w, err)
-			return
+		if billing.syncAfterChange(w, r, flow, org) {
+			http.Redirect(w, r, "/usage?tab=billing&billing=scheduled", http.StatusSeeOther)
 		}
-		http.Redirect(w, r, "/usage?tab=billing&billing=scheduled", http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("POST /billing/change/undo", func(w http.ResponseWriter, r *http.Request) {
@@ -209,13 +203,27 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, bill
 				http.Error(w, "Could not undo the scheduled change.", http.StatusBadGateway)
 				return
 			}
-		}
-		if err := changes.ClearScheduledChange(principal, org.Billing.SubscriptionID); err != nil {
+			if !billing.syncAfterChange(w, r, flow, org) {
+				return
+			}
+		} else if err := changes.UndoDemoChange(principal); err != nil {
 			writeBillingError(w, err)
 			return
 		}
 		http.Redirect(w, r, "/usage?tab=billing&billing=undone", http.StatusSeeOther)
 	})
+}
+
+// syncAfterChange projects what Stripe accepted, so the scheduled or pending
+// change shown to the owner is Stripe's, not a local guess. It reports false
+// after writing an error response.
+func (billing *Stripe) syncAfterChange(w http.ResponseWriter, r *http.Request, flow BillingFlow, org core.Organization) bool {
+	if _, err := billing.SyncCustomer(r.Context(), flow, org.Billing.CustomerID); err != nil {
+		slog.Error("sync Stripe customer after plan change", "organization_id", org.ID, "error", err)
+		http.Error(w, "Stripe accepted the change, but the dashboard could not refresh it yet. Reload in a moment.", http.StatusBadGateway)
+		return false
+	}
+	return true
 }
 
 func validPlanChangeCSRF(deps core.Deps, w http.ResponseWriter, r *http.Request) bool {

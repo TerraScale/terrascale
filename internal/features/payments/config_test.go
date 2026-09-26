@@ -12,6 +12,9 @@ func validStripeEnv() map[string]string {
 		"STRIPE_SECRET_KEY":       "sk_test_123",
 		"STRIPE_WEBHOOK_SECRET":   "whsec_123",
 		"DASHBOARD_PUBLIC_ORIGIN": "https://dashboard.example.test/",
+		"TS_BILLING_TENANT_ID":    "tenant_dashboard",
+		"TS_BILLING_PROJECT_ID":   "project_billing",
+		"TS_BILLING_DATABASE_ID":  "dashboard-billing",
 	}
 	for _, plan := range paidPlans {
 		for _, interval := range intervals {
@@ -26,7 +29,8 @@ func TestLoadStripeConfigAcceptsCompleteSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.PublicOrigin != "https://dashboard.example.test" || len(config.PriceIDs) != 6 || !config.PlanChangesEnabled() {
+	if config.PublicOrigin != "https://dashboard.example.test" || len(config.PriceIDs) != 6 || !config.PlanChangesEnabled() ||
+		config.State != (StateScope{TenantID: "tenant_dashboard", ProjectID: "project_billing", DatabaseID: "dashboard-billing"}) {
 		t.Fatalf("config = %#v", config)
 	}
 	if priceID, ok := config.PriceID("Business", IntervalAnnual); !ok || priceID != "price_business_annual" {
@@ -52,6 +56,8 @@ func TestLoadStripeConfigRejectsInvalidSettings(t *testing.T) {
 		{"origin with path", map[string]string{"DASHBOARD_PUBLIC_ORIGIN": "https://dashboard.example.test/app"}, "DASHBOARD_PUBLIC_ORIGIN"},
 		{"missing price", map[string]string{"STRIPE_PRICE_PRO_ANNUAL": ""}, "STRIPE_PRICE_PRO_ANNUAL"},
 		{"duplicate price", map[string]string{"STRIPE_PRICE_PRO_ANNUAL": "price_pro_monthly"}, "STRIPE_PRICE_PRO_ANNUAL reuses"},
+		{"missing state database", map[string]string{"TS_BILLING_DATABASE_ID": ""}, "TS_BILLING_DATABASE_ID"},
+		{"invalid state database", map[string]string{"TS_BILLING_DATABASE_ID": "Dashboard_Billing"}, "TS_BILLING_DATABASE_ID"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -69,7 +75,7 @@ func TestLoadStripeConfigRejectsInvalidSettings(t *testing.T) {
 
 func TestLoadStripeConfigReportsEveryProblem(t *testing.T) {
 	_, err := LoadStripeConfig(func(string) string { return "" })
-	for _, name := range []string{"STRIPE_MODE", "STRIPE_WEBHOOK_SECRET", "DASHBOARD_PUBLIC_ORIGIN", "STRIPE_PRICE_STARTER_MONTHLY", "STRIPE_PRICE_BUSINESS_ANNUAL"} {
+	for _, name := range []string{"STRIPE_MODE", "STRIPE_WEBHOOK_SECRET", "DASHBOARD_PUBLIC_ORIGIN", "STRIPE_PRICE_STARTER_MONTHLY", "STRIPE_PRICE_BUSINESS_ANNUAL", "TS_BILLING_TENANT_ID"} {
 		if err == nil || !strings.Contains(err.Error(), name) {
 			t.Fatalf("error %v does not mention %s", err, name)
 		}
@@ -91,11 +97,14 @@ func TestLoadStripeConfigAcceptsRestrictedKeysAndLoopbackHTTP(t *testing.T) {
 }
 
 func TestNewIgnoresStripeSettingsInDemoMode(t *testing.T) {
-	billing, err := New(true, func(string) string { return "invalid" })
+	billing, err := New(t.Context(), true, func(string) string { return "invalid" }, nil)
 	if err != nil || billing != nil {
 		t.Fatalf("demo billing = %v, %v", billing, err)
 	}
-	if _, err := New(false, func(string) string { return "" }); !errors.Is(err, ErrInvalidStripeOptions) {
+	if _, err := New(t.Context(), false, func(string) string { return "" }, nil); !errors.Is(err, ErrInvalidStripeOptions) {
 		t.Fatalf("live billing without settings error = %v", err)
+	}
+	if _, err := New(t.Context(), false, func(name string) string { return validStripeEnv()[name] }, nil); !errors.Is(err, ErrInvalidStripeOptions) {
+		t.Fatalf("live billing without ts-go error = %v", err)
 	}
 }

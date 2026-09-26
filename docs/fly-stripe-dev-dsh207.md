@@ -58,29 +58,20 @@ fly config validate --strict -c fly.dev.toml -a terrascale-dashboard-dev
 
 No Stripe Workbench em modo teste, crie um endpoint exclusivo para
 `https://terrascale-dashboard-dev.fly.dev/api/auth/stripe/webhook` na versão de
-API do stripe-go (`stripe.APIVersion`, hoje `2026-08-26.dahlia`) com estes
-eventos:
-
-```text
-checkout.session.completed
-checkout.session.async_payment_succeeded
-checkout.session.expired
-customer.subscription.created
-customer.subscription.updated
-customer.subscription.deleted
-invoice.finalized
-invoice.paid
-invoice.payment_failed
-invoice.voided
-```
+API do stripe-go (`stripe.APIVersion`, hoje `2026-08-26.dahlia`) com todos os
+eventos listados em [`stripe.md`](stripe.md#webhook-endpoint). Em Settings →
+Checkout, habilite "Limit customers to one subscription".
 
 Anote o segredo de assinatura **desse endpoint**, os seis IDs de preço de
 teste e uma chave restrita (`rk_test_…`) ou secreta de teste em um arquivo privado `KEY=VALUE`, fora do
 repositório. Use os nomes `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
 `STRIPE_PRICE_STARTER_MONTHLY`, `STRIPE_PRICE_STARTER_ANNUAL`,
 `STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_ANNUAL`,
-`STRIPE_PRICE_BUSINESS_MONTHLY` e `STRIPE_PRICE_BUSINESS_ANNUAL`. As
-permissões da chave restrita estão em [`stripe.md`](stripe.md).
+`STRIPE_PRICE_BUSINESS_MONTHLY` e `STRIPE_PRICE_BUSINESS_ANNUAL`, além de
+`TS_API_ACCESS_TOKEN` e do escopo TerraBase `TS_BILLING_TENANT_ID`,
+`TS_BILLING_PROJECT_ID` e `TS_BILLING_DATABASE_ID`, onde o estado sincronizado
+do Stripe fica guardado. As permissões da chave restrita estão em
+[`stripe.md`](stripe.md).
 Importe sem colocar valores no histórico do shell:
 
 ```sh

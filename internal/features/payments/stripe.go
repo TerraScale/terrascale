@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"terrascale.tech/dashboard/internal/core"
 )
 
 var (
@@ -23,11 +25,13 @@ var (
 type Stripe struct {
 	config   StripeConfig
 	provider BillingProvider
+	store    StateStore
 }
 
-// New loads the Stripe configuration and creates the official stripe-go
-// client. Demo mode returns nil and ignores every Stripe setting.
-func New(demo bool, lookup func(string) string) (*Stripe, error) {
+// New loads the Stripe configuration, creates the official stripe-go client,
+// and connects the TerraBase state store through ts-go. Demo mode returns nil
+// and ignores every Stripe and TerraBase billing setting.
+func New(ctx context.Context, demo bool, lookup func(string) string, sdk core.SDKFactory) (*Stripe, error) {
 	if demo {
 		return nil, nil
 	}
@@ -35,12 +39,25 @@ func New(demo bool, lookup func(string) string) (*Stripe, error) {
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("Stripe billing enabled", "mode", config.Mode, "public_origin", config.PublicOrigin)
-	return newStripe(config, newStripeProvider(config)), nil
+	if sdk == nil {
+		return nil, fmt.Errorf("%w: a ts-go client is required to store Stripe state", ErrInvalidStripeOptions)
+	}
+	client, err := sdk.ForScope(config.State.TenantID, config.State.ProjectID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: connect to TerraBase: %w", ErrInvalidStripeOptions, err)
+	}
+	store := newTerraBaseStateStore(client, config.State.DatabaseID)
+	schemaContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := store.EnsureSchema(schemaContext); err != nil {
+		return nil, fmt.Errorf("prepare Stripe state store: %w", err)
+	}
+	slog.Info("Stripe billing enabled", "mode", config.Mode, "public_origin", config.PublicOrigin, "state_database", config.State.DatabaseID)
+	return newStripe(config, newStripeProvider(config), store), nil
 }
 
-func newStripe(config StripeConfig, provider BillingProvider) *Stripe {
-	return &Stripe{config: config, provider: provider}
+func newStripe(config StripeConfig, provider BillingProvider, store StateStore) *Stripe {
+	return &Stripe{config: config, provider: provider, store: store}
 }
 
 // PreviewPlanChange quotes an immediate upgrade against the same Stripe

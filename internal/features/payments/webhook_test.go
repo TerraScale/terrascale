@@ -5,8 +5,10 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -20,57 +22,135 @@ import (
 
 const testWebhookSecret = "whsec_test"
 
+var testPeriodEnd = time.Date(2026, time.October, 26, 0, 0, 0, 0, time.UTC)
+
+// fakeProvider serves a Stripe customer, its pending Checkout Session, and
+// the subscription the plan-change routes verify.
 type fakeProvider struct {
 	payments.BillingProvider
-	subscription  payments.SubscriptionSnapshot
-	subscriptions int
+	customer     payments.StripeCustomer
+	checkout     payments.CheckoutSession
+	subscription payments.SubscriptionSnapshot
+	fetchErr     error
+	fetches      int
+	releases     int
+}
+
+func (provider *fakeProvider) FetchCustomer(_ context.Context, customerID string) (payments.StripeCustomer, error) {
+	provider.fetches++
+	if provider.fetchErr != nil {
+		return payments.StripeCustomer{}, provider.fetchErr
+	}
+	customer := provider.customer
+	customer.ID = customerID
+	return customer, nil
+}
+
+func (provider *fakeProvider) RetrieveCheckoutSession(context.Context, string) (payments.CheckoutSession, error) {
+	return provider.checkout, nil
 }
 
 func (provider *fakeProvider) RetrieveSubscription(context.Context, string) (payments.SubscriptionSnapshot, error) {
-	provider.subscriptions++
 	return provider.subscription, nil
 }
 
-type webhookFixture struct {
+func (provider *fakeProvider) ReleaseSchedule(context.Context, string, string) error {
+	provider.releases++
+	return nil
+}
+
+type fixtureSessions struct{ principal core.Principal }
+
+func (sessions fixtureSessions) Start(http.ResponseWriter, *http.Request, core.Principal) error {
+	return nil
+}
+func (sessions fixtureSessions) Principal(*http.Request) (core.Principal, bool) {
+	return sessions.principal, true
+}
+func (sessions fixtureSessions) BearerPrincipal(*http.Request) (core.Principal, bool) {
+	return core.Principal{}, false
+}
+func (sessions fixtureSessions) End(http.ResponseWriter, *http.Request) {}
+func (sessions fixtureSessions) RevokeUser(string, string)              {}
+
+type billingFixture struct {
 	store     *core.Store
 	principal core.Principal
 	provider  *fakeProvider
+	state     payments.StateStore
+	billing   *payments.Stripe
+	service   subscriptions.BillingService
 	mux       *http.ServeMux
 }
 
-// newWebhookFixture creates an owner whose organization has a Stripe customer
-// and an open Checkout Session for Pro monthly, as after POST /billing/checkout.
-func newWebhookFixture(t *testing.T) webhookFixture {
+var testConfig = payments.StripeConfig{
+	Mode: payments.ModeTest, WebhookSecret: testWebhookSecret, PublicOrigin: "https://dashboard.example.test",
+	PriceIDs: map[payments.PriceKey]string{
+		{PlanKey: payments.PlanStarter, Interval: payments.IntervalMonthly}:  "price_starter_monthly",
+		{PlanKey: payments.PlanPro, Interval: payments.IntervalMonthly}:      "price_pro_monthly",
+		{PlanKey: payments.PlanBusiness, Interval: payments.IntervalMonthly}: "price_business_monthly",
+	},
+}
+
+// newBillingFixture creates a Personal owner bound to Stripe customer
+// cus_test with an open Checkout Session for Pro monthly, as after
+// POST /billing/checkout. Stripe reports the checkout complete and the
+// subscription active unless a test changes the fake.
+func newBillingFixture(t *testing.T) billingFixture {
+	t.Helper()
+	return newBillingFixtureWithStore(t, payments.NewMemoryStateStore())
+}
+
+func newBillingFixtureWithStore(t *testing.T, state payments.StateStore) billingFixture {
 	t.Helper()
 	store := core.NewStore()
-	account, err := store.CreateAccount(core.User{Name: "Owner", Email: "webhook@example.test", PasswordHash: "unused"})
+	account, err := store.CreateAccount(core.User{Name: "Owner", Email: "billing@example.test", PasswordHash: "unused"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	principal := account.Principal()
 	service := subscriptions.NewBillingService(store)
+	if _, err := state.BindCustomer(t.Context(), principal.OrganizationID, "cus_test"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := service.RecordCustomer(principal, "cus_test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.RecordExternalCheckout(principal, payments.PlanPro, payments.IntervalMonthly, "/billing", payments.CheckoutSession{
+	if err := service.RecordExternalCheckout(principal, payments.PlanPro, payments.IntervalMonthly, "/usage?tab=billing", payments.CheckoutSession{
 		ID: "cs_test", CustomerID: "cus_test", ClientReferenceID: principal.OrganizationID, ExpiresAt: time.Now().Add(time.Hour),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	provider := &fakeProvider{subscription: payments.SubscriptionSnapshot{
-		ID: "sub_test", CustomerID: "cus_test", OrganizationID: principal.OrganizationID, Status: "active",
-		PriceID: "price_pro_monthly", ItemID: "si_test", CurrentPeriodEnd: time.Now().Add(30 * 24 * time.Hour).UTC(),
-	}}
-	config := payments.StripeConfig{
-		Mode: payments.ModeTest, WebhookSecret: testWebhookSecret, PublicOrigin: "https://dashboard.example.test",
-		PriceIDs: map[payments.PriceKey]string{{PlanKey: payments.PlanPro, Interval: payments.IntervalMonthly}: "price_pro_monthly"},
+	provider := &fakeProvider{
+		customer: payments.StripeCustomer{
+			OrganizationID: principal.OrganizationID,
+			Subscriptions:  []payments.SubscriptionSnapshot{activeSubscription("price_pro_monthly")},
+			Invoices: []core.Invoice{{
+				ID: "in_first", Number: "INV-1", Status: "paid", AmountCents: 5000, Currency: "usd",
+				CreatedAt: testPeriodEnd.AddDate(0, -1, 0), PeriodStart: testPeriodEnd.AddDate(0, -1, 0), PeriodEnd: testPeriodEnd,
+			}},
+		},
+		checkout: payments.CheckoutSession{
+			ID: "cs_test", CustomerID: "cus_test", ClientReferenceID: principal.OrganizationID,
+			SubscriptionID: "sub_test", Status: "complete", PaymentStatus: "paid",
+		},
 	}
+	billing := payments.NewStripeForTest(testConfig, provider, state)
 	mux := http.NewServeMux()
-	payments.Mount(mux, core.Deps{Store: store}, service, payments.NewStripeForTest(config, provider))
-	return webhookFixture{store: store, principal: principal, provider: provider, mux: mux}
+	payments.Mount(mux, core.Deps{Store: store, Sessions: fixtureSessions{principal: principal}}, service, billing)
+	return billingFixture{store: store, principal: principal, provider: provider, state: state, billing: billing, service: service, mux: mux}
 }
 
-func (fixture webhookFixture) organization(t *testing.T) core.Organization {
+func activeSubscription(priceID string) payments.SubscriptionSnapshot {
+	return payments.SubscriptionSnapshot{
+		ID: "sub_test", CustomerID: "cus_test", Status: "active", PriceID: priceID, ItemID: "si_test",
+		TrialStarted: true, CreatedAt: testPeriodEnd.AddDate(0, -1, 0),
+		CurrentPeriodStart: testPeriodEnd.AddDate(0, -1, 0), CurrentPeriodEnd: testPeriodEnd,
+		PaymentMethod: &payments.PaymentMethod{Brand: "visa", Last4: "4242", ExpMonth: 8, ExpYear: 2028},
+	}
+}
+
+func (fixture billingFixture) organization(t *testing.T) core.Organization {
 	t.Helper()
 	account, err := fixture.store.SnapshotAs(fixture.principal)
 	if err != nil {
@@ -79,20 +159,33 @@ func (fixture webhookFixture) organization(t *testing.T) core.Organization {
 	return account.Organizations[fixture.principal.OrganizationID]
 }
 
+func (fixture billingFixture) sync(t *testing.T) {
+	t.Helper()
+	if _, err := fixture.billing.SyncCustomer(t.Context(), fixture.service, "cus_test"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (fixture billingFixture) request(method, target string) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	fixture.mux.ServeHTTP(response, httptest.NewRequest(method, target, nil))
+	return response
+}
+
 type testEvent struct {
 	ID         string
 	Type       string
-	Object     map[string]any
+	Customer   string
 	APIVersion string
 	Livemode   bool
 }
 
-func (fixture webhookFixture) deliver(t *testing.T, event testEvent, secret string) *httptest.ResponseRecorder {
+func (fixture billingFixture) deliver(t *testing.T, event testEvent, secret string) *httptest.ResponseRecorder {
 	t.Helper()
 	payload, err := json.Marshal(map[string]any{
 		"id": event.ID, "object": "event", "type": event.Type, "created": time.Now().Unix(),
 		"api_version": cmp.Or(event.APIVersion, stripe.APIVersion), "livemode": event.Livemode,
-		"data": map[string]any{"object": event.Object},
+		"data": map[string]any{"object": map[string]any{"id": "obj_" + event.ID, "customer": cmp.Or(event.Customer, "cus_test")}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -105,69 +198,68 @@ func (fixture webhookFixture) deliver(t *testing.T, event testEvent, secret stri
 	return response
 }
 
-func invoiceObject(id, status string) map[string]any {
-	now := time.Now().Unix()
-	return map[string]any{
-		"id": id, "object": "invoice", "customer": "cus_test", "status": status, "number": "INV-1",
-		"amount_due": 5000, "currency": "usd", "created": now, "period_start": now, "period_end": now + 30*24*3600,
-		"parent": map[string]any{"type": "subscription_details", "subscription_details": map[string]any{"subscription": "sub_test"}},
-	}
-}
-
-func checkoutObject(orgID, status, paymentStatus string) map[string]any {
-	return map[string]any{
-		"id": "cs_test", "object": "checkout.session", "mode": "subscription", "customer": "cus_test",
-		"subscription": "sub_test", "client_reference_id": orgID, "status": status, "payment_status": paymentStatus,
-		"metadata": map[string]string{"organization_id": orgID, "plan_key": payments.PlanPro, "interval": payments.IntervalMonthly},
-	}
-}
-
-func TestWebhookRecordsInvoiceDeliveredBeforeCheckoutCompletion(t *testing.T) {
-	fixture := newWebhookFixture(t)
-	response := fixture.deliver(t, testEvent{ID: "evt_invoice", Type: "invoice.paid", Object: invoiceObject("in_first", "paid")}, testWebhookSecret)
-	if response.Code != http.StatusOK {
-		t.Fatalf("invoice webhook = %d %s", response.Code, response.Body)
-	}
-	invoices := fixture.organization(t).Billing.Invoices
-	if len(invoices) != 1 || invoices[0].ID != "in_first" || invoices[0].Status != "paid" || invoices[0].AmountCents != 5000 {
-		t.Fatalf("invoices = %#v", invoices)
-	}
-	if fixture.provider.subscriptions != 0 {
-		t.Fatalf("invoice webhook retrieved the subscription %d times", fixture.provider.subscriptions)
-	}
-}
-
-func TestWebhookActivatesCheckoutFromSubscriptionSnapshot(t *testing.T) {
-	fixture := newWebhookFixture(t)
-	orgID := fixture.principal.OrganizationID
-	response := fixture.deliver(t, testEvent{ID: "evt_checkout", Type: "checkout.session.completed", Object: checkoutObject(orgID, "complete", "paid")}, testWebhookSecret)
-	if response.Code != http.StatusOK {
-		t.Fatalf("checkout webhook = %d %s", response.Code, response.Body)
+func TestWebhookSyncsCustomerFromStripe(t *testing.T) {
+	fixture := newBillingFixture(t)
+	if response := fixture.deliver(t, testEvent{ID: "evt_invoice", Type: "invoice.paid"}, testWebhookSecret); response.Code != http.StatusOK {
+		t.Fatalf("webhook = %d %s", response.Code, response.Body)
 	}
 	org := fixture.organization(t)
-	if org.Billing.SubscriptionID != "sub_test" || org.Billing.PlanKey != payments.PlanPro || org.Billing.Status != "active" || org.Billing.CheckoutID != "" || org.PlanID != "plan_pro" {
-		t.Fatalf("billing after checkout = %#v", org.Billing)
+	if org.PlanID != "plan_pro" || org.Billing.SubscriptionID != "sub_test" || org.Billing.Status != "active" || org.BillingStatus != "active" {
+		t.Fatalf("billing after sync = %#v", org.Billing)
 	}
-	if !org.BillingRenewal.Equal(fixture.provider.subscription.CurrentPeriodEnd) {
-		t.Fatalf("renewal = %v, want %v", org.BillingRenewal, fixture.provider.subscription.CurrentPeriodEnd)
+	if org.Billing.CheckoutID != "" || org.CheckoutSessions["cs_test"].Status != "complete" {
+		t.Fatalf("checkout after sync = %#v, sessions = %#v", org.Billing.CheckoutID, org.CheckoutSessions)
 	}
-	if replay := fixture.deliver(t, testEvent{ID: "evt_checkout", Type: "checkout.session.completed", Object: checkoutObject(orgID, "complete", "paid")}, testWebhookSecret); replay.Code != http.StatusOK {
-		t.Fatalf("replayed webhook = %d", replay.Code)
+	if !org.BillingRenewal.Equal(testPeriodEnd) || len(org.Billing.Invoices) != 1 || org.Billing.Invoices[0].ID != "in_first" {
+		t.Fatalf("renewal = %v, invoices = %#v", org.BillingRenewal, org.Billing.Invoices)
+	}
+	if org.Billing.PaymentMethodBrand != "visa" || org.Billing.PaymentMethodLastFour != "4242" || org.Billing.PaymentMethodExpiry != "08/28" {
+		t.Fatalf("payment method = %#v", org.Billing)
+	}
+	stored, version, err := fixture.state.Load(t.Context(), "cus_test")
+	if err != nil || version == "" || stored.Status != "active" || stored.PlanKey != payments.PlanPro || stored.OrganizationID != fixture.principal.OrganizationID {
+		t.Fatalf("stored state = %#v, version %q, error %v", stored, version, err)
 	}
 }
 
-func TestWebhookReleasesExpiredCheckout(t *testing.T) {
-	fixture := newWebhookFixture(t)
-	orgID := fixture.principal.OrganizationID
-	object := checkoutObject(orgID, "expired", "unpaid")
-	delete(object, "subscription")
-	response := fixture.deliver(t, testEvent{ID: "evt_expired", Type: "checkout.session.expired", Object: object}, testWebhookSecret)
-	if response.Code != http.StatusOK {
-		t.Fatalf("expired webhook = %d %s", response.Code, response.Body)
+func TestWebhookSyncIsIdempotentAcrossEventOrder(t *testing.T) {
+	fixture := newBillingFixture(t)
+	fixture.deliver(t, testEvent{ID: "evt_updated", Type: "customer.subscription.updated"}, testWebhookSecret)
+	first := fixture.organization(t)
+	for _, event := range []testEvent{
+		{ID: "evt_updated", Type: "customer.subscription.updated"},
+		{ID: "evt_created", Type: "customer.subscription.created"},
+		{ID: "evt_checkout", Type: "checkout.session.completed"},
+	} {
+		if response := fixture.deliver(t, event, testWebhookSecret); response.Code != http.StatusOK {
+			t.Fatalf("%s = %d", event.Type, response.Code)
+		}
 	}
-	org := fixture.organization(t)
-	if org.Billing.CheckoutID != "" || org.CheckoutSessions["cs_test"].Status != "canceled" {
-		t.Fatalf("checkout after expiry = %#v, sessions = %#v", org.Billing, org.CheckoutSessions)
+	if again := fixture.organization(t); !reflect.DeepEqual(first, again) {
+		t.Fatalf("replayed and older events changed the organization:\nfirst %#v\nagain %#v", first.Billing, again.Billing)
+	}
+}
+
+func TestWebhookSkipsUnboundAndUntrackedEvents(t *testing.T) {
+	fixture := newBillingFixture(t)
+	for _, event := range []testEvent{
+		{ID: "evt_other", Type: "invoice.paid", Customer: "cus_other"},
+		{ID: "evt_untracked", Type: "customer.updated"},
+	} {
+		if response := fixture.deliver(t, event, testWebhookSecret); response.Code != http.StatusOK {
+			t.Fatalf("%s = %d", event.ID, response.Code)
+		}
+	}
+	if fixture.provider.fetches != 0 || fixture.organization(t).Billing.CheckoutID != "cs_test" {
+		t.Fatalf("skipped events read Stripe %d times or changed billing", fixture.provider.fetches)
+	}
+}
+
+func TestWebhookAsksStripeToRetryFailedSync(t *testing.T) {
+	fixture := newBillingFixture(t)
+	fixture.provider.fetchErr = errors.New("Stripe is unavailable")
+	if response := fixture.deliver(t, testEvent{ID: "evt_retry", Type: "invoice.paid"}, testWebhookSecret); response.Code != http.StatusInternalServerError {
+		t.Fatalf("failed sync = %d, want 500", response.Code)
 	}
 }
 
@@ -177,18 +269,18 @@ func TestWebhookRejectsUntrustedEvents(t *testing.T) {
 		event  testEvent
 		secret string
 	}{
-		{"wrong signing secret", testEvent{ID: "evt_bad", Type: "invoice.paid", Object: invoiceObject("in_bad", "paid")}, "whsec_other"},
-		{"old API version", testEvent{ID: "evt_old", Type: "invoice.paid", Object: invoiceObject("in_old", "paid"), APIVersion: "2024-06-20"}, testWebhookSecret},
-		{"live event in test mode", testEvent{ID: "evt_live", Type: "invoice.paid", Object: invoiceObject("in_live", "paid"), Livemode: true}, testWebhookSecret},
+		{"wrong signing secret", testEvent{ID: "evt_bad", Type: "invoice.paid"}, "whsec_other"},
+		{"old API version", testEvent{ID: "evt_old", Type: "invoice.paid", APIVersion: "2024-06-20"}, testWebhookSecret},
+		{"live event in test mode", testEvent{ID: "evt_live", Type: "invoice.paid", Livemode: true}, testWebhookSecret},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newWebhookFixture(t)
+			fixture := newBillingFixture(t)
 			if response := fixture.deliver(t, test.event, test.secret); response.Code != http.StatusBadRequest {
 				t.Fatalf("webhook = %d, want 400", response.Code)
 			}
-			if invoices := fixture.organization(t).Billing.Invoices; len(invoices) != 0 {
-				t.Fatalf("untrusted event changed invoices: %#v", invoices)
+			if fixture.provider.fetches != 0 {
+				t.Fatalf("untrusted event read Stripe %d times", fixture.provider.fetches)
 			}
 		})
 	}

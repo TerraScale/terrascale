@@ -23,13 +23,17 @@ var ErrInvalidReturnPath = errors.New("return path must stay inside the dashboar
 type BillingFlow interface {
 	BeginDemoCheckout(core.Principal, string, string, string) (core.CheckoutSession, error)
 	Checkout(core.Principal, string) (core.CheckoutSession, error)
-	CheckoutForReturn(core.Principal, string) (core.CheckoutSession, error)
 	CompleteDemoCheckout(core.Principal, string, bool) (string, error)
 	RecordCustomer(core.Principal, string) (string, error)
 	RecordExternalCheckout(core.Principal, string, string, string, CheckoutSession) error
 	ExpireExternalCheckout(core.Principal, string) error
-	ReconcileCheckoutReturn(core.Principal, string, CheckoutSession) (string, string, error)
-	ApplyStripeEvent(BillingEvent) error
+	// CheckoutOutcome reports where the owner returns after a checkout and
+	// whether it succeeded, from the organization's projected state.
+	CheckoutOutcome(core.Principal, string) (string, string, error)
+	// PendingCheckoutID returns the organization's open Checkout Session.
+	PendingCheckoutID(organizationID string) (string, error)
+	// ProjectCustomerState applies synced Stripe state to the organization.
+	ProjectCustomerState(CustomerState, *CheckoutSession) error
 }
 
 // Mount registers billing provider routes. In demo mode billing is nil and
@@ -79,22 +83,30 @@ func Mount(mux *http.ServeMux, deps core.Deps, flow BillingFlow, billing *Stripe
 			http.Error(w, "Billing is not configured.", http.StatusServiceUnavailable)
 			return
 		}
-		if _, err := flow.CheckoutForReturn(principal, sessionID); err != nil {
-			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-			return
-		}
-		remote, err := billing.provider.RetrieveCheckoutSession(r.Context(), sessionID)
+		// The owner usually returns before Stripe's webhooks arrive, so sync
+		// eagerly. The session ID only selects the return path; the state
+		// always comes from the organization's own Stripe customer.
+		customerID, bound, err := billing.store.CustomerFor(r.Context(), principal.OrganizationID)
 		if err != nil {
-			slog.Error("retrieve Stripe checkout session", "session_id", sessionID, "error", err)
+			slog.Error("look up Stripe customer after checkout", "organization_id", principal.OrganizationID, "error", err)
 			http.Error(w, "Could not verify checkout status.", http.StatusBadGateway)
 			return
 		}
-		returnPath, state, err := flow.ReconcileCheckoutReturn(principal, sessionID, remote)
+		if !bound {
+			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+			return
+		}
+		if _, err := billing.SyncCustomer(r.Context(), flow, customerID); err != nil {
+			slog.Error("sync Stripe customer after checkout", "organization_id", principal.OrganizationID, "error", err)
+			http.Error(w, "Could not verify checkout status.", http.StatusBadGateway)
+			return
+		}
+		returnPath, outcome, err := flow.CheckoutOutcome(principal, sessionID)
 		if err != nil {
 			writeBillingError(w, err)
 			return
 		}
-		http.Redirect(w, r, WithPaymentOutcome(returnPath, state), http.StatusSeeOther)
+		http.Redirect(w, r, WithPaymentOutcome(returnPath, outcome), http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("GET /billing/portal", func(w http.ResponseWriter, r *http.Request) {
@@ -158,7 +170,7 @@ func (billing *Stripe) startCheckout(w http.ResponseWriter, r *http.Request, dep
 		http.Redirect(w, r, "/billing/portal", http.StatusSeeOther)
 		return
 	}
-	if organization.Billing.SubscriptionID == "" && organization.BillingStatus == "active" {
+	if organization.Billing.SubscriptionID == "" && organization.BillingStatus == "active" && organization.PlanID != "plan_free" {
 		http.Error(w, "An existing active plan must be managed through its billing account.", http.StatusConflict)
 		return
 	}
@@ -175,22 +187,21 @@ func (billing *Stripe) startCheckout(w http.ResponseWriter, r *http.Request, dep
 		writeBillingError(w, err)
 		return
 	}
-	customerID := organization.Billing.CustomerID
-	if customerID == "" {
-		created, err := billing.provider.CreateCustomer(r.Context(), CustomerRequest{
-			Email: account.User.Email, Name: organization.Name, OrganizationID: organization.ID,
-			IdempotencyKey: "customer:" + organization.ID,
-		})
-		if err != nil {
-			slog.Error("create Stripe customer", "organization_id", organization.ID, "error", err)
-			http.Error(w, "Could not start checkout.", http.StatusBadGateway)
-			return
-		}
-		customerID, err = flow.RecordCustomer(principal, created.ID)
-		if err != nil {
-			writeBillingError(w, err)
-			return
-		}
+	customerID, err := billing.customerFor(r.Context(), account.User.Email, organization)
+	if err != nil {
+		slog.Error("bind Stripe customer", "organization_id", organization.ID, "error", err)
+		http.Error(w, "Could not start checkout.", http.StatusBadGateway)
+		return
+	}
+	recorded, err := flow.RecordCustomer(principal, customerID)
+	if err != nil {
+		writeBillingError(w, err)
+		return
+	}
+	if recorded != customerID {
+		slog.Error("organization records a different Stripe customer than its binding", "organization_id", organization.ID)
+		http.Error(w, "This organization's billing account needs attention.", http.StatusConflict)
+		return
 	}
 	trialDays := 0
 	if !organization.Billing.TrialUsed {
@@ -225,6 +236,25 @@ func (billing *Stripe) startCheckout(w http.ResponseWriter, r *http.Request, dep
 		return
 	}
 	http.Redirect(w, r, created.URL, http.StatusSeeOther)
+}
+
+// customerFor returns the organization's Stripe customer, creating it before
+// the first checkout. The binding is stored create-only, so every checkout,
+// webhook, and sync for the organization resolves to one customer even when
+// two checkouts race.
+func (billing *Stripe) customerFor(ctx context.Context, email string, organization core.Organization) (string, error) {
+	customerID, bound, err := billing.store.CustomerFor(ctx, organization.ID)
+	if err != nil || bound {
+		return customerID, err
+	}
+	created, err := billing.provider.CreateCustomer(ctx, CustomerRequest{
+		Email: email, Name: organization.Name, OrganizationID: organization.ID,
+		IdempotencyKey: "customer:" + organization.ID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return billing.store.BindCustomer(ctx, organization.ID, created.ID)
 }
 
 // resumeCheckout handles an organization's pending checkout. It reports true

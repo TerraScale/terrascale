@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/mail"
@@ -54,7 +55,8 @@ func New(cfg config.Config) (*Application, error) {
 	if err := seedDemoAccount(store); err != nil {
 		return nil, err
 	}
-	billing, err := payments.New(cfg.Demo, os.Getenv)
+	sdkFactory := tsgo.Factory{APIBaseURL: cfg.SDKBaseURL, AccessToken: cfg.SDKAccessToken}
+	billing, err := payments.New(context.Background(), cfg.Demo, os.Getenv, sdkFactory)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +74,7 @@ func New(cfg config.Config) (*Application, error) {
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo,
-		SDK: tsgo.Factory{APIBaseURL: cfg.SDKBaseURL, AccessToken: cfg.SDKAccessToken},
+		SDK: sdkFactory,
 	}
 	mux := http.NewServeMux()
 	if err := assets.Mount(mux, cfg.Dev); err != nil {

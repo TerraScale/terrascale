@@ -12,12 +12,11 @@ import (
 )
 
 var (
-	ErrNotFound         = errors.New("not found")
-	ErrConflict         = errors.New("conflict")
-	ErrUnauthorized     = errors.New("unauthorized")
-	ErrForbidden        = errors.New("forbidden")
-	ErrInvalid          = errors.New("invalid input")
-	ErrAlreadyProcessed = errors.New("already processed")
+	ErrNotFound     = errors.New("not found")
+	ErrConflict     = errors.New("conflict")
+	ErrUnauthorized = errors.New("unauthorized")
+	ErrForbidden    = errors.New("forbidden")
+	ErrInvalid      = errors.New("invalid input")
 	// ErrDatabaseLimit rejects a change that would give an organization more
 	// databases than its plan allows.
 	ErrDatabaseLimit = errors.New("plan database limit reached")
@@ -307,7 +306,6 @@ type Billing struct {
 	ScheduledInterval     string
 	ScheduledAt           time.Time
 	ScheduleID            string
-	PaymentMethodID       string
 	PaymentMethodLastFour string
 	PaymentMethodExpiry   string
 	PaymentMethodBrand    string
@@ -315,7 +313,6 @@ type Billing struct {
 	PlanKey               string
 	Interval              string
 	CheckoutID            string
-	LastEventAt           time.Time
 	ReturnPath            string
 	PaidExcessEnabled     bool
 	SpendCapCents         int64
@@ -339,7 +336,6 @@ type CheckoutSession struct {
 
 type Invoice struct {
 	ID          string
-	LastEventAt time.Time
 	Number      string
 	Status      string
 	AmountCents int64

@@ -110,60 +110,48 @@ func (s *Store) DeclineInvitation(p Principal, tokenHash string) (Organization, 
 	return Organization{}, ErrNotFound
 }
 
-// ApplyBillingEventWithPlans finds the canonical tenant by provider identity
-// and marks an event processed only after the projection callback succeeds.
-// It supplies a detached plan catalog while holding the event commit lock. Projection callbacks must use this snapshot instead
-// of calling Store.Plan or Store.Plans, which would acquire the lock again.
-func (s *Store) ApplyBillingEventWithPlans(eventID, customerID, subscriptionID string, mutate func(*Organization, map[string]Plan) error) error {
-	if mutate == nil {
-		return ErrInvalid
+// Organization returns a copy of one organization for trusted server-side
+// integrations that act without a signed-in principal, such as Stripe syncs.
+func (s *Store) Organization(organizationID string) (Organization, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	org, ok := s.organizations[organizationID]
+	if !ok {
+		return Organization{}, false
 	}
-	return s.applyBillingEvent(eventID, customerID, subscriptionID, func(org *Organization) error {
-		plans := make(map[string]Plan, 2*len(s.plans))
-		for _, plan := range s.plans {
-			plans[plan.ID] = plan
-			plans[plan.Key] = plan
-		}
-		return mutate(org, plans)
-	})
+	return cloneOrganization(org), true
 }
 
-func (s *Store) applyBillingEvent(eventID, customerID, subscriptionID string, mutate func(*Organization) error) error {
-	if eventID == "" || (customerID == "" && subscriptionID == "") || mutate == nil {
+// UpdateOrganization applies a trusted server-side change to one
+// organization, such as projecting provider state synced from Stripe. The
+// callback receives a detached plan catalog keyed by plan ID and key, and must
+// use it instead of Store.Plan or Store.Plans, which would lock again.
+func (s *Store) UpdateOrganization(organizationID string, mutate func(*Organization, map[string]Plan) error) error {
+	if organizationID == "" || mutate == nil {
 		return ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.billingEvents[eventID]; exists {
-		return ErrAlreadyProcessed
-	}
-	var matchedID string
-	var matched Organization
-	for id, org := range s.organizations {
-		if (customerID == "" || org.Billing.CustomerID != customerID) &&
-			(subscriptionID == "" || org.Billing.SubscriptionID != subscriptionID) {
-			continue
-		}
-		if matchedID != "" && matchedID != id {
-			return ErrConflict
-		}
-		matchedID, matched = id, org
-	}
-	if matchedID == "" {
+	current, ok := s.organizations[organizationID]
+	if !ok {
 		return ErrNotFound
 	}
-	next := cloneOrganization(matched)
-	if err := mutate(&next); err != nil {
+	plans := make(map[string]Plan, 2*len(s.plans))
+	for _, plan := range s.plans {
+		plans[plan.ID] = plan
+		plans[plan.Key] = plan
+	}
+	next := cloneOrganization(current)
+	if err := mutate(&next, plans); err != nil {
 		return err
 	}
-	if next.ID != matched.ID {
+	if next.ID != current.ID {
 		return ErrInvalid
 	}
-	if !s.providerUniqueLocked(matchedID, next) {
+	if !s.providerUniqueLocked(organizationID, next) {
 		return ErrConflict
 	}
-	s.organizations[matchedID] = cloneOrganization(next)
-	s.billingEvents[eventID] = struct{}{}
+	s.organizations[organizationID] = cloneOrganization(next)
 	return nil
 }
 
