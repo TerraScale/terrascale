@@ -27,8 +27,8 @@ component patterns as needed.
    all `--ts-font-mono`. Adds a technical feel and keeps digits aligned
    (`font-variant-numeric: tabular-nums` on animated counters).
 6. **Motion is subtle and shared.** Most transitions are 150–260 ms with
-   cubic-bezier easings. Ambient loops (breathing, floating, orbit) run at
-   4–16 s so they never compete with the user. Everything collapses to
+   cubic-bezier easings. Ambient loops (breathing, floating, pulsing) run at
+   2.2–16 s so they never compete with the user. Everything collapses to
    instant under `prefers-reduced-motion: reduce`.
 7. **Grounded copy.** No "SOC 2 Type II", "99.99% uptime", "sub-20 ms", "20+
    regions" unless the claim is actually verified. Describe what the product
@@ -39,8 +39,7 @@ component patterns as needed.
 ## 1. Document shell
 
 ```html
-<html lang="en" class="dark" data-theme="focused" data-glass="subtle"
-      data-atmosphere="dramatic">
+<html lang="en" class="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -64,10 +63,8 @@ component patterns as needed.
 </html>
 ```
 
-- `data-theme="focused"` is the only theme used. `data-glass="subtle"` and
-  `data-atmosphere="dramatic"` are locked and present for future extensibility.
-- The three `data-*` attributes can be dropped if you only ship one theme;
-  every token is declared both on `:root` and `[data-theme="focused"]`.
+- Only one theme ships. Every token is declared both on `:root` and
+  `[data-theme="focused"]`, so no `data-theme` attribute is required.
 - Always preload Quantico woff2 to avoid FOUT on the headline.
 
 ---
@@ -137,6 +134,12 @@ hard-coded colours.
 
   /* ── Gradients ────────────────────────────────────── */
   --ts-gradient-primary: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+
+  /* ── 404 page ─────────────────────────────────────── */
+  --ts-notfound-bg: #0d1729;
+  --ts-notfound-blue: #0861ed;
+  --ts-notfound-blue-bright: #3794ff;
+  --ts-notfound-grid: rgba(43, 106, 211, 0.22);
 
   /* ── Atmosphere (locked to "dramatic") ────────────── */
   --ts-atmo-mult: 1.9;
@@ -215,7 +218,7 @@ Follow this pattern religiously - do not introduce new hardcoded RGBA values.
 | Hairline | `var(--ts-divider)` or `var(--ts-glass-border)` | - |
 | Body text | `var(--ts-text)` | 1 |
 | Muted text | `var(--ts-text-muted)` | 1 |
-| Status online/ok | `var(--ts-secondary)` with `0 0 8px` glow | - |
+| Status online/ok | `var(--ts-secondary)` with `0 0 10px` glow | - |
 | Success highlight | `rgba(var(--ts-secondary-rgb), 0.5)` | 0.5 |
 | Accent / decorative | `var(--ts-tertiary)` at ≤0.4 alpha | - |
 
@@ -240,10 +243,11 @@ lines.
 ### Fonts
 
 - **Body - Quantico** (self-hosted woff2, 400 + 700 weights). Geometric, angled,
-  reads as "confident / engineered". Every paragraph, headline, button,
-  navigation link uses this unless noted.
-- **Accent - Roboto** (Google Fonts, 300/400/500/700). Used for eyebrows,
-  footer text, badges, subtitles, pill labels, form labels - anywhere the
+  reads as "confident / engineered". Every paragraph and headline uses this
+  unless noted.
+- **Accent - Roboto** (Google Fonts, 300/400/500/700). Used for buttons,
+  navigation links, eyebrows, footer text, badges, subtitles, pill labels,
+  form labels - anywhere the
   tone needs to be "calm UI" rather than "engineered".
 - **Mono - Roboto Mono** with JetBrains Mono as fallback. Used for prices,
   stats, code, filenames, and anything numeric that should stay tabular.
@@ -264,16 +268,15 @@ Token names map as: `--ts-font-body`, `--ts-font-accent`, `--ts-font-mono`.
 | Eyebrow / kicker | 11px | 700 | accent, UPPERCASE, 0.14em ls |
 | Pill / chip label | 11–13px | 600–700 | accent |
 | Monospace digit/filename | 11–22px | 400–700 | mono, tabular-nums |
-| Pricing $ value | 44px | 700 | mono |
-| Pricing animated counter | 44px | 700 | mono, tabular-nums |
+| Pricing $ value | `clamp(0.8125rem, 2.4vw + 0.25rem, 2.125rem)` | 700 | mono |
+| Pricing animated counter | `clamp(0.8125rem, 2.4vw + 0.25rem, 2.125rem)` | 700 | mono, tabular-nums |
 
 ### Letter-spacing rhythm
 
 - Headlines: `letter-spacing: -0.035em` down to `-0.02em`. Tighten as size
   grows.
 - UPPERCASE labels (badges, eyebrows, status, button text): `0.08em` for
-  button labels, `0.10em`–`0.14em` for eyebrows and chips, `0.20em` for very
-  small labels (trial "DAYS" style).
+  button labels, `0.10em`–`0.14em` for eyebrows and chips.
 - Lowercase body copy: `0` (default).
 
 ### Line-height rhythm
@@ -293,10 +296,10 @@ these targets:
 |---|---|---|
 | Content section (features, code, pricing) | `80–88px 0` | `56–64px 0` |
 | Hero | `min-height: clamp(580px, calc(78vh - 72px), 760px)` | `clamp(520px, 92vh, 680px)` |
-| Final CTA | `84px 0 112px` | `56px 0 88px` |
+| Final CTA | `84px 0 112px` | `48px 0 72px` |
 | Footer | `36px 0 20px` | same |
 | Container inner padding | `0 40px` | `0 20px` |
-| Max content width | `1240px` (or `1120px`, `960px`, `900px`, `720px` depending on density) | same |
+| Max content width | `1240px` (or `1120px`, `960px`, `880px`, `720px` depending on density) | same |
 | Section-header max-width | `720px` | same |
 
 Grid gaps default to `16–20px`; card internal padding default `20–32px`
@@ -310,7 +313,7 @@ depending on density.
 |---|---|
 | `4px` | Eyebrows, small chips, code-block bullets |
 | `6px` (`--ts-radius-sm`) | Buttons, small cards, input fields |
-| `8px` | Social icon squares, FAQ item |
+| `7–8px` | Social icon squares, FAQ item |
 | `10–12px` (`--ts-radius-md`) | Cards, terminal, CTA glass panel |
 | `16–18px` (`--ts-radius-lg`/`xl`) | Large billboard CTAs |
 | `9999px` (`--ts-radius-pill`) | Highlight pills, billing toggle, status chip |
@@ -359,7 +362,7 @@ A subtle inner light is sometimes added on elevated glass:
 | Card hover (lift + shadow) | 250–260 ms | `ease` |
 | FAQ expand / chevron rotate | **220 ms** | `cubic-bezier(.22, 1, .36, 1)` (must match between arrow and panel) |
 | Toggle thumb slide | 240 ms | `cubic-bezier(.4, 0, .2, 1)` |
-| Reveal-on-scroll | 720 ms | `cubic-bezier(.22, 1, .36, 1)` |
+| Reveal-on-scroll | 380 ms (`reveal` action default; CSS fallback 720 ms) | `cubic-bezier(.22, 1, .36, 1)` |
 | Price tween (monthly↔annual) | 650 ms | `cubicOut` (Svelte `svelte/easing`) |
 | CTA shine sweep | 900 ms | `cubic-bezier(.4, 0, .2, 1)` on hover |
 
@@ -418,7 +421,8 @@ the `reveal` Svelte action or by manually toggling classes:
 
 - Element starts with class `ts-reveal` + direction (`ts-reveal-up/down/left/right/none`).
 - When visible, add class `is-visible`.
-- Direction offsets are 22px by default, transition 720ms.
+- Direction offsets are 22px by default. The `reveal` action sets
+  `--ts-reveal-duration` to 380ms; the CSS fallback is 720ms.
 
 ```css
 .ts-reveal {
@@ -478,6 +482,10 @@ confine the effect to a child element with `overflow: hidden` and feather it
 into the body via a `mask-image: radial-gradient(...)` so it dissolves at the
 edges instead of creating a rectangle.
 
+The one exception is the 404 page (`src/pages/NotFound.svelte`), which paints
+its own backdrop from the `--ts-notfound-*` tokens plus a perspective grid
+floor.
+
 ---
 
 ## 11. Core components
@@ -488,9 +496,9 @@ edges instead of creating a rectangle.
 - Background transitions from `rgba(var(--ts-bg-base-raw), 0.75)` to `0.94`
   once the user scrolls > 24 px (add/remove a `.scrolled` class on scroll).
 - `backdrop-filter: blur(20px)`.
-- Three-column layout: `grid-template-columns: 1fr auto 1fr` - nav centred,
-  brand left, actions right. Collapses to 2 cols at `max-width: 960px` and
-  reveals a hamburger button.
+- Flex row: brand left, nav centred (`margin: 0 auto`), actions right. At
+  `max-width: 1240px` the nav and actions hide and a hamburger button
+  reveals a mobile menu.
 - Height: `72px`.
 
 ```css
@@ -516,7 +524,7 @@ on hover, active state = brand pill (10% blue bg + 25% blue border).
 - Column headings: 11px, 700, uppercase, 0.14em letter-spacing.
 - Each link has a chevron glyph that translates +2px on hover.
 - Meta row at the bottom is divided by another hairline; left = copyright,
-  right = status + compliance chip (each with a pulsing or static icon).
+  right = inline language selector.
 
 ### 11.3 Buttons
 
@@ -545,14 +553,14 @@ Three variants. All use `--ts-font-accent`, `font-size: 13px`, `font-weight:
 .ts-btn-primary:active { transform: translateY(0); }
 
 .ts-btn-glass {
-  background: rgba(255,255,255,0.04);
+  background: rgba(255,255,255,0.09);
   border-color: var(--ts-glass-border);
   color: var(--ts-text);
   backdrop-filter: blur(8px);
 }
 .ts-btn-glass:hover {
   border-color: rgba(var(--ts-primary-rgb), 0.45);
-  background: rgba(var(--ts-primary-rgb), 0.06);
+  background: rgba(var(--ts-primary-rgb), 0.14);
 }
 
 .ts-btn-compact { padding: 11px 22px; font-size: 12px; }
@@ -658,11 +666,10 @@ A breathing dot that signals "live / online / streaming":
 }
 ```
 
-Typically `6–9 px`, backgrounded with `--ts-secondary` and a matching
-`box-shadow: 0 0 8px var(--ts-secondary)` for bloom.
+Typically `9 px`, backgrounded with `--ts-secondary` and a matching
+`box-shadow: 0 0 10px var(--ts-secondary)` for bloom.
 
-Used in: header status link, CTA perk block,
-footer meta stat.
+Used in: header status link.
 
 ### 11.8 Glass surface
 
@@ -704,9 +711,9 @@ Card variants observed:
 
 - **Feature card** (2×2 grid): 28 px padding, single accent colour
   (brand blue only).
-- **Pricing card** (3 up): 32 px padding, per-plan `--plan-accent` /
-  `--plan-accent-rgb` custom props so each tier can tint its icon, CTA, and
-  hover shadow.
+- **Pricing card** (3 up): `clamp(0.5rem, 2vw, 1.5rem)` padding, per-plan
+  `--plan-accent` / `--plan-accent-rgb` custom props so each tier can tint
+  its icon, CTA, and hover shadow.
 - **Triad card** (3 up, compact): 22 px padding, horizontal layout with
   icon + copy inline.
 - **FAQ item**: full-width collapsing panel - see §11.12.
@@ -780,7 +787,7 @@ Used for showcasing SDKs. Structure:
    `1px solid var(--ts-glass-border)`, elevated shadow (see §8).
 2. Chrome bar: 3 macOS-style dots (red #ff5f57, yellow #febc2e, green #28c840)
    + a monospace filename on the left, a Copy button on the right.
-3. Language tabs: small 8×14 px icons + label, underline-on-active style.
+3. Language tabs: small 13 px icons + label, underline-on-active style.
 4. `<pre>` with `padding: 24 px`, `font-size: 13.5 px`, `line-height: 1.75`,
    `color: #cbd5e1`, `max-height: 480 px`, `overflow: auto`.
 
@@ -807,10 +814,10 @@ Keep the highlighter minimal and hand-rolled - no Prism / shiki runtime.
 - Each SVG is monochrome and uses `currentColor`, so text colour classes
   control appearance.
 - An `icons.ts` registry maps camelCase names (`arrowRight`, `brandDiscord`)
-  to public paths. Rendering component fetches the SVG once, caches the
-  markup, and injects it as inline HTML.
+  to public paths. `Icon.svelte` renders a `<span>` that uses the SVG as a CSS
+  `mask` over `background-color: currentColor`.
 - Typical icon sizes: 11 px (chip / chevron), 14 px (button / status),
-  16 px (nav), 18–22 px (card icon tile), 28 px+ (hero CTA).
+  16 px (nav), 18–20 px (card icon tile).
 
 ### 11.15 Animated price counter
 
@@ -862,8 +869,8 @@ Composition top-to-bottom, all centred:
 
 1. (optional) World-map widget as the background - see §13.
 2. Wordmark mark (`logo-principal.svg`) with a soft breathing blue radial
-   glow behind it (via `.hero__brand-glow` pseudo / absolute div with
-   `.breathe`).
+   glow behind it (via the absolute `.hero__brand-glow` div animated with
+   `ts-breathe`).
 3. Headline (H1). Use gradient text on the trailing phrase only.
 4. Muted subtitle (max 560–620 px wide, single concrete sentence).
 5. Two CTAs: primary + glass secondary.
@@ -886,8 +893,8 @@ all of those were added and later removed because they fragmented the page.
 
 Common grids:
 - 2 × 2 feature cards (max-width 1240, gap 18)
-- 3 × pricing cards (max-width 1240, gap 20) - collapses to 1 column at
-  `max-width: 960px`
+- 3 × pricing cards (max-width 1240, gap `clamp(0.375rem, 1.3vw, 1rem)`) -
+  stays on a single row at every width; card content scales down instead
 - 3 × triad cards, horizontal layout (max-width 1120, gap 16)
 - 1 × code terminal with 1.2fr preview column, gap 72 at desktop, gap 40
   stacked on mobile
@@ -943,9 +950,9 @@ mask-image: radial-gradient(ellipse 95% 92% at 50% 50%,
   #000 0%, #000 70%, rgba(0,0,0,0.35) 88%, transparent 100%);
 ```
 
-- Topology: a **ring** between ~7 major hubs (each region connects to the
-  next, last closes back to first). Don't use full mesh (too noisy) or
-  random pairs (reads like mistakes).
+- Topology: a **ring** between the region hubs (currently 3; each region
+  connects to the next, last closes back to first). Don't use full mesh (too
+  noisy) or random pairs (reads like mistakes).
 - Map size: `width: min(1600px, 100%)` with `aspect-ratio: 119 / 60` - lets
   the entire map fit inside the viewport while keeping regions at the right
   geographic coords.
@@ -958,19 +965,22 @@ The site uses a handful of max-width breakpoints, not a formal grid system:
 
 | Breakpoint | Common switches |
 |---|---|
-| `max-width: 1100px` | Feature grid uses 2 cols |
-| `max-width: 960px` | Header collapses to hamburger, Pricing grid → 1 col, Code panel stacks, Footer grid → 2 cols |
-| `max-width: 860px` | Triad grid → 1 col, Features old breakpoint |
+| `max-width: 1240px` | Header collapses to hamburger |
+| `max-width: 960px` | Code panel stacks, Footer grid → 2 cols, Contact grid → 1 col |
+| `max-width: 900px` | 404 page stacks |
+| `max-width: 860px` | Triad grid → 1 col, About sections → 1 col |
 | `max-width: 760px` | Detailed pricing table header hides, rows stack |
-| `max-width: 720px` | Hero padding/height shrinks, CTA stacks |
-| `max-width: 640px` | Most "final mobile" adjustments (FAQ title shrink, CTA card padding drops) |
-| `max-width: 560px` | Footer grid → 1 col, meta row stacks |
+| `max-width: 720px` | Hero padding/height shrinks, highlight pills stack |
+| `max-width: 640px` | Most "final mobile" adjustments (Features → 1 col, FAQ title shrink, CTA card padding drops) |
+| `max-width: 560px` | Footer grid → 1 col, meta row stacks, popular pricing badge collapses to its icon |
+| `max-width: 420px` | Pricing card header stacks |
 
-No `@media (min-width: ...)` queries - always mobile-friendly by default and
-use max-width overrides.
+The only `@media (min-width: ...)` query keeps the CodePanel headline on one
+line at `min-width: 961px`; everything else is mobile-friendly by default and
+uses max-width overrides.
 
-All `.section__inner` containers shrink their gutter from `0 40px` to
-`0 20px` at the first mobile breakpoint.
+Section `*__inner` containers shrink their gutter from `0 40px` to
+`0 20px` at their first mobile breakpoint.
 
 ---
 
@@ -1058,6 +1068,7 @@ src/
 ├── index.css                    # tokens + utilities (§3, §9, §10)
 ├── lib/
 │   ├── site.ts                  # nav, footer, social data
+│   ├── i18n/                    # locales + message dictionaries
 │   ├── icons.ts                 # icon registry
 │   ├── highlight.ts             # code tokenizer (§11.13)
 │   ├── motion/reveal.ts         # IntersectionObserver action
@@ -1066,6 +1077,7 @@ src/
 │   ├── Header.svelte            # §11.1
 │   ├── Footer.svelte            # §11.2
 │   ├── Icon.svelte              # §11.14
+│   ├── LanguageSelector.svelte  # header + footer locale switch
 │   ├── ScrollReveal.svelte      # wrapper around reveal action
 │   ├── AnimatedPrice.svelte     # §11.15
 │   ├── RouteLink.svelte         # internal nav
@@ -1084,6 +1096,7 @@ src/
 ├── pages/
 │   ├── Home.svelte              # Hero → CodePanel → Features → Pricing → Cta
 │   ├── Pricing.svelte           # PricingSection → Triad → Detailed → FAQ → CTA
+│   ├── About.svelte
 │   ├── Contact.svelte
 │   └── NotFound.svelte
 └── routes/                      # SvelteKit adapters that mount pages
@@ -1091,11 +1104,12 @@ static/
 ├── logo-principal.svg  logo-white.svg  logo-blue.svg  logo-black.svg
 ├── icon-blue.svg       icon-white.svg  icon-black.svg
 ├── world-map.svg
+├── 404-number.webp     404-illustration.webp
 ├── fonts/quantico.woff2  quantico-bold.woff2  jetbrains-mono.woff2  ...
 ├── icons/lucide/*.svg  icons/simple-icons/*.svg
 └── language-icons/*.svg
 scripts/
-├── icons-sync.mjs            # regenerates static/icons from manifest
+├── icons-sync.mjs            # regenerates static/icons + src/lib/icons.ts from manifest
 ├── icons-manifest.mjs
 └── world-map-sync.mjs        # regenerates static/world-map.svg + manifest
 ```
