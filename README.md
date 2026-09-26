@@ -330,15 +330,20 @@ production exit gates.
 
 ## Development
 
-~~~bash
+```bash
 npm install
 npm run typecheck
 npm run build
 npm test
 ```
 
-This checks committed contract metadata, installs dependencies, typechecks,
-builds, and runs Vitest. Browser qualification is a separate lane:
+This installs dependencies, typechecks, builds, and runs Vitest, including the
+committed contract-metadata checks. The OpenAPI drift test needs the pinned
+producer bundles: set `CONTRACT_SOURCE` (for example `../terrabase/contracts`)
+or `CONTRACT_URL` with `CONTRACT_ARCHIVE_SHA256` for the TerraBase bundle, and
+`EDGE_CONTRACT_SOURCE` or `EDGE_CONTRACT_URL` with
+`EDGE_CONTRACT_ARCHIVE_SHA256` for the edge bundle. Browser qualification is a
+separate lane:
 
 ```bash
 npm run test:browser
@@ -356,21 +361,18 @@ Review generated changes against the owning service contract before updating a
 pin. Product routes remain typed clients in the root entrypoint and are not
 part of the generated database/reactive route manifest.
 
-~~~bash
-node scripts/generate-msgpack-protocol.mjs --check
-node --test test/msgpack-manifest-drift.test.mjs
-node --test test/msgpack-hostile-decode.test.mjs
-node --test test/msgpack-corpus-roundtrip.test.mjs
-~~~
+```bash
+node scripts/generate-msgpack-protocol.ts --check
+npx vitest run test/msgpack-manifest-drift.test.ts \
+  test/msgpack-hostile-decode.test.ts test/msgpack-corpus-roundtrip.test.ts
+```
 
 Integration tests target the fixed DevHost public routes. When the required
 base URLs or credentials are absent, they skip instead of using mocked HTTP.
 Database API live tests also need fixed DevHost routes and credentials. The
-default OpenAPI gate checks the owner-published Dashboard snapshot and the
-checked-out `ts-internals` Database API document, including a complete
-contract fingerprint for each covered Database operation. Auth-storage routes stay
-listed as explicit SDK-3/INT-4 deferrals until their durable contract lands. A
-local emulator cannot qualify a live contract.
+OpenAPI gate checks the committed route manifest and descriptor against the
+pinned TerraBase and edge contract bundles. The only expected contract gap is
+`databases.websocket`. A local emulator cannot qualify a live contract.
 
 ## Releases
 

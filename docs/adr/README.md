@@ -2,8 +2,7 @@
 
 These records define the public TypeScript SDK boundary, local development
 runtime, reactive protocol, and package release gates. The workspace
-[`../../../GOAL.md`](../../../GOAL.md) and repository [`../../GOAL.md`](../../GOAL.md)
-remain authoritative. Status does not replace implementation or live
+[`../../../GOAL.md`](../../../GOAL.md) remains authoritative. Status does not replace implementation or live
 qualification tests.
 
 | ADR | Status | Decision |

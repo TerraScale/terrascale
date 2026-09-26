@@ -26,8 +26,8 @@ in protected jobs.
 
 ## Current state
 
-The current Dashboard snapshot covers all 91 SDK routes with zero typed-contract
-debt. The standalone MessagePack suites run through `npm test` and both
-protected Node runtime lanes. Production WebSocket and HTTP fallback transport,
-live Database API checks, and the current delivery workflow remain open tasks
-in the workspace `GOAL.md`.
+The committed route manifest pins 73 routes against the TerraBase and edge
+contract bundles; `databases.websocket` is the only expected contract gap. The
+standalone MessagePack suites run through `npm test` and both protected Node
+runtime lanes. Production reactive transport qualification, live Database API
+checks, and the current delivery workflow remain open.

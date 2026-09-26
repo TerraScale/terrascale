@@ -5,12 +5,15 @@ registries are not a distribution target.
 
 ## Current status
 
-Native CI is active for pushes to `develop` and `main` and for pull requests
-to `main`. The static contract gates, the Node.js `22.23.2` and `24.21.0`
-matrix, and the browser lane run on the `terrascale-builder` job image, which
-bakes Node.js `24.21.0` and the pinned Playwright engines. The
-jobs check out the event revision without credentials and do not receive npm,
-release, or live API secrets.
+Native CI runs on pushes to `develop` and `main` and on pull requests to
+`main`. The static contract gates, the Node.js `22.23.2` and `24.21.0` matrix,
+and the browser lane run on `terrascale-builder`. Its image includes Node.js
+`24.21.0` and the pinned Playwright Chromium and Firefox engines; the browser
+lane installs WebKit. Jobs check out the event revision, and the static and
+Node jobs also check out the pinned TerraBase (`TerraScale/ts-rust`) and edge
+(`TerraScale/ts-atlas`) contract bundles. Checkouts use `REGISTRY_TOKEN` with
+`persist-credentials: false`; jobs do not receive npm, release, or live API
+secrets.
 
 Production publication remains blocked. The unchanged
 `scripts/promote-npm-candidate.ts` verifier requires a real reviewed
@@ -31,8 +34,10 @@ npm ci
 npm run typecheck
 npm run build
 npm test
-npm run check:openapi-drift && npm run check:route-manifest \
+npm run check:public-contract-fixture
+npm run check:openapi-contract-descriptor && npm run check:route-manifest \
   && npm run check:forbidden-surface
+npm run check:sbom && npm run check:vulnerabilities
 npm run test:browser
 ```
 
@@ -43,16 +48,17 @@ uses pinned current Chromium, Firefox, and WebKit engines. A skipped or
 host-blocked required lane blocks publication.
 
 The route manifest and OpenAPI descriptor must match the owner-published
-contracts. Dashboard owns identity and product routes. The Go Database API in
-`ts-internals` owns database and reactive routes. A missing contract stays
-missing from the SDK.
+TerraBase and edge contract bundles selected by `CONTRACT_SOURCE` or
+`CONTRACT_URL` and `EDGE_CONTRACT_SOURCE` or `EDGE_CONTRACT_URL`. A missing
+contract stays missing from the SDK.
 
-The reactive gate checks the generated `terrascale.sync.v2.msgpack` manifest,
+The reactive gate checks the generated `terrascale.sync.v1.msgpack` manifest,
 hostile decoding, golden bytes, and result-view behavior. MessagePack carries
 the envelope and operation structure. Document bodies remain raw
 TerraScale-canonical JSON bytes, and the client performs one native
-`JSON.parse` per body after decoding the envelope. WebSocket is the fast path,
-HTTP + MessagePack is the fallback, and there is no JSON WebSocket variant.
+`JSON.parse` per body after decoding the envelope. HTTP is the default
+transport, WebSocket and server-sent events are opt-in upgrades, and there is
+no JSON WebSocket variant.
 
 The local SQLite runtime cannot qualify live API behavior, authorization,
 multi-Region durability, recovery, billing, or performance. Live integration
@@ -62,9 +68,9 @@ a passing result.
 ## Protected release when publication is restored
 
 Agents commit green changes directly to `develop`; pull requests to `main` run
-the same native CI.
-The owner may restore a main-only release graph after accepting a native receipt
-producer and promoting `develop` to `main`. That protected `main` run must:
+the same native CI. The owner may restore a main-only release graph after
+accepting a native receipt producer and promoting `develop` to `main`. That
+protected `main` run must:
 
 1. build one immutable npm tarball from the promoted commit;
 2. bind the tarball to the exact commit, dependency lock, generated contracts,
