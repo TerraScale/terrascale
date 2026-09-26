@@ -1,6 +1,6 @@
 # `terrascale` — Rust SDK for TerraScale
 
-Document CRUD, the typed schema builder (`#[derive(Schema)]` in
+Document CRUD, provider-independent file storage, the typed schema builder (`#[derive(Schema)]` in
 `terrascale-derive`), the typed SQL builder and raw parameterized SQL,
 `subscribe`/`execute`, checkpoints and typed resets, Atlas discovery routing,
 tenants, and management.
@@ -24,7 +24,7 @@ let docs = client.documents();
 
 A failover-affinity client (the default) targeting the public origin
 `https://api.terrascale.tech` resolves member traffic through **Atlas
-discovery**; the retired per-request proxy no longer exists.
+discovery**.
 
 - **First use of a database** (`/api/v1/databases/{name}/…`) sends one
   unauthenticated metadata GET to
@@ -44,8 +44,8 @@ discovery**; the retired per-request proxy no longer exists.
   routing document whenever the scope holds one.
 - **Discovery failure degrades to the region catalog**
   (`GET https://atlas.terrascale.tech/api/v1/regions`, cached five minutes);
-  the request then goes directly to the first available regional host. Never
-  a proxy. If discovery and the catalog both fail, member routes fail with a
+  the request then goes directly to the first available regional host. If
+  discovery and the catalog both fail, member routes fail with a
   typed `routing_unavailable` error.
 - **Product routes** (`/api/v1/organizations*`, `/api/v1/projects*`,
   `/api/v1/regions/{code}`) target the configured API base, which the
@@ -59,23 +59,21 @@ discovery**; the retired per-request proxy no longer exists.
   A `421` adopts the member's `X-TerraScale-Placement` into the routing
   cache and marks the scope for one corrective `stale=1` rediscovery; `404`
   never triggers rediscovery. Idempotency-key retry gating and the strict
-  URL allowlist are unchanged.
+  URL allowlist still apply.
 - **Affinity options**: `RegionAffinity::Failover` (default) uses
   discovery + catalog as above; `RegionAffinity::Strict` keeps the direct
-  pinned regional base (`{region}.api.terrascale.tech`) with no discovery.
-  Per-request region hints stay advisory `X-TerraScale-Preferred-Region`
+  pinned regional base (`{region}.api.terrascale.tech`) with no discovery and
+  requires `preferred_region`. Per-request region hints stay advisory `X-TerraScale-Preferred-Region`
   headers under discovery and never steer the base URL.
 - **Configuration knobs**: `ClientConfig::builder().api_base_url(...)`
   selects the product origin (default `https://api.terrascale.tech`);
   `.atlas_base_url(...)` overrides the discovery origin (default
   `https://atlas.terrascale.tech`) and forces discovery on for custom API
-  origins — used by tests and local development. Discovery requests are
+  origins under failover affinity — used by tests and local development.
+  Without that override, custom API origins make direct requests with no
+  discovery. `.sync_base_url(...)` overrides the reactive delivery origin
+  (default `https://sync.api.terrascale.tech`). Discovery requests are
   bounded at 3 s.
-
-**Migration note (from the ADR 0043 proxy flow):** the global origin no
-longer proxies or pins member traffic, and serving-region first-contact
-learning is gone. Custom origins and strict affinity behave exactly as
-before — no discovery, direct requests.
 
 ## Reactive transports
 
@@ -168,8 +166,9 @@ manifest.
 ## Layout
 
 - `src/` — `terrascale` crate. Key modules are `config`, `discovery`,
-  `regions`, `transport`, `client`, `documents`, `schema`, `sql`, `reactive`,
-  `tenants`, `management`, and `auth_idp` (ts-auth hosted IdP client).
+  `regions`, `transport`, `client`, `documents`, `files`, `schema`, `sql`,
+  `reactive`, `tenants`, `management`, and `auth_idp` (ts-auth hosted IdP
+  client).
 - `terrascale-derive/` — `#[derive(Schema)]` collection and field metadata.
 - `tests/conformance.rs` — SDK behavior checks against a mock transport.
 - `tests/producer_http_conformance.rs` — public SDK calls exercised against
@@ -194,9 +193,9 @@ rename is absent.
 
 ## Verify
 
-`nice -n 19 cargo fmt --all --check`, `nice -n 19 cargo clippy --workspace
---all-targets --all-features -- -D warnings`, and `nice -n 19 cargo test
---workspace --all-features` run the Rust verification set. Contract
+`nice -n 19 cargo fmt --all --check`, `nice -n 19 cargo clippy --locked
+--workspace --all-targets --all-features -- -D warnings`, and `nice -n 19 cargo
+test --locked --workspace --all-features` run the Rust verification set. Contract
 verification uses `dotnet run scripts/contracts.cs` with an explicit source or
 immutable archive and remains fail-closed without one.
 
@@ -213,6 +212,8 @@ is represented or remotely cancellable.
   formatting, lint (`clippy -D warnings`), and locked workspace tests.
 - Edition: 2021, declared in `Cargo.toml`. `cargo-audit` 0.22.2 runs the
   dependency advisory gate over the committed lockfile.
-- Contract surface: the TerraBase API contract is pinned through
-  `scripts/contracts.cs` (immutable archive with SHA-256 verification); tests
-  fail closed when the archive is not resolvable.
+- Contract surface: the TerraBase API contract is pinned in `contracts/v1`
+  (`CONTRACT_VERSION`, `CONTRACT_ARCHIVE_SHA256`) and regenerated with
+  `src/generated_contract.rs` by `scripts/contracts.cs` from an explicit source
+  or SHA-256-verified archive; tests fail when the committed bundle drifts from
+  the generated digests.

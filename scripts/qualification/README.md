@@ -14,6 +14,7 @@ The required environment is `TERRASCALE_API_URL`, `TERRASCALE_AUTH_URL`,
 `TERRASCALE_JOURNEY_RUN_ID`, plus the independently supplied
 `TERRASCALE_SDK_CRATE`/`TERRASCALE_SDK_CRATE_SHA256` and
 `TERRASCALE_SDK_DERIVE_CRATE`/`TERRASCALE_SDK_DERIVE_CRATE_SHA256` pairs.
+Optionally set `TERRASCALE_SYNC_URL` to override the reactive delivery origin.
 Both regular files and hashes, archive roots, package manifests, and the exact
 derive dependency are validated before extraction, Cargo, or provider access.
 The derive package is extracted to an explicit temporary path and bound by
