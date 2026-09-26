@@ -1,0 +1,302 @@
+diff --git a/core/mvcc/database/checkpoint_state_machine.rs b/core/mvcc/database/checkpoint_state_machine.rs
+index c7ff58e47..c5d1ec2b6 100644
+--- a/core/mvcc/database/checkpoint_state_machine.rs
++++ b/core/mvcc/database/checkpoint_state_machine.rs
+@@ -3103,11 +3103,11 @@ impl<Clock: LogicalClock, A: ConcurrentAllocator> CheckpointStateMachine<Clock,
+                 // Locks stay held until `step()` runs `on_checkpoint_end`, then
+                 // `release_checkpoint_locks_if_needed`.
+                 self.finalize(&())?;
+-                Ok(TransitionResult::Done(
+-                    self.checkpoint_result.take().ok_or_else(|| {
+-                        LimboError::InternalError("checkpoint_result not set".to_string())
+-                    })?,
+-                ))
++                let mut result = self.checkpoint_result.take().ok_or_else(|| {
++                    LimboError::InternalError("checkpoint_result not set".to_string())
++                })?;
++                result.mvcc_snapshot_ts = Some(self.snapshot_ts);
++                Ok(TransitionResult::Done(result))
+             }
+         }
+     }
+diff --git a/core/mvcc/persistent_storage/logical_log.rs b/core/mvcc/persistent_storage/logical_log.rs
+index 71b87a060..a1d0503bb 100644
+--- a/core/mvcc/persistent_storage/logical_log.rs
++++ b/core/mvcc/persistent_storage/logical_log.rs
+@@ -233,6 +233,7 @@
+ 
+ use crate::io::{FileSyncType, SharedBufferData};
+ use crate::sync::Arc;
++use crate::sync::Mutex;
+ use crate::sync::RwLock;
+ use crate::turso_assert;
+ use crate::types::IOResultOr;
+@@ -252,6 +253,12 @@ use crate::{
+ 
+ use crate::storage::encryption::EncryptionContext;
+ use crate::File;
++#[cfg(not(any(unix, windows)))]
++use std::io::{Read, Seek};
++#[cfg(unix)]
++use std::os::unix::fs::FileExt;
++#[cfg(windows)]
++use std::os::windows::fs::FileExt;
+ 
+ mod serializer;
+ use serializer::EncryptedPayload;
+@@ -1647,6 +1654,8 @@ pub struct StreamingLogicalLogReader {
+     /// updated after each successfully validated frame.
+     running_crc: u32,
+     encryption_ctx: Option<EncryptionContext>,
++    /// Only strict complete-file validation applies this caller-owned frame limit.
++    max_validation_frame_plaintext_len: Option<usize>,
+     /// Plaintext bytes per encrypted payload chunk. Production uses the fixed format constant;
+     /// tests may override via `new_with_encrypted_payload_chunk_size_for_test`.
+     encrypted_payload_chunk_size: usize,
+@@ -1665,6 +1674,94 @@ pub struct StreamingLogicalLogReader {
+     frame_in_progress: Option<FrameInProgress>,
+ }
+ 
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct CompleteLogValidation {
++    end_offset: u64,
++    running_crc: u32,
++    frame_count: u64,
++}
++
++impl CompleteLogValidation {
++    pub fn end_offset(&self) -> u64 {
++        self.end_offset
++    }
++
++    pub fn running_crc(&self) -> u32 {
++        self.running_crc
++    }
++
++    pub fn frame_count(&self) -> u64 {
++        self.frame_count
++    }
++}
++
++struct ReadOnlyLogFile {
++    file: Mutex<std::fs::File>,
++}
++
++impl File for ReadOnlyLogFile {
++    fn lock_file(&self, _exclusive: bool) -> Result<()> {
++        Ok(())
++    }
++
++    fn unlock_file(&self) -> Result<()> {
++        Ok(())
++    }
++
++    fn pread(&self, pos: u64, completion: Completion) -> Result<Completion> {
++        let count = {
++            let file = self.file.lock();
++            #[cfg(unix)]
++            let count = file.read_at(completion.as_read().buf().as_mut_slice(), pos);
++            #[cfg(windows)]
++            let count = file.seek_read(completion.as_read().buf().as_mut_slice(), pos);
++            #[cfg(not(any(unix, windows)))]
++            let count = {
++                let mut file = file;
++                file.seek(std::io::SeekFrom::Start(pos))
++                    .map_err(|error| crate::error::io_error(error, "logical log seek"))?;
++                file.read(completion.as_read().buf().as_mut_slice())
++            };
++            count.map_err(|error| crate::error::io_error(error, "logical log read"))?
++        };
++        let count = i32::try_from(count)
++            .map_err(|_| LimboError::Corrupt("Logical log read exceeds i32".to_string()))?;
++        completion.complete(count);
++        Ok(completion)
++    }
++
++    fn pwrite(
++        &self,
++        _pos: u64,
++        _buffer: Arc<Buffer>,
++        _completion: Completion,
++    ) -> Result<Completion> {
++        Err(LimboError::InvalidArgument(
++            "Cannot write a read-only logical log".to_string(),
++        ))
++    }
++
++    fn sync(&self, _completion: Completion, _sync_type: FileSyncType) -> Result<Completion> {
++        Err(LimboError::InvalidArgument(
++            "Cannot sync a read-only logical log".to_string(),
++        ))
++    }
++
++    fn size(&self) -> Result<u64> {
++        self.file
++            .lock()
++            .metadata()
++            .map(|metadata| metadata.len())
++            .map_err(|error| crate::error::io_error(error, "logical log size"))
++    }
++
++    fn truncate(&self, _len: u64, _completion: Completion) -> Result<Completion> {
++        Err(LimboError::InvalidArgument(
++            "Cannot truncate a read-only logical log".to_string(),
++        ))
++    }
++}
++
+ impl StreamingLogicalLogReader {
+     fn new_internal(
+         file: Arc<dyn File>,
+@@ -1688,6 +1785,7 @@ impl StreamingLogicalLogReader {
+             last_valid_offset: 0,
+             running_crc: 0,
+             encryption_ctx,
++            max_validation_frame_plaintext_len: None,
+             encrypted_payload_chunk_size,
+             #[cfg(test)]
+             pending_ops: std::collections::VecDeque::new(),
+@@ -1701,6 +1799,75 @@ impl StreamingLogicalLogReader {
+         Self::new_internal(file, encryption_ctx, ENCRYPTED_PAYLOAD_CHUNK_SIZE)
+     }
+ 
++    pub fn validate_complete_std_file(
++        file: std::fs::File,
++        io: &Arc<dyn crate::IO>,
++        encryption_ctx: Option<EncryptionContext>,
++        expected_len: u64,
++        max_frame_plaintext_len: usize,
++    ) -> Result<CompleteLogValidation> {
++        let actual_len = file
++            .metadata()
++            .map(|metadata| metadata.len())
++            .map_err(|error| crate::error::io_error(error, "logical log size"))?;
++        if actual_len != expected_len {
++            return Err(LimboError::Corrupt(
++                "Logical log length differs from expected complete length".to_string(),
++            ));
++        }
++        let file = Arc::new(ReadOnlyLogFile {
++            file: Mutex::new(file),
++        });
++        Self::new(file, encryption_ctx).validate_complete_log(
++            io,
++            expected_len,
++            max_frame_plaintext_len,
++        )
++    }
++
++    pub fn validate_complete_log(
++        &mut self,
++        io: &Arc<dyn crate::IO>,
++        expected_len: u64,
++        max_frame_plaintext_len: usize,
++    ) -> Result<CompleteLogValidation> {
++        if expected_len < LOG_HDR_SIZE as u64 || self.file.size()? != expected_len {
++            return Err(LimboError::Corrupt(
++                "Logical log length differs from expected complete length".to_string(),
++            ));
++        }
++        self.max_validation_frame_plaintext_len = Some(max_frame_plaintext_len);
++        self.read_header(io)?;
++
++        let mut frame_count = 0_u64;
++        loop {
++            match io.block(|| self.parse_next_transaction())? {
++                ParseResult::Frame(_) => {
++                    frame_count = frame_count.checked_add(1).ok_or_else(|| {
++                        LimboError::Corrupt("Logical log frame count overflow".to_string())
++                    })?;
++                }
++                ParseResult::Eof => break,
++                ParseResult::InvalidFrame => {
++                    return Err(LimboError::Corrupt(
++                        "Logical log contains an invalid transaction frame".to_string(),
++                    ));
++                }
++            }
++        }
++
++        if self.last_valid_offset as u64 != expected_len || self.file.size()? != expected_len {
++            return Err(LimboError::Corrupt(
++                "Logical log has an incomplete transaction tail".to_string(),
++            ));
++        }
++        Ok(CompleteLogValidation {
++            end_offset: expected_len,
++            running_crc: self.running_crc,
++            frame_count,
++        })
++    }
++
+     #[cfg(test)]
+     fn new_with_payload_chunk_size(
+         file: Arc<dyn File>,
+@@ -2333,7 +2500,10 @@ impl StreamingLogicalLogReader {
+         let chunk_count =
+             encrypted_payload_chunk_count(plaintext_size, self.encrypted_payload_chunk_size);
+         let mut running_crc = running_crc;
+-        let mut plaintext = Vec::with_capacity(plaintext_size);
++        let mut plaintext = Vec::new();
++        plaintext
++            .try_reserve_exact(plaintext_size)
++            .map_err(LimboError::from)?;
+         for chunk_index in 0..chunk_count {
+             running_crc = match return_if_io!(self.read_and_decrypt_encrypted_chunk(
+                 &payload_ctx,
+@@ -2870,6 +3040,33 @@ impl StreamingLogicalLogReader {
+             }
+         };
+ 
++        if let Some(max_frame_plaintext_len) = self.max_validation_frame_plaintext_len {
++            let Some(plaintext_len) = payload_size.checked_add(extension_size) else {
++                return Ok(IOResult::Done(HeaderParseOutcome::Invalid));
++            };
++            if plaintext_len > max_frame_plaintext_len {
++                return Ok(IOResult::Done(HeaderParseOutcome::Invalid));
++            }
++            let body_len = match self.encryption_ctx.as_ref() {
++                Some(encryption_ctx) => encrypted_payload_blob_size(
++                    plaintext_len,
++                    self.encrypted_payload_chunk_size,
++                    encryption_ctx.tag_size(),
++                    encryption_ctx.nonce_size(),
++                ),
++                None => Ok(plaintext_len),
++            };
++            let Ok(body_len) = body_len else {
++                return Ok(IOResult::Done(HeaderParseOutcome::Invalid));
++            };
++            if body_len
++                .checked_add(TX_TRAILER_SIZE)
++                .is_none_or(|required| required > self.remaining_bytes())
++            {
++                return Ok(IOResult::Done(HeaderParseOutcome::Invalid));
++            }
++        }
++
+         // Chained CRC: seed from running_crc (derived from salt, or previous frame's CRC).
+         let running_crc = crc32c::crc32c_append(self.running_crc, &header_bytes);
+ 
+diff --git a/core/storage/wal.rs b/core/storage/wal.rs
+index 82b040213..d74ba3369 100644
+--- a/core/storage/wal.rs
++++ b/core/storage/wal.rs
+@@ -62,6 +62,9 @@ pub struct RollbackTo {
+ 
+ #[derive(Debug, Clone, Default)]
+ pub struct CheckpointResult {
++    /// MVCC transaction timestamp materialized by this checkpoint, sampled
++    /// while the checkpoint's writer exclusion was held. None for non-MVCC.
++    pub mvcc_snapshot_ts: Option<u64>,
+     /// max frame in the WAL after checkpoint
+     /// note, that as we TRUNCATE wal outside of the main checkpoint routine - this field will be set to non-zero number even for TRUNCATE mode
+     pub wal_max_frame: u64,
+@@ -93,6 +96,7 @@ impl CheckpointResult {
+         wal_checkpoint_backfilled: u64,
+     ) -> Self {
+         Self {
++            mvcc_snapshot_ts: None,
+             wal_max_frame,
+             wal_total_backfilled,
+             wal_checkpoint_backfilled,

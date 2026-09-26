@@ -1,0 +1,786 @@
+{
+  "authority": "main worktree source inputs at seal time; benchmark binaries will be built from the persistent integration snapshot after the source-input comparison below",
+  "created_utc": "2026-09-26T08:02:12Z",
+  "differences_in_scoped_inputs": [],
+  "excluded_test_file_differences": [
+    {
+      "main_sha256": "bf27c7a51111ef3ea6dcdfde3c4f0ff0b0d7c8ccdbfc309a899c1c276efafe0b",
+      "path": "crates/tb-server/tests/client_process.rs",
+      "reason": "Slow-gated poison/recovery additions only in main; the separately recorded Fast fixture test function is byte-identical.",
+      "snapshot_sha256": "41587b83104580f8456a1a1eaeba3c680a7dc35f9006ccfb3d076a75fd9b02f3"
+    },
+    {
+      "main_sha256": "0b390bcb443b5c8ded6af7be25ea267e39d87180fc4f993dff5a9b60f90f17bc",
+      "path": "crates/tb-server/tests/support/object/slow.rs",
+      "reason": "Slow integration-test support; excluded from production profile build.",
+      "snapshot_sha256": "8f2d7367fb9f223807bff9ff9fe5596f3752c2a5c555f42d53cfd99a36e7230f"
+    }
+  ],
+  "fast_fixture_test": {
+    "identical": true,
+    "main": {
+      "function_sha256": "8c4360a7a39013a9efb65e525f47bba5eb1c0b044f7ca9b2fc037a30a876328c",
+      "path": "crates/tb-server/tests/client_process.rs",
+      "symbol": "async fn packaged_initializer_bootstraps_fresh_local_v1_for_https_document_caller"
+    },
+    "snapshot": {
+      "function_sha256": "8c4360a7a39013a9efb65e525f47bba5eb1c0b044f7ca9b2fc037a30a876328c",
+      "path": "crates/tb-server/tests/client_process.rs",
+      "symbol": "async fn packaged_initializer_bootstraps_fresh_local_v1_for_https_document_caller"
+    }
+  },
+  "production_build_input_manifest": {
+    "entries": [
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": ".gitmodules",
+        "sha256": "468e11af359d41b881607263b59bb44cc1577b58ce627b468f7a03956c653bf1"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "Cargo.lock",
+        "sha256": "44667ceb0baca71dd7d432cd5b8150cc58fb761b6edaff83b6a1b796dbc1ae36"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "Cargo.toml",
+        "sha256": "dd76634dadbd32351b5c830ba775eb67a4853658b6f24307e15133218f5abc12"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "Makefile",
+        "sha256": "fbda8a0c7e1e31db2c6a23a1dd2847d02cf7a20bca1999221cd1bff226477fa0"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-core/Cargo.toml",
+        "sha256": "9950aff8bdcd95e2804a8fbf142fc197a93937e5e373556584dc1fe3d4ccf061"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-core/src/error.rs",
+        "sha256": "f5520aadb561a93fd5887e5e67ba08e9f796a2a26f7d1ed322edc11880a3e3da"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-core/src/lib.rs",
+        "sha256": "d4a188e79697d72d3e649dd16fa6424e7b3a4fe498884affdbe42cfaab122c2a"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-core/src/memory.rs",
+        "sha256": "aeed1eb3a8a0f45ef1a4d73806f8e2c758206f11e77140c7ddf05362dc3246d4"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-core/src/types.rs",
+        "sha256": "9686e406de9c34c3f2da77ace00dcd4b087e26bda9b37320bb7d70b69ca27047"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-document/Cargo.toml",
+        "sha256": "ccf0b88bac0ff2c68ad29229e3756ca1114d40d69fb1df10026a17eef5afac1e"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-document/src/distributed.rs",
+        "sha256": "50e3cec6fec5d721d9ff7f8022c08e1328aa233310bf6b18b59405da09e560ae"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-document/src/distributed_apply.rs",
+        "sha256": "f87554f5e080d98997502415c26516990aca664b56cd6a2300531526b28d6cb9"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-document/src/distributed_producer.rs",
+        "sha256": "e2bf6aa62e9ec06168980fdf84cd3d83ef4dea557b8e1e020b85c5740319dc2b"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-document/src/distributed_read.rs",
+        "sha256": "f20eaa0f8fb691e8ecd999c89bf3351260a216e702f6475d7c91dc73f1f12dfa"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-document/src/distributed_state.rs",
+        "sha256": "b0304e99be5ab77b3ce6a85f6b815538af1e20ce211f71c2831a19930a04aca0"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-document/src/lib.rs",
+        "sha256": "e801eba6ea06bc04c137ebb9c0aec723608d3711d5b7e7b61c434338976d9e66"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-document/src/local_v1.rs",
+        "sha256": "4a8c7869b354e1d8b54f68a96543aeea6e10a2fa4213604f7be0e1e329dcd262"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-document/src/producer.rs",
+        "sha256": "f6d3578d4371b56ea46f61ca02317d0e9b07de0314d9ec3e819bedd564326fb0"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-engine-io/Cargo.toml",
+        "sha256": "9df428f24c60fa44c92401ca419c65cf703b84b2ad7baa9dbc7c39857ff65f97"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-engine-io/src/lib.rs",
+        "sha256": "c5bc3d9bb19eb7e9ff5c9a11b5e16f4f234f09104e89b36b3056f0fdf9b748af"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-format/Cargo.toml",
+        "sha256": "345f785f98603dc514f9731c726ad8c6061f5bf9b8a204a7dcfbe39b74a3bf7b"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-format/src/document.rs",
+        "sha256": "cab750b73265248295f10db5e0a098a650e9b371c73da6ff63818c0cde44fbdd"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-format/src/document_v2.rs",
+        "sha256": "da73c94766d11f4b0be7194a6535c72e9bf8d5baef5ddb24af45388cfb30f7da"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-format/src/envelope.rs",
+        "sha256": "a41d3b2b8910bee6a3a007d781fab1c3fda2b2edf5d5d40f62dc7e0a2b559062"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-format/src/lib.rs",
+        "sha256": "8b1550b0fbfe3df479c597cec8d6ccc1e865a63f70e823dd31bc5cfb93a5daee"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-format/src/remote.rs",
+        "sha256": "0f208c10f43d16bbc73dace41d91da0db7604b0d653d857c6c2e4d4026d24664"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-format/src/segment.rs",
+        "sha256": "567a42a2f368d7ea5700159e0321712e557f4f10a80f3b49559ff8f14b15416e"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-format/src/wal.rs",
+        "sha256": "a6bb04b930d350090f1731bf1a67fa29aa0b67707a9083c4b7c0db7c1d72bee2"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-object/Cargo.toml",
+        "sha256": "4eedbf34fbf0cc2844ddd99c8c7a71fb31aa299a8d9ff0d2afb0da40b40dd25b"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-object/src/client.rs",
+        "sha256": "4b3ec36f4d52a6768003d08a59a7a668e035a0fad000ec3e827e6b81587a929f"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-object/src/error.rs",
+        "sha256": "538c0158299d33a9abb226c9db00589aac923808db182722dadaeee774cb1940"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-object/src/lib.rs",
+        "sha256": "3e27070296f565bc1092f4882ef99a52cdad38715dfbb8cb6f83709df03f14f0"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-object/src/manifest.rs",
+        "sha256": "cc68322e1404800a701184875ea8271695c280ab1a212b323dabbf03aa2800e8"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-object/src/tier.rs",
+        "sha256": "612068ccb1916b7e6593d49f0fe1be823d8f8245bbf9bc1b9506245ed9c350ca"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-object/src/types.rs",
+        "sha256": "ca57492b893f01e6d8f67bd27301890f9e051eef7f1d4e978d652e49b1ea14b2"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-protocol/Cargo.toml",
+        "sha256": "6b569a51d3aadf67b35e23ed402e1f138a34ae490241971c25dcdae0181e1042"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-protocol/build.rs",
+        "sha256": "d585849a370ee528d3baa3d68afca72b25cbd16b77c740489aa1392f07a55f45"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-protocol/src/admission.rs",
+        "sha256": "77cdba0781a81c9512df7ee923ace4dfe4aa12512892cd66875d2b1cd5dec71f"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-protocol/src/batch.rs",
+        "sha256": "e2fc47e41c275fe9c0acc15f865fa79524375ff12965ab3758686aad45e0ffa7"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-protocol/src/handshake.rs",
+        "sha256": "1aefbf1be918389f46615bacfddc164f2a25390fd85d8ab2c6444d761ffde40c"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-protocol/src/lib.rs",
+        "sha256": "b07b79511e391de10825bf3b57bc707b58e20de85117c7b9382f2c4e84b1e9c5"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-protocol/src/security.rs",
+        "sha256": "41b8fb01b614bd257383a8018b9621fa6695abfc1507cb449f0f52211df58a5b"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-protocol/src/sync_codec.rs",
+        "sha256": "3cf896d59548627c6de534eec98cdc9b1340d315d401c7514b5add0e17b2bb96"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-protocol/src/timeout.rs",
+        "sha256": "1c25110c1d63904092fa4e2a3900d99d52b579047e672d39a05822cb28dd4467"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-replication/Cargo.toml",
+        "sha256": "1e89ef6a9449a0fad36a79933a974fcab9c281ed513bc960e693435cf46e2f0e"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-replication/src/authority.rs",
+        "sha256": "2000771412e6ca2cce576fc58f1edcb3c18fb8bd18f9ff22f1f076b84e921487"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-replication/src/cursor.rs",
+        "sha256": "9a0275f281699d1d24250ce23526027d67feb7a8418cf3a189599a625c7005c3"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-replication/src/event.rs",
+        "sha256": "56576aae259b07ca806428ab6da70412ba1549be5cdc7ecc4cf85a4dcad77667"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-replication/src/journal.rs",
+        "sha256": "3dbca01a6518a8b7314765f088524d5ca48938c6056ae6ff00d1791f333c190c"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-replication/src/lib.rs",
+        "sha256": "5f6df912e242d31d7c8957c66d587c1652e8d4be2ea4235eb8b2d972e3a70b6e"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-replication/src/merge.rs",
+        "sha256": "4bc6b9a2933c7d657872dea470704d5203f15a066c744ae7aedcbf97d4fd2026"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-replication/src/metadata.rs",
+        "sha256": "2c8a8b6d9d9d8921cb386b99a10f1962cc31ac7bf95badc56640855c6630e8e3"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-replication/src/tests.rs",
+        "sha256": "0b76bd92d5f3182fca54562dde882c7d2184d0fc1afeb66a247271ce292feebd"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/Cargo.toml",
+        "sha256": "db3de79db0a41ea66a2d2117fe5233604de2924a014c06ce6bc7ed6acb197bdd"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/bin/terrabase-init.rs",
+        "sha256": "fb33df5fdf3eff5fcce9018c3ba968889e93ee021a4a1d2f38cc1a63b6d25d42"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/client_auth.rs",
+        "sha256": "08843369468d8d9fb96d9a3d73362cd416b8af566301610b17a03f5fa77293fb"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/client_http.rs",
+        "sha256": "50fcafb2daabfc4dadca571ea4704d555c890f6a23ad49129819763fab4740e9"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/client_json.rs",
+        "sha256": "8fd4614428fbf6e3cb80aec2602ea2119b0844bd6d4384cd9d0cfc0eef381a86"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/config.rs",
+        "sha256": "11d0c7b7e21a5fea883d08fdd36bd4c3d7655db1c6098c9e521d0717528c5d5b"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/distributed_runtime.rs",
+        "sha256": "706052cfe86ba688d4f50c5f5cddf565747c04b012752050401ab7b9de053bb7"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/document_service.rs",
+        "sha256": "2d3eba3eef614dc0f746fa1d9ffb3ede64d3337bf2c9fae6707f8bdb3e521088"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/http.rs",
+        "sha256": "14d4bcf9429bda3212228111e82191ccb9ca2d6c5ef32c464212656121d69334"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/lib.rs",
+        "sha256": "2566906bf560275f41d911a3d63aff5aad77618620e9cbc38b4cc6f86222ace0"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/lifecycle.rs",
+        "sha256": "015ad2230090898f188d13899b3a1ba35dd446b330ddef5bf3a9dda286f4c81b"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/local_v1_runtime.rs",
+        "sha256": "9e940b2be1901cd9f9c205ebbb6430e04c0f07b4723e74f8de107f93edcf2852"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/main.rs",
+        "sha256": "ef34fa145d19b18a754f70f47914d934b3b9efcade7f724614c7d396af201316"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/member_control.rs",
+        "sha256": "9f2121ca9adf0367e34d7c10330ff9e237985c37de8d7d453fe6cb0595d91d72"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/memory_metrics.rs",
+        "sha256": "c3fd37057a486a6d6112b9e970019cf02ab8c5a64cb882197da3d1adc68d3b24"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/memory_pressure.rs",
+        "sha256": "131ad0618c0d8fb476674e0fd66eac7c1a562f65e3b4295ddf5a33d82a3a00c2"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/native_uuid.rs",
+        "sha256": "98e4a6deed6c1ff540941204f5a401a63c31f368b9bcb8c2c1ce19ff65dd6e81"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/replication_config.rs",
+        "sha256": "4521588508d77ea69723bd106136ec9a7c4cce5d6cb8f32f00c53e0109a03a9f"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/replication_sender.rs",
+        "sha256": "634069e6547d9d6ca96185f41a2c39771e5afaa12f6ff5ae85ee0729072779c5"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/replication_sender_tls.rs",
+        "sha256": "c0a8f065e4e6c50048b4c2d2554877627b02bd34a0d3bef5940b122344ee5bb7"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/replication_server.rs",
+        "sha256": "d370954b30b1ea11a4b2262d5f82063d641ddbd52fdb0280bcbbe5c49a595754"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/state.rs",
+        "sha256": "9099352ae1d1eef3b0259a9370381a4d34472259a7f7d610ff706e058621c576"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-server/src/terrabase_keygen.rs",
+        "sha256": "6c916ceb46dbf7d7fca93fd6fca54ddac9a4f7874799c2aea198f641e232d8a2"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-storage/Cargo.toml",
+        "sha256": "bf47fd989e94bd2001ea4c10c00f2e2662bb1df7488b62c236b5f154cffe715d"
+      },
+      {
+        "kind": "missing",
+        "path": "crates/tb-storage/src/floor.rs"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-storage/src/lib.rs",
+        "sha256": "fe3d79c25bf029a09f73494739065d252a6943a19c51b7b0a2f98d398513d861"
+      },
+      {
+        "kind": "missing",
+        "path": "crates/tb-storage/src/local.rs"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-storage/src/local_mode.rs",
+        "sha256": "641e1e6f22cf03a7ee72ad49ea30b1b7de80853dce432cfb1c370acc527cec1d"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-storage/src/mode.rs",
+        "sha256": "43fd16bd5c70ae2226449745cb4b09000fd547a760e6ccf2bf8fbe82f1ec632d"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-storage/src/native.rs",
+        "sha256": "f70f81fd552e697e2f90674f7f48d723bddd335aa6697b0ba3ef33eecc49cfef"
+      },
+      {
+        "kind": "missing",
+        "path": "crates/tb-storage/src/run.rs"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "crates/tb-storage/src/work.rs",
+        "sha256": "bb20f2b7a1316623a4a43554e4e6cf2bf8e38e989e43799bdaa687864fe35b8b"
+      },
+      {
+        "kind": "directory",
+        "mode": "0o755",
+        "path": "crates/turso"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "patches/turso/complete-log-validation.patch",
+        "sha256": "449fe5a383a2db86dc175c82c8cc73234c550652d8c6c4396b82f68f5c8708f4"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "rust-toolchain.toml",
+        "sha256": "2ca9bd8c09dbcda0b3644412530df2c49b1f4db05400492d093868f1bd31a884"
+      },
+      {
+        "kind": "file",
+        "mode": "0o644",
+        "path": "scripts/ci/prepare-turso.sh",
+        "sha256": "2a4ea80f4e0920de5647575c2572763177fee4441b888df912ad05e9f9eb6aef"
+      }
+    ],
+    "entry_count": 89,
+    "identical_main_and_snapshot": true,
+    "main_sha256": "7612d0f9f00efa17755afa320a4610532e4843b15b40b439b0dc5a95cbc71677",
+    "snapshot_sha256": "7612d0f9f00efa17755afa320a4610532e4843b15b40b439b0dc5a95cbc71677"
+  },
+  "production_build_input_scope": "Root Cargo workspace/build inputs, all crate sources and crate manifests, Makefile, Rust toolchain, repo Cargo config, pinned Turso patch and prepare script. Crate test, benchmark and example trees are excluded because the production profile build does not compile them; the precise Fast HTTPS caller test function is separately hashed below.",
+  "schema_version": 1,
+  "snapshot_sealed": true,
+  "source_repositories": {
+    "main": {
+      "diff_sha256": "b19c1444805be6298014587bfea3b679d026768b03f5722f308f3e534a4bbb4e",
+      "head": "12850214606652f036e9fde000695fe5743b374b",
+      "path": "/home/mariogk/Projects/TerraScale/terrabase",
+      "status_entries": [
+        " M Cargo.lock",
+        " M Cargo.toml",
+        " M GOAL.md",
+        " M Makefile",
+        " M crates/tb-core/Cargo.toml",
+        " M crates/tb-core/src/error.rs",
+        " M crates/tb-core/src/types.rs",
+        " M crates/tb-document/src/distributed.rs",
+        " M crates/tb-document/src/distributed_apply.rs",
+        " M crates/tb-document/src/distributed_producer.rs",
+        " M crates/tb-document/src/distributed_read.rs",
+        " M crates/tb-document/src/lib.rs",
+        " M crates/tb-document/src/local_v1.rs",
+        " M crates/tb-document/src/producer.rs",
+        " M crates/tb-object/Cargo.toml",
+        " M crates/tb-object/src/client.rs",
+        " M crates/tb-object/src/error.rs",
+        " M crates/tb-object/src/lib.rs",
+        " M crates/tb-object/src/types.rs",
+        " M crates/tb-protocol/src/lib.rs",
+        " M crates/tb-replication/Cargo.toml",
+        " M crates/tb-replication/src/authority.rs",
+        " M crates/tb-replication/src/journal.rs",
+        " M crates/tb-server/Cargo.toml",
+        " M crates/tb-server/src/bin/terrabase-init.rs",
+        " M crates/tb-server/src/client_json.rs",
+        " M crates/tb-server/src/document_service.rs",
+        " M crates/tb-server/src/lib.rs",
+        " M crates/tb-server/src/local_v1_runtime.rs",
+        " M crates/tb-server/src/member_control.rs",
+        " M crates/tb-server/src/replication_config.rs",
+        " M crates/tb-server/src/replication_server.rs",
+        " M crates/tb-server/src/terrabase_keygen.rs",
+        " M crates/tb-server/tests/client_process.rs",
+        " M crates/tb-server/tests/fast.rs",
+        " M crates/tb-server/tests/replication_process.rs",
+        " M crates/tb-server/tests/support/document/distributed_open.rs",
+        " M crates/tb-server/tests/support/document/distributed_source.rs",
+        " M crates/tb-server/tests/support/document/document_contract.rs",
+        " M crates/tb-server/tests/support/document/local_v1_contract.rs",
+        " M crates/tb-server/tests/support/document/receiver_fast.rs",
+        " M crates/tb-server/tests/support/document/receiver_fixture.rs",
+        " M crates/tb-server/tests/support/format/fast.rs",
+        " M crates/tb-server/tests/support/format/slow.rs",
+        " M crates/tb-server/tests/support/object/slow.rs",
+        " M crates/tb-server/tests/support/storage/document_mode_contract.rs",
+        " M crates/tb-server/tests/support/storage/fast.rs",
+        " M crates/tb-server/tests/support/storage/floor_initialization_contract.rs",
+        " M crates/tb-server/tests/support/storage/local_document_mode_contract.rs",
+        " M crates/tb-server/tests/support/storage/post_sync_apply_contract.rs",
+        " M crates/tb-server/tests/support/storage/prepared_batch_contract.rs",
+        " M crates/tb-server/tests/support/storage/retained_lookup_contract.rs",
+        " M crates/tb-server/tests/support/storage/retry_deadline_contract.rs",
+        " M crates/tb-server/tests/support/storage/scan_clone_contract.rs",
+        " M crates/tb-server/tests/support/storage/scan_contract.rs",
+        " M crates/tb-server/tests/support/storage/staged_batch_contract.rs",
+        " M crates/tb-server/tests/support/storage/storage_contract.rs",
+        " M crates/tb-storage/Cargo.toml",
+        " D crates/tb-storage/src/floor.rs",
+        " M crates/tb-storage/src/lib.rs",
+        " D crates/tb-storage/src/local.rs",
+        " M crates/tb-storage/src/local_mode.rs",
+        " M crates/tb-storage/src/mode.rs",
+        " D crates/tb-storage/src/run.rs",
+        " M crates/tb-storage/src/work.rs",
+        " M crates/turso",
+        " M docs/acceptance.md",
+        " M docs/architecture.md",
+        " M docs/coordination-test-runtime-20260925.md",
+        " M docs/distributed-document-open.md",
+        " M docs/distributed-protocol.md",
+        " M docs/document-contract.md",
+        " M docs/engineering-plan.md",
+        " M docs/evidence-ledger.md",
+        " M docs/server-data-plane-boundary.md",
+        " M docs/server-http-json-api-key-provisional.md",
+        " M docs/server-http-json-first-caller-decision.md",
+        " M docs/storage-format.md",
+        "?? .forgejo/",
+        "?? CLAUDE.md",
+        "?? crates/tb-engine-io/",
+        "?? crates/tb-object/src/manifest.rs",
+        "?? crates/tb-object/src/tier.rs",
+        "?? crates/tb-server/src/native_uuid.rs",
+        "?? crates/tb-server/tests/support/member_control/",
+        "?? crates/tb-server/tests/support/object/fast.rs",
+        "?? crates/tb-server/tests/support/object/log_validation.rs",
+        "?? crates/tb-server/tests/support/sql/",
+        "?? crates/tb-storage/src/native.rs",
+        "?? docs/TURSO-HANDOFF.md",
+        "?? patches/",
+        "?? scripts/"
+      ],
+      "status_sha256": "40cb75de092a8d866a7cb6f51ff28f830762bfb88fa203cd0b05b5bc13781ef3"
+    },
+    "sealed_build_snapshot": {
+      "diff_sha256": "2cbf8ea3c77a0a0f3634acb6039bd0945e90d9888198776e488ae36ab5c4bd10",
+      "head": "77b8389fb2d4c215ee3a51145d6de4a9842aa721",
+      "path": "/home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration",
+      "status_entries": [
+        " M Cargo.lock",
+        " M Cargo.toml",
+        " M GOAL.md",
+        " M Makefile",
+        " M crates/tb-core/Cargo.toml",
+        " M crates/tb-core/src/error.rs",
+        " M crates/tb-core/src/types.rs",
+        " M crates/tb-document/src/distributed.rs",
+        " M crates/tb-document/src/distributed_apply.rs",
+        " M crates/tb-document/src/distributed_producer.rs",
+        " M crates/tb-document/src/distributed_read.rs",
+        " M crates/tb-document/src/lib.rs",
+        " M crates/tb-document/src/local_v1.rs",
+        " M crates/tb-document/src/producer.rs",
+        " M crates/tb-object/Cargo.toml",
+        " M crates/tb-object/src/client.rs",
+        " M crates/tb-object/src/error.rs",
+        " M crates/tb-object/src/lib.rs",
+        " M crates/tb-object/src/types.rs",
+        " M crates/tb-protocol/src/lib.rs",
+        " M crates/tb-replication/Cargo.toml",
+        " M crates/tb-replication/src/authority.rs",
+        " M crates/tb-replication/src/journal.rs",
+        " M crates/tb-server/Cargo.toml",
+        " M crates/tb-server/src/bin/terrabase-init.rs",
+        " M crates/tb-server/src/client_json.rs",
+        " M crates/tb-server/src/document_service.rs",
+        " M crates/tb-server/src/lib.rs",
+        " M crates/tb-server/src/local_v1_runtime.rs",
+        " M crates/tb-server/src/member_control.rs",
+        " M crates/tb-server/src/replication_config.rs",
+        " M crates/tb-server/src/replication_server.rs",
+        " M crates/tb-server/src/terrabase_keygen.rs",
+        " M crates/tb-server/tests/client_process.rs",
+        " M crates/tb-server/tests/fast.rs",
+        " M crates/tb-server/tests/replication_process.rs",
+        " M crates/tb-server/tests/support/document/distributed_open.rs",
+        " M crates/tb-server/tests/support/document/distributed_source.rs",
+        " M crates/tb-server/tests/support/document/document_contract.rs",
+        " M crates/tb-server/tests/support/document/local_v1_contract.rs",
+        " M crates/tb-server/tests/support/document/receiver_fast.rs",
+        " M crates/tb-server/tests/support/document/receiver_fixture.rs",
+        " M crates/tb-server/tests/support/format/fast.rs",
+        " M crates/tb-server/tests/support/format/slow.rs",
+        " M crates/tb-server/tests/support/object/slow.rs",
+        " M crates/tb-server/tests/support/storage/document_mode_contract.rs",
+        " M crates/tb-server/tests/support/storage/fast.rs",
+        " M crates/tb-server/tests/support/storage/floor_initialization_contract.rs",
+        " M crates/tb-server/tests/support/storage/local_document_mode_contract.rs",
+        " M crates/tb-server/tests/support/storage/post_sync_apply_contract.rs",
+        " M crates/tb-server/tests/support/storage/prepared_batch_contract.rs",
+        " M crates/tb-server/tests/support/storage/retained_lookup_contract.rs",
+        " M crates/tb-server/tests/support/storage/retry_deadline_contract.rs",
+        " M crates/tb-server/tests/support/storage/scan_clone_contract.rs",
+        " M crates/tb-server/tests/support/storage/scan_contract.rs",
+        " M crates/tb-server/tests/support/storage/staged_batch_contract.rs",
+        " M crates/tb-server/tests/support/storage/storage_contract.rs",
+        " M crates/tb-storage/Cargo.toml",
+        " D crates/tb-storage/src/floor.rs",
+        " M crates/tb-storage/src/lib.rs",
+        " D crates/tb-storage/src/local.rs",
+        " M crates/tb-storage/src/local_mode.rs",
+        " M crates/tb-storage/src/mode.rs",
+        " D crates/tb-storage/src/run.rs",
+        " M crates/tb-storage/src/work.rs",
+        " M crates/turso",
+        " M docs/acceptance.md",
+        " M docs/coordination-test-runtime-20260925.md",
+        " M docs/distributed-document-open.md",
+        " M docs/distributed-protocol.md",
+        " M docs/document-contract.md",
+        " M docs/engineering-plan.md",
+        " M docs/evidence-ledger.md",
+        " M docs/server-data-plane-boundary.md",
+        " M docs/server-http-json-api-key-provisional.md",
+        " M docs/server-http-json-first-caller-decision.md",
+        " M docs/storage-format.md",
+        "?? .forgejo/",
+        "?? crates/tb-engine-io/",
+        "?? crates/tb-object/src/manifest.rs",
+        "?? crates/tb-object/src/tier.rs",
+        "?? crates/tb-server/src/native_uuid.rs",
+        "?? crates/tb-server/tests/support/member_control/",
+        "?? crates/tb-server/tests/support/object/fast.rs",
+        "?? crates/tb-server/tests/support/object/log_validation.rs",
+        "?? crates/tb-server/tests/support/sql/",
+        "?? crates/tb-storage/src/native.rs",
+        "?? patches/",
+        "?? scripts/"
+      ],
+      "status_sha256": "d20fa446a0b82a8ee41e0d16ee1604b8fd550110a1b1f4f2d9f6cce899901ffc"
+    }
+  },
+  "submodule": {
+    "identical": true,
+    "main": {
+      "gitlink": "crates/turso",
+      "head": "64b8ef5742fc18937f9c89806c81e3f6475dc7a3",
+      "pinned_patch_sha256": "449fe5a383a2db86dc175c82c8cc73234c550652d8c6c4396b82f68f5c8708f4",
+      "worktree_diff_equals_pinned_patch": true,
+      "worktree_diff_sha256": "449fe5a383a2db86dc175c82c8cc73234c550652d8c6c4396b82f68f5c8708f4"
+    },
+    "snapshot": {
+      "gitlink": "crates/turso",
+      "head": "64b8ef5742fc18937f9c89806c81e3f6475dc7a3",
+      "pinned_patch_sha256": "449fe5a383a2db86dc175c82c8cc73234c550652d8c6c4396b82f68f5c8708f4",
+      "worktree_diff_equals_pinned_patch": true,
+      "worktree_diff_sha256": "449fe5a383a2db86dc175c82c8cc73234c550652d8c6c4396b82f68f5c8708f4"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{"operation":0,"cycle":0,"kind":"insert","elapsed_ns":7605642}
+{"operation":1,"cycle":0,"kind":"read-inserted","elapsed_ns":29275}
+{"operation":2,"cycle":0,"kind":"update","elapsed_ns":953294}
+{"operation":3,"cycle":0,"kind":"read-updated","elapsed_ns":17131}
+{"operation":4,"cycle":0,"kind":"delete","elapsed_ns":835856}
+{"operation":5,"cycle":0,"kind":"read-missing","elapsed_ns":14241}
+{"operation":6,"cycle":0,"kind":"upsert","elapsed_ns":899754}
+{"operation":7,"cycle":1,"kind":"insert","elapsed_ns":895569}
+{"operation":8,"cycle":1,"kind":"read-inserted","elapsed_ns":18045}
+{"operation":9,"cycle":1,"kind":"update","elapsed_ns":887648}
+{"operation":10,"cycle":1,"kind":"read-updated","elapsed_ns":17917}
+{"operation":11,"cycle":1,"kind":"delete","elapsed_ns":854866}
+{"operation":12,"cycle":1,"kind":"read-missing","elapsed_ns":13694}
+{"operation":13,"cycle":1,"kind":"upsert","elapsed_ns":822757}

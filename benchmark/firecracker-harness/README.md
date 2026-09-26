@@ -183,8 +183,19 @@ access. RustFS, Von, multi-node replication, and external load generators must
 each be provisioned in their own matching Firecracker guests with a qualified
 network topology before those integration gates can pass. A host RustFS/Von
 process cannot satisfy those gates.
-The scoped implementation and cleanup brief for those fixtures is in
-[NETWORK-FIXTURE-BRIEF.md](NETWORK-FIXTURE-BRIEF.md).
+
+`make -C firecracker-harness guest-rustfs-fixture` is the only networked
+service fixture. It boots two guests on one private, run-owned network: a
+RustFS service guest from the receipt-verified, OCI-digest-pinned artifact
+named by `RUSTFS_ARTIFACT_RECEIPT`, and a client guest running
+`CLIENT_PROGRAM` (the real TerraBase Slow S3 integration executable). It also
+requires `SUBJECT_REPO`, a verified `IMAGE_PROFILE`, and a unique `RUN_ID`, and
+checks host memory for both guests before staging and again before boot. There
+is no host S3 endpoint. After an interrupted run, reconcile only the recorded
+resources with
+`make -C firecracker-harness rustfs-fixture-cleanup RECEIPT=/absolute/path/to/pair-network-ownership.json`.
+Von, multi-node replication, and external load-generator fixtures do not exist
+yet.
 
 All harness source and evidence stay in `../ts-benchmark`; do not put benchmark
 data or results in the TerraBase source repository.

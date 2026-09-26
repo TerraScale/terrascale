@@ -1,12 +1,25 @@
 # Legacy benchmark archive
 
-[`legacy-pre-rust-2026-09-24/`](legacy-pre-rust-2026-09-24/) mirrors the old
-repository-relative paths for the .NET TerraBase, Loro, ts-atlas, ts-auth, and
-historic `bench/` workloads, reports, fixtures, receipts, and ignored generated
-run data. It also contains the former root README, `.gitignore`, and Forgejo
-workflow. The archive is evidence/history; active Rust testing starts at the
-repository root. Git history before the move remains at revision
-`27fb234d5a058059b8a1a415937f4537f15072ff`.
+[`recovered-legacy-pre-rust-2026-09-24/`](recovered-legacy-pre-rust-2026-09-24/)
+is a separate Git export of the tracked
+[`legacy-pre-rust-2026-09-24/`](legacy-pre-rust-2026-09-24/) subtree from
+benchmark commit `7c1ad80df8e885bbaeab5017ac146ecc43a32d02`. The original
+tracked paths remain absent from the shared worktree as unstaged deletions; the
+recovery copy does not restore or stage them. Its README and source manifest
+record the export boundary and per-file hashes.
+
+The legacy archive mirrors the old repository-relative paths for the .NET
+TerraBase, Loro, ts-atlas, ts-auth, and historic `bench/` workloads, reports,
+fixtures, receipts, and ignored generated run data. It also contains the former
+root README, `.gitignore`, and Forgejo workflow. The archive is evidence/history;
+active Rust testing starts at the repository root. Git history before the move
+remains at revision `27fb234d5a058059b8a1a415937f4537f15072ff`.
+
+[`terrabase-pre-turso-2026-09-25/`](terrabase-pre-turso-2026-09-25/) preserves
+the superseded custom-engine Rust source snapshot, candidate patches, and
+selected historical evidence. Its README identifies the source revision and
+states which evidence is failed, provisional, or unqualified; it is not current
+Turso runtime evidence or acceptance evidence.
 
 The 2026-09-24 move used same-filesystem renames, with no regular-file content
 rewrite or deletion. A recursive pre/post `lstat` comparison, taken before the

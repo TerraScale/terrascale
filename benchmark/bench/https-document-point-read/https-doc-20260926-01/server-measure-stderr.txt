@@ -1,0 +1,2 @@
+terrabase-server local-v1 ready on http://127.0.0.1:35923
+terrabase-server client listener on https://127.0.0.1:47147

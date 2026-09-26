@@ -12,5 +12,7 @@ is a protected fixture output: do not prune it as a transient benchmark run.
 Keep small recipe, package-lock, provenance, artifact-index and verification
 receipts visible; generated `vmlinux`, `rootfs.ext4`, download caches and OCI
 archives remain ignored. The historical local-checksum-pinned image is not
-silently replaced by a new profile. The first proposed profile is documented
-in `../../firecracker-harness/IMAGE-BUILDER-BRIEF.md` and is not qualified yet.
+silently replaced by a new profile. The current candidate profile is
+documented in
+[`../../firecracker-harness/images/terrabase-noble-podman-v2/README.md`](../../firecracker-harness/images/terrabase-noble-podman-v2/README.md)
+and is not qualified yet.

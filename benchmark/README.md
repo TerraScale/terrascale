@@ -10,12 +10,13 @@ results in [`history/`](history/README.md) do not qualify the Rust engine.
 | Path | Purpose |
 | --- | --- |
 | `terra-rust/` | Rust benchmark driver and embedded SQLite baseline |
-| `firecracker-harness/` | Pinned microVM definitions, launch, and environment verification |
+| `https-document/` | Process-based HTTPS point-read diagnostic driver |
+| `firecracker-harness/` | Optional development microVM tooling and historical environment verification |
 | `bench/terrabase-rust-acceptance-v1.md` | Versioned required-case scoreboard |
 | `bench/firecracker-harness/` | Firecracker environment receipts |
 | `bench/fixtures/` | Versioned seeds, data generators, dataset definitions, and fixture manifests |
-| `bench/<matrix-version>/<case>/<trial>/` | New guest results, raw samples, receipts, and profiles |
-| `history/legacy-pre-rust-2026-09-24/` | Preserved earlier benchmark code, reports, and generated run data |
+| `bench/<matrix-version>/<case>/<trial>/` | Matrix-qualified results, raw samples, receipts, and profiles |
+| `history/recovered-legacy-pre-rust-2026-09-24/` | Verified export of tracked earlier benchmark code and reports; see `history/README.md` for the original local archive boundary |
 
 ## Build and test boundary
 
@@ -35,9 +36,8 @@ Without mise, prefix Make commands with
 `env -u RUSTUP_TOOLCHAIN PATH="$HOME/.cargo/bin:$PATH"`.
 
 Use the root Makefile for the Rust driver's format check, compile check, and
-release build. The engine-enabled equivalents are check-engine, lint-engine,
-and build-guest-engine; they compile the real embedded TerraBase caller into
-the same guest binary as the SQLite lane. Build work runs at the lowest CPU
+release build. The engine-enabled `check-engine` and `lint-engine` targets
+compile the real embedded TerraBase caller. Build work runs at the lowest CPU
 and I/O scheduling priority:
 
 ```sh
@@ -45,14 +45,14 @@ mise exec -- nice -n 19 ionice -c 3 make fmt check lint build
 mise exec -- nice -n 19 ionice -c 3 make build-guest MUSL_CC=/path/to/musl-gcc
 ```
 
-`make test-build` compiles the feature-enabled musl test executable without
-running it on the host. Run it inside Firecracker with `make test` (or
-`make test-vm`), passing `TEST_BINARY` as its absolute path, a unique `RUN_ID`,
-and `HARNESS_BINARY`, `GUEST_AGENT_BINARY`, `HARNESS_SHA256`, and
-`GUEST_AGENT_SHA256` from one frozen harness packet. The test entrypoint checks
-the executable pair before launch. The harness has its own
-`make -C firecracker-harness test-build` and `test-vm` targets for controller
-tests. Bare `make` in the root and harness directories prints help.
+The HTTPS diagnostic driver has its own Make targets: `fmt`, `check`, `lint`,
+and `build` under `https-document/`. It measures a running, packaged TerraBase
+server through the real TLS endpoint with an already committed fixture. It does
+not provision the server or produce a SQLite comparison. See
+[`https-document/README.md`](https-document/README.md) for its input and receipt
+contract. The `test-build`, `test-vm`, and `vm-*` Make targets remain available
+for optional Firecracker development work. Bare `make` in the root and harness
+directories prints help.
 
 Forgejo CI checks out this repository at the event revision under
 `ts-benchmark/` and a paired TerraBase checkout under sibling `terrabase/`.
@@ -60,39 +60,40 @@ Configure `TERRABASE_CI_SHA` as a full, published TerraBase commit SHA whose
 tree contains `crates/tb-core` and `crates/tb-storage`; CI checks the resolved
 commit and both manifests before compiling either driver mode. Even SQLite-only
 Cargo commands resolve those optional path dependencies, so the sibling
-checkout is required. CI reads the private TerraBase repository with the
-read-only `ORG_READ_TOKEN` secret. CI formats, checks, lints, and builds both
-driver modes, the harness, the image builder, and the musl guest and test
-executables. It never executes test binaries or measurements: the
-`terrascale-builder` runner has no KVM, Firecracker, or pinned guest images.
-Guest execution runs locally on a KVM host with `firecracker` on `PATH` and the
-pinned kernel and rootfs at `/tmp/vm-inputs` (see
-[`firecracker-harness/pins.toml`](firecracker-harness/pins.toml)): run
-`make vm-preflight vm-smoke`, then `make test-vm` for the harness,
-image-builder, and engine unit binaries. CI selects the same pinned Rust
-toolchain through rustup proxies; it does not require mise on the runner.
+checkout is required. The default job token must have read access to the
+TerraBase repository; when it does not, configure the read-only
+`TERRABASE_READ_TOKEN` secret. The current local engine source needs publication
+before a paired CI build can be configured. On `terrascale-builder`, CI checks
+and lints both `terra-rust` driver modes and builds its host SQLite executable;
+it also validates and builds the HTTPS diagnostic driver. CI does not launch
+Firecracker or perform benchmark measurements. TerraBase's own Fast and Slow
+suites provide process integration coverage for the product. These compile
+checks establish neither that a product caller ran nor a benchmark acceptance
+result. CI selects the same pinned Rust toolchain through rustup proxies; it
+does not require mise on the runner. The Makefiles lower priority only for
+local work; CI sets `CI=true` and builds at full priority.
 
 `build` is a host artifact. `build-guest` produces the statically linked
 `terra-rust/target/x86_64-unknown-linux-musl/release/terrabase-sqlite-baseline`
-used by the current guest image. The pinned Rust musl target and a musl C
-compiler are required because bundled SQLite contains C code.
+used by the optional guest image. The pinned Rust musl target and a musl C
+compiler are required for that build because bundled SQLite contains C code.
 
-Run `make vm-preflight` to check pinned inputs and KVM, then `make vm-smoke`
-to boot the guest and check the effective limits. `make vm-run` delegates a
-caller-supplied `PROGRAM`, `SUBJECT_REPO`, `RUN_ID`, and optional `ARGS` and
-`TIMEOUT_SECONDS` (default 1800, maximum 3500) to the
+For an optional development VM run, `make vm-preflight` checks pinned inputs
+and KVM, and `make vm-smoke` boots a guest and checks its effective limits.
+`make vm-run` delegates a caller-supplied `PROGRAM`, `SUBJECT_REPO`, `RUN_ID`,
+and optional `ARGS` and `TIMEOUT_SECONDS` (default 1800, maximum 3500) to the
 guest harness;
 see [`firecracker-harness/README.md`](firecracker-harness/README.md) for its
 runner and output contract.
 
-Building on the host is allowed. **Tests and measurements qualify only when
-run inside verified Firecracker guests** with 4 vCPUs and 8,192 MiB RAM per
-guest and swap disabled. The environment harness checks the effective guest
-configuration and records Firecracker, kernel/rootfs image hashes, guest CPU,
-memory and swap, host CPU affinity, and output filesystem. Dedicated SSD,
-cache-state and networked topology qualification remain open. RustFS, Von, and
-load generators occupy separate guests when applicable. Lack of KVM, images,
-or a required service is an environment failure, never a host fallback.
+Ordinary CI and product integration run as binaries and processes on
+`terrascale-builder`; KVM and guest images are not prerequisites. The optional
+Firecracker harness remains useful for development experiments. The registered
+v1 matrix separately requires verified 4-vCPU, 8,192-MiB guests for
+hardware-comparable performance qualification, with swap disabled and separate
+service/load-generator guests where applicable. A host process diagnostic, or
+a run without that matrix evidence, leaves comparison rows open. Do not treat
+missing KVM or images as a reason to skip ordinary process CI.
 
 The current Rust driver implements SQLite and a matching initial embedded
 TerraBase subset. Its
@@ -106,16 +107,16 @@ repeated paired trials are recorded in the matrix.
 
 Create a stable fixture ID before each experiment. Save its generator/source
 revision, seed, dataset specification, and digest under `bench/fixtures/`.
-Copy guest JSON receipts, raw JSONL samples, profiles, and environment manifest
-to `bench/<matrix-version>/<case>/<trial>/`. Put an easy-to-compare Markdown
-table in `bench/` for each measured case or run series, as required by
+Copy qualified JSON receipts, raw JSONL samples, profiles, and environment
+manifests to `bench/<matrix-version>/<case>/<trial>/`. Put an easy-to-compare
+Markdown table in `bench/` for each measured case or run series, as required by
 [`AGENTS.md`](AGENTS.md). Rows identify both repository revisions and binary
 hashes, the matrix version, case, trial, environment manifest, engine,
 durability mode, primary metric, variance/confidence interval, and result
 status. Retain failed and negative experiments. Keep the SQLite scoreboard
 statuses distinct: win, loss, statistically inconclusive, unsupported, or not
 comparable, with the receipt and reason. Do not fill an open row from a mock,
-host run, historic report, or a SQLite-only measurement.
+diagnostic host run, historic report, or a SQLite-only measurement.
 
 The [matrix](bench/terrabase-rust-acceptance-v1.md) defines the pinned SQLite
 version, fair tuning and guarantees, minimum paired trials, significance

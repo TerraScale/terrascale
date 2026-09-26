@@ -42,6 +42,6 @@ files invalidate the input tree.
 
 No kernel, rootfs, OCI image, or benchmark output is checked in here. Image
 artifacts and build receipts belong under
-`bench/firecracker-harness/image-fixtures/<identity>/` or an explicitly
+`bench/fixtures/firecracker-images/<profile>/<image-build-id>/` or an explicitly
 supplied output directory. No VM, service image, or replication behavior is
 qualified by this recipe alone.

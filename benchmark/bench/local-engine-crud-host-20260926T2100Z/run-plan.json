@@ -1,0 +1,41 @@
+{
+  "benchmark_head": "7c1ad80df8e885bbaeab5017ac146ecc43a32d02",
+  "build_command": "make local-engine-build (cargo build --release --locked -j 2)",
+  "cache_policy": "fresh database; OS page cache not evicted",
+  "cpu_affinity": "20",
+  "io_priority": "idle",
+  "pairs": [
+    [
+      "sqlite",
+      "turso"
+    ],
+    [
+      "turso",
+      "sqlite"
+    ],
+    [
+      "sqlite",
+      "turso"
+    ],
+    [
+      "turso",
+      "sqlite"
+    ]
+  ],
+  "process_nice": 19,
+  "registered_utc": "2026-09-26T21:01:43.323702+00:00",
+  "scope": "single-client local Rust SQL API host-process diagnostic; not v1 matrix qualification",
+  "source_hashes_sha256": "0e85aa42ad7983faaabddaaa20000a652839f7d3614d01f6199fa6c8ab4bc611",
+  "status": "registered_before_measurement",
+  "terrabase_head": "12850214606652f036e9fde000695fe5743b374b",
+  "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "turso_gitlink": "64b8ef5742fc18937f9c89806c81e3f6475dc7a3",
+  "turso_tracked_diff_sha256": "3860cb7bb959179a6e651e1b00ca17f647787d2f4c35d2974ecd23274fe7c55b",
+  "workload": {
+    "body_bytes": 256,
+    "cycles": 1000,
+    "operations_per_cycle": 7,
+    "seed": 1,
+    "warmup_cycles": 0
+  }
+}

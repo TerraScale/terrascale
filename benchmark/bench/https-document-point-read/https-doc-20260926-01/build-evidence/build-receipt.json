@@ -1,0 +1,153 @@
+{
+  "created_utc": "2026-09-26T08:31:36+00:00",
+  "driver_build": {
+    "artifact": {
+      "path": "/home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration/target/release/terrabase-https-document-point-read",
+      "sha256": "abfc88540b20d9718e7de2ad19113be84502ba76ae9cc8e6536c6ae796504225",
+      "size_bytes": 8053072
+    },
+    "commands": [
+      "make -C /home/mariogk/Projects/TerraScale/ts-benchmark/https-document lock",
+      "make -C /home/mariogk/Projects/TerraScale/ts-benchmark/https-document format",
+      "CARGO_TARGET_DIR=/home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration/target make -C /home/mariogk/Projects/TerraScale/ts-benchmark/https-document fmt check lint build"
+    ],
+    "features": "crate defaults; reqwest rustls",
+    "outcome": "fmt, check, lint and release build passed; release build 6.45s",
+    "priority": "Make applied nice -n 19 and ionice -c 3; -j 2",
+    "profile": "release (optimized)",
+    "target": "x86_64-unknown-linux-gnu host binary"
+  },
+  "driver_source": {
+    "fix": "sha2 0.11 digest output has no LowerHex implementation; use pinned hex 0.4.3 and hex::encode without changing measurement semantics.",
+    "repository_head": "7c1ad80df8e885bbaeab5017ac146ecc43a32d02",
+    "source_inputs": {
+      "Cargo.lock": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/https-document/Cargo.lock",
+        "sha256": "abd2eb91bdf8fa21c1e880c64017573144f405b458df7df425eb766074155319",
+        "size_bytes": 41453
+      },
+      "Cargo.toml": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/https-document/Cargo.toml",
+        "sha256": "e79daf85690fa4e631d5f6664a99969d1dd67ee795b07da6badaf806ef2d0cff",
+        "size_bytes": 640
+      },
+      "Makefile": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/https-document/Makefile",
+        "sha256": "addd4a48c4a231acc46fd9648b2d3647a068eb8cd3957e397786010dfd4409e8",
+        "size_bytes": 645
+      },
+      "rust-toolchain.toml": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/https-document/rust-toolchain.toml",
+        "sha256": "c910997cb152c6dc8ed13b1fdf9fa28a4ed30d6776123e27dd6170e5c66067a0",
+        "size_bytes": 86
+      },
+      "src/main.rs": {
+        "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/https-document/src/main.rs",
+        "sha256": "b83280c0ee1a952049f5fd93fb53847234e43a01e31cdede93788c1df6fab116",
+        "size_bytes": 16676
+      }
+    }
+  },
+  "initial_failures": [
+    {
+      "cause": "E0277: sha2 0.11 digest generic array did not implement LowerHex; fixed by using hex::encode.",
+      "log": "driver-build-attempt-1.log"
+    },
+    {
+      "cause": "Clippy pedantic issues in run orchestration and request-client match; fixed with helper extraction, consumed Args destructure, method pointer and let-else.",
+      "log": "driver-quality-checks-attempt-1.log"
+    },
+    {
+      "cause": "fmt --check requested rustfmt changes; applied repository format target before the passing attempt.",
+      "log": "driver-quality-checks-attempt-2.log"
+    }
+  ],
+  "logs": {
+    "driver-build-attempt-1.log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/https-document-point-read-build-evidence/https-doc-20260926-01/driver-build-attempt-1.log",
+      "sha256": "47a4422835148d28fb7c869913c0d50394664243ac2e6b07456426a25269a54e",
+      "size_bytes": 5100
+    },
+    "driver-build-attempt-2.log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/https-document-point-read-build-evidence/https-doc-20260926-01/driver-build-attempt-2.log",
+      "sha256": "bfd8097c6a6f4efd3be7aaee1a4ab4457a4745c082ba556130dc44f49743fd44",
+      "size_bytes": 442
+    },
+    "driver-format.log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/https-document-point-read-build-evidence/https-doc-20260926-01/driver-format.log",
+      "sha256": "a1ce3b862591f1f0b5a7f22767be1c146b8922b8dd964da190525ebe4a1f7016",
+      "size_bytes": 235
+    },
+    "driver-lock-update.log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/https-document-point-read-build-evidence/https-doc-20260926-01/driver-lock-update.log",
+      "sha256": "79f5ac16620d247514dca7ad4354adb6001babffc7f812f9095f6dbeed99f7d7",
+      "size_bytes": 927
+    },
+    "driver-lock.log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/https-document-point-read-build-evidence/https-doc-20260926-01/driver-lock.log",
+      "sha256": "66fa42c2a22eacdda771b15759bb2243aa3e84fb038f82a70479eff39efaf180",
+      "size_bytes": 927
+    },
+    "driver-quality-checks-attempt-1.log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/https-document-point-read-build-evidence/https-doc-20260926-01/driver-quality-checks-attempt-1.log",
+      "sha256": "690c3a6708aa7c9117b406229b42598049ff91d6899a17354344c16388a00b5c",
+      "size_bytes": 5901
+    },
+    "driver-quality-checks-attempt-2.log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/https-document-point-read-build-evidence/https-doc-20260926-01/driver-quality-checks-attempt-2.log",
+      "sha256": "ac0a5f2d9ffaee8bed53ec8214ef75f675a5a2a73365c0b74da6e7f2da7bbc9e",
+      "size_bytes": 1716
+    },
+    "driver-quality-checks-attempt-3.log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/https-document-point-read-build-evidence/https-doc-20260926-01/driver-quality-checks-attempt-3.log",
+      "sha256": "72d060e68f0928a68e809fbddaf6a448c82eeee0311a4adbae5e555a05256a28",
+      "size_bytes": 996
+    },
+    "product-build.log": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/https-document-point-read-build-evidence/https-doc-20260926-01/product-build.log",
+      "sha256": "384d07aca7f5645fc8000e70d114e38c2bf11ba04144a5a0a4447bcc3b6879ff",
+      "size_bytes": 15601
+    }
+  },
+  "product_build": {
+    "artifacts": {
+      "tb-server": {
+        "path": "/home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration/target/x86_64-unknown-linux-musl/release/tb-server",
+        "sha256": "10c757627b7a732c82d6c57834b61d4a517433f679a6bdf4debc93b0c6f684b3",
+        "size_bytes": 34121440
+      },
+      "terrabase-init": {
+        "path": "/home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration/target/x86_64-unknown-linux-musl/release/terrabase-init",
+        "sha256": "c66f53f29adb15a5f70ab0bcdca91bcb6b35043fb608f40c24cfc8043b7f04e9",
+        "size_bytes": 22250000
+      },
+      "terrabase-keygen": {
+        "path": "/home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration/target/x86_64-unknown-linux-musl/release/terrabase-keygen",
+        "sha256": "3fe162bec8d36df8ee24b684e9d4d9c1b72b1accd572e2ad822e6154b642ad12",
+        "size_bytes": 648016
+      }
+    },
+    "command": "CARGO_TARGET_DIR=/home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration/target make -C /home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration build CARGO_ARGS=\"-p tb-server --release --no-default-features\" CARGO_BUILD_JOBS=2 CARGO_TARGET=x86_64-unknown-linux-musl",
+    "features": "tb-server --no-default-features; no slow-tests or test hooks",
+    "outcome": "exit 0; release profile; 11m 19s",
+    "priority": "Make applied nice -n 19; CARGO_BUILD_JOBS=2",
+    "profile": "release (optimized)",
+    "target": "x86_64-unknown-linux-musl"
+  },
+  "product_source": {
+    "main_head": "12850214606652f036e9fde000695fe5743b374b",
+    "production_input_manifest_sha256": "7612d0f9f00efa17755afa320a4610532e4843b15b40b439b0dc5a95cbc71677",
+    "snapshot_head": "77b8389fb2d4c215ee3a51145d6de4a9842aa721",
+    "snapshot_path": "/home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration",
+    "source_snapshot_manifest": {
+      "path": "/home/mariogk/Projects/TerraScale/ts-benchmark/bench/fixtures/https-document-point-read/source-snapshot-manifest.json",
+      "sha256": "0240930cf5d235dbcd218478f903a7182f2e3880414ade2e7cb189a94f95ae27",
+      "size_bytes": 30956
+    },
+    "turso_commit": "64b8ef5742fc18937f9c89806c81e3f6475dc7a3",
+    "turso_patch_sha256": "449fe5a383a2db86dc175c82c8cc73234c550652d8c6c4396b82f68f5c8708f4"
+  },
+  "qualification": "Build inputs and resulting binary hashes are recorded; this is not a reproducible-build/compiler attestation.",
+  "run_id": "https-doc-20260926-01",
+  "schema_version": 1
+}

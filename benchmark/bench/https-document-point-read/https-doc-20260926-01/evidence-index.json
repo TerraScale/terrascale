@@ -1,0 +1,152 @@
+{
+  "artifacts": [
+    {
+      "path": "build-evidence/build-receipt.json",
+      "sha256": "e900c204faae34a1386f5e944e1619bf582f3894620212671b18b5af895e6234",
+      "size_bytes": 8429
+    },
+    {
+      "path": "build-evidence/driver-build-attempt-1.log",
+      "sha256": "47a4422835148d28fb7c869913c0d50394664243ac2e6b07456426a25269a54e",
+      "size_bytes": 5100
+    },
+    {
+      "path": "build-evidence/driver-build-attempt-2.log",
+      "sha256": "bfd8097c6a6f4efd3be7aaee1a4ab4457a4745c082ba556130dc44f49743fd44",
+      "size_bytes": 442
+    },
+    {
+      "path": "build-evidence/driver-format.log",
+      "sha256": "a1ce3b862591f1f0b5a7f22767be1c146b8922b8dd964da190525ebe4a1f7016",
+      "size_bytes": 235
+    },
+    {
+      "path": "build-evidence/driver-lock-update.log",
+      "sha256": "79f5ac16620d247514dca7ad4354adb6001babffc7f812f9095f6dbeed99f7d7",
+      "size_bytes": 927
+    },
+    {
+      "path": "build-evidence/driver-lock.log",
+      "sha256": "66fa42c2a22eacdda771b15759bb2243aa3e84fb038f82a70479eff39efaf180",
+      "size_bytes": 927
+    },
+    {
+      "path": "build-evidence/driver-quality-checks-attempt-1.log",
+      "sha256": "690c3a6708aa7c9117b406229b42598049ff91d6899a17354344c16388a00b5c",
+      "size_bytes": 5901
+    },
+    {
+      "path": "build-evidence/driver-quality-checks-attempt-2.log",
+      "sha256": "ac0a5f2d9ffaee8bed53ec8214ef75f675a5a2a73365c0b74da6e7f2da7bbc9e",
+      "size_bytes": 1716
+    },
+    {
+      "path": "build-evidence/driver-quality-checks-attempt-3.log",
+      "sha256": "72d060e68f0928a68e809fbddaf6a448c82eeee0311a4adbae5e555a05256a28",
+      "size_bytes": 996
+    },
+    {
+      "path": "build-evidence/fixture-harness.log",
+      "sha256": "715a21a20c8270a728ec19ac2b7fce0aef18f36e12d1d51a388596cfb68101ac",
+      "size_bytes": 101
+    },
+    {
+      "path": "build-evidence/product-build.log",
+      "sha256": "384d07aca7f5645fc8000e70d114e38c2bf11ba04144a5a0a4447bcc3b6879ff",
+      "size_bytes": 15601
+    },
+    {
+      "path": "client-ca.pem",
+      "sha256": "639b7a435c1d530d0e4b98782664590733acae71ef5b66cecfb066986223e756",
+      "size_bytes": 700
+    },
+    {
+      "path": "driver.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    {
+      "path": "driver.stdout.txt",
+      "sha256": "715a21a20c8270a728ec19ac2b7fce0aef18f36e12d1d51a388596cfb68101ac",
+      "size_bytes": 101
+    },
+    {
+      "path": "expected-response.json",
+      "sha256": "9a730ff9733b25d33964947e06a4d2669b505076c27331a17c75520995cf9e75",
+      "size_bytes": 567
+    },
+    {
+      "path": "fixture-manifest.json",
+      "sha256": "f35f3f7ed95ed1a35ce4fffc6f926b512cb00a69a5545b07865f5dd58e5978dc",
+      "size_bytes": 13292
+    },
+    {
+      "path": "fixture-source/README.md",
+      "sha256": "2ce2343e3f4febe7e6cb18d0e42182bb7f8c9ac39619ac7ce1a4f3566f125fb6",
+      "size_bytes": 3722
+    },
+    {
+      "path": "fixture-source/initializer-input.json",
+      "sha256": "d05404d853e84df09a3943046533fb2a7cce95290d180bb3498933284bf43254",
+      "size_bytes": 1713
+    },
+    {
+      "path": "fixture-source/run_fixture.py",
+      "sha256": "01f01a615a3dffae1498feecce10019a48386387451eab5de3efc9986e36a0bf",
+      "size_bytes": 39635
+    },
+    {
+      "path": "fixture-source/source-snapshot-manifest.json",
+      "sha256": "0240930cf5d235dbcd218478f903a7182f2e3880414ade2e7cb189a94f95ae27",
+      "size_bytes": 30956
+    },
+    {
+      "path": "local-v1-config.json",
+      "sha256": "b647da9fc952d0b1051ac9eb28acda3d58ce00d468244c172ce8a0292e38c302",
+      "size_bytes": 626
+    },
+    {
+      "path": "receipt.json",
+      "sha256": "039f4c2d935eae0449ad0d23da1a545810e893918d0052f43fcb058be0201bfd",
+      "size_bytes": 2136
+    },
+    {
+      "path": "samples.jsonl",
+      "sha256": "39b9fcaf43127eb3ff8ed4984497ad67c55fe09b80290720fadb0bf8941522c8",
+      "size_bytes": 77897
+    },
+    {
+      "path": "seed-transaction.json",
+      "sha256": "4c0ccdba0486a96eb7fdc867123a9aaf9a21110bf6db26a885ee1efd7c70586a",
+      "size_bytes": 462
+    },
+    {
+      "path": "server-client-config.json",
+      "sha256": "4da097415cb5ace1d9dd681d7fea24acf8555f99ff3bcb56bb1f944ad8135674",
+      "size_bytes": 541
+    },
+    {
+      "path": "server-measure-stderr.txt",
+      "sha256": "f9ec927cbf8047ea5475e5afb847821c2a57872385c3c9c2441ccbe76f967461",
+      "size_bytes": 118
+    },
+    {
+      "path": "server-seed-stderr.txt",
+      "sha256": "f9ec927cbf8047ea5475e5afb847821c2a57872385c3c9c2441ccbe76f967461",
+      "size_bytes": 118
+    },
+    {
+      "path": "server-source-manifest.json",
+      "sha256": "3f49b0cb4f5bafd48123e61274fcced162ea552be7f1bf29c062c0e42f398884",
+      "size_bytes": 8410
+    },
+    {
+      "path": "summary.md",
+      "sha256": "dd6cd690e6a628f071ae5192ef9da977184c42287d9b630081ce05a10f5b626d",
+      "size_bytes": 922
+    }
+  ],
+  "created_utc": "2026-09-26T08:34:30+00:00",
+  "run_id": "https-doc-20260926-01",
+  "schema_version": 1
+}

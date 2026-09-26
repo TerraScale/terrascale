@@ -1,0 +1,98 @@
+# Pinned local SQL engine CRUD driver
+
+This standalone binary compares **local Rust SQL binding calls** on one
+deterministic, single-client key/value CRUD trace. Timings include binding,
+row conversion, and engine work; they cannot isolate storage-core speed.
+It does not measure the
+TerraBase HTTPS API, document semantics, replication, S3, object-durable ACK,
+concurrent transactions, or regional recovery. The existing
+[HTTPS diagnostic](../bench/https-document-point-read/https-doc-20260926-01/summary.md)
+and [P04 deleted-history diagnostic](../bench/p04-three-way-protocol-20260925.md)
+remain separate.
+
+The two lanes use the same binary, schema, SQL text, generated keys and values,
+and seven prepared operations per key: insert, read hit, update, read hit,
+delete, read miss, and upsert. The upsert leaves a final row. Every write is
+one explicit `BEGIN IMMEDIATE`/prepared statement/`COMMIT` operation; every
+read materializes the full payload and revision and finishes the statement.
+The timestamp starts after the cached prepare and stops after COMMIT or
+completed read cleanup. Value
+generation, correctness comparison, JSONL output, final scan, integrity
+check, and reopen are outside each latency sample. The receipt separately
+records the wall duration of the seven-step cycle loop, including value
+generation, validation, and JSONL writing, but excluding setup, final scan,
+integrity check, and reopen. It is not isolated engine service time.
+
+Both lanes request a 4,096-byte page, WAL journal, `synchronous=FULL`,
+and a 64-MiB page cache. The driver **reads back and requires** those
+values before creating the identical table. SQLite also sets and reads
+back `wal_autocheckpoint=1000`. Pinned Turso does not support that PRAGMA;
+its WAL source fixes a 1,000-unbackfilled-frame threshold. Turso triggers
+an automatic passive checkpoint after a commit when its frame count is
+**greater than** that threshold and may checkpoint on close. SQLite's
+configured WAL autocheckpoint is a separate engine policy. The numeric
+thresholds do not establish identical checkpoint timing or cost.
+SQLite uses existing repository dependency `rusqlite 0.40.2` with bundled
+SQLite. Turso uses the sibling TerraBase submodule's Rust binding
+`0.8.0-pre.13` at gitlink
+`64b8ef5742fc18937f9c89806c81e3f6475dc7a3`, with default features off.
+The SQLite library version and Turso's reported SQLite compatibility version
+are recorded separately; they are not the same engine or release version.
+The build script rejects a different gitlink or untracked Turso files and
+embeds the SHA-256 of the tracked diff and each changed tracked file. The
+current submodule has tracked changes in
+`core/mvcc/database/checkpoint_state_machine.rs`,
+`core/mvcc/persistent_storage/logical_log.rs`, and `core/storage/wal.rs`;
+the build receipt must identify their **actual** bytes when it runs. Do not
+call a dirty build a clean gitlink-only build.
+
+The [registered host diagnostic and completed scorecard](../bench/local-engine-crud-v1.md)
+fix the input bounds, alternating run order, source checks, and acceptance
+rules. This is separate from the v1 guest qualification matrix. The crate
+pins the repository's Rust 1.98.1 toolchain; older toolchains have not been
+verified. Its **private** `Cargo.lock` was generated under a lock-only
+resource lease. A compile check found and prompted a correction to an
+ambiguous integer type; no successful run or speed result existed when this
+host protocol was registered. Use the low-priority Make targets under an
+exclusive build window; refresh the lock only when that window permits it:
+
+```sh
+make -C ts-benchmark local-engine-fmt local-engine-check local-engine-lint
+make -C ts-benchmark local-engine-build
+```
+
+Each host lane requires a fresh database path, a fresh output directory,
+an observed host environment manifest, and source revisions. Use the same
+CPU affinity for every lane; generate the manifest from inside that affinity
+with `host-manifest.py`. The driver requires its actual `/proc/self/status`
+CPU affinity and canonical database parent to match the manifest. This
+example assumes the
+selected CPU is allowed by the host and the per-lane directory exists:
+
+```sh
+nice -n 19 ionice -c 3 taskset -c "$CPU" \
+  python3 ts-benchmark/local-engine/host-manifest.py \
+  --output "$LANE/environment.json" --database-parent "$LANE"
+nice -n 19 ionice -c 3 taskset -c "$CPU" \
+  ts-benchmark/local-engine/target/release/local-engine-scorecard \
+  --engine sqlite --cycles 1000 --body-bytes 256 --seed 1 --trial 1 \
+  --database "$LANE/data.db" --output "$LANE/results" \
+  --environment-manifest "$LANE/environment.json" \
+  --benchmark-revision <exact-ts-benchmark-commit> \
+  --terrabase-revision <exact-terrabase-commit> \
+  --turso-revision 64b8ef5742fc18937f9c89806c81e3f6475dc7a3
+```
+
+Use `--engine turso` for the other lane, with a different fresh directory.
+The run record must independently capture the compiled binary SHA-256,
+source checkout and submodule patch inventory, build flags, CPU affinity,
+host/kernel/filesystem/memory/swap and observed load. The driver records
+its binary, source/manifest/lock hashes, and environment manifest hash.
+A matching driver receipt alone does not prove that the source was compiled
+from the claimed commit; compare it with the frozen build inventory. Host
+process timings can be affected by other work and do not qualify the v1
+guest hardware matrix.
+
+The completed [four-pair host run](../bench/local-engine-crud-host-20260926T2100Z/summary.md)
+retains the raw samples, receipts, source snapshot, and post-reopen database
+images. The results describe this host and workload only.
