@@ -89,21 +89,22 @@ mise exec -- cargo run --locked -p auth-app
 | Variable | Meaning |
 | --- | --- |
 | `TS_AUTH_PUBLIC_ORIGIN` | One global public origin shared by every replica (issuer URLs, email links, WebAuthn RP) |
-| `TS_AUTH_TERRASCALE_API_URL` | TerraScale API origin (default `https://api.terrascale.tech`); production auth routes all storage operations strictly to the GRU authority |
+| `TS_AUTH_TERRASCALE_API_URL` | TerraScale API origin (default `https://api.terrascale.tech`); must be `https://api.terrascale.tech` or `https://gru.api.terrascale.tech`, or a loopback URL in Development. Non-loopback storage routes strictly to the GRU authority |
 | `TS_AUTH_TERRASCALE_API_KEY` | Project API key for TerraBase |
 | `TS_AUTH_TERRASCALE_PROJECT_ID` / `TS_AUTH_TERRASCALE_TENANT_ID` | Optional project/tenant selectors |
 | `TS_AUTH_DATABASE` | TerraBase database backing ts-auth |
 | `TS_AUTH_MASTER_KEY` | base64 32 bytes; encrypts recoverable secrets (TOTP seeds) |
 | `TS_AUTH_AUDIT_SIGNING_KEY` | base64 32-byte HMAC key for authentic audit-event seals (required outside Development) |
-| `TS_AUTH_AUDIT_VERIFY_KEYS` | optional semicolon-separated previous audit HMAC keys retained during rotation |
+| `TS_AUTH_AUDIT_VERIFY_KEYS` | optional semicolon-separated previous audit HMAC keys (at most 5) retained during rotation |
 | `TS_AUTH_OPERATOR_KEY` | Bearer key that can create instances (`POST /v1/instances`) |
 | `TS_AUTH_METRICS_KEY` | Dedicated private `/metrics` scrape key sent as `X-TerraScale-Metrics-Key` (required outside Development) |
-| `TS_AUTH_LISTEN` | Listen URL (default `http://+:8080`) |
+| `TS_AUTH_LISTEN` | Listen URL (default `http://0.0.0.0:8080`) |
+| `TS_AUTH_ENVIRONMENT` | `Development` waives the audit-signing and metrics key requirements and permits a loopback TerraScale API URL |
 | `TS_AUTH_RATE_LIMIT` | Management API requests per key per 5-minute process-local window (default 1000) |
 | `TS_AUTH_STRIPE_SECRET_KEY` | Stripe secret key (billing routes 503 when unset) |
 | `TS_AUTH_STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (`whsec_...`) |
 | `TS_AUTH_PRICE_PRO` / `TS_AUTH_PRICE_ENTERPRISE` | Stripe price ids for the plans |
-| `TS_AUTH_STRIPE_API_URL` | Stripe API origin (test override) |
+| `TS_AUTH_STRIPE_API_URL` | Stripe API origin (default `https://api.stripe.com`; test override) |
 | `TS_AUTH_SMTP_HOST` | SMTP host for real email delivery (OCI: `smtp.email.sa-saopaulo-1.oci.oraclecloud.com`); when unset, emails are only logged |
 | `TS_AUTH_SMTP_PORT` | SMTP port, default 587 (STARTTLS) |
 | `TS_AUTH_SMTP_USERNAME` | SMTP username — the OCI SMTP credential OCID, full string including the `@oci` suffix |
@@ -319,17 +320,18 @@ the global placement and creates the database through the regional data API.
 - Hosted UI: `/ui/S/sign-in`, `/sign-up`, `/account`, `/account/sessions`,
   `/forgot-password`, `/reset-password`, `/verify-email`, `/magic-link`,
   `/passcode`, `/mfa/*`, `/passkeys/*`, `/connections/*`, `/admin`,
-  `/billing`, `/invitations/{id}/accept`
+  `/billing`, `/device`, `/invitations/{id}/accept`
 - OAuth/OIDC: `/S/.well-known/openid-configuration`, `/S/.well-known/jwks.json`,
-  `/S/oauth/{authorize,token,userinfo,revoke,introspect,logout}`
+  `/S/oauth/{authorize,token,userinfo,revoke,introspect,logout,device_authorization}`,
+  `/S/oauth/anonymous`, `/S/oauth/anonymous/upgrade{,/complete}`
 - SCIM: `/scim/{directoryId}/Users`, `/Groups`, `/ServiceProviderConfig`,
   `/ResourceTypes`, `/Schemas`
 - Management (Bearer `sk_...`): `/v1/S/users*`, `/v1/S/sessions*`,
   `/v1/S/api-keys*`, `/v1/S/oauth-clients*`, `/v1/S/connections*`,
   `/v1/S/directories*`, `/v1/S/organizations*` (incl. org `domains*`),
   `/v1/S/domains/{domain}/enroll`, `/v1/S/jwt-templates*`, `/v1/S/webhooks*`,
-  `/v1/S/audit-events`, `/v1/S/audit-events/verify`,
-  `/v1/S/billing*`, `/v1/S/instance`
+  `/v1/S/audit-events`, `/v1/S/audit-events/verify`, `/v1/S/roles*`,
+  `/v1/S/authorization/check`, `/v1/S/billing*`, `/v1/S/instance`
 - Billing webhook: `POST /v1/billing/webhook` (Stripe signature)
 - Quota repair: `POST /v1/{slug}/billing/quota/reconcile` removes expired pending seat claims whose user is absent, then recounts durable owners and unresolved admissions. Active claims remain reserved. It returns examined/removed/retained claim counts and requires the instance's authenticated management key.
 
@@ -370,9 +372,13 @@ rotation.
 ## CI
 
 `.forgejo/workflows/ci.yml` checks out a pinned `ts-rust` revision, checks
-formatting, runs Cargo tests and a locked dependency advisory audit, and builds the Rust release binary into the
-distroless `Containerfile`. Registry publishing is held until the Rust
-feature inventory and real caller acceptance checks are complete.
+formatting, runs Clippy with warnings denied and the Cargo tests, and runs a
+locked dependency advisory audit. It builds the Rust release binary in a
+Debian bookworm Rust container, packages it into the distroless
+`Containerfile`, smoke-checks `/healthz`, `/openapi/v1.json` and fail-closed
+`/readyz`, then runs the explicit Chromium admin and device-authorization
+tests. Pushes to `main` publish the image as
+`git.terrascale.tech/<owner>/ts-auth:<commit>`.
 
 The locked dependency audit ignores only `RUSTSEC-2023-0071` for `rsa`:
 ts-auth currently uses RSA public-key signature verification for JWT,
