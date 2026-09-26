@@ -222,6 +222,21 @@ func (s *Store) DeletePlanAs(p Principal, planID string) error {
 	return nil
 }
 
+// AuthorizePlatformAdmin reports whether the principal still matches its
+// account and belongs to a platform administrator, without copying state.
+func (s *Store) AuthorizePlatformAdmin(p Principal) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.accounts[p.AccountID]
+	if !ok {
+		return ErrNotFound
+	}
+	if err := authorize(s.viewLocked(a), p); err != nil {
+		return err
+	}
+	return s.requirePlatformAdminLocked(p)
+}
+
 func (s *Store) PlatformAccounts(p Principal) ([]Account, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
