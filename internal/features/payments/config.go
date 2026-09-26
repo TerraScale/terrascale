@@ -210,3 +210,15 @@ func PlanRank(key string) int {
 // IsEntitledStatus reports whether a Stripe subscription status grants the
 // plan's entitlements.
 func IsEntitledStatus(status string) bool { return status == "active" || status == "trialing" }
+
+// IsDunningStatus reports whether Stripe is still trying to collect payment
+// for a subscription that should retain its selected plan while billing is
+// resolved.
+func IsDunningStatus(status string) bool {
+	switch status {
+	case "past_due", "unpaid", "paused":
+		return true
+	default:
+		return false
+	}
+}

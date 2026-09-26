@@ -127,6 +127,24 @@ func TestSyncRequiresBillingForBusinessWithoutSubscription(t *testing.T) {
 	}
 }
 
+func TestSyncKeepsPersonalPlanDuringDunning(t *testing.T) {
+	for _, status := range []string{"past_due", "unpaid", "paused"} {
+		t.Run(status, func(t *testing.T) {
+			fixture := newBillingFixture(t)
+			fixture.sync(t)
+			past := activeSubscription("price_pro_monthly")
+			past.Status = status
+			fixture.provider.customer.Subscriptions = []payments.SubscriptionSnapshot{past}
+			fixture.sync(t)
+
+			org := fixture.organization(t)
+			if org.PlanID != "plan_pro" || org.Billing.PlanKey != payments.PlanPro || org.Billing.Status != status || org.BillingStatus != "billing_required" {
+				t.Fatalf("Personal during %s = %#v", status, org)
+			}
+		})
+	}
+}
+
 func TestSyncPicksCurrentSubscriptionAndRemembersTrials(t *testing.T) {
 	fixture := newBillingFixture(t)
 	old := activeSubscription("price_starter_monthly")

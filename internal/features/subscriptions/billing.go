@@ -512,15 +512,19 @@ func projectSubscription(organization *core.Organization, state payments.Custome
 		organization.BillingStatus = "active"
 		organization.PaymentMethodValidated = true
 		organization.BillingRenewal = state.CurrentPeriodEnd
-	case organization.Kind == "personal":
-		// Personal workspaces fall back to Free whenever no subscription
-		// grants a paid plan, including while a first payment is pending.
+	case organization.Kind == "personal" && !payments.IsDunningStatus(state.Status):
+		// Personal workspaces fall back to Free when no subscription grants
+		// the plan, including while a first payment is pending or after it ends.
 		organization.PlanID = "plan_free"
 		billing.PlanKey = "free"
 		billing.Interval = ""
 		organization.BillingStatus = "active"
 		organization.PaymentMethodValidated = false
 		organization.BillingRenewal = time.Time{}
+	case organization.Kind == "personal":
+		// Keep the current plan while Stripe retries payment, but surface the
+		// account as requiring billing attention.
+		organization.BillingStatus = "billing_required"
 	default:
 		organization.BillingStatus = "billing_required"
 	}

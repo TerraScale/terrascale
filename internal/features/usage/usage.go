@@ -421,7 +421,9 @@ func reviewBillingPlan(r *http.Request, deps core.Deps, billing *payments.Stripe
 			review.Estimate, review.Ready = "Demo only; no Stripe charge", true
 		} else {
 			quote, err := billing.PreviewPlanChange(r.Context(), org.Billing.CustomerID, org.Billing.SubscriptionID, key, interval)
-			if err != nil {
+			if errors.Is(err, payments.ErrStripeUnavailable) {
+				review.Error = "Plan changes are not available yet."
+			} else if err != nil {
 				review.Error = "Stripe could not calculate the estimated charge. Try again."
 			} else {
 				review.Estimate = priceUSD(quote.AmountDueCents) + " estimated by Stripe (including " + priceUSD(quote.ProrationCents) + " in prorations)"
