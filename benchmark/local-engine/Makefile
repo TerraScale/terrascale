@@ -2,7 +2,8 @@
 .PHONY: help lock fmt check lint build build-guest
 
 MUSL_CC ?= x86_64-unknown-linux-musl-gcc
-LOW_PRIORITY := nice -n 19 ionice -c 3
+# Local runs yield to interactive work; CI builds run at normal priority.
+LOW_PRIORITY := $(if $(filter true,$(CI)),,nice -n 19 ionice -c 3)
 
 help:
 	@printf '%s\n' 'lock: explicitly create or refresh this standalone driver lockfile' 'fmt/check/lint/build: source validation and host release build' 'build-guest: static musl release binary for the pinned benchmark guest'
