@@ -1,7 +1,9 @@
+# syntax=docker/dockerfile:1
 FROM node:24-bookworm-slim AS css
 WORKDIR /src
 COPY package.json package-lock.json .browserslistrc ./
-RUN npm ci --ignore-scripts --no-audit --no-fund
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
 COPY scripts/build-css.mjs ./scripts/build-css.mjs
 COPY web/assets ./web/assets
 RUN npm run build:css
@@ -9,15 +11,19 @@ RUN npm run build:css
 FROM golang:1.27.1-bookworm AS build
 WORKDIR /src
 ENV CGO_ENABLED=0 \
-    GOFLAGS=-mod=vendor \
+    GOFLAGS='-mod=vendor -trimpath' \
     GOTOOLCHAIN=local
 COPY go.mod go.sum ./
 COPY vendor ./vendor
 COPY cmd ./cmd
 COPY internal ./internal
 COPY web ./web
+# Compile against the committed stylesheet while the css stage runs, so only
+# the embedding package and the link step wait for the fresh bundle.
+RUN --mount=type=cache,target=/root/.cache/go-build go build ./...
 COPY --from=css /src/web/static/css/terrascale.css ./web/static/css/terrascale.css
-RUN go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/dashboard ./cmd/dashboard
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    go build -buildvcs=false -ldflags='-s -w' -o /out/dashboard ./cmd/dashboard
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /

@@ -97,6 +97,9 @@ while idle, so preview accounts are reset when it wakes. Both configurations
 probe `GET /health/ready` and set `TS_DASHBOARD_PRODUCTION_DEMO=1`.
 
 The e2e workflow runs lint and the full Go browser and SDK suite on every pull
-request and push to `main`. The production workflow lints, builds, and deploys.
-The preview workflow deploys one machine per pull request. No live deployment is required for local
-development or tests.
+request and push to `main`. The production and preview workflows build the
+image on Fly's remote builder (`fly deploy --remote-only`), so they need no Go
+or Node.js toolchain on the runner; the Dockerfile keeps the Go build and npm
+caches in BuildKit cache mounts. Production deploys one warm machine and the
+preview workflow deploys one machine per pull request. No live deployment is
+required for local development or tests.

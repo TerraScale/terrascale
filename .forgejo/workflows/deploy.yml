@@ -8,43 +8,29 @@ concurrency:
 jobs:
   deploy:
     runs-on: terrascale-builder
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Set up pinned Go and Node.js toolchains
-        run: scripts/setup-ci-toolchains.sh
-      - name: Install dashboard JS dependencies
-        run: npm ci --no-audit --no-fund
-      # Pull requests only merge after the e2e workflow passes.
-      - name: Check generated Templ, lint, and bundle
-        run: make lint build
-      - name: Deploy production (one warm demo machine)
+      # Pull requests only merge after the e2e workflow lints and tests them,
+      # and Fly's remote builder compiles the image, so the runner needs no
+      # Go or Node.js toolchain of its own.
+      - name: Build on Fly and deploy production (one warm demo machine)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_APP: ts-dashboard
         run: |
           set -euo pipefail
           fly config validate --strict -c fly.toml
-          fly deploy -c fly.toml --strategy immediate --ha=false
+          fly deploy -c fly.toml --remote-only --strategy immediate --ha=false
           # The in-memory demo has process-local account and session state.
-          fly scale count 1 -a ts-dashboard -c fly.toml --yes
+          fly scale count 1 -a "$FLY_APP" -c fly.toml --yes
+          machine_id=$(fly machine list -a "$FLY_APP" -q | xargs)
+          fly machine wait "$machine_id" -a "$FLY_APP" --state started --wait-timeout 2m
           machines_json=$(mktemp)
           volumes_json=$(mktemp)
           trap 'rm -f "$machines_json" "$volumes_json"' EXIT
-          fly machine list -a ts-dashboard --json > "$machines_json"
-          machine_id=$(node -e '
-            const machines = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-            if (machines.length !== 1) process.exit(1);
-            process.stdout.write(machines[0].id);
-          ' "$machines_json")
-          machine_to_update=$(node -e '
-            const machines = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-            if (machines.length !== 1) process.exit(1);
-            if (machines[0].config?.init?.swap_size_mb !== 900) process.stdout.write(machines[0].id);
-          ' "$machines_json")
-          if [[ -n "$machine_to_update" ]]; then
-            fly machine update "$machine_to_update" -a ts-dashboard -c fly.toml --swap-size 900 --yes
-          fi
-          fly machine wait "$machine_id" -a ts-dashboard --state started --wait-timeout 2m
-          fly machine list -a ts-dashboard --json > "$machines_json"
-          fly volumes list -a ts-dashboard --json > "$volumes_json"
+          fly machine list -a "$FLY_APP" --json > "$machines_json"
+          fly volumes list -a "$FLY_APP" --json > "$volumes_json"
           node scripts/check-fly-deployment.mjs production "$machines_json" "$volumes_json"
+          curl -fsS --retry 6 --retry-delay 2 --retry-connrefused \
+            "https://${FLY_APP}.fly.dev/health/ready"
