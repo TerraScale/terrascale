@@ -14,7 +14,15 @@ import (
 	"terrascale.tech/dashboard/internal/core"
 )
 
-var ErrInvalidToken = errors.New("invalid CSRF token")
+var (
+	ErrInvalidToken = errors.New("invalid CSRF token")
+	ErrBodyTooLarge = errors.New("request body too large")
+)
+
+// maxFormBody bounds the body Protect reads while it looks for a form token,
+// before any handler can set its own limit; the largest form a feature
+// accepts is a 1 MiB document.
+const maxFormBody = 2 << 20
 
 type Options struct {
 	CookieName string
@@ -63,6 +71,9 @@ func (g *Guard) Verify(r *http.Request) error {
 	token := r.Header.Get("X-CSRF-Token")
 	if token == "" {
 		if err := r.ParseForm(); err != nil {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+				return ErrBodyTooLarge
+			}
 			return ErrInvalidToken
 		}
 		token = r.PostForm.Get("_csrf")
@@ -88,7 +99,12 @@ func (g *Guard) Protect(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if err := g.Verify(r); err != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+		switch err := g.Verify(r); {
+		case errors.Is(err, ErrBodyTooLarge):
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		case err != nil:
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
