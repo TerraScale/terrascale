@@ -104,24 +104,28 @@ func (store *terraBaseStateStore) EnsureSchema(ctx context.Context) error {
 	return nil
 }
 
+// BindCustomer writes the organization's binding first and the customer's
+// reverse binding second. Both writes are create-only and an existing binding
+// is accepted when it matches, so binding an already bound organization again
+// restores a reverse binding an interrupted earlier call left missing.
 func (store *terraBaseStateStore) BindCustomer(ctx context.Context, organizationID, customerID string) (string, error) {
 	if organizationID == "" || customerID == "" {
 		return "", ErrInvalidBillingInput
 	}
 	_, err := store.client.Documents.Create(ctx, store.databaseID, organizationsCollection, organizationID,
 		organizationDocument{CustomerID: customerID}, sdk.WithIdempotencyKey("bind:"+organizationID+":"+customerID))
-	switch {
-	case isConflict(err):
+	if isConflict(err) {
 		// Another request bound this organization first; its customer wins.
-		existing, ok, err := store.CustomerFor(ctx, organizationID)
-		if err != nil {
-			return "", err
+		existing, ok, lookupErr := store.CustomerFor(ctx, organizationID)
+		if lookupErr != nil {
+			return "", lookupErr
 		}
 		if !ok {
 			return "", core.ErrConflict
 		}
-		return existing, nil
-	case err != nil:
+		customerID, err = existing, nil
+	}
+	if err != nil {
 		return "", err
 	}
 	// The reverse binding starts empty and is filled by the first sync; its
@@ -129,9 +133,6 @@ func (store *terraBaseStateStore) BindCustomer(ctx context.Context, organization
 	_, err = store.client.Documents.Create(ctx, store.databaseID, customersCollection, customerID,
 		customerDocument{OrganizationID: organizationID, Status: StatusNone},
 		sdk.WithIdempotencyKey("bind-customer:"+customerID))
-	if err != nil && !isConflict(err) {
-		return "", err
-	}
 	if isConflict(err) {
 		boundTo, ok, lookupErr := store.OrganizationFor(ctx, customerID)
 		if lookupErr != nil {
@@ -140,6 +141,10 @@ func (store *terraBaseStateStore) BindCustomer(ctx context.Context, organization
 		if !ok || boundTo != organizationID {
 			return "", core.ErrConflict
 		}
+		err = nil
+	}
+	if err != nil {
+		return "", err
 	}
 	return customerID, nil
 }

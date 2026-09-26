@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"slices"
 
+	"terrascale.tech/dashboard/internal/core"
+
 	stripe "github.com/stripe/stripe-go/v86"
 	"github.com/stripe/stripe-go/v86/webhook"
 )
@@ -99,12 +101,22 @@ func handleWebhook(flow BillingFlow, billing *Stripe) http.HandlerFunc {
 			http.Error(w, "Invalid Stripe billing event.", http.StatusBadRequest)
 			return
 		}
+		if customerID == "" {
+			// Checkouts the dashboard creates always carry a customer; others
+			// in the account are not ours and must not be retried.
+			logger.Info("skip Stripe event without a customer")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		logger = logger.With("customer_id", customerID)
 		switch _, err := billing.SyncCustomer(r.Context(), flow, customerID); {
 		case err == nil:
 			logger.Info("synced Stripe customer")
 		case errors.Is(err, ErrUnknownCustomer):
 			logger.Info("skip Stripe event for an unbound customer")
+		case errors.Is(err, core.ErrNotFound):
+			// Redelivery cannot bring back a deleted organization.
+			logger.Info("skip Stripe event for a missing organization", "error", err)
 		default:
 			logger.Error("sync Stripe customer", "error", err)
 			http.Error(w, "Could not sync Stripe customer.", http.StatusInternalServerError)
@@ -114,8 +126,9 @@ func handleWebhook(flow BillingFlow, billing *Stripe) http.HandlerFunc {
 	}
 }
 
-// eventCustomer returns the customer ID every tracked event carries on its
-// data object, whether Stripe sends it as an ID or an expanded object.
+// eventCustomer returns the customer ID a tracked event carries on its data
+// object, whether Stripe sends it as an ID or an expanded object, or "" when
+// the object has none.
 func eventCustomer(event stripe.Event) (string, error) {
 	if event.Data == nil || len(event.Data.Raw) == 0 {
 		return "", errors.New("event has no data object")
@@ -126,8 +139,8 @@ func eventCustomer(event stripe.Event) (string, error) {
 	if err := json.Unmarshal(event.Data.Raw, &object); err != nil {
 		return "", err
 	}
-	if object.Customer == nil || object.Customer.ID == "" {
-		return "", errors.New("event object has no customer")
+	if object.Customer == nil {
+		return "", nil
 	}
 	return object.Customer.ID, nil
 }

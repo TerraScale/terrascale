@@ -241,20 +241,24 @@ func (billing *Stripe) startCheckout(w http.ResponseWriter, r *http.Request, dep
 // customerFor returns the organization's Stripe customer, creating it before
 // the first checkout. The binding is stored create-only, so every checkout,
 // webhook, and sync for the organization resolves to one customer even when
-// two checkouts race.
+// two checkouts race. A bound customer is bound again so a binding an
+// interrupted checkout left half written is completed before payment.
 func (billing *Stripe) customerFor(ctx context.Context, email string, organization core.Organization) (string, error) {
 	customerID, bound, err := billing.store.CustomerFor(ctx, organization.ID)
-	if err != nil || bound {
-		return customerID, err
-	}
-	created, err := billing.provider.CreateCustomer(ctx, CustomerRequest{
-		Email: email, Name: organization.Name, OrganizationID: organization.ID,
-		IdempotencyKey: "customer:" + organization.ID,
-	})
 	if err != nil {
 		return "", err
 	}
-	return billing.store.BindCustomer(ctx, organization.ID, created.ID)
+	if !bound {
+		created, err := billing.provider.CreateCustomer(ctx, CustomerRequest{
+			Email: email, Name: organization.Name, OrganizationID: organization.ID,
+			IdempotencyKey: "customer:" + organization.ID,
+		})
+		if err != nil {
+			return "", err
+		}
+		customerID = created.ID
+	}
+	return billing.store.BindCustomer(ctx, organization.ID, customerID)
 }
 
 // resumeCheckout handles an organization's pending checkout. It reports true

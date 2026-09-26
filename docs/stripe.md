@@ -24,9 +24,10 @@ projected; an event only says which customer to sync.
 
 The save is conditional on the version loaded before reading Stripe. When two
 syncs race, the loser re-reads Stripe, so the stored state always comes from a
-read that started after the previous save. Duplicate, late, and out-of-order
-events therefore converge on Stripe's current state without event IDs or
-timestamps.
+read that started after the previous save. The organization records when its
+projected state was read and ignores an older one that a slower sync projects
+late. Duplicate, late, and out-of-order events therefore converge on Stripe's
+current state without event IDs.
 
 ## State store
 
@@ -133,6 +134,8 @@ invoice.voided
 - Webhooks are verified against the raw body, the signing secret, a
   five-minute timestamp tolerance, the API version, and the configured mode.
   A failed sync returns `5xx`, so Stripe redelivers; syncing is idempotent.
+  Events without a customer, for an unbound customer, or for a deleted
+  organization are acknowledged and skipped.
 - Checkout Sessions expire after one hour. The local pending checkout uses the
   expiry Stripe returns and is released by the next sync after it expires.
 

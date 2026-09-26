@@ -115,6 +115,19 @@ func TestTerraBaseStateStoreBindsEachCustomerOnce(t *testing.T) {
 	}
 }
 
+func TestTerraBaseStateStoreCompletesInterruptedBinding(t *testing.T) {
+	store, fake := newFakeTerraBase(t)
+	ctx := t.Context()
+	// The organization binding was written but the customer binding was not.
+	fake.documents[organizationsCollection+"/org_a"] = []byte(`{"customerId":"cus_a"}`)
+	if customer, err := store.BindCustomer(ctx, "org_a", "cus_a"); err != nil || customer != "cus_a" {
+		t.Fatalf("binding again = %q, %v", customer, err)
+	}
+	if organization, ok, err := store.OrganizationFor(ctx, "cus_a"); err != nil || !ok || organization != "org_a" {
+		t.Fatalf("OrganizationFor = %q, %v, %v", organization, ok, err)
+	}
+}
+
 func TestTerraBaseStateStoreSavesConditionally(t *testing.T) {
 	store, _ := newFakeTerraBase(t)
 	ctx := t.Context()

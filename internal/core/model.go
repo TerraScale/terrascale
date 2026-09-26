@@ -317,6 +317,9 @@ type Billing struct {
 	PaidExcessEnabled     bool
 	SpendCapCents         int64
 	Invoices              []Invoice
+	// SyncedAt is when the projected Stripe state was read, so a slower
+	// sync cannot project older state over a newer one.
+	SyncedAt time.Time
 }
 
 type CheckoutSession struct {

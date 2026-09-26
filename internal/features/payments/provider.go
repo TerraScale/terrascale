@@ -76,7 +76,6 @@ type SubscriptionSnapshot struct {
 type StripeCustomer struct {
 	ID                   string
 	OrganizationID       string
-	Deleted              bool
 	DefaultPaymentMethod *PaymentMethod
 	Subscriptions        []SubscriptionSnapshot
 	Invoices             []core.Invoice
@@ -243,7 +242,7 @@ func (provider *stripeProvider) FetchCustomer(ctx context.Context, customerID st
 	if err != nil {
 		return StripeCustomer{}, err
 	}
-	result := StripeCustomer{ID: customer.ID, OrganizationID: customer.Metadata["organization_id"], Deleted: customer.Deleted}
+	result := StripeCustomer{ID: customer.ID, OrganizationID: customer.Metadata["organization_id"]}
 	if customer.InvoiceSettings != nil {
 		result.DefaultPaymentMethod = paymentMethod(customer.InvoiceSettings.DefaultPaymentMethod)
 	}

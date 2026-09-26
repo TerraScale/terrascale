@@ -176,16 +176,21 @@ type testEvent struct {
 	ID         string
 	Type       string
 	Customer   string
+	NoCustomer bool
 	APIVersion string
 	Livemode   bool
 }
 
 func (fixture billingFixture) deliver(t *testing.T, event testEvent, secret string) *httptest.ResponseRecorder {
 	t.Helper()
+	object := map[string]any{"id": "obj_" + event.ID, "customer": cmp.Or(event.Customer, "cus_test")}
+	if event.NoCustomer {
+		delete(object, "customer")
+	}
 	payload, err := json.Marshal(map[string]any{
 		"id": event.ID, "object": "event", "type": event.Type, "created": time.Now().Unix(),
 		"api_version": cmp.Or(event.APIVersion, stripe.APIVersion), "livemode": event.Livemode,
-		"data": map[string]any{"object": map[string]any{"id": "obj_" + event.ID, "customer": cmp.Or(event.Customer, "cus_test")}},
+		"data": map[string]any{"object": object},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -235,7 +240,10 @@ func TestWebhookSyncIsIdempotentAcrossEventOrder(t *testing.T) {
 			t.Fatalf("%s = %d", event.Type, response.Code)
 		}
 	}
-	if again := fixture.organization(t); !reflect.DeepEqual(first, again) {
+	// Only the time of the latest Stripe read may change.
+	again := fixture.organization(t)
+	again.Billing.SyncedAt = first.Billing.SyncedAt
+	if !reflect.DeepEqual(first, again) {
 		t.Fatalf("replayed and older events changed the organization:\nfirst %#v\nagain %#v", first.Billing, again.Billing)
 	}
 }
@@ -245,6 +253,7 @@ func TestWebhookSkipsUnboundAndUntrackedEvents(t *testing.T) {
 	for _, event := range []testEvent{
 		{ID: "evt_other", Type: "invoice.paid", Customer: "cus_other"},
 		{ID: "evt_untracked", Type: "customer.updated"},
+		{ID: "evt_guest", Type: "checkout.session.completed", NoCustomer: true},
 	} {
 		if response := fixture.deliver(t, event, testWebhookSecret); response.Code != http.StatusOK {
 			t.Fatalf("%s = %d", event.ID, response.Code)
@@ -252,6 +261,17 @@ func TestWebhookSkipsUnboundAndUntrackedEvents(t *testing.T) {
 	}
 	if fixture.provider.fetches != 0 || fixture.organization(t).Billing.CheckoutID != "cs_test" {
 		t.Fatalf("skipped events read Stripe %d times or changed billing", fixture.provider.fetches)
+	}
+}
+
+func TestWebhookSkipsCustomerOfMissingOrganization(t *testing.T) {
+	fixture := newBillingFixture(t)
+	if _, err := fixture.state.BindCustomer(t.Context(), "org_deleted", "cus_deleted"); err != nil {
+		t.Fatal(err)
+	}
+	fixture.provider.customer.OrganizationID = "org_deleted"
+	if response := fixture.deliver(t, testEvent{ID: "evt_deleted", Type: "invoice.paid", Customer: "cus_deleted"}, testWebhookSecret); response.Code != http.StatusOK {
+		t.Fatalf("event for a missing organization = %d, want 200", response.Code)
 	}
 }
 

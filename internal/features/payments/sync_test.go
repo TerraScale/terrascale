@@ -3,7 +3,9 @@ package payments_test
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"testing"
+	"time"
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/payments"
@@ -33,6 +35,22 @@ func TestCheckoutReturnReportsProcessingUntilPaymentConfirms(t *testing.T) {
 	org := fixture.organization(t)
 	if org.PlanID != "plan_free" || org.Billing.CheckoutID != "cs_test" {
 		t.Fatalf("unconfirmed payment changed the plan or released checkout: %#v", org.Billing)
+	}
+}
+
+func TestSyncIgnoresOlderStateProjectedLate(t *testing.T) {
+	fixture := newBillingFixture(t)
+	fixture.sync(t)
+	newer := fixture.organization(t)
+	stale := payments.CustomerState{
+		CustomerID: "cus_test", OrganizationID: fixture.principal.OrganizationID, Status: payments.StatusNone,
+		SyncedAt: newer.Billing.SyncedAt.Add(-time.Second),
+	}
+	if err := fixture.service.ProjectCustomerState(stale, nil); err != nil {
+		t.Fatal(err)
+	}
+	if org := fixture.organization(t); !reflect.DeepEqual(org, newer) {
+		t.Fatalf("older state replaced newer billing:\n got %#v\nwant %#v", org.Billing, newer.Billing)
 	}
 }
 
