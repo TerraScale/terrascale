@@ -8,8 +8,7 @@ imports and exports, and auth persistence.
 
 ## Atlas discovery and regional routing (ADR 0050)
 
-There is no per-request proxy anymore. Routing follows the ADR 0050
-discovery-first flow:
+Routing follows the ADR 0050 discovery-first flow:
 
 - **Database-scoped requests** (`/api/v1/databases/{name}/…`) first resolve
   the database's eligible regional endpoints with one metadata GET,
@@ -55,10 +54,7 @@ never discover. `Config.DiscoveryBaseURL` overrides the metadata origin for
 tests and development (loopback dev origins may serve `http` regional
 endpoints); it is independent of `APIBaseURL`.
 
-Migration note (from the ADR 0043 flow): the global first-contact pin
-learning, the pin-clearing recovery to the global origin, and every other
-member-data request to the bare `api.terrascale.tech` origin are gone.
-`PinRegion`/`PreferredRegion` remain the explicit region pin and
+`PinRegion`/`PreferredRegion` are the explicit region pin and
 `X-TerraScale-Preferred-Region` hint; under discovery the router owns
 stickiness and failover per database scope.
 
@@ -217,8 +213,9 @@ configured tenant/project scope in both responses.
 ## Supported versions
 
 - Go floor: `go 1.24.0`, declared in `go.mod` and enforced by the toolchain at
-  build time. The SDK has no CGO dependencies; runtime dependency is
-  `github.com/coder/websocket` (see `go.mod` for the pinned version).
+  build time. The SDK has no CGO dependencies; runtime dependencies are
+  `github.com/coder/websocket` and `github.com/zeebo/blake3` (see `go.mod`
+  for the pinned versions).
 - Toolchain checks: `go vet`, `gofmt`, `go test ./...` and `go test -race ./...`
   all run in CI; the dependency lane runs the pinned `govulncheck@v1.8.0`
   scanner and fails on any known vulnerability.
