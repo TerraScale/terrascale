@@ -2,9 +2,8 @@
 
 `@terrascale/sdk` is the public TypeScript client for TerraScale.
 
-The workspace `../GOAL.md` is the sole architecture and delivery authority.
-This repository's [GOAL.md](GOAL.md) points to it and lists the local
-verification commands. An accepted target is not a released SDK capability.
+The workspace [`../GOAL.md`](../GOAL.md) is the sole architecture and delivery
+authority. An accepted target is not a released SDK capability.
 
 ## Service boundary
 
@@ -51,6 +50,15 @@ server-only and is excluded from browser bundles. The generated Database API
 implementation, pinned Better Auth compatibility and license checks, and
 adapter conformance are separate qualification gates.
 
+~~~ts
+import { createAuthPersistenceClient, createTerraScaleAuthAdapter } from "@terrascale/sdk/better-auth";
+
+const persistence = createAuthPersistenceClient({
+  accessToken: process.env.TERRASCALE_ACCESS_TOKEN,
+});
+const database = createTerraScaleAuthAdapter(persistence, "auth");
+~~~
+
 ## ts-auth identity provider
 
 The `ts-auth` entrypoint manages a ts-auth hosted identity instance: users,
@@ -87,9 +95,6 @@ call. Webhook deliveries are verified against the raw request bytes with
 retried when `maxRetryAttempts` is configured; mutations are never retried. A
 per-call `AbortSignal` is currently accepted on `users.list`, `users.listAll`,
 and `auditEvents.list` only; the request deadline bounds everything else.
-
-```ts
-import { AuthPersistenceClient, createTerraScaleAuthAdapter } from "@terrascale/sdk/better-auth";
 
 ## Database documents
 
@@ -203,8 +208,6 @@ The public API `/api/v1` is versioned. The SDK runs on Node.js 22 and 24.
 Release qualification must cover the
 exact packed tarball and the current stable major versions of Chrome, Firefox, Safari, and Edge.
 
-## Development and contracts
-
 ## Idempotent mutations
 
 Public clients opt in with `idempotencyKeyFactory` on the client or
@@ -225,8 +228,7 @@ automatic retry candidates.
 
 The discovery origin is `https://atlas.terrascale.tech` (the metadata-only
 `ts-atlas` Worker); `https://api.terrascale.tech` is the dashboard-owned
-product API origin. Per
-[ADR 0050](../terrabase/docs/adr/0050-sdk-discovery-and-direct-regional-routing.md),
+product API origin. Per ADR 0050 (SDK discovery and direct regional routing),
 the SDK's first database-scoped request performs one metadata
 `GET /api/v1/discovery` call against the discovery origin and then connects
 **directly** to the ranked regional endpoint —
@@ -322,9 +324,9 @@ Each operation is gated against:
 Unbacked operations remain omitted. Do not invent types or use a generic
 request to hide a contract gap.
 
-The repository decision records are under [`docs/adr/`](docs/adr/). Start with
-the in-repository [`GOAL.md`](GOAL.md), which points workspace contributors to
-the cross-repository authority and production exit gates.
+The repository decision records are under [`docs/adr/`](docs/adr/). The
+workspace [`../GOAL.md`](../GOAL.md) owns the cross-repository authority and
+production exit gates.
 
 ## Development
 
