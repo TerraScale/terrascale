@@ -16,9 +16,21 @@ terrascale push --database <branch-database>
 npm run dev
 ```
 
-`terrascale` is the Go CLI from the separate `ts-cli` repository, not an npm
-package. Install it from a checkout with `go install ./cmd/terrascale`, then
-run the command above to create or reuse a cloud branch. It prints the branch
+`terrascale` is the C#/.NET CLI from the separate `ts-cli` repository, not an
+npm package. From that checkout, run the pinned project directly:
+
+```bash
+dotnet run --project src/TerraScale.Cli -- dev <database> --watch=false --no-log-tail
+```
+
+For a globally available command, publish the same project and place the
+resulting executable on `PATH`:
+
+```bash
+dotnet publish src/TerraScale.Cli/TerraScale.Cli.csproj --configuration Release
+```
+
+The CLI creates or reuses a cloud branch. It prints the branch
 name, source, and selected region, but not credentials or a database id. Use
 the dashboard/API response to obtain the branch database id, then put that id
 and the API settings in `.env.local`. Set the redirect URI to the exact URL

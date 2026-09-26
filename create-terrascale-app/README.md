@@ -16,13 +16,17 @@ terrascale push --database <branch-database>
 npm run dev
 ```
 
-The CLI is a Go binary from the separate `ts-cli` repository; it is not an
-npm dependency. Until a CLI release is published, install it from a checkout:
+The CLI is a C#/.NET tool from the separate `ts-cli` repository; it is not an
+npm dependency. Until a CLI release is published, build it from a checkout and
+place the resulting `terrascale` executable on `PATH`:
 
 ```bash
 cd /path/to/ts-cli
-go install ./cmd/terrascale
+dotnet publish src/TerraScale.Cli/TerraScale.Cli.csproj --configuration Release
 ```
+
+Alternatively, run it in place with
+`dotnet run --project src/TerraScale.Cli -- <command>`.
 
 `terrascale dev <database> --watch=false --no-log-tail` creates or reuses a
 cloud branch. It prints the branch name, source, and selected region, but not

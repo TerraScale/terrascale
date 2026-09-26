@@ -102,7 +102,9 @@ export function createStubSandbox() {
       },
       async get(database, collection, id) {
         const value = await sandbox.get({ databaseId: database, collection, id });
-        return { ok: true, value, status: value === null ? 404 : 200 };
+        return value === null
+          ? { ok: false, error: { kind: "not-found", code: "not_found" }, status: 404 }
+          : { ok: true, value, status: 200 };
       },
       async patch(database, collection, id, patch) {
         const current = await sandbox.get({ databaseId: database, collection, id });

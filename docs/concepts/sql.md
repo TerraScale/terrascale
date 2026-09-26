@@ -27,7 +27,7 @@ A `SELECT` over one collection with `WHERE` on columns or JSON paths,
 `ORDER BY`, `LIMIT`, and FTS5 `MATCH` is **subscribable**: the sync engine
 maintains it incrementally and pushes deltas. Joins, aggregates, window
 functions, and subqueries are `execute`-only at launch — subscribing to one
-returns `NotSubscribable` with the fix, not a mystery error.
+returns a typed error with the fix, not a mystery error.
 
 ## Where SQL runs
 
@@ -66,8 +66,7 @@ templates (frequency × logical cost), builds candidate indexes invisibly
 under a write budget, verifies them in shadow, and only then makes them
 visible — journaled so every region follows. Index maintenance happens in the
 write's own transaction, so **a visible index can never serve a stale read**.
-Queries that would race a building index get a hybrid plan or a typed
-`IndexBuilding` error with the fix ("retry in 800 ms, or `terrascale index
-wait`").
+Queries that would race a building index get a hybrid plan or a typed error
+with the fix (retry later, or wait with `terrascale index wait`).
 
 Full-text search is FTS5 `MATCH` with its own auto-index kind.

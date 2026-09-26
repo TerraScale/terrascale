@@ -30,10 +30,12 @@ npm install
 cp .env.example .env.local
 ```
 
-`terrascale` is a Go binary from the separate `ts-cli` repository, not an npm
-dependency. Install it from a CLI release (or, while developing the CLI, from
-its checkout with `go install ./cmd/terrascale`). The branch-only command below
-uses only the public database-scoped lifecycle:
+`terrascale` is a C#/.NET CLI from the separate `ts-cli` repository, not an
+npm dependency. No CLI release is published yet; from its checkout, run it with
+`dotnet run --project src/TerraScale.Cli -- <command>`, or build it with
+`dotnet publish src/TerraScale.Cli/TerraScale.Cli.csproj --configuration Release`
+and place the resulting `terrascale` executable on `PATH`. The branch-only
+command below uses only the public database-scoped lifecycle:
 
 ```bash
 # TERRASCALE_API_KEY must be exported for the CLI; .env.local is read by Next.js only.
@@ -41,9 +43,10 @@ terrascale dev <database> --watch=false --no-log-tail
 ```
 
 The command talks to the cloud service. It never starts an engine on your
-machine. Seed execution, log tailing, and codegen watch are separate CLI
-capabilities; do not add those flags unless the CLI release you installed
-advertises their contracts.
+machine. Data-file seeds (`--seed ./seed.jsonl --seed-collection posts`),
+branch diagnostic log tailing, and codegen watch
+(`--watch --language typescript --codegen-out <path>`) are optional; the command above disables watch and log tailing. The CLI does
+not execute TypeScript seed functions.
 
 The starter is a Next.js app wired to `@terrascale/sdk`. Click **Sign in with
 TerraScale** in each browser tab. It uses OAuth authorization-code PKCE and
@@ -79,12 +82,20 @@ export const schema = defineSchema({
       indexes: { byAuthor: ['authorId'] },
     },
 })
+
+// The SQL builder takes schema field objects, not column-name strings.
+export const posts = schema.toObject().collections.find((c) => c.name === 'posts')!
+export const title = posts.fields.find((f) => f.name === 'title')!
+export const publishedAt = posts.fields.find((f) => f.name === 'publishedAt')!
 ```
 
 ```bash
 terrascale push --database <branch-database> # applies schema to that branch
-terrascale codegen     # generates types from the schema file
+terrascale codegen --language typescript --out schema.gen.ts # types from the schema file
 ```
+
+`codegen` defaults to C# on standard output, so pass `--language typescript`
+and an `--out` path for a TypeScript app.
 
 ## 3. Open a cloud dev branch
 

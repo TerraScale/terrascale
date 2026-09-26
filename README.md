@@ -3,8 +3,7 @@
 Product docs site source: runnable snippets, `llms.txt`, launch-post drafts,
 and pricing/limits pages generated from the checked-in pricing data.
 
-Single authority for product decisions is the workspace-root `GOAL.md`; this
-repo holds docs source only.
+This repo holds docs source only.
 
 ## Develop
 

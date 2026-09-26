@@ -34,6 +34,6 @@ export async function run(sandbox: Sandbox): Promise<void> {
   const deleted = await sandbox.client.documents.delete(databaseId, "todos", "todo-1");
   assert.equal(deleted.ok, true);
   const gone = await sandbox.client.documents.get(databaseId, "todos", "todo-1");
-  assert.equal(gone.ok, true);
-  assert.equal(gone.value, null);
+  assert.equal(gone.ok, false);
+  assert.equal(gone.ok ? undefined : gone.error.kind, "not-found");
 }

@@ -38,7 +38,7 @@ console.log("  npm install");
 console.log("  cp .env.example .env.local");
 console.log("  # sign in when prompted (card required at signup for fraud screening;");
 console.log("  # free plan needs no subscription; eligible onboarding promotion waives subscription only; authorized excess is billed)");
-console.log("  # from a ts-cli checkout: go install ./cmd/terrascale");
+console.log("  # from a ts-cli checkout: dotnet publish src/TerraScale.Cli/TerraScale.Cli.csproj -c Release, then put terrascale on PATH");
 console.log("  terrascale dev <database> --watch=false --no-log-tail");
 console.log("  # copy the branch database id/API settings into .env.local");
 console.log("  terrascale push --database <branch-database>");

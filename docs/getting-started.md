@@ -11,7 +11,7 @@ npx create-terrascale-app@latest my-app
 cd my-app
 npm install
 cp .env.example .env.local
-# install the Go CLI from a ts-cli checkout or release
+# build the .NET CLI from a ts-cli checkout and put `terrascale` on PATH
 terrascale dev <database> --watch=false --no-log-tail
 # Fill in the public project, branch, API, and registered callback settings.
 terrascale push --database <branch-database>

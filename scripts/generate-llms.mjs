@@ -77,7 +77,7 @@ ${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
 - Local mode (the default): \`npm test\` runs the deterministic stub harness.
 - Remote qualification (explicit, fail-closed): set TERRASCALE_SANDBOX_URL,
   TERRASCALE_SANDBOX_API_KEY, and TERRASCALE_SANDBOX_DATABASE_ID, then run
-  \`make qualify-remote\`. The local harness does not qualify the remote
+  \`npm run test:remote\`. The local harness does not qualify the remote
   contract.
 
 ## API entry points

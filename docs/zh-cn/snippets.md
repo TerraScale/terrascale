@@ -8,7 +8,7 @@
 Runnable snippets can be qualified against a real cloud sandbox branch
 pre-filled with the reader's key. `npm test` is the deterministic local stub
 check used by CI. The explicit remote, fail-closed launch gate is
-`make qualify-remote`; it requires all three sandbox environment variables and
+`npm run test:remote`; it requires all three sandbox environment variables and
 exits non-zero when the sandbox is unavailable. An absent sandbox is a failed
 gate, not a passing fixture run.
 
@@ -16,7 +16,7 @@ gate, not a passing fixture run.
 TERRASCALE_SANDBOX_URL=https://<branch>.<region>.api.terrascale.tech \
 TERRASCALE_SANDBOX_API_KEY=ts_... \
 TERRASCALE_SANDBOX_DATABASE_ID=db_... \
-make qualify-remote
+npm run test:remote
 # Local-only smoke test; this is not launch qualification.
 npm test
 ```

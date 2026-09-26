@@ -435,7 +435,9 @@ export function createRemoteSandbox() {
       },
       async get(databaseId, collection, id) {
         const value = await sandbox.get({ databaseId, collection, id });
-        return result(value, value === null ? 404 : 200);
+        return value === null
+          ? { ok: false, error: { kind: "not-found", code: "not_found" }, status: 404 }
+          : result(value, 200);
       },
       async patch(databaseId, collection, id, patch) {
         const current = await sandbox.get({ databaseId, collection, id });
