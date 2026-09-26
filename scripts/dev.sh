@@ -12,6 +12,8 @@ export DASHBOARD_DEMO_ADMIN_EMAIL="${DASHBOARD_DEMO_ADMIN_EMAIL:-e2e-admin-seed@
 export DASHBOARD_DEMO_ADMIN_PASSWORD="${DASHBOARD_DEMO_ADMIN_PASSWORD:-E2e-admin-seed-123!}"
 export GOFLAGS="${GOFLAGS:--mod=vendor}"
 
+# The Go build embeds web/static/js, so it must exist before air starts.
+npm run build:js
 npm run watch:css &
 css_pid=$!
 npm run watch:js &

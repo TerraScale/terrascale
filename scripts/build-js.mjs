@@ -46,13 +46,20 @@ const workers = {
   'json-worker': resolve(monacoDist, 'lsp/json/worker.mjs'),
 };
 
+// The JSON language service would fetch any http(s) $schema a document names,
+// from a worker the page's CSP does not govern; schemas stay local.
+const workerPatches = {
+  'lsp/json/worker.mjs': [
+    [/return cache\.fetch\(url\)\.then\(\(res\) => res\.text\(\)\);/, 'return Promise.reject(new Error("Remote JSON schemas are disabled"));'],
+  ],
+};
+
 // Replacements applied to modern-monaco sources, keyed by dist-relative path.
-// Every pattern must match so an upstream change fails the build loudly.
 function monacoPatches(workerFiles, codiconFile) {
   // Monaco and modern-monaco inject <style> elements at runtime; give them the
-  // page nonce, still readable as the .nonce property of any nonced script,
-  // so the CSP admits them.
-  const nonced = 'Object.assign(document.createElement("style"), { nonce: document.querySelector("script[nonce]")?.nonce ?? "" })';
+  // page nonce, still readable as the .nonce property of the editor's own
+  // nonced script, so the CSP admits them.
+  const nonced = 'Object.assign(document.createElement("style"), { nonce: document.querySelector(\'script[src^="/js/code-editor.js"]\')?.nonce ?? "" })';
   const styleElements = [/document\.createElement\("style"\)/g, nonced];
   return {
     'core.mjs': [
@@ -75,10 +82,14 @@ function monacoPatches(workerFiles, codiconFile) {
   };
 }
 
+// Applies patches while esbuild loads each file. Every pattern must match, and
+// every patched file must be part of the bundle, so an upstream change fails
+// the build loudly instead of shipping unpatched code.
 function patchPlugin(patches) {
   return {
     name: 'modern-monaco-patches',
     setup(build) {
+      const applied = new Set();
       build.onLoad({ filter: /modern-monaco[\\/]dist[\\/].+\.mjs$/ }, async ({ path }) => {
         const name = path.slice(monacoDist.length + 1).replaceAll('\\', '/');
         let contents = await readFile(path, 'utf8');
@@ -89,10 +100,26 @@ function patchPlugin(patches) {
           pattern.lastIndex = 0;
           contents = contents.replace(pattern, replacement);
         }
+        applied.add(name);
         return { contents, loader: 'js' };
+      });
+      build.onEnd(result => {
+        const missing = Object.keys(patches).filter(name => !applied.has(name));
+        if (missing.length > 0 && result.errors.length === 0) {
+          throw new Error(`modern-monaco patches were never applied: ${missing.join(', ')}`);
+        }
       });
     },
   };
+}
+
+// Nothing may load code from another origin at runtime.
+function assertSelfHosted(files) {
+  for (const file of files) {
+    if (/import\(\s*["'`]https?:/.test(file.text)) {
+      throw new Error(`${basename(file.path)} imports code from a remote origin`);
+    }
+  }
 }
 
 // The codicon font ships base64-encoded inside Monaco's CSS; write it out as a
@@ -118,6 +145,7 @@ async function build() {
     ...shared,
     entryPoints: Object.entries(workers).map(([out, input]) => ({ in: input, out })),
     entryNames: '[name].[hash]',
+    plugins: [patchPlugin(workerPatches)],
   });
   const workerFiles = {};
   for (const [output, meta] of Object.entries(workerResult.metafile.outputs)) {
@@ -136,6 +164,7 @@ async function build() {
     splitting: true,
     plugins: [patchPlugin(monacoPatches(workerFiles, codicon.name))],
   });
+  assertSelfHosted([...workerResult.outputFiles, ...mainResult.outputFiles]);
 
   const files = [
     ...workerResult.outputFiles,
@@ -149,7 +178,11 @@ async function build() {
   if (release) {
     await Promise.all(files.map(precompress));
   }
-  const current = new Set(files.flatMap(file => [basename(file.path), `${basename(file.path)}.br`]));
+  // Brotli siblings from an earlier release build would shadow newer files.
+  const current = new Set(files.flatMap(file => {
+    const name = basename(file.path);
+    return release ? [name, `${name}.br`] : [name];
+  }));
   const stale = (await readdir(outdir)).filter(name => !current.has(name));
   await Promise.all(stale.map(name => rm(resolve(outdir, name))));
   return files.reduce((total, file) => total + file.contents.length, 0);

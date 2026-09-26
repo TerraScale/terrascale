@@ -8,6 +8,14 @@
   display: block;
 }
 
+/* Same metrics as the editor (13px on 20px lines, 12px padding), so the field
+   keeps its height when Monaco replaces it. */
+.ts-code-editor > textarea.ts-input {
+  padding-block: var(--ts-s3);
+  font-size: var(--ts-fs-sm);
+  line-height: 20px;
+}
+
 .ts-code-editor[data-ready] {
   min-height: 96px;
   overflow: hidden;

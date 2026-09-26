@@ -58,7 +58,7 @@ templ subscriptionsContent(page core.Page, d pageData) {
 						<input class="ts-input" id="subscription-name" name="name" pattern="[a-z][a-z0-9_\-]*" maxlength="64" required/>
 					}
 					@ui.Field(ui.FieldProps{ID: "subscription-query", Label: "Read-only SQL statement", Hint: "Demo accepts SELECT * FROM collection with an optional LIMIT up to 100."}) {
-						@ui.CodeEditor(ui.CodeEditorProps{ID: "subscription-query", Name: "query", Language: "sql", Value: "SELECT * FROM documents LIMIT 100", Rows: 5, Required: true})
+						@ui.CodeEditor(ui.CodeEditorProps{ID: "subscription-query", Name: "query", Language: ui.CodeSQL, Value: "SELECT * FROM documents LIMIT 100", Rows: 5, Required: true})
 					}
 					@ui.Field(ui.FieldProps{ID: "subscription-transport", Label: "Delivery preference"}) {
 						<select class="ts-select" id="subscription-transport" name="transport"><option value="http">HTTP + CDN</option><option value="websocket">WebSocket</option></select>

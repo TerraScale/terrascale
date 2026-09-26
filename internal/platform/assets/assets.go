@@ -1,8 +1,8 @@
 package assets
 
 import (
-	"bytes"
 	"fmt"
+	"io"
 	"io/fs"
 	"mime"
 	"net/http"
@@ -34,7 +34,11 @@ func Mount(mux *http.ServeMux, dev bool) error {
 			return err
 		}
 		prefix := "/" + name + "/"
-		mux.Handle("GET "+prefix, cached(dev, http.StripPrefix(prefix, precompressed(files, http.FileServerFS(files)))))
+		handler := cached(dev, http.StripPrefix(prefix, precompressed(files, http.FileServerFS(files))))
+		if name == "js" {
+			handler = workerPolicy(handler)
+		}
+		mux.Handle("GET "+prefix, handler)
 	}
 	if dev {
 		mux.HandleFunc("GET /__dev/events", devEvents)
@@ -42,9 +46,20 @@ func Mount(mux *http.ServeMux, dev bool) error {
 	return nil
 }
 
-// hashedName matches build outputs whose file name carries their content hash,
-// such as js/editor-core.P4OPRQN4.js; they never change under the same name.
-var hashedName = regexp.MustCompile(`\.[A-Z0-9]{8}\.[a-z0-9]+$`)
+// hashedName matches script build outputs whose file name carries their
+// content hash, such as js/editor-core.P4OPRQN4.js; they never change under
+// the same name.
+var hashedName = regexp.MustCompile(`^js/.+\.[A-Z0-9]{8}\.[a-z0-9]+$`)
+
+// workerPolicy sets the CSP that governs scripts started as workers: a worker
+// follows its own response's policy, not the page's, so without it the code
+// editor's language workers could reach any origin.
+func workerPolicy(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'")
+		next.ServeHTTP(w, r)
+	})
+}
 
 // cached sets the static cache policy. Embedded files have no modification
 // time, so the content hash doubles as the ETag; a request for the current
@@ -71,17 +86,27 @@ func cached(dev bool, next http.Handler) http.Handler {
 
 // precompressed serves the brotli sibling written by release builds
 // (scripts/build-js.mjs --release) to clients that accept it; the compression
-// middleware leaves responses that already carry a Content-Encoding alone.
+// middleware leaves responses that already carry a Content-Encoding alone and
+// sets Vary for both representations.
 func precompressed(files fs.FS, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Add("Vary", "Accept-Encoding")
+		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+		if strings.HasSuffix(name, ".br") {
+			http.NotFound(w, r)
+			return
+		}
 		if !acceptsBrotli(r.Header.Get("Accept-Encoding")) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
-		body, err := fs.ReadFile(files, name+".br")
+		file, err := files.Open(name + ".br")
 		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		defer file.Close()
+		body, ok := file.(io.ReadSeeker)
+		if !ok {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -91,18 +116,26 @@ func precompressed(files fs.FS, next http.Handler) http.Handler {
 		}
 		w.Header().Set("Content-Type", mime.TypeByExtension(path.Ext(name)))
 		w.Header().Set("Content-Encoding", "br")
-		http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(body))
+		http.ServeContent(w, r, name, time.Time{}, body)
 	})
 }
 
-// acceptsBrotli reports whether an Accept-Encoding header lists br without
-// refusing it through q=0.
+// acceptsBrotli reports whether an Accept-Encoding header lists br with a
+// non-zero quality.
 func acceptsBrotli(header string) bool {
 	for coding := range strings.SplitSeq(header, ",") {
 		name, params, _ := strings.Cut(coding, ";")
-		if strings.TrimSpace(name) == "br" {
-			return strings.ReplaceAll(params, " ", "") != "q=0"
+		if !strings.EqualFold(strings.TrimSpace(name), "br") {
+			continue
 		}
+		for param := range strings.SplitSeq(params, ";") {
+			key, value, _ := strings.Cut(param, "=")
+			if strings.EqualFold(strings.TrimSpace(key), "q") {
+				quality, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+				return err == nil && quality > 0
+			}
+		}
+		return true
 	}
 	return false
 }

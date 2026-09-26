@@ -436,7 +436,7 @@ func documentsView(page core.Page, d pageData) templ.Component {
 						}()
 					}
 					ctx = templ.InitializeContext(ctx)
-					templ_7745c5c3_Err = ui.CodeEditor(ui.CodeEditorProps{ID: "new-document-json", Name: "document", Language: "json", Value: "{}", Rows: 10}).Render(ctx, templ_7745c5c3_Buffer)
+					templ_7745c5c3_Err = ui.CodeEditor(ui.CodeEditorProps{ID: "new-document-json", Name: "document", Language: ui.CodeJSON, Value: "{}", Rows: 10}).Render(ctx, templ_7745c5c3_Buffer)
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -687,7 +687,7 @@ func editDocument(page core.Page, d pageData) templ.Component {
 						}()
 					}
 					ctx = templ.InitializeContext(ctx)
-					templ_7745c5c3_Err = ui.CodeEditor(ui.CodeEditorProps{ID: "document-json", Name: "document", Language: "json", Value: d.EditJSON, Rows: 14}).Render(ctx, templ_7745c5c3_Buffer)
+					templ_7745c5c3_Err = ui.CodeEditor(ui.CodeEditorProps{ID: "document-json", Name: "document", Language: ui.CodeJSON, Value: d.EditJSON, Rows: 14}).Render(ctx, templ_7745c5c3_Buffer)
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -1004,7 +1004,7 @@ func sqlView(page core.Page, d pageData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = ui.CodeEditor(ui.CodeEditorProps{ID: "sql", Language: "sql", Value: d.SQL, Rows: 8}).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = ui.CodeEditor(ui.CodeEditorProps{ID: "sql", Language: ui.CodeSQL, Value: d.SQL, Rows: 8}).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1344,7 +1344,7 @@ func savedQueries(page core.Page, d pageData) templ.Component {
 						}()
 					}
 					ctx = templ.InitializeContext(ctx)
-					templ_7745c5c3_Err = ui.CodeEditor(ui.CodeEditorProps{ID: "saved-sql", Name: "sql", Language: "sql", Value: d.SQL, Rows: 6, Required: true}).Render(ctx, templ_7745c5c3_Buffer)
+					templ_7745c5c3_Err = ui.CodeEditor(ui.CodeEditorProps{ID: "saved-sql", Name: "sql", Language: ui.CodeSQL, Value: d.SQL, Rows: 6, Required: true}).Render(ctx, templ_7745c5c3_Buffer)
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -1691,7 +1691,7 @@ func schemaView(page core.Page, d pageData) templ.Component {
 					}()
 				}
 				ctx = templ.InitializeContext(ctx)
-				templ_7745c5c3_Err = ui.CodeEditor(ui.CodeEditorProps{ID: "schema-json", Name: "schema", Language: "json", Value: d.Schema, Rows: 14, Required: true, ReadOnly: !d.CanWrite}).Render(ctx, templ_7745c5c3_Buffer)
+				templ_7745c5c3_Err = ui.CodeEditor(ui.CodeEditorProps{ID: "schema-json", Name: "schema", Language: ui.CodeJSON, Value: d.Schema, Rows: 14, Required: true, ReadOnly: !d.CanWrite}).Render(ctx, templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}

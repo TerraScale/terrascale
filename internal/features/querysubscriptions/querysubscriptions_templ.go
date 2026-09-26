@@ -373,7 +373,7 @@ func subscriptionsContent(page core.Page, d pageData) templ.Component {
 					}()
 				}
 				ctx = templ.InitializeContext(ctx)
-				templ_7745c5c3_Err = ui.CodeEditor(ui.CodeEditorProps{ID: "subscription-query", Name: "query", Language: "sql", Value: "SELECT * FROM documents LIMIT 100", Rows: 5, Required: true}).Render(ctx, templ_7745c5c3_Buffer)
+				templ_7745c5c3_Err = ui.CodeEditor(ui.CodeEditorProps{ID: "subscription-query", Name: "query", Language: ui.CodeSQL, Value: "SELECT * FROM documents LIMIT 100", Rows: 5, Required: true}).Render(ctx, templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}

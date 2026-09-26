@@ -17,7 +17,15 @@ const pageLoaded = new Promise(resolve => {
 });
 const monaco = pageLoaded
   .then(() => Promise.all([import('./monaco.js'), document.fonts.load(`${fontSize}px "JetBrains Mono"`)]))
-  .then(([module]) => module.load());
+  .then(([module]) => module.load())
+  .catch(error => {
+    // The textareas stay usable as plain fields.
+    console.warn('Code editor unavailable:', error);
+    return null;
+  });
+
+// Every field gets its own model; ids and names may repeat across forms.
+let models = 0;
 
 class CodeEditor extends HTMLElement {
   async connectedCallback() {
@@ -26,7 +34,7 @@ class CodeEditor extends HTMLElement {
       return;
     }
     const api = await monaco;
-    if (!this.isConnected || this.editor) {
+    if (!api || !this.isConnected || this.editor) {
       return;
     }
     this.mount(api, textarea);
@@ -43,16 +51,16 @@ class CodeEditor extends HTMLElement {
     this.style.height = `${rows * lineHeight + padding * 2 + 2}px`;
     this.append(container);
 
-    // A Uri per field: modern-monaco's fallback model URI is a plain string,
+    // A Uri per model: modern-monaco's fallback model URI is a plain string,
     // which Monaco's marker lookups never match, so diagnostics would not show.
     const language = this.dataset.language || 'plaintext';
-    const uri = api.Uri.file(`/${textarea.id || textarea.name}.${language}`);
-    api.editor.getModel(uri)?.dispose();
+    const uri = api.Uri.file(`/${++models}/${textarea.name || 'field'}.${language}`);
     const model = api.editor.createModel(textarea.value, language, uri);
     const editor = api.editor.create(container, {
       model,
       theme: 'terrascale',
-      ariaLabel: textarea.labels?.[0]?.textContent.trim() || textarea.name,
+      // Tab indents code; announce the key that lets it move focus instead.
+      ariaLabel: `${textarea.labels[0]?.textContent.trim() || textarea.name}. Press Ctrl+M to toggle Tab moving focus.`,
       readOnly: textarea.readOnly,
       fontFamily: getComputedStyle(this).getPropertyValue('--ts-font-mono').trim(),
       fontSize,
@@ -96,10 +104,10 @@ class CodeEditor extends HTMLElement {
       }
     };
     const onReset = () => setTimeout(toEditor);
-    // Labels and failed validation focus the editor; the textarea itself
-    // keeps focus when something else targets it directly.
-    const focusEditor = () => editor.focus();
-    const focusFromLabel = event => {
+    // Labels and failed validation focus the editor rather than the hidden
+    // textarea; the textarea keeps focus when something targets it directly.
+    // Its :user-invalid state still marks the editor frame.
+    const focusEditor = event => {
       event.preventDefault();
       editor.focus();
     };
@@ -107,13 +115,14 @@ class CodeEditor extends HTMLElement {
     textarea.addEventListener('input', toEditor);
     textarea.addEventListener('invalid', focusEditor);
     textarea.form?.addEventListener('reset', onReset);
-    labels.forEach(label => label.addEventListener('click', focusFromLabel));
+    labels.forEach(label => label.addEventListener('click', focusEditor));
     textarea.tabIndex = -1;
+    textarea.ariaHidden = 'true';
 
     // Ctrl/Cmd+Enter submits the surrounding form, like a query console. An
     // action is scoped to this editor; addCommand would bind every editor on
     // the page to the last form registered.
-    const submit = editor.addAction({
+    const submit = textarea.readOnly ? null : editor.addAction({
       id: 'terrascale.submitForm',
       label: 'Submit form',
       keybindings: [api.KeyMod.CtrlCmd | api.KeyCode.Enter],
@@ -124,14 +133,15 @@ class CodeEditor extends HTMLElement {
     this.dataset.ready = '';
     this.cleanup = () => {
       toTextarea.dispose();
-      submit.dispose();
+      submit?.dispose();
       editor.dispose();
       model.dispose();
       textarea.removeEventListener('input', toEditor);
       textarea.removeEventListener('invalid', focusEditor);
       textarea.form?.removeEventListener('reset', onReset);
-      labels.forEach(label => label.removeEventListener('click', focusFromLabel));
+      labels.forEach(label => label.removeEventListener('click', focusEditor));
       textarea.removeAttribute('tabindex');
+      textarea.removeAttribute('aria-hidden');
       container.remove();
       this.style.height = '';
       delete this.dataset.ready;

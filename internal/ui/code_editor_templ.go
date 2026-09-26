@@ -15,32 +15,20 @@ import (
 	static "terrascale.tech/dashboard/web/static"
 )
 
-// PageFeatures records the optional browser features a page used while it
-// rendered, so the layout loads their scripts and the renderer widens the
-// Content-Security-Policy only on pages that need it.
-type PageFeatures struct {
-	CodeEditor bool
-}
+// CodeLanguage is a grammar the code editor bundles.
+type CodeLanguage string
 
-type pageFeaturesKey struct{}
+const (
+	CodeSQL  CodeLanguage = "sql"
+	CodeJSON CodeLanguage = "json"
+)
 
-// WithPageFeatures returns a context whose render records into features.
-func WithPageFeatures(ctx context.Context) (context.Context, *PageFeatures) {
-	features := &PageFeatures{}
-	return context.WithValue(ctx, pageFeaturesKey{}, features), features
-}
-
-func usesCodeEditor(ctx context.Context) bool {
-	features, _ := ctx.Value(pageFeaturesKey{}).(*PageFeatures)
-	return features != nil && features.CodeEditor
-}
-
-// CodeEditorProps configures a code field. Name defaults to ID; Language is a
-// grammar the editor bundles ("sql" or "json"); Rows sets the height.
+// CodeEditorProps configures a code field. Name defaults to ID; Rows sets the
+// height.
 type CodeEditorProps struct {
 	ID       string
 	Name     string
-	Language string
+	Language CodeLanguage
 	Value    string
 	Rows     int
 	Required bool
@@ -52,7 +40,7 @@ type CodeEditorProps struct {
 // form value and the control when JavaScript is unavailable.
 func CodeEditor(p CodeEditorProps) templ.Component {
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
-		if features, ok := ctx.Value(pageFeaturesKey{}).(*PageFeatures); ok {
+		if features := pageFeaturesFrom(ctx); features != nil {
 			features.CodeEditor = true
 		}
 		return codeEditor(p).Render(ctx, w)
@@ -85,9 +73,9 @@ func codeEditor(p CodeEditorProps) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var2 string
-		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.Language)
+		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.ResolveAttributeValue(string(p.Language))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 56, Col: 66}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 44, Col: 74}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var2)
 		if templ_7745c5c3_Err != nil {
@@ -100,7 +88,7 @@ func codeEditor(p CodeEditorProps) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.ID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 59, Col: 12}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 47, Col: 12}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var3)
 		if templ_7745c5c3_Err != nil {
@@ -113,7 +101,7 @@ func codeEditor(p CodeEditorProps) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.ResolveAttributeValue(displayName(p.Name, p.ID))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 60, Col: 35}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 48, Col: 35}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var4)
 		if templ_7745c5c3_Err != nil {
@@ -126,7 +114,7 @@ func codeEditor(p CodeEditorProps) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.ResolveAttributeValue(strconv.Itoa(max(p.Rows, 3)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 61, Col: 38}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 49, Col: 38}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var5)
 		if templ_7745c5c3_Err != nil {
@@ -155,7 +143,7 @@ func codeEditor(p CodeEditorProps) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(p.Value)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 67, Col: 12}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 55, Col: 12}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -192,7 +180,7 @@ func codeEditorScript(nonce string) templ.Component {
 			templ_7745c5c3_Var7 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		if usesCodeEditor(ctx) {
+		if features := pageFeaturesFrom(ctx); features != nil && features.CodeEditor {
 			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<script type=\"module\" src=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
@@ -200,7 +188,7 @@ func codeEditorScript(nonce string) templ.Component {
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.ResolveAttributeValue(static.URL("js/code-editor.js"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 75, Col: 61}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 63, Col: 61}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var8)
 			if templ_7745c5c3_Err != nil {
@@ -213,7 +201,7 @@ func codeEditorScript(nonce string) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.ResolveAttributeValue(nonce)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 75, Col: 77}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/code_editor.templ`, Line: 63, Col: 77}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var9)
 			if templ_7745c5c3_Err != nil {
