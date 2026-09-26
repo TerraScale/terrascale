@@ -134,12 +134,6 @@
   flex-basis: 0;
 }
 
-.ts-data-sql-input {
-  min-height: 180px;
-  line-height: 1.6;
-  resize: vertical;
-}
-
 .ts-data-queries {
   display: grid;
   list-style: none;

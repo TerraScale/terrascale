@@ -14,6 +14,8 @@ export GOFLAGS="${GOFLAGS:--mod=vendor}"
 
 npm run watch:css &
 css_pid=$!
+npm run watch:js &
+js_pid=$!
 runner_pid=""
 runner_pgid=""
 
@@ -22,8 +24,8 @@ cleanup() {
     kill -TERM -- "-$runner_pgid" 2>/dev/null || true
     wait "$runner_pid" 2>/dev/null || true
   fi
-  kill "$css_pid" 2>/dev/null || true
-  wait "$css_pid" 2>/dev/null || true
+  kill "$css_pid" "$js_pid" 2>/dev/null || true
+  wait "$css_pid" "$js_pid" 2>/dev/null || true
 }
 trap cleanup EXIT
 trap 'exit 130' INT

@@ -9,6 +9,7 @@
 @import "layout.css" layer(layout);
 @import "shell.css" layer(components);
 @import "controls.css" layer(components);
+@import "code-editor.css" layer(components);
 @import "surfaces.css" layer(components);
 @import "data.css" layer(components);
 @import "overlays.css" layer(components);

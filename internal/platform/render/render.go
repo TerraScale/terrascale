@@ -33,10 +33,17 @@ var buffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 // maxPooledBuffer keeps an unusually large page from pinning its buffer.
 const maxPooledBuffer = 1 << 20
 
-const (
-	cspPrefix = "default-src 'self'; script-src 'self' 'nonce-"
-	cspSuffix = "'; style-src 'self'; img-src 'self' data: https://flagcdn.com; font-src 'self'; connect-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
-)
+// contentSecurityPolicy admits only same-origin resources and the page's own
+// nonced scripts. A page with a code editor also admits Monaco's nonced
+// <style> elements and the inline style attributes it positions lines with.
+func contentSecurityPolicy(nonce string, features *ui.PageFeatures) string {
+	style := "style-src 'self'"
+	if features.CodeEditor {
+		style = "style-src 'self' 'nonce-" + nonce + "'; style-src-attr 'unsafe-inline'"
+	}
+	return "default-src 'self'; script-src 'self' 'nonce-" + nonce + "'; " + style +
+		"; img-src 'self' data: https://flagcdn.com; font-src 'self'; connect-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+}
 
 func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) error {
 	if (page.Layout != "shell" && page.Layout != "auth" && page.Layout != "admin") || page.View == nil {
@@ -86,12 +93,13 @@ func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) er
 			buffers.Put(output)
 		}
 	}()
-	if err := document.Render(templ.WithNonce(r.Context(), page.Nonce), output); err != nil {
+	ctx, features := ui.WithPageFeatures(templ.WithNonce(r.Context(), page.Nonce))
+	if err := document.Render(ctx, output); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-store")
-	w.Header().Set("Content-Security-Policy", cspPrefix+page.Nonce+cspSuffix)
+	w.Header().Set("Content-Security-Policy", contentSecurityPolicy(page.Nonce, features))
 	_, err := w.Write(output.Bytes())
 	return err
 }

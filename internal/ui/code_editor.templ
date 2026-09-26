@@ -1,0 +1,77 @@
+package ui
+
+import (
+	"context"
+	"io"
+	"strconv"
+
+	static "terrascale.tech/dashboard/web/static"
+)
+
+// PageFeatures records the optional browser features a page used while it
+// rendered, so the layout loads their scripts and the renderer widens the
+// Content-Security-Policy only on pages that need it.
+type PageFeatures struct {
+	CodeEditor bool
+}
+
+type pageFeaturesKey struct{}
+
+// WithPageFeatures returns a context whose render records into features.
+func WithPageFeatures(ctx context.Context) (context.Context, *PageFeatures) {
+	features := &PageFeatures{}
+	return context.WithValue(ctx, pageFeaturesKey{}, features), features
+}
+
+func usesCodeEditor(ctx context.Context) bool {
+	features, _ := ctx.Value(pageFeaturesKey{}).(*PageFeatures)
+	return features != nil && features.CodeEditor
+}
+
+// CodeEditorProps configures a code field. Name defaults to ID; Language is a
+// grammar the editor bundles ("sql" or "json"); Rows sets the height.
+type CodeEditorProps struct {
+	ID       string
+	Name     string
+	Language string
+	Value    string
+	Rows     int
+	Required bool
+	ReadOnly bool
+}
+
+// CodeEditor renders a textarea that web/assets/js/code-editor upgrades into a
+// Monaco editor once the page has loaded. The textarea remains the submitted
+// form value and the control when JavaScript is unavailable.
+func CodeEditor(p CodeEditorProps) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		if features, ok := ctx.Value(pageFeaturesKey{}).(*PageFeatures); ok {
+			features.CodeEditor = true
+		}
+		return codeEditor(p).Render(ctx, w)
+	})
+}
+
+templ codeEditor(p CodeEditorProps) {
+	<ts-code-editor class="ts-code-editor" data-language={ p.Language }>
+		<textarea
+			class="ts-input ts-mono"
+			id={ p.ID }
+			name={ displayName(p.Name, p.ID) }
+			rows={ strconv.Itoa(max(p.Rows, 3)) }
+			spellcheck="false"
+			autocapitalize="off"
+			autocomplete="off"
+			required?={ p.Required }
+			readonly?={ p.ReadOnly }
+		>{ p.Value }</textarea>
+	</ts-code-editor>
+}
+
+// codeEditorScript loads the editor once per page, after every CodeEditor in
+// the body has rendered.
+templ codeEditorScript(nonce string) {
+	if usesCodeEditor(ctx) {
+		<script type="module" src={ static.URL("js/code-editor.js") } nonce={ nonce }></script>
+	}
+}

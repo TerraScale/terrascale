@@ -64,6 +64,7 @@ templ document(page core.Page, bodyClass string) {
 			data-on:keydown__window="evt.key === 'Escape' && ($_navPending = false)"
 		>
 			{ children... }
+			@codeEditorScript(page.Nonce)
 			if page.DevMode {
 				// Development only: the Go dev host streams stylesheet patches and a
 				// boot ID that reloads the page after a server restart.
