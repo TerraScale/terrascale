@@ -7,6 +7,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ts-auth-${{ forgejo.workflow }}-${{ forgejo.ref }}
+  cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
+
 jobs:
   ci:
     name: Check and build Rust ts-auth
@@ -14,56 +18,43 @@ jobs:
     timeout-minutes: 60
     env:
       FORGEJO_SHA: ${{ forgejo.sha }}
-      FORGEJO_TOKEN: ${{ forgejo.token }}
       TS_RUST_REV: c590cd41eabf05bbd5982a1580c1bb01880c346a
-      RUSTUP_TOOLCHAIN: 1.98.1
+      # Incremental build state survives across jobs on the shared cache.
+      CARGO_TARGET_DIR: /cache/cargo-target/ts-auth
     steps:
       - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
           ref: ${{ forgejo.sha }}
-          fetch-depth: 0
+          fetch-depth: 1
           persist-credentials: false
 
-      - name: Check out the pinned Rust SDK
+      # The workspace depends on the SDK through `path = "../ts-rust"`, which
+      # carries its own rust-toolchain.toml. RUSTUP_TOOLCHAIN pins every
+      # rustup proxy (including rustc runs inside ../ts-rust) to this
+      # repository's toolchain.
+      - name: Check out the pinned Rust SDK and select the toolchain
         env:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         run: |
           set -euo pipefail
-          git clone "https://oauth2:${ORG_READ_TOKEN:?org read token is required}@git.terrascale.tech/TerraScale/ts-rust.git" ../ts-rust
-          git -C ../ts-rust checkout --detach "${TS_RUST_REV}"
+          git init -q ../ts-rust
+          git -C ../ts-rust fetch -q --depth 1 \
+            "https://oauth2:${ORG_READ_TOKEN:?org read token is required}@git.terrascale.tech/TerraScale/ts-rust.git" \
+            "${TS_RUST_REV}"
+          git -C ../ts-rust checkout -q --detach FETCH_HEAD
           test "$(git -C ../ts-rust rev-parse HEAD)" = "${TS_RUST_REV}"
-          rustup_bin="${CARGO_HOME:-${HOME}/.cargo}/bin/rustup"
-          if ! test -x "${rustup_bin}"; then rustup_bin="$(command -v rustup)"; fi
-          test -x "${rustup_bin}"
-          toolchain_file_version="$(sed -nE 's/^channel = "([^"]+)"$/\1/p' rust-toolchain.toml)"
-          test "${toolchain_file_version}" = "${RUSTUP_TOOLCHAIN}"
-          "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" rustc --version
-          active_toolchain_output="$("${rustup_bin}" show active-toolchain)"
-          printf '%s\n' "${active_toolchain_output}"
-          active_toolchain="$(printf '%s\n' "${active_toolchain_output}" | awk 'NR == 1 {print $1}')"
-          toolchain_host="$("${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" rustc -vV | sed -n 's/^host: //p')"
-          test -n "${toolchain_host}"
-          expected_host_qualified_toolchain="${RUSTUP_TOOLCHAIN}-${toolchain_host}"
-          if test "${active_toolchain}" != "${RUSTUP_TOOLCHAIN}" && \
-            test "${active_toolchain}" != "${expected_host_qualified_toolchain}"; then
-            echo "active rustup toolchain mismatch: expected ${RUSTUP_TOOLCHAIN} or ${expected_host_qualified_toolchain}, got ${active_toolchain}" >&2
-            exit 1
-          fi
-          "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo --version
+          toolchain="$(sed -nE 's/^channel = "([^"]+)"$/\1/p' rust-toolchain.toml)"
+          echo "RUSTUP_TOOLCHAIN=${toolchain:?rust-toolchain.toml has no channel}" >> "${GITHUB_ENV}"
 
       - name: Check formatting and run Rust tests
         run: |
           set -euo pipefail
-          rustup_bin="${CARGO_HOME:-${HOME}/.cargo}/bin/rustup"
-          if ! test -x "${rustup_bin}"; then rustup_bin="$(command -v rustup)"; fi
-          test -x "${rustup_bin}"
-          export RUSTC="$("${rustup_bin}" which rustc --toolchain "${RUSTUP_TOOLCHAIN}")"
-          "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo fmt --all -- --check
-          "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
           mkdir -p artifacts/ci/tests
-          "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo test --workspace --all-targets --locked 2>&1 | tee artifacts/ci/tests/auth-tests.log
+          cargo test --workspace --all-targets --locked 2>&1 | tee artifacts/ci/tests/auth-tests.log
           bash scripts/check-rust-test-results.sh artifacts/ci/tests/auth-tests.log
           (cd artifacts/ci/tests && sha256sum auth-tests.log > SHA256SUMS)
           (cd artifacts/ci/tests && sha256sum --check --strict SHA256SUMS)
@@ -78,16 +69,12 @@ jobs:
       - name: Audit locked Rust dependencies
         run: |
           set -euo pipefail
-          rustup_bin="${CARGO_HOME:-${HOME}/.cargo}/bin/rustup"
-          if ! test -x "${rustup_bin}"; then rustup_bin="$(command -v rustup)"; fi
-          test -x "${rustup_bin}"
-          export RUSTC="$("${rustup_bin}" which rustc --toolchain "${RUSTUP_TOOLCHAIN}")"
           # This advisory affects RSA private-key operations. Production auth-
           # security code uses RSA public keys for verification; the private
           # keys in security_vectors.rs only create test signatures. Guard that
           # production boundary before keeping this single-advisory exception.
           bash scripts/check-rsa-private-usage.sh
-          cargo-audit audit --file Cargo.lock --ignore RUSTSEC-2023-0071
+          cargo audit --file Cargo.lock --ignore RUSTSEC-2023-0071
 
       - name: Build and inspect the release image
         run: |
@@ -96,16 +83,20 @@ jobs:
           test "${source_commit}" = "${FORGEJO_SHA:?event SHA is required}"
           # Build against Debian's older glibc so the binary runs in the
           # distroless Debian 13 runtime even when the host runner is newer.
+          # The registry and target dir ride the shared cache.
+          mkdir -p /cache/cargo /cache/cargo-target/ts-auth-release
           podman run --rm --security-opt label=disable \
             --volume "$PWD:/work/ts-auth" \
             --volume "$(realpath ../ts-rust):/work/ts-rust:ro" \
+            --volume /cache/cargo:/cargo-home \
+            --volume /cache/cargo-target/ts-auth-release:/cargo-target \
             --workdir /work/ts-auth \
-            --env CARGO_HOME=/tmp/ts-auth-cargo \
-            --env CARGO_TARGET_DIR=/work/ts-auth/target/ci-debian \
+            --env CARGO_HOME=/cargo-home \
+            --env CARGO_TARGET_DIR=/cargo-target \
             "docker.io/library/rust:${RUSTUP_TOOLCHAIN}-bookworm" \
             cargo build --release --locked -p auth-app
           mkdir -p artifacts/ci/container-publish
-          cp -- target/ci-debian/release/auth-app artifacts/ci/container-publish/ts-auth
+          cp -- /cache/cargo-target/ts-auth-release/release/auth-app artifacts/ci/container-publish/ts-auth
           test -s artifacts/ci/container-publish/ts-auth
           podman build \
             --pull=missing \
@@ -148,29 +139,16 @@ jobs:
           curl --silent --fail "http://127.0.0.1:${port}/openapi/v1.json" | jq -e '.info.title == "TerraScale Auth API" and .paths["/healthz"] != null'
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/readyz")" = 503
 
-      - name: Check baked Playwright and Chromium
-        run: |
-          set -euo pipefail
-          test -f /usr/lib/node_modules/playwright/index.mjs
-          chromium_path="$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')"
-          test -x "${chromium_path}"
-
+      # Playwright and Chromium are baked into the ts-builder job image.
       - name: Run admin browser acceptance
+        env:
+          TS_AUTH_PLAYWRIGHT_MODULE: /usr/lib/node_modules/playwright/index.mjs
         run: |
           set -euo pipefail
-          rustup_bin="${CARGO_HOME:-${HOME}/.cargo}/bin/rustup"
-          if ! test -x "${rustup_bin}"; then rustup_bin="$(command -v rustup)"; fi
-          test -x "${rustup_bin}"
-          playwright_module=/usr/lib/node_modules/playwright/index.mjs
-          chromium_path="$(node -e 'process.stdout.write(require("playwright").chromium.executablePath())')"
-          test -f "${playwright_module}"
-          test -x "${chromium_path}"
-          TS_AUTH_PLAYWRIGHT_MODULE="${playwright_module}" \
-          TS_AUTH_CHROMIUM_PATH="${chromium_path}" \
-            "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo test --locked -p auth-app --test admin_browser -- --ignored --nocapture
-          TS_AUTH_PLAYWRIGHT_MODULE="${playwright_module}" \
-          TS_AUTH_CHROMIUM_PATH="${chromium_path}" \
-            "${rustup_bin}" run "${RUSTUP_TOOLCHAIN}" cargo test --locked -p auth-app --test device_authorization -- --ignored --nocapture
+          TS_AUTH_CHROMIUM_PATH="$(node -p 'require("playwright").chromium.executablePath()')"
+          export TS_AUTH_CHROMIUM_PATH
+          cargo test --locked -p auth-app --test admin_browser -- --ignored --nocapture
+          cargo test --locked -p auth-app --test device_authorization -- --ignored --nocapture
 
       - name: Publish immutable container on protected main
         if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
