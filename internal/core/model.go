@@ -5,6 +5,7 @@ import (
 	"maps"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -584,6 +585,22 @@ func (o Organization) DatabaseCount() int {
 		count += len(project.Databases)
 	}
 	return count
+}
+
+// DefaultProjectID returns the organization's default project, or the first
+// project by ID when none is marked default, or "" when it has no projects.
+func (o Organization) DefaultProjectID() string {
+	ids := make([]string, 0, len(o.Projects))
+	for id, project := range o.Projects {
+		if project.IsDefault {
+			return id
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	return slices.Min(ids)
 }
 
 // RemoveDatabase deletes a database with everything scoped to it, so no
