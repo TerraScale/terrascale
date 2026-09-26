@@ -37,10 +37,11 @@ app.MapTerraScaleEndpoints();
 app.MapTerraScaleOpenApi();
 ```
 
-`Configure()` exposes `Get`, `Post`, `Put`, `Patch`, `Delete`, `Name`,
-`Summary`, `Description`, `Tags`, `Produces<T>`, `Accepts<T>`,
-`AllowAnonymous`, `RequireAuthorization`, and `Metadata`. A precomputed
-`IEnumerable<Type>` can be supplied to avoid reflection scanning completely.
+`Configure()` exposes `Get`, `Post`, `Put`, `Patch`, `Delete`, `Verbs`,
+`Route`, `Name`, `Summary`, `Description`, `Tags`, `Produces<T>`,
+`ProducesSse`, `Accepts<T>`, `AllowAnonymous`, `RequireAuthorization`, and
+`Metadata`. A precomputed `IEnumerable<Type>` can be passed to
+`AddTerraScaleEndpoints` to avoid reflection scanning completely.
 OpenAPI is served at `/openapi/v1.json`; Scalar is served at `/scalar`.
 
 For FastEndpoints-style command handlers, derive from `Endpoint<TRequest>` (or
