@@ -413,7 +413,7 @@ func (s *Store) repairSelectionsLocked() {
 		// A project another member deleted must not stay selected: the
 		// session and every later sign-in would fail to authorize it.
 		if org, ok := s.organizations[a.ActiveOrganizationID]; ok && a.ActiveProjectID != "" {
-			if _, exists := org.Projects[a.ActiveProjectID]; !exists {
+			if project, exists := org.Projects[a.ActiveProjectID]; !exists || project.OrganizationID != org.ID {
 				a.ActiveProjectID = org.DefaultProjectID()
 				changed = true
 			}

@@ -130,7 +130,7 @@ func (s Service) SwitchOrganization(p core.Principal, organizationID string) err
 			return core.ErrForbidden
 		}
 		a.ActiveOrganizationID = organizationID
-		a.ActiveProjectID = defaultProjectID(org)
+		a.ActiveProjectID = org.DefaultProjectID()
 		return nil
 	})
 }
@@ -539,7 +539,7 @@ func (s Service) LeaveOrganization(p core.Principal) error {
 			return core.ErrConflict
 		}
 		a.ActiveOrganizationID = fallbackID
-		a.ActiveProjectID = defaultProjectID(fallback)
+		a.ActiveProjectID = fallback.DefaultProjectID()
 		return nil
 	})
 }
@@ -577,21 +577,6 @@ func canProvision(org core.Organization, userID string) bool {
 		return org.OwnerUserID == userID
 	}
 	return org.Kind == kindBusiness && org.OwnerUserID == userID && strings.EqualFold(org.BillingStatus, "active")
-}
-
-func defaultProjectID(org core.Organization) string {
-	ids := make([]string, 0, len(org.Projects))
-	for id, project := range org.Projects {
-		if project.OrganizationID == org.ID && project.IsDefault {
-			return id
-		}
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	if len(ids) == 0 {
-		return ""
-	}
-	return ids[0]
 }
 
 func accessibleOrganization(a *core.Account, userID string) (string, core.Organization) {
