@@ -48,7 +48,7 @@ func startSDKFixture(t *testing.T) sdkFixture {
 	public := httptest.NewServer(producer.handler())
 	t.Cleanup(public.Close)
 
-	demo := core.Deps{Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard), Demo: true}
+	demo := core.Deps{Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil), Demo: true}
 	live := demo
 	live.Demo = false
 	live.SDK = tsgo.Factory{APIBaseURL: public.URL, AccessToken: producer.managementToken}

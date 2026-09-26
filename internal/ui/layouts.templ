@@ -102,10 +102,34 @@ templ signedInDocument(page core.Page, body templ.Component, admin bool) {
 					</button>
 					<img class="ts-topbar-brand" src="/brand/logo-terrascale-principal.svg" alt="TerraScale" decoding="async"/>
 				</header>
+				@StatusBanner(page.Shell.Notices)
 				<div id="ts-main" class="ts-main" tabindex="-1">
 					@body
 				</div>
 			</div>
+		</div>
+	}
+}
+
+// StatusBanner announces the status page's unresolved incidents and current
+// or upcoming maintenance above the page. It renders nothing when all is
+// clear or the status page cannot be read.
+templ StatusBanner(notices []core.StatusNotice) {
+	if len(notices) > 0 {
+		<div class="ts-status-banner" role="status" aria-label="TerraScale status">
+			for _, notice := range notices {
+				<div class="ts-status-notice" data-impact={ notice.Impact }>
+					<span class="ts-dot" aria-hidden="true"></span>
+					<p class="ts-status-notice-text">
+						<span class="ts-status-notice-label">{ notice.Label }<span class="ts-sr-only">:</span></span>
+						<span class="ts-status-notice-title">{ notice.Title }</span>
+						if notice.Message != "" {
+							<span class="ts-status-notice-message">{ notice.Message }</span>
+						}
+					</p>
+					<a class="ts-link ts-status-notice-link" href={ notice.URL }>View status<span class="ts-sr-only"> of { notice.Title }</span></a>
+				</div>
+			}
 		</div>
 	}
 }

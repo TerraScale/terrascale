@@ -27,8 +27,12 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     touch web/static/js/placeholder && go build ./...
 COPY --from=assets /src/web/static/css/terrascale.css ./web/static/css/terrascale.css
 COPY --from=assets /src/web/static/js ./web/static/js
+# The deploy workflows pass the commit; health probes report it as the version.
+ARG VERSION=dev
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    go build -buildvcs=false -ldflags='-s -w' -o /out/dashboard ./cmd/dashboard
+    go build -buildvcs=false \
+      -ldflags="-s -w -X terrascale.tech/dashboard/internal/platform/buildinfo.version=${VERSION}" \
+      -o /out/dashboard ./cmd/dashboard
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /

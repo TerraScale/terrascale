@@ -2,37 +2,48 @@
 package status
 
 import (
+	"encoding/json/v2"
 	"net/http"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/platform/buildinfo"
 )
 
-// Probe bodies never change, so they are written as prebuilt JSON.
-var (
-	okBody          = []byte(`{"status":"ok"}` + "\n")
-	unavailableBody = []byte(`{"status":"unavailable"}` + "\n")
-)
+// probe is the JSON body of every health probe. Version names the running
+// build, so the status page can record a marker whenever it changes.
+type probe struct {
+	Status  string `json:"status"`
+	Version string `json:"version"`
+}
 
 // Mount registers the liveness and readiness probes used by the platform.
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	mux.HandleFunc("GET /health/live", live)
-	mux.HandleFunc("GET /api/v1/status/live", live)
-	mux.HandleFunc("GET /health/ready", ready(deps))
-	mux.HandleFunc("GET /api/v1/status/ready", ready(deps))
-}
-
-func live(w http.ResponseWriter, _ *http.Request) {
-	writeStatus(w, http.StatusOK, okBody)
-}
-
-func ready(deps core.Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
+	ok := probeBody("ok")
+	unavailable := probeBody("unavailable")
+	live := func(w http.ResponseWriter, _ *http.Request) {
+		writeStatus(w, http.StatusOK, ok)
+	}
+	ready := func(w http.ResponseWriter, _ *http.Request) {
 		if deps.Store == nil {
-			writeStatus(w, http.StatusServiceUnavailable, unavailableBody)
+			writeStatus(w, http.StatusServiceUnavailable, unavailable)
 			return
 		}
-		writeStatus(w, http.StatusOK, okBody)
+		writeStatus(w, http.StatusOK, ok)
 	}
+	mux.HandleFunc("GET /health/live", live)
+	mux.HandleFunc("GET /api/v1/status/live", live)
+	mux.HandleFunc("GET /health/ready", ready)
+	mux.HandleFunc("GET /api/v1/status/ready", ready)
+}
+
+// probeBody prebuilds a probe response once; the build version never changes
+// while the process runs.
+func probeBody(status string) []byte {
+	body, err := json.Marshal(probe{Status: status, Version: buildinfo.Version()})
+	if err != nil {
+		panic("status: encode probe: " + err.Error())
+	}
+	return append(body, '\n')
 }
 
 func writeStatus(w http.ResponseWriter, status int, body []byte) {

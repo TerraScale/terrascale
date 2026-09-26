@@ -6,6 +6,10 @@ import (
 	"strings"
 )
 
+// defaultStatusURL is the public status page summary behind the shell's
+// incident and maintenance banner.
+const defaultStatusURL = "https://status.terrascale.tech/api/v2/summary.json"
+
 type Config struct {
 	Addr           string
 	Demo           bool
@@ -15,6 +19,9 @@ type Config struct {
 	AdminPassword  string
 	SDKBaseURL     string
 	SDKAccessToken string
+	// StatusURL is the Statuspage-compatible summary.json the shell banner
+	// reads; empty disables the banner.
+	StatusURL string
 }
 
 func Load() (Config, error) {
@@ -29,6 +36,12 @@ func Load() (Config, error) {
 	}
 	if c.Addr == "" {
 		c.Addr = ":8080"
+	}
+	// Set DASHBOARD_STATUS_SUMMARY_URL to another summary, or to an empty
+	// value to disable the status banner.
+	c.StatusURL = defaultStatusURL
+	if statusURL, set := os.LookupEnv("DASHBOARD_STATUS_SUMMARY_URL"); set {
+		c.StatusURL = strings.TrimSpace(statusURL)
 	}
 	if !c.Demo {
 		return Config{}, errors.New("live dashboard persistence is not configured; set TS_DASHBOARD_PRODUCTION_DEMO=1")
