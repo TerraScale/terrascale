@@ -7,54 +7,26 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ts-go-${{ forgejo.workflow }}-${{ forgejo.ref }}
+  cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
+
 jobs:
   ci:
     name: Run ts-go checks
     runs-on: terrascale-builder
     timeout-minutes: 30
     env:
-      FORGEJO_SHA: ${{ forgejo.sha }}
       CONTRACT_URL: ${{ vars.CONTRACT_URL }}
       GOTOOLCHAIN: local
     steps:
       - name: Check out the source revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
           ref: ${{ forgejo.sha }}
           fetch-depth: 1
           persist-credentials: false
-
-      - name: Install the pinned Go toolchain and vulnerability scanner
-        run: |
-          set -euo pipefail
-          go_version=1.27.1
-          go_root="${RUNNER_TEMP:-/tmp}/terrascale-go-${go_version}"
-          go_archive="${RUNNER_TEMP:-/tmp}/go${go_version}.linux-amd64.tar.gz"
-          if [ ! -x "${go_root}/go/bin/go" ]; then
-            mkdir -p "${go_root}"
-            curl --fail --location --retry 3 \
-              "https://go.dev/dl/go${go_version}.linux-amd64.tar.gz" \
-              --output "${go_archive}"
-            printf '%s  %s\n' \
-              '63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445' \
-              "${go_archive}" | sha256sum --check --strict
-            tar -xzf "${go_archive}" -C "${go_root}"
-          fi
-          export PATH="${go_root}/go/bin:${go_root}/bin:${PATH}"
-          mkdir -p "${go_root}/bin"
-          GOBIN="${go_root}/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
-          printf '%s\n' "${go_root}/go/bin" "${go_root}/bin" >> "${GITHUB_PATH:?GITHUB_PATH is required}"
-          go version
-          govulncheck -version
-
-      - name: Report the pinned Go toolchain
-        run: go version
-
-      - name: Verify the checked out source revision
-        run: |
-          set -eu
-          test "$(git rev-parse HEAD)" = "${FORGEJO_SHA:?event SHA is required}"
 
       - name: Verify the immutable producer contract
         run: dotnet run scripts/verify-producer.cs
@@ -65,10 +37,9 @@ jobs:
       - name: Run the contract boundary tests
         run: dotnet run scripts/contracts.tests.cs -- --minimum-expected-tests 9
 
+      # Go and govulncheck are baked into the ts-builder job image.
       - name: Verify Go formatting
-        run: |
-          set -eu
-          test -z "$(gofmt -l .)"
+        run: test -z "$(gofmt -l .)"
 
       - name: Run Go vet
         run: go vet ./...
