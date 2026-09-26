@@ -4,6 +4,10 @@ CARGO ?= cargo
 NICE ?= nice
 IONICE ?= ionice
 CARGO_BUILD_JOBS ?= 2
+# Local runs yield to interactive work (low priority, CARGO_BUILD_JOBS jobs);
+# CI (CI=true) builds at full priority with cargo's default parallelism.
+LOW_PRIORITY := $(if $(CI),,$(NICE) -n 19 $(IONICE) -c 3)
+JOBS := $(if $(CI),,--jobs $(CARGO_BUILD_JOBS))
 MUSL_CC ?= $(shell command -v x86_64-unknown-linux-musl-gcc 2>/dev/null)
 TIMEOUT_SECONDS ?= 1800
 
@@ -13,28 +17,28 @@ help:
 	@printf '%s\n' 'fmt/check-controller/lint-controller: format, compile, and lint the harness and guest agent' 'check-image-builder/lint-image-builder: compile and lint the image builder' 'build-image-builder: build the host CLI used for candidate input provisioning' 'build: release controller and static musl guest agent' 'build-bucket-admin: static musl Rust S3 bucket lifecycle helper' 'build-cgroup-probe: static musl read-only cgroup-v2 guest probe' 'build-finite-cgroup-runner: static musl finite-memory guest test wrapper' 'build-client-finite-cgroup-runner: static musl finite-memory client test wrapper' 'test-build/test-build-image-builder: compile musl tests without running them on the host' 'test/test-vm: execute TEST_BINARY inside Firecracker; requires RUN_ID' 'preflight/guest-smoke/guest-network-smoke/guest-image-smoke: verify pinned VM inputs and boot paths' 'guest-run: execute PROGRAM in a guest; requires SUBJECT_REPO and RUN_ID' 'guest-rustfs-fixture: two private VMs, qualified RustFS artifact and real Slow S3 caller' 'network-cleanup/rustfs-fixture-cleanup: reconcile only recorded network resources using RECEIPT'
 
 lock:
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) generate-lockfile
+	$(LOW_PRIORITY) $(CARGO) generate-lockfile
 
 fmt:
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) fmt --all --check
+	$(LOW_PRIORITY) $(CARGO) fmt --all --check
 
 format:
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) fmt --all
+	$(LOW_PRIORITY) $(CARGO) fmt --all
 
 check-controller:
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) check --locked --jobs $(CARGO_BUILD_JOBS) -p fc-harness -p fc-guest-agent
+	$(LOW_PRIORITY) $(CARGO) check --locked $(JOBS) -p fc-harness -p fc-guest-agent
 
 lint-controller:
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) clippy --locked --all-targets --jobs $(CARGO_BUILD_JOBS) -p fc-harness -p fc-guest-agent -- -D warnings
+	$(LOW_PRIORITY) $(CARGO) clippy --locked --all-targets $(JOBS) -p fc-harness -p fc-guest-agent -- -D warnings
 
 check-image-builder:
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) check --locked --jobs $(CARGO_BUILD_JOBS) -p fc-image-builder
+	$(LOW_PRIORITY) $(CARGO) check --locked $(JOBS) -p fc-image-builder
 
 lint-image-builder:
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) clippy --locked --all-targets --jobs $(CARGO_BUILD_JOBS) -p fc-image-builder -- -D warnings
+	$(LOW_PRIORITY) $(CARGO) clippy --locked --all-targets $(JOBS) -p fc-image-builder -- -D warnings
 
 build-image-builder:
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) build --locked --jobs $(CARGO_BUILD_JOBS) -p fc-image-builder
+	$(LOW_PRIORITY) $(CARGO) build --locked $(JOBS) -p fc-image-builder
 
 test: test-vm
 
@@ -43,16 +47,16 @@ test-build:
 	@test -n "$(MUSL_CC)" || { echo "x86_64-unknown-linux-musl-gcc is required" >&2; exit 2; }
 	CC_x86_64_unknown_linux_musl="$(MUSL_CC)" \
 	CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$(MUSL_CC)" \
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) test --locked --no-run \
-		--jobs $(CARGO_BUILD_JOBS) --target x86_64-unknown-linux-musl -p fc-harness
+	$(LOW_PRIORITY) $(CARGO) test --locked --no-run \
+		$(JOBS) --target x86_64-unknown-linux-musl -p fc-harness
 	@printf '%s\n' 'Compiled guest test executable only; run make test-vm with TEST_BINARY and RUN_ID to execute inside Firecracker.'
 
 test-build-image-builder:
 	@test -n "$(MUSL_CC)" || { echo "x86_64-unknown-linux-musl-gcc is required" >&2; exit 2; }
 	CC_x86_64_unknown_linux_musl="$(MUSL_CC)" \
 	CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$(MUSL_CC)" \
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) test --locked --no-run --lib \
-		--jobs $(CARGO_BUILD_JOBS) --target x86_64-unknown-linux-musl -p fc-image-builder
+	$(LOW_PRIORITY) $(CARGO) test --locked --no-run --lib \
+		$(JOBS) --target x86_64-unknown-linux-musl -p fc-image-builder
 	@printf '%s\n' 'Compiled image-builder tests only; run the printed musl executable with make test-vm inside Firecracker.'
 
 test-vm:
@@ -67,49 +71,49 @@ test-vm:
 		--timeout-seconds 120 -- --nocapture
 
 lint:
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) clippy --locked --all-targets --jobs $(CARGO_BUILD_JOBS) -- -D warnings
+	$(LOW_PRIORITY) $(CARGO) clippy --locked --all-targets $(JOBS) -- -D warnings
 
 build: build-controller build-guest
 
 build-controller:
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) build --locked --release --jobs $(CARGO_BUILD_JOBS) -p fc-harness
+	$(LOW_PRIORITY) $(CARGO) build --locked --release $(JOBS) -p fc-harness
 
 build-guest:
 	@test -n "$(MUSL_CC)" || { echo "x86_64-unknown-linux-musl-gcc is required" >&2; exit 2; }
 	CC_x86_64_unknown_linux_musl="$(MUSL_CC)" \
 	CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$(MUSL_CC)" \
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) build --locked --release \
-		--jobs $(CARGO_BUILD_JOBS) --target x86_64-unknown-linux-musl -p fc-guest-agent
+	$(LOW_PRIORITY) $(CARGO) build --locked --release \
+		$(JOBS) --target x86_64-unknown-linux-musl -p fc-guest-agent
 
 build-bucket-admin:
 	@test -n "$(MUSL_CC)" || { echo "x86_64-unknown-linux-musl-gcc is required" >&2; exit 2; }
 	CC_x86_64_unknown_linux_musl="$(MUSL_CC)" \
 	CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$(MUSL_CC)" \
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) build --locked --release \
-		--jobs $(CARGO_BUILD_JOBS) --target x86_64-unknown-linux-musl -p rustfs-bucket-admin
+	$(LOW_PRIORITY) $(CARGO) build --locked --release \
+		$(JOBS) --target x86_64-unknown-linux-musl -p rustfs-bucket-admin
 
 build-cgroup-probe:
 	@test -n "$(MUSL_CC)" || { echo "x86_64-unknown-linux-musl-gcc is required" >&2; exit 2; }
 	CC_x86_64_unknown_linux_musl="$(MUSL_CC)" \
 	CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$(MUSL_CC)" \
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) build --locked --release \
-		--jobs $(CARGO_BUILD_JOBS) --target x86_64-unknown-linux-musl \
+	$(LOW_PRIORITY) $(CARGO) build --locked --release \
+		$(JOBS) --target x86_64-unknown-linux-musl \
 		-p fc-harness --example cgroup_probe
 
 build-finite-cgroup-runner:
 	@test -n "$(MUSL_CC)" || { echo "x86_64-unknown-linux-musl-gcc is required" >&2; exit 2; }
 	CC_x86_64_unknown_linux_musl="$(MUSL_CC)" \
 	CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$(MUSL_CC)" \
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) build --locked --release \
-		--jobs $(CARGO_BUILD_JOBS) --target x86_64-unknown-linux-musl \
+	$(LOW_PRIORITY) $(CARGO) build --locked --release \
+		$(JOBS) --target x86_64-unknown-linux-musl \
 		-p fc-harness --example finite_cgroup_runner
 
 build-client-finite-cgroup-runner:
 	@test -n "$(MUSL_CC)" || { echo "x86_64-unknown-linux-musl-gcc is required" >&2; exit 2; }
 	CC_x86_64_unknown_linux_musl="$(MUSL_CC)" \
 	CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$(MUSL_CC)" \
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) build --locked --release \
-		--jobs $(CARGO_BUILD_JOBS) --target x86_64-unknown-linux-musl \
+	$(LOW_PRIORITY) $(CARGO) build --locked --release \
+		$(JOBS) --target x86_64-unknown-linux-musl \
 		-p fc-harness --example client_finite_cgroup_runner
 
 preflight: build-controller
@@ -158,4 +162,4 @@ guest-run: build
 		$(if $(PAYLOAD_FILE),--payload-file "$(PAYLOAD_FILE)") -- $(ARGS)
 
 clean:
-	$(NICE) -n 19 $(IONICE) -c 3 $(CARGO) clean
+	$(LOW_PRIORITY) $(CARGO) clean

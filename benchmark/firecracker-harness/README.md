@@ -31,8 +31,8 @@ and a guest smoke passes. Without an explicit profile, the historical pins
 above remain the selected images.
 
 Build the host controller and static musl guest agent through the Makefile. Its
-Rust compiler commands use `nice -n 19`, `ionice -c 3`, and two build jobs by
-default.
+Rust compiler commands use `nice -n 19`, `ionice -c 3`, and two build jobs for
+local runs; under CI (`CI=true`) they run at full priority and parallelism.
 `make -C firecracker-harness test-build` compiles a static musl test executable
 with `--no-run`. Pass its printed path as `TEST_BINARY` and a unique `RUN_ID` to
 `make -C firecracker-harness test-vm`; the `test` alias runs that same Firecracker
