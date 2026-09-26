@@ -32,19 +32,6 @@ jobs:
           ips=$(fly ips list -a "$PR_APP")
           grep -q " v6 " <<<"$ips" || fly ips allocate-v6 -a "$PR_APP"
           grep -q "(shared)" <<<"$ips" || fly ips allocate-v4 -a "$PR_APP" --shared
-          # Seed the disposable in-memory preview with a fresh admin for this
-          # run. Keep the password in stdin and the runner env file, never argv.
-          ADMIN_EMAIL="e2e-admin-${GITHUB_RUN_ID}@example.test"
-          ADMIN_PASSWORD="$(node -p 'require("node:crypto").randomBytes(32).toString("hex")')"
-          printf '::add-mask::%s\n' "$ADMIN_PASSWORD"
-          {
-            printf 'DASHBOARD_E2E_ADMIN_EMAIL=%s\n' "$ADMIN_EMAIL"
-            printf 'DASHBOARD_E2E_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"
-          } >> "$GITHUB_ENV"
-          {
-            printf 'DASHBOARD_DEMO_ADMIN_EMAIL=%s\n' "$ADMIN_EMAIL"
-            printf 'DASHBOARD_DEMO_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"
-          } | fly secrets import --stage -a "$PR_APP"
           # The in-memory demo backend is process-local: two machines would
           # split accounts and sessions, so account creation would appear to
           # vanish between steps. --ha=false skips the spare machine and the

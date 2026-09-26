@@ -5,10 +5,6 @@ primary_region = "gru"
 [env]
   DASHBOARD_ADDR = ":8080"
   TS_DASHBOARD_PRODUCTION_DEMO = "1"
-  # The preview E2E suite runs against this app exactly like the local
-  # Playwright webServer does, so the testing dev shim must be available for
-  # owner-only assertions. Preview-only: fly.toml never sets this.
-  DASHBOARD_E2E = "1"
 
 [http_service]
   internal_port = 8080
