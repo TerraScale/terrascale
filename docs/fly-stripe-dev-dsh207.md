@@ -47,8 +47,7 @@ Remova `TS_DASHBOARD_PRODUCTION_DEMO` desse arquivo. Com o modo demo
 desligado, o app valida todas as variáveis Stripe na inicialização e não sobe
 se alguma estiver ausente ou inconsistente. Mantenha o serviço HTTP na porta interna 8080, HTTPS obrigatório e o health
 check `/health/ready`. Configure as URLs e credenciais de ts-auth e do banco
-conforme a integração persistente definir. Não copie `DASHBOARD_E2E=1` do
-preview para este app. Valide o arquivo antes do deploy:
+conforme a integração persistente definir. Valide o arquivo antes do deploy:
 
 ```sh
 fly config validate --strict -c fly.dev.toml -a terrascale-dashboard-dev

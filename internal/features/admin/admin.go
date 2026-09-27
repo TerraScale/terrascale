@@ -340,16 +340,8 @@ func requireAdminRoute(deps core.Deps, w http.ResponseWriter, r *http.Request) (
 		core.RedirectToLogin(w, r)
 		return core.Principal{}, false
 	}
-	if _, err := deps.Store.SnapshotAs(principal); err != nil {
+	if err := deps.Store.AuthorizePlatformAdmin(principal); err != nil {
 		writeAdminError(w, err)
-		return core.Principal{}, false
-	}
-	if _, err := deps.Store.PlatformAccounts(principal); err != nil {
-		if errors.Is(err, core.ErrForbidden) {
-			http.Error(w, "forbidden", http.StatusForbidden)
-		} else {
-			writeAdminError(w, err)
-		}
 		return core.Principal{}, false
 	}
 	return principal, true

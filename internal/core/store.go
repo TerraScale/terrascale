@@ -407,13 +407,16 @@ func (s *Store) repairSelectionsLocked() {
 					break
 				}
 			}
-			if org, ok := s.organizations[a.ActiveOrganizationID]; ok {
-				for id := range org.Projects {
-					a.ActiveProjectID = id
-					break
-				}
-			}
+			a.ActiveProjectID = s.organizations[a.ActiveOrganizationID].DefaultProjectID()
 			changed = true
+		}
+		// A project another member deleted must not stay selected: the
+		// session and every later sign-in would fail to authorize it.
+		if org, ok := s.organizations[a.ActiveOrganizationID]; ok && a.ActiveProjectID != "" {
+			if project, exists := org.Projects[a.ActiveProjectID]; !exists || project.OrganizationID != org.ID {
+				a.ActiveProjectID = org.DefaultProjectID()
+				changed = true
+			}
 		}
 		if changed {
 			s.accounts[accountID] = detachAccount(a)

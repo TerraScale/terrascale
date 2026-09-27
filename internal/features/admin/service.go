@@ -441,18 +441,17 @@ func (s Service) DeletePlan(principal core.Principal, planID string) error {
 }
 
 func (s Service) platformAccounts(principal core.Principal) ([]core.Account, error) {
-	if s.store == nil {
-		return nil, core.ErrUnauthorized
-	}
-	if _, err := s.store.SnapshotAs(principal); err != nil {
+	if err := s.requireAdmin(principal); err != nil {
 		return nil, err
 	}
 	return s.store.PlatformAccounts(principal)
 }
 
 func (s Service) requireAdmin(principal core.Principal) error {
-	_, err := s.platformAccounts(principal)
-	return err
+	if s.store == nil {
+		return core.ErrUnauthorized
+	}
+	return s.store.AuthorizePlatformAdmin(principal)
 }
 
 func (s Service) lockMutations() func() {

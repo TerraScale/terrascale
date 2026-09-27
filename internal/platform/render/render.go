@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/url"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -33,8 +32,8 @@ type Engine struct {
 }
 
 // New returns the page renderer. A nil status source renders no banner.
-func New(store *core.Store, csrf core.CSRF, status StatusNotices) *Engine {
-	return &Engine{store: store, csrf: csrf, status: status, dev: os.Getenv("DASHBOARD_DEV") == "1"}
+func New(store *core.Store, csrf core.CSRF, status StatusNotices, dev bool) *Engine {
+	return &Engine{store: store, csrf: csrf, status: status, dev: dev}
 }
 
 // buffers holds render buffers across requests; a page is rendered fully

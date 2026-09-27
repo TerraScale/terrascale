@@ -48,6 +48,9 @@ func (s *Store) AcceptInvitation(p Principal, tokenHash string) (Organization, e
 			if NormalizeEmail(invitation.Email) != a.User.Email {
 				return Organization{}, ErrForbidden
 			}
+			if !strings.EqualFold(canonical.Status, "active") || canonical.Archived || canonical.DeletionRequested {
+				return Organization{}, ErrConflict
+			}
 			org := cloneOrganization(canonical)
 			if plan, ok := s.plans[org.PlanID]; ok && plan.MaxMembers > 0 {
 				active := 0
@@ -72,7 +75,7 @@ func (s *Store) AcceptInvitation(p Principal, tokenHash string) (Organization, e
 			next := detachAccount(s.viewLocked(a))
 			next.Organizations[id] = Organization{ID: id}
 			next.ActiveOrganizationID = id
-			next.ActiveProjectID = ""
+			next.ActiveProjectID = org.DefaultProjectID()
 			s.organizations[id] = org
 			s.accounts[a.ID] = next
 			return cloneOrganization(org), nil
@@ -220,6 +223,21 @@ func (s *Store) DeletePlanAs(p Principal, planID string) error {
 	}
 	delete(s.plans, planID)
 	return nil
+}
+
+// AuthorizePlatformAdmin reports whether the principal still matches its
+// account and belongs to a platform administrator, without copying state.
+func (s *Store) AuthorizePlatformAdmin(p Principal) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.accounts[p.AccountID]
+	if !ok {
+		return ErrNotFound
+	}
+	if err := authorize(s.viewLocked(a), p); err != nil {
+		return err
+	}
+	return s.requirePlatformAdminLocked(p)
 }
 
 func (s *Store) PlatformAccounts(p Principal) ([]Account, error) {

@@ -7,6 +7,7 @@
 //   node scripts/build-css.mjs --watch --minify  minified output with CSS watching
 //   node scripts/build-css.mjs --release  minified, plus a maximum-quality .br
 //                                         sibling served in place of the file
+//   node scripts/build-css.mjs --check    exit 1 when the output differs from a fresh bundle
 import { createHash } from 'node:crypto';
 import { readFileSync, watch } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -24,6 +25,7 @@ const entry = resolve(source, 'css/terrascale.css');
 const args = process.argv.slice(2);
 const watchMode = args.includes('--watch');
 const release = args.includes('--release');
+const checkMode = args.includes('--check');
 const devMode = watchMode || args.includes('--dev');
 const minify = args.includes('--minify') || !devMode;
 const output = resolve(args.find(arg => !arg.startsWith('--')) ?? resolve(repository, 'web/static/css/terrascale.css'));
@@ -49,6 +51,14 @@ async function build() {
 
   const bundled = code;
   const current = await readFile(output).catch(() => null);
+  if (checkMode) {
+    // A check only compares, so it leaves the stylesheet and its .br alone.
+    if (!current?.equals(bundled)) {
+      console.error(`CSS: ${output} is stale; run make css`);
+      process.exit(1);
+    }
+    return bundled.length;
+  }
   if (!current?.equals(bundled)) {
     await mkdir(dirname(output), { recursive: true });
     // Keep the served asset valid while the development watcher rebuilds it.
@@ -102,7 +112,7 @@ async function precompress(file, contents) {
 }
 
 const bytes = await build();
-console.log(`CSS: ${bytes} bytes${minify ? '' : ' (dev)'} → ${output}`);
+console.log(`CSS: ${bytes} bytes${minify ? '' : ' (dev)'} ${checkMode ? 'match' : '→'} ${output}`);
 
 if (watchMode) {
   let timer;
