@@ -266,7 +266,7 @@ templ menuTile(name string) {
 }
 
 templ accountMenu(page core.Page) {
-	@Dropdown(DropdownProps{Class: "ts-account", Up: true, Label: "Account menu", Trigger: accountTrigger(page.Shell), TriggerClass: "ts-account-trigger"}) {
+	@Dropdown(DropdownProps{Class: "ts-account", Up: true, Trigger: accountTrigger(page.Shell), TriggerClass: "ts-account-trigger"}) {
 		<div class="ts-account-card">
 			<span class="ts-account-avatar ts-account-avatar-lg" aria-hidden="true">{ displayName(page.Shell.UserInitials, "TS") }</span>
 			<span class="ts-account-meta">
@@ -287,8 +287,11 @@ templ accountMenu(page core.Page) {
 	}
 }
 
+// accountTrigger is named by its visible text, so speech input can open it by
+// the user's name; the hidden prefix says what it opens.
 templ accountTrigger(shell core.Shell) {
 	<span class="ts-account-avatar" aria-hidden="true">{ displayName(shell.UserInitials, "TS") }</span>
+	<span class="ts-sr-only">Account menu for </span>
 	<span class="ts-account-meta">
 		<span class="ts-account-name">{ displayName(shell.UserName, "TerraScale user") }</span>
 		<span class="ts-account-email">{ shell.UserEmail }</span>

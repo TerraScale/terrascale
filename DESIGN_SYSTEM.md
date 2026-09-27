@@ -73,9 +73,11 @@ it with Lightning CSS into the single stylesheet `web/static/css/terrascale.css`
 area for single series, a dashed grid, and focusable hover columns (capped at
 60) with a guide line, dots and an SVG tooltip listing the point label and the
 exact value of every series. The tooltip is sized from its monospaced text and
-flips left near the plot end, so it never leaves the viewBox. Rings and share
-bars sit in a focusable `ts-chart-meter` whose `ts-chart-tooltip` shows name and
-percent above it. Tooltips appear on `:hover` and `:focus-visible`; no chart
+flips left near the plot end, so it never leaves the viewBox. With Datastar
+running a line chart is one tab stop, starting on the latest point; the arrow
+keys, Home and End move between points. Rings and share bars sit in a
+focusable `ts-chart-meter` whose `ts-chart-tooltip` shows name and percent
+above it. Tooltips appear on `:hover` and `:focus-visible`; no chart
 library or script.
 
 ## Performance

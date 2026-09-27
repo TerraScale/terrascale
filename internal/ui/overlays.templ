@@ -26,11 +26,14 @@ type DropdownProps struct {
 
 // Dropdown is the one popover menu of the dashboard: a <details> element
 // that closes on outside clicks and on Escape, returning focus to its
-// trigger. Children are the panel content, typically MenuItem entries.
+// trigger. A menu item that submits a form closes the menu and focuses the
+// trigger too, so focus survives when the response patches the page in
+// place. Children are the panel content, typically MenuItem entries.
 templ Dropdown(p DropdownProps) {
 	<details
 		class={ "ts-menu", templ.KV("ts-menu-end", p.End), templ.KV("ts-menu-up", p.Up), p.Class }
 		data-on:click__outside="el.open = false"
+		data-on:click="evt.target.closest('.ts-menu-panel [type=submit]') && (el.open = false, el.querySelector('summary').focus())"
 		data-on:keydown__window="evt.key === 'Escape' && el.open && (el.open = false, el.querySelector('summary').focus())"
 		{ p.Attrs... }
 	>

@@ -192,6 +192,17 @@ func NewLine(label string, ticks, points []string, height int, series ...Series)
 // maxColumns bounds the hover targets rendered per chart.
 const maxColumns = 60
 
+// Keyboard behaviour of a line chart's columns, as Datastar expressions on
+// the chart. The page renders every column focusable; once Datastar runs the
+// chart is one tab stop, initially the latest point. The arrow keys step
+// between points, Home and End jump to the ends, and the tab stop moves with
+// them. The chart must not listen for focus events: Chromium makes an SVG
+// element with focus listeners a tab stop of its own.
+const (
+	columnTabStop = `el.querySelectorAll('.ts-chart-column').forEach((column, i, all) => column.setAttribute('tabindex', i === all.length - 1 ? '0' : '-1'))`
+	columnKeys    = `evt.target.matches('.ts-chart-column') && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(evt.key) && (evt.preventDefault(), [{ArrowLeft: evt.target.previousElementSibling, ArrowRight: evt.target.nextElementSibling, Home: el.querySelector('.ts-chart-column'), End: el.querySelector('.ts-chart-column:last-of-type')}[evt.key]?.closest('.ts-chart-column')].filter(Boolean).forEach(next => (evt.target.setAttribute('tabindex', '-1'), next.setAttribute('tabindex', '0'), next.focus())))`
+)
+
 // Tooltip metrics in viewBox units. The text is monospaced, so its width is
 // the character count times a fixed advance.
 const (
