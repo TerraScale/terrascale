@@ -180,7 +180,7 @@ func loginPage(deps core.Deps) http.HandlerFunc {
 		if returnTo == "" {
 			returnTo = r.URL.Query().Get("next")
 		}
-		renderLogin(w, r, deps, http.StatusOK, loginPageData{RedirectTo: safeRedirectTarget(returnTo)})
+		renderLogin(w, r, deps, http.StatusOK, loginPageData{RedirectTo: SafeRedirectTarget(returnTo)})
 	}
 }
 
@@ -195,7 +195,7 @@ func loginForm(deps core.Deps) http.HandlerFunc {
 		}
 		data := loginPageData{
 			Email:      strings.TrimSpace(r.PostForm.Get("email")),
-			RedirectTo: safeRedirectTarget(r.PostForm.Get("redirectTo")),
+			RedirectTo: SafeRedirectTarget(r.PostForm.Get("redirectTo")),
 		}
 		password := r.PostForm.Get("password")
 		if data.Email == "" {
@@ -280,7 +280,7 @@ func oauthConsent(deps core.Deps) http.HandlerFunc {
 }
 
 func redirectToLogin(w http.ResponseWriter, r *http.Request) {
-	returnTo := safeRedirectTarget(r.URL.RequestURI())
+	returnTo := SafeRedirectTarget(r.URL.RequestURI())
 	if returnTo == "/" {
 		returnTo = "/oauth/consent"
 	}
@@ -494,7 +494,10 @@ func currentPrincipal(sessions core.Sessions, r *http.Request) (core.Principal, 
 	return sessions.BearerPrincipal(r)
 }
 
-func safeRedirectTarget(raw string) string {
+// SafeRedirectTarget is the same-origin path to continue to after signing in
+// or signing up, or "/" when raw is empty, longer than 2048 bytes, or leaves
+// the dashboard.
+func SafeRedirectTarget(raw string) string {
 	if raw == "" || len(raw) > 2048 {
 		return "/"
 	}
@@ -508,6 +511,14 @@ func safeRedirectTarget(raw string) string {
 		target.RawQuery = query.Encode()
 	}
 	return target.RequestURI()
+}
+
+// signUpURL links to sign-up, passing on the page to return to afterwards.
+func signUpURL(returnTo string) string {
+	if returnTo == "/" {
+		return "/onboarding"
+	}
+	return "/onboarding?returnTo=" + url.QueryEscape(returnTo)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

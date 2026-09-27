@@ -204,3 +204,19 @@ func TestRegisterAccountNamesTheInvalidField(t *testing.T) {
 		})
 	}
 }
+
+func TestLoginPageSignUpLinkKeepsTheReturnPath(t *testing.T) {
+	t.Parallel()
+	mux := newLoginMux(t, throttle.Options{})
+	for _, tc := range []struct{ path, want string }{
+		{path: "/login?returnTo=%2Finvitations%2Ftok%3Fx%3D1", want: `href="/onboarding?returnTo=%2Finvitations%2Ftok%3Fx%3D1"`},
+		{path: "/login", want: `href="/onboarding"`},
+		{path: "/login?returnTo=https%3A%2F%2Fevil.example%2F", want: `href="/onboarding"`},
+	} {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if !strings.Contains(response.Body.String(), tc.want+`>Create account</a>`) {
+			t.Fatalf("GET %s has no Create account link with %s", tc.path, tc.want)
+		}
+	}
+}

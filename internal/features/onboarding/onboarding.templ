@@ -42,6 +42,12 @@ templ onboardingView(data pageData, csrfToken string) {
 				@stepHeading("create-account-title", "Create your account", "Your Personal workspace is ready as soon as your account is created.")
 				<form class="ts-form" method="post" action="/onboarding" data-submit-once aria-labelledby="create-account-title">
 					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					if data.Plan != "" {
+						<input type="hidden" name="plan" value={ data.Plan }/>
+					}
+					if data.ReturnTo != "" {
+						<input type="hidden" name="returnTo" value={ data.ReturnTo }/>
+					}
 					{{ displayName := field(data, "displayName", "Full name", "") }}
 					@ui.Field(displayName) {
 						<input class="ts-input" id="displayName" name="displayName" value={ data.DisplayName } autocomplete="name" maxlength="128" required { displayName.ControlAttrs()... }/>
@@ -71,7 +77,7 @@ templ onboardingView(data pageData, csrfToken string) {
 						}
 					</div>
 					<div class="ts-onboarding-footer">
-						<p class="ts-meta">Already have an account? <a class="ts-link" href="/login">Sign in</a></p>
+						<p class="ts-meta">Already have an account? <a class="ts-link" href={ signInURL(data.ReturnTo) }>Sign in</a></p>
 						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create account <span aria-hidden="true">→</span></button>
 					</div>
 				</form>
@@ -119,7 +125,7 @@ templ onboardingView(data pageData, csrfToken string) {
 						<legend class="ts-sr-only">Select a plan</legend>
 						for i, plan := range data.Plans {
 							<label class="ts-onboarding-plan" data-tone={ planTone(i) }>
-								<input class="ts-onboarding-plan-radio" type="radio" name="plan" value={ plan.Key } checked?={ i == 0 } required/>
+								<input class="ts-onboarding-plan-radio" type="radio" name="plan" value={ plan.Key } checked?={ plan.Key == data.Plan } required/>
 								<span class="ts-row-between">
 									<span class="ts-onboarding-plan-name">{ plan.Name }</span>
 									<span class="ts-onboarding-plan-check" aria-hidden="true">✓</span>

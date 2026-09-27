@@ -19,7 +19,9 @@ import (
 )
 
 // pageData is the onboarding page. Error is shown above the step's form, or
-// under the control named by ErrorField.
+// under the control named by ErrorField. Plan and ReturnTo come from the link
+// that opened sign-up: the payment step preselects Plan, and a new account
+// continues to ReturnTo, a dashboard path, instead of setup.
 type pageData struct {
 	Registration    bool
 	Demo            bool
@@ -29,6 +31,8 @@ type pageData struct {
 	Error           string
 	ErrorField      string
 	PaymentCanceled bool
+	Plan            string
+	ReturnTo        string
 	Plans           []core.Plan
 	Step            string
 	Steps           []stepView
@@ -61,14 +65,18 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 
 func getOnboarding(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		plans := offeredPlans(deps)
+		// Landing pages link with return=; sign-in and the dashboard use returnTo.
+		registration := pageData{Registration: true, Plan: offeredPlan(plans, query.Get("plan")), ReturnTo: returnPath(cmp.Or(query.Get("returnTo"), query.Get("return")))}
 		principal, ok := deps.Sessions.Principal(r)
 		if !ok {
-			render(w, r, deps, http.StatusOK, pageData{Registration: true})
+			render(w, r, deps, http.StatusOK, registration)
 			return
 		}
 		account, err := deps.Store.SnapshotAs(principal)
 		if err != nil {
-			render(w, r, deps, http.StatusOK, pageData{Registration: true})
+			render(w, r, deps, http.StatusOK, registration)
 			return
 		}
 		if account.OnboardingCompleted {
@@ -115,26 +123,14 @@ func getOnboarding(deps core.Deps) http.HandlerFunc {
 		if paymentOutcome == "success" && data.Step == "payment-method" {
 			data.Error = "Payment setup could not be confirmed. Finish checkout or continue without payment."
 		}
-		for _, plan := range deps.Store.Plans() {
-			if plan.Visible && plan.PriceCents > 0 {
-				data.Plans = append(data.Plans, plan)
-			}
+		data.Plans = plans
+		requested := query.Get("plan")
+		if requested == "" && data.PaymentCanceled {
+			// A canceled checkout comes back without the link's plan; offer
+			// the plan it was for again.
+			requested = checkoutPlan(account, principal, plans)
 		}
-		planRank := map[string]int{"starter": 0, "pro": 1, "business": 2}
-		slices.SortFunc(data.Plans, func(a, b core.Plan) int {
-			aRank, aKnown := planRank[a.Key]
-			bRank, bKnown := planRank[b.Key]
-			if !aKnown {
-				aRank = len(planRank)
-			}
-			if !bKnown {
-				bRank = len(planRank)
-			}
-			if order := cmp.Compare(aRank, bRank); order != 0 {
-				return order
-			}
-			return cmp.Compare(a.Key, b.Key)
-		})
+		data.Plan = cmp.Or(offeredPlan(plans, requested), firstPlan(plans))
 		render(w, r, deps, http.StatusOK, data)
 	}
 }
@@ -152,10 +148,14 @@ func register(deps core.Deps) http.HandlerFunc {
 			ConfirmPassword: r.Form.Get("confirmPassword"),
 			AcceptedTerms:   r.Form.Get("terms") == "true",
 		}
+		plan, returnTo := offeredPlan(offeredPlans(deps), r.Form.Get("plan")), returnPath(r.Form.Get("returnTo"))
 		account, err := auth.RegisterAccount(deps, input)
 		if err != nil {
 			// Render the form again with everything but the passwords kept.
-			data := pageData{Registration: true, DisplayName: input.DisplayName, Email: input.Email, AcceptedTerms: input.AcceptedTerms}
+			data := pageData{
+				Registration: true, DisplayName: input.DisplayName, Email: input.Email,
+				AcceptedTerms: input.AcceptedTerms, Plan: plan, ReturnTo: returnTo,
+			}
 			status := http.StatusUnprocessableEntity
 			switch inputError, isInputError := errors.AsType[auth.InputError](err); {
 			case isInputError:
@@ -174,7 +174,15 @@ func register(deps core.Deps) http.HandlerFunc {
 			http.Error(w, "could not create session", http.StatusInternalServerError)
 			return
 		}
-		http.Redirect(w, r, "/onboarding", http.StatusSeeOther)
+		// Like sign-in, a return path wins; setup resumes at the next sign-in.
+		location := "/onboarding"
+		switch {
+		case returnTo != "":
+			location = returnTo
+		case plan != "":
+			location += "?" + url.Values{"plan": {plan}}.Encode()
+		}
+		http.Redirect(w, r, location, http.StatusSeeOther)
 	}
 }
 
@@ -282,7 +290,12 @@ func saveStep(deps core.Deps) http.HandlerFunc {
 			return
 		}
 		if message != "" {
-			http.Redirect(w, r, "/onboarding?error="+url.QueryEscape(message), http.StatusSeeOther)
+			query := url.Values{"error": {message}}
+			// A refused payment step keeps the plan that was picked.
+			if plan := offeredPlan(offeredPlans(deps), r.Form.Get("plan")); r.Form.Get("step") == "payment-method" && plan != "" {
+				query.Set("plan", plan)
+			}
+			http.Redirect(w, r, "/onboarding?"+query.Encode(), http.StatusSeeOther)
 			return
 		}
 		if r.Form.Get("step") == "project" {
@@ -386,6 +399,81 @@ func render(w http.ResponseWriter, r *http.Request, deps core.Deps, status int, 
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render onboarding page", http.StatusInternalServerError)
 	}
+}
+
+// returnPath is the dashboard path a sign-up link asks to return to, or ""
+// when there is none.
+func returnPath(raw string) string {
+	if target := auth.SafeRedirectTarget(raw); target != "/" {
+		return target
+	}
+	return ""
+}
+
+// offeredPlans are the paid plans the payment step offers, cheapest first.
+func offeredPlans(deps core.Deps) []core.Plan {
+	var plans []core.Plan
+	for _, plan := range deps.Store.Plans() {
+		if plan.Visible && plan.PriceCents > 0 {
+			plans = append(plans, plan)
+		}
+	}
+	planRank := map[string]int{"starter": 0, "pro": 1, "business": 2}
+	slices.SortFunc(plans, func(a, b core.Plan) int {
+		aRank, aKnown := planRank[a.Key]
+		bRank, bKnown := planRank[b.Key]
+		if !aKnown {
+			aRank = len(planRank)
+		}
+		if !bKnown {
+			bRank = len(planRank)
+		}
+		if order := cmp.Compare(aRank, bRank); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.Key, b.Key)
+	})
+	return plans
+}
+
+// offeredPlan returns requested when it is an offered plan's key, otherwise "".
+func offeredPlan(plans []core.Plan, requested string) string {
+	if slices.ContainsFunc(plans, func(plan core.Plan) bool { return plan.Key == requested }) {
+		return requested
+	}
+	return ""
+}
+
+func firstPlan(plans []core.Plan) string {
+	if len(plans) == 0 {
+		return ""
+	}
+	return plans[0].Key
+}
+
+// checkoutPlan is the key of the plan in the principal's latest onboarding
+// checkout, if it is still offered.
+func checkoutPlan(account core.Account, principal core.Principal, plans []core.Plan) string {
+	var latest core.CheckoutSession
+	for _, checkout := range account.Organizations[principal.OrganizationID].CheckoutSessions {
+		if checkout.OwnerUserID == principal.UserID && checkout.ReturnPath == "/onboarding" && checkout.CreatedAt.After(latest.CreatedAt) {
+			latest = checkout
+		}
+	}
+	for _, plan := range plans {
+		if plan.ID == latest.PlanID && latest.PlanID != "" {
+			return plan.Key
+		}
+	}
+	return ""
+}
+
+// signInURL links to sign-in, passing on the page to return to afterwards.
+func signInURL(returnTo string) string {
+	if returnTo == "" {
+		return "/login"
+	}
+	return "/login?returnTo=" + url.QueryEscape(returnTo)
 }
 
 // field labels one registration control and attaches the submission's error
