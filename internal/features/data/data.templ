@@ -236,13 +236,14 @@ templ sqlView(page core.Page, d pageData) {
 					</div>
 				</form>
 			}
-			if d.FormError != "" && d.Dialog == "" {
-				@ui.Alert("danger", "Query failed", d.FormError)
-			}
 			if d.SQLResult != nil {
 				@sqlResultView(*d.SQLResult)
 			}
-			if d.SQLAnalysis.OK {
+			// A failed run explains itself; the statement check would repeat or
+			// contradict it.
+			if d.FormError != "" && d.Dialog == "" {
+				@ui.Alert("danger", "Query failed", d.FormError)
+			} else if d.SQLAnalysis.OK {
 				@sqlCheck(d)
 			} else if d.SQLAnalysis.Error != "" {
 				@ui.Alert("danger", "", d.SQLAnalysis.Error)

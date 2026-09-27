@@ -62,4 +62,13 @@ func TestFormErrorsShowBesideTheirInput(t *testing.T) {
 	if !strings.Contains(sql, "Query failed") || strings.Contains(sql, `id="sql-result"`) {
 		t.Error("a failed run shows the error in place of a result")
 	}
+
+	// The statement check would repeat an invalid statement's error or call a
+	// rejected one accepted; a failed run shows only its own error.
+	for _, analysis := range []sqlAnalysis{{OK: true}, {Error: "Only read-only statements run here."}} {
+		sql := render(t, pageData{Section: "sql", CanWrite: true, SQL: "SELECT 1", FormError: "Only read-only statements run here.", SQLAnalysis: analysis})
+		if strings.Count(sql, "Only read-only statements run here.") != 1 || strings.Contains(sql, "Read-only statement accepted") {
+			t.Errorf("failed run with analysis %+v shows the statement check too", analysis)
+		}
+	}
 }
