@@ -461,6 +461,11 @@ func safeRedirectTarget(raw string) string {
 	if err != nil || target.IsAbs() || target.Host != "" || target.Opaque != "" || !strings.HasPrefix(target.Path, "/") || strings.HasPrefix(target.Path, "//") || strings.Contains(target.Path, `\`) {
 		return "/"
 	}
+	// Signing in follows this target with a same-origin redirect, which
+	// would carry a status message a crafted link put in it.
+	if query := target.Query(); core.DropMessages(query) {
+		target.RawQuery = query.Encode()
+	}
 	return target.RequestURI()
 }
 
