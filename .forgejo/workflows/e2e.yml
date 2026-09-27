@@ -3,9 +3,10 @@ on:
   pull_request:
   push:
     branches: [main]
+# The browser suite shares a builder across refs; queue runs instead of overlapping.
 concurrency:
-  group: dashboard-slow-${{ github.ref }}
-  cancel-in-progress: true
+  group: dashboard-e2e
+  cancel-in-progress: false
 jobs:
   test:
     runs-on: terrascale-builder
