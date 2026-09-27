@@ -37,8 +37,8 @@ bootstrap needs access to the Go module proxy. The dashboard and templ
 generator build from vendored modules. Stopping the foreground `make dev`
 process with Ctrl+C terminates Air, its app child, and both asset watchers.
 
-Page behavior uses the official Datastar v1.0.4 bundle with Rocket, loaded from
-the jsDelivr CDN with a pinned Subresource Integrity hash (`datastarURL` and
+Page behavior uses the official Datastar v1.0.4 bundle, loaded from the
+jsDelivr CDN with a pinned Subresource Integrity hash (`datastarURL` and
 `datastarIntegrity` in `internal/ui/layout_helpers.go`; update both together).
 Behavior lives in Go handlers, templ components, native HTML (`<details>`,
 `<dialog>` with `command`/`commandfor`) and Datastar attributes. The one custom
