@@ -244,17 +244,23 @@ func (s *Store) ChangeEmailAs(p Principal, email, expectedPasswordHash string) e
 		return nil
 	}
 	next.User.Email = email
-	for id, org := range next.Organizations {
-		if member, ok := org.Members[p.UserID]; ok {
-			member.Email = email
-			org.Members[p.UserID] = member
-			next.Organizations[id] = org
-		}
-	}
+	syncMemberships(&next)
 	s.putLocked(next)
 	delete(s.byEmail, oldEmail)
 	s.byEmail[email] = next.ID
 	return nil
+}
+
+// syncMemberships copies the user's current name and email into their member
+// record in each of their organizations, which keep them for display, so a
+// change made in one organization reaches every other.
+func syncMemberships(a *Account) {
+	for _, org := range a.Organizations {
+		if member, ok := org.Members[a.User.ID]; ok {
+			member.Name, member.Email = a.User.Name, a.User.Email
+			org.Members[a.User.ID] = member
+		}
+	}
 }
 
 // UpdateAsWithPlan resolves a canonical plan under the same lock as the scoped
@@ -329,6 +335,7 @@ func (s *Store) updateLocked(accountID string, mutate func(*Account) error) erro
 	if next.User.PasswordHash == "" {
 		return ErrInvalid
 	}
+	syncMemberships(&next)
 	if next.User.PasswordHash != current.User.PasswordHash {
 		next.AuthVersion = current.AuthVersion + 1
 	} else {
