@@ -3,7 +3,8 @@ package core
 import "fmt"
 
 // Allowance labels describe a plan's limits the same way on every billing
-// surface.
+// surface. AllowanceUnpublished stands in for a limit the plan doesn't set.
+const AllowanceUnpublished = "Limit not published"
 
 func (plan Plan) StorageAllowance() string {
 	switch {
@@ -14,7 +15,7 @@ func (plan Plan) StorageAllowance() string {
 	case plan.StorageMiB > 0:
 		return fmt.Sprintf("%d MiB storage", plan.StorageMiB)
 	}
-	return "Limit not published"
+	return AllowanceUnpublished
 }
 
 func (plan Plan) OperationsAllowance() string {
@@ -24,21 +25,21 @@ func (plan Plan) OperationsAllowance() string {
 	case plan.MonthlyRequests > 0:
 		return compactCount(plan.MonthlyRequests) + " requests/month"
 	}
-	return "Limit not published"
+	return AllowanceUnpublished
 }
 
 func (plan Plan) DatabaseAllowance() string {
 	if plan.MaxDatabases > 0 {
 		return countOf(plan.MaxDatabases, "database")
 	}
-	return "Limit not published"
+	return AllowanceUnpublished
 }
 
 func (plan Plan) MemberAllowance() string {
 	if plan.MaxMembers > 0 {
 		return countOf(plan.MaxMembers, "team member")
 	}
-	return "Limit not published"
+	return AllowanceUnpublished
 }
 
 // compactCount writes whole thousands and millions as K and M.

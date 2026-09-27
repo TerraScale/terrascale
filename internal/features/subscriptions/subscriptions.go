@@ -333,7 +333,7 @@ func makePlanView(plan core.Plan, index int, current planCardContext) planView {
 func planFeatures(plan core.Plan) []string {
 	features := make([]string, 0, 4)
 	for _, allowance := range []string{plan.StorageAllowance(), plan.OperationsAllowance(), plan.DatabaseAllowance(), plan.MemberAllowance()} {
-		if allowance != "Limit not published" {
+		if allowance != core.AllowanceUnpublished {
 			features = append(features, allowance)
 		}
 	}
