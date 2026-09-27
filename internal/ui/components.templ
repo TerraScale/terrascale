@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"terrascale.tech/dashboard/internal/ui/icons"
+	static "terrascale.tech/dashboard/web/static"
 )
 
 // Shared page building blocks. Feature pages compose these instead of
@@ -289,7 +290,7 @@ templ RegionMap(selectID string) {
 			data-highlights="SFO,GRU,FRA"
 		}
 	>
-		<img class="ts-region-map-image" src="/brand/region-map.svg" alt="" loading="lazy" decoding="async"/>
+		<img class="ts-region-map-image" src={ static.URL("brand/region-map.svg") } alt="" loading="lazy" decoding="async"/>
 		if selectID == "" {
 			<svg class="ts-region-overlay" viewBox="0 0 136 80" preserveAspectRatio="xMidYMid meet">
 				for i := range regionPins {

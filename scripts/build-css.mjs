@@ -5,18 +5,25 @@
 //   node scripts/build-css.mjs --dev      readable development bundle
 //   node scripts/build-css.mjs --watch    readable, rebuilt on every source CSS change
 //   node scripts/build-css.mjs --watch --minify  minified output with CSS watching
-import { watch } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+//   node scripts/build-css.mjs --release  minified, plus a maximum-quality .br
+//                                         sibling served in place of the file
+import { createHash } from 'node:crypto';
+import { readFileSync, watch } from 'node:fs';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { brotliCompress, constants } from 'node:zlib';
 import browserslist from 'browserslist';
 import { browserslistToTargets, bundleAsync } from 'lightningcss';
 
 const repository = fileURLToPath(new URL('../', import.meta.url));
 const source = resolve(repository, 'web/assets');
+const publicRoot = resolve(repository, 'web/static');
 const entry = resolve(source, 'css/terrascale.css');
 const args = process.argv.slice(2);
 const watchMode = args.includes('--watch');
+const release = args.includes('--release');
 const devMode = watchMode || args.includes('--dev');
 const minify = args.includes('--minify') || !devMode;
 const output = resolve(args.find(arg => !arg.startsWith('--')) ?? resolve(repository, 'web/static/css/terrascale.css'));
@@ -34,6 +41,7 @@ async function build() {
     targets,
     errorRecovery: false,
     resolver: { read: file => readFile(file, 'utf8') },
+    visitor: { Url: fingerprint },
   });
   if (warnings.length > 0) {
     throw new Error(warnings.map(w => `${w.loc.filename}:${w.loc.line}:${w.loc.column} ${w.message}`).join('\n'));
@@ -48,7 +56,49 @@ async function build() {
     await writeFile(temporary, bundled);
     await rename(temporary, output);
   }
+  // A brotli sibling from an earlier release build would shadow this one.
+  await (release ? precompress(output, bundled) : rm(`${output}.br`, { force: true }));
   return bundled.length;
+}
+
+// Root-relative url()s name files served from web/static. They get the
+// content hash static.URL appends in Go, so the asset handler caches them as
+// immutable and a changed file is fetched under a new URL.
+function fingerprint(url) {
+  if (!url.url.startsWith('/') || url.url.startsWith('//')) {
+    return url;
+  }
+  // The file lookup needs the decoded path; the emitted URL keeps the
+  // specifier as written so escapes, queries and fragments survive.
+  const path = new URL(url.url, 'file:').pathname;
+  let contents;
+  try {
+    contents = readFileSync(resolve(publicRoot, `.${path}`));
+  } catch {
+    throw new Error(`url(${url.url}) is not a file in web/static`);
+  }
+  // static.Version: the first six bytes of the SHA-256, in hex.
+  const version = createHash('sha256').update(contents).digest('hex').slice(0, 12);
+  const [resource, fragment] = url.url.split(/(?=#)/, 2);
+  const separator = resource.includes('?') ? '&' : '?';
+  return { ...url, url: `${resource}${separator}v=${version}${fragment ?? ''}` };
+}
+
+// Brotli at quality 11 is too slow to run per request but shrinks the
+// stylesheet by a quarter over the server's on-the-fly compression.
+const compress = promisify(brotliCompress);
+async function precompress(file, contents) {
+  const compressed = await compress(contents, {
+    params: {
+      [constants.BROTLI_PARAM_QUALITY]: constants.BROTLI_MAX_QUALITY,
+      [constants.BROTLI_PARAM_SIZE_HINT]: contents.length,
+    },
+  });
+  // Swap it in whole, like the stylesheet itself, so the server never sends a
+  // partly written brotli stream.
+  const temporary = `${file}.br.${process.pid}.tmp`;
+  await writeFile(temporary, compressed);
+  await rename(temporary, `${file}.br`);
 }
 
 const bytes = await build();

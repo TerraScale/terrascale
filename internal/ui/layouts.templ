@@ -36,11 +36,11 @@ templ document(page core.Page, bodyClass string) {
 			<meta name="color-scheme" content="dark"/>
 			<meta name="theme-color" content="#0a0c12"/>
 			<title>{ title(page.Title) }</title>
-			<link rel="icon" type="image/svg+xml" href="/brand/logo-icon-blue.svg"/>
+			<link rel="icon" type="image/svg+xml" href={ static.URL("brand/logo-icon-blue.svg") }/>
 			// Preloaded fonts are ready before first paint, so text never renders
 			// in a fallback face and then swaps on every navigation.
-			<link rel="preload" href="/fonts/oxanium-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin/>
-			<link rel="preload" href="/fonts/jetbrains-mono-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin/>
+			<link rel="preload" href={ static.URL("fonts/oxanium-latin-wght-normal.woff2") } as="font" type="font/woff2" crossorigin/>
+			<link rel="preload" href={ static.URL("fonts/jetbrains-mono-latin-wght-normal.woff2") } as="font" type="font/woff2" crossorigin/>
 			<link id="ts-css" rel="stylesheet" href={ static.URL("css/terrascale.css") } data-dashboard-css/>
 			<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin/>
 			<script type="module" src={ datastarURL } integrity={ datastarIntegrity } crossorigin="anonymous" if page.Nonce != "" {
@@ -100,7 +100,7 @@ templ signedInDocument(page core.Page, body templ.Component, admin bool) {
 					<button type="button" id="ts-nav-toggle" class="ts-icon-btn ts-fab-nav" aria-label="Open navigation" aria-controls="ts-navigation" aria-expanded="false" data-on:click="$navOpen = true; setTimeout(() => document.getElementById('ts-nav-close').focus())" data-attr:aria-expanded="$navOpen ? 'true' : 'false'">
 						@icons.PanelLeft(18)
 					</button>
-					<img class="ts-topbar-brand" src="/brand/logo-terrascale-principal.svg" alt="TerraScale" decoding="async"/>
+					<img class="ts-topbar-brand" src={ static.URL("brand/logo-terrascale-principal.svg") } alt="TerraScale" decoding="async"/>
 				</header>
 				@StatusBanner(page.Shell.Notices)
 				<div id="ts-main" class="ts-main" tabindex="-1">
@@ -159,7 +159,7 @@ templ shellSidebar(page core.Page, admin bool) {
 		</nav>
 		<div class="ts-sidebar-footer">
 			<a class="ts-sidebar-brand" href="/" aria-label="TerraScale dashboard">
-				<img src="/brand/logo-terrascale-principal.svg" alt="" aria-hidden="true" decoding="async"/>
+				<img src={ static.URL("brand/logo-terrascale-principal.svg") } alt="" aria-hidden="true" decoding="async"/>
 			</a>
 			if admin {
 				<a class="ts-nav-link" href="/" data-tone="slate">

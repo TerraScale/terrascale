@@ -81,8 +81,10 @@ library or script.
 ## Performance
 
 Responses are compressed (brotli, zstd, gzip) by `httpcompression`. Datastar
-comes from the jsDelivr CDN (immutable, pinned by SRI). The stylesheet is
-linked with its content hash (`static.URL`) and cached as immutable; other static files revalidate by ETag. Speculation rules
+comes from the jsDelivr CDN (immutable, pinned by SRI). Every static file is
+linked with its content hash (`static.URL` in templates; the CSS build hashes
+the stylesheet's `url()`s) and cached as immutable. Release builds precompress
+the stylesheet and scripts with brotli at maximum quality. Speculation rules
 prefetch pages on hover, and every mutating request clears the prefetch cache
 with `Clear-Site-Data`.
 

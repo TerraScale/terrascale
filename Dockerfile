@@ -6,8 +6,10 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
 COPY scripts/build-css.mjs scripts/build-js.mjs ./scripts/
 COPY web/assets ./web/assets
-# Release scripts ship brotli-precompressed siblings served in their place.
-RUN npm run build:css && npm run build:js -- --release
+# The stylesheet links the fonts by content hash.
+COPY web/static/fonts ./web/static/fonts
+# Release bundles ship brotli-precompressed siblings served in their place.
+RUN npm run build:css -- --release && npm run build:js -- --release
 
 FROM golang:1.27.1-bookworm AS build
 WORKDIR /src
@@ -25,7 +27,7 @@ COPY web ./web
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=tmpfs,target=/src/web/static/js \
     touch web/static/js/placeholder && go build ./...
-COPY --from=assets /src/web/static/css/terrascale.css ./web/static/css/terrascale.css
+COPY --from=assets /src/web/static/css ./web/static/css
 COPY --from=assets /src/web/static/js ./web/static/js
 # The deploy workflows pass the commit; health probes report it as the version.
 ARG VERSION=dev
