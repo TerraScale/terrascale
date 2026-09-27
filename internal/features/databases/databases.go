@@ -214,7 +214,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			if _, ok := project.Databases[db.ID]; !ok {
 				return core.ErrNotFound
 			}
-			delete(project.Databases, db.ID)
+			project.RemoveDatabase(db.ID, time.Now().UTC())
 			org := a.Organizations[p.OrganizationID]
 			org.Projects[p.ProjectID] = project
 			a.Organizations[p.OrganizationID] = org

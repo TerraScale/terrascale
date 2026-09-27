@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"maps"
 	"net/http"
 	"regexp"
 	"strings"
@@ -574,6 +575,24 @@ func (o Organization) DatabaseCount() int {
 		count += len(project.Databases)
 	}
 	return count
+}
+
+// RemoveDatabase deletes a database with everything scoped to it, so no
+// project record outlives the database it points at: the API keys limited to
+// it are revoked at now, and its shared result configurations and backup
+// policy are deleted.
+func (p *Project) RemoveDatabase(id string, now time.Time) {
+	delete(p.Databases, id)
+	delete(p.BackupPolicies, id)
+	maps.DeleteFunc(p.SharedResultConfigs, func(_ string, config SharedResultConfig) bool {
+		return config.DatabaseID == id
+	})
+	for keyID, key := range p.APIKeys {
+		if key.DatabaseID == id && key.RevokedAt.IsZero() {
+			key.RevokedAt = now
+			p.APIKeys[keyID] = key
+		}
+	}
 }
 
 func (o Organization) CanProvisionResources(userID string) bool {
