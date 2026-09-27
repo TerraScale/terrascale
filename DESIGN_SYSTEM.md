@@ -91,8 +91,10 @@ with `Clear-Site-Data`.
 ## Motion
 
 Page navigations show a full-width gradient progress bar
-(`body.ts-nav-pending`, set by Datastar in `internal/ui/layouts.templ`). Fonts are
-preloaded (the monospace face only once someone is signed in, since signed-out
-pages never show it) and use `font-display: block`, so text never flashes a
-fallback face.
+(`body.ts-nav-pending`, set by Datastar in `internal/ui/layouts.templ`). A form
+marked `data-submit-once` is not sent again while that navigation loads, and
+its submit buttons read as busy; use it where a second submission would fail
+or repeat an action. Fonts are preloaded (the monospace face only once someone
+is signed in, since signed-out pages never show it) and use
+`font-display: block`, so text never flashes a fallback face.
 `prefers-reduced-motion` disables animation.
