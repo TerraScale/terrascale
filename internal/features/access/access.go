@@ -25,6 +25,8 @@ type memberView struct {
 	IsSelf   bool   `json:"isSelf"`
 	CanEdit  bool   `json:"canEdit" jsonschema:"Whether the caller may change this member's role or remove them."`
 	JoinedAt string `json:"joinedAt" jsonschema:"Join date as YYYY-MM-DD."`
+	// JoinedOn is the join date as the Team page shows it.
+	JoinedOn string `json:"-"`
 }
 
 type projectView struct {
@@ -41,7 +43,17 @@ type invitationView struct {
 	Email     string `json:"email"`
 	Role      string `json:"role"`
 	Status    string `json:"status" jsonschema:"Pending, Accepted, Declined, Canceled, or Expired."`
-	ExpiresAt string `json:"expiresAt" jsonschema:"RFC 3339 expiry time."`
+	ExpiresAt string `json:"expiresAt" jsonschema:"RFC 3339 expiry time, empty when the invitation does not expire."`
+	// Open marks an invitation still pending in the store, even past its
+	// expiry, so an owner can resend or cancel it.
+	Open bool `json:"open" jsonschema:"Whether the invitation can still be resent or canceled."`
+	// ExpiresOn is the expiry as the Team page shows it.
+	ExpiresOn string `json:"-"`
+}
+
+// notice confirms an invitation response after its redirect.
+type notice struct {
+	Tone, Title, Message string
 }
 
 // shareView is one colored row of a distribution chart.
@@ -76,18 +88,8 @@ type pageData struct {
 	PreviousURL        string
 	NextURL            string
 	Error              string
+	Notice             notice
 	InviteURL          string
-}
-
-type invitationPageData struct {
-	OrganizationName string
-	Email            string
-	Role             string
-	ExpiresAt        string
-	Token            string
-	CurrentEmail     string
-	HasSession       bool
-	CanRespond       bool
 }
 
 func Mount(mux *http.ServeMux, deps core.Deps) {
@@ -102,6 +104,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	mux.HandleFunc("POST /api/v1/access/members/{userID}/revoke", revokeMember(deps, organizationService))
 	mux.HandleFunc("GET /invitations/{token}", invitationPage(deps))
 	mux.HandleFunc("POST /invitations/{token}/respond", respondToInvitation(deps, service))
+	mux.HandleFunc("POST /invitations/{token}/switch-account", switchInvitationAccount(deps))
 }
 
 func accessPage(deps core.Deps, service organization.Service) http.HandlerFunc {
@@ -121,7 +124,7 @@ func renderAccessPage(w http.ResponseWriter, r *http.Request, deps core.Deps, se
 		writeProblem(w, err)
 		return
 	}
-	data := buildPageData(account, org, p, r.URL.Query(), message, inviteURL)
+	data := buildPageData(account, org, p, r.URL.Query(), message, inviteURL, time.Now())
 	csrfToken := deps.CSRF.Token(w, r)
 	if r.Method == http.MethodGet && strings.EqualFold(r.Header.Get("Datastar-Request"), "true") && r.URL.Query().Get("tab") == "members" {
 		if deps.Events == nil {
@@ -147,9 +150,9 @@ func renderAccessPage(w http.ResponseWriter, r *http.Request, deps core.Deps, se
 	}
 }
 
-func buildPageData(account core.Account, org core.Organization, p core.Principal, query url.Values, message, inviteURL string) pageData {
+func buildPageData(account core.Account, org core.Organization, p core.Principal, query url.Values, message, inviteURL string, now time.Time) pageData {
 	tab := query.Get("tab")
-	if tab != "members" && tab != "projects" && tab != "invitations" {
+	if !slices.Contains(listTabs, tab) {
 		if query.Get("q") != "" || query.Get("role") != "" {
 			tab = "members"
 		} else if query.Get("create") != "" {
@@ -164,7 +167,7 @@ func buildPageData(account core.Account, org core.Organization, p core.Principal
 	if roles := query["role"]; len(roles) > 0 {
 		roleFilter = roles[len(roles)-1]
 	}
-	if roleFilter != "owner" && roleFilter != "member" && roleFilter != "viewer" {
+	if !slices.Contains(filterRoles[1:], roleFilter) {
 		roleFilter = "all"
 	}
 
@@ -178,12 +181,12 @@ func buildPageData(account core.Account, org core.Organization, p core.Principal
 		allProjects = append(allProjects, projectView{
 			ID: project.ID, Name: project.Name, Region: project.Region, BackupRegion: project.BackupRegion,
 			Selected:  project.ID == account.ActiveProjectID,
-			CreatedAt: project.CreatedAt.UTC().Format(time.RFC3339),
+			CreatedAt: displayDay(project.CreatedAt, "Unknown"),
 		})
 	}
 	slices.SortFunc(allProjects, func(a, b projectView) int { return strings.Compare(a.Name, b.Name) })
 
-	allInvitations := invitationViews(org)
+	allInvitations := invitationViews(org, now)
 
 	const pageSize = 10
 	filtered := 0
@@ -208,7 +211,7 @@ func buildPageData(account core.Account, org core.Organization, p core.Principal
 		MemberCount: len(allMembers), ProjectCount: len(allProjects),
 		Tab: tab, Query: search, RoleFilter: roleFilter,
 		Page: page, PageCount: pageCount, Total: filtered,
-		Error: message, InviteURL: inviteURL,
+		Error: message, Notice: invitationNotice(query.Get("invitation"), org.Name), InviteURL: inviteURL,
 	}
 	for _, invitation := range allInvitations {
 		if strings.EqualFold(invitation.Status, "Pending") {
@@ -243,11 +246,18 @@ func buildPageData(account core.Account, org core.Organization, p core.Principal
 	return data
 }
 
+// listTabs are the Team page tabs besides the overview.
+var listTabs = []string{"members", "projects", "invitations"}
+
+// filterRoles lists the member filter's choices, "all" first.
+var filterRoles = []string{"all", "owner", "admin", "member", "viewer"}
+
 // roleShares splits active members by organization role. Every role is
 // listed, even when empty, so its color stays put.
 func roleShares(org core.Organization) []shareView {
 	shares := []shareView{
 		{Label: "Organization Owner", Tone: roleTone("owner")},
+		{Label: "Admin", Tone: roleTone("admin")},
 		{Label: "Member", Tone: roleTone("member")},
 		{Label: "Viewer", Tone: roleTone("viewer")},
 	}
@@ -260,10 +270,12 @@ func roleShares(org core.Organization) []shareView {
 		switch {
 		case member.UserID == org.OwnerUserID || member.Role == "owner":
 			shares[0].Count++
-		case member.Role == "member":
+		case member.Role == "admin":
 			shares[1].Count++
-		case member.Role == "viewer":
+		case member.Role == "member":
 			shares[2].Count++
+		case member.Role == "viewer":
+			shares[3].Count++
 		}
 	}
 	return withPercents(shares, total)
@@ -301,6 +313,8 @@ func roleTone(role string) string {
 	switch role {
 	case "owner":
 		return "violet"
+	case "admin":
+		return "teal"
 	case "member":
 		return "blue"
 	default:
@@ -355,6 +369,15 @@ func accessPageURL(tab, search, role string, page int) string {
 	return "/access?" + values.Encode()
 }
 
+// invitationStatus labels an invitation, reporting a pending one past its
+// expiry as expired: its link no longer works.
+func invitationStatus(invitation core.Invitation, now time.Time) string {
+	if strings.EqualFold(invitation.Status, "pending") && !invitation.ExpiresAt.IsZero() && !now.Before(invitation.ExpiresAt) {
+		return "Expired"
+	}
+	return invitationStatusLabel(invitation.Status)
+}
+
 func invitationStatusLabel(status string) string {
 	switch strings.ToLower(status) {
 	case "pending":
@@ -372,6 +395,45 @@ func invitationStatusLabel(status string) string {
 	}
 }
 
+// invitationNotice confirms the invitation response named by the redirect
+// that follows it.
+func invitationNotice(outcome, organizationName string) notice {
+	switch outcome {
+	case "accepted":
+		return notice{Tone: "success", Title: "Invitation accepted", Message: "You are now a member of " + organizationName + "."}
+	case "declined":
+		return notice{Tone: "info", Title: "Invitation declined", Message: "You were not added to that organization."}
+	default:
+		return notice{}
+	}
+}
+
+// roleLabel capitalizes an organization role for display.
+func roleLabel(role string) string {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return "Unknown"
+	}
+	return strings.ToUpper(role[:1]) + role[1:]
+}
+
+// displayDay formats a date for tables, or returns zero for an unset time.
+func displayDay(t time.Time, zero string) string {
+	if t.IsZero() {
+		return zero
+	}
+	return t.UTC().Format("Jan 2, 2006")
+}
+
+// protectInvitationLink keeps a response that carries an invitation token
+// out of caches and keeps its URL from other origins. Unlike no-referrer,
+// same-origin still sends Origin on the page's own form posts, which the
+// CSRF check requires.
+func protectInvitationLink(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "same-origin")
+}
+
 func createInvitation(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, form, ok := parseMutation(w, r, deps)
@@ -383,8 +445,7 @@ func createInvitation(deps core.Deps, service Service) http.HandlerFunc {
 			redirectAccessError(w, r, err)
 			return
 		}
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		protectInvitationLink(w)
 		renderAccessPage(w, r, deps, service.organizations, p, link, "")
 	}
 }
@@ -400,8 +461,7 @@ func resendInvitation(deps core.Deps, service Service) http.HandlerFunc {
 			redirectAccessError(w, r, err)
 			return
 		}
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		protectInvitationLink(w)
 		renderAccessPage(w, r, deps, service.organizations, p, link, "")
 	}
 }
@@ -448,80 +508,6 @@ func revokeMember(deps core.Deps, service organization.Service) http.HandlerFunc
 	}
 }
 
-func invitationPage(deps core.Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		token := r.PathValue("token")
-		org, invitation, ok := deps.Store.FindInvitation(hashInvitationToken(token))
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		p, signedIn := deps.Sessions.Principal(r)
-		currentEmail := ""
-		canRespond := false
-		if signedIn {
-			if account, err := deps.Store.SnapshotAs(p); err == nil {
-				currentEmail = account.User.Email
-				canRespond = core.NormalizeEmail(currentEmail) == core.NormalizeEmail(invitation.Email)
-			}
-		}
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		page := core.Page{
-			Layout: "auth", Title: "Organization invitation · TerraScale",
-			Principal: p, CSRFToken: deps.CSRF.Token(w, r),
-			View: func(page core.Page) templ.Component {
-				return invitationPageView(page, invitationPageData{
-					OrganizationName: org.Name, Email: invitation.Email, Role: invitation.Role,
-					ExpiresAt: invitation.ExpiresAt.UTC().Format(time.RFC3339),
-					Token:     token, CurrentEmail: currentEmail, HasSession: signedIn, CanRespond: canRespond,
-				})
-			},
-		}
-		if err := deps.Render.Page(w, r, page); err != nil {
-			http.Error(w, "could not render invitation page", http.StatusInternalServerError)
-		}
-	}
-}
-
-func respondToInvitation(deps core.Deps, service Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !deps.VerifyCSRF(w, r) {
-			return
-		}
-		p, ok := deps.Sessions.Principal(r)
-		if !ok {
-			http.Error(w, "authentication required", http.StatusUnauthorized)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid form", http.StatusBadRequest)
-			return
-		}
-		action := strings.ToLower(strings.TrimSpace(r.Form.Get("action")))
-		org, err := service.RespondToInvitation(p, r.PathValue("token"), action)
-		if err != nil {
-			writeProblem(w, err)
-			return
-		}
-		if action == "accept" {
-			refreshed, ok := deps.Store.CurrentPrincipal(p.AccountID, p.UserID)
-			if !ok {
-				writeProblem(w, core.ErrForbidden)
-				return
-			}
-			if err := deps.Sessions.Start(w, r, refreshed); err != nil {
-				http.Error(w, "could not refresh session", http.StatusInternalServerError)
-				return
-			}
-			http.Redirect(w, r, "/access?tab=members&accepted=1", http.StatusSeeOther)
-			return
-		}
-		http.Redirect(w, r, "/access?error="+url.QueryEscape("Invitation to "+org.Name+" declined."), http.StatusSeeOther)
-	}
-}
-
 func parseMutation(w http.ResponseWriter, r *http.Request, deps core.Deps) (core.Principal, url.Values, bool) {
 	if !deps.VerifyCSRF(w, r) {
 		return core.Principal{}, nil, false
@@ -544,6 +530,8 @@ func redirectAccessError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, core.ErrInvalid):
 		message = "Check the email address, role, or other submitted details."
+	case errors.Is(err, organization.ErrMemberLimit):
+		message = "Your plan's member limit is reached. Cancel a pending invitation, remove a member, or upgrade the plan."
 	case errors.Is(err, core.ErrConflict):
 		message = "That person is already a member or has a pending invitation."
 	case errors.Is(err, core.ErrForbidden):
@@ -553,7 +541,11 @@ func redirectAccessError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, core.ErrNotFound):
 		message = "The selected member or invitation was not found."
 	}
-	http.Redirect(w, r, "/access?error="+url.QueryEscape(message), http.StatusSeeOther)
+	query := url.Values{"error": {message}}
+	if tab := r.URL.Query().Get("tab"); slices.Contains(listTabs, tab) {
+		query.Set("tab", tab)
+	}
+	http.Redirect(w, r, "/access?"+query.Encode(), http.StatusSeeOther)
 }
 
 func writeProblem(w http.ResponseWriter, err error) {

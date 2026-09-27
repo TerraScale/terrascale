@@ -12,28 +12,55 @@ templ invitationPageView(page core.Page, data invitationPageData) {
 			<div class="ts-auth-brand">
 				<img class="ts-brand-logo" src={ static.URL("brand/logo-terrascale-blue.svg") } alt="TerraScale" decoding="async"/>
 			</div>
-			<div class="ts-auth-heading">
-				<p class="ts-eyebrow">Organization invitation</p>
-				<h1 class="ts-auth-title" id="invitation-title">Join { data.OrganizationName }</h1>
-				<p class="ts-auth-subtitle">You have been invited to join this organization as a { data.Role }.</p>
-				<p class="ts-meta">Invitation for { data.Email } · expires { data.ExpiresAt }</p>
-			</div>
-			if data.CanRespond {
-				<form method="post" action={ "/invitations/" + data.Token + "/respond" } class="ts-stack-sm">
-					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-					<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit" name="action" value="accept">Accept invitation</button>
-					<button class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" type="submit" name="action" value="decline">Decline</button>
-				</form>
-			} else if data.HasSession {
-				@ui.Alert("danger", "", "Sign in using "+data.Email+" to accept or decline this invitation. You are currently signed in as "+data.CurrentEmail+".")
-				<a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/login">Switch account</a>
+			if data.Unavailable {
+				@unavailableInvitation(data)
 			} else {
-				<p class="ts-muted">Sign in or create an account with { data.Email } to accept this invitation.</p>
-				<div class="ts-stack-sm">
-					<a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="/login">Sign in</a>
-					<a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/onboarding">Create account</a>
-				</div>
+				@pendingInvitation(page, data)
 			}
 		</section>
 	</main>
+}
+
+templ unavailableInvitation(data invitationPageData) {
+	<div class="ts-auth-heading">
+		<p class="ts-eyebrow">Organization invitation</p>
+		<h1 class="ts-auth-title" id="invitation-title">This invitation is no longer valid</h1>
+		<p class="ts-auth-subtitle">The link has expired, was canceled, or has already been used. Ask an organization owner to send you a new invitation.</p>
+	</div>
+	if data.HasSession {
+		<a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="/">Go to dashboard</a>
+	} else {
+		<a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="/login">Sign in</a>
+	}
+}
+
+templ pendingInvitation(page core.Page, data invitationPageData) {
+	<div class="ts-auth-heading">
+		<p class="ts-eyebrow">Organization invitation</p>
+		<h1 class="ts-auth-title" id="invitation-title">Join { data.OrganizationName }</h1>
+		<p class="ts-auth-subtitle">You have been invited to join this organization as a { data.Role }.</p>
+		<p class="ts-meta">Invitation for { data.Email } · { data.Expiry }</p>
+	</div>
+	if data.Error != "" {
+		@ui.Alert("danger", "", data.Error)
+	}
+	if data.CanRespond {
+		<form method="post" action={ invitationPath(data.Token) + "/respond" } class="ts-stack-sm">
+			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+			<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit" name="action" value="accept">Accept invitation</button>
+			<button class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" type="submit" name="action" value="decline">Decline</button>
+		</form>
+	} else if data.HasSession {
+		@ui.Alert("warning", "", "This invitation is for "+data.Email+", but you are signed in as "+data.CurrentEmail+". Sign out, then sign in with the invited email to answer it.")
+		<form method="post" action={ invitationPath(data.Token) + "/switch-account" }>
+			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+			<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Sign out and switch account</button>
+		</form>
+	} else {
+		<p class="ts-muted">Sign in with { data.Email } to accept this invitation. New to TerraScale? Create an account with that email, then open this link again.</p>
+		<div class="ts-stack-sm">
+			<a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href={ invitationLoginURL(data.Token) }>Sign in</a>
+			<a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/onboarding">Create account</a>
+		</div>
+	}
 }

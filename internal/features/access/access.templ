@@ -20,11 +20,24 @@ templ accessPageView(page core.Page, data pageData) {
 		if data.Error != "" {
 			@ui.Alert("warning", data.Error, "")
 		}
+		if data.Notice.Title != "" {
+			@ui.Alert(data.Notice.Tone, data.Notice.Title, data.Notice.Message)
+		}
 		if data.InviteURL != "" {
-			<section class="ts-alert ts-alert-success" aria-labelledby="invitation-link-title">
+			// The link answers a POST: swap the address for the tab's own, so a
+			// reload cannot resend the invitation and void the copied link.
+			<section class="ts-alert ts-alert-success" aria-labelledby="invitation-link-title" data-init={ "history.replaceState(null, '', '" + tabPath(data.Tab) + "')" }>
 				<p class="ts-alert-title" id="invitation-link-title">Invitation created</p>
-				<p class="ts-alert-body">Share this one-time link with the invitee. It will only be shown again if you resend the invitation.</p>
-				<a class="ts-link ts-break" href={ data.InviteURL } rel="noreferrer">{ data.InviteURL }</a>
+				<p class="ts-alert-body">Copy this link and send it to the invitee. It works once and expires in seven days; resending the invitation replaces it.</p>
+				<div class="ts-row">
+					<a id="invitation-link" class="ts-link ts-break" href={ data.InviteURL } rel="noreferrer" data-text="el.href">{ data.InviteURL }</a>
+					// Clipboard access needs a secure context and permission: say so when
+					// it fails, and reset the label after a copy.
+					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-signals="{_copy: ''}" data-on:click="(navigator.clipboard?.writeText(document.getElementById('invitation-link').href) ?? Promise.reject()).then(() => { $_copy = 'Copied'; setTimeout(() => $_copy = '', 2000) }, () => $_copy = 'Copy failed: select the link')">
+						@icons.Copy(14)
+						<span data-text="$_copy || 'Copy link'">Copy link</span>
+					</button>
+				</div>
 			</section>
 		}
 		<div class="ts-toolbar">
@@ -66,7 +79,7 @@ templ memberFilters(data pageData) {
 		<div class="ts-filter-field">
 			<span class="ts-sr-only" id="member-role-filter-label">Organization role</span>
 			@ui.Dropdown(ui.DropdownProps{End: true, LabelledBy: "member-role-filter-label member-role-filter-value", Trigger: roleFilterTrigger(data.RoleFilter), TriggerClass: "ts-select"}) {
-				for _, role := range []string{"all", "owner", "member", "viewer"} {
+				for _, role := range filterRoles {
 					@ui.MenuItem(ui.MenuItemProps{Type: "submit", Name: "role", Value: roleFilterValue(role), Label: roleFilterLabel(role), Current: data.RoleFilter == role})
 				}
 			}
@@ -130,7 +143,7 @@ templ accessOverview(page core.Page, data pageData) {
 							<li class="ts-list-item">
 								<span class="ts-list-main ts-strong ts-truncate">{ invitation.Email }</span>
 								@ui.StatusBadge(invitationTone(invitation.Status), invitation.Status)
-								if invitation.Status == "Pending" {
+								if invitation.Open {
 									<form method="post" action={ "/api/v1/access/invitations/" + invitation.ID + "/revoke" }><input type="hidden" name="_csrf" value={ page.CSRFToken }/><button class="ts-btn ts-btn-ghost ts-btn-sm" type="submit" title={ "Cancel invitation for " + invitation.Email }>Cancel</button></form>
 								}
 							</li>
@@ -166,19 +179,7 @@ templ accessMembers(page core.Page, data pageData) {
 					</tbody>
 				</table>
 			</div>
-			if data.PageCount > 1 {
-				<nav class="ts-pager" aria-label="Member pages">
-					<span>Showing { fmt.Sprint(data.First) }–{ fmt.Sprint(data.Last) } of { fmt.Sprint(data.Total) }</span>
-					<div class="ts-row">
-						if data.PreviousURL != "" {
-							<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ data.PreviousURL }>Previous</a>
-						}
-						if data.NextURL != "" {
-							<a class="ts-btn ts-btn-secondary ts-btn-sm" href={ data.NextURL }>Next</a>
-						}
-					</div>
-				</nav>
-			}
+			@accessPager("Member pages", data)
 		}
 	}
 }
@@ -202,14 +203,14 @@ templ accessProjects(data pageData) {
 										@ui.Badge("neutral", projectStatus(project.Selected))
 									}
 								</td>
-								<td class="ts-meta">{ project.CreatedAt }</td>
+								<td class="ts-meta ts-access-date">{ project.CreatedAt }</td>
 							</tr>
 						}
 					</tbody>
 				</table>
 			</div>
-			if data.Tab == "projects" && data.PageCount > 1 {
-				<nav class="ts-pager" aria-label="Project pages"><span>Showing { fmt.Sprint(data.First) }–{ fmt.Sprint(data.Last) } of { fmt.Sprint(data.Total) }</span></nav>
+			if data.Tab == "projects" {
+				@accessPager("Project pages", data)
 			}
 		}
 	}
@@ -218,7 +219,7 @@ templ accessProjects(data pageData) {
 templ accessInvitations(page core.Page, data pageData) {
 	if data.CanManage {
 		@ui.Card(ui.CardProps{ID: "team-invite", Title: "Invite a teammate", Description: "Links expire after seven days and can be refreshed by an owner."}) {
-			<form method="post" action="/api/v1/access/invitations" class="ts-access-invite">
+			<form method="post" action="/api/v1/access/invitations?tab=invitations" class="ts-access-invite">
 				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 				@ui.Field(ui.FieldProps{ID: "invite-email", Label: "Email address"}) {
 					<input class="ts-input" id="invite-email" name="email" type="email" autocomplete="email" placeholder="teammate@example.com" required/>
@@ -244,6 +245,7 @@ templ accessInvitations(page core.Page, data pageData) {
 					</tbody>
 				</table>
 			</div>
+			@accessPager("Invitation pages", data)
 		}
 	}
 }
@@ -260,6 +262,23 @@ templ shareChart(label, of string, shares []shareView) {
 			</li>
 		}
 	</ul>
+}
+
+// accessPager pages the active tab's list; it renders nothing for one page.
+templ accessPager(label string, data pageData) {
+	if data.PageCount > 1 {
+		<nav class="ts-pager" aria-label={ label }>
+			<span>Showing { fmt.Sprint(data.First) }–{ fmt.Sprint(data.Last) } of { fmt.Sprint(data.Total) }</span>
+			<div class="ts-row">
+				if data.PreviousURL != "" {
+					<a class="ts-btn ts-btn-secondary ts-btn-sm" rel="prev" href={ data.PreviousURL }>Previous</a>
+				}
+				if data.NextURL != "" {
+					<a class="ts-btn ts-btn-secondary ts-btn-sm" rel="next" href={ data.NextURL }>Next</a>
+				}
+			</div>
+		</nav>
+	}
 }
 
 templ noMembers() {
@@ -283,23 +302,33 @@ templ accessMemberRow(page core.Page, member memberView) {
 		<td><div class="ts-row ts-access-member">@memberIdentity(member)</div></td>
 		<td><code class="ts-meta">{ member.ID }</code></td>
 		<td>@ui.StatusBadge(memberRoleTone(member), accessMemberRoleLabel(member))</td>
-		<td class="ts-meta">{ member.JoinedAt }</td>
+		<td class="ts-meta ts-access-date">{ member.JoinedOn }</td>
 		<td class="ts-table-actions">
 			if member.CanEdit {
 				<div class="ts-row ts-row-end">
-					<form class="ts-row" method="post" action={ "/api/v1/access/members/" + member.ID + "/role" }>
+					<form class="ts-row" method="post" action={ "/api/v1/access/members/" + member.ID + "/role?tab=members" }>
 						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-						<label class="ts-sr-only" for={ "role-" + member.ID }>Role for { member.Name }</label>
-						<select class="ts-select ts-input-sm ts-access-role" id={ "role-" + member.ID } name="role">
+						<label class="ts-sr-only" for={ "role-" + member.ID }>Role for { accessMemberDisplayName(member) }</label>
+						<select class="ts-select ts-input-sm ts-access-role" id={ "role-" + member.ID } name="role" required>
+							// A role the form cannot assign stays shown and selected, so
+							// saving without a choice cannot silently change it.
+							if member.Role != "member" && member.Role != "viewer" {
+								<option value="" selected disabled>{ roleLabel(member.Role) }</option>
+							}
 							<option value="member" selected?={ member.Role == "member" }>Member</option>
 							<option value="viewer" selected?={ member.Role == "viewer" }>Viewer</option>
 						</select>
 						<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Save role</button>
 					</form>
-					<form method="post" action={ "/api/v1/access/members/" + member.ID + "/revoke" }>
-						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-						<button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">Remove access</button>
-					</form>
+					@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "remove-member-" + member.ID, Label: "Remove access", Variant: "danger", Small: true})
+					@ui.Dialog(ui.DialogProps{ID: "remove-member-" + member.ID, Title: "Remove " + accessMemberDisplayName(member) + "?", Description: member.Email + " loses access to this organization and all of its projects. You can invite them again later."}) {
+						<form method="post" action={ "/api/v1/access/members/" + member.ID + "/revoke?tab=members" }>
+							<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+							@ui.DialogActions("remove-member-" + member.ID) {
+								<button class="ts-btn ts-btn-danger" type="submit">Remove access</button>
+							}
+						</form>
+					}
 				</div>
 			} else if member.IsSelf {
 				<span class="ts-meta">You</span>
@@ -313,17 +342,17 @@ templ accessMemberRow(page core.Page, member memberView) {
 templ accessInvitationRow(page core.Page, canManage bool, invitation invitationView) {
 	<tr>
 		<td class="ts-strong">{ invitation.Email }</td>
-		<td>{ invitation.Role }</td>
+		<td>{ roleLabel(invitation.Role) }</td>
 		<td>@ui.StatusBadge(invitationTone(invitation.Status), invitation.Status)</td>
-		<td class="ts-meta">{ invitation.ExpiresAt }</td>
+		<td class="ts-meta ts-access-date">{ invitation.ExpiresOn }</td>
 		<td class="ts-table-actions">
-			if canManage && invitation.Status == "Pending" {
+			if canManage && invitation.Open {
 				<div class="ts-row ts-row-end">
-					<form method="post" action={ "/api/v1/access/invitations/" + invitation.ID + "/resend" }>
+					<form method="post" action={ "/api/v1/access/invitations/" + invitation.ID + "/resend?tab=invitations" }>
 						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 						<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Resend</button>
 					</form>
-					<form method="post" action={ "/api/v1/access/invitations/" + invitation.ID + "/revoke" }>
+					<form method="post" action={ "/api/v1/access/invitations/" + invitation.ID + "/revoke?tab=invitations" }>
 						<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 						<button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">Cancel</button>
 					</form>
@@ -335,6 +364,14 @@ templ accessInvitationRow(page core.Page, canManage bool, invitation invitationV
 	</tr>
 }
 
+// tabPath is the address of a Team page tab.
+func tabPath(tab string) string {
+	if tab == "overview" {
+		return "/access"
+	}
+	return "/access?tab=" + tab
+}
+
 func roleFilterValue(role string) string {
 	if role == "all" {
 		return ""
@@ -344,14 +381,12 @@ func roleFilterValue(role string) string {
 
 func roleFilterLabel(role string) string {
 	switch role {
+	case "all":
+		return "All roles"
 	case "owner":
 		return "Organization owner"
-	case "member":
-		return "Member"
-	case "viewer":
-		return "Viewer"
 	default:
-		return "All roles"
+		return roleLabel(role)
 	}
 }
 
@@ -389,11 +424,7 @@ func accessMemberRoleLabel(member memberView) string {
 	if member.IsOwner {
 		return "Organization Owner"
 	}
-	role := strings.TrimSpace(member.Role)
-	if role == "" {
-		return "Unknown"
-	}
-	return strings.ToUpper(role[:1]) + role[1:]
+	return roleLabel(member.Role)
 }
 
 func invitationNoun(count int) string {
