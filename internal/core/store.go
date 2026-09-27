@@ -339,10 +339,23 @@ func (s *Store) updateLocked(accountID string, mutate func(*Account) error) erro
 		if !s.providerUniqueLocked(id, org) {
 			return ErrConflict
 		}
+		if !s.withinDatabaseLimitLocked(id, org) {
+			return ErrDatabaseLimit
+		}
 	}
 	s.putLocked(next)
 	s.repairSelectionsLocked()
 	return nil
+}
+
+// withinDatabaseLimitLocked reports whether org may be committed with its
+// databases. Whatever route adds a database, the organization must stay
+// within its plan's MaxDatabases; one already past it, such as after a
+// downgrade, keeps what it has but cannot gain more.
+func (s *Store) withinDatabaseLimitLocked(id string, org Organization) bool {
+	limit := s.plans[org.PlanID].MaxDatabases
+	count := org.DatabaseCount()
+	return limit <= 0 || count <= limit || count <= s.organizations[id].DatabaseCount()
 }
 
 func (s *Store) providerUniqueLocked(id string, org Organization) bool {

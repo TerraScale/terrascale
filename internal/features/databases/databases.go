@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"errors"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -13,9 +12,6 @@ import (
 	"terrascale.tech/dashboard/internal/core"
 	sdk "terrascale.tech/sdk"
 )
-
-var namePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
-var errPlanDatabaseLimit = errors.New("plan database limit reached")
 
 type databaseView struct {
 	ID        string    `json:"id"`
@@ -67,7 +63,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			regionValue = project.Region
 		}
 		region, err := sdk.ParseRegionCode(regionValue)
-		if !namePattern.MatchString(name) || err != nil {
+		if !core.ValidDatabaseName(name) || err != nil {
 			http.Error(w, "valid database name and region are required", http.StatusBadRequest)
 			return
 		}
@@ -75,36 +71,14 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if deps.Demo {
 			db.Status = "ready"
 		}
-		account, err := deps.Store.SnapshotAs(p)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		selectedOrg, exists := account.Organizations[p.OrganizationID]
-		if !exists {
-			writeError(w, core.ErrNotFound)
-			return
-		}
-		err = deps.Store.UpdateAsWithPlan(p, selectedOrg.PlanID, func(a *core.Account, plan core.Plan) error {
+		err = deps.Store.UpdateAs(p, func(a *core.Account) error {
 			project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 			if err != nil {
 				return err
 			}
 			org := a.Organizations[p.OrganizationID]
-			if org.PlanID != plan.ID {
-				return core.ErrConflict
-			}
 			if !org.CanProvisionResources(p.UserID) {
 				return core.ErrForbidden
-			}
-			if plan.MaxDatabases > 0 {
-				count := 0
-				for _, item := range org.Projects {
-					count += len(item.Databases)
-				}
-				if count >= plan.MaxDatabases {
-					return errPlanDatabaseLimit
-				}
 			}
 			for _, existing := range project.Databases {
 				if existing.Name == name {
@@ -374,8 +348,8 @@ func setStatus(deps core.Deps, p core.Principal, databaseID, status string) erro
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, errPlanDatabaseLimit):
-		http.Error(w, "plan database limit reached", http.StatusConflict)
+	case errors.Is(err, core.ErrDatabaseLimit):
+		http.Error(w, core.ErrDatabaseLimit.Error(), http.StatusConflict)
 	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)

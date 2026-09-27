@@ -526,7 +526,7 @@ func detailBackups(page core.Page, d detailData) templ.Component {
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "\" name=\"name\" placeholder=\"New database name\" required> <button class=\"ts-btn ts-btn-secondary ts-btn-sm\" type=\"submit\">Restore side by side</button></form>")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "\" name=\"name\" placeholder=\"New database name\" pattern=\"[a-z0-9][a-z0-9\\-]*\" maxlength=\"63\" required> <button class=\"ts-btn ts-btn-secondary ts-btn-sm\" type=\"submit\">Restore side by side</button></form>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}

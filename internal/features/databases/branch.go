@@ -37,7 +37,7 @@ func mountBranch(mux *http.ServeMux, deps core.Deps) {
 		if _, hasName := r.Form["name"]; !hasName {
 			name = previewBranchName(source.Name)
 		}
-		if !namePattern.MatchString(name) || source.Status != "ready" {
+		if !core.ValidDatabaseName(name) || source.Status != "ready" {
 			http.Error(w, "valid branch name and ready source database are required", http.StatusBadRequest)
 			return
 		}

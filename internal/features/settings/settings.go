@@ -586,6 +586,8 @@ func redirectSettings(w http.ResponseWriter, r *http.Request, tab, toast, databa
 func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case core.WriteAccessError(w, err):
+	case errors.Is(err, core.ErrDatabaseLimit):
+		http.Error(w, core.ErrDatabaseLimit.Error(), http.StatusConflict)
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)
 	default:
