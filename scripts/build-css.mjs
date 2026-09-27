@@ -68,6 +68,8 @@ function fingerprint(url) {
   if (!url.url.startsWith('/') || url.url.startsWith('//')) {
     return url;
   }
+  // The file lookup needs the decoded path; the emitted URL keeps the
+  // specifier as written so escapes, queries and fragments survive.
   const path = new URL(url.url, 'file:').pathname;
   let contents;
   try {
@@ -77,7 +79,9 @@ function fingerprint(url) {
   }
   // static.Version: the first six bytes of the SHA-256, in hex.
   const version = createHash('sha256').update(contents).digest('hex').slice(0, 12);
-  return { ...url, url: `${path}?v=${version}` };
+  const [resource, fragment] = url.url.split(/(?=#)/, 2);
+  const separator = resource.includes('?') ? '&' : '?';
+  return { ...url, url: `${resource}${separator}v=${version}${fragment ?? ''}` };
 }
 
 // Brotli at quality 11 is too slow to run per request but shrinks the
@@ -90,7 +94,11 @@ async function precompress(file, contents) {
       [constants.BROTLI_PARAM_SIZE_HINT]: contents.length,
     },
   });
-  await writeFile(`${file}.br`, compressed);
+  // Swap it in whole, like the stylesheet itself, so the server never sends a
+  // partly written brotli stream.
+  const temporary = `${file}.br.${process.pid}.tmp`;
+  await writeFile(temporary, compressed);
+  await rename(temporary, `${file}.br`);
 }
 
 const bytes = await build();
