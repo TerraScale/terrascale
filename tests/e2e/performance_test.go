@@ -27,9 +27,12 @@ func TestPerformance(t *testing.T) {
 		t.Fatal("PERF_RUNS must be a positive integer")
 	}
 
+	page := newPage(t)
+	login(t, page, sampleAccount.Email, sampleAccount.Password)
+	paths := []string{"/login", "/", "/databases", sqlConsolePath(t, page), "/settings", "/usage"}
 	var samples []perfSample
 	for _, profile := range []string{"desktop", "mobile"} {
-		for _, path := range []string{"/login", "/", "/databases", "/data", "/settings", "/usage"} {
+		for _, path := range paths {
 			for run := range runs {
 				samples = append(samples, measure(t, profile, path, run)...)
 			}
@@ -113,6 +116,15 @@ var mobileThrottling = []cdpCommand{
 	{"Network.emulateNetworkConditions", map[string]any{"offline": false, "latency": 80, "downloadThroughput": 200_000, "uploadThroughput": 100_000}},
 }
 
+// sqlConsolePath returns the SQL console of the sample account's core-primary
+// database, the page that loads the code editor; page must be signed in as the
+// sample account.
+func sqlConsolePath(t *testing.T, page playwright.Page) string {
+	t.Helper()
+	goToOK(t, page, "/databases")
+	return linkPath(t, page, pageByRole(page, *playwright.AriaRoleLink, "core-primary")) + "/sql"
+}
+
 func measure(t *testing.T, profile, path string, run int) []perfSample {
 	t.Helper()
 	viewport := &playwright.Size{Width: 1440, Height: 900}
@@ -130,7 +142,8 @@ func measure(t *testing.T, profile, path string, run int) []perfSample {
 	must(t, page.BringToFront())
 	cdp, err := context.NewCDPSession(page)
 	must(t, err)
-	commands := []cdpCommand{{method: "Network.enable"}}
+	// Signing in cached the shared assets; drop them so "cold" means cold.
+	commands := []cdpCommand{{method: "Network.enable"}, {method: "Network.clearBrowserCache"}}
 	if profile == "mobile" {
 		commands = append(commands, mobileThrottling...)
 	}

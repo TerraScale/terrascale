@@ -92,6 +92,13 @@ falls back to the newest headless shell under `PLAYWRIGHT_BROWSERS_PATH`
 so tests run in parallel. Set `DASHBOARD_E2E_SCREENSHOTS=<dir>` to capture
 desktop and mobile screenshots.
 
+`tests/e2e/page_weight_test.go` loads the main pages with a cold cache and
+fails when the compressed document, stylesheet, fonts, scripts, or images of a
+page exceed their budget; raise a budget only when the extra bytes are
+intended. `make perf` measures Core Web Vitals on desktop and throttled mobile
+profiles, each page once with a cold cache and once warm; set `PERF_BASELINE`
+to a previous report to fail on regressions.
+
 The SDK journey registers through the browser, creates databases and scoped
 API keys against an in-process public API fixture, then uses the vendored
 `ts-go` SDK to write, read, and delete a document. The fixture exists only
