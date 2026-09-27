@@ -196,7 +196,8 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			project = org.Projects[projectID]
 		}
 		if project.ID == "" && tab != "billing" {
-			http.Error(w, "selected project is unavailable", http.StatusNotFound)
+			// Without a project, Overview leads to the project setup.
+			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
 		databaseFilter := r.URL.Query().Get("database")
