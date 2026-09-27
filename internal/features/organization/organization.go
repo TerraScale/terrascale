@@ -1,6 +1,7 @@
 package organization
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/http"
@@ -78,8 +79,12 @@ type organizationPageData struct {
 	NewOrganizationID   string
 	Error               string
 	PaymentCanceled     bool
-	OwnershipRequested  bool
 	CanConfirmOwnership bool
+	// OwnerName tells a nominee who asked; PendingOwner and TransferExpires
+	// tell the owner whom they nominated, while the transfer is still open.
+	OwnerName       string
+	PendingOwner    memberView
+	TransferExpires string
 }
 
 // Mount registers organization, project, and organization-scope routes.
@@ -97,6 +102,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	mux.HandleFunc("POST /api/v1/dashboard/organization/members/{userID}/remove", removeMember(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/members/ownership", requestOwnershipTransfer(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/members/ownership/confirm", confirmOwnershipTransfer(deps, service))
+	mux.HandleFunc("POST /api/v1/dashboard/organization/members/ownership/cancel", cancelOwnershipTransfer(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/deletion", requestDeletion(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/leave", leaveOrganization(deps, service))
 }
@@ -120,7 +126,7 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 			writeProblem(w, err)
 			return
 		}
-		data := makeOrganizationPage(account, org, p, r.URL.Query().Get("newOrganization"), r.URL.Query().Get("error"))
+		data := makeOrganizationPage(account, org, p, r.URL.Query().Get("newOrganization"), r.URL.Query().Get("error"), time.Now())
 		data.NewOrganizationID = org.ID
 		data.PaymentCanceled = paymentVerified && r.URL.Query().Get("payment") == "canceled" && data.NewOrganization == "payment"
 		data.OpenCreateProject = r.URL.Query().Get("newProject") == "1"
@@ -196,7 +202,7 @@ func resumeCheckoutOrganization(deps core.Deps, service Service, w http.Response
 	return refreshed, true, nil
 }
 
-func makeOrganizationPage(account core.Account, active core.Organization, p core.Principal, step, pageError string) organizationPageData {
+func makeOrganizationPage(account core.Account, active core.Organization, p core.Principal, step, pageError string, now time.Time) organizationPageData {
 	data := organizationPageData{
 		Organization:        activeOrganizationView(active),
 		InvitationCount:     len(active.Invitations),
@@ -208,8 +214,14 @@ func makeOrganizationPage(account core.Account, active core.Organization, p core
 		SignedInEmail:       account.User.Email,
 		Error:               pageError,
 		Regions:             supportedRegions,
-		OwnershipRequested:  active.PendingOwnerUserID != "",
-		CanConfirmOwnership: active.PendingOwnerUserID == p.UserID && active.PendingOwnerExpiresAt.After(time.Now()),
+		CanConfirmOwnership: active.PendingOwnerUserID == p.UserID && active.PendingOwnerExpiresAt.After(now),
+	}
+	if owner, ok := active.Members[active.OwnerUserID]; ok {
+		data.OwnerName = cmp.Or(owner.Name, owner.Email)
+	}
+	if nominee, ok := active.Members[active.PendingOwnerUserID]; ok && nominee.Status == statusActive && active.PendingOwnerExpiresAt.After(now) {
+		data.PendingOwner = memberView{ID: nominee.UserID, Name: cmp.Or(nominee.Name, nominee.Email), Email: nominee.Email, Role: nominee.Role}
+		data.TransferExpires = active.PendingOwnerExpiresAt.UTC().Format("Jan 2, 2006")
 	}
 	if strings.TrimSpace(step) != "" {
 		data.NewOrganization = normalizeWizardStep(step, active)
@@ -495,6 +507,12 @@ func confirmOwnershipTransfer(deps core.Deps, service Service) http.HandlerFunc 
 	}
 }
 
+func cancelOwnershipTransfer(deps core.Deps, service Service) http.HandlerFunc {
+	return organizationMutation(deps, "/organization", func(p core.Principal, _ *http.Request, _ url.Values) error {
+		return service.CancelOwnershipTransfer(p)
+	})
+}
+
 func requestDeletion(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, form, ok := parseMutation(w, r, deps)
@@ -577,6 +595,8 @@ func redirectWithError(w http.ResponseWriter, r *http.Request, path string, err 
 		message = "Complete Business billing before creating resources."
 	case errors.Is(err, ErrPersonalOrg):
 		message = "Personal workspaces cannot be left or deleted."
+	case errors.Is(err, ErrNoTransfer):
+		message = "That ownership transfer is no longer pending. It expired, was canceled, or went to another member."
 	case errors.Is(err, ErrRequiresOwner):
 		message = "Only an organization owner can make that change."
 	case errors.Is(err, core.ErrForbidden):

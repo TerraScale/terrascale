@@ -122,26 +122,60 @@ templ organizationPageView(page core.Page, data organizationPageData) {
 
 templ organizationOwnership(page core.Page, data organizationPageData) {
 	if data.CanLeave {
-		<form method="post" action="/api/v1/dashboard/organization/leave">
-			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-			<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">@icons.LogOut(14)<span>Leave organization</span></button>
-		</form>
+		@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "leave-organization", Label: "Leave organization", Icon: icons.LogOut(14), Small: true})
+		@ui.Dialog(ui.DialogProps{ID: "leave-organization", Title: "Leave " + data.Organization.Name + "?", Description: "You lose access to its projects and data right away. To come back, an owner has to invite you again."}) {
+			<form method="post" action="/api/v1/dashboard/organization/leave">
+				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+				@ui.DialogActions("leave-organization") {
+					<button class="ts-btn ts-btn-danger" type="submit">Leave organization</button>
+				}
+			</form>
+		}
+	}
+	if data.CanConfirmOwnership {
+		@ui.Alert("info", "You are asked to take ownership", data.OwnerName+" wants to make you the owner of "+data.Organization.Name+". You would control its billing, members, and deletion, and "+data.OwnerName+" would become a member. The request expires "+data.TransferExpires+".") {
+			<div class="ts-row">
+				<form method="post" action="/api/v1/dashboard/organization/members/ownership/confirm">
+					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+					<button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Accept ownership</button>
+				</form>
+				<form method="post" action="/api/v1/dashboard/organization/members/ownership/cancel">
+					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Decline</button>
+				</form>
+			</div>
+		}
 	}
 	if data.CanManage {
-		if hasTransferCandidate(data.Members) {
-			<form method="post" action="/api/v1/dashboard/organization/members/ownership" class="ts-form">
-				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-				@ui.Field(ui.FieldProps{ID: "new-owner", Label: "Transfer ownership to"}) {
-					<select class="ts-select" id="new-owner" name="userID" required>
-						for _, member := range data.Members {
-							if !member.IsOwner {
-								<option value={ member.ID }>{ member.Name } · { member.Email }</option>
+		if data.Organization.Kind != "personal" {
+			<p class="ts-meta">As the owner you can't leave this organization. Transfer ownership to another member first.</p>
+		}
+		if data.PendingOwner.ID != "" {
+			@ui.Alert("info", "Ownership transfer pending", "Waiting for "+data.PendingOwner.Name+" ("+data.PendingOwner.Email+") to accept. The request expires "+data.TransferExpires+".") {
+				<form method="post" action="/api/v1/dashboard/organization/members/ownership/cancel">
+					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Cancel transfer</button>
+				</form>
+			}
+		} else if hasTransferCandidate(data.Members) {
+			@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "transfer-ownership", Label: "Transfer ownership", Small: true})
+			@ui.Dialog(ui.DialogProps{ID: "transfer-ownership", Title: "Transfer ownership", Description: "The member you choose becomes the owner once they accept, within seven days. You then become a member and lose control of billing, members, and deletion."}) {
+				<form method="post" action="/api/v1/dashboard/organization/members/ownership" class="ts-form">
+					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+					@ui.Field(ui.FieldProps{ID: "new-owner", Label: "New owner"}) {
+						<select class="ts-select" id="new-owner" name="userID" required>
+							for _, member := range data.Members {
+								if !member.IsOwner {
+									<option value={ member.ID }>{ member.Name } · { member.Email }</option>
+								}
 							}
-						}
-					</select>
-				}
-				<div class="ts-form-actions"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Request transfer</button></div>
-			</form>
+						</select>
+					}
+					@ui.DialogActions("transfer-ownership") {
+						<button class="ts-btn ts-btn-primary" type="submit">Request transfer</button>
+					}
+				</form>
+			}
 		} else {
 			<p class="ts-meta">Invite another member before transferring ownership.</p>
 		}
@@ -161,12 +195,6 @@ templ organizationOwnership(page core.Page, data organizationPageData) {
 				</form>
 			}
 		}
-	} else if data.CanConfirmOwnership {
-		<h3 class="ts-section-title">Confirm ownership transfer</h3>
-		<form method="post" action="/api/v1/dashboard/organization/members/ownership/confirm">
-			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-			<button class="ts-btn ts-btn-primary" type="submit">Accept ownership</button>
-		</form>
 	}
 }
 
