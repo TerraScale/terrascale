@@ -3,12 +3,16 @@ package auth
 import (
 	"encoding/json/v2"
 	"errors"
+	"fmt"
+	"math"
 	"mime"
 	"net/http"
 	"net/mail"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -210,6 +214,11 @@ func loginForm(deps core.Deps) http.HandlerFunc {
 			renderLogin(w, r, deps, http.StatusUnauthorized, data)
 			return
 		}
+		if refused, ok := errors.AsType[tooManyAttempts](err); ok {
+			data.Error = refused.retryAfter(w)
+			renderLogin(w, r, deps, http.StatusTooManyRequests, data)
+			return
+		}
 		if err != nil {
 			http.Error(w, "could not create session", http.StatusInternalServerError)
 			return
@@ -381,6 +390,11 @@ func loginAPI(deps core.Deps) http.HandlerFunc {
 			writeJSON(w, http.StatusUnauthorized, apiError{Error: "invalid_credentials"})
 			return
 		}
+		if refused, ok := errors.AsType[tooManyAttempts](err); ok {
+			refused.retryAfter(w)
+			writeJSON(w, http.StatusTooManyRequests, apiError{Error: "too_many_attempts"})
+			return
+		}
 		if err != nil {
 			http.Error(w, "could not create session", http.StatusInternalServerError)
 			return
@@ -392,10 +406,36 @@ func loginAPI(deps core.Deps) http.HandlerFunc {
 	}
 }
 
+// tooManyAttempts is a sign-in attempt the throttle refused before checking
+// the password.
+type tooManyAttempts struct{ wait time.Duration }
+
+func (tooManyAttempts) Error() string { return "too many sign-in attempts" }
+
+// retryAfter sets the Retry-After header to the wait in whole seconds and
+// returns the message that tells a person how long to wait.
+func (e tooManyAttempts) retryAfter(w http.ResponseWriter) string {
+	seconds := max(1, int(math.Ceil(e.wait.Seconds())))
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	if seconds == 1 {
+		return "Too many sign-in attempts. Try again in 1 second."
+	}
+	return fmt.Sprintf("Too many sign-in attempts. Try again in %d seconds.", seconds)
+}
+
 // startPasswordSession checks the credentials and starts a session bound to
 // the account's current password hash. An unknown email is checked against a
 // dummy hash, so the response time does not reveal which accounts exist.
+// The throttle counts failed attempts by the normalized email whether or not
+// an account uses it, so its refusals do not reveal that either.
 func startPasswordSession(w http.ResponseWriter, r *http.Request, deps core.Deps, email, password string) (core.Account, error) {
+	if deps.Throttle == nil {
+		return core.Account{}, errors.New("sign-in throttling is unavailable")
+	}
+	email = core.NormalizeEmail(email)
+	if wait, allowed := deps.Throttle.Allow(r, email); !allowed {
+		return core.Account{}, tooManyAttempts{wait: wait}
+	}
 	account, exists := deps.Store.FindByEmail(email)
 	passwordHash := dummyPasswordHash()
 	if exists {
@@ -405,6 +445,7 @@ func startPasswordSession(w http.ResponseWriter, r *http.Request, deps core.Deps
 	if !exists || !passwordMatches {
 		return core.Account{}, errInvalidCredentials
 	}
+	deps.Throttle.Forgive(r, email)
 	credentialSessions, ok := deps.Sessions.(core.CredentialSessions)
 	if !ok {
 		return core.Account{}, errors.New("credential-bound sessions are unavailable")

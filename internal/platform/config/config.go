@@ -22,6 +22,10 @@ type Config struct {
 	// StatusURL is the Statuspage-compatible summary.json the shell banner
 	// reads; empty disables the banner.
 	StatusURL string
+	// ClientIPHeader names the header in which the reverse proxy in front of
+	// the dashboard reports the client address; empty means the connection's
+	// remote address is the client's.
+	ClientIPHeader string
 }
 
 func Load() (Config, error) {
@@ -49,6 +53,11 @@ func Load() (Config, error) {
 	c.SecureCookies = os.Getenv("DASHBOARD_SECURE_COOKIES") == "1" ||
 		(os.Getenv("DASHBOARD_SECURE_COOKIES") != "0" && !c.Dev &&
 			(strings.HasPrefix(os.Getenv("DASHBOARD_PUBLIC_URL"), "https://") || os.Getenv("FLY_APP_NAME") != ""))
+	// On Fly.io every request arrives through Fly Proxy, which reports the
+	// client address in Fly-Client-IP.
+	if os.Getenv("FLY_APP_NAME") != "" {
+		c.ClientIPHeader = "Fly-Client-IP"
+	}
 	if (c.AdminEmail == "") != (c.AdminPassword == "") {
 		return Config{}, errors.New("demo admin email and password must both be set")
 	}

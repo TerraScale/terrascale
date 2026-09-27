@@ -13,6 +13,7 @@ import (
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
+	"terrascale.tech/dashboard/internal/platform/throttle"
 )
 
 const (
@@ -20,12 +21,17 @@ const (
 	testPassword = "correct-horse-battery"
 )
 
-func newLoginMux(t *testing.T) *http.ServeMux {
+// newLoginMux mounts the auth routes with one registered account, throttling
+// failed sign-ins with limits (zero budgets use the defaults).
+func newLoginMux(t *testing.T, limits throttle.Options) *http.ServeMux {
 	t.Helper()
 	store := core.NewStore()
 	sessions := session.New(store, session.Options{})
 	guard := csrf.New(sessions, csrf.Options{})
-	deps := core.Deps{Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil)}
+	deps := core.Deps{
+		Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil),
+		Throttle: throttle.New(limits),
+	}
 	if _, err := RegisterAccount(deps, RegistrationInput{
 		DisplayName: "Ada Lovelace", Email: testEmail, Password: testPassword,
 		ConfirmPassword: testPassword, AcceptedTerms: true,
@@ -59,7 +65,7 @@ func inputTag(t *testing.T, body, id string) string {
 
 func TestLoginFormKeepsEmailAfterRejectedCredentials(t *testing.T) {
 	t.Parallel()
-	mux := newLoginMux(t)
+	mux := newLoginMux(t, throttle.Options{})
 	response := postLogin(mux, url.Values{"email": {" " + testEmail + " "}, "password": {"wrong-password-123"}, "redirectTo": {"/databases"}})
 
 	body := response.Body.String()
@@ -84,7 +90,7 @@ func TestLoginFormKeepsEmailAfterRejectedCredentials(t *testing.T) {
 
 func TestLoginFormAsksForMissingFields(t *testing.T) {
 	t.Parallel()
-	mux := newLoginMux(t)
+	mux := newLoginMux(t, throttle.Options{})
 	response := postLogin(mux, url.Values{"email": {"  "}, "password": {""}})
 
 	body := response.Body.String()
@@ -115,7 +121,7 @@ func TestLoginFormAsksForMissingFields(t *testing.T) {
 
 func TestLoginFormRedirectsAfterSignIn(t *testing.T) {
 	t.Parallel()
-	mux := newLoginMux(t)
+	mux := newLoginMux(t, throttle.Options{})
 	for _, tc := range []struct{ redirectTo, want string }{
 		{redirectTo: "", want: "/onboarding"},
 		{redirectTo: "/databases?tab=all", want: "/databases?tab=all"},
@@ -133,7 +139,7 @@ func TestLoginFormRedirectsAfterSignIn(t *testing.T) {
 
 func TestLoginPageIgnoresErrorQuery(t *testing.T) {
 	t.Parallel()
-	mux := newLoginMux(t)
+	mux := newLoginMux(t, throttle.Options{})
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/login?error="+url.QueryEscape("Account locked. Call +1 555 0100."), nil))
 	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "Account locked") {
@@ -143,7 +149,7 @@ func TestLoginPageIgnoresErrorQuery(t *testing.T) {
 
 func TestLoginAPIAcceptsOnlyJSON(t *testing.T) {
 	t.Parallel()
-	mux := newLoginMux(t)
+	mux := newLoginMux(t, throttle.Options{})
 	for _, tc := range []struct {
 		contentType, body string
 		status            int
