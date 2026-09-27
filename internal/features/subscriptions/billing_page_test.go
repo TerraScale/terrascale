@@ -192,10 +192,10 @@ func TestUpcomingChangeHumanizesMissingPlanKey(t *testing.T) {
 func TestBillingPageShowsAPendingUpgrade(t *testing.T) {
 	fixture := newBillingFixture(t)
 	fixture.subscribe(t, "starter", intervalMonthly)
-	// Stripe reports an upgrade awaiting payment as the pending plan.
 	if err := fixture.store.UpdateAs(fixture.principal, func(account *core.Account) error {
 		org := account.Organizations[fixture.principal.OrganizationID]
-		org.Billing.PendingPlanKey, org.Billing.PendingInterval = "business", intervalAnnual
+		org.Billing.PendingPlanKey = "business"
+		org.Billing.PendingInterval = intervalAnnual
 		account.Organizations[org.ID] = org
 		return nil
 	}); err != nil {
