@@ -15,7 +15,11 @@ import (
 	sdk "terrascale.tech/sdk"
 )
 
-const maxDocumentBytes = 1 << 20
+const (
+	maxDocumentBytes = 1 << 20
+	// maxDemoRows is the most rows one in-memory demo query returns.
+	maxDemoRows = 100
+)
 
 var selectPattern = regexp.MustCompile(`(?i)^select\s+\*\s+from\s+([a-z][a-z0-9_-]*)(?:\s+limit\s+([0-9]{1,3}))?\s*;?$`)
 
@@ -621,8 +625,6 @@ func documentFailure(err error, id, collection string) (int, string) {
 		return http.StatusConflict, "A document with ID " + id + " already exists in " + collection + ". Choose another ID or edit that document."
 	case errors.Is(err, core.ErrNotFound):
 		return http.StatusNotFound, "Document " + id + " no longer exists in " + collection + "."
-	case errors.Is(err, core.ErrInvalid):
-		return http.StatusBadRequest, "A patch must be a JSON object; its fields are merged into the document."
 	default:
 		return failure(err, "The data plane rejected the change")
 	}

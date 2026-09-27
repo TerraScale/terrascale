@@ -86,6 +86,29 @@ func TestSQLResultReportsMatchedRowsBeyondTheRowsReturned(t *testing.T) {
 	}
 }
 
+func TestDemoSelectReportsTheRowsItsDefaultCapLeavesOut(t *testing.T) {
+	documents := make(map[string][]byte, maxDemoRows+20)
+	for i := range maxDemoRows + 20 {
+		documents[fmt.Sprintf("doc_%03d", i)] = []byte(`{}`)
+	}
+
+	rows, matched, ok := demoSelect(documents, "")
+	if !ok || len(rows) != maxDemoRows || matched != maxDemoRows+20 || rows[0].ID != "doc_000" {
+		t.Fatalf("without a LIMIT: %d rows from %q, matched %d; want the first %d of %d", len(rows), rows[0].ID, matched, maxDemoRows, maxDemoRows+20)
+	}
+	if !newSQLResult(rows, matched).Truncated() {
+		t.Fatal("a query cut by the demo cap says so")
+	}
+	if rows, matched, ok = demoSelect(documents, "5"); !ok || len(rows) != 5 || matched != 5 {
+		t.Fatalf("LIMIT 5: %d rows, matched %d; the LIMIT is part of the query", len(rows), matched)
+	}
+	for _, limit := range []string{"0", "101"} {
+		if _, _, ok := demoSelect(documents, limit); ok {
+			t.Errorf("LIMIT %s is outside 1 to %d and is refused", limit, maxDemoRows)
+		}
+	}
+}
+
 func TestParseSchemaExplainsWhatToFix(t *testing.T) {
 	cases := []struct {
 		name, body, want string

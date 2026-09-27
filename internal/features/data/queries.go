@@ -86,23 +86,14 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			failed(http.StatusBadRequest, "The in-memory demo runs SELECT * FROM collection [LIMIT n] only. Check SQL validates any other read-only statement.")
 			return
 		}
-		limit := 100
-		if matches[2] != "" {
-			limit, _ = strconv.Atoi(matches[2])
-		}
-		if limit < 1 || limit > 100 {
-			failed(http.StatusBadRequest, "Demo queries return 1 to 100 rows; use a LIMIT in that range.")
+		rows, matched, ok := demoSelect(db.Documents[matches[1]], matches[2])
+		if !ok {
+			failed(http.StatusBadRequest, "Demo queries return 1 to "+strconv.Itoa(maxDemoRows)+" rows; use a LIMIT in that range.")
 			return
 		}
-		rows := make([]documentView, 0, len(db.Documents[matches[1]]))
-		for id, body := range db.Documents[matches[1]] {
-			rows = append(rows, documentView{ID: id, Value: slices.Clone(body)})
-		}
-		slices.SortFunc(rows, func(a, b documentView) int { return strings.Compare(a.ID, b.ID) })
-		rows = rows[:min(len(rows), limit)]
 		writeSQLResponse(w, r, deps, db.ID, statement, struct {
 			Rows []documentView `json:"rows"`
-		}{Rows: rows}, newSQLResult(rows, len(rows)))
+		}{Rows: rows}, newSQLResult(rows, matched))
 	})
 	mux.HandleFunc("GET /api/v1/dashboard/data/saved-queries", func(w http.ResponseWriter, r *http.Request) {
 		_, _, project, err := selectedProject(deps, r)
@@ -250,6 +241,29 @@ func liveResult(result *sdk.SQLResult) sqlResult {
 	table := newSQLResult(rows, int(min(result.Matched, math.MaxInt32)))
 	table.Explain = result.Explain
 	return table
+}
+
+// demoSelect answers SELECT * FROM collection [LIMIT n] over the demo
+// documents in ID order, with the number of documents the query matched. An
+// explicit LIMIT is part of the query, so it matches only the rows it keeps;
+// without one the demo still returns at most maxDemoRows, and every document
+// counts as matched so the result says it was cut. It reports false when the
+// LIMIT is outside 1 to maxDemoRows.
+func demoSelect(documents map[string][]byte, limit string) ([]documentView, int, bool) {
+	rows := make([]documentView, 0, len(documents))
+	for id, body := range documents {
+		rows = append(rows, documentView{ID: id, Value: slices.Clone(body)})
+	}
+	slices.SortFunc(rows, func(a, b documentView) int { return strings.Compare(a.ID, b.ID) })
+	if limit == "" {
+		return rows[:min(len(rows), maxDemoRows)], len(rows), true
+	}
+	n, err := strconv.Atoi(limit)
+	if err != nil || n < 1 || n > maxDemoRows {
+		return nil, 0, false
+	}
+	rows = rows[:min(len(rows), n)]
+	return rows, len(rows), true
 }
 
 // savedQueriesReturn sends a saved-query form back to the SQL console of the
