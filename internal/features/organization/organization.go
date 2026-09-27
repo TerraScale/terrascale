@@ -51,6 +51,8 @@ type planView struct {
 	AnnualPriceCents int64
 	MonthlyPrice     string
 	AnnualPrice      string
+	Allowances       []string
+	Trial            string
 }
 
 type memberView struct {
@@ -79,6 +81,7 @@ type organizationPageData struct {
 	NewOrganizationID   string
 	Error               string
 	PaymentCanceled     bool
+	Demo                bool
 	CanConfirmOwnership bool
 	// OwnerName tells a nominee who asked; PendingOwner and TransferExpires
 	// tell the owner whom they nominated, while the transfer is still open.
@@ -107,6 +110,32 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	mux.HandleFunc("POST /api/v1/dashboard/organization/leave", leaveOrganization(deps, service))
 }
 
+// wizardPlans lists the paid plans a business organization can start on,
+// cheapest first. Checkout grants the plan's trial to an organization that
+// never had one.
+func wizardPlans(plans []core.Plan, org core.Organization) []planView {
+	views := make([]planView, 0, len(plans))
+	for _, plan := range plans {
+		if !plan.Visible || plan.PriceCents <= 0 {
+			continue
+		}
+		view := planView{
+			Key: plan.Key, Name: plan.Name, PriceCents: plan.PriceCents, AnnualPriceCents: plan.AnnualPriceCents,
+			MonthlyPrice: fmt.Sprintf("$%.2f", float64(plan.PriceCents)/100),
+			AnnualPrice:  fmt.Sprintf("$%.2f", float64(plan.AnnualPriceCents)/100),
+			Allowances:   []string{plan.StorageAllowance(), plan.OperationsAllowance(), plan.DatabaseAllowance(), plan.MemberAllowance()},
+		}
+		if plan.TrialDays > 0 && !org.Billing.TrialUsed {
+			view.Trial = fmt.Sprintf("%d-day free trial", plan.TrialDays)
+		}
+		views = append(views, view)
+	}
+	slices.SortFunc(views, func(a, b planView) int {
+		return cmp.Or(cmp.Compare(a.PriceCents, b.PriceCents), strings.Compare(a.Key, b.Key))
+	})
+	return views
+}
+
 func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := deps.Sessions.Principal(r)
@@ -130,16 +159,8 @@ func organizationPage(deps core.Deps, service Service) http.HandlerFunc {
 		data.NewOrganizationID = org.ID
 		data.PaymentCanceled = paymentVerified && r.URL.Query().Get("payment") == "canceled" && data.NewOrganization == "payment"
 		data.OpenCreateProject = r.URL.Query().Get("newProject") == "1"
-		for _, plan := range deps.Store.Plans() {
-			if plan.Visible && plan.PriceCents > 0 {
-				data.Plans = append(data.Plans, planView{
-					Key: plan.Key, Name: plan.Name, PriceCents: plan.PriceCents, AnnualPriceCents: plan.AnnualPriceCents,
-					MonthlyPrice: fmt.Sprintf("$%.2f", float64(plan.PriceCents)/100),
-					AnnualPrice:  fmt.Sprintf("$%.2f", float64(plan.AnnualPriceCents)/100),
-				})
-			}
-		}
-		slices.SortFunc(data.Plans, func(a, b planView) int { return strings.Compare(a.Key, b.Key) })
+		data.Plans = wizardPlans(deps.Store.Plans(), org)
+		data.Demo = deps.Demo
 		page := core.Page{
 			Layout: "shell", Title: "Organization · TerraScale",
 			Principal: p, CSRFToken: deps.CSRF.Token(w, r),

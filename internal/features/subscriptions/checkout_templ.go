@@ -37,7 +37,7 @@ func checkoutContent(csrfToken string, data checkoutPage) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = simulatorHeading("checkout-title", "Local payment setup", data.PlanName+" · billed "+data.Interval).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = simulatorHeading("checkout-title", "Local payment setup", data.PlanName+" · "+billedEvery(data.Interval)).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -212,6 +212,14 @@ func simulatorHeading(id, title, subtitle string) templ.Component {
 		}
 		return nil
 	})
+}
+
+// billedEvery words a checkout's billing interval.
+func billedEvery(interval string) string {
+	if interval == intervalAnnual {
+		return "billed annually"
+	}
+	return "billed monthly"
 }
 
 var _ = templruntime.GeneratedTemplate
