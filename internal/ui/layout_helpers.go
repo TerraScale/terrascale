@@ -57,12 +57,33 @@ func countText(count int) string {
 	return strconv.Itoa(count)
 }
 
-// notificationsLabel names the top bar's notifications link with its count.
-func notificationsLabel(unread int) string {
-	if unread == 0 {
-		return "Notifications"
+// CountLabel names a navigation count for assistive technology as its pill
+// shows it, e.g. "1 organization" or "99+ organizations".
+func CountLabel(count int, one, many string) string {
+	if count == 1 {
+		return "1 " + one
 	}
-	return "Notifications, " + strconv.Itoa(unread) + " unread"
+	return countText(count) + " " + many
+}
+
+// UnreadLabel names an unread notifications count, e.g. "3 unread".
+func UnreadLabel(count int) string {
+	return CountLabel(count, "unread", "unread")
+}
+
+// notificationsItem is the Notifications link shown outside the section
+// navigation: in the top bar and in the admin sidebar.
+func notificationsItem(unread int) core.NavItem {
+	return core.NavItem{Label: "Notifications", URL: "/notifications", BadgeCount: unread, BadgeLabel: UnreadLabel(unread)}
+}
+
+// navLabel is a navigation link's accessible name: its label, then its count
+// as BadgeLabel names it, e.g. "Notifications, 3 unread".
+func navLabel(item core.NavItem) string {
+	if item.BadgeCount == 0 || item.BadgeLabel == "" {
+		return item.Label
+	}
+	return item.Label + ", " + item.BadgeLabel
 }
 
 func title(value string) string {

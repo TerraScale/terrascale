@@ -103,10 +103,11 @@ templ signedInDocument(page core.Page, body templ.Component, admin bool) {
 						@icons.PanelLeft(18)
 					</button>
 					<img class="ts-topbar-brand" src={ static.URL("brand/logo-terrascale-principal.svg") } alt="TerraScale" decoding="async"/>
-					<a class="ts-icon-btn ts-topbar-notifications" href="/notifications" data-tone="amber" aria-label={ notificationsLabel(page.Shell.UnreadNotifications) }>
+					{{ notifications := notificationsItem(page.Shell.UnreadNotifications) }}
+					<a class="ts-icon-btn ts-topbar-notifications" href={ notifications.URL } data-tone="amber" aria-label={ navLabel(notifications) }>
 						@icons.Bell(18)
-						if page.Shell.UnreadNotifications > 0 {
-							<span class="ts-nav-count" aria-hidden="true">{ countText(page.Shell.UnreadNotifications) }</span>
+						if notifications.BadgeCount > 0 {
+							<span class="ts-nav-count" aria-hidden="true">{ countText(notifications.BadgeCount) }</span>
 						}
 					</a>
 				</header>
@@ -173,6 +174,10 @@ templ shellSidebar(page core.Page, admin bool) {
 				<a class="ts-nav-link" href="/" data-tone="slate">
 					<span class="ts-nav-icon" aria-hidden="true">@icons.ArrowLeft(16)</span>
 					<span class="ts-nav-label">Back to dashboard</span>
+				</a>
+				{{ notifications := notificationsItem(page.Shell.UnreadNotifications) }}
+				<a class="ts-nav-link" href={ notifications.URL } data-tone="amber" aria-label={ navLabel(notifications) }>
+					@navLinkContent(notifications)
 				</a>
 			}
 			@accountMenu(page)
@@ -331,7 +336,7 @@ templ sidebarNavigation(items []core.NavItem) {
 							aria-current="page"
 						}
 						if item.BadgeCount > 0 && item.BadgeLabel != "" {
-							aria-label={ item.Label + ", " + item.BadgeLabel }
+							aria-label={ navLabel(item) }
 						}
 					>
 						@navLinkContent(item)

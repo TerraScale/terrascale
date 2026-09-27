@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -257,9 +256,10 @@ func navItems(items []core.NavItem, path string, shell core.Shell) []core.NavIte
 		switch items[i].URL {
 		case "/organization":
 			items[i].BadgeCount = len(shell.Organizations)
+			items[i].BadgeLabel = ui.CountLabel(items[i].BadgeCount, "organization", "organizations")
 		case "/notifications":
 			items[i].BadgeCount = shell.UnreadNotifications
-			items[i].BadgeLabel = strconv.Itoa(shell.UnreadNotifications) + " unread"
+			items[i].BadgeLabel = ui.UnreadLabel(shell.UnreadNotifications)
 		}
 	}
 	return items
