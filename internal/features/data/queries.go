@@ -1,9 +1,13 @@
 package data
 
 import (
+	"cmp"
 	json "encoding/json/v2"
+	"errors"
 	"maps"
+	"math"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -33,15 +37,12 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "SQL must be 16 KiB or less", http.StatusBadRequest)
 			return
 		}
-		collection := strings.TrimSpace(r.FormValue("collection"))
-		if !validCollection(collection) {
+		if !validCollection(strings.TrimSpace(r.FormValue("collection"))) {
 			http.Error(w, "invalid collection", http.StatusBadRequest)
 			return
 		}
-		renderSection(w, r, deps, db.ID, "sql", &sqlPageResult{
-			Collection: collection,
-			Statement:  statement,
-			CheckOnly:  true,
+		renderSection(w, r, deps, db.ID, "sql", http.StatusOK, func(d *pageData) {
+			d.SQL, d.CheckRequested = statement, true
 		})
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/data/sql", func(w http.ResponseWriter, r *http.Request) {
@@ -59,48 +60,40 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		statement := strings.TrimSpace(r.FormValue("sql"))
-		if len(statement) == 0 || len(statement) > 16<<10 || sdk.ValidateSQL(statement, nil) != nil {
-			http.Error(w, "enter one read-only SQL query", http.StatusBadRequest)
+		failed := func(status int, message string) {
+			formFailed(w, r, deps, db.ID, "sql", status, message, func(d *pageData) { d.SQL = statement })
+		}
+		if analysis := analyzeSQL(statement); !analysis.OK || sdk.ValidateSQL(statement, nil) != nil {
+			failed(http.StatusBadRequest, cmp.Or(analysis.Error, "The console cannot bind parameters such as $1; replace them with values."))
 			return
 		}
 		if !deps.Demo {
 			client, err := client(deps, p)
 			if err != nil {
-				writeError(w, err)
+				failed(http.StatusServiceUnavailable, "The live data plane is unavailable. Try again shortly.")
 				return
 			}
 			result, err := client.ExecuteSQL(r.Context(), db.Name, statement, nil)
 			if err != nil {
-				http.Error(w, "SQL query failed: "+err.Error(), http.StatusBadGateway)
+				failed(http.StatusBadGateway, "The query failed: "+err.Error())
 				return
 			}
-			writeSQLResponse(w, r, deps, db.ID, statement, result)
+			writeSQLResponse(w, r, deps, db.ID, statement, result, liveResult(result))
 			return
 		}
 		matches := selectPattern.FindStringSubmatch(statement)
 		if matches == nil {
-			http.Error(w, "demo SQL supports SELECT * FROM collection [LIMIT n]", http.StatusBadRequest)
+			failed(http.StatusBadRequest, "The in-memory demo runs SELECT * FROM collection [LIMIT n] only. Check SQL validates any other read-only statement.")
 			return
 		}
-		limit := 100
-		if matches[2] != "" {
-			limit, _ = strconv.Atoi(matches[2])
-		}
-		if limit < 1 || limit > 100 {
-			http.Error(w, "query limit must be 1 to 100", http.StatusBadRequest)
+		rows, matched, ok := demoSelect(db.Documents[matches[1]], matches[2])
+		if !ok {
+			failed(http.StatusBadRequest, "Demo queries return 1 to "+strconv.Itoa(maxDemoRows)+" rows; use a LIMIT in that range.")
 			return
-		}
-		rows := make([]documentView, 0, len(db.Documents[matches[1]]))
-		for id, body := range db.Documents[matches[1]] {
-			rows = append(rows, documentView{ID: id, Value: slices.Clone(body)})
-		}
-		slices.SortFunc(rows, func(a, b documentView) int { return strings.Compare(a.ID, b.ID) })
-		if len(rows) > limit {
-			rows = rows[:limit]
 		}
 		writeSQLResponse(w, r, deps, db.ID, statement, struct {
 			Rows []documentView `json:"rows"`
-		}{Rows: rows})
+		}{Rows: rows}, newSQLResult(rows, matched))
 	})
 	mux.HandleFunc("GET /api/v1/dashboard/data/saved-queries", func(w http.ResponseWriter, r *http.Request) {
 		_, _, project, err := selectedProject(deps, r)
@@ -130,8 +123,17 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		name, sql := strings.TrimSpace(r.FormValue("name")), strings.TrimSpace(r.FormValue("sql"))
-		if name == "" || len(name) > 128 || sql == "" || len(sql) > 16<<10 || sdk.ValidateSQL(sql, nil) != nil {
-			http.Error(w, "invalid saved query", http.StatusBadRequest)
+		failed := func(status int, message string) {
+			formFailed(w, r, deps, r.FormValue("databaseId"), "sql", status, message, func(d *pageData) {
+				d.Dialog, d.QueryName, d.SQL = "save-query", name, sql
+			})
+		}
+		if name == "" || len(name) > 128 {
+			failed(http.StatusBadRequest, "Name the query in 128 characters or less.")
+			return
+		}
+		if analysis := analyzeSQL(sql); !analysis.OK || sdk.ValidateSQL(sql, nil) != nil {
+			failed(http.StatusBadRequest, cmp.Or(analysis.Error, "Saved queries cannot use parameters such as $1; replace them with values."))
 			return
 		}
 		query := core.SavedQuery{ID: core.NewID("qry"), Name: name, SQL: sql, CreatedAt: time.Now().UTC()}
@@ -153,7 +155,8 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			return nil
 		})
 		if err != nil {
-			writeError(w, err)
+			status, message := failure(err, "The query could not be saved")
+			failed(status, message)
 			return
 		}
 		if core.WantsHTML(r) {
@@ -198,7 +201,11 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 			return nil
 		})
 		if err != nil {
-			writeError(w, err)
+			status, message := failure(err, "The query could not be deleted")
+			if errors.Is(err, core.ErrNotFound) {
+				message = "This saved query was already deleted."
+			}
+			formFailed(w, r, deps, r.FormValue("databaseId"), "sql", status, message, nil)
 			return
 		}
 		if core.WantsHTML(r) {
@@ -209,26 +216,68 @@ func mountQueryRoutes(mux *http.ServeMux, deps core.Deps) {
 	})
 }
 
-func writeSQLResponse(w http.ResponseWriter, r *http.Request, deps core.Deps, databaseID, statement string, result any) {
+// writeSQLResponse answers a query run: API clients get the JSON result and
+// the console shows it as a table below the statement.
+func writeSQLResponse(w http.ResponseWriter, r *http.Request, deps core.Deps, databaseID, statement string, response any, result sqlResult) {
 	if !core.WantsHTML(r) {
-		core.WriteJSON(w, http.StatusOK, result)
+		core.WriteJSON(w, http.StatusOK, response)
 		return
 	}
-	encoded, err := json.Marshal(result)
-	if err != nil {
-		http.Error(w, "encode response failed", http.StatusInternalServerError)
-		return
+	renderSection(w, r, deps, databaseID, "sql", http.StatusOK, func(d *pageData) {
+		d.SQL, d.SQLResult = statement, &result
+	})
+}
+
+// liveResult lays out a data plane result; an EXPLAIN answers with its plan.
+func liveResult(result *sdk.SQLResult) sqlResult {
+	rows := make([]documentView, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		value, err := json.Marshal(row.Value)
+		if err != nil {
+			value = []byte("null")
+		}
+		rows = append(rows, documentView{ID: row.ID, Value: value})
 	}
-	renderSection(w, r, deps, databaseID, "sql", &sqlPageResult{Statement: statement, JSON: string(encoded)})
+	table := newSQLResult(rows, int(min(result.Matched, math.MaxInt32)))
+	table.Explain = result.Explain
+	return table
+}
+
+// demoSelect answers SELECT * FROM collection [LIMIT n] over the demo
+// documents in ID order, with the number of documents the query matched. An
+// explicit LIMIT is part of the query, so it matches only the rows it keeps;
+// without one the demo still returns at most maxDemoRows, and every document
+// counts as matched so the result says it was cut. It reports false when the
+// LIMIT is outside 1 to maxDemoRows.
+func demoSelect(documents map[string][]byte, limit string) ([]documentView, int, bool) {
+	rows := make([]documentView, 0, len(documents))
+	for id, body := range documents {
+		rows = append(rows, documentView{ID: id, Value: slices.Clone(body)})
+	}
+	slices.SortFunc(rows, func(a, b documentView) int { return strings.Compare(a.ID, b.ID) })
+	if limit == "" {
+		return rows[:min(len(rows), maxDemoRows)], len(rows), true
+	}
+	n, err := strconv.Atoi(limit)
+	if err != nil || n < 1 || n > maxDemoRows {
+		return nil, 0, false
+	}
+	rows = rows[:min(len(rows), n)]
+	return rows, len(rows), true
 }
 
 // savedQueriesReturn sends a saved-query form back to the SQL console of the
-// database it was submitted from.
+// database and collection it was submitted from.
 func savedQueriesReturn(r *http.Request) string {
-	if id := r.FormValue("databaseId"); id != "" {
-		return sectionPath(id, "sql", nil)
+	id := r.FormValue("databaseId")
+	if id == "" {
+		return "/databases"
 	}
-	return "/databases"
+	var query url.Values
+	if collection := strings.TrimSpace(r.FormValue("collection")); validCollection(collection) {
+		query = url.Values{"collection": {collection}}
+	}
+	return sectionPath(id, "sql", query)
 }
 
 func selectedProject(deps core.Deps, r *http.Request) (core.Principal, core.Account, core.Project, error) {

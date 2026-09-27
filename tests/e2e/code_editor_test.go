@@ -11,10 +11,12 @@ import (
 )
 
 // codeEditor waits for the Monaco editor that upgrades the textarea with id.
+// Every browser context downloads Monaco again, which takes longer than the
+// default assertion timeout on a busy CI runner.
 func codeEditor(t *testing.T, page playwright.Page, id string) playwright.Locator {
 	t.Helper()
 	editor := page.Locator(`ts-code-editor[data-ready]:has(> textarea#` + id + `)`)
-	visible(t, editor.Locator(".monaco-editor .view-lines"))
+	must(t, expect.Locator(editor.Locator(".monaco-editor .view-lines")).ToBeVisible(playwright.LocatorAssertionsToBeVisibleOptions{Timeout: new(30_000.0)}))
 	return editor
 }
 
