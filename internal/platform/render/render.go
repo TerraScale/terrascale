@@ -2,10 +2,12 @@ package render
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -178,12 +180,6 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 			shell.UserInitials += strings.ToUpper(string(last))
 		}
 	}
-	returnURL := r.URL.RequestURI()
-	if strings.HasPrefix(returnURL, "/") && !strings.HasPrefix(returnURL, "//") {
-		shell.ReturnURL = returnURL
-	} else {
-		shell.ReturnURL = "/"
-	}
 	for id, org := range account.Organizations {
 		if _, err := account.OrganizationFor(p, id); err != nil {
 			continue
@@ -210,7 +206,35 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 	for i, group := range groups {
 		shell.Navigation[i] = core.NavGroup{Label: group.Label, Items: navItems(group.Items, r.URL.Path, len(shell.Organizations))}
 	}
+	shell.ReturnURL = switchReturnURL(shell.Navigation, r.URL)
 	return shell
+}
+
+// switchReturnURL is where switching organization or project lands: the
+// deepest navigation entry holding the current page. The page URL itself can
+// name a database, filter or tab of the previous project that the next one
+// lacks. Pages outside the navigation belong to the account and keep their URL.
+func switchReturnURL(groups []core.NavGroup, current *url.URL) string {
+	for _, group := range groups {
+		if section := activeSection(group.Items); section != "" {
+			return section
+		}
+	}
+	if uri := current.RequestURI(); strings.HasPrefix(uri, "/") && !strings.HasPrefix(uri, "//") {
+		return uri
+	}
+	return "/"
+}
+
+// activeSection returns the URL of the deepest active item, or "" when no
+// item is active.
+func activeSection(items []core.NavItem) string {
+	for _, item := range items {
+		if item.Active {
+			return cmp.Or(activeSection(item.Children), item.URL)
+		}
+	}
+	return ""
 }
 
 // navItems copies items for one request, flagging the sections that contain

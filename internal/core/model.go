@@ -424,7 +424,8 @@ type Shell struct {
 	Organizations    []OrganizationOption
 	Projects         []ProjectOption
 	Navigation       []NavGroup
-	ReturnURL        string
+	// ReturnURL is where switching organization or project lands.
+	ReturnURL string
 	// Notices are the status page's active incidents and maintenance.
 	Notices []StatusNotice
 }

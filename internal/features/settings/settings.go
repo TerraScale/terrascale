@@ -488,6 +488,11 @@ func selected(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 		return core.Principal{}, core.Account{}, core.Project{}, false
 	}
 	project, err := account.ProjectFor(p, p.OrganizationID, p.ProjectID)
+	if errors.Is(err, core.ErrNotFound) && r.Method == http.MethodGet {
+		// Without a project, Overview leads to the project setup.
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return core.Principal{}, core.Account{}, core.Project{}, false
+	}
 	if err != nil {
 		writeError(w, err)
 		return core.Principal{}, core.Account{}, core.Project{}, false

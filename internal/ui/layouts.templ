@@ -192,6 +192,7 @@ templ contextSwitcher(page core.Page) {
 					<form method="post" action="/api/v1/dashboard/switch-organization" data-show="$organizationSearch === '' || el.dataset.organizationName.toLowerCase().includes($organizationSearch.toLowerCase())" data-organization-name={ organization.Name }>
 						@formToken(page.CSRFToken)
 						<input type="hidden" name="organizationId" value={ organization.ID }/>
+						<input type="hidden" name="returnUrl" value={ page.Shell.ReturnURL }/>
 						@contextOption(organization.Name, organization.Selected, "data-organization-option", organization.ID)
 					</form>
 				}

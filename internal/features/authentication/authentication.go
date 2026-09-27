@@ -54,7 +54,8 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, key stri
 	}
 	project, exists := org.Projects[p.ProjectID]
 	if !exists || project.OrganizationID != org.ID {
-		http.Error(w, "selected project is unavailable", http.StatusForbidden)
+		// Without a project, Overview leads to the project setup.
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 	query := r.URL.Query()
