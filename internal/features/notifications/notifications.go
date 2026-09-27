@@ -4,6 +4,7 @@ package notifications
 import (
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/a-h/templ"
@@ -35,10 +36,10 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		all := scoped(account.Notifications, p)
+		all := slices.DeleteFunc(slices.Clone(account.Notifications), func(n core.Notification) bool { return !n.VisibleTo(p) })
 		total, unread, critical := len(all), 0, 0
 		for _, item := range all {
-			if strings.EqualFold(item.Status, "unread") {
+			if item.Unread() {
 				unread++
 				if strings.EqualFold(item.Severity, "danger") || strings.EqualFold(item.Severity, "critical") {
 					critical++
@@ -48,7 +49,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		status := "all"
 		if strings.EqualFold(r.URL.Query().Get("status"), "unread") {
 			status = "unread"
-			all = slices.DeleteFunc(all, func(n core.Notification) bool { return !strings.EqualFold(n.Status, "unread") })
+			all = slices.DeleteFunc(all, func(n core.Notification) bool { return !n.Unread() })
 		}
 		slices.SortFunc(all, func(a, b core.Notification) int { return b.CreatedAt.Compare(a.CreatedAt) })
 		count := len(all)
@@ -75,8 +76,8 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		id := r.PathValue("notificationID")
 		err := deps.Store.UpdateAs(p, func(account *core.Account) error {
 			for i := range account.Notifications {
-				if account.Notifications[i].ID == id && visible(p, account.Notifications[i]) {
-					account.Notifications[i].Status = "Read"
+				if account.Notifications[i].ID == id && account.Notifications[i].VisibleTo(p) {
+					account.Notifications[i].Status = "read"
 					return nil
 				}
 			}
@@ -86,7 +87,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		http.Redirect(w, r, "/notifications", http.StatusSeeOther)
+		http.Redirect(w, r, returnHref(r), http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("POST /api/v1/notifications/read-all", func(w http.ResponseWriter, r *http.Request) {
@@ -99,8 +100,8 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 		err := deps.Store.UpdateAs(p, func(account *core.Account) error {
 			for i := range account.Notifications {
-				if visible(p, account.Notifications[i]) {
-					account.Notifications[i].Status = "Read"
+				if account.Notifications[i].VisibleTo(p) {
+					account.Notifications[i].Status = "read"
 				}
 			}
 			return nil
@@ -109,8 +110,15 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
-		http.Redirect(w, r, "/notifications", http.StatusSeeOther)
+		http.Redirect(w, r, returnHref(r), http.StatusSeeOther)
 	})
+}
+
+// returnHref is the inbox view a mark-read form was posted from, so readers
+// keep their filter and page.
+func returnHref(r *http.Request) string {
+	page, _ := strconv.Atoi(r.PostFormValue("page"))
+	return pageHref(page, r.PostFormValue("status"))
 }
 
 func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Principal, core.Account, bool) {
@@ -147,21 +155,6 @@ func render(w http.ResponseWriter, r *http.Request, deps core.Deps, p core.Princ
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render notifications", http.StatusInternalServerError)
 	}
-}
-
-func scoped(items []core.Notification, p core.Principal) []core.Notification {
-	result := make([]core.Notification, 0, len(items))
-	for _, item := range items {
-		if visible(p, item) {
-			result = append(result, item)
-		}
-	}
-	return result
-}
-
-func visible(p core.Principal, item core.Notification) bool {
-	return (item.OrganizationID == "" || item.OrganizationID == p.OrganizationID) &&
-		(item.ProjectID == "" || item.ProjectID == p.ProjectID)
 }
 
 func writeError(w http.ResponseWriter, err error) {

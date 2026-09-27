@@ -235,7 +235,21 @@ type BackupPolicy struct {
 
 type Notification struct {
 	ID, OrganizationID, ProjectID, Type, Title, Body, Status, Severity string
-	CreatedAt                                                          time.Time
+	// URL is the dashboard page where the reader can act on it, if any.
+	URL       string
+	CreatedAt time.Time
+}
+
+// VisibleTo reports whether n belongs to the principal's selected
+// organization and project; account-wide notifications name neither.
+func (n Notification) VisibleTo(p Principal) bool {
+	return (n.OrganizationID == "" || n.OrganizationID == p.OrganizationID) &&
+		(n.ProjectID == "" || n.ProjectID == p.ProjectID)
+}
+
+// Unread reports whether n has not been read yet.
+func (n Notification) Unread() bool {
+	return strings.EqualFold(n.Status, "unread")
 }
 
 type AuditEvent struct {
@@ -398,6 +412,9 @@ type NavItem struct {
 	URL        string
 	Active     bool
 	BadgeCount int
+	// BadgeLabel names the count for assistive technology, e.g. "2 unread";
+	// without it the count is decorative.
+	BadgeLabel string
 	// Group names the run of sibling sub-navigation items this item starts
 	// or continues; the sidebar renders a label where the group changes.
 	Group string
@@ -451,6 +468,8 @@ type Shell struct {
 	ReturnURL string
 	// Notices are the status page's active incidents and maintenance.
 	Notices []StatusNotice
+	// UnreadNotifications counts unread notifications in the selected scope.
+	UnreadNotifications int
 }
 
 // StatusNotice is one unresolved incident or current or upcoming maintenance

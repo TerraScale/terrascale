@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"strconv"
-
 	static "terrascale.tech/dashboard/web/static"
 
 	"terrascale.tech/dashboard/internal/core"
@@ -105,6 +103,12 @@ templ signedInDocument(page core.Page, body templ.Component, admin bool) {
 						@icons.PanelLeft(18)
 					</button>
 					<img class="ts-topbar-brand" src={ static.URL("brand/logo-terrascale-principal.svg") } alt="TerraScale" decoding="async"/>
+					<a class="ts-icon-btn ts-topbar-notifications" href="/notifications" data-tone="amber" aria-label={ notificationsLabel(page.Shell.UnreadNotifications) }>
+						@icons.Bell(18)
+						if page.Shell.UnreadNotifications > 0 {
+							<span class="ts-nav-count" aria-hidden="true">{ countText(page.Shell.UnreadNotifications) }</span>
+						}
+					</a>
 				</header>
 				@StatusBanner(page.Shell.Notices)
 				<div id="ts-main" class="ts-main" tabindex="-1">
@@ -267,8 +271,6 @@ templ accountMenu(page core.Page) {
 		</div>
 		@MenuSeparator()
 		@MenuItem(MenuItemProps{Href: "/profile", Tone: "pink", Icon: icons.UserRound(15), Label: "Profile"})
-		@MenuItem(MenuItemProps{Href: "/notifications", Tone: "amber", Icon: icons.Bell(15), Label: "Notifications"})
-		@MenuItem(MenuItemProps{Href: "/settings", Tone: "slate", Icon: icons.Settings(15), Label: "Settings"})
 		if page.Principal.PlatformAdmin {
 			@MenuItem(MenuItemProps{Href: "/admin", Tone: "violet", Icon: icons.ShieldCheck(15), Label: "Administration"})
 		}
@@ -328,6 +330,9 @@ templ sidebarNavigation(items []core.NavItem) {
 						if item.Active {
 							aria-current="page"
 						}
+						if item.BadgeCount > 0 && item.BadgeLabel != "" {
+							aria-label={ item.Label + ", " + item.BadgeLabel }
+						}
 					>
 						@navLinkContent(item)
 					</a>
@@ -343,6 +348,6 @@ templ navLinkContent(item core.NavItem) {
 	</span>
 	<span class="ts-nav-label">{ item.Label }</span>
 	if item.BadgeCount > 0 {
-		<span class="ts-nav-count" aria-hidden="true">{ strconv.Itoa(item.BadgeCount) }</span>
+		<span class="ts-nav-count" aria-hidden="true">{ countText(item.BadgeCount) }</span>
 	}
 }

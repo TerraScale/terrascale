@@ -82,9 +82,9 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 		notificationCount, unread := 0, 0
 		for _, notification := range account.Notifications {
-			if notificationVisible(p, notification) {
+			if notification.VisibleTo(p) {
 				notificationCount++
-				if strings.EqualFold(notification.Status, "unread") {
+				if notification.Unread() {
 					unread++
 				}
 			}
@@ -161,9 +161,4 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 		return core.Principal{}, core.Account{}, false
 	}
 	return p, account, true
-}
-
-func notificationVisible(p core.Principal, item core.Notification) bool {
-	return (item.OrganizationID == "" || item.OrganizationID == p.OrganizationID) &&
-		(item.ProjectID == "" || item.ProjectID == p.ProjectID)
 }

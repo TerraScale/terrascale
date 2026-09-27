@@ -8,7 +8,7 @@ import (
 
 templ settingsView(data pageData, csrfToken string) {
 	<main class="ts-page">
-		@ui.PageHeader("Settings")
+		@ui.PageHeader("Project settings")
 		if data.Toast != "" {
 			@ui.Alert("success", "", data.Toast)
 		}

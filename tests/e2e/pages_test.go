@@ -57,7 +57,7 @@ var parityRouteStates = []routeState{
 	{key: "notifications", path: "/notifications", heading: "Notifications"},
 	{key: "organization", path: "/organization", heading: "Organization"},
 	{key: "profile", path: "/profile", heading: "Profile"},
-	{key: "settings", path: "/settings", heading: "Settings"},
+	{key: "settings", path: "/settings", heading: "Project settings"},
 	{key: "subscriptions", path: "/subscriptions", heading: "Shared result configuration"},
 	{key: "usage", path: "/usage", heading: "Usage"},
 	{key: "agent-approve", path: "/agent/approve", heading: "Approve agent access"},
@@ -85,7 +85,7 @@ func TestPagesMemberNavigationKeyboardAndMobile(t *testing.T) {
 
 	navigation := pageByRole(page, *playwright.AriaRoleNavigation, "Dashboard sections")
 	visible(t, byRole(navigation, *playwright.AriaRoleLink, "Overview"))
-	for _, label := range []string{"Databases", "Team", "Usage", "Billing", "Settings"} {
+	for _, label := range []string{"Databases", "Query subscriptions", "Team", "Usage", "Billing", "Project settings"} {
 		visible(t, byRole(navigation, *playwright.AriaRoleLink, label, true))
 	}
 	viewportScreenshot(t, page, "member-desktop-navigation")

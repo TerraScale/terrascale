@@ -502,7 +502,7 @@ func selected(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 
 func render(w http.ResponseWriter, r *http.Request, deps core.Deps, p core.Principal, data pageData) {
 	page := core.Page{
-		Layout: "shell", Title: "Settings", Principal: p,
+		Layout: "shell", Title: "Project settings", Principal: p,
 		View: func(view core.Page) templ.Component { return settingsView(data, view.CSRFToken) },
 	}
 	if err := deps.Render.Page(w, r, page); err != nil {

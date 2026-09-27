@@ -598,6 +598,22 @@ details[open] > .ts-account-trigger {
     width: auto;
   }
 
+  .ts-topbar-notifications {
+    position: relative;
+    margin-inline-start: auto;
+  }
+
+  .ts-topbar-notifications > .ts-nav-count {
+    position: absolute;
+    top: -6px;
+    right: -8px;
+    min-width: 18px;
+    padding: 0 5px;
+    background: var(--tone);
+    color: var(--ts-canvas);
+    line-height: 18px;
+  }
+
   .ts-status-notice {
     padding-inline: var(--ts-s4);
   }

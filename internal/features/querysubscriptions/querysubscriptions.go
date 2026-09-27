@@ -146,7 +146,7 @@ func render(w http.ResponseWriter, r *http.Request, deps core.Deps, status int, 
 	if edit != nil {
 		edit(&data)
 	}
-	page := core.Page{Layout: "shell", Title: "Subscriptions", Principal: p, Status: status, View: func(page core.Page) templ.Component { return subscriptionsContent(page, data) }}
+	page := core.Page{Layout: "shell", Title: "Query subscriptions", Principal: p, Status: status, View: func(page core.Page) templ.Component { return subscriptionsContent(page, data) }}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render subscriptions", http.StatusInternalServerError)
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/a-h/templ"
@@ -21,6 +22,7 @@ type navDestination struct {
 
 var navDestinations = map[string]navDestination{
 	"/":                    {icons.LayoutDashboard, "violet"},
+	"/notifications":       {icons.Bell, "amber"},
 	"/databases":           {icons.Database, "blue"},
 	"/api-keys":            {icons.KeyRound, "amber"},
 	"/access":              {icons.Users, "pink"},
@@ -45,6 +47,22 @@ func navIcon(url string) templ.Component {
 		return destination.icon(16)
 	}
 	return icons.Circle(16)
+}
+
+// countText shows a navigation count, capped so the pill keeps its width.
+func countText(count int) string {
+	if count > 99 {
+		return "99+"
+	}
+	return strconv.Itoa(count)
+}
+
+// notificationsLabel names the top bar's notifications link with its count.
+func notificationsLabel(unread int) string {
+	if unread == 0 {
+		return "Notifications"
+	}
+	return "Notifications, " + strconv.Itoa(unread) + " unread"
 }
 
 func title(value string) string {

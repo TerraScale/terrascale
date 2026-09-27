@@ -2,7 +2,8 @@ package notifications
 
 import (
 	"fmt"
-	"strings"
+	"net/url"
+	"strconv"
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/ui"
@@ -12,7 +13,7 @@ templ notificationsView(data pageData, csrfToken string) {
 	<main class="ts-page">
 		@ui.PageHeader("Notifications") {
 			<form method="post" action="/api/v1/notifications/read-all">
-				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				@viewFields(data, csrfToken)
 				<button class="ts-btn ts-btn-secondary" type="submit" disabled?={ data.Unread == 0 }>Mark all read</button>
 			</form>
 		}
@@ -33,7 +34,7 @@ templ notificationsView(data pageData, csrfToken string) {
 			<ol class="ts-notification-list">
 				for _, item := range data.Notifications {
 					<li>
-						@notificationItem(item, csrfToken)
+						@notificationItem(item, data, csrfToken)
 					</li>
 				}
 			</ol>
@@ -58,41 +59,62 @@ templ notificationsView(data pageData, csrfToken string) {
 	</main>
 }
 
-templ notificationItem(item core.Notification, csrfToken string) {
+templ notificationItem(item core.Notification, data pageData, csrfToken string) {
 	<article
-		class={ "ts-notification", templ.KV("ts-notification-unread", unread(item)) }
+		class={ "ts-notification", templ.KV("ts-notification-unread", item.Unread()) }
 		data-tone={ severityTone(item.Severity) }
 		aria-label={ item.Severity + " notification" }
 	>
 		<span class="ts-notification-marker" aria-hidden="true"></span>
 		<div class="ts-stack-sm">
 			<div class="ts-row">
-				<strong class="ts-strong">{ item.Title }</strong>
+				if item.URL != "" {
+					<a class="ts-strong" href={ item.URL }>{ item.Title }</a>
+				} else {
+					<strong class="ts-strong">{ item.Title }</strong>
+				}
 				@ui.Badge("tone", item.Severity)
 			</div>
 			<p class="ts-muted">{ item.Body }</p>
-			<p class="ts-meta"><time datetime={ item.CreatedAt.Format("2006-01-02T15:04:05Z07:00") }>{ item.CreatedAt.UTC().Format("Jan 2, 2006 15:04 UTC") }</time> · { item.Status }</p>
+			<p class="ts-meta"><time datetime={ item.CreatedAt.Format("2006-01-02T15:04:05Z07:00") }>{ item.CreatedAt.UTC().Format("Jan 2, 2006 15:04 UTC") }</time> · { statusText(item) }</p>
 		</div>
-		if unread(item) {
+		if item.Unread() {
 			<form method="post" action={ "/api/v1/notifications/" + item.ID + "/read" }>
-				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				@viewFields(data, csrfToken)
 				<button class="ts-btn ts-btn-ghost ts-btn-sm" type="submit">Mark read</button>
 			</form>
 		}
 	</article>
 }
 
-// unread matches the status case-insensitively; stored notifications use
-// both "Unread" and "unread".
-func unread(item core.Notification) bool {
-	return strings.EqualFold(item.Status, "unread")
+// viewFields carry the current filter and page through a mark-read form.
+templ viewFields(data pageData, csrfToken string) {
+	<input type="hidden" name="_csrf" value={ csrfToken }/>
+	<input type="hidden" name="status" value={ data.Status }/>
+	<input type="hidden" name="page" value={ strconv.Itoa(data.Page) }/>
 }
 
-func pageHref(page int, status string) string {
-	if status == "unread" {
-		return fmt.Sprintf("/notifications?page=%d&status=unread", page)
+func statusText(item core.Notification) string {
+	if item.Unread() {
+		return "unread"
 	}
-	return fmt.Sprintf("/notifications?page=%d", page)
+	return "read"
+}
+
+// pageHref links one page of the inbox; page 1 and the all filter are the
+// defaults and stay out of the URL.
+func pageHref(page int, status string) string {
+	query := url.Values{}
+	if page > 1 {
+		query.Set("page", strconv.Itoa(page))
+	}
+	if status == "unread" {
+		query.Set("status", "unread")
+	}
+	if len(query) == 0 {
+		return "/notifications"
+	}
+	return "/notifications?" + query.Encode()
 }
 
 func severityTone(severity string) string {
