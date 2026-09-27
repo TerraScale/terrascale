@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -62,14 +63,18 @@ func WriteJSON(w http.ResponseWriter, status int, value any) {
 // next page, such as /settings?error=… after a failed form post.
 var messageParams = []string{"error", "notice", "toast"}
 
-// DropMessages removes the status message parameters from query and reports
-// whether it had any. Pages show them only after the dashboard's own
-// redirects, so neither a foreign link nor a URL built from request input may
-// carry them.
+// draftPrefix starts the parameters that carry a failed form's input back to
+// it, such as /api-keys?draftName=…, so nothing has to be typed again.
+const draftPrefix = "draft"
+
+// DropMessages removes the status message and form draft parameters from
+// query and reports whether it had any. Pages honor them only after the
+// dashboard's own redirects, so neither a foreign link nor a URL built from
+// request input may carry them.
 func DropMessages(query url.Values) bool {
 	found := false
-	for _, name := range messageParams {
-		if query.Has(name) {
+	for name := range query {
+		if slices.Contains(messageParams, name) || strings.HasPrefix(name, draftPrefix) {
 			query.Del(name)
 			found = true
 		}

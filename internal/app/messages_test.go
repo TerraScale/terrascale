@@ -30,14 +30,14 @@ func TestDropForeignMessagesKeepsOnlyTheDashboardsOwn(t *testing.T) {
 		{"form post", http.MethodPost, map[string]string{"Sec-Fetch-Site": "cross-site"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			query := url.Values{"tab": {"identity"}, "error": {planted}, "notice": {planted}, "toast": {planted}}
+			query := url.Values{"tab": {"identity"}, "error": {planted}, "notice": {planted}, "toast": {planted}, "draftScopes": {planted}}
 			request := httptest.NewRequest(tc.method, "/settings?"+query.Encode(), nil)
 			for name, value := range tc.headers {
 				request.Header.Set(name, value)
 			}
 			seen = nil
 			handler.ServeHTTP(httptest.NewRecorder(), request)
-			for _, name := range []string{"error", "notice", "toast"} {
+			for _, name := range []string{"error", "notice", "toast", "draftScopes"} {
 				if got := seen.Get(name); (got == planted) != tc.kept {
 					t.Errorf("%s = %q, kept %t, want %t", name, got, got == planted, tc.kept)
 				}

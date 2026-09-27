@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	json "encoding/json/v2"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -201,17 +202,18 @@ func rotateDemoKey(deps core.Deps, p core.Principal, keyID string) (core.APIKey,
 		if !a.Organizations[p.OrganizationID].CanManage(p.UserID) {
 			return core.ErrForbidden
 		}
-		key, ok := project.APIKeys[keyID]
-		if !ok || !key.RevokedAt.IsZero() {
+		current, ok := project.APIKeys[keyID]
+		if !ok || !current.RevokedAt.IsZero() {
 			return core.ErrNotFound
 		}
-		if key.Kind == "m2m" {
+		if current.Kind == "m2m" {
 			secret = "tsm_demo_" + strings.TrimPrefix(core.NewID(""), "_")
 		}
-		key.SecretHash = hash(secret)
-		key.Prefix = secret[:min(len(secret), 16)]
-		key.LastFour = secret[len(secret)-4:]
-		project.APIKeys[keyID] = key
+		current.SecretHash = hash(secret)
+		current.Prefix = secret[:min(len(secret), 16)]
+		current.LastFour = secret[len(secret)-4:]
+		project.APIKeys[keyID] = current
+		key = current
 		org := a.Organizations[p.OrganizationID]
 		org.Projects[p.ProjectID] = project
 		a.Organizations[p.OrganizationID] = org
@@ -258,6 +260,10 @@ func selected(deps core.Deps, r *http.Request) (core.Principal, core.Project, co
 	return p, project, a, err
 }
 
+// errUnknownDatabase rejects a credential limited to a database that is not in
+// the project.
+var errUnknownDatabase = fmt.Errorf("%w: database", core.ErrNotFound)
+
 func validateInput(project core.Project, input sdk.CreateProjectAPIKeyRequest) error {
 	if strings.TrimSpace(input.Name) == "" || len(input.Name) > 128 || len(input.Scopes) == 0 || len(input.Scopes) > 16 {
 		return core.ErrInvalid
@@ -269,7 +275,7 @@ func validateInput(project core.Project, input sdk.CreateProjectAPIKeyRequest) e
 	}
 	if input.DatabaseID != "" {
 		if db, ok := project.Databases[input.DatabaseID]; !ok || db.ProjectID != project.ID {
-			return core.ErrNotFound
+			return errUnknownDatabase
 		}
 	}
 	return nil
