@@ -18,10 +18,10 @@ database cap is enforced for new databases while existing data is retained.
 python3 scripts/audit-stripe-test.py --online --env-file /path/to/local/test.env
 ```
 
-The file accepts the current `STRIPE_*` names and the legacy
-`Payments__Stripe__*` names. It never prints keys, webhook secrets, customer
-IDs, or subscription IDs. It checks six active recurring USD prices and their
-products, portal features, matching webhook URL and events, and inventories
+The file uses the `STRIPE_*` names documented in [`stripe.md`](stripe.md). It
+never prints keys, webhook secrets, customer IDs, or subscription IDs. It
+checks six active recurring USD prices and their products, portal features,
+matching webhook URL, events, and API version, and inventories
 subscription statuses and duplicate current subscriptions per customer. A
 customer count does not prove which TerraScale organization owns a Stripe
 subscription; attribution requires the account's stored customer and

@@ -57,7 +57,7 @@ func startSDKFixture(t *testing.T) sdkFixture {
 	must(t, assets.Mount(mux, false))
 	auth.Mount(mux, demo)
 	onboarding.Mount(mux, demo)
-	subscriptions.Mount(mux, demo)
+	subscriptions.Mount(mux, demo, nil)
 	databases.Mount(mux, live)
 	apikeys.MountWithIssuer(mux, live, fixtureIssuer{store: store, producer: producer})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {

@@ -1,9 +1,11 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/mail"
+	"os"
 	"strings"
 
 	"github.com/CAFxX/httpcompression"
@@ -22,6 +24,7 @@ import (
 	"terrascale.tech/dashboard/internal/features/notifications"
 	"terrascale.tech/dashboard/internal/features/onboarding"
 	"terrascale.tech/dashboard/internal/features/organization"
+	"terrascale.tech/dashboard/internal/features/payments"
 	"terrascale.tech/dashboard/internal/features/profile"
 	"terrascale.tech/dashboard/internal/features/querysubscriptions"
 	"terrascale.tech/dashboard/internal/features/settings"
@@ -52,6 +55,11 @@ func New(cfg config.Config) (*Application, error) {
 	if err := seedDemoAccount(store); err != nil {
 		return nil, err
 	}
+	sdkFactory := tsgo.Factory{APIBaseURL: cfg.SDKBaseURL, AccessToken: cfg.SDKAccessToken}
+	billing, err := payments.New(context.Background(), cfg.Demo, os.Getenv, sdkFactory)
+	if err != nil {
+		return nil, err
+	}
 	sessions := session.New(store, session.Options{Secure: cfg.SecureCookies})
 	guard := csrf.New(sessions, csrf.Options{Secure: cfg.SecureCookies})
 	var notices render.StatusNotices
@@ -66,7 +74,7 @@ func New(cfg config.Config) (*Application, error) {
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo,
-		SDK: tsgo.Factory{APIBaseURL: cfg.SDKBaseURL, AccessToken: cfg.SDKAccessToken},
+		SDK: sdkFactory,
 	}
 	mux := http.NewServeMux()
 	if err := assets.Mount(mux, cfg.Dev); err != nil {
@@ -86,9 +94,9 @@ func New(cfg config.Config) (*Application, error) {
 	apikeys.Mount(mux, deps)
 	data.Mount(mux, deps)
 	backups.Mount(mux, deps)
-	subscriptions.Mount(mux, deps)
+	subscriptions.Mount(mux, deps, billing)
 	querysubscriptions.Mount(mux, deps)
-	usage.Mount(mux, deps)
+	usage.Mount(mux, deps, billing)
 	notifications.Mount(mux, deps)
 	audit.Mount(mux, deps)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

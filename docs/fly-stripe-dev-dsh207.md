@@ -1,6 +1,8 @@
 # DSH-207: homologação Stripe no Fly
 
 Estas instruções são para `terrascale-dashboard-dev` e chaves **Stripe de teste**.
+A referência de configuração e o comportamento da integração estão em
+[`stripe.md`](stripe.md).
 O runtime atual rejeita `TS_DASHBOARD_PRODUCTION_DEMO=0` e guarda contas e sessões
 em memória. Conclua primeiro a integração persistente de contas, sessões e
 ts-auth. Fazer o deploy deste commit com Stripe configurado não ativa a
@@ -35,15 +37,15 @@ primary_region = "gru"
 
 [env]
   DASHBOARD_ADDR = ":8080"
-  TS_DASHBOARD_PRODUCTION_DEMO = "0"
-  APP_ENV = "production"
   STRIPE_MODE = "test"
   DASHBOARD_PUBLIC_ORIGIN = "https://terrascale-dashboard-dev.fly.dev"
   DASHBOARD_PUBLIC_URL = "https://terrascale-dashboard-dev.fly.dev"
   DASHBOARD_SECURE_COOKIES = "1"
 ```
 
-Mantenha o serviço HTTP na porta interna 8080, HTTPS obrigatório e o health
+Remova `TS_DASHBOARD_PRODUCTION_DEMO` desse arquivo. Com o modo demo
+desligado, o app valida todas as variáveis Stripe na inicialização e não sobe
+se alguma estiver ausente ou inconsistente. Mantenha o serviço HTTP na porta interna 8080, HTTPS obrigatório e o health
 check `/health/ready`. Configure as URLs e credenciais de ts-auth e do banco
 conforme a integração persistente definir. Não copie `DASHBOARD_E2E=1` do
 preview para este app. Valide o arquivo antes do deploy:
@@ -55,27 +57,21 @@ fly config validate --strict -c fly.dev.toml -a terrascale-dashboard-dev
 ## 3. Stripe e segredos
 
 No Stripe Workbench em modo teste, crie um endpoint exclusivo para
-`https://terrascale-dashboard-dev.fly.dev/api/auth/stripe/webhook` com estes
-eventos:
-
-```text
-checkout.session.completed
-checkout.session.async_payment_succeeded
-customer.subscription.created
-customer.subscription.updated
-customer.subscription.deleted
-invoice.finalized
-invoice.paid
-invoice.payment_failed
-invoice.voided
-```
+`https://terrascale-dashboard-dev.fly.dev/api/auth/stripe/webhook` na versão de
+API do stripe-go (`stripe.APIVersion`, hoje `2026-08-26.dahlia`) com todos os
+eventos listados em [`stripe.md`](stripe.md#webhook-endpoint). Em Settings →
+Checkout, habilite "Limit customers to one subscription".
 
 Anote o segredo de assinatura **desse endpoint**, os seis IDs de preço de
-teste e a chave secreta de teste em um arquivo privado `KEY=VALUE`, fora do
+teste e uma chave restrita (`rk_test_…`) ou secreta de teste em um arquivo privado `KEY=VALUE`, fora do
 repositório. Use os nomes `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
 `STRIPE_PRICE_STARTER_MONTHLY`, `STRIPE_PRICE_STARTER_ANNUAL`,
 `STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_ANNUAL`,
-`STRIPE_PRICE_BUSINESS_MONTHLY` e `STRIPE_PRICE_BUSINESS_ANNUAL`.
+`STRIPE_PRICE_BUSINESS_MONTHLY` e `STRIPE_PRICE_BUSINESS_ANNUAL`, além de
+`TS_API_ACCESS_TOKEN` e do escopo TerraBase `TS_BILLING_TENANT_ID`,
+`TS_BILLING_PROJECT_ID` e `TS_BILLING_DATABASE_ID`, onde o estado sincronizado
+do Stripe fica guardado. As permissões da chave restrita estão em
+[`stripe.md`](stripe.md).
 Importe sem colocar valores no histórico do shell:
 
 ```sh
@@ -89,8 +85,8 @@ no portal porque o dashboard confirma essa ação.
 
 ## 4. Deploy e verificação
 
-Depois que o runtime persistente iniciar localmente com
-`TS_DASHBOARD_PRODUCTION_DEMO=0`:
+Depois que o runtime persistente iniciar localmente sem
+`TS_DASHBOARD_PRODUCTION_DEMO`:
 
 ```sh
 fly deploy -c fly.dev.toml -a terrascale-dashboard-dev --ha=false

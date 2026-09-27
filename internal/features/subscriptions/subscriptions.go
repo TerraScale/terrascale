@@ -33,6 +33,7 @@ type subscriptionsPage struct {
 	BillingInterval  string
 	Renewal          string
 	PaymentValidated bool
+	PaymentMethod    string
 	HasSubscription  bool
 	Demo             bool
 	PaymentNotice    string
@@ -56,7 +57,8 @@ type portalPage struct {
 	Demo             bool
 }
 
-func Mount(mux *http.ServeMux, deps core.Deps) {
+// Mount registers the billing pages. billing is nil in demo mode.
+func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 	service := NewBillingService(deps.Store)
 	mux.HandleFunc("GET /billing", func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := requestPrincipal(deps, w, r)
@@ -80,6 +82,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			BillingInterval:  intervalLabel(view.Organization.Billing.Interval),
 			Renewal:          formatRenewal(view.Organization.BillingRenewal),
 			PaymentValidated: view.Organization.PaymentMethodValidated,
+			PaymentMethod:    paymentMethodLabel(view.Organization.Billing),
 			HasSubscription:  view.Organization.Billing.SubscriptionID != "" && view.Organization.Billing.Status != "canceled" && view.Organization.Billing.Status != "incomplete_expired",
 			Demo:             deps.Demo,
 			PaymentNotice:    paymentNotice(r.URL.Query().Get("payment")),
@@ -171,7 +174,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 	})
 
-	payments.Mount(mux, deps, service)
+	payments.Mount(mux, deps, service, billing)
 }
 
 // planTones color plan cards from the cheapest plan up.
@@ -258,14 +261,30 @@ func billingTone(org core.Organization) string {
 	}
 }
 
+// paymentMethodLabel describes the card Stripe charges, such as
+// "Visa •••• 4242, expires 08/28", or is empty when none is known.
+func paymentMethodLabel(billing core.Billing) string {
+	if billing.PaymentMethodLastFour == "" {
+		return ""
+	}
+	label := cmp.Or(cardBrands[billing.PaymentMethodBrand], "Card") + " •••• " + billing.PaymentMethodLastFour
+	if billing.PaymentMethodExpiry != "" {
+		label += ", expires " + billing.PaymentMethodExpiry
+	}
+	return label
+}
+
+var cardBrands = map[string]string{
+	"amex": "American Express", "diners": "Diners Club", "discover": "Discover", "eftpos_au": "eftpos",
+	"jcb": "JCB", "mastercard": "Mastercard", "unionpay": "UnionPay", "visa": "Visa",
+}
+
 func paymentNotice(outcome string) string {
 	switch outcome {
 	case "success":
-		return "The local demo billing setup is complete."
+		return "Billing setup is complete."
 	case "processing":
-		return "Checkout completed. Billing will update after Stripe confirms the subscription."
-	case "pending":
-		return "Checkout has not been confirmed yet. Billing will update when Stripe confirms it."
+		return "Checkout is still processing. Billing will update as soon as Stripe confirms the payment."
 	case "canceled":
 		return "Checkout was canceled. Your current plan is unchanged."
 	default:

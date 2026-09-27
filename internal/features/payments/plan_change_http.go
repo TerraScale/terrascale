@@ -10,27 +10,15 @@ import (
 	"terrascale.tech/dashboard/internal/core"
 )
 
+// planChangeFlow is the demo counterpart of the Stripe plan-change calls.
+// Live changes are applied in Stripe and then synced like any other change.
 type planChangeFlow interface {
-	RecordScheduledChange(core.Principal, string, string, string, string, time.Time) error
-	RecordPendingChange(core.Principal, string, string, string) error
-	ClearScheduledChange(core.Principal, string) error
 	ChangeDemoPlan(core.Principal, string, string) error
+	ScheduleDemoChange(core.Principal, string, string, time.Time) error
+	UndoDemoChange(core.Principal) error
 }
 
-func planRank(key string) int {
-	switch key {
-	case PlanStarter:
-		return 1
-	case PlanPro:
-		return 2
-	case PlanBusiness:
-		return 3
-	default:
-		return 0
-	}
-}
-
-func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, config StripeConfig, provider BillingProvider, configErr error) {
+func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, billing *Stripe) {
 	changes, ok := flow.(planChangeFlow)
 	if !ok {
 		return
@@ -82,7 +70,7 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 			return
 		}
 		if deps.Demo {
-			if planRank(key) > planRank(org.Billing.PlanKey) {
+			if PlanRank(key) > PlanRank(org.Billing.PlanKey) {
 				if err := changes.ChangeDemoPlan(principal, key, interval); err != nil {
 					writeBillingError(w, err)
 					return
@@ -90,30 +78,26 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 				http.Redirect(w, r, "/usage?tab=billing&billing=changed", http.StatusSeeOther)
 				return
 			}
-			if err := changes.RecordScheduledChange(principal, org.Billing.SubscriptionID, key, interval, "", org.BillingRenewal); err != nil {
+			if err := changes.ScheduleDemoChange(principal, key, interval, org.BillingRenewal); err != nil {
 				writeBillingError(w, err)
 				return
 			}
 			http.Redirect(w, r, "/usage?tab=billing&billing=scheduled", http.StatusSeeOther)
 			return
 		}
-		if configErr != nil || provider == nil || config.Mode != "test" {
-			http.Error(w, "Billing is not configured.", http.StatusServiceUnavailable)
+		if billing == nil || !billing.config.PlanChangesEnabled() {
+			http.Error(w, "Plan changes are not available yet.", http.StatusServiceUnavailable)
 			return
 		}
-		changer, ok := provider.(PlanChangeProvider)
-		if !ok {
-			http.Error(w, "Plan changes are unavailable.", http.StatusServiceUnavailable)
-			return
-		}
-		current, err := provider.RetrieveSubscription(r.Context(), org.Billing.SubscriptionID)
+		config, changer := billing.config, billing.provider
+		current, err := changer.RetrieveSubscription(r.Context(), org.Billing.SubscriptionID)
 		if err != nil || current.ID != org.Billing.SubscriptionID || current.CustomerID != org.Billing.CustomerID || current.PriceID == "" || current.CurrentPeriodEnd.IsZero() {
-			slog.Error("verify subscription before plan change", "subscription_id", org.Billing.SubscriptionID, "error", err)
+			slog.Error("verify subscription before plan change", "subscription_id", org.Billing.SubscriptionID, "organization_id", org.ID, "error", err)
 			http.Error(w, "Could not verify the current subscription.", http.StatusBadGateway)
 			return
 		}
 		currentKey, currentInterval, mapped := config.planFromPriceID(current.PriceID)
-		if !mapped || !isEntitledStatus(current.Status) {
+		if !mapped || !IsEntitledStatus(current.Status) {
 			http.Error(w, "Current subscription needs billing attention.", http.StatusConflict)
 			return
 		}
@@ -128,15 +112,13 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 				return
 			}
 			if err := changer.SetCancelAtPeriodEnd(r.Context(), current.ID, true, idempotencyKey); err != nil {
-				slog.Error("schedule Personal Free", "error", err)
+				slog.Error("schedule Personal Free", "organization_id", org.ID, "error", err)
 				http.Error(w, "Could not schedule Free.", http.StatusBadGateway)
 				return
 			}
-			if err := changes.RecordScheduledChange(principal, current.ID, key, "", "", current.CurrentPeriodEnd); err != nil {
-				writeBillingError(w, err)
-				return
+			if billing.syncAfterChange(w, r, flow, org) {
+				http.Redirect(w, r, "/usage?tab=billing&billing=scheduled", http.StatusSeeOther)
 			}
-			http.Redirect(w, r, "/usage?tab=billing&billing=scheduled", http.StatusSeeOther)
 			return
 		}
 		nextPriceID, configured := config.PriceID(key, interval)
@@ -144,38 +126,33 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 			http.Error(w, "Selected Stripe price is not configured.", http.StatusServiceUnavailable)
 			return
 		}
-		if planRank(key) > planRank(currentKey) {
+		if PlanRank(key) > PlanRank(currentKey) {
 			if current.ScheduleID != "" || current.CancelAtPeriodEnd {
 				http.Error(w, "Undo the scheduled change first.", http.StatusConflict)
 				return
 			}
 			if err := changer.ChangePlanNow(r.Context(), current, nextPriceID, idempotencyKey); err != nil {
-				slog.Error("change Stripe subscription", "error", err)
+				slog.Error("change Stripe subscription", "organization_id", org.ID, "error", err)
 				http.Error(w, "Could not confirm the plan change.", http.StatusBadGateway)
 				return
 			}
-			if err := changes.RecordPendingChange(principal, current.ID, key, interval); err != nil {
-				writeBillingError(w, err)
-				return
+			if billing.syncAfterChange(w, r, flow, org) {
+				http.Redirect(w, r, "/usage?tab=billing&billing=pending", http.StatusSeeOther)
 			}
-			http.Redirect(w, r, "/usage?tab=billing&billing=pending", http.StatusSeeOther)
 			return
 		}
 		if current.CancelAtPeriodEnd {
 			http.Error(w, "Undo the scheduled cancellation first.", http.StatusConflict)
 			return
 		}
-		scheduleID, err := changer.SchedulePlanChange(r.Context(), current, nextPriceID, key, idempotencyKey)
-		if err != nil {
-			slog.Error("schedule Stripe plan change", "error", err)
+		if _, err := changer.SchedulePlanChange(r.Context(), current, nextPriceID, idempotencyKey); err != nil {
+			slog.Error("schedule Stripe plan change", "organization_id", org.ID, "error", err)
 			http.Error(w, "Could not schedule the plan change.", http.StatusBadGateway)
 			return
 		}
-		if err := changes.RecordScheduledChange(principal, current.ID, key, interval, scheduleID, current.CurrentPeriodEnd); err != nil {
-			writeBillingError(w, err)
-			return
+		if billing.syncAfterChange(w, r, flow, org) {
+			http.Redirect(w, r, "/usage?tab=billing&billing=scheduled", http.StatusSeeOther)
 		}
-		http.Redirect(w, r, "/usage?tab=billing&billing=scheduled", http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("POST /billing/change/undo", func(w http.ResponseWriter, r *http.Request) {
@@ -191,19 +168,19 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 			return
 		}
 		if !deps.Demo {
-			changer, ok := provider.(PlanChangeProvider)
-			if configErr != nil || !ok || config.Mode != "test" {
-				http.Error(w, "Billing is not configured.", http.StatusServiceUnavailable)
+			if billing == nil || !billing.config.PlanChangesEnabled() {
+				http.Error(w, "Plan changes are not available yet.", http.StatusServiceUnavailable)
 				return
 			}
-			current, err := provider.RetrieveSubscription(r.Context(), org.Billing.SubscriptionID)
+			config, changer := billing.config, billing.provider
+			current, err := changer.RetrieveSubscription(r.Context(), org.Billing.SubscriptionID)
 			if err != nil || current.ID != org.Billing.SubscriptionID || current.CustomerID != org.Billing.CustomerID {
 				http.Error(w, "Could not verify the current subscription.", http.StatusBadGateway)
 				return
 			}
 			key := fmt.Sprintf("undo:%s:%s:%d:%d", org.ID, org.Billing.ScheduledPlanKey, org.Billing.ScheduledAt.Unix(), org.Billing.ChangeVersion)
 			currentKey, currentInterval, mapped := config.planFromPriceID(current.PriceID)
-			alreadyUndone := mapped && isEntitledStatus(current.Status) && currentKey == org.Billing.PlanKey && currentInterval == org.Billing.Interval
+			alreadyUndone := mapped && IsEntitledStatus(current.Status) && currentKey == org.Billing.PlanKey && currentInterval == org.Billing.Interval
 			if org.Billing.ScheduledPlanKey == "free" {
 				if !current.CancelAtPeriodEnd && !alreadyUndone {
 					http.Error(w, "The scheduled cancellation changed in Stripe.", http.StatusConflict)
@@ -222,12 +199,14 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 				}
 			}
 			if err != nil {
-				slog.Error("undo Stripe plan change", "error", err)
+				slog.Error("undo Stripe plan change", "organization_id", org.ID, "error", err)
 				http.Error(w, "Could not undo the scheduled change.", http.StatusBadGateway)
 				return
 			}
-		}
-		if err := changes.ClearScheduledChange(principal, org.Billing.SubscriptionID); err != nil {
+			if !billing.syncAfterChange(w, r, flow, org) {
+				return
+			}
+		} else if err := changes.UndoDemoChange(principal); err != nil {
 			writeBillingError(w, err)
 			return
 		}
@@ -235,7 +214,17 @@ func mountPlanChanges(mux *http.ServeMux, deps core.Deps, flow BillingFlow, conf
 	})
 }
 
-func isEntitledStatus(status string) bool { return status == "active" || status == "trialing" }
+// syncAfterChange projects what Stripe accepted, so the scheduled or pending
+// change shown to the owner is Stripe's, not a local guess. It reports false
+// after writing an error response.
+func (billing *Stripe) syncAfterChange(w http.ResponseWriter, r *http.Request, flow BillingFlow, org core.Organization) bool {
+	if _, err := billing.SyncCustomer(r.Context(), flow, org.Billing.CustomerID); err != nil {
+		slog.Error("sync Stripe customer after plan change", "organization_id", org.ID, "error", err)
+		http.Error(w, "Stripe accepted the change, but the dashboard could not refresh it yet. Reload in a moment.", http.StatusBadGateway)
+		return false
+	}
+	return true
+}
 
 func validPlanChangeCSRF(deps core.Deps, w http.ResponseWriter, r *http.Request) bool {
 	if deps.CSRF != nil && deps.CSRF.Verify(r) != nil {

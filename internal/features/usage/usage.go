@@ -173,8 +173,9 @@ type billingPlanReview struct {
 	Key, Name, Interval, Price, Effect, Estimate, Storage, Requests, Databases, Members, Error string
 }
 
-// Mount registers the usage page and spending controls.
-func Mount(mux *http.ServeMux, deps core.Deps) {
+// Mount registers the usage page and spending controls. billing is nil in
+// demo mode.
+func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 	mux.HandleFunc("GET /usage", func(w http.ResponseWriter, r *http.Request) {
 		p, account, ok := signedIn(deps, w, r)
 		if !ok {
@@ -251,7 +252,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			}
 		}
 		if tab == "billing" && data.CanManageBilling && r.URL.Query().Get("review") == "1" {
-			data.Review = reviewBillingPlan(r, deps, org, data)
+			data.Review = reviewBillingPlan(r, deps, billing, org, data)
 		}
 		data.Saved = r.URL.Query().Get("saved")
 		if tab == "billing" {
@@ -371,7 +372,7 @@ func priceUSD(cents int64) string {
 	return fmt.Sprintf("US$ %d.%02d", cents/100, cents%100)
 }
 
-func reviewBillingPlan(r *http.Request, deps core.Deps, org core.Organization, data pageData) billingPlanReview {
+func reviewBillingPlan(r *http.Request, deps core.Deps, billing *payments.Stripe, org core.Organization, data pageData) billingPlanReview {
 	key, interval := strings.ToLower(r.URL.Query().Get("plan")), strings.ToLower(r.URL.Query().Get("interval"))
 	review := billingPlanReview{Open: true, Key: key, Interval: interval}
 	if key == "free" {
@@ -414,14 +415,16 @@ func reviewBillingPlan(r *http.Request, deps core.Deps, org core.Organization, d
 		review.Error = "This is your current plan."
 		return review
 	}
-	review.Immediate = billingRank(key) > billingRank(data.BillingPlanKey)
+	review.Immediate = payments.PlanRank(key) > payments.PlanRank(data.BillingPlanKey)
 	if review.Immediate {
 		review.Effect = "After Stripe confirms the change and payment"
 		if deps.Demo {
 			review.Estimate, review.Ready = "Demo only; no Stripe charge", true
 		} else {
-			quote, err := payments.PreviewOrganizationChange(r.Context(), org.Billing.CustomerID, org.Billing.SubscriptionID, key, interval)
-			if err != nil {
+			quote, err := billing.PreviewPlanChange(r.Context(), org.Billing.CustomerID, org.Billing.SubscriptionID, key, interval)
+			if errors.Is(err, payments.ErrStripeUnavailable) {
+				review.Error = "Plan changes are not available yet."
+			} else if err != nil {
 				review.Error = "Stripe could not calculate the estimated charge. Try again."
 			} else {
 				review.Estimate = priceUSD(quote.AmountDueCents) + " estimated by Stripe (including " + priceUSD(quote.ProrationCents) + " in prorations)"
@@ -433,18 +436,6 @@ func reviewBillingPlan(r *http.Request, deps core.Deps, org core.Organization, d
 		review.Estimate, review.Ready = "No charge today", true
 	}
 	return review
-}
-
-func billingRank(key string) int {
-	switch key {
-	case "starter":
-		return 1
-	case "pro":
-		return 2
-	case "business":
-		return 3
-	}
-	return 0
 }
 
 func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.Organization, project core.Project, tab, databaseFilter string) pageData {

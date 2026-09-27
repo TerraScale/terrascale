@@ -49,7 +49,7 @@ func TestPersonalPlanChangeUsesExistingSubscriptionAndSchedulesFree(t *testing.T
 		t.Fatalf("second checkout = %v, want conflict", err)
 	}
 	mux := http.NewServeMux()
-	payments.Mount(mux, core.Deps{Store: store, Sessions: planChangeSessions{principal: principal}, Demo: true}, service)
+	payments.Mount(mux, core.Deps{Store: store, Sessions: planChangeSessions{principal: principal}, Demo: true}, service, nil)
 	post := func(path string, values url.Values) *httptest.ResponseRecorder {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(values.Encode()))

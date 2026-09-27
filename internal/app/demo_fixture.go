@@ -78,6 +78,7 @@ func seedMarioDemoFixture(account *core.Account) {
 		BillingStatus: "active", PaymentMethodValidated: true,
 		Billing: core.Billing{
 			Status: "active", PlanKey: "pro", Interval: "monthly", Invoices: marioInvoices(),
+			PaymentMethodBrand: "visa", PaymentMethodLastFour: "4242", PaymentMethodExpiry: "08/28",
 		},
 		Projects: map[string]core.Project{
 			coreProjectID: coreProject, edgeProjectID: edgeProject, sandboxProjectID: sandboxProject,

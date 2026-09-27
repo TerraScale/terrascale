@@ -22,7 +22,6 @@ type Store struct {
 	accounts      map[string]Account
 	byEmail       map[string]string
 	organizations map[string]Organization
-	billingEvents map[string]struct{}
 	plans         map[string]Plan
 	adminActions  []AdminAction
 }
@@ -30,7 +29,7 @@ type Store struct {
 func NewStore() *Store {
 	return &Store{
 		accounts: make(map[string]Account), byEmail: make(map[string]string),
-		organizations: make(map[string]Organization), billingEvents: make(map[string]struct{}),
+		organizations: make(map[string]Organization),
 		plans: map[string]Plan{
 			"plan_free":     {ID: "plan_free", Key: "free", Name: "Free", Visible: true, MaxDatabases: 1},
 			"plan_starter":  {ID: "plan_starter", Key: "starter", Name: "Starter", PriceCents: 500, AnnualPriceCents: 5000, TrialDays: 30, Visible: true, MaxDatabases: 5, MaxMembers: 5, OperationsPerMonth: 1_000_000, StorageLabel: "5 GB-region storage"},

@@ -31,7 +31,9 @@ templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
 					<div>
 						<dt>Payment method</dt>
 						<dd>
-							if data.PaymentValidated {
+							if data.PaymentMethod != "" {
+								{ data.PaymentMethod }
+							} else if data.PaymentValidated {
 								On file
 							} else {
 								Not set

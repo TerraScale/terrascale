@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
-	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -16,13 +15,12 @@ import (
 var (
 	ErrBillingOwnerRequired = errors.New("organization owner role required for billing")
 	ErrCheckoutUnavailable  = errors.New("checkout session is unavailable")
-	ErrInvalidReturnPath    = errors.New("return path must stay inside the dashboard")
 	ErrPlanUnavailable      = errors.New("selected billing plan is unavailable")
 )
 
 const (
-	intervalMonthly = "monthly"
-	intervalAnnual  = "annual"
+	intervalMonthly = payments.IntervalMonthly
+	intervalAnnual  = payments.IntervalAnnual
 	checkoutOpen    = "open"
 	checkoutDone    = "complete"
 	checkoutCancel  = "canceled"
@@ -60,9 +58,9 @@ func (service BillingService) Snapshot(principal core.Principal) (BillingSnapsho
 	return BillingSnapshot{Account: account, Organization: organization, Plan: plan, Plans: plans}, nil
 }
 
-// RecordScheduledChange stores a provider-confirmed future change without
-// changing entitlements before the subscription webhook reports the new price.
-func (service BillingService) RecordScheduledChange(principal core.Principal, subscriptionID, planKey, interval, scheduleID string, effectiveAt time.Time) error {
+// ScheduleDemoChange records a downgrade the demo applies at renewal. Live
+// scheduled changes come from Stripe through ProjectCustomerState.
+func (service BillingService) ScheduleDemoChange(principal core.Principal, planKey, interval string, effectiveAt time.Time) error {
 	if planKey != "free" {
 		if _, err := service.selectedPlan(planKey, interval); err != nil {
 			return err
@@ -73,11 +71,11 @@ func (service BillingService) RecordScheduledChange(principal core.Principal, su
 		if !ok || account.ActiveOrganizationID != org.ID || org.OwnerUserID != principal.UserID || org.Archived || org.DeletionRequested {
 			return ErrBillingOwnerRequired
 		}
-		if org.Billing.SubscriptionID != subscriptionID || subscriptionID == "" || effectiveAt.IsZero() {
+		if org.Billing.SubscriptionID == "" || effectiveAt.IsZero() {
 			return core.ErrConflict
 		}
 		if org.Billing.PendingPlanKey != "" || org.Billing.ScheduledPlanKey != "" {
-			if org.Billing.ScheduledPlanKey == planKey && org.Billing.ScheduledInterval == interval && org.Billing.ScheduleID == scheduleID {
+			if org.Billing.ScheduledPlanKey == planKey && org.Billing.ScheduledInterval == interval {
 				return nil
 			}
 			return core.ErrConflict
@@ -91,55 +89,23 @@ func (service BillingService) RecordScheduledChange(principal core.Principal, su
 		org.Billing.ScheduledPlanKey = planKey
 		org.Billing.ScheduledInterval = interval
 		org.Billing.ScheduledAt = effectiveAt
-		org.Billing.ScheduleID = scheduleID
 		org.Billing.ChangeVersion++
 		account.Organizations[org.ID] = org
 		return nil
 	})
 }
 
-func (service BillingService) ClearScheduledChange(principal core.Principal, subscriptionID string) error {
+// UndoDemoChange clears the demo's scheduled downgrade.
+func (service BillingService) UndoDemoChange(principal core.Principal) error {
 	return service.store.UpdateAs(principal, func(account *core.Account) error {
 		org, ok := account.Organizations[principal.OrganizationID]
 		if !ok || account.ActiveOrganizationID != org.ID || org.OwnerUserID != principal.UserID {
 			return ErrBillingOwnerRequired
 		}
-		if org.Billing.SubscriptionID != subscriptionID || subscriptionID == "" {
+		if org.Billing.SubscriptionID == "" {
 			return core.ErrConflict
 		}
-		org.Billing.ScheduledPlanKey = ""
-		org.Billing.ScheduledInterval = ""
-		org.Billing.ScheduledAt = time.Time{}
-		org.Billing.ScheduleID = ""
-		account.Organizations[org.ID] = org
-		return nil
-	})
-}
-
-func (service BillingService) RecordPendingChange(principal core.Principal, subscriptionID, planKey, interval string) error {
-	if _, err := service.selectedPlan(planKey, interval); err != nil {
-		return err
-	}
-	return service.store.UpdateAs(principal, func(account *core.Account) error {
-		org, ok := account.Organizations[principal.OrganizationID]
-		if !ok || account.ActiveOrganizationID != org.ID || org.OwnerUserID != principal.UserID {
-			return ErrBillingOwnerRequired
-		}
-		if subscriptionID == "" || org.Billing.SubscriptionID != subscriptionID {
-			return core.ErrConflict
-		}
-		if org.Billing.ScheduledPlanKey != "" || org.Billing.PendingPlanKey != "" {
-			if org.Billing.PendingPlanKey == planKey && org.Billing.PendingInterval == interval {
-				return nil
-			}
-			return core.ErrConflict
-		}
-		if org.Billing.PlanKey == planKey && org.Billing.Interval == interval {
-			return nil
-		}
-		org.Billing.PendingPlanKey = planKey
-		org.Billing.PendingInterval = interval
-		org.Billing.ChangeVersion++
+		clearScheduledChange(&org.Billing)
 		account.Organizations[org.ID] = org
 		return nil
 	})
@@ -208,7 +174,7 @@ func (service BillingService) BeginDemoCheckout(principal core.Principal, planKe
 	if err != nil {
 		return core.CheckoutSession{}, err
 	}
-	returnPath, err = NormalizeReturnPath(returnPath, "/billing")
+	returnPath, err = payments.NormalizeReturnPath(returnPath, "/billing")
 	if err != nil {
 		return core.CheckoutSession{}, err
 	}
@@ -273,38 +239,6 @@ func (service BillingService) Checkout(principal core.Principal, sessionID strin
 	return session, nil
 }
 
-// CheckoutForReturn permits an owner to reconcile their own completed session
-// after the webhook has consumed it. A pending session must still be current
-// and unexpired; terminal records remain tenant-bound by their stored owner
-// and organization IDs.
-func (service BillingService) CheckoutForReturn(principal core.Principal, sessionID string) (core.CheckoutSession, error) {
-	if sessionID == "" {
-		return core.CheckoutSession{}, core.ErrNotFound
-	}
-	account, err := service.store.SnapshotAs(principal)
-	if err != nil {
-		return core.CheckoutSession{}, err
-	}
-	if account.ActiveOrganizationID != principal.OrganizationID {
-		return core.CheckoutSession{}, core.ErrForbidden
-	}
-	organization, err := account.OrganizationFor(principal, principal.OrganizationID)
-	if err != nil {
-		return core.CheckoutSession{}, err
-	}
-	session, ok := organization.CheckoutSessions[sessionID]
-	if !ok || session.ID != sessionID || session.OwnerUserID != principal.UserID || session.OrganizationID != organization.ID {
-		return core.CheckoutSession{}, core.ErrNotFound
-	}
-	if session.Status == checkoutOpen && (organization.Billing.CheckoutID != sessionID || !session.ExpiresAt.After(service.now())) {
-		return core.CheckoutSession{}, core.ErrNotFound
-	}
-	if session.Status != checkoutOpen && session.Status != checkoutDone && session.Status != checkoutCancel {
-		return core.CheckoutSession{}, core.ErrNotFound
-	}
-	return session, nil
-}
-
 // CompleteDemoCheckout consumes the current demo session exactly once. The
 // session is looked up and the organization is updated in one scoped commit.
 func (service BillingService) CompleteDemoCheckout(principal core.Principal, sessionID string, canceled bool) (string, error) {
@@ -325,7 +259,7 @@ func (service BillingService) CompleteDemoCheckout(principal core.Principal, ses
 		if !ok || session.ID != sessionID || session.OrganizationID != organization.ID || session.OwnerUserID != principal.UserID || session.Status != checkoutOpen || !session.ExpiresAt.After(service.now()) || organization.Billing.CheckoutID != sessionID {
 			return ErrCheckoutUnavailable
 		}
-		path, err := NormalizeReturnPath(session.ReturnPath, "/billing")
+		path, err := payments.NormalizeReturnPath(session.ReturnPath, "/billing")
 		if err != nil {
 			return err
 		}
@@ -356,7 +290,7 @@ func (service BillingService) CompleteDemoCheckout(principal core.Principal, ses
 		}
 		organization.CheckoutSessions[sessionID] = session
 		account.Organizations[organization.ID] = organization
-		returnTo = withOutcome(path, map[bool]string{true: "canceled", false: "success"}[canceled])
+		returnTo = payments.WithPaymentOutcome(path, map[bool]string{true: "canceled", false: "success"}[canceled])
 		return nil
 	}
 	if canceled {
@@ -406,18 +340,18 @@ func (service BillingService) RecordExternalCheckout(principal core.Principal, p
 	if err != nil {
 		return err
 	}
-	returnPath, err = NormalizeReturnPath(returnPath, "/billing")
+	returnPath, err = payments.NormalizeReturnPath(returnPath, "/billing")
 	if err != nil {
 		return err
 	}
-	if providerSession.ID == "" {
+	now := service.now()
+	if providerSession.ID == "" || !providerSession.ExpiresAt.After(now) {
 		return core.ErrInvalid
 	}
-	now := service.now()
 	localSession := core.CheckoutSession{
 		ID: providerSession.ID, OwnerUserID: principal.UserID, OrganizationID: principal.OrganizationID,
 		Interval: interval, ReturnPath: returnPath, Status: checkoutOpen,
-		CreatedAt: now, ExpiresAt: now.Add(24 * time.Hour),
+		CreatedAt: now, ExpiresAt: providerSession.ExpiresAt,
 	}
 	err = service.store.UpdateAsWithPlan(principal, planID, func(account *core.Account, plan core.Plan) error {
 		if err := validatePlanSelection(plan, planKey, interval); err != nil {
@@ -484,11 +418,10 @@ func (service BillingService) ExpireExternalCheckout(principal core.Principal, s
 	})
 }
 
-// ReconcileCheckoutReturn verifies that Stripe's retrieved session matches
-// this tenant's current pending checkout. The webhook alone may activate a
-// paid subscription; a browser redirect is only a notification that Stripe
-// returned control to the dashboard.
-func (service BillingService) ReconcileCheckoutReturn(principal core.Principal, sessionID string, providerSession payments.CheckoutSession) (string, string, error) {
+// CheckoutOutcome reports the return path and payment outcome of the owner's
+// checkout once its customer has been synced. Sessions are looked up only in
+// the current organization, so a session ID cannot reveal another tenant.
+func (service BillingService) CheckoutOutcome(principal core.Principal, sessionID string) (string, string, error) {
 	account, err := service.store.SnapshotAs(principal)
 	if err != nil {
 		return "", "", err
@@ -500,242 +433,156 @@ func (service BillingService) ReconcileCheckoutReturn(principal core.Principal, 
 	if err != nil {
 		return "", "", err
 	}
-	localSession, ok := organization.CheckoutSessions[sessionID]
-	if !ok || localSession.ID != sessionID || localSession.OwnerUserID != principal.UserID || localSession.OrganizationID != organization.ID || providerSession.ID != sessionID {
+	session, ok := organization.CheckoutSessions[sessionID]
+	if !ok || session.OwnerUserID != principal.UserID || session.OrganizationID != organization.ID {
 		return "", "", core.ErrNotFound
 	}
-	if localSession.Status == checkoutOpen && organization.Billing.CheckoutID != sessionID {
-		return "", "", core.ErrNotFound
+	switch session.Status {
+	case checkoutDone:
+		return session.ReturnPath, "success", nil
+	case checkoutCancel:
+		return session.ReturnPath, "canceled", nil
+	default:
+		return session.ReturnPath, "processing", nil
 	}
-	if localSession.Status != checkoutOpen && localSession.Status != checkoutDone {
-		return "", "", core.ErrNotFound
-	}
-	if providerSession.ClientReferenceID != organization.ID || organization.Billing.CustomerID == "" || providerSession.CustomerID != organization.Billing.CustomerID {
-		return "", "", core.ErrForbidden
-	}
-	status := "pending"
-	if providerSession.Status == "complete" && (providerSession.PaymentStatus == "paid" || providerSession.PaymentStatus == "no_payment_required") {
-		status = "processing"
-		if localSession.Status == checkoutDone && organization.Billing.SubscriptionID != "" && organization.Billing.SubscriptionID == providerSession.SubscriptionID && organization.BillingStatus == "active" {
-			status = "success"
-		}
-	}
-	return localSession.ReturnPath, status, nil
 }
 
-// ApplyStripeEvent projects only a fresh event associated with the stored
-// customer or subscription. A checkout completion must match the pending
-// checkout ID and its server-side tenant, plan, and interval selection.
-func (service BillingService) ApplyStripeEvent(event payments.BillingEvent) error {
-	if event.ID == "" || event.CreatedAt.IsZero() || (event.CustomerID == "" && event.SubscriptionID == "") {
-		return core.ErrInvalid
+// PendingCheckoutID returns the organization's open Checkout Session, which
+// the Stripe sync reads so the projection can complete or release it.
+func (service BillingService) PendingCheckoutID(organizationID string) (string, error) {
+	organization, ok := service.store.Organization(organizationID)
+	if !ok {
+		return "", core.ErrNotFound
 	}
-	if event.Invoice != nil {
-		return service.store.ApplyBillingEventWithPlans(event.ID, event.CustomerID, event.SubscriptionID, func(organization *core.Organization, _ map[string]core.Plan) error {
-			if organization.Billing.CustomerID != event.CustomerID || organization.Billing.SubscriptionID != event.SubscriptionID {
-				return nil
-			}
-			invoice := *event.Invoice
-			if invoice.ID == "" {
-				return core.ErrInvalid
-			}
-			for i, previous := range organization.Billing.Invoices {
-				if previous.ID != invoice.ID {
-					continue
-				}
-				if event.CreatedAt.Before(previous.LastEventAt) {
-					return nil
-				}
-				invoice.LastEventAt = event.CreatedAt
-				organization.Billing.Invoices[i] = invoice
-				return nil
-			}
-			invoice.LastEventAt = event.CreatedAt
-			organization.Billing.Invoices = append(organization.Billing.Invoices, invoice)
-			return nil
-		})
-	}
-	orderAt := event.CreatedAt
-	if event.ProviderCurrent && !event.ObservedAt.IsZero() {
-		orderAt = event.ObservedAt
-	}
-	return service.store.ApplyBillingEventWithPlans(event.ID, event.CustomerID, event.SubscriptionID, func(organization *core.Organization, plans map[string]core.Plan) error {
-		if event.CustomerID != "" && event.CustomerID != organization.Billing.CustomerID {
+	return organization.Billing.CheckoutID, nil
+}
+
+// ProjectCustomerState applies a customer's synced Stripe state to its
+// organization. Every billing field is derived from the state alone, so
+// applying the same state twice is harmless. Concurrent syncs save in order
+// but can project out of order, so a state read from Stripe before the
+// projected one is ignored.
+func (service BillingService) ProjectCustomerState(state payments.CustomerState, checkout *payments.CheckoutSession) error {
+	return service.store.UpdateOrganization(state.OrganizationID, func(organization *core.Organization, plans map[string]core.Plan) error {
+		switch organization.Billing.CustomerID {
+		case state.CustomerID:
+		case "":
+			organization.Billing.CustomerID = state.CustomerID
+		default:
+			return core.ErrConflict
+		}
+		if state.SyncedAt.Before(organization.Billing.SyncedAt) {
 			return nil
 		}
-		if event.OrganizationID != organization.ID || orderAt.Before(organization.Billing.LastEventAt) {
-			return nil
+		organization.Billing.SyncedAt = state.SyncedAt
+		if err := projectSubscription(organization, state, plans); err != nil {
+			return err
 		}
-		if orderAt.Equal(organization.Billing.LastEventAt) && event.ProviderCurrent && isEntitledSubscriptionState(event.SubscriptionState) && !isEntitledSubscriptionState(organization.Billing.Status) {
-			// Stripe event timestamps are second-granular. If two provider
-			// snapshots tie exactly, keep the more restrictive state until a
-			// later observation resolves the subscription.
-			return nil
-		}
-		if event.Type == "checkout.session.completed" || event.Type == "checkout.session.async_payment_succeeded" {
-			return applyCheckoutEvent(plans, organization, event, orderAt)
-		}
-		return applySubscriptionEvent(plans, organization, event, orderAt)
+		projectChanges(organization, state)
+		projectCheckout(organization, state, checkout)
+		return nil
 	})
 }
 
-func applyCheckoutEvent(plans map[string]core.Plan, organization *core.Organization, event payments.BillingEvent, orderAt time.Time) error {
-	if event.CheckoutID == "" || event.SubscriptionID == "" || event.CheckoutID != organization.Billing.CheckoutID ||
-		event.ClientReferenceID != organization.ID || event.CheckoutStatus != "complete" {
-		return nil
+func projectSubscription(organization *core.Organization, state payments.CustomerState, plans map[string]core.Plan) error {
+	billing := &organization.Billing
+	entitled := payments.IsEntitledStatus(state.Status)
+	billing.SubscriptionID = state.SubscriptionID
+	billing.Status = state.Status
+	billing.TrialUsed = billing.TrialUsed || state.TrialUsed || entitled
+	billing.Invoices = state.Invoices
+	billing.PaymentMethodBrand, billing.PaymentMethodLastFour, billing.PaymentMethodExpiry = "", "", ""
+	if method := state.PaymentMethod; method != nil {
+		billing.PaymentMethodBrand = method.Brand
+		billing.PaymentMethodLastFour = method.Last4
+		billing.PaymentMethodExpiry = fmt.Sprintf("%02d/%02d", method.ExpMonth, method.ExpYear%100)
 	}
-	session, ok := organization.CheckoutSessions[event.CheckoutID]
-	if !ok || session.ID != event.CheckoutID || session.OrganizationID != organization.ID || session.PlanID == "" || session.Status != checkoutOpen || !session.ExpiresAt.After(event.CreatedAt) {
-		return nil
-	}
-	planKey := normalizePlanKey(event.PlanKey)
-	if session.Interval != event.Interval || planKey == "" {
-		return nil
-	}
-	plan, planExists := plans[session.PlanID]
-	if planExists && (normalizePlanKey(plan.Key) == "" || normalizePlanKey(plan.Key) != planKey) {
-		return nil
-	}
-	if event.PaymentStatus != "paid" && event.PaymentStatus != "no_payment_required" {
-		if planExists {
-			organization.Billing.LastEventAt = orderAt
-		}
-		return nil
-	}
-	trial := event.PaymentStatus == "no_payment_required"
-	if event.ProviderCurrent {
-		if event.SubscriptionState != "active" && event.SubscriptionState != "trialing" {
-			if planExists {
-				organization.Billing.LastEventAt = orderAt
-			}
-			return nil
-		}
-		trial = event.SubscriptionState == "trialing"
-	}
-	if !planExists {
-		return fmt.Errorf("%w: checkout plan %q no longer exists", ErrPlanUnavailable, session.PlanID)
-	}
-	activateSubscription(organization, session, plan, event.SubscriptionID, event.CreatedAt, orderAt, trial)
-	if !event.PeriodEnd.IsZero() {
-		organization.BillingRenewal = event.PeriodEnd
-	}
-	return nil
-}
-
-func applySubscriptionEvent(plans map[string]core.Plan, organization *core.Organization, event payments.BillingEvent, orderAt time.Time) error {
-	if event.SubscriptionID == "" {
-		return nil
-	}
-	if organization.Billing.SubscriptionID != "" {
-		if organization.Billing.SubscriptionID != event.SubscriptionID {
-			return nil
-		}
-	} else {
-		if organization.Billing.CheckoutID == "" {
-			return nil
-		}
-		session, ok := organization.CheckoutSessions[organization.Billing.CheckoutID]
-		if !ok || session.Status != checkoutOpen || session.OrganizationID != organization.ID || !session.ExpiresAt.After(event.CreatedAt) {
-			return nil
-		}
-		if event.SubscriptionState != "active" && event.SubscriptionState != "trialing" {
-			return nil
-		}
-		planKey := normalizePlanKey(event.PlanKey)
-		if planKey == "" || session.Interval != event.Interval {
-			return nil
-		}
-		plan, planExists := plans[session.PlanID]
-		if !planExists {
-			return fmt.Errorf("%w: checkout plan %q no longer exists", ErrPlanUnavailable, session.PlanID)
-		}
-		if normalizePlanKey(plan.Key) != planKey {
-			return nil
-		}
-		activateSubscription(organization, session, plan, event.SubscriptionID, event.CreatedAt, orderAt, event.SubscriptionState == "trialing")
-		if !event.PeriodEnd.IsZero() {
-			organization.BillingRenewal = event.PeriodEnd
-		}
-		return nil
-	}
-	if event.ProviderCurrent && (event.PlanKey == "" || (event.Interval != intervalMonthly && event.Interval != intervalAnnual)) {
-		organization.Billing.Status = "unmapped_price"
+	switch {
+	case entitled && state.PlanKey == "":
+		billing.Status = "unmapped_price"
 		organization.BillingStatus = "billing_required"
-		organization.Billing.LastEventAt = orderAt
-		return nil
-	}
-
-	switch event.SubscriptionState {
-	case "active", "trialing":
-		planKey := normalizePlanKey(event.PlanKey)
-		if planKey != "" && (event.Interval == intervalMonthly || event.Interval == intervalAnnual) {
-			plan, ok := plans[planKey]
-			if !ok {
-				return fmt.Errorf("%w: subscription plan %q no longer exists", ErrPlanUnavailable, planKey)
-			}
-			organization.PlanID = plan.ID
-			organization.Billing.PlanKey = normalizePlanKey(plan.Key)
-			organization.Billing.Interval = event.Interval
+	case entitled:
+		plan, ok := plans[state.PlanKey]
+		if !ok {
+			return fmt.Errorf("%w: subscription plan %q no longer exists", ErrPlanUnavailable, state.PlanKey)
 		}
-		organization.Billing.Status = event.SubscriptionState
+		organization.PlanID = plan.ID
+		billing.PlanKey = state.PlanKey
+		billing.Interval = state.Interval
 		organization.BillingStatus = "active"
 		organization.PaymentMethodValidated = true
-		organization.Billing.TrialUsed = true
-		if !event.PeriodEnd.IsZero() {
-			organization.BillingRenewal = event.PeriodEnd
-		}
-	case "canceled", "incomplete_expired", "past_due", "unpaid", "paused":
-		organization.Billing.Status = event.SubscriptionState
+		organization.BillingRenewal = state.CurrentPeriodEnd
+	case organization.Kind == "personal" && !payments.IsDunningStatus(state.Status):
+		// Personal workspaces fall back to Free when no subscription grants
+		// the plan, including while a first payment is pending or after it ends.
+		organization.PlanID = "plan_free"
+		billing.PlanKey = "free"
+		billing.Interval = ""
+		organization.BillingStatus = "active"
+		organization.PaymentMethodValidated = false
+		organization.BillingRenewal = time.Time{}
+	case organization.Kind == "personal":
+		// Keep the current plan while Stripe retries payment, but surface the
+		// account as requiring billing attention.
 		organization.BillingStatus = "billing_required"
-		if event.SubscriptionState == "canceled" && organization.Kind == "personal" {
-			organization.PlanID = "plan_free"
-			organization.Billing.PlanKey = "free"
-			organization.Billing.Interval = ""
-			organization.BillingStatus = "active"
-			organization.PaymentMethodValidated = false
-		}
+	default:
+		organization.BillingStatus = "billing_required"
 	}
-	if organization.Billing.ScheduledPlanKey != "" && (event.PlanKey == organization.Billing.ScheduledPlanKey && event.Interval == organization.Billing.ScheduledInterval || event.SubscriptionState == "canceled") {
-		organization.Billing.ScheduledPlanKey = ""
-		organization.Billing.ScheduledInterval = ""
-		organization.Billing.ScheduledAt = time.Time{}
-		organization.Billing.ScheduleID = ""
-	}
-	if organization.Billing.PendingPlanKey != "" && (event.PlanKey == organization.Billing.PendingPlanKey && event.Interval == organization.Billing.PendingInterval || event.SubscriptionState == "canceled" || event.ProviderCurrent && !event.PendingUpdate) {
-		organization.Billing.PendingPlanKey = ""
-		organization.Billing.PendingInterval = ""
-	}
-	organization.Billing.LastEventAt = orderAt
 	return nil
 }
 
-func activateSubscription(organization *core.Organization, session core.CheckoutSession, plan core.Plan, subscriptionID string, at, orderAt time.Time, trial bool) {
-	organization.PlanID = plan.ID
-	organization.Billing.PlanKey = normalizePlanKey(plan.Key)
-	organization.Billing.Interval = session.Interval
-	organization.Billing.SubscriptionID = subscriptionID
-	organization.Billing.TrialUsed = true
-	organization.Billing.Status = "active"
-	organization.BillingStatus = "active"
-	organization.PaymentMethodValidated = true
-	period := 30 * 24 * time.Hour
-	if session.Interval == intervalAnnual {
-		period = 365 * 24 * time.Hour
+// projectChanges mirrors the scheduled and pending plan changes Stripe holds.
+// ChangeVersion advances whenever they change, which gives each plan change
+// its own Stripe idempotency keys while keeping retries of one change stable.
+func projectChanges(organization *core.Organization, state payments.CustomerState) {
+	billing := &organization.Billing
+	before := [...]string{billing.ScheduledPlanKey, billing.ScheduledInterval, billing.ScheduleID, billing.PendingPlanKey, billing.PendingInterval}
+	switch {
+	case state.ScheduledPlanKey != "":
+		billing.ScheduledPlanKey, billing.ScheduledInterval = state.ScheduledPlanKey, state.ScheduledInterval
+		billing.ScheduledAt, billing.ScheduleID = state.CurrentPeriodEnd, state.ScheduleID
+	case state.CancelAtPeriodEnd && organization.Kind == "personal" && payments.IsEntitledStatus(state.Status):
+		billing.ScheduledPlanKey, billing.ScheduledInterval = "free", ""
+		billing.ScheduledAt, billing.ScheduleID = state.CurrentPeriodEnd, ""
+	default:
+		clearScheduledChange(billing)
 	}
-	if trial {
-		organization.Billing.Status = "trialing"
-		period = time.Duration(plan.TrialDays) * 24 * time.Hour
+	billing.PendingPlanKey, billing.PendingInterval = state.PendingPlanKey, state.PendingInterval
+	after := [...]string{billing.ScheduledPlanKey, billing.ScheduledInterval, billing.ScheduleID, billing.PendingPlanKey, billing.PendingInterval}
+	if before != after {
+		billing.ChangeVersion++
 	}
-	organization.BillingRenewal = at.Add(period)
-	organization.Billing.CheckoutID = ""
-	organization.Billing.ReturnPath = ""
-	organization.Billing.LastEventAt = orderAt
-	session.Status = checkoutDone
-	organization.CheckoutSessions[session.ID] = session
 }
 
-func isEntitledSubscriptionState(status string) bool {
-	return status == "active" || status == "trialing"
+// projectCheckout completes the pending checkout once Stripe reports it
+// complete and its subscription entitled, and releases it once expired.
+func projectCheckout(organization *core.Organization, state payments.CustomerState, checkout *payments.CheckoutSession) {
+	checkoutID := organization.Billing.CheckoutID
+	if checkoutID == "" || checkout == nil || checkout.ID != checkoutID {
+		return
+	}
+	session, ok := organization.CheckoutSessions[checkoutID]
+	if !ok || session.Status != checkoutOpen {
+		return
+	}
+	switch {
+	case checkout.Status == "complete" && checkout.SubscriptionID != "" && checkout.SubscriptionID == state.SubscriptionID && payments.IsEntitledStatus(state.Status):
+		session.Status = checkoutDone
+	case checkout.Status == "expired":
+		session.Status = checkoutCancel
+	default:
+		return
+	}
+	organization.CheckoutSessions[checkoutID] = session
+	organization.Billing.CheckoutID = ""
+	organization.Billing.ReturnPath = ""
+}
+
+func clearScheduledChange(billing *core.Billing) {
+	billing.ScheduledPlanKey = ""
+	billing.ScheduledInterval = ""
+	billing.ScheduledAt = time.Time{}
+	billing.ScheduleID = ""
 }
 
 func (service BillingService) selectedPlan(planKey, interval string) (core.Plan, error) {
@@ -778,26 +625,6 @@ func validatePlanSelection(plan core.Plan, planKey, interval string) error {
 	return nil
 }
 
-// NormalizeReturnPath rejects absolute, protocol-relative, escaped authority,
-// and backslash paths so checkout cannot be used as an open redirect.
-func NormalizeReturnPath(value, fallback string) (string, error) {
-	if strings.TrimSpace(value) == "" {
-		value = fallback
-	}
-	value = strings.TrimSpace(value)
-	if strings.ContainsAny(value, "\\\r\n") {
-		return "", ErrInvalidReturnPath
-	}
-	parsed, err := url.ParseRequestURI(value)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.User != nil || parsed.Fragment != "" || !strings.HasPrefix(parsed.Path, "/") || strings.HasPrefix(parsed.Path, "//") {
-		return "", ErrInvalidReturnPath
-	}
-	if decoded, err := url.PathUnescape(parsed.EscapedPath()); err != nil || strings.HasPrefix(decoded, "//") || strings.Contains(decoded, "\\") {
-		return "", ErrInvalidReturnPath
-	}
-	return parsed.RequestURI(), nil
-}
-
 func normalizePlanKey(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if len(value) == 0 || len(value) > 64 {
@@ -811,12 +638,4 @@ func normalizePlanKey(value string) string {
 		}
 	}
 	return value
-}
-
-func withOutcome(returnPath, outcome string) string {
-	parsed, _ := url.Parse(returnPath)
-	query := parsed.Query()
-	query.Set("payment", outcome)
-	parsed.RawQuery = query.Encode()
-	return parsed.RequestURI()
 }
