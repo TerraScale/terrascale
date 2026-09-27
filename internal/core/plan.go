@@ -1,6 +1,9 @@
 package core
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // Allowance labels describe a plan's limits the same way on every billing
 // surface. AllowanceUnpublished stands in for a limit the plan doesn't set.
@@ -42,15 +45,19 @@ func (plan Plan) MemberAllowance() string {
 	return AllowanceUnpublished
 }
 
-// compactCount writes whole thousands and millions as K and M.
+// compactCount writes n in the largest unit that shows it exactly: B and M
+// with up to two decimals, such as 1.5M, and whole thousands as K, such as
+// 250K. An allowance is never rounded; any other value is written in full.
 func compactCount(n int64) string {
-	switch {
-	case n >= 1_000_000 && n%1_000_000 == 0:
-		return fmt.Sprintf("%dM", n/1_000_000)
-	case n >= 1_000 && n%1_000 == 0:
-		return fmt.Sprintf("%dK", n/1_000)
+	for _, unit := range []struct {
+		size, step int64
+		suffix     string
+	}{{1_000_000_000, 10_000_000, "B"}, {1_000_000, 10_000, "M"}, {1_000, 1_000, "K"}} {
+		if n >= unit.size && n%unit.step == 0 {
+			return strconv.FormatFloat(float64(n)/float64(unit.size), 'f', -1, 64) + unit.suffix
+		}
 	}
-	return fmt.Sprint(n)
+	return strconv.FormatInt(n, 10)
 }
 
 func countOf(n int, noun string) string {
