@@ -374,14 +374,14 @@ templ explainPlan(plan sdk.SQLExplainResponse) {
 templ sqlCheck(d pageData) {
 	@ui.Card(ui.CardProps{ID: "sql-analysis", Title: "SQL check"}) {
 		<ul class="ts-data-checks">
-			<li role="status">@icons.CircleCheck(16)<span>Read-only statement accepted. { d.SQLAnalysis.ParameterSlots } parameter slot(s).</span></li>
+			<li>@icons.CircleCheck(16)<span>Read-only statement accepted. { d.SQLAnalysis.ParameterSlots } parameter slot(s).</span></li>
 			if d.SQLAnalysis.HasLimit {
 				<li>@icons.CircleCheck(16)<span>Bounded with LIMIT.</span></li>
 			} else {
 				<li class="ts-data-check-warn">@icons.CircleAlert(16)<span>Add LIMIT to bound results.</span></li>
 			}
 			if d.SQLChecked {
-				<li role="status">@icons.CircleCheck(16)<span>Server check passed.</span></li>
+				<li>@icons.CircleCheck(16)<span>Server check passed.</span></li>
 			}
 			if d.SQLAnalysis.Collection != "" {
 				<li>@icons.Table(16)<span>Statement collection: { d.SQLAnalysis.Collection }</span></li>

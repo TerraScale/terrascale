@@ -4,6 +4,7 @@
   "type": "module",
   "devDependencies": {
     "@shikijs/engine-javascript": "4.4.3",
+    "axe-core": "4.13.0",
     "browserslist": "^4.29.0",
     "esbuild": "0.28.2",
     "lightningcss": "1.33.0",

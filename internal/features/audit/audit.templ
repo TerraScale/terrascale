@@ -114,7 +114,7 @@ templ severityShare(label, tone string, count, total int) {
 		<dt class="ts-stat-label">{ label }</dt>
 		<dd class="ts-stat-value">{ fmt.Sprint(count) }</dd>
 		<dd class="ts-meta">{ fmt.Sprint(auditPercent(count, total)) }% · { fmt.Sprint(count) } of { fmt.Sprint(total) } filtered events</dd>
-		<meter class="ts-audit-meter" min="0" max={ max(total, 1) } value={ count } aria-label={ fmt.Sprintf("%s: %d of %d filtered events", strings.TrimSuffix(label, " severity"), count, total) }></meter>
+		<dd><meter class="ts-audit-meter" min="0" max={ max(total, 1) } value={ count } aria-label={ fmt.Sprintf("%s: %d of %d filtered events", strings.TrimSuffix(label, " severity"), count, total) }></meter></dd>
 	</div>
 }
 

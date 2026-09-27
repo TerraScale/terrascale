@@ -11,16 +11,22 @@
   --ts-surface-3: #1e2330;
   --ts-line: rgb(148 163 184 / 0.12);
   --ts-line-strong: rgb(148 163 184 / 0.22);
+  /* Form control borders: at least 3:1 against the canvas, --ts-surface and
+     --ts-surface-2, so inputs stay identifiable (WCAG 1.4.11). */
+  --ts-control-line: #5e677b;
+  --ts-control-line-hover: #7a8397;
 
-  /* Text. */
+  /* Text. Every ink keeps at least 4.5:1 on the canvas and all surfaces. */
   --ts-ink: #eef1f7;
   --ts-ink-2: #a7afbf;
-  --ts-ink-3: #6c7589;
+  --ts-ink-3: #858ea3;
 
   /* Primary accent and status colors. */
   --ts-accent: #3b82f6;
-  --ts-accent-hover: #5b96f8;
   --ts-accent-soft: rgb(59 130 246 / 0.14);
+  /* Filled surfaces behind --ts-on-accent text: 5.2:1, and 6.7:1 on hover. */
+  --ts-accent-fill: #2563eb;
+  --ts-accent-fill-hover: #1d4ed8;
   --ts-on-accent: #ffffff;
   --ts-link: #6ea8ff;
   --ts-success: #34d399;

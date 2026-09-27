@@ -19,7 +19,10 @@ it with Lightning CSS into the single stylesheet `web/static/css/terrascale.css`
    margins. Use the 4px scale `--ts-s1`…`--ts-s12`.
 4. **Tokens only.** Colors, type, radius and motion come from
    `web/assets/css/tokens.css`. No inline `style` attributes (CSP
-   `style-src 'self'`); use `data-*` attributes for finite variants.
+   `style-src 'self'`); use `data-*` attributes for finite variants. The
+   tokens meet WCAG 2.2 AA: every ink keeps 4.5:1 on the canvas and all
+   surfaces, white text sits on `--ts-accent-fill` (never `--ts-accent`), and
+   form controls use the 3:1 `--ts-control-line` border.
 5. **No custom JavaScript.** Tabs, filters and pagination are GET links and
    forms. Interactivity comes from native HTML (`<details>` menus, `<dialog>`
    with `command`/`commandfor`) and Datastar attributes; write JavaScript only

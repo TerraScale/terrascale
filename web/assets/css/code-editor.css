@@ -19,7 +19,7 @@
 .ts-code-editor[data-ready] {
   min-height: 96px;
   overflow: hidden;
-  border: 1px solid var(--ts-line-strong);
+  border: 1px solid var(--ts-control-line);
   border-radius: var(--ts-radius);
   background: var(--ts-surface);
   resize: vertical;
@@ -27,7 +27,7 @@
 }
 
 .ts-code-editor[data-ready]:hover {
-  border-color: rgb(148 163 184 / 0.34);
+  border-color: var(--ts-control-line-hover);
 }
 
 .ts-code-editor[data-ready]:focus-within {

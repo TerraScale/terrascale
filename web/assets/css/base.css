@@ -147,7 +147,7 @@ hr {
   z-index: var(--ts-z-tooltip);
   padding: var(--ts-s2) var(--ts-s4);
   border-radius: var(--ts-radius);
-  background: var(--ts-accent);
+  background: var(--ts-accent-fill);
   color: var(--ts-on-accent);
   transform: translateY(-200%);
 }

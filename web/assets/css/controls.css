@@ -44,24 +44,24 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
 }
 
 .ts-btn-primary {
-  background: var(--ts-accent);
+  background: var(--ts-accent-fill);
   color: var(--ts-on-accent);
 }
 
 .ts-btn-primary:hover {
-  background: var(--ts-accent-hover);
+  background: var(--ts-accent-fill-hover);
 }
 
 .ts-btn-secondary,
 .ts-btn-outline {
-  border-color: var(--ts-line-strong);
+  border-color: var(--ts-control-line);
   background: transparent;
   color: var(--ts-ink);
 }
 
 .ts-btn-secondary:hover,
 .ts-btn-outline:hover {
-  border-color: rgb(148 163 184 / 0.34);
+  border-color: var(--ts-control-line-hover);
   background: var(--ts-surface-2);
 }
 
@@ -172,7 +172,7 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
   min-width: 0;
   height: var(--ts-control-h);
   padding: 0 var(--ts-s3);
-  border: 1px solid var(--ts-line-strong);
+  border: 1px solid var(--ts-control-line);
   border-radius: var(--ts-radius);
   background: var(--ts-surface);
   color: var(--ts-ink);
@@ -194,7 +194,7 @@ textarea.ts-input {
 
 .ts-input:hover,
 .ts-select:hover {
-  border-color: rgb(148 163 184 / 0.34);
+  border-color: var(--ts-control-line-hover);
 }
 
 .ts-input:focus,
@@ -229,7 +229,7 @@ select.ts-input,
 .ts-select {
   appearance: none;
   padding-right: 34px;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236c7589' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23858ea3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-position: right 10px center;
   background-repeat: no-repeat;
   cursor: pointer;
