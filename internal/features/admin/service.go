@@ -312,15 +312,6 @@ func (s Service) UpdateUser(principal core.Principal, accountID, name string, pl
 	return s.store.UpdateAccountAsAdmin(principal, accountID, func(account *core.Account) error {
 		account.User.Name = name
 		account.User.PlatformAdmin = platformAdmin
-		for orgID, org := range account.Organizations {
-			for memberID, member := range org.Members {
-				if member.UserID == account.User.ID {
-					member.Name = name
-					org.Members[memberID] = member
-				}
-			}
-			account.Organizations[orgID] = org
-		}
 		return nil
 	})
 }

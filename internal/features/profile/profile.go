@@ -224,13 +224,6 @@ func updateProfile(deps core.Deps) http.HandlerFunc {
 		err := deps.Store.UpdateAs(principal, func(account *core.Account) error {
 			if name != "" {
 				account.User.Name = name
-				if organization, ok := account.Organizations[principal.OrganizationID]; ok {
-					if member, ok := organization.Members[account.User.ID]; ok {
-						member.Name = name
-						organization.Members[account.User.ID] = member
-						account.Organizations[principal.OrganizationID] = organization
-					}
-				}
 			}
 			account.User.Phone = phone
 			return nil

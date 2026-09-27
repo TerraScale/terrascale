@@ -203,14 +203,6 @@ func saveStep(deps core.Deps) http.HandlerFunc {
 					if account.OnboardingStep == "account-information" {
 						account.OnboardingStep = "payment-method"
 					}
-					for id, org := range account.Organizations {
-						if org.Kind == "personal" {
-							member := org.Members[account.User.ID]
-							member.Name = name
-							org.Members[account.User.ID] = member
-							account.Organizations[id] = org
-						}
-					}
 					return nil
 				})
 			}
