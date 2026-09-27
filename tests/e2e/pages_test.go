@@ -313,6 +313,31 @@ func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 	must(t, expect.Locator(createdProject.GetByLabel("Primary region")).ToHaveValue(selectedRegion))
 }
 
+func TestPagesPreloadTheMonospaceFontOnlyWhenSignedIn(t *testing.T) {
+	t.Parallel()
+	page := newPage(t)
+	var monoRequests atomic.Int64
+	page.OnRequest(func(request playwright.Request) {
+		if strings.Contains(request.URL(), "/fonts/jetbrains-mono-") {
+			monoRequests.Add(1)
+		}
+	})
+	preload := page.Locator(`link[rel="preload"][href*="/fonts/jetbrains-mono-"]`)
+
+	for _, path := range []string{"/login", "/onboarding"} {
+		_, err := page.Goto(path, playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateNetworkidle})
+		must(t, err)
+		must(t, expect.Locator(preload).ToHaveCount(0))
+	}
+	if n := monoRequests.Load(); n != 0 {
+		t.Fatalf("sign-in pages requested the monospace font %d times, want 0", n)
+	}
+
+	login(t, page, sampleAccount.Email, sampleAccount.Password)
+	must(t, expect.Locator(preload).ToHaveCount(1))
+	eventually(t, "monospace font request", func() bool { return monoRequests.Load() > 0 })
+}
+
 func TestPagesMemberHasNoAdministration(t *testing.T) {
 	t.Parallel()
 	page := newPage(t)

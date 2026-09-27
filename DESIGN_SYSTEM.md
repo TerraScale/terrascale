@@ -92,5 +92,6 @@ with `Clear-Site-Data`.
 
 Page navigations show a full-width gradient progress bar
 (`body.ts-nav-pending`, set by Datastar in `internal/ui/layouts.templ`). Fonts are
-preloaded and use `font-display: block`, so text never flashes a fallback
-face. `prefers-reduced-motion` disables animation.
+preloaded (the monospace face only on signed-in pages, since sign-in pages never
+show it) and use `font-display: block`, so text never flashes a fallback face.
+`prefers-reduced-motion` disables animation.

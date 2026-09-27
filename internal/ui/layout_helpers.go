@@ -154,9 +154,9 @@ func speculationScript(nonce string) templ.Component {
 	return templ.Raw(`<script type="speculationrules"` + attr + `>` + speculationRules + `</script>`)
 }
 
-// Datastar v1.0.4 with Rocket, loaded from the official CDN build. The
-// integrity hash pins the exact file; bump both together when upgrading.
+// Datastar v1.0.4, loaded from the official CDN build. The integrity hash pins
+// the exact file; bump both together when upgrading.
 const (
-	datastarURL       = "https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.4/bundles/datastar-rocket.js"
-	datastarIntegrity = "sha384-vUxZojLrF1Ar3de5h7VINqhJXBgjyZS4U49pHvGa87kum6j5Xn6JRziuARNw5ELG"
+	datastarURL       = "https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.4/bundles/datastar.js"
+	datastarIntegrity = "sha384-twbOvafhSBQ0rJDNPzJdUw6DRvthVgAVfSIG1BQVmCiNO7Qh2zeVn7T5qstgjJ9q"
 )

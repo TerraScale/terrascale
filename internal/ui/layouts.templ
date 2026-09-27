@@ -21,7 +21,7 @@ func Admin(page core.Page, body templ.Component) templ.Component {
 	return signedInDocument(page, body, true)
 }
 
-templ document(page core.Page, bodyClass string) {
+templ document(page core.Page, bodyClass string, preloadMono bool) {
 	<!DOCTYPE html>
 	<html
 		lang="en"
@@ -38,9 +38,12 @@ templ document(page core.Page, bodyClass string) {
 			<title>{ title(page.Title) }</title>
 			<link rel="icon" type="image/svg+xml" href={ static.URL("brand/logo-icon-blue.svg") }/>
 			// Preloaded fonts are ready before first paint, so text never renders
-			// in a fallback face and then swaps on every navigation.
+			// in a fallback face and then swaps on every navigation. Sign-in pages
+			// never show the monospace face, so only signed-in layouts preload it.
 			<link rel="preload" href={ static.URL("fonts/oxanium-latin-wght-normal.woff2") } as="font" type="font/woff2" crossorigin/>
-			<link rel="preload" href={ static.URL("fonts/jetbrains-mono-latin-wght-normal.woff2") } as="font" type="font/woff2" crossorigin/>
+			if preloadMono {
+				<link rel="preload" href={ static.URL("fonts/jetbrains-mono-latin-wght-normal.woff2") } as="font" type="font/woff2" crossorigin/>
+			}
 			<link id="ts-css" rel="stylesheet" href={ static.URL("css/terrascale.css") } data-dashboard-css/>
 			<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin/>
 			<script type="module" src={ datastarURL } integrity={ datastarIntegrity } crossorigin="anonymous" if page.Nonce != "" {
@@ -75,7 +78,7 @@ templ document(page core.Page, bodyClass string) {
 }
 
 templ authDocument(page core.Page, body templ.Component) {
-	@document(page, "ts-auth-body") {
+	@document(page, "ts-auth-body", false) {
 		<a class="ts-skip-link" href="#ts-auth-main">Skip to main content</a>
 		<div id="ts-auth-main">
 			@body
@@ -84,7 +87,7 @@ templ authDocument(page core.Page, body templ.Component) {
 }
 
 templ signedInDocument(page core.Page, body templ.Component, admin bool) {
-	@document(page, "") {
+	@document(page, "", true) {
 		<a class="ts-skip-link" href="#ts-main">Skip to main content</a>
 		<div
 			class="ts-shell"

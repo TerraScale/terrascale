@@ -14,7 +14,7 @@ so leave the PR open until the owner authorizes that release.
 
 The deployable application in this checkout is the Go server in `cmd/dashboard`.
 It renders with templ, uses the Datastar Go SDK, and serves the Datastar v1.0.4
-browser bundle with Rocket beta.2. The application uses the first-party
+browser bundle. The application uses the first-party
 `terrascale.tech/sdk` Go module pinned to ts-go commit
 `3088ef2e3bd0cfbd22c980c029b2b745b82d1eff`; the dependency is vendored, so
 builds do not use a sibling C# or SDK checkout. Multiple CSS source files under
