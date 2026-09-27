@@ -226,7 +226,8 @@ func billingPage(store *core.Store, principal core.Principal, view BillingSnapsh
 	}
 	current := planCardContext{
 		Interval: interval, Key: normalizePlanKey(org.Billing.PlanKey), BillingInterval: org.Billing.Interval,
-		PriceCents: view.Plan.PriceCents, TrialEligible: !hasSubscription && !org.Billing.TrialUsed,
+		PriceCents: view.Plan.PriceCents, AnnualPriceCents: view.Plan.AnnualPriceCents,
+		TrialEligible:   !hasSubscription && !org.Billing.TrialUsed,
 		AwaitingPayment: data.AwaitingPayment, Change: data.Change,
 	}
 	for i, plan := range view.Plans {
@@ -248,23 +249,32 @@ func upcomingChange(store *core.Store, billing core.Billing) upcomingPlanChange 
 	if change.Key == "" {
 		return upcomingPlanChange{}
 	}
-	change.PlanName = change.Key
+	change.PlanName = humanizePlanKey(change.Key)
 	if plan, ok := store.Plan(change.Key); ok {
 		change.PlanName = plan.Name
 	}
 	return change
 }
 
+func humanizePlanKey(key string) string {
+	key = strings.ReplaceAll(strings.ReplaceAll(key, "-", " "), "_", " ")
+	if key == "" {
+		return "Plan"
+	}
+	return strings.ToUpper(key[:1]) + key[1:]
+}
+
 // planCardContext is the organization's billing state that each plan card is
 // compared against.
 type planCardContext struct {
-	Interval        string
-	Key             string
-	BillingInterval string
-	PriceCents      int64
-	TrialEligible   bool
-	AwaitingPayment bool
-	Change          upcomingPlanChange
+	Interval         string
+	Key              string
+	BillingInterval  string
+	PriceCents       int64
+	AnnualPriceCents int64
+	TrialEligible    bool
+	AwaitingPayment  bool
+	Change           upcomingPlanChange
 }
 
 func makePlanView(plan core.Plan, index int, current planCardContext) planView {
@@ -290,6 +300,8 @@ func makePlanView(plan core.Plan, index int, current planCardContext) planView {
 	if current.TrialEligible && plan.TrialDays > 0 {
 		card.Features = append(card.Features, fmt.Sprintf("%d-day free trial", plan.TrialDays))
 	}
+	currentPrice := monthlyEquivalentPrice(current.PriceCents, current.AnnualPriceCents, current.BillingInterval)
+	planPrice := monthlyEquivalentPrice(plan.PriceCents, plan.AnnualPriceCents, card.Interval)
 	switch {
 	case current.AwaitingPayment:
 		card.Action = "Choose " + plan.Name
@@ -297,27 +309,42 @@ func makePlanView(plan core.Plan, index int, current planCardContext) planView {
 		card.Current, card.Action = true, "Current plan"
 	case key == current.Key:
 		card.Action = "Switch to " + card.Interval + " billing"
-	case plan.PriceCents > current.PriceCents:
+	case planPrice > currentPrice:
 		card.Action = "Upgrade to " + plan.Name
 	default:
 		card.Action = "Switch to " + plan.Name
 	}
 	if current.Change.Key != "" && !card.Current {
 		card.Locked = true
+		card.Action = "Unavailable while a change is in progress"
 		if current.Change.Key == key && current.Change.Interval == card.Interval {
 			card.Upcoming, card.Badge = true, "Scheduled"
 			if current.Change.Pending {
 				card.Badge = "Awaiting payment"
 			}
+			card.Action = card.Badge
 		}
 	}
 	return card
 }
 
-// planFeatures lists a plan's allowances as a plan card shows them. Whether a
-// trial applies depends on the organization, so callers add it.
+// planFeatures lists a plan's published allowances as a plan card shows
+// them. Whether a trial applies depends on the organization, so callers add it.
 func planFeatures(plan core.Plan) []string {
-	return []string{plan.StorageAllowance(), plan.OperationsAllowance(), plan.DatabaseAllowance(), plan.MemberAllowance()}
+	features := make([]string, 0, 4)
+	for _, allowance := range []string{plan.StorageAllowance(), plan.OperationsAllowance(), plan.DatabaseAllowance(), plan.MemberAllowance()} {
+		if allowance != "Limit not published" {
+			features = append(features, allowance)
+		}
+	}
+	return features
+}
+
+func monthlyEquivalentPrice(monthlyPrice, annualPrice int64, interval string) int64 {
+	if interval == intervalAnnual && annualPrice > 0 {
+		return (annualPrice + 6) / 12
+	}
+	return monthlyPrice
 }
 
 func intervalLabel(interval string) string {

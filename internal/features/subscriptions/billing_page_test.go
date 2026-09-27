@@ -76,6 +76,14 @@ func TestPlanCardsListEveryAllowance(t *testing.T) {
 	}
 }
 
+func TestPlanCardsOmitUnpublishedAllowances(t *testing.T) {
+	plan := core.Plan{Key: "custom", Name: "Custom", PriceCents: 1000}
+	card := makePlanView(plan, 0, planCardContext{Interval: intervalMonthly})
+	if len(card.Features) != 0 {
+		t.Fatalf("plan with unpublished allowances has features %q", card.Features)
+	}
+}
+
 func TestPlanCardsOfferTrialOnlyWhileCheckoutGrantsOne(t *testing.T) {
 	fixture := newBillingFixture(t)
 	if features := fixture.page(t, fixture.principal, intervalMonthly).card(t, "pro").Features; !slices.Contains(features, "30-day free trial") {
@@ -99,6 +107,23 @@ func TestAnnualPlanCardsRoundTheMonthlyEquivalent(t *testing.T) {
 	}
 }
 
+func TestAnnualPlanActionUsesDisplayedMonthlyEquivalent(t *testing.T) {
+	current := planCardContext{
+		Interval: intervalAnnual, Key: "current", BillingInterval: intervalAnnual,
+		PriceCents: 10_000, AnnualPriceCents: 60_000,
+	}
+	plan := core.Plan{
+		Key: "target", Name: "Target", PriceCents: 12_000, AnnualPriceCents: 48_000,
+	}
+	card := makePlanView(plan, 0, current)
+	if card.Price != "$40.00" {
+		t.Fatalf("annual plan price = %s, want $40.00", card.Price)
+	}
+	if card.Action != "Switch to Target" {
+		t.Fatalf("annual plan action = %q, want a switch based on the $40.00 annual equivalent", card.Action)
+	}
+}
+
 func TestBillingPageShowsTheScheduledChangeAndLocksOtherPlans(t *testing.T) {
 	fixture := newBillingFixture(t)
 	fixture.subscribe(t, "pro", intervalMonthly)
@@ -117,14 +142,50 @@ func TestBillingPageShowsTheScheduledChangeAndLocksOtherPlans(t *testing.T) {
 	if starter := page.card(t, "starter"); !starter.Upcoming || starter.Badge != "Scheduled" || !starter.Locked {
 		t.Errorf("scheduled Starter card = %#v", starter)
 	}
-	if business := page.card(t, "business"); business.Upcoming || !business.Locked {
+	if business := page.card(t, "business"); business.Upcoming || !business.Locked || business.Action != "Unavailable while a change is in progress" {
 		t.Errorf("Business card should be locked while a change is scheduled: %#v", business)
+	}
+	if starter := page.card(t, "starter"); starter.Action != "Scheduled" {
+		t.Errorf("scheduled Starter action = %q, want Scheduled", starter.Action)
 	}
 	html := renderBillingPage(t, page)
 	for _, want := range []string{"Change scheduled", "Pro stays active until October 27, 2026", "moves to Starter, billed monthly", `action="/billing/change/undo"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("billing page is missing %q", want)
 		}
+	}
+}
+
+func TestBillingPageExplainsScheduledFreeChangeWithoutAFreeCard(t *testing.T) {
+	fixture := newBillingFixture(t)
+	fixture.subscribe(t, "pro", intervalMonthly)
+	renewal := time.Date(2026, time.October, 27, 0, 0, 0, 0, time.UTC)
+	if err := fixture.service.ScheduleDemoChange(fixture.principal, "free", "", renewal); err != nil {
+		t.Fatal(err)
+	}
+
+	page := fixture.page(t, fixture.principal, intervalMonthly)
+	if page.Change.PlanName != "Free" || page.Change.Interval != "" {
+		t.Fatalf("scheduled Free change = %#v", page.Change)
+	}
+	for _, card := range page.Plans {
+		if !card.Current && (!card.Locked || card.Action != "Unavailable while a change is in progress") {
+			t.Errorf("non-current plan remains actionable during scheduled Free change: %#v", card)
+		}
+	}
+	html := renderBillingPage(t, page)
+	for _, want := range []string{"moves to Free", "Unavailable while a change is in progress"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("billing page is missing %q", want)
+		}
+	}
+}
+
+func TestUpcomingChangeHumanizesMissingPlanKey(t *testing.T) {
+	fixture := newBillingFixture(t)
+	change := upcomingChange(fixture.store, core.Billing{ScheduledPlanKey: "missing_plan-key"})
+	if change.PlanName != "Missing plan key" {
+		t.Fatalf("missing plan name = %q, want Missing plan key", change.PlanName)
 	}
 }
 
@@ -141,12 +202,36 @@ func TestBillingPageShowsAPendingUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := fixture.page(t, fixture.principal, intervalAnnual)
-	if business := page.card(t, "business"); !business.Upcoming || business.Badge != "Awaiting payment" || !business.Locked {
+	if business := page.card(t, "business"); !business.Upcoming || business.Badge != "Awaiting payment" || !business.Locked || business.Action != "Awaiting payment" {
 		t.Errorf("pending Business card = %#v", business)
 	}
 	html := renderBillingPage(t, page)
 	if !strings.Contains(html, "Stripe is confirming the change to Business, billed annually") || strings.Contains(html, "/billing/change/undo") {
 		t.Errorf("pending upgrade notice is wrong:\n%s", html)
+	}
+}
+
+func TestCheckoutActionsStayDisabledForAnExpiredSubscriptionWithAPendingChange(t *testing.T) {
+	fixture := newBillingFixture(t)
+	if err := fixture.store.UpdateAs(fixture.principal, func(account *core.Account) error {
+		org := account.Organizations[fixture.principal.OrganizationID]
+		org.Billing.SubscriptionID = "sub_expired"
+		org.Billing.Status = "incomplete_expired"
+		org.Billing.PendingPlanKey = "starter"
+		org.Billing.PendingInterval = intervalMonthly
+		account.Organizations[org.ID] = org
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	page := fixture.page(t, fixture.principal, intervalMonthly)
+	if page.HasSubscription {
+		t.Fatal("expired subscription was treated as active")
+	}
+	html := renderBillingPage(t, page)
+	if !strings.Contains(html, `disabled>Awaiting payment</button>`) {
+		t.Fatal("checkout form allows submitting a plan with a pending change")
 	}
 }
 

@@ -145,7 +145,7 @@ templ planCard(csrfToken string, plan planView, data subscriptionsPage) {
 				<input type="hidden" name="plan" value={ plan.Key }/>
 				<input type="hidden" name="interval" value={ plan.Interval }/>
 				<input type="hidden" name="return" value="/billing"/>
-				<button class="ts-btn ts-btn-primary ts-btn-block" type="submit">{ plan.Action }</button>
+				<button class={ "ts-btn", "ts-btn-block", templ.KV("ts-btn-primary", !plan.Locked), templ.KV("ts-btn-secondary", plan.Locked) } type="submit" disabled?={ plan.Locked }>{ plan.Action }</button>
 			</form>
 		}
 	</article>

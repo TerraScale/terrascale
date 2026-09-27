@@ -80,7 +80,7 @@ func TestBillingPageShowsScheduledDowngradeUntilUndone(t *testing.T) {
 	must(t, expect.Locator(summary).ToContainText("Change scheduled"))
 	must(t, expect.Locator(summary).ToContainText("moves to Starter, billed monthly"))
 	must(t, expect.Locator(planCard(page, "Starter")).ToContainText("Scheduled"))
-	must(t, expect.Locator(byRole(planCard(page, "Business"), *playwright.AriaRoleButton, "Upgrade to Business")).ToBeDisabled())
+	must(t, expect.Locator(byRole(planCard(page, "Business"), *playwright.AriaRoleButton, "Unavailable while a change is in progress")).ToBeDisabled())
 	screenshot(t, page, "billing-scheduled-downgrade")
 
 	click(t, byRole(summary, *playwright.AriaRoleButton, "Undo scheduled change"))
