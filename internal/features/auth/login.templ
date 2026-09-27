@@ -1,6 +1,9 @@
 package auth
 
-import "terrascale.tech/dashboard/internal/ui"
+import (
+	"terrascale.tech/dashboard/internal/ui"
+	static "terrascale.tech/dashboard/web/static"
+)
 
 // loginView pairs a full-bleed region map with the sign-in column.
 templ loginView(data loginPageData, csrfToken string) {
@@ -15,7 +18,7 @@ templ loginView(data loginPageData, csrfToken string) {
 		</section>
 		<div class="ts-login-column">
 			<div class="ts-login-panel">
-				<img class="ts-login-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async"/>
+				<img class="ts-login-logo" src={ static.URL("brand/logo-terrascale-blue.svg") } alt="TerraScale" decoding="async"/>
 				<div class="ts-auth-heading">
 					<h1 class="ts-auth-title" id="login-title">Sign in</h1>
 					<p class="ts-auth-subtitle">Access your databases and cloud operations.</p>
@@ -45,8 +48,8 @@ templ loginView(data loginPageData, csrfToken string) {
 				<div class="ts-auth-divider" aria-hidden="true">Other sign-in options</div>
 				<div class="ts-auth-providers">
 					<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="Passkey sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo">Passkey</button>
-					<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="Google sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src="/brand/google.svg" alt="" aria-hidden="true" width="18" height="18"/></button>
-					<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="GitHub sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src="/brand/github.svg" alt="" aria-hidden="true" width="18" height="18"/></button>
+					<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="Google sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src={ static.URL("brand/google.svg") } alt="" aria-hidden="true" width="18" height="18"/></button>
+					<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="GitHub sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src={ static.URL("brand/github.svg") } alt="" aria-hidden="true" width="18" height="18"/></button>
 				</div>
 				<p class="ts-auth-footer">New to TerraScale? <a class="ts-link" href="/onboarding">Create account</a></p>
 			</div>
@@ -86,7 +89,7 @@ templ authStatusView(data authStatusPageData, csrfToken string) {
 		<main class="ts-auth">
 			<div class="ts-auth-card">
 				<div class="ts-auth-brand">
-					<img class="ts-brand-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async"/>
+					<img class="ts-brand-logo" src={ static.URL("brand/logo-terrascale-blue.svg") } alt="TerraScale" decoding="async"/>
 				</div>
 				<div class="ts-auth-heading">
 					<h1 class="ts-auth-title">{ data.Title }</h1>

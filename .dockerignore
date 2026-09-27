@@ -11,3 +11,5 @@ docs
 test-results
 # Generated inside the image by scripts/build-js.mjs --release.
 web/static/js
+# Generated inside the image by scripts/build-css.mjs --release.
+web/static/css/*.br

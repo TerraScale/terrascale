@@ -438,7 +438,7 @@ func TestCutoverUnknownPageRendersIllustrated404AndAPIReturnsBare404(t *testing.
 	}
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, notFound))
 	for _, source := range []string{"/img/404-number.webp", "/img/404-illustration.webp"} {
-		image := page.Locator(`img[src="` + source + `"]`)
+		image := page.Locator(`img[src^="` + source + `?v="]`)
 		visible(t, image)
 		eventually(t, source+" to finish loading with a natural width", func() bool {
 			loaded, err := image.Evaluate(`image => image.complete && image.naturalWidth > 0`, nil)

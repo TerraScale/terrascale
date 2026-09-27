@@ -29,7 +29,7 @@ func TestFreshAccountRegistrationOnboardingSessionAndSignIn(t *testing.T) {
 	must(t, expect.Locator(highlightedMap).ToHaveAttribute("aria-hidden", "true"))
 	must(t, expect.Locator(highlightedMap.Locator(".ts-region-node")).ToHaveCount(3))
 	mapImage := highlightedMap.Locator("img.ts-region-map-image")
-	must(t, expect.Locator(mapImage).ToHaveAttribute("src", "/brand/region-map.svg"))
+	must(t, expect.Locator(mapImage).ToHaveAttribute("src", assetURL("/brand/region-map.svg")))
 	must(t, expect.Locator(mapImage).ToHaveAttribute("loading", "lazy"))
 	screenshot(t, page, "login")
 
