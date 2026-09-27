@@ -130,6 +130,10 @@ dialog.ts-org-wizard {
   font-size: var(--ts-fs-xl);
 }
 
+.ts-org-plan > .ts-badge {
+  justify-self: start;
+}
+
 .ts-org-intervals {
   display: inline-flex;
   gap: var(--ts-s1);

@@ -8,7 +8,7 @@ import (
 templ checkoutContent(csrfToken string, data checkoutPage) {
 	<main class="ts-auth">
 		<section class="ts-auth-card" aria-labelledby="checkout-title">
-			@simulatorHeading("checkout-title", "Local payment setup", data.PlanName+" · billed "+data.Interval)
+			@simulatorHeading("checkout-title", "Local payment setup", data.PlanName+" · "+billedEvery(data.Interval))
 			@ui.Alert("info", "Demo simulator only", "No card details are collected, no Stripe service is contacted, and no real payment or charge occurs.")
 			<dl class="ts-kv">
 				<dt>Checkout session</dt>
@@ -41,4 +41,12 @@ templ simulatorHeading(id, title, subtitle string) {
 		<h1 class="ts-auth-title" id={ id }>{ title }</h1>
 		<p class="ts-auth-subtitle">{ subtitle }</p>
 	</div>
+}
+
+// billedEvery words a checkout's billing interval.
+func billedEvery(interval string) string {
+	if interval == intervalAnnual {
+		return "billed annually"
+	}
+	return "billed monthly"
 }

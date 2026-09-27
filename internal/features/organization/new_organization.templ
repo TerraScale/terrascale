@@ -100,6 +100,12 @@ templ newOrganizationWizardContent(page core.Page, data organizationPageData, su
 											} else {
 												<span class="ts-meta">Annual billing unavailable</span>
 											}
+											for _, allowance := range plan.Allowances {
+												<span class="ts-meta">{ allowance }</span>
+											}
+											if plan.Trial != "" {
+												@ui.Badge("success", plan.Trial)
+											}
 										</label>
 									}
 								</div>
@@ -111,7 +117,11 @@ templ newOrganizationWizardContent(page core.Page, data organizationPageData, su
 									<label class="ts-org-interval"><input type="radio" name="interval" value="annual"/> Annual</label>
 								</div>
 							</fieldset>
-							<p class="ts-meta">Continue to the demo checkout to confirm this organization’s billing before project creation.</p>
+							if data.Demo {
+								<p class="ts-meta">Continue to a local checkout simulation to confirm this organization’s billing. Projects can be created once it’s confirmed.</p>
+							} else {
+								<p class="ts-meta">Continue to Stripe Checkout to add a payment method. Projects can be created once Stripe confirms billing.</p>
+							}
 						}
 						<div class="ts-form-actions">
 							<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit" disabled?={ len(data.Plans) == 0 }>Continue to checkout</button>

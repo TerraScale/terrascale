@@ -27,12 +27,20 @@ func TestCutoverBusinessOrganizationRetriesCanceledAnnualCheckoutAsMonthly(t *te
 	visible(t, byRole(wizard, *playwright.AriaRoleHeading, "Set up billing"))
 
 	payment := wizardStep(page, wizard, "payment-method")
+	plans := payment.Locator(".ts-org-plan")
+	must(t, expect.Locator(plans).ToHaveCount(3))
+	for _, text := range []string{"Starter", "$5.00", "5 GB-region storage", "1M operations/month", "5 databases", "5 team members", "30-day free trial"} {
+		must(t, expect.Locator(plans.First()).ToContainText(text))
+	}
+	must(t, expect.Locator(plans.Last()).ToContainText("Business"))
+	must(t, expect.Locator(payment).ToContainText("local checkout simulation"))
+	screenshot(t, page, "organization-billing-step")
 	must(t, payment.Locator(`input[name="plan"][value="starter"]`).Check())
 	must(t, payment.Locator(`input[name="interval"][value="annual"]`).Check())
 	submitAndExpect(t, page, newOrganizationPath, 307, byRole(payment, *playwright.AriaRoleButton, "Continue to checkout").Click)
 	must(t, page.WaitForURL(regexp.MustCompile(`/checkout/cs_local_`)))
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Local payment setup"))
-	must(t, expect.Locator(page.Locator(".ts-auth-subtitle")).ToContainText("billed annual"))
+	must(t, expect.Locator(page.Locator(".ts-auth-subtitle")).ToContainText("Starter · billed annually"))
 	must(t, expect.Locator(page.GetByRole(*playwright.AriaRoleStatus)).ToContainText("No card details are collected"))
 	click(t, pageByRole(page, *playwright.AriaRoleButton, "Cancel checkout"))
 
