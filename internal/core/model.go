@@ -383,6 +383,15 @@ type CredentialSessions interface {
 	StartIfPasswordHash(http.ResponseWriter, *http.Request, Principal, string) error
 }
 
+// Throttle bounds password guessing. Allow reserves one attempt for the
+// request's client and the account before the password is checked, and
+// reports how long to wait once either budget is spent. Forgive returns the
+// reservation after a correct password, so only failures count.
+type Throttle interface {
+	Allow(r *http.Request, account string) (time.Duration, bool)
+	Forgive(r *http.Request, account string)
+}
+
 type NavItem struct {
 	Label      string
 	URL        string
@@ -516,6 +525,7 @@ type Deps struct {
 	Render   Renderer
 	Events   Events
 	SDK      SDKFactory
+	Throttle Throttle
 	Demo     bool
 }
 

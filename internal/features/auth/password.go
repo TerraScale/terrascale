@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -17,10 +18,21 @@ const (
 	passwordSaltLength  = 16
 )
 
+// derivations bounds concurrent key derivations to half the CPUs. Each one
+// takes a CPU for a noticeable time, so a burst of password checks waits
+// here instead of starving every other request.
+var derivations = make(chan struct{}, max(1, runtime.GOMAXPROCS(0)/2))
+
+func deriveKey(password string, salt []byte, iterations, length int) ([]byte, error) {
+	derivations <- struct{}{}
+	defer func() { <-derivations }()
+	return pbkdf2.Key(sha256.New, password, salt, iterations, length)
+}
+
 func HashPassword(password string) (string, error) {
 	salt := make([]byte, passwordSaltLength)
 	rand.Read(salt)
-	key, err := pbkdf2.Key(sha256.New, password, salt, passwordIterations, passwordKeyLength)
+	key, err := deriveKey(password, salt, passwordIterations, passwordKeyLength)
 	if err != nil {
 		return "", err
 	}
@@ -57,7 +69,7 @@ func VerifyPassword(encoded, password string) bool {
 	if err != nil || len(expected) != passwordKeyLength {
 		return false
 	}
-	actual, err := pbkdf2.Key(sha256.New, password, salt, iterations, len(expected))
+	actual, err := deriveKey(password, salt, iterations, len(expected))
 	if err != nil {
 		return false
 	}

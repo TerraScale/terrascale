@@ -38,6 +38,7 @@ import (
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
 	"terrascale.tech/dashboard/internal/platform/statuspage"
+	"terrascale.tech/dashboard/internal/platform/throttle"
 )
 
 type Application struct {
@@ -74,7 +75,7 @@ func New(cfg config.Config) (*Application, error) {
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo,
-		SDK: sdkFactory,
+		SDK: sdkFactory, Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader}),
 	}
 	mux := http.NewServeMux()
 	if err := assets.Mount(mux, cfg.Dev); err != nil {
