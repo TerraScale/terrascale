@@ -14,17 +14,67 @@ import (
 )
 
 type pageData struct {
-	ProjectID  string
-	CanManage  bool
-	Kind       string
-	Status     string
-	DatabaseID string
-	Search     string
-	Create     string
-	Keys       []keyView
-	Databases  []databaseChoice
-	Revealed   revealed
-	Error      string
+	listFilters
+	ProjectID string
+	CanManage bool
+	Create    string
+	Draft     draft
+	Keys      []keyView
+	Databases []databaseChoice
+	Revealed  revealed
+	Error     string
+}
+
+// listFilters narrow the credential list. Forms that change a credential
+// carry them in their action URL, so the page comes back filtered the same way.
+type listFilters struct {
+	Kind, Status, DatabaseID, Search string
+}
+
+func readFilters(query url.Values) listFilters {
+	f := listFilters{Kind: query.Get("kind"), Status: query.Get("status"), DatabaseID: query.Get("databaseId"), Search: strings.TrimSpace(query.Get("q"))}
+	if !slices.Contains([]string{"key", "m2m"}, f.Kind) {
+		f.Kind = ""
+	}
+	if !slices.Contains([]string{"active", "inactive"}, f.Status) {
+		f.Status = ""
+	}
+	if len(f.Search) > 256 {
+		f.Search = f.Search[:256]
+	}
+	return f
+}
+
+func (f listFilters) query() url.Values {
+	query := url.Values{}
+	for name, value := range map[string]string{"kind": f.Kind, "status": f.Status, "databaseId": f.DatabaseID, "q": f.Search} {
+		if value != "" {
+			query.Set(name, value)
+		}
+	}
+	return query
+}
+
+// with returns path followed by the filters as its query.
+func (f listFilters) with(path string) string {
+	if query := f.query(); len(query) > 0 {
+		return path + "?" + query.Encode()
+	}
+	return path
+}
+
+// draft is what a create form submitted, returned with its error so nothing
+// has to be typed again.
+type draft struct {
+	Name, Scopes, DatabaseID string
+}
+
+// draftFor returns the draft of the create dialog for kind, if it reopened.
+func (d pageData) draftFor(kind string) draft {
+	if d.Create != kind {
+		return draft{}
+	}
+	return d.Draft
 }
 
 // revealed is a secret shown once, in the response that issued it.
@@ -92,7 +142,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		input := sdk.CreateProjectAPIKeyRequest{Name: r.FormValue("name"), DatabaseID: r.FormValue("databaseId"), Scopes: formScopes(r.FormValue("scopes"))}
+		input := sdk.CreateProjectAPIKeyRequest{Name: r.PostFormValue("name"), DatabaseID: r.PostFormValue("databaseId"), Scopes: formScopes(r.PostFormValue("scopes"))}
 		if err := validateInput(project, input); err != nil {
 			redirectPageError(w, r, err, "key")
 			return
@@ -125,7 +175,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		input := sdk.CreateProjectAPIKeyRequest{Name: r.FormValue("name"), DatabaseID: r.FormValue("databaseId"), Scopes: formScopes(r.FormValue("scopes"))}
+		input := sdk.CreateProjectAPIKeyRequest{Name: r.PostFormValue("name"), DatabaseID: r.PostFormValue("databaseId"), Scopes: formScopes(r.PostFormValue("scopes"))}
 		if err := validateInput(project, input); err != nil {
 			redirectPageError(w, r, err, "m2m")
 			return
@@ -158,7 +208,7 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		key, secret, err := rotateDemoKey(deps, p, r.FormValue("keyId"))
+		key, secret, err := rotateDemoKey(deps, p, r.PostFormValue("keyId"))
 		if err != nil {
 			redirectPageError(w, r, err, "")
 			return
@@ -186,11 +236,11 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		if err := revokeDemoKey(deps, p, r.FormValue("keyId")); err != nil {
+		if err := revokeDemoKey(deps, p, r.PostFormValue("keyId")); err != nil {
 			redirectPageError(w, r, err, "")
 			return
 		}
-		http.Redirect(w, r, "/api-keys", http.StatusSeeOther)
+		http.Redirect(w, r, readFilters(r.URL.Query()).with("/api-keys"), http.StatusSeeOther)
 	})
 }
 
@@ -212,21 +262,30 @@ func selectedPage(deps core.Deps, r *http.Request) (core.Principal, core.Project
 	return p, project, a, err
 }
 
-// redirectPageError returns a failed credential form to the API keys page
-// with an explanation. A create kind reopens that dialog after invalid input.
+// redirectPageError returns a failed credential form to the API keys page,
+// filtered as before, with an explanation. A failed create reopens its dialog
+// with what was submitted; a database that no longer exists is left out.
 func redirectPageError(w http.ResponseWriter, r *http.Request, err error, create string) {
 	message := "The credential change could not be completed. Try again."
 	switch {
 	case errors.Is(err, core.ErrInvalid):
-		message = "Enter a name of up to 128 characters and at least one scope, such as database:read."
+		message = "Enter a name of up to 128 characters and 1 to 16 scopes of up to 128 characters each, such as database:read."
+	case errors.Is(err, core.ErrNotFound) && create != "":
+		message = "That database no longer exists. Choose another database or all project databases."
 	case errors.Is(err, core.ErrNotFound):
-		message = "That credential or database no longer exists, or the credential was already revoked."
+		message = "That credential no longer exists or was already revoked."
 	case errors.Is(err, core.ErrForbidden):
 		message = "Only organization owners and admins can manage credentials."
 	}
-	query := url.Values{"error": {message}}
-	if create != "" && errors.Is(err, core.ErrInvalid) {
+	query := readFilters(r.URL.Query()).query()
+	query.Set("error", message)
+	if create != "" && (errors.Is(err, core.ErrInvalid) || errors.Is(err, core.ErrNotFound)) {
 		query.Set("create", create)
+		query.Set("draftName", r.PostFormValue("name"))
+		query.Set("draftScopes", r.PostFormValue("scopes"))
+		if !errors.Is(err, core.ErrNotFound) {
+			query.Set("draftDatabaseId", r.PostFormValue("databaseId"))
+		}
 	}
 	http.Redirect(w, r, "/api-keys?"+query.Encode(), http.StatusSeeOther)
 }
@@ -242,18 +301,11 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, reveal r
 		return
 	}
 	query := r.URL.Query()
-	data := pageData{ProjectID: project.ID, CanManage: a.Organizations[p.OrganizationID].CanManage(p.UserID), Revealed: reveal, Error: query.Get("error"), Kind: query.Get("kind"), Status: query.Get("status"), DatabaseID: query.Get("databaseId"), Search: strings.TrimSpace(query.Get("q")), Create: query.Get("create")}
-	if !slices.Contains([]string{"key", "m2m"}, data.Create) {
+	data := pageData{listFilters: readFilters(query), ProjectID: project.ID, CanManage: a.Organizations[p.OrganizationID].CanManage(p.UserID), Revealed: reveal, Error: query.Get("error"), Create: query.Get("create")}
+	if slices.Contains([]string{"key", "m2m"}, data.Create) {
+		data.Draft = draft{Name: query.Get("draftName"), Scopes: query.Get("draftScopes"), DatabaseID: query.Get("draftDatabaseId")}
+	} else {
 		data.Create = ""
-	}
-	if !slices.Contains([]string{"key", "m2m"}, data.Kind) {
-		data.Kind = ""
-	}
-	if !slices.Contains([]string{"active", "inactive"}, data.Status) {
-		data.Status = ""
-	}
-	if len(data.Search) > 256 {
-		data.Search = data.Search[:256]
 	}
 	search := strings.ToLower(data.Search)
 	for _, key := range project.APIKeys {
