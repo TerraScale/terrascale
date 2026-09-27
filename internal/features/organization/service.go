@@ -30,6 +30,7 @@ var (
 	ErrRequiresOwner = errors.New("organization owner role required")
 	ErrBillingNeeded = errors.New("active billing is required to create projects")
 	ErrPersonalOrg   = errors.New("personal organizations cannot be deleted or left")
+	ErrNoTransfer    = errors.New("no ownership transfer is pending for this member")
 )
 
 // Service contains organization and project behavior. Persistence and atomic
@@ -458,7 +459,7 @@ func (s Service) ConfirmOwnershipTransfer(p core.Principal) error {
 			return err
 		}
 		if org.PendingOwnerUserID == "" || org.PendingOwnerUserID != p.UserID || !org.PendingOwnerExpiresAt.After(s.now()) {
-			return core.ErrForbidden
+			return ErrNoTransfer
 		}
 		oldOwner, ok := org.Members[org.OwnerUserID]
 		if !ok || oldOwner.Role != roleOwner {
@@ -473,6 +474,27 @@ func (s Service) ConfirmOwnershipTransfer(p core.Principal) error {
 		org.Members[oldOwner.UserID] = oldOwner
 		org.Members[newOwner.UserID] = newOwner
 		org.OwnerUserID = newOwner.UserID
+		org.PendingOwnerUserID = ""
+		org.PendingOwnerExpiresAt = time.Time{}
+		a.Organizations[org.ID] = org
+		return nil
+	})
+}
+
+// CancelOwnershipTransfer withdraws a pending transfer: the owner cancels it,
+// or the nominated member declines it.
+func (s Service) CancelOwnershipTransfer(p core.Principal) error {
+	return s.store.UpdateAs(p, func(a *core.Account) error {
+		org, err := a.OrganizationFor(p, p.OrganizationID)
+		if err != nil {
+			return err
+		}
+		if org.PendingOwnerUserID == "" {
+			return ErrNoTransfer
+		}
+		if p.UserID != org.OwnerUserID && p.UserID != org.PendingOwnerUserID {
+			return ErrRequiresOwner
+		}
 		org.PendingOwnerUserID = ""
 		org.PendingOwnerExpiresAt = time.Time{}
 		a.Organizations[org.ID] = org
