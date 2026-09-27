@@ -404,11 +404,26 @@ templ billingReviewDialog(data pageData, csrfToken string) {
 	<dialog id="review-billing-plan" class="ts-dialog" data-init="el.showModal()" aria-labelledby="review-billing-plan-title">
 		<div class="ts-dialog-content ts-stack">
 			<div class="ts-billing-dialog-head">
-				<div class="ts-dialog-header"><h2 class="ts-dialog-title" id="review-billing-plan-title">Review plan change</h2><p class="ts-dialog-description">Stripe confirms the final charge and billing date.</p></div>
+				<div class="ts-dialog-header">
+					<h2 class="ts-dialog-title" id="review-billing-plan-title">Review plan change</h2>
+					<p class="ts-dialog-description">
+						if data.Demo {
+							Demo billing doesn’t contact Stripe or charge a card.
+						} else {
+							Stripe confirms the final charge and billing date.
+						}
+					</p>
+				</div>
 				<a class="ts-icon-btn" href="/usage?tab=billing" aria-label="Close plan review">@icons.X(18)</a>
 			</div>
 			if data.Review.Error != "" {
 				@ui.Alert("warning", "", data.Review.Error)
+				if data.Review.CanUndo {
+					<form method="post" action="/billing/change/undo">
+						<input type="hidden" name="_csrf" value={ csrfToken }/>
+						<button class="ts-btn ts-btn-secondary" type="submit">Undo scheduled change</button>
+					</form>
+				}
 			} else {
 				<dl class="ts-kv">
 					<div><dt>Plan</dt><dd>{ data.Review.Name }</dd></div>
@@ -420,6 +435,9 @@ templ billingReviewDialog(data pageData, csrfToken string) {
 					<div><dt>Databases</dt><dd>{ data.Review.Databases }</dd></div>
 					<div><dt>Team</dt><dd>{ data.Review.Members }</dd></div>
 				</dl>
+				for _, warning := range data.Review.Warnings {
+					@ui.Alert("warning", warning.Title, warning.Detail)
+				}
 				if data.Review.Ready {
 					<form method="post" action={ billingChangeAction(data) }>
 						<input type="hidden" name="_csrf" value={ csrfToken }/>
