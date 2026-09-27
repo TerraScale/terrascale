@@ -495,7 +495,8 @@ func currentPrincipal(sessions core.Sessions, r *http.Request) (core.Principal, 
 }
 
 // SafeRedirectTarget is the same-origin path to continue to after signing in
-// or signing up, or "/" when raw is empty or leaves the dashboard.
+// or signing up, or "/" when raw is empty, longer than 2048 bytes, or leaves
+// the dashboard.
 func SafeRedirectTarget(raw string) string {
 	if raw == "" || len(raw) > 2048 {
 		return "/"
