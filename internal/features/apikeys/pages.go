@@ -2,10 +2,12 @@ package apikeys
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
@@ -32,15 +34,12 @@ type listFilters struct {
 }
 
 func readFilters(query url.Values) listFilters {
-	f := listFilters{Kind: query.Get("kind"), Status: query.Get("status"), DatabaseID: query.Get("databaseId"), Search: strings.TrimSpace(query.Get("q"))}
+	f := listFilters{Kind: query.Get("kind"), Status: query.Get("status"), DatabaseID: query.Get("databaseId"), Search: clip(strings.TrimSpace(query.Get("q")), 256)}
 	if !slices.Contains([]string{"key", "m2m"}, f.Kind) {
 		f.Kind = ""
 	}
 	if !slices.Contains([]string{"active", "inactive"}, f.Status) {
 		f.Status = ""
-	}
-	if len(f.Search) > 256 {
-		f.Search = f.Search[:256]
 	}
 	return f
 }
@@ -64,9 +63,25 @@ func (f listFilters) with(path string) string {
 }
 
 // draft is what a create form submitted, returned with its error so nothing
-// has to be typed again.
+// has to be typed again. Each field is clipped so that even the oversized
+// input that failed validation fits in the redirect address.
 type draft struct {
 	Name, Scopes, DatabaseID string
+}
+
+func newDraft(name, scopes, databaseID string) draft {
+	return draft{Name: clip(name, 256), Scopes: clip(scopes, 2560), DatabaseID: clip(databaseID, 128)}
+}
+
+// clip shortens s to at most n bytes without splitting a character.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // draftFor returns the draft of the create dialog for kind, if it reopened.
@@ -263,28 +278,40 @@ func selectedPage(deps core.Deps, r *http.Request) (core.Principal, core.Project
 }
 
 // redirectPageError returns a failed credential form to the API keys page,
-// filtered as before, with an explanation. A failed create reopens its dialog
-// with what was submitted; a database that no longer exists is left out.
+// filtered as before, with an explanation. A create that failed on its input
+// reopens its dialog with what was submitted, less a database that no longer
+// exists.
 func redirectPageError(w http.ResponseWriter, r *http.Request, err error, create string) {
 	message := "The credential change could not be completed. Try again."
+	reopen := false
 	switch {
 	case errors.Is(err, core.ErrInvalid):
 		message = "Enter a name of up to 128 characters and 1 to 16 scopes of up to 128 characters each, such as database:read."
-	case errors.Is(err, core.ErrNotFound) && create != "":
+		reopen = true
+	case errors.Is(err, errUnknownDatabase):
 		message = "That database no longer exists. Choose another database or all project databases."
+		reopen = true
+	case errors.Is(err, core.ErrNotFound) && create != "":
+		message = "This project is no longer available. Reload the page and try again."
 	case errors.Is(err, core.ErrNotFound):
 		message = "That credential no longer exists or was already revoked."
 	case errors.Is(err, core.ErrForbidden):
 		message = "Only organization owners and admins can manage credentials."
+	default:
+		slog.Error("change credential", "path", r.URL.Path, "error", err)
 	}
 	query := readFilters(r.URL.Query()).query()
 	query.Set("error", message)
-	if create != "" && (errors.Is(err, core.ErrInvalid) || errors.Is(err, core.ErrNotFound)) {
+	if create != "" && reopen {
+		submitted := newDraft(r.PostFormValue("name"), r.PostFormValue("scopes"), r.PostFormValue("databaseId"))
+		if errors.Is(err, errUnknownDatabase) {
+			submitted.DatabaseID = ""
+		}
 		query.Set("create", create)
-		query.Set("draftName", r.PostFormValue("name"))
-		query.Set("draftScopes", r.PostFormValue("scopes"))
-		if !errors.Is(err, core.ErrNotFound) {
-			query.Set("draftDatabaseId", r.PostFormValue("databaseId"))
+		query.Set("draftName", submitted.Name)
+		query.Set("draftScopes", submitted.Scopes)
+		if submitted.DatabaseID != "" {
+			query.Set("draftDatabaseId", submitted.DatabaseID)
 		}
 	}
 	http.Redirect(w, r, "/api-keys?"+query.Encode(), http.StatusSeeOther)
@@ -303,7 +330,7 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, reveal r
 	query := r.URL.Query()
 	data := pageData{listFilters: readFilters(query), ProjectID: project.ID, CanManage: a.Organizations[p.OrganizationID].CanManage(p.UserID), Revealed: reveal, Error: query.Get("error"), Create: query.Get("create")}
 	if slices.Contains([]string{"key", "m2m"}, data.Create) {
-		data.Draft = draft{Name: query.Get("draftName"), Scopes: query.Get("draftScopes"), DatabaseID: query.Get("draftDatabaseId")}
+		data.Draft = newDraft(query.Get("draftName"), query.Get("draftScopes"), query.Get("draftDatabaseId"))
 	} else {
 		data.Create = ""
 	}

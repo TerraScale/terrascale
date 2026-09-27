@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	json "encoding/json/v2"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -259,6 +260,10 @@ func selected(deps core.Deps, r *http.Request) (core.Principal, core.Project, co
 	return p, project, a, err
 }
 
+// errUnknownDatabase rejects a credential limited to a database that is not in
+// the project.
+var errUnknownDatabase = fmt.Errorf("%w: database", core.ErrNotFound)
+
 func validateInput(project core.Project, input sdk.CreateProjectAPIKeyRequest) error {
 	if strings.TrimSpace(input.Name) == "" || len(input.Name) > 128 || len(input.Scopes) == 0 || len(input.Scopes) > 16 {
 		return core.ErrInvalid
@@ -270,7 +275,7 @@ func validateInput(project core.Project, input sdk.CreateProjectAPIKeyRequest) e
 	}
 	if input.DatabaseID != "" {
 		if db, ok := project.Databases[input.DatabaseID]; !ok || db.ProjectID != project.ID {
-			return core.ErrNotFound
+			return errUnknownDatabase
 		}
 	}
 	return nil

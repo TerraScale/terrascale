@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"terrascale.tech/dashboard/internal/core"
 	sdk "terrascale.tech/sdk"
@@ -42,7 +43,9 @@ func TestRedirectPageError(t *testing.T) {
 		draft        url.Values
 	}{
 		{name: "invalid input reopens its dialog with the input", create: "m2m", err: core.ErrInvalid, reopen: "m2m", draft: url.Values{"draftName": {"ci-deploy"}, "draftScopes": {"database:read"}, "draftDatabaseId": {"db_gone"}}},
-		{name: "a missing database reopens it without the database", create: "key", err: core.ErrNotFound, reopen: "key", draft: url.Values{"draftName": {"ci-deploy"}, "draftScopes": {"database:read"}, "draftDatabaseId": nil}},
+		{name: "a missing database reopens it without the database", create: "key", err: errUnknownDatabase, reopen: "key", draft: url.Values{"draftName": {"ci-deploy"}, "draftScopes": {"database:read"}, "draftDatabaseId": nil}},
+		{name: "a project gone mid-request does not blame the database", create: "key", err: core.ErrNotFound, draft: url.Values{"draftName": nil}},
+		{name: "an unexpected failure does not reopen", create: "key", err: core.ErrConflict, draft: url.Values{"draftName": nil}},
 		{name: "rotate and revoke have no dialog to reopen", err: core.ErrNotFound, draft: url.Values{"draftName": nil}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -70,6 +73,25 @@ func TestRedirectPageError(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRedirectPageErrorClipsOversizedInput(t *testing.T) {
+	form := url.Values{"name": {strings.Repeat("é", 4096)}, "scopes": {strings.Repeat("database:read,", 100000)}}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/dashboard/credentials/key", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+	redirectPageError(recorder, request, core.ErrInvalid, "key")
+	location := recorder.Header().Get("Location")
+	if len(location) > 8192 {
+		t.Fatalf("redirect address is %d bytes; oversized input must be clipped", len(location))
+	}
+	parsed, err := url.Parse(location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name := parsed.Query().Get("draftName"); name == "" || !utf8.ValidString(name) {
+		t.Errorf("draftName = %q, want a valid clipped prefix of the input", name)
 	}
 }
 
