@@ -114,7 +114,7 @@
   display: inline-flex;
   gap: 2px;
   padding: 3px;
-  border: 1px solid var(--ts-line-strong);
+  border: 1px solid var(--ts-control-line);
   border-radius: var(--ts-radius);
   background: var(--ts-canvas);
 }
@@ -161,7 +161,7 @@
   justify-items: start;
   gap: var(--ts-s2);
   padding: var(--ts-s4);
-  border: 1px solid var(--ts-line-strong);
+  border: 1px solid var(--ts-control-line);
   border-radius: var(--ts-radius-lg);
   background: transparent;
   cursor: pointer;
@@ -202,7 +202,7 @@
   place-items: center;
   width: 20px;
   height: 20px;
-  border: 1px solid var(--ts-line-strong);
+  border: 1px solid var(--ts-control-line);
   border-radius: 50%;
   color: transparent;
   font-size: 12px;

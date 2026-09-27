@@ -54,14 +54,14 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
 
 .ts-btn-secondary,
 .ts-btn-outline {
-  border-color: var(--ts-line-strong);
+  border-color: var(--ts-control-line);
   background: transparent;
   color: var(--ts-ink);
 }
 
 .ts-btn-secondary:hover,
 .ts-btn-outline:hover {
-  border-color: rgb(148 163 184 / 0.34);
+  border-color: var(--ts-control-line-hover);
   background: var(--ts-surface-2);
 }
 

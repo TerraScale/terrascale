@@ -99,7 +99,7 @@ dialog.ts-org-wizard {
   gap: var(--ts-s1);
   padding: var(--ts-s4);
   padding-right: var(--ts-s10);
-  border: 1px solid var(--ts-line-strong);
+  border: 1px solid var(--ts-control-line);
   border-radius: var(--ts-radius);
   background: transparent;
   cursor: pointer;
@@ -113,7 +113,7 @@ dialog.ts-org-wizard {
 }
 
 .ts-org-plan:hover {
-  border-color: rgb(148 163 184 / 0.34);
+  border-color: var(--ts-control-line-hover);
 }
 
 .ts-org-plan:has(input:checked) {
@@ -138,7 +138,7 @@ dialog.ts-org-wizard {
   display: inline-flex;
   gap: var(--ts-s1);
   padding: var(--ts-s1);
-  border: 1px solid var(--ts-line-strong);
+  border: 1px solid var(--ts-control-line);
   border-radius: var(--ts-radius);
   background: var(--ts-canvas);
 }
