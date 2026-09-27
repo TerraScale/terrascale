@@ -19,7 +19,9 @@ import (
 )
 
 // pageData is the onboarding page. Error is shown above the step's form, or
-// under the control named by ErrorField.
+// under the control named by ErrorField. Plan and ReturnTo come from the link
+// that opened sign-up: the payment step preselects Plan, and a new account
+// continues to ReturnTo, a dashboard path, instead of setup.
 type pageData struct {
 	Registration    bool
 	Demo            bool
@@ -29,6 +31,8 @@ type pageData struct {
 	Error           string
 	ErrorField      string
 	PaymentCanceled bool
+	Plan            string
+	ReturnTo        string
 	Plans           []core.Plan
 	Step            string
 	Steps           []stepView
@@ -61,14 +65,16 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 
 func getOnboarding(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		registration := pageData{Registration: true, Plan: query.Get("plan"), ReturnTo: returnPath(query.Get("returnTo"))}
 		principal, ok := deps.Sessions.Principal(r)
 		if !ok {
-			render(w, r, deps, http.StatusOK, pageData{Registration: true})
+			render(w, r, deps, http.StatusOK, registration)
 			return
 		}
 		account, err := deps.Store.SnapshotAs(principal)
 		if err != nil {
-			render(w, r, deps, http.StatusOK, pageData{Registration: true})
+			render(w, r, deps, http.StatusOK, registration)
 			return
 		}
 		if account.OnboardingCompleted {
@@ -135,6 +141,7 @@ func getOnboarding(deps core.Deps) http.HandlerFunc {
 			}
 			return cmp.Compare(a.Key, b.Key)
 		})
+		data.Plan = selectedPlan(data.Plans, query.Get("plan"))
 		render(w, r, deps, http.StatusOK, data)
 	}
 }
@@ -152,10 +159,14 @@ func register(deps core.Deps) http.HandlerFunc {
 			ConfirmPassword: r.Form.Get("confirmPassword"),
 			AcceptedTerms:   r.Form.Get("terms") == "true",
 		}
+		plan, returnTo := r.Form.Get("plan"), returnPath(r.Form.Get("returnTo"))
 		account, err := auth.RegisterAccount(deps, input)
 		if err != nil {
 			// Render the form again with everything but the passwords kept.
-			data := pageData{Registration: true, DisplayName: input.DisplayName, Email: input.Email, AcceptedTerms: input.AcceptedTerms}
+			data := pageData{
+				Registration: true, DisplayName: input.DisplayName, Email: input.Email,
+				AcceptedTerms: input.AcceptedTerms, Plan: plan, ReturnTo: returnTo,
+			}
 			status := http.StatusUnprocessableEntity
 			switch inputError, isInputError := errors.AsType[auth.InputError](err); {
 			case isInputError:
@@ -174,7 +185,15 @@ func register(deps core.Deps) http.HandlerFunc {
 			http.Error(w, "could not create session", http.StatusInternalServerError)
 			return
 		}
-		http.Redirect(w, r, "/onboarding", http.StatusSeeOther)
+		// Like sign-in, a return path wins; setup resumes at the next sign-in.
+		location := "/onboarding"
+		switch {
+		case returnTo != "":
+			location = returnTo
+		case plan != "":
+			location += "?" + url.Values{"plan": {plan}}.Encode()
+		}
+		http.Redirect(w, r, location, http.StatusSeeOther)
 	}
 }
 
@@ -386,6 +405,37 @@ func render(w http.ResponseWriter, r *http.Request, deps core.Deps, status int, 
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render onboarding page", http.StatusInternalServerError)
 	}
+}
+
+// returnPath is the dashboard path a sign-up link asks to return to, or ""
+// when there is none.
+func returnPath(raw string) string {
+	if target := auth.SafeRedirectTarget(raw); target != "/" {
+		return target
+	}
+	return ""
+}
+
+// selectedPlan is the plan the payment step preselects: the requested one
+// when it is offered, otherwise the first.
+func selectedPlan(plans []core.Plan, requested string) string {
+	for _, plan := range plans {
+		if plan.Key == requested {
+			return requested
+		}
+	}
+	if len(plans) > 0 {
+		return plans[0].Key
+	}
+	return ""
+}
+
+// signInURL links to sign-in, passing on the page to return to afterwards.
+func signInURL(returnTo string) string {
+	if returnTo == "" {
+		return "/login"
+	}
+	return "/login?returnTo=" + url.QueryEscape(returnTo)
 }
 
 // field labels one registration control and attaches the submission's error

@@ -10,8 +10,8 @@ func TestSafeRedirectTargetDropsStatusMessages(t *testing.T) {
 		"/api-keys?kind=m2m":                   "/api-keys?kind=m2m",
 		"https://evil.example/?error=Call+us":  "/",
 	} {
-		if got := safeRedirectTarget(raw); got != want {
-			t.Errorf("safeRedirectTarget(%q) = %q, want %q", raw, got, want)
+		if got := SafeRedirectTarget(raw); got != want {
+			t.Errorf("SafeRedirectTarget(%q) = %q, want %q", raw, got, want)
 		}
 	}
 }
