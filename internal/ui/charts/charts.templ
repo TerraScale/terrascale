@@ -4,7 +4,14 @@ import "fmt"
 
 templ Line(data LineData) {
 	if len(data.Paths) > 0 {
-		<svg class="ts-chart" viewBox={ data.ViewBox } role="group" aria-label={ data.Label }>
+		<svg
+			class="ts-chart"
+			viewBox={ data.ViewBox }
+			role="group"
+			aria-label={ data.Label }
+			data-init={ columnTabStop }
+			data-on:keydown={ columnKeys }
+		>
 			<defs>
 				<linearGradient id={ data.GradientID } x1="0" y1="0" x2="0" y2="1">
 					<stop class="ts-chart-fill-start" offset="0"></stop>

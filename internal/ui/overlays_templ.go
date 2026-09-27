@@ -33,7 +33,9 @@ type DropdownProps struct {
 
 // Dropdown is the one popover menu of the dashboard: a <details> element
 // that closes on outside clicks and on Escape, returning focus to its
-// trigger. Children are the panel content, typically MenuItem entries.
+// trigger. A menu item that submits a form closes the menu and focuses the
+// trigger too, so focus survives when the response patches the page in
+// place. Children are the panel content, typically MenuItem entries.
 func Dropdown(p DropdownProps) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -73,7 +75,7 @@ func Dropdown(p DropdownProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\" data-on:click__outside=\"el.open = false\" data-on:keydown__window=\"evt.key === 'Escape' && el.open && (el.open = false, el.querySelector('summary').focus())\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\" data-on:click__outside=\"el.open = false\" data-on:click=\"evt.target.closest('.ts-menu-panel [type=submit]') && (el.open = false, el.querySelector('summary').focus())\" data-on:keydown__window=\"evt.key === 'Escape' && el.open && (el.open = false, el.querySelector('summary').focus())\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -115,7 +117,7 @@ func Dropdown(p DropdownProps) templ.Component {
 			var templ_7745c5c3_Var6 string
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.Label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 40, Col: 24}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 43, Col: 24}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var6)
 			if templ_7745c5c3_Err != nil {
@@ -134,7 +136,7 @@ func Dropdown(p DropdownProps) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.LabelledBy)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 43, Col: 34}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 46, Col: 34}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var7)
 			if templ_7745c5c3_Err != nil {
@@ -187,7 +189,7 @@ func Dropdown(p DropdownProps) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.PanelLabel)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 52, Col: 29}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 55, Col: 29}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var10)
 			if templ_7745c5c3_Err != nil {
@@ -277,7 +279,7 @@ func MenuItem(p MenuItemProps) templ.Component {
 			var templ_7745c5c3_Var14 templ.SafeURL
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(p.Href))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 80, Col: 31}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 83, Col: 31}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -295,7 +297,7 @@ func MenuItem(p MenuItemProps) templ.Component {
 				var templ_7745c5c3_Var15 string
 				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.Tone)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 82, Col: 22}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 85, Col: 22}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var15)
 				if templ_7745c5c3_Err != nil {
@@ -354,7 +356,7 @@ func MenuItem(p MenuItemProps) templ.Component {
 			var templ_7745c5c3_Var18 string
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.ResolveAttributeValue(displayName(p.Type, "button"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 94, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 97, Col: 39}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var18)
 			if templ_7745c5c3_Err != nil {
@@ -372,7 +374,7 @@ func MenuItem(p MenuItemProps) templ.Component {
 				var templ_7745c5c3_Var19 string
 				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 96, Col: 17}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 99, Col: 17}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var19)
 				if templ_7745c5c3_Err != nil {
@@ -385,7 +387,7 @@ func MenuItem(p MenuItemProps) templ.Component {
 				var templ_7745c5c3_Var20 string
 				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.Value)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 97, Col: 19}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 100, Col: 19}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var20)
 				if templ_7745c5c3_Err != nil {
@@ -404,7 +406,7 @@ func MenuItem(p MenuItemProps) templ.Component {
 				var templ_7745c5c3_Var21 string
 				templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.Tone)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 100, Col: 22}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 103, Col: 22}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var21)
 				if templ_7745c5c3_Err != nil {
@@ -476,7 +478,7 @@ func menuItemContent(p MenuItemProps) templ.Component {
 		var templ_7745c5c3_Var23 string
 		templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(p.Label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 116, Col: 38}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 119, Col: 38}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 		if templ_7745c5c3_Err != nil {
@@ -533,7 +535,7 @@ func MenuHeading(text string) templ.Component {
 		var templ_7745c5c3_Var25 string
 		templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(text)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 124, Col: 36}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 127, Col: 36}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 		if templ_7745c5c3_Err != nil {
@@ -624,7 +626,7 @@ func Dialog(p DialogProps) templ.Component {
 		var templ_7745c5c3_Var29 string
 		templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.ID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 148, Col: 11}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 151, Col: 11}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var29)
 		if templ_7745c5c3_Err != nil {
@@ -650,7 +652,7 @@ func Dialog(p DialogProps) templ.Component {
 		var templ_7745c5c3_Var31 string
 		templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.ID + "-title")
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 151, Col: 35}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 154, Col: 35}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var31)
 		if templ_7745c5c3_Err != nil {
@@ -668,7 +670,7 @@ func Dialog(p DialogProps) templ.Component {
 			var templ_7745c5c3_Var32 string
 			templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.ID + "-description")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 153, Col: 43}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 156, Col: 43}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var32)
 			if templ_7745c5c3_Err != nil {
@@ -692,7 +694,7 @@ func Dialog(p DialogProps) templ.Component {
 		var templ_7745c5c3_Var33 string
 		templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.ID + "-title")
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 162, Col: 53}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 165, Col: 53}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var33)
 		if templ_7745c5c3_Err != nil {
@@ -705,7 +707,7 @@ func Dialog(p DialogProps) templ.Component {
 		var templ_7745c5c3_Var34 string
 		templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(p.Title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 162, Col: 65}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 165, Col: 65}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 		if templ_7745c5c3_Err != nil {
@@ -723,7 +725,7 @@ func Dialog(p DialogProps) templ.Component {
 			var templ_7745c5c3_Var35 string
 			templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.ID + "-description")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 164, Col: 65}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 167, Col: 65}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var35)
 			if templ_7745c5c3_Err != nil {
@@ -736,7 +738,7 @@ func Dialog(p DialogProps) templ.Component {
 			var templ_7745c5c3_Var36 string
 			templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(p.Description)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 164, Col: 83}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 167, Col: 83}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 			if templ_7745c5c3_Err != nil {
@@ -754,7 +756,7 @@ func Dialog(p DialogProps) templ.Component {
 		var templ_7745c5c3_Var37 string
 		templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.ID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 167, Col: 98}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 170, Col: 98}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var37)
 		if templ_7745c5c3_Err != nil {
@@ -840,7 +842,7 @@ func DialogTrigger(p DialogTriggerProps) templ.Component {
 		var templ_7745c5c3_Var41 string
 		templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.Dialog)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 191, Col: 23}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 194, Col: 23}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var41)
 		if templ_7745c5c3_Err != nil {
@@ -863,7 +865,7 @@ func DialogTrigger(p DialogTriggerProps) templ.Component {
 		var templ_7745c5c3_Var42 string
 		templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(p.Label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 196, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 199, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
 		if templ_7745c5c3_Err != nil {
@@ -907,7 +909,7 @@ func DialogActions(dialog string) templ.Component {
 		var templ_7745c5c3_Var44 string
 		templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.ResolveAttributeValue(dialog)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 204, Col: 87}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/overlays.templ`, Line: 207, Col: 87}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var44)
 		if templ_7745c5c3_Err != nil {

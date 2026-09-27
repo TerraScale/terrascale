@@ -79,7 +79,7 @@ func TestPagesMemberNavigationKeyboardAndMobile(t *testing.T) {
 	registerAndOnboard(t, page, newAccount("navigation"))
 
 	accountMenu := page.Locator("details.ts-account")
-	accountTrigger := page.Locator(`details.ts-account > summary[aria-label="Account menu"]`)
+	accountTrigger := page.Locator(`details.ts-account > summary`)
 	must(t, accountTrigger.Focus())
 	must(t, expect.Locator(accountTrigger).ToBeFocused())
 
@@ -350,7 +350,7 @@ func TestPagesMemberHasNoAdministration(t *testing.T) {
 	registerAndOnboard(t, page, newAccount("member"))
 
 	accountMenu := page.Locator("details.ts-account")
-	click(t, page.Locator(`details.ts-account > summary[aria-label="Account menu"]`))
+	click(t, page.Locator(`details.ts-account > summary`))
 	must(t, expect.Locator(accountMenu).ToHaveAttribute("open", ""))
 	must(t, expect.Locator(byRole(accountMenu, *playwright.AriaRoleLink, "Administration")).ToHaveCount(0))
 
@@ -368,7 +368,7 @@ func TestPagesDemoAdministratorHasAdministration(t *testing.T) {
 	login(t, page, admin.Email, admin.Password)
 
 	accountMenu := page.Locator("details.ts-account")
-	click(t, page.Locator(`details.ts-account > summary[aria-label="Account menu"]`))
+	click(t, page.Locator(`details.ts-account > summary`))
 	must(t, expect.Locator(accountMenu).ToHaveAttribute("open", ""))
 	click(t, pageByRole(page, *playwright.AriaRoleLink, "Administration"))
 	must(t, expect.Page(page).ToHaveURL(regexp.MustCompile(`/admin(?:/|$)`)))

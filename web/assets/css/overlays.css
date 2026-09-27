@@ -77,8 +77,13 @@ details.ts-menu-up > .ts-menu-panel {
 .ts-menu-item:focus-visible {
   background: rgb(255 255 255 / 0.06);
   color: var(--ts-ink);
-  outline: none;
   text-decoration: none;
+}
+
+/* Keyboard focus keeps the solid ring, drawn inside the item, so it never
+   looks like hover or the current item. */
+.ts-menu-item:focus-visible {
+  outline-offset: -2px;
 }
 
 .ts-menu-item[aria-current="true"],

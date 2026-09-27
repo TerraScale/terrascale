@@ -1474,7 +1474,7 @@ func accountMenu(page core.Page) templ.Component {
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = Dropdown(DropdownProps{Class: "ts-account", Up: true, Label: "Account menu", Trigger: accountTrigger(page.Shell), TriggerClass: "ts-account-trigger"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var62), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = Dropdown(DropdownProps{Class: "ts-account", Up: true, Trigger: accountTrigger(page.Shell), TriggerClass: "ts-account-trigger"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var62), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1482,6 +1482,8 @@ func accountMenu(page core.Page) templ.Component {
 	})
 }
 
+// accountTrigger is named by its visible text, so speech input can open it by
+// the user's name; the hidden prefix says what it opens.
 func accountTrigger(shell core.Shell) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -1510,20 +1512,20 @@ func accountTrigger(shell core.Shell) templ.Component {
 		var templ_7745c5c3_Var67 string
 		templ_7745c5c3_Var67, templ_7745c5c3_Err = templ.JoinStringErrs(displayName(shell.UserInitials, "TS"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 291, Col: 91}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 293, Col: 91}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var67))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 123, "</span> <span class=\"ts-account-meta\"><span class=\"ts-account-name\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 123, "</span> <span class=\"ts-sr-only\">Account menu for </span> <span class=\"ts-account-meta\"><span class=\"ts-account-name\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var68 string
 		templ_7745c5c3_Var68, templ_7745c5c3_Err = templ.JoinStringErrs(displayName(shell.UserName, "TerraScale user"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 293, Col: 80}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 296, Col: 80}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var68))
 		if templ_7745c5c3_Err != nil {
@@ -1536,7 +1538,7 @@ func accountTrigger(shell core.Shell) templ.Component {
 		var templ_7745c5c3_Var69 string
 		templ_7745c5c3_Var69, templ_7745c5c3_Err = templ.JoinStringErrs(shell.UserEmail)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 294, Col: 50}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 297, Col: 50}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var69))
 		if templ_7745c5c3_Err != nil {
@@ -1586,7 +1588,7 @@ func formToken(token string) templ.Component {
 		var templ_7745c5c3_Var71 string
 		templ_7745c5c3_Var71, templ_7745c5c3_Err = templ.ResolveAttributeValue(token)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 300, Col: 48}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 303, Col: 48}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var71)
 		if templ_7745c5c3_Err != nil {
@@ -1638,7 +1640,7 @@ func sidebarNavigation(items []core.NavItem) templ.Component {
 				var templ_7745c5c3_Var73 string
 				templ_7745c5c3_Var73, templ_7745c5c3_Err = templ.ResolveAttributeValue(navDestinations[item.URL].tone)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 308, Col: 83}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 311, Col: 83}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var73)
 				if templ_7745c5c3_Err != nil {
@@ -1677,7 +1679,7 @@ func sidebarNavigation(items []core.NavItem) templ.Component {
 				var templ_7745c5c3_Var74 string
 				templ_7745c5c3_Var74, templ_7745c5c3_Err = templ.ResolveAttributeValue(item.Label)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 313, Col: 51}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 316, Col: 51}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var74)
 				if templ_7745c5c3_Err != nil {
@@ -1696,7 +1698,7 @@ func sidebarNavigation(items []core.NavItem) templ.Component {
 						var templ_7745c5c3_Var75 string
 						templ_7745c5c3_Var75, templ_7745c5c3_Err = templ.JoinStringErrs(child.Group)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 316, Col: 50}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 319, Col: 50}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var75))
 						if templ_7745c5c3_Err != nil {
@@ -1714,7 +1716,7 @@ func sidebarNavigation(items []core.NavItem) templ.Component {
 					var templ_7745c5c3_Var76 templ.SafeURL
 					templ_7745c5c3_Var76, templ_7745c5c3_Err = templ.JoinURLErrs(child.URL)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 321, Col: 26}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 324, Col: 26}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var76))
 					if templ_7745c5c3_Err != nil {
@@ -1737,7 +1739,7 @@ func sidebarNavigation(items []core.NavItem) templ.Component {
 					var templ_7745c5c3_Var77 string
 					templ_7745c5c3_Var77, templ_7745c5c3_Err = templ.JoinStringErrs(child.Label)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 325, Col: 23}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 328, Col: 23}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var77))
 					if templ_7745c5c3_Err != nil {
@@ -1760,7 +1762,7 @@ func sidebarNavigation(items []core.NavItem) templ.Component {
 				var templ_7745c5c3_Var78 templ.SafeURL
 				templ_7745c5c3_Var78, templ_7745c5c3_Err = templ.JoinURLErrs(item.URL)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 333, Col: 21}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 336, Col: 21}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var78))
 				if templ_7745c5c3_Err != nil {
@@ -1773,7 +1775,7 @@ func sidebarNavigation(items []core.NavItem) templ.Component {
 				var templ_7745c5c3_Var79 string
 				templ_7745c5c3_Var79, templ_7745c5c3_Err = templ.ResolveAttributeValue(navDestinations[item.URL].tone)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 334, Col: 48}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 337, Col: 48}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var79)
 				if templ_7745c5c3_Err != nil {
@@ -1797,7 +1799,7 @@ func sidebarNavigation(items []core.NavItem) templ.Component {
 					var templ_7745c5c3_Var80 string
 					templ_7745c5c3_Var80, templ_7745c5c3_Err = templ.ResolveAttributeValue(navLabel(item))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 339, Col: 34}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 342, Col: 34}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var80)
 					if templ_7745c5c3_Err != nil {
@@ -1870,7 +1872,7 @@ func navLinkContent(item core.NavItem) templ.Component {
 		var templ_7745c5c3_Var82 string
 		templ_7745c5c3_Var82, templ_7745c5c3_Err = templ.JoinStringErrs(item.Label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 354, Col: 40}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 357, Col: 40}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var82))
 		if templ_7745c5c3_Err != nil {
@@ -1888,7 +1890,7 @@ func navLinkContent(item core.NavItem) templ.Component {
 			var templ_7745c5c3_Var83 string
 			templ_7745c5c3_Var83, templ_7745c5c3_Err = templ.JoinStringErrs(countText(item.BadgeCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 356, Col: 76}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/layouts.templ`, Line: 359, Col: 76}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var83))
 			if templ_7745c5c3_Err != nil {
