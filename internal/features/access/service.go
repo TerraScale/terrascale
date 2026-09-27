@@ -58,7 +58,7 @@ func (s Service) Invitations(p core.Principal) ([]invitationView, error) {
 	if err != nil {
 		return nil, err
 	}
-	return invitationViews(org), nil
+	return invitationViews(org, time.Now()), nil
 }
 
 // Invite creates an invitation and returns it with its one-time link path.
@@ -70,7 +70,7 @@ func (s Service) Invite(p core.Principal, email, role string) (invitationView, s
 	if err != nil {
 		return invitationView{}, "", err
 	}
-	return invitationViewOf(invitation), inviteURL(token), nil
+	return invitationViewOf(invitation, time.Now()), invitationPath(token), nil
 }
 
 // Resend replaces a pending invitation's link and extends its expiry.
@@ -79,7 +79,7 @@ func (s Service) Resend(p core.Principal, invitationID string) (invitationView, 
 	if err != nil {
 		return invitationView{}, "", err
 	}
-	return invitationViewOf(invitation), inviteURL(token), nil
+	return invitationViewOf(invitation, time.Now()), invitationPath(token), nil
 }
 
 // Invitation previews the pending invitation a token or link names for the
@@ -137,17 +137,18 @@ func memberViews(org core.Organization, p core.Principal, search, role string) [
 			IsSelf:   member.UserID == p.UserID,
 			CanEdit:  org.OwnerUserID == p.UserID && member.UserID != p.UserID && member.UserID != org.OwnerUserID && member.Role != "owner",
 			JoinedAt: member.CreatedAt.UTC().Format("2006-01-02"),
+			JoinedOn: displayDay(member.CreatedAt, "Unknown"),
 		})
 	}
 	slices.SortFunc(members, func(a, b memberView) int { return strings.Compare(a.Name, b.Name) })
 	return members
 }
 
-func invitationViews(org core.Organization) []invitationView {
+func invitationViews(org core.Organization, now time.Time) []invitationView {
 	invitations := make([]invitationView, 0, len(org.Invitations))
 	for _, invitation := range org.Invitations {
 		if invitation.Email != "" {
-			invitations = append(invitations, invitationViewOf(invitation))
+			invitations = append(invitations, invitationViewOf(invitation, now))
 		}
 	}
 	slices.SortFunc(invitations, func(a, b invitationView) int {
@@ -163,16 +164,14 @@ func invitationViews(org core.Organization) []invitationView {
 	return invitations
 }
 
-func invitationViewOf(invitation core.Invitation) invitationView {
+func invitationViewOf(invitation core.Invitation, now time.Time) invitationView {
 	return invitationView{
 		ID: invitation.ID, Email: invitation.Email, Role: invitation.Role,
-		Status:    invitationStatusLabel(invitation.Status),
-		ExpiresAt: invitation.ExpiresAt.UTC().Format(time.RFC3339),
+		Status:    invitationStatus(invitation, now),
+		ExpiresAt: rfc3339(invitation.ExpiresAt),
+		Open:      strings.EqualFold(invitation.Status, "pending"),
+		ExpiresOn: displayDay(invitation.ExpiresAt, "No expiry"),
 	}
-}
-
-func inviteURL(token string) string {
-	return "/invitations/" + url.PathEscape(token)
 }
 
 // invitationToken accepts a bare token or an invitation link and returns the
@@ -192,4 +191,12 @@ func invitationToken(raw string) string {
 func hashInvitationToken(token string) string {
 	digest := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(digest[:])
+}
+
+// rfc3339 formats t for API clients, or returns "" for an unset time.
+func rfc3339(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }

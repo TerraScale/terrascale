@@ -83,8 +83,9 @@ func WriteJSON(w http.ResponseWriter, status int, value any) {
 }
 
 // messageParams carry the status message a dashboard redirect hands to the
-// next page, such as /settings?error=… after a failed form post.
-var messageParams = []string{"error", "notice", "toast"}
+// next page, such as /settings?error=… after a failed form post or
+// /access?invitation=accepted after answering an invitation.
+var messageParams = []string{"error", "notice", "toast", "invitation"}
 
 // draftPrefix starts the parameters that carry a failed form's input back to
 // it, such as /api-keys?draftName=…, so nothing has to be typed again.

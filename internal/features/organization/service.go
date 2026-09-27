@@ -32,6 +32,7 @@ var (
 	ErrBillingNeeded = errors.New("active billing is required to create projects")
 	ErrPersonalOrg   = errors.New("personal organizations cannot be deleted or left")
 	ErrNoTransfer    = errors.New("no ownership transfer is pending for this member")
+	ErrMemberLimit   = fmt.Errorf("%w: the plan's member limit is reached", core.ErrConflict)
 )
 
 var (
@@ -385,6 +386,16 @@ func (s Service) CreateInvitation(p core.Principal, email, role string) (core.In
 		if org.PlanID != plan.ID {
 			return core.ErrConflict
 		}
+		for _, member := range org.Members {
+			if core.NormalizeEmail(member.Email) == email && member.Status == statusActive {
+				return fmt.Errorf("%w: %s is already a member", core.ErrConflict, email)
+			}
+		}
+		for _, existing := range org.Invitations {
+			if core.NormalizeEmail(existing.Email) == email && existing.Status == statusPending && existing.ExpiresAt.After(s.now()) {
+				return fmt.Errorf("%w: %s already has a pending invitation", core.ErrConflict, email)
+			}
+		}
 		if plan.MaxMembers > 0 {
 			occupied := 0
 			for _, member := range org.Members {
@@ -398,17 +409,7 @@ func (s Service) CreateInvitation(p core.Principal, email, role string) (core.In
 				}
 			}
 			if occupied >= plan.MaxMembers {
-				return fmt.Errorf("%w: the %s plan allows %d members including pending invitations", core.ErrConflict, plan.Name, plan.MaxMembers)
-			}
-		}
-		for _, member := range org.Members {
-			if core.NormalizeEmail(member.Email) == email && member.Status == statusActive {
-				return fmt.Errorf("%w: %s is already a member", core.ErrConflict, email)
-			}
-		}
-		for _, existing := range org.Invitations {
-			if core.NormalizeEmail(existing.Email) == email && existing.Status == statusPending && existing.ExpiresAt.After(s.now()) {
-				return fmt.Errorf("%w: %s already has a pending invitation", core.ErrConflict, email)
+				return fmt.Errorf("%w: the %s plan allows %d members including pending invitations", ErrMemberLimit, plan.Name, plan.MaxMembers)
 			}
 		}
 		if org.Invitations == nil {

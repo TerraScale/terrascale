@@ -21,6 +21,10 @@
   min-width: 112px;
 }
 
+.ts-access-date {
+  white-space: nowrap;
+}
+
 /* Member filters sit on the tab row, right-aligned. */
 .ts-access-filters {
   flex: 1 1 360px;
