@@ -232,7 +232,7 @@ func onboardingView(data pageData, csrfToken string) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, " <form class=\"ts-form\" method=\"post\" action=\"/onboarding\" aria-labelledby=\"create-account-title\"><input type=\"hidden\" name=\"_csrf\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, " <form class=\"ts-form\" method=\"post\" action=\"/onboarding\" data-submit-once aria-labelledby=\"create-account-title\"><input type=\"hidden\" name=\"_csrf\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -442,7 +442,7 @@ func onboardingView(data pageData, csrfToken string) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, " <form class=\"ts-form\" method=\"post\" action=\"/onboarding/step\" aria-labelledby=\"account-information-title\"><input type=\"hidden\" name=\"_csrf\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, " <form class=\"ts-form\" method=\"post\" action=\"/onboarding/step\" data-submit-once aria-labelledby=\"account-information-title\"><input type=\"hidden\" name=\"_csrf\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -534,7 +534,7 @@ func onboardingView(data pageData, csrfToken string) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		} else if data.Step == "payment-method" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<form class=\"ts-form\" method=\"post\" action=\"/onboarding/step\" aria-labelledby=\"payment-method-title\"><input type=\"hidden\" name=\"_csrf\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<form class=\"ts-form\" method=\"post\" action=\"/onboarding/step\" data-submit-once aria-labelledby=\"payment-method-title\"><input type=\"hidden\" name=\"_csrf\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -739,7 +739,7 @@ func onboardingView(data pageData, csrfToken string) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, " <form class=\"ts-form\" method=\"post\" action=\"/onboarding/step\" aria-labelledby=\"project-title\"><input type=\"hidden\" name=\"_csrf\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, " <form class=\"ts-form\" method=\"post\" action=\"/onboarding/step\" data-submit-once aria-labelledby=\"project-title\"><input type=\"hidden\" name=\"_csrf\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

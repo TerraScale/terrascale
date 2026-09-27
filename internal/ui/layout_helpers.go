@@ -135,8 +135,10 @@ func regionArc(from, to regionPin) string {
 const navClickPending = "$_navPending = $_navPending || !!(!evt.defaultPrevented && evt.button === 0 && !evt.metaKey && !evt.ctrlKey && !evt.shiftKey && !evt.altKey && evt.target.closest && evt.target.closest('a[href]:not([target]):not([download])') && evt.target.closest('a[href]').origin === location.origin && (evt.target.closest('a[href]').pathname !== location.pathname || evt.target.closest('a[href]').search !== location.search))"
 
 // navSubmitPending flags native form submissions; Datastar-handled forms
-// prevent the default and never show the bar.
-const navSubmitPending = "$_navPending = $_navPending || (!evt.defaultPrevented && evt.target.method !== 'dialog' && !evt.target.target)"
+// prevent the default and never show the bar. A form marked data-submit-once
+// is not sent again while a navigation is loading, so a double click cannot
+// send it twice.
+const navSubmitPending = "evt.target.hasAttribute('data-submit-once') && $_navPending ? evt.preventDefault() : ($_navPending = $_navPending || (!evt.defaultPrevented && evt.target.method !== 'dialog' && !evt.target.target))"
 
 // speculationRules prefetches page links on hover. Routes with side effects
 // (API calls, exports, payment sessions, one-shot links) are never prefetched.

@@ -34,6 +34,15 @@
   opacity: 0.5;
 }
 
+/* A form marked data-submit-once is not sent twice (see navSubmitPending in
+   internal/ui/layout_helpers.go); its buttons read as busy while it loads,
+   after the same delay as the navigation bar. */
+body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
+  cursor: progress;
+  opacity: 0.6;
+  transition: opacity var(--ts-fast) var(--ts-ease) 150ms;
+}
+
 .ts-btn-primary {
   background: var(--ts-accent);
   color: var(--ts-on-accent);

@@ -40,7 +40,7 @@ templ onboardingView(data pageData, csrfToken string) {
 			}
 			if data.Registration {
 				@stepHeading("create-account-title", "Create your account", "Your Personal workspace is ready as soon as your account is created.")
-				<form class="ts-form" method="post" action="/onboarding" aria-labelledby="create-account-title">
+				<form class="ts-form" method="post" action="/onboarding" data-submit-once aria-labelledby="create-account-title">
 					<input type="hidden" name="_csrf" value={ csrfToken }/>
 					{{ displayName := field(data, "displayName", "Full name", "") }}
 					@ui.Field(displayName) {
@@ -77,7 +77,7 @@ templ onboardingView(data pageData, csrfToken string) {
 				</form>
 			} else if data.Step == "account-information" {
 				@stepHeading("account-information-title", "Review your account information", "Signed in as "+data.Email)
-				<form class="ts-form" method="post" action="/onboarding/step" aria-labelledby="account-information-title">
+				<form class="ts-form" method="post" action="/onboarding/step" data-submit-once aria-labelledby="account-information-title">
 					<input type="hidden" name="_csrf" value={ csrfToken }/>
 					<input type="hidden" name="step" value="account-information"/>
 					@ui.Field(ui.FieldProps{ID: "displayName", Label: "Full name"}) {
@@ -92,7 +92,7 @@ templ onboardingView(data pageData, csrfToken string) {
 					</div>
 				</form>
 			} else if data.Step == "payment-method" {
-				<form class="ts-form" method="post" action="/onboarding/step" aria-labelledby="payment-method-title">
+				<form class="ts-form" method="post" action="/onboarding/step" data-submit-once aria-labelledby="payment-method-title">
 					<input type="hidden" name="_csrf" value={ csrfToken }/>
 					<input type="hidden" name="step" value="payment-method"/>
 					<input type="hidden" name="return" value="/onboarding"/>
@@ -144,7 +144,7 @@ templ onboardingView(data pageData, csrfToken string) {
 				</form>
 			} else {
 				@stepHeading("project-title", "Create your first project", "Choose where your project's data will live.")
-				<form class="ts-form" method="post" action="/onboarding/step" aria-labelledby="project-title">
+				<form class="ts-form" method="post" action="/onboarding/step" data-submit-once aria-labelledby="project-title">
 					<input type="hidden" name="_csrf" value={ csrfToken }/>
 					<input type="hidden" name="step" value="project"/>
 					@ui.Field(ui.FieldProps{ID: "projectName", Label: "Project name"}) {

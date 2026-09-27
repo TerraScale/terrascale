@@ -65,7 +65,7 @@ func loginView(data loginPageData, csrfToken string) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<form class=\"ts-form\" method=\"post\" action=\"/login\" novalidate><input type=\"hidden\" name=\"_csrf\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<form class=\"ts-form\" method=\"post\" action=\"/login\" data-submit-once novalidate><input type=\"hidden\" name=\"_csrf\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -355,7 +355,7 @@ func authStatusView(data authStatusPageData, csrfToken string) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			if data.ShowEmailForm {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<form class=\"ts-form\" method=\"post\" action=\"/reset-password\"><input type=\"hidden\" name=\"_csrf\" value=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<form class=\"ts-form\" method=\"post\" action=\"/reset-password\" data-submit-once><input type=\"hidden\" name=\"_csrf\" value=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}

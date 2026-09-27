@@ -26,7 +26,7 @@ templ loginView(data loginPageData, csrfToken string) {
 				if data.Error != "" {
 					@ui.Alert("danger", "", data.Error)
 				}
-				<form class="ts-form" method="post" action="/login" novalidate>
+				<form class="ts-form" method="post" action="/login" data-submit-once novalidate>
 					<input type="hidden" name="_csrf" value={ csrfToken }/>
 					<input type="hidden" name="redirectTo" value={ data.RedirectTo }/>
 					{{ email := ui.FieldProps{ID: "email", Label: "Email", Error: data.EmailError} }}
@@ -99,7 +99,7 @@ templ authStatusView(data authStatusPageData, csrfToken string) {
 					<p class="ts-alert-body">{ data.Message }</p>
 				</div>
 				if data.ShowEmailForm {
-					<form class="ts-form" method="post" action="/reset-password">
+					<form class="ts-form" method="post" action="/reset-password" data-submit-once>
 						<input type="hidden" name="_csrf" value={ csrfToken }/>
 						@ui.Field(ui.FieldProps{ID: "resetEmail", Label: "Email"}) {
 							<input class="ts-input" type="email" id="resetEmail" name="email" autocomplete="email" placeholder="name@company.com" required/>
