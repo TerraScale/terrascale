@@ -7,13 +7,11 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/auth"
+	"terrascale.tech/dashboard/internal/features/payments"
 	"terrascale.tech/dashboard/internal/features/subscriptions"
 	"terrascale.tech/dashboard/internal/ui"
 )
@@ -42,15 +40,18 @@ type pageData struct {
 }
 
 type stepView struct {
-	Key       string
-	Label     string
-	Number    string
-	State     string
-	Completed bool
-	Current   bool
+	Key       string `json:"key"`
+	Label     string `json:"label"`
+	Number    string `json:"number"`
+	State     string `json:"state" jsonschema:"COMPLETED, CURRENT, or NOT STARTED."`
+	Completed bool   `json:"completed"`
+	Current   bool   `json:"current"`
 }
 
-func Mount(mux *http.ServeMux, deps core.Deps) {
+// Mount registers account setup and its tools. billing is nil in demo mode.
+func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
+	service := Service{deps: deps, billing: payments.NewService(deps, subscriptions.NewBillingService(deps.Store), billing)}
+	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /register", func(w http.ResponseWriter, r *http.Request) {
 		target := "/onboarding"
 		if r.URL.RawQuery != "" {
@@ -58,15 +59,15 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 		http.Redirect(w, r, target, http.StatusSeeOther)
 	})
-	mux.HandleFunc("GET /onboarding", getOnboarding(deps))
+	mux.HandleFunc("GET /onboarding", getOnboarding(deps, service))
 	mux.HandleFunc("POST /onboarding", register(deps))
-	mux.HandleFunc("POST /onboarding/step", saveStep(deps))
+	mux.HandleFunc("POST /onboarding/step", saveStep(deps, service))
 }
 
-func getOnboarding(deps core.Deps) http.HandlerFunc {
+func getOnboarding(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
-		plans := offeredPlans(deps)
+		plans := paidPlans(deps.Store)
 		// Landing pages link with return=; sign-in and the dashboard use returnTo.
 		registration := pageData{Registration: true, Plan: offeredPlan(plans, query.Get("plan")), ReturnTo: returnPath(cmp.Or(query.Get("returnTo"), query.Get("return")))}
 		principal, ok := deps.Sessions.Principal(r)
@@ -85,30 +86,13 @@ func getOnboarding(deps core.Deps) http.HandlerFunc {
 		}
 		paymentOutcome := r.URL.Query().Get("payment")
 		if paymentOutcome == "success" && account.OnboardingStep == "payment-method" {
-			if err := deps.Store.UpdateAs(principal, func(current *core.Account) error {
-				if current.OnboardingStep != "payment-method" || current.ActiveOrganizationID != principal.OrganizationID {
-					return core.ErrConflict
-				}
-				organization, ok := current.Organizations[principal.OrganizationID]
-				if !ok || organization.Kind != "personal" || !organization.PaymentMethodValidated {
-					return core.ErrForbidden
-				}
-				for _, checkout := range organization.CheckoutSessions {
-					if checkout.OwnerUserID == principal.UserID && checkout.OrganizationID == organization.ID &&
-						checkout.Status == "complete" && checkout.ReturnPath == "/onboarding" {
-						current.OnboardingStep = "project"
-						return nil
-					}
-				}
-				return core.ErrForbidden
-			}); err == nil {
-				account, err = deps.Store.SnapshotAs(principal)
-				if err != nil {
-					http.Error(w, "account not found", http.StatusUnauthorized)
-					return
-				}
-			} else if !errors.Is(err, core.ErrForbidden) && !errors.Is(err, core.ErrConflict) {
+			if err := service.ConfirmPayment(principal); err != nil {
 				http.Error(w, "could not confirm payment setup", http.StatusInternalServerError)
+				return
+			}
+			account, err = deps.Store.SnapshotAs(principal)
+			if err != nil {
+				http.Error(w, "account not found", http.StatusUnauthorized)
 				return
 			}
 		}
@@ -118,12 +102,11 @@ func getOnboarding(deps core.Deps) http.HandlerFunc {
 			Error:           r.URL.Query().Get("error"),
 			PaymentCanceled: paymentOutcome == "canceled",
 			Step:            account.OnboardingStep,
-			Steps:           steps(account.OnboardingStep),
+			Plans:           plans,
 		}
 		if paymentOutcome == "success" && data.Step == "payment-method" {
 			data.Error = "Payment setup could not be confirmed. Finish checkout or continue without payment."
 		}
-		data.Plans = plans
 		requested := query.Get("plan")
 		if requested == "" && data.PaymentCanceled {
 			// A canceled checkout comes back without the link's plan; offer
@@ -148,7 +131,7 @@ func register(deps core.Deps) http.HandlerFunc {
 			ConfirmPassword: r.Form.Get("confirmPassword"),
 			AcceptedTerms:   r.Form.Get("terms") == "true",
 		}
-		plan, returnTo := offeredPlan(offeredPlans(deps), r.Form.Get("plan")), returnPath(r.Form.Get("returnTo"))
+		plan, returnTo := offeredPlan(paidPlans(deps.Store), r.Form.Get("plan")), returnPath(r.Form.Get("returnTo"))
 		account, err := auth.RegisterAccount(deps, input)
 		if err != nil {
 			// Render the form again with everything but the passwords kept.
@@ -186,7 +169,7 @@ func register(deps core.Deps) http.HandlerFunc {
 	}
 }
 
-func saveStep(deps core.Deps) http.HandlerFunc {
+func saveStep(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid onboarding form", http.StatusBadRequest)
@@ -197,144 +180,37 @@ func saveStep(deps core.Deps) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		account, err := deps.Store.SnapshotAs(principal)
-		if err != nil {
-			http.Error(w, "account not found", http.StatusUnauthorized)
-			return
-		}
-		if account.OnboardingCompleted {
-			http.Redirect(w, r, "/", http.StatusSeeOther)
-			return
-		}
-
-		var message string
-		switch r.Form.Get("step") {
-		case "account-information":
-			name := strings.TrimSpace(r.Form.Get("displayName"))
-			if name == "" {
-				message = "This field is required."
-			} else if !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
-				message = "Enter a valid name."
-			} else if utf8.RuneCountInString(name) > 128 {
-				message = "Use a name with 128 characters or fewer."
-			} else {
-				err = deps.Store.UpdateAs(principal, func(account *core.Account) error {
-					account.User.Name = name
-					if account.OnboardingStep == "account-information" {
-						account.OnboardingStep = "payment-method"
-					}
-					return nil
-				})
-			}
-		case "payment-method":
-			if account.OnboardingStep != "payment-method" {
-				message = "Complete the current setup step first."
-			} else if r.Form.Get("bypass") == "1" {
-				err = deps.Store.UpdateAs(principal, func(account *core.Account) error {
-					if account.OnboardingStep != "payment-method" {
-						return core.ErrConflict
-					}
-					account.OnboardingStep = "project"
-					return nil
-				})
-			} else if !deps.Demo {
-				organization, ok := account.Organizations[principal.OrganizationID]
-				if !ok || organization.Kind != "personal" || account.ActiveOrganizationID != organization.ID {
-					message = "Return to your Personal workspace to finish account setup."
-				} else {
-					http.Redirect(w, r, "/billing/checkout", http.StatusTemporaryRedirect)
-					return
-				}
-			} else {
-				organization, ok := account.Organizations[principal.OrganizationID]
-				if !ok || organization.Kind != "personal" || account.ActiveOrganizationID != organization.ID {
-					message = "Return to your Personal workspace to finish account setup."
-				} else {
-					checkout, checkoutErr := subscriptions.NewBillingService(deps.Store).BeginDemoCheckout(
-						principal, r.Form.Get("plan"), r.Form.Get("interval"), "/onboarding",
-					)
-					if checkoutErr == nil {
-						http.Redirect(w, r, "/checkout/"+url.PathEscape(checkout.ID), http.StatusSeeOther)
-						return
-					}
-					if errors.Is(checkoutErr, subscriptions.ErrPlanUnavailable) || errors.Is(checkoutErr, core.ErrInvalid) {
-						message = "Choose an available plan and billing interval."
-					} else {
-						err = checkoutErr
-					}
-				}
-			}
-		case "project":
-			name := strings.TrimSpace(r.Form.Get("name"))
-			if account.OnboardingStep != "project" {
-				message = "Complete the current setup step first."
-			} else if !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
-				message = "Enter a valid project name."
-			} else if utf8.RuneCountInString(name) > 100 {
-				message = "Use a project name with 100 characters or fewer."
-			} else if region := normalizedRegion(r.Form.Get("region")); region == "" {
-				message = "Choose a supported project region."
-			} else {
-				err = completeProjectStep(deps, principal, name, region)
-			}
-		default:
-			message = "Choose a valid setup step."
-		}
-
-		if err != nil {
-			if errors.Is(err, core.ErrForbidden) || errors.Is(err, core.ErrNotFound) {
-				http.Error(w, "account scope is no longer available", http.StatusUnauthorized)
-				return
-			}
-			http.Error(w, "could not save onboarding step", http.StatusInternalServerError)
-			return
-		}
-		if message != "" {
-			query := url.Values{"error": {message}}
+		result, err := service.SaveStep(r.Context(), principal, stepInput{
+			Step: r.Form.Get("step"), DisplayName: r.Form.Get("displayName"), Bypass: r.Form.Get("bypass") == "1",
+			Plan: r.Form.Get("plan"), Interval: r.Form.Get("interval"), Name: r.Form.Get("name"), Region: r.Form.Get("region"),
+		})
+		switch message, isStepError := errors.AsType[stepError](err); {
+		case isStepError:
+			query := url.Values{"error": {string(message)}}
 			// A refused payment step keeps the plan that was picked.
-			if plan := offeredPlan(offeredPlans(deps), r.Form.Get("plan")); r.Form.Get("step") == "payment-method" && plan != "" {
+			if plan := offeredPlan(paidPlans(deps.Store), r.Form.Get("plan")); r.Form.Get("step") == "payment-method" && plan != "" {
 				query.Set("plan", plan)
 			}
 			http.Redirect(w, r, "/onboarding?"+query.Encode(), http.StatusSeeOther)
-			return
-		}
-		if r.Form.Get("step") == "project" {
+		case errors.Is(err, core.ErrUnauthorized), errors.Is(err, core.ErrForbidden), errors.Is(err, core.ErrNotFound):
+			http.Error(w, "account scope is no longer available", http.StatusUnauthorized)
+		case errors.Is(err, payments.ErrSubscriptionManaged):
+			http.Redirect(w, r, "/billing/portal", http.StatusSeeOther)
+		case errors.Is(err, core.ErrConflict):
+			http.Error(w, err.Error(), http.StatusConflict)
+		case err != nil:
+			if status, ok := payments.ProviderStatus(err); ok {
+				http.Error(w, err.Error(), status)
+				return
+			}
+			http.Error(w, "could not save onboarding step", http.StatusInternalServerError)
+		case result.CheckoutURL != "":
+			http.Redirect(w, r, result.CheckoutURL, http.StatusSeeOther)
+		case result.Completed:
 			http.Redirect(w, r, "/", http.StatusSeeOther)
-			return
+		default:
+			http.Redirect(w, r, "/onboarding", http.StatusSeeOther)
 		}
-		http.Redirect(w, r, "/onboarding", http.StatusSeeOther)
-	}
-}
-
-func completeProjectStep(deps core.Deps, principal core.Principal, name, region string) error {
-	return deps.Store.UpdateAs(principal, func(account *core.Account) error {
-		organization, ok := account.Organizations[principal.OrganizationID]
-		if !ok {
-			return core.ErrNotFound
-		}
-		project, ok := organization.Projects[account.ActiveProjectID]
-		if !ok || project.OrganizationID != organization.ID {
-			return core.ErrNotFound
-		}
-		if name != "" {
-			project.Name = name
-		}
-		project.Region = region
-		project.Regions = []string{region}
-		organization.Projects[project.ID] = project
-		account.Organizations[organization.ID] = organization
-		account.OnboardingStep = ""
-		account.OnboardingCompleted = true
-		return nil
-	})
-}
-
-func normalizedRegion(region string) string {
-	switch strings.ToUpper(strings.TrimSpace(region)) {
-	case "GRU", "SFO", "FRA":
-		return strings.ToUpper(strings.TrimSpace(region))
-	default:
-		return ""
 	}
 }
 
@@ -408,32 +284,6 @@ func returnPath(raw string) string {
 		return target
 	}
 	return ""
-}
-
-// offeredPlans are the paid plans the payment step offers, cheapest first.
-func offeredPlans(deps core.Deps) []core.Plan {
-	var plans []core.Plan
-	for _, plan := range deps.Store.Plans() {
-		if plan.Visible && plan.PriceCents > 0 {
-			plans = append(plans, plan)
-		}
-	}
-	planRank := map[string]int{"starter": 0, "pro": 1, "business": 2}
-	slices.SortFunc(plans, func(a, b core.Plan) int {
-		aRank, aKnown := planRank[a.Key]
-		bRank, bKnown := planRank[b.Key]
-		if !aKnown {
-			aRank = len(planRank)
-		}
-		if !bKnown {
-			bRank = len(planRank)
-		}
-		if order := cmp.Compare(aRank, bRank); order != 0 {
-			return order
-		}
-		return cmp.Compare(a.Key, b.Key)
-	})
-	return plans
 }
 
 // offeredPlan returns requested when it is an offered plan's key, otherwise "".

@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
 	"errors"
@@ -102,7 +103,13 @@ func sectionPath(databaseID, section string, query url.Values) string {
 // their outcome through edit and a status, so the input they carry and the
 // result never travel in the URL.
 func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, databaseID, section string, status int, edit func(*pageData)) {
-	p, a, project, err := selectedProject(deps, r)
+	p, ok := deps.Sessions.Principal(r)
+	if !ok || p.ProjectID == "" {
+		core.RedirectToLogin(w, r)
+		return
+	}
+	service := Service{deps: deps}
+	a, project, err := service.project(p)
 	if err != nil {
 		if errors.Is(err, core.ErrUnauthorized) {
 			core.RedirectToLogin(w, r)
@@ -146,7 +153,7 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 	if deps.Demo {
 		loadDemo(&data, a, p, db)
 	} else {
-		loadLive(r, deps, p, &data)
+		loadLive(r.Context(), service, p, &data)
 	}
 	data.Queries = slices.SortedFunc(maps.Values(project.SavedQueries), func(a, b core.SavedQuery) int { return strings.Compare(a.Name, b.Name) })
 	if section == "sql" {
@@ -252,55 +259,32 @@ func loadDemo(data *pageData, a core.Account, p core.Principal, db core.Database
 }
 
 // loadLive reads what the open section needs through the data plane SDK.
-func loadLive(r *http.Request, deps core.Deps, p core.Principal, data *pageData) {
-	client, err := client(deps, p)
-	if err != nil {
-		data.Error = "Live data plane unavailable."
-		return
-	}
-	name := data.Database.Name
+func loadLive(ctx context.Context, service Service, p core.Principal, data *pageData) {
+	var err error
 	switch data.Section {
 	case "documents":
-		rows, err := client.Documents.List(r.Context(), name, data.Collection, 100, "")
-		if err != nil {
-			data.Error = err.Error()
-			return
-		}
-		for _, row := range rows.Documents {
-			data.Documents = append(data.Documents, documentView{ID: row.ID, Value: row.Value})
-		}
+		data.Documents, err = service.Documents(ctx, p, data.Database.ID, documentQuery{Collection: data.Collection})
 	case "history":
 		if data.DocumentID == "" {
 			return
 		}
-		entries, err := client.Documents.History(r.Context(), name, data.Collection, data.DocumentID)
-		if err != nil {
-			data.Error = err.Error()
-			return
-		}
+		var entries []historyEntry
+		entries, err = service.History(ctx, p, data.Database.ID, data.Collection, data.DocumentID)
 		for _, entry := range entries {
 			data.History = append(data.History, historyVersion{Number: entry.Revision, Deleted: entry.Deleted})
 		}
 	case "indexes":
-		page, err := client.Databases.ListIndexes(r.Context(), name, data.Collection, sdk.PageRequest{})
-		if err != nil {
-			data.Error = err.Error()
-			return
-		}
-		for _, index := range page.Indexes {
+		var indexes []indexView
+		indexes, err = service.Indexes(ctx, p, data.Database.ID, data.Collection)
+		for _, index := range indexes {
 			data.Indexes = append(data.Indexes, index.Field)
 		}
 	case "schema":
-		current, err := client.Databases.GetCollectionSchema(r.Context(), name, data.Collection)
-		if err != nil {
-			data.Error = err.Error()
-			return
-		}
-		encoded, err := json.Marshal(current.Schema)
-		if err != nil {
-			data.Error = err.Error()
-			return
-		}
-		data.Schema = indented(encoded)
+		var schema []byte
+		schema, err = service.Schema(ctx, p, data.Database.ID, data.Collection)
+		data.Schema = indented(schema)
+	}
+	if err != nil {
+		data.Error = err.Error()
 	}
 }

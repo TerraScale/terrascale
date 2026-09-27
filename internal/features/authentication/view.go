@@ -100,9 +100,8 @@ func buildPage(current section, project core.Project, manage bool, search, rawPa
 		Instance: instance, Settings: effectiveSettings(instance), CanManage: manage, Search: search,
 		Page: 1, PageCount: 1, Counts: make(map[string]int),
 	}
-	names := make(map[string]string)
+	names := recordNames(instance)
 	for _, resource := range instance.Resources {
-		names[resource.ID] = recordName(resource)
 		if resource.Status != "Revoked" {
 			data.Counts[resource.Section]++
 		}
@@ -253,6 +252,15 @@ func describe(current section, resource core.AuthResource, names map[string]stri
 		}
 	}
 	return row
+}
+
+// recordNames maps every record ID to its stored label.
+func recordNames(instance core.AuthInstance) map[string]string {
+	names := make(map[string]string, len(instance.Resources))
+	for _, resource := range instance.Resources {
+		names[resource.ID] = recordName(resource)
+	}
+	return names
 }
 
 // recordName is the stored label of a record; describe refines the rows

@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -304,10 +306,10 @@ func (s Service) UpdateUser(principal core.Principal, accountID, name string, pl
 		}
 	}
 	if target == nil {
-		return core.ErrNotFound
+		return fmt.Errorf("%w: account %q", core.ErrNotFound, accountID)
 	}
 	if target.User.PlatformAdmin && !platformAdmin && adminCount <= 1 {
-		return core.ErrConflict
+		return fmt.Errorf("%w: the last platform administrator cannot be demoted", core.ErrConflict)
 	}
 	return s.store.UpdateAccountAsAdmin(principal, accountID, func(account *core.Account) error {
 		account.User.Name = name
@@ -323,16 +325,16 @@ func (s Service) RecordEstateAction(principal core.Principal, action, target, re
 		return err
 	}
 	if !slices.Contains(estateActionKinds[:], action) {
-		return core.ErrInvalid
+		return core.Invalid("action must be one of " + strings.Join(estateActionKinds[:], ", "))
 	}
 	target = strings.TrimSpace(target)
 	if target == "" {
-		return core.ErrInvalid
+		return core.Invalid("enter a target")
 	}
 	reason = strings.TrimSpace(reason)
 	reasonLength := utf8.RuneCountInString(reason)
 	if reasonLength < 3 || reasonLength > 1000 {
-		return core.ErrInvalid
+		return core.Invalid("provide a reason between 3 and 1000 characters")
 	}
 	return s.store.RecordPlatformAdminAction(principal, action, target, reason)
 }
@@ -348,7 +350,7 @@ func (s Service) RenameOrganization(principal core.Principal, accountID, organiz
 	return s.store.UpdateAccountAsAdmin(principal, accountID, func(account *core.Account) error {
 		org, ok := account.Organizations[organizationID]
 		if !ok {
-			return core.ErrNotFound
+			return fmt.Errorf("%w: organization %q", core.ErrNotFound, organizationID)
 		}
 		org.Name = name
 		account.Organizations[organizationID] = org
@@ -367,11 +369,11 @@ func (s Service) RenameProject(principal core.Principal, accountID, organization
 	return s.store.UpdateAccountAsAdmin(principal, accountID, func(account *core.Account) error {
 		org, ok := account.Organizations[organizationID]
 		if !ok {
-			return core.ErrNotFound
+			return fmt.Errorf("%w: organization %q", core.ErrNotFound, organizationID)
 		}
 		project, ok := org.Projects[projectID]
 		if !ok {
-			return core.ErrNotFound
+			return fmt.Errorf("%w: project %q", core.ErrNotFound, projectID)
 		}
 		project.Name = name
 		org.Projects[projectID] = project
@@ -380,39 +382,46 @@ func (s Service) RenameProject(principal core.Principal, accountID, organization
 	})
 }
 
-func (s Service) SavePlan(principal core.Principal, plan core.Plan) error {
+// SavePlan creates a plan when plan.ID is empty and otherwise updates the
+// catalog fields the administrator edits. Limits the editor does not manage,
+// such as database and member caps, keep their saved values.
+func (s Service) SavePlan(principal core.Principal, plan core.Plan) (core.Plan, error) {
 	unlock := s.lockMutations()
 	defer unlock()
 	if err := s.requireAdmin(principal); err != nil {
-		return err
+		return core.Plan{}, err
 	}
 	var err error
-	plan.Name, err = validName(plan.Name)
-	if err != nil || !validPlanKey(plan.Key) || plan.PriceCents < 0 || plan.AnnualPriceCents < 0 ||
-		plan.TrialDays < 0 || plan.StorageMiB < 0 || plan.MonthlyRequests < 0 {
-		return core.ErrInvalid
+	if plan.Name, err = validName(plan.Name); err != nil {
+		return core.Plan{}, err
+	}
+	if !validPlanKey(plan.Key) {
+		return core.Plan{}, core.Invalid("plan keys use up to 64 lowercase letters, digits, hyphens, and underscores")
+	}
+	if plan.PriceCents < 0 || plan.AnnualPriceCents < 0 || plan.TrialDays < 0 || plan.StorageMiB < 0 || plan.MonthlyRequests < 0 {
+		return core.Plan{}, core.Invalid("plan prices and limits must be non-negative")
 	}
 	plans := s.store.Plans()
 	if plan.ID == "" {
 		plan.ID = core.NewID("plan")
 	} else {
-		exists := false
-		for _, existing := range plans {
-			if existing.ID == plan.ID {
-				exists = true
-				break
-			}
+		index := slices.IndexFunc(plans, func(existing core.Plan) bool { return existing.ID == plan.ID })
+		if index < 0 {
+			return core.Plan{}, fmt.Errorf("%w: plan %q", core.ErrNotFound, plan.ID)
 		}
-		if !exists {
-			return core.ErrNotFound
-		}
+		existing := plans[index]
+		plan.MaxDatabases, plan.MaxMembers = existing.MaxDatabases, existing.MaxMembers
+		plan.OperationsPerMonth, plan.StorageLabel = existing.OperationsPerMonth, existing.StorageLabel
 	}
 	for _, existing := range plans {
 		if existing.ID != plan.ID && strings.EqualFold(existing.Key, plan.Key) {
-			return core.ErrConflict
+			return core.Plan{}, fmt.Errorf("%w: plan key %q is already used", core.ErrConflict, plan.Key)
 		}
 	}
-	return s.store.UpsertPlanAs(principal, plan)
+	if err := s.store.UpsertPlanAs(principal, plan); err != nil {
+		return core.Plan{}, err
+	}
+	return plan, nil
 }
 
 func (s Service) SetPlanVisibility(principal core.Principal, planID string, visible bool) error {
@@ -428,7 +437,7 @@ func (s Service) SetPlanVisibility(principal core.Principal, planID string, visi
 			return s.store.UpsertPlanAs(principal, plan)
 		}
 	}
-	return core.ErrNotFound
+	return fmt.Errorf("%w: plan %q", core.ErrNotFound, planID)
 }
 
 func (s Service) DeletePlan(principal core.Principal, planID string) error {
@@ -437,7 +446,14 @@ func (s Service) DeletePlan(principal core.Principal, planID string) error {
 	if err := s.requireAdmin(principal); err != nil {
 		return err
 	}
-	return s.store.DeletePlanAs(principal, planID)
+	err := s.store.DeletePlanAs(principal, planID)
+	switch {
+	case errors.Is(err, core.ErrNotFound):
+		return fmt.Errorf("%w: plan %q", core.ErrNotFound, planID)
+	case errors.Is(err, core.ErrConflict):
+		return fmt.Errorf("%w: an organization or open checkout still uses this plan", core.ErrConflict)
+	}
+	return err
 }
 
 func (s Service) platformAccounts(principal core.Principal) ([]core.Account, error) {
@@ -465,7 +481,7 @@ func (s Service) lockMutations() func() {
 func validName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" || !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) || utf8.RuneCountInString(name) > 128 {
-		return "", core.ErrInvalid
+		return "", core.Invalid("names use 1-128 printable characters")
 	}
 	return name, nil
 }

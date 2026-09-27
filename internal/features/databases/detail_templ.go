@@ -857,14 +857,14 @@ func detailBackups(page core.Page, d detailData) templ.Component {
 						}()
 					}
 					ctx = templ.InitializeContext(ctx)
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "<input class=\"ts-input\" id=\"retention\" name=\"retentionDays\" type=\"number\" min=\"1\" max=\"365\" value=\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "<input class=\"ts-input\" id=\"retention\" name=\"retentionDays\" type=\"number\" min=\"1\" max=\"35\" value=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var41 string
 					templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.ResolveAttributeValue(policyValue(d, d.Refill.Retention, backupRetentionDays(d.Info.BackupPolicy.RetentionDays)))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/detail.templ`, Line: 157, Col: 196}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/databases/detail.templ`, Line: 157, Col: 195}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var41)
 					if templ_7745c5c3_Err != nil {

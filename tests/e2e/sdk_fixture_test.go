@@ -51,7 +51,7 @@ func startSDKFixture(t *testing.T) sdkFixture {
 
 	demo := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil, false),
-		Throttle: throttle.New(throttle.Options{}), Demo: true,
+		Throttle: throttle.New(throttle.Options{}), Tools: core.NewTools(store), Demo: true,
 	}
 	live := demo
 	live.Demo = false
@@ -60,7 +60,7 @@ func startSDKFixture(t *testing.T) sdkFixture {
 	mux := http.NewServeMux()
 	must(t, assets.Mount(mux, false))
 	auth.Mount(mux, demo)
-	onboarding.Mount(mux, demo)
+	onboarding.Mount(mux, demo, nil)
 	subscriptions.Mount(mux, demo, nil)
 	databases.Mount(mux, live)
 	apikeys.MountWithIssuer(mux, live, fixtureIssuer{store: store, producer: producer})

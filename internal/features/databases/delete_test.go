@@ -38,7 +38,7 @@ func TestDeleteDatabaseRevokesItsKeysAndDropsItsConfigurations(t *testing.T) {
 	sessions := session.New(store, session.Options{})
 	guard := csrf.New(sessions, csrf.Options{})
 	mux := http.NewServeMux()
-	Mount(mux, core.Deps{Store: store, Sessions: sessions, CSRF: guard, Demo: true})
+	Mount(mux, core.Deps{Store: store, Sessions: sessions, CSRF: guard, Tools: core.NewTools(store), Demo: true})
 	signIn := httptest.NewRecorder()
 	if err := sessions.Start(signIn, httptest.NewRequest(http.MethodGet, "/", nil), p); err != nil {
 		t.Fatal(err)

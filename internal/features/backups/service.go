@@ -1,0 +1,358 @@
+package backups
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"terrascale.tech/dashboard/internal/core"
+	sdk "terrascale.tech/sdk"
+)
+
+// ErrUnavailable marks a backup action the live provider contract cannot
+// perform.
+var ErrUnavailable = errors.New("on-demand backups and backup scheduling are unavailable in the published SDK contract")
+
+const maxRetentionDays = 35
+
+var (
+	errRetention     = core.Invalid("Set snapshot retention from 1 to 35 days.")
+	errSchedule      = core.Invalid("Enter schedules as five cron fields, such as 0 2 * * *, or leave them empty.")
+	errRestoreName   = core.Invalid("Name the restored database with 1 to 63 lowercase letters, digits, and inner hyphens.")
+	errBackupMissing = fmt.Errorf("%w: that restore point is no longer available", core.ErrNotFound)
+)
+
+type backupView struct {
+	ID        string    `json:"id"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
+	SizeBytes int64     `json:"sizeBytes"`
+}
+
+type policyView struct {
+	FullBackupCron        string    `json:"fullBackupCron" jsonschema:"Cron schedule for full backups; empty when unscheduled."`
+	IncrementalBackupCron string    `json:"incrementalBackupCron" jsonschema:"Cron schedule for incremental backups; empty when unscheduled."`
+	RetentionDays         int       `json:"retentionDays"`
+	Disabled              bool      `json:"disabled"`
+	UpdatedAt             time.Time `json:"updatedAt,omitzero"`
+}
+
+// backupListing is a database's backup state. The demo reports its policy
+// and snapshots; the live data plane reports backup readiness.
+type backupListing struct {
+	Policy    core.BackupPolicy
+	Backups   []backupView
+	Readiness *sdk.BackupReadiness
+}
+
+// restoreResult is the database a restore created. Live restores also carry
+// the provisioning operation.
+type restoreResult struct {
+	DatabaseID string                     `json:"databaseId"`
+	Name       string                     `json:"name"`
+	Status     string                     `json:"status" jsonschema:"ready, or the live provisioning state."`
+	Operation  *sdk.ProvisioningOperation `json:"-"`
+}
+
+// PolicyInput is a backup schedule a manager saves for one database.
+type PolicyInput struct {
+	FullBackupCron        string
+	IncrementalBackupCron string
+	RetentionDays         int
+	Disabled              bool
+}
+
+// RestoreInput names the database a restore creates; an empty Name derives
+// one from the source. The demo restores BackupID; the live data plane
+// restores the point in time AtMillis, or the latest state when it is nil.
+type RestoreInput struct {
+	Name     string
+	BackupID string
+	AtMillis *int64
+}
+
+func view(backup core.Backup) backupView {
+	return backupView{ID: backup.ID, Status: backup.Status, CreatedAt: backup.CreatedAt, SizeBytes: backup.SizeBytes}
+}
+
+func policy(p core.BackupPolicy) policyView {
+	return policyView(p)
+}
+
+// Service owns database backups, backup policies, and restores in a
+// principal's selected project. The backups and settings pages and the MCP
+// tools all call it.
+type Service struct {
+	deps core.Deps
+}
+
+func NewService(deps core.Deps) Service {
+	return Service{deps: deps}
+}
+
+func (s Service) database(p core.Principal, databaseID string) (core.Project, core.Database, error) {
+	if p.ProjectID == "" {
+		return core.Project{}, core.Database{}, core.ErrNotFound
+	}
+	a, err := s.deps.Store.SnapshotAs(p)
+	if err != nil {
+		return core.Project{}, core.Database{}, err
+	}
+	project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
+	if err != nil {
+		return core.Project{}, core.Database{}, err
+	}
+	db, ok := project.Databases[databaseID]
+	if !ok || db.ProjectID != project.ID {
+		return core.Project{}, core.Database{}, fmt.Errorf("%w: database %q", core.ErrNotFound, databaseID)
+	}
+	return project, db, nil
+}
+
+// managedDatabase resolves a database the principal may manage.
+func (s Service) managedDatabase(p core.Principal, databaseID string) (core.Database, error) {
+	_, db, err := s.database(p, databaseID)
+	if err != nil {
+		return core.Database{}, err
+	}
+	if !s.deps.Store.Can(p, core.Organization.CanManage) {
+		return core.Database{}, core.ErrForbidden
+	}
+	return db, nil
+}
+
+// update commits mutate to the selected project once allow grants the
+// principal's role in the selected organization.
+func (s Service) update(p core.Principal, allow func(core.Organization, string) bool, mutate func(*core.Account, *core.Project) error) error {
+	return s.deps.Store.UpdateAs(p, func(a *core.Account) error {
+		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
+		if err != nil {
+			return err
+		}
+		org := a.Organizations[p.OrganizationID]
+		if !allow(org, p.UserID) {
+			return core.ErrForbidden
+		}
+		if err := mutate(a, &project); err != nil {
+			return err
+		}
+		org.Projects[p.ProjectID] = project
+		a.Organizations[p.OrganizationID] = org
+		return nil
+	})
+}
+
+// List returns a database's backups, newest first, with its policy.
+func (s Service) List(ctx context.Context, p core.Principal, databaseID string) (backupListing, error) {
+	project, db, err := s.database(p, databaseID)
+	if err != nil {
+		return backupListing{}, err
+	}
+	if !s.deps.Demo {
+		client, err := s.deps.DataPlane(p)
+		if err != nil {
+			return backupListing{}, err
+		}
+		readiness, err := client.Backups.ListDatabaseBackups(ctx, db.Name)
+		if err != nil {
+			return backupListing{}, core.ProviderError{Action: "backup readiness", Err: err}
+		}
+		return backupListing{Readiness: readiness}, nil
+	}
+	listing := backupListing{Policy: project.BackupPolicies[db.ID], Backups: make([]backupView, 0, len(db.Backups))}
+	for _, backup := range db.Backups {
+		listing.Backups = append(listing.Backups, view(backup))
+	}
+	slices.SortFunc(listing.Backups, func(a, b backupView) int { return b.CreatedAt.Compare(a.CreatedAt) })
+	return listing, nil
+}
+
+// Create snapshots a database's documents, schemas, and indexes.
+func (s Service) Create(p core.Principal, databaseID string) (backupView, error) {
+	db, err := s.managedDatabase(p, databaseID)
+	if err != nil {
+		return backupView{}, err
+	}
+	if !s.deps.Demo {
+		return backupView{}, ErrUnavailable
+	}
+	var created core.Backup
+	err = s.update(p, core.Organization.CanManage, func(a *core.Account, project *core.Project) error {
+		current, ok := project.Databases[db.ID]
+		if !ok {
+			return core.ErrNotFound
+		}
+		created = core.Backup{
+			ID: core.NewID("bkp"), DatabaseID: db.ID, Status: "ready", CreatedAt: time.Now().UTC(),
+			Documents: core.CloneDocuments(current.Documents), Schemas: core.CloneSchemas(current.Schemas), Indexes: core.CloneIndexes(current.Indexes),
+		}
+		for _, docs := range current.Documents {
+			for _, body := range docs {
+				created.SizeBytes += int64(len(body))
+			}
+		}
+		current.Backups = append(current.Backups, created)
+		project.Databases[db.ID] = current
+		a.RecordAudit(p, "backup.created", current.Name, "database", created.CreatedAt)
+		return nil
+	})
+	if err != nil {
+		return backupView{}, err
+	}
+	return view(created), nil
+}
+
+// SetPolicy saves a database's backup schedule and retention.
+func (s Service) SetPolicy(p core.Principal, databaseID string, in PolicyInput) (core.BackupPolicy, error) {
+	db, err := s.managedDatabase(p, databaseID)
+	if err != nil {
+		return core.BackupPolicy{}, err
+	}
+	if !s.deps.Demo {
+		return core.BackupPolicy{}, ErrUnavailable
+	}
+	saved := core.BackupPolicy{
+		FullBackupCron: normalizeCron(in.FullBackupCron), IncrementalBackupCron: normalizeCron(in.IncrementalBackupCron),
+		RetentionDays: in.RetentionDays, Disabled: in.Disabled, UpdatedAt: time.Now().UTC(),
+	}
+	if saved.RetentionDays < 1 || saved.RetentionDays > maxRetentionDays {
+		return core.BackupPolicy{}, errRetention
+	}
+	if !validCron(saved.FullBackupCron) || !validCron(saved.IncrementalBackupCron) {
+		return core.BackupPolicy{}, errSchedule
+	}
+	err = s.update(p, core.Organization.CanManage, func(a *core.Account, project *core.Project) error {
+		if _, ok := project.Databases[db.ID]; !ok {
+			return core.ErrNotFound
+		}
+		if project.BackupPolicies == nil {
+			project.BackupPolicies = make(map[string]core.BackupPolicy)
+		}
+		project.BackupPolicies[db.ID] = saved
+		a.RecordAudit(p, "backup.policy_updated", db.Name, "database", saved.UpdatedAt)
+		return nil
+	})
+	if err != nil {
+		return core.BackupPolicy{}, err
+	}
+	return saved, nil
+}
+
+// Restore creates a new database from a backup of databaseID.
+func (s Service) Restore(ctx context.Context, p core.Principal, databaseID string, in RestoreInput) (restoreResult, error) {
+	db, err := s.managedDatabase(p, databaseID)
+	if err != nil {
+		return restoreResult{}, err
+	}
+	name := strings.TrimSpace(in.Name)
+	if name != "" && !core.ValidDatabaseName(name) {
+		return restoreResult{}, errRestoreName
+	}
+	if in.AtMillis != nil && *in.AtMillis < 0 {
+		return restoreResult{}, core.Invalid("restore timestamp must not be negative")
+	}
+	target := core.Database{ID: core.NewID("db"), ProjectID: p.ProjectID, Region: db.Region, Status: "provisioning", CreatedAt: time.Now().UTC()}
+	if s.deps.Demo {
+		target.Status = "ready"
+	}
+	err = s.update(p, core.Organization.CanProvisionResources, func(a *core.Account, project *core.Project) error {
+		current, ok := project.Databases[db.ID]
+		if !ok {
+			return core.ErrNotFound
+		}
+		target.Name = name
+		if target.Name == "" {
+			target.Name = restoredName(*project, current.Name)
+		}
+		for _, existing := range project.Databases {
+			if existing.Name == target.Name {
+				return fmt.Errorf("%w: database %q already exists", core.ErrConflict, target.Name)
+			}
+		}
+		if s.deps.Demo {
+			index := slices.IndexFunc(current.Backups, func(b core.Backup) bool { return b.ID == in.BackupID && b.Status == "ready" })
+			if index < 0 {
+				return errBackupMissing
+			}
+			backup := current.Backups[index]
+			target.Documents = core.CloneDocuments(backup.Documents)
+			target.Schemas = core.CloneSchemas(backup.Schemas)
+			target.Indexes = core.CloneIndexes(backup.Indexes)
+		}
+		project.Databases[target.ID] = target
+		a.RecordAudit(p, "backup.restored", current.Name+" → "+target.Name, "database", target.CreatedAt)
+		return nil
+	})
+	if err != nil {
+		return restoreResult{}, err
+	}
+	result := restoreResult{DatabaseID: target.ID, Name: target.Name, Status: target.Status}
+	if s.deps.Demo {
+		return result, nil
+	}
+	client, err := s.deps.DataPlane(p)
+	if err != nil {
+		_ = s.setStatus(p, target.ID, "failed")
+		return restoreResult{}, err
+	}
+	operation, err := client.Backups.RestoreBackup(ctx, db.Name, sdk.RestoreBackupRequest{Name: target.Name, At: in.AtMillis, OperationID: target.ID}, sdk.WithIdempotencyKey(target.ID))
+	if err != nil {
+		_ = s.setStatus(p, target.ID, "failed")
+		return restoreResult{}, core.ProviderError{Action: "restore", Err: err}
+	}
+	result.Operation, result.Status = operation, operation.State
+	return result, s.setStatus(p, target.ID, operation.State)
+}
+
+// validCron accepts an empty schedule, which leaves that backup kind
+// unscheduled, or five cron fields made of digits, ranges, lists, steps, and
+// wildcards.
+func validCron(schedule string) bool {
+	if schedule == "" {
+		return true
+	}
+	fields := strings.Fields(schedule)
+	return len(fields) == 5 && !slices.ContainsFunc(fields, func(field string) bool {
+		return strings.Trim(field, "0123456789*,-/") != "" || !strings.ContainsAny(field, "0123456789*")
+	})
+}
+
+// normalizeCron collapses the whitespace between a schedule's fields.
+func normalizeCron(schedule string) string {
+	return strings.Join(strings.Fields(schedule), " ")
+}
+
+func (s Service) setStatus(p core.Principal, databaseID, status string) error {
+	return s.update(p, func(core.Organization, string) bool { return true }, func(_ *core.Account, project *core.Project) error {
+		db, ok := project.Databases[databaseID]
+		if !ok {
+			return core.ErrNotFound
+		}
+		db.Status = status
+		project.Databases[databaseID] = db
+		return nil
+	})
+}
+
+// restoredName derives an unused database name of at most 63 characters for
+// a restore of source, shortening source to fit the suffix.
+func restoredName(project core.Project, source string) string {
+	taken := make(map[string]bool, len(project.Databases))
+	for _, db := range project.Databases {
+		taken[db.Name] = true
+	}
+	for attempt := 1; ; attempt++ {
+		suffix := "-restore"
+		if attempt > 1 {
+			suffix += "-" + strconv.Itoa(attempt)
+		}
+		candidate := strings.TrimRight(source[:min(len(source), 63-len(suffix))], "-") + suffix
+		if !taken[candidate] {
+			return candidate
+		}
+	}
+}

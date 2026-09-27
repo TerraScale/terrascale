@@ -20,17 +20,17 @@ func TestRotateReturnsTheRotatedKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps, owner := core.Deps{Store: store}, account.Principal()
-	created, first, err := createDemoKey(deps, owner, sdk.CreateProjectAPIKeyRequest{Name: "ci-deploy", Scopes: []string{"database:read"}})
+	service, owner := Service{deps: core.Deps{Store: store, Demo: true}}, account.Principal()
+	created, err := service.Create(t.Context(), owner, kindAPIKey, sdk.CreateProjectAPIKeyRequest{Name: "ci-deploy", Scopes: []string{"database:read"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rotated, second, err := rotateDemoKey(deps, owner, created.ID)
+	rotated, err := service.Rotate(t.Context(), owner, created.APIKey.ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rotated.ID != created.ID || rotated.Name != "ci-deploy" || rotated.SecretHash != hash(second) || second == first {
-		t.Fatalf("rotateDemoKey = %+v with a new secret %t, want ci-deploy with the new secret's hash", rotated, second != first)
+	if rotated.APIKey.ID != created.APIKey.ID || rotated.APIKey.Name != "ci-deploy" || rotated.Secret == "" || rotated.Secret == created.Secret {
+		t.Fatalf("Rotate = %+v, want ci-deploy with a new secret", rotated)
 	}
 }
 

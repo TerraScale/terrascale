@@ -19,18 +19,18 @@ var (
 )
 
 type sqlSuggestion struct {
-	Field  string
-	Reason string
+	Field  string `json:"field"`
+	Reason string `json:"reason"`
 }
 
 type sqlAnalysis struct {
-	OK             bool
-	Error          string
-	Collection     string
-	ParameterSlots int
-	HasLimit       bool
-	Explain        string
-	Suggestions    []sqlSuggestion
+	OK             bool            `json:"ok" jsonschema:"Whether the statement is one allowed read-only query."`
+	Error          string          `json:"error,omitempty"`
+	Collection     string          `json:"collection,omitempty"`
+	ParameterSlots int             `json:"parameterSlots"`
+	HasLimit       bool            `json:"hasLimit"`
+	Explain        string          `json:"explain,omitempty" jsonschema:"EXPLAIN statement that shows the query plan."`
+	Suggestions    []sqlSuggestion `json:"suggestions,omitempty" jsonschema:"Fields worth indexing for this query."`
 }
 
 func analyzeSQL(statement string) sqlAnalysis {

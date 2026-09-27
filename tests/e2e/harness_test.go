@@ -23,10 +23,13 @@ type credentials struct {
 var sampleAccount = credentials{Email: "mario@terrascale.tech", Password: "terrascale", DisplayName: "Mario Kraus"}
 
 // newAccount returns unique credentials so parallel tests never share state.
+// journeyPassword is the password of every account newAccount creates.
+const journeyPassword = "E2e-journey-123!"
+
 func newAccount(label string) credentials {
 	return credentials{
 		Email:       uniqueName("e2e-"+label) + "@example.test",
-		Password:    "E2e-journey-123!",
+		Password:    journeyPassword,
 		DisplayName: "E2E " + label,
 	}
 }

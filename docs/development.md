@@ -109,6 +109,18 @@ records the source commit for the vendored `ts-go` package. Do not replace this
 with a sibling checkout path in `go.mod`; standalone CI and Docker builds must
 work from the repository contents.
 
+Adding or upgrading a third-party module still makes `go mod tidy` resolve
+`terrascale.tech/sdk`. Serve the pinned commit from a local file proxy, with
+the module zip built by `golang.org/x/mod/zip.CreateFromDir` from a clean
+`git archive` of that commit, at
+`<dir>/terrascale.tech/sdk/@v/<version>.{info,mod,zip}` plus a `list` file.
+Then run `GOFLAGS=-mod=mod GOPROXY=file://<dir>,https://proxy.golang.org
+GONOSUMDB=terrascale.tech go mod tidy && go mod vendor`. `go.sum` verifies that
+the zip matches the recorded checksum. `go mod vendor` deletes
+`vendor/PROVENANCE.md`, so restore it with `git checkout`.
+
+The MCP endpoint and its tool conventions are described in [mcp.md](mcp.md).
+
 ## Fly runtime
 
 `fly.toml` configures the production app for one warm machine. Its process-local

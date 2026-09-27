@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/mail"
 	"slices"
 	"strings"
@@ -33,15 +34,22 @@ var (
 	ErrNoTransfer    = errors.New("no ownership transfer is pending for this member")
 )
 
-// Service contains organization and project behavior. Persistence and atomic
-// account scoping remain owned by core.Store.
+var (
+	errNameRequired = core.Invalid("names need 1-128 characters including a letter or digit")
+	errMemberRole   = core.Invalid("role must be member or viewer")
+)
+
+// Service contains organization and project behavior. HTTP handlers and MCP
+// tools both call it. Persistence and atomic account scoping remain owned by
+// core.Store.
 type Service struct {
-	store *core.Store
-	now   func() time.Time
+	store    *core.Store
+	sessions core.Sessions
+	now      func() time.Time
 }
 
-func NewService(store *core.Store) Service {
-	return Service{store: store, now: func() time.Time { return time.Now().UTC() }}
+func NewService(store *core.Store, sessions core.Sessions) Service {
+	return Service{store: store, sessions: sessions, now: func() time.Time { return time.Now().UTC() }}
 }
 
 func (s Service) Snapshot(p core.Principal) (core.Account, core.Organization, error) {
@@ -80,7 +88,7 @@ func (s Service) ForOrganization(p core.Principal, organizationID string) (core.
 func (s Service) CreateBusiness(p core.Principal, name string) (core.Organization, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || utf8.RuneCountInString(name) > 128 || slug(name) == "" {
-		return core.Organization{}, core.ErrInvalid
+		return core.Organization{}, errNameRequired
 	}
 	var result core.Organization
 	err := s.store.UpdateAs(p, func(a *core.Account) error {
@@ -94,7 +102,7 @@ func (s Service) CreateBusiness(p core.Principal, name string) (core.Organizatio
 		}
 		for _, org := range a.Organizations {
 			if org.OwnerUserID == p.UserID && org.Slug == slug(name) {
-				return core.ErrConflict
+				return fmt.Errorf("%w: you already own an organization named %q", core.ErrConflict, org.Name)
 			}
 		}
 
@@ -119,7 +127,7 @@ func (s Service) CreateBusiness(p core.Principal, name string) (core.Organizatio
 
 func (s Service) SwitchOrganization(p core.Principal, organizationID string) error {
 	if organizationID == "" {
-		return core.ErrInvalid
+		return core.Invalid("organizationId is required")
 	}
 	return s.store.UpdateAs(p, func(a *core.Account) error {
 		org, err := a.OrganizationFor(p, organizationID)
@@ -138,7 +146,7 @@ func (s Service) SwitchOrganization(p core.Principal, organizationID string) err
 func (s Service) RenameOrganization(p core.Principal, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" || utf8.RuneCountInString(name) > 128 || slug(name) == "" {
-		return core.ErrInvalid
+		return errNameRequired
 	}
 	return s.store.UpdateAs(p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
@@ -152,10 +160,15 @@ func (s Service) RenameOrganization(p core.Principal, name string) error {
 	})
 }
 
+// CreateProject adds a project to the principal's organization. Regions
+// default to the primary region when none are listed.
 func (s Service) CreateProject(p core.Principal, name, region, backupRegion string, regions []string) (core.Project, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || utf8.RuneCountInString(name) > 128 || slug(name) == "" {
-		return core.Project{}, core.ErrInvalid
+		return core.Project{}, errNameRequired
+	}
+	if len(regions) == 0 && region != "" {
+		regions = []string{region}
 	}
 	validatedRegions, err := normalizeRegions(regions)
 	if err != nil {
@@ -184,7 +197,7 @@ func (s Service) CreateProject(p core.Principal, name, region, backupRegion stri
 		projectSlug := slug(name)
 		for _, existing := range org.Projects {
 			if strings.EqualFold(existing.Slug, projectSlug) {
-				return core.ErrConflict
+				return fmt.Errorf("%w: project %q already exists", core.ErrConflict, existing.Name)
 			}
 		}
 		now := s.now()
@@ -206,8 +219,11 @@ func (s Service) CreateProject(p core.Principal, name, region, backupRegion stri
 
 func (s Service) RenameProject(p core.Principal, projectID, name, region, backupRegion string, regions []string) error {
 	name = strings.TrimSpace(name)
-	if projectID == "" || name == "" || utf8.RuneCountInString(name) > 128 || slug(name) == "" {
-		return core.ErrInvalid
+	if projectID == "" {
+		return core.Invalid("projectId is required")
+	}
+	if name == "" || utf8.RuneCountInString(name) > 128 || slug(name) == "" {
+		return errNameRequired
 	}
 	var validatedRegions []string
 	if len(regions) > 0 {
@@ -243,7 +259,7 @@ func (s Service) RenameProject(p core.Principal, projectID, name, region, backup
 		}
 		for id, existing := range org.Projects {
 			if id != projectID && strings.EqualFold(existing.Slug, project.Slug) {
-				return core.ErrConflict
+				return fmt.Errorf("%w: project %q already exists", core.ErrConflict, existing.Name)
 			}
 		}
 		org.Projects[projectID] = project
@@ -252,29 +268,40 @@ func (s Service) RenameProject(p core.Principal, projectID, name, region, backup
 	})
 }
 
+// SwitchProject selects a project in any organization the principal belongs
+// to, together with that organization.
 func (s Service) SwitchProject(p core.Principal, projectID string) error {
 	if projectID == "" {
-		return core.ErrInvalid
+		return core.Invalid("projectId is required")
 	}
 	return s.store.UpdateAs(p, func(a *core.Account) error {
-		org, err := a.OrganizationFor(p, p.OrganizationID)
-		if err != nil {
-			return err
+		for id, candidate := range a.Organizations {
+			project, ok := candidate.Projects[projectID]
+			if !ok || project.OrganizationID != id {
+				continue
+			}
+			org, err := a.OrganizationFor(p, id)
+			if err != nil {
+				return err
+			}
+			if !strings.EqualFold(org.Status, statusActive) {
+				return core.ErrForbidden
+			}
+			a.ActiveOrganizationID = org.ID
+			a.ActiveProjectID = projectID
+			return nil
 		}
-		project, ok := org.Projects[projectID]
-		if !ok || project.OrganizationID != org.ID {
-			return core.ErrNotFound
-		}
-		a.ActiveOrganizationID = org.ID
-		a.ActiveProjectID = projectID
-		return nil
+		return fmt.Errorf("%w: project %q", core.ErrNotFound, projectID)
 	})
 }
 
 func (s Service) UpdateMemberRole(p core.Principal, userID, role string) error {
 	role = strings.ToLower(strings.TrimSpace(role))
-	if userID == "" || (role != roleMember && role != roleViewer) || userID == p.UserID {
-		return core.ErrInvalid
+	if role != roleMember && role != roleViewer {
+		return errMemberRole
+	}
+	if userID == "" || userID == p.UserID {
+		return core.Invalid("choose another member than yourself")
 	}
 	return s.store.UpdateAs(p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
@@ -283,7 +310,7 @@ func (s Service) UpdateMemberRole(p core.Principal, userID, role string) error {
 		}
 		member, ok := org.Members[userID]
 		if !ok || member.Status != statusActive || userID == org.OwnerUserID || member.Role == roleOwner {
-			return core.ErrNotFound
+			return fmt.Errorf("%w: member %q", core.ErrNotFound, userID)
 		}
 		member.Role = role
 		org.Members[userID] = member
@@ -292,31 +319,45 @@ func (s Service) UpdateMemberRole(p core.Principal, userID, role string) error {
 	})
 }
 
+// RemoveMember removes a member from the principal's organization and ends
+// the removed user's dashboard sessions.
 func (s Service) RemoveMember(p core.Principal, userID string) error {
 	if userID == "" || userID == p.UserID {
-		return core.ErrInvalid
+		return core.Invalid("choose another member than yourself")
 	}
-	return s.store.UpdateAs(p, func(a *core.Account) error {
+	var removed core.Member
+	err := s.store.UpdateAs(p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
 		if err != nil {
 			return err
 		}
 		member, ok := org.Members[userID]
 		if !ok || userID == org.OwnerUserID || member.Role == roleOwner {
-			return core.ErrNotFound
+			return fmt.Errorf("%w: member %q", core.ErrNotFound, userID)
 		}
+		removed = member
 		delete(org.Members, userID)
 		a.Organizations[org.ID] = org
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if target, found := s.store.FindByEmail(removed.Email); found && s.sessions != nil {
+		s.sessions.RevokeUser(target.ID, userID)
+	}
+	return nil
 }
 
 func (s Service) CreateInvitation(p core.Principal, email, role string) (core.Invitation, string, error) {
 	email = core.NormalizeEmail(email)
 	role = strings.ToLower(strings.TrimSpace(role))
 	parsed, err := mail.ParseAddress(email)
-	if err != nil || !strings.EqualFold(parsed.Address, email) || (role != roleMember && role != roleViewer) {
-		return core.Invitation{}, "", core.ErrInvalid
+	if err != nil || !strings.EqualFold(parsed.Address, email) {
+		return core.Invitation{}, "", core.Invalid("enter a valid email address")
+	}
+	if role != roleMember && role != roleViewer {
+		return core.Invitation{}, "", errMemberRole
 	}
 	account, err := s.store.SnapshotAs(p)
 	if err != nil {
@@ -357,17 +398,17 @@ func (s Service) CreateInvitation(p core.Principal, email, role string) (core.In
 				}
 			}
 			if occupied >= plan.MaxMembers {
-				return core.ErrConflict
+				return fmt.Errorf("%w: the %s plan allows %d members including pending invitations", core.ErrConflict, plan.Name, plan.MaxMembers)
 			}
 		}
 		for _, member := range org.Members {
 			if core.NormalizeEmail(member.Email) == email && member.Status == statusActive {
-				return core.ErrConflict
+				return fmt.Errorf("%w: %s is already a member", core.ErrConflict, email)
 			}
 		}
 		for _, existing := range org.Invitations {
 			if core.NormalizeEmail(existing.Email) == email && existing.Status == statusPending && existing.ExpiresAt.After(s.now()) {
-				return core.ErrConflict
+				return fmt.Errorf("%w: %s already has a pending invitation", core.ErrConflict, email)
 			}
 		}
 		if org.Invitations == nil {
@@ -387,7 +428,7 @@ func (s Service) CreateInvitation(p core.Principal, email, role string) (core.In
 
 func (s Service) ResendInvitation(p core.Principal, invitationID string) (core.Invitation, string, error) {
 	if invitationID == "" {
-		return core.Invitation{}, "", core.ErrInvalid
+		return core.Invitation{}, "", core.Invalid("invitationId is required")
 	}
 	token := newToken()
 	digest := sha256.Sum256([]byte(token))
@@ -399,7 +440,7 @@ func (s Service) ResendInvitation(p core.Principal, invitationID string) (core.I
 		}
 		current, ok := org.Invitations[invitationID]
 		if !ok || current.Status != statusPending {
-			return core.ErrNotFound
+			return fmt.Errorf("%w: pending invitation %q", core.ErrNotFound, invitationID)
 		}
 		current.TokenHash = hex.EncodeToString(digest[:])
 		current.CreatedAt = s.now()
@@ -420,7 +461,7 @@ func (s Service) RevokeInvitation(p core.Principal, invitationID string) error {
 		}
 		invitation, ok := org.Invitations[invitationID]
 		if !ok || invitation.Status != statusPending {
-			return core.ErrNotFound
+			return fmt.Errorf("%w: pending invitation %q", core.ErrNotFound, invitationID)
 		}
 		invitation.Status = "revoked"
 		org.Invitations[invitationID] = invitation
@@ -431,7 +472,7 @@ func (s Service) RevokeInvitation(p core.Principal, invitationID string) error {
 
 func (s Service) RequestOwnershipTransfer(p core.Principal, targetUserID string) error {
 	if targetUserID == "" || targetUserID == p.UserID {
-		return core.ErrInvalid
+		return core.Invalid("choose another active member as the new owner")
 	}
 	return s.store.UpdateAs(p, func(a *core.Account) error {
 		org, err := editableOrganization(a, p)
@@ -440,7 +481,7 @@ func (s Service) RequestOwnershipTransfer(p core.Principal, targetUserID string)
 		}
 		target, ok := org.Members[targetUserID]
 		if !ok || target.Status != statusActive || target.Role == roleOwner {
-			return core.ErrNotFound
+			return fmt.Errorf("%w: member %q", core.ErrNotFound, targetUserID)
 		}
 		org.PendingOwnerUserID = targetUserID
 		org.PendingOwnerExpiresAt = s.now().Add(7 * 24 * time.Hour)
@@ -512,7 +553,7 @@ func (s Service) RequestDeletion(p core.Principal, confirmation string) error {
 			return ErrPersonalOrg
 		}
 		if strings.TrimSpace(confirmation) != org.Name {
-			return core.ErrInvalid
+			return core.Invalid("type the organization name to confirm deletion")
 		}
 		org.DeletionRequested = true
 		a.Organizations[org.ID] = org
@@ -530,10 +571,13 @@ func (s Service) LeaveOrganization(p core.Principal) error {
 			return ErrPersonalOrg
 		}
 		if org.OwnerUserID == p.UserID {
-			return core.ErrConflict
+			return fmt.Errorf("%w: owners must transfer ownership before leaving", core.ErrConflict)
 		}
 		delete(org.Members, p.UserID)
 		a.Organizations[org.ID] = org
+		if a.ActiveOrganizationID != org.ID {
+			return nil
+		}
 		fallbackID, fallback := accessibleOrganization(a, p.UserID)
 		if fallbackID == "" {
 			return core.ErrConflict
@@ -606,7 +650,7 @@ func normalizeRegions(regions []string) ([]string, error) {
 	for _, value := range regions {
 		region, err := parseRegion(value)
 		if err != nil {
-			return nil, core.ErrInvalid
+			return nil, err
 		}
 		if _, ok := seen[region]; ok {
 			continue
@@ -615,7 +659,7 @@ func normalizeRegions(regions []string) ([]string, error) {
 		result = append(result, region)
 	}
 	if len(result) == 0 {
-		return nil, core.ErrInvalid
+		return nil, core.Invalid("choose at least one region")
 	}
 	return result, nil
 }
@@ -623,7 +667,7 @@ func normalizeRegions(regions []string) ([]string, error) {
 func parseRegion(value string) (string, error) {
 	region, err := sdk.ParseRegionCode(value)
 	if err != nil {
-		return "", core.ErrInvalid
+		return "", core.Invalid(fmt.Sprintf("unknown region %q; use GRU, SFO, or FRA", value))
 	}
 	return string(region), nil
 }
@@ -647,4 +691,77 @@ func newToken() string {
 	var raw [32]byte
 	rand.Read(raw[:])
 	return base64.RawURLEncoding.EncodeToString(raw[:])
+}
+
+// Context returns the signed-in user, the saved dashboard selection, and
+// every organization and project the user can access.
+func (s Service) Context(p core.Principal) (contextView, error) {
+	a, err := s.store.SnapshotAs(p)
+	if err != nil {
+		return contextView{}, err
+	}
+	result := contextView{
+		User:          userView{ID: a.User.ID, Name: a.User.Name, Email: a.User.Email, PlatformAdmin: a.User.PlatformAdmin},
+		Selection:     selectionView{OrganizationID: a.ActiveOrganizationID, ProjectID: a.ActiveProjectID},
+		Organizations: []organizationSummary{},
+	}
+	for _, org := range a.Organizations {
+		if _, err := a.OrganizationFor(p, org.ID); err == nil {
+			result.Organizations = append(result.Organizations, s.summary(org, p.UserID))
+		}
+	}
+	slices.SortFunc(result.Organizations, func(a, b organizationSummary) int { return strings.Compare(a.Name, b.Name) })
+	return result, nil
+}
+
+// Overview returns the principal's organization with its projects, member
+// and invitation counts, and ownership transfer state.
+func (s Service) Overview(p core.Principal) (organizationDetail, error) {
+	_, org, err := s.Snapshot(p)
+	if err != nil {
+		return organizationDetail{}, err
+	}
+	detail := organizationDetail{
+		organizationSummary: s.summary(org, p.UserID), Slug: org.Slug, CreatedAt: org.CreatedAt,
+		CanLeave:            org.Kind != kindPersonal && org.OwnerUserID != p.UserID,
+		PendingOwnerUserID:  org.PendingOwnerUserID,
+		CanConfirmOwnership: org.PendingOwnerUserID == p.UserID && org.PendingOwnerExpiresAt.After(s.now()),
+	}
+	if org.PendingOwnerUserID != "" {
+		detail.PendingOwnerExpiresAt = &org.PendingOwnerExpiresAt
+	}
+	for _, member := range org.Members {
+		if member.Status == statusActive {
+			detail.MemberCount++
+		}
+	}
+	for _, invitation := range org.Invitations {
+		if invitation.Status == statusPending && invitation.ExpiresAt.After(s.now()) {
+			detail.PendingInvitations++
+		}
+	}
+	return detail, nil
+}
+
+func (s Service) summary(org core.Organization, userID string) organizationSummary {
+	summary := organizationSummary{
+		ID: org.ID, Name: org.Name, Kind: org.Kind, Status: org.Status, Role: roleFor(org, userID),
+		PlanID: org.PlanID, BillingStatus: org.BillingStatus, CanManage: org.OwnerUserID == userID,
+		CanProvision: canProvision(org, userID), DeletionRequested: org.DeletionRequested,
+		Projects: []projectSummary{},
+	}
+	if plan, ok := s.store.Plan(org.PlanID); ok {
+		summary.PlanName = plan.Name
+	}
+	for _, project := range org.Projects {
+		if project.OrganizationID != org.ID {
+			continue
+		}
+		summary.Projects = append(summary.Projects, projectSummary{
+			ID: project.ID, Name: project.Name, Region: project.Region, BackupRegion: project.BackupRegion,
+			Regions: append([]string{}, project.Regions...), IsDefault: project.IsDefault, Databases: len(project.Databases),
+		})
+	}
+	slices.SortFunc(summary.Projects, func(a, b projectSummary) int { return strings.Compare(a.Name, b.Name) })
+	return summary
 }

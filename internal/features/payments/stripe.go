@@ -81,6 +81,42 @@ func (billing *Stripe) PreviewPlanChange(ctx context.Context, customerID, subscr
 	return billing.provider.PreviewPlanChange(ctx, current, priceID)
 }
 
+// customerFor returns the organization's Stripe customer, creating it before
+// the first checkout. The binding is stored create-only, so every checkout,
+// webhook, and sync for the organization resolves to one customer even when
+// two checkouts race. A bound customer is bound again so a binding an
+// interrupted checkout left half written is completed before payment.
+func (billing *Stripe) customerFor(ctx context.Context, email string, organization core.Organization) (string, error) {
+	customerID, bound, err := billing.store.CustomerFor(ctx, organization.ID)
+	if err != nil {
+		return "", err
+	}
+	if !bound {
+		created, err := billing.provider.CreateCustomer(ctx, CustomerRequest{
+			Email: email, Name: organization.Name, OrganizationID: organization.ID,
+			IdempotencyKey: "customer:" + organization.ID,
+		})
+		if err != nil {
+			return "", err
+		}
+		customerID = created.ID
+	}
+	return billing.store.BindCustomer(ctx, organization.ID, customerID)
+}
+
+// expireUnboundCheckout closes a Checkout Session the dashboard could not bind
+// to the tenant, so the customer can never pay for it.
+func (billing *Stripe) expireUnboundCheckout(ctx context.Context, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := billing.provider.ExpireCheckoutSession(cleanup, sessionID); err != nil {
+		slog.Warn("expire unbound Stripe checkout session", "session_id", sessionID, "error", err)
+	}
+}
+
 func newStripeHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: stripeRequestTimeout,

@@ -1,7 +1,6 @@
 package data
 
 import (
-	stdjson "encoding/json"
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
 	"errors"
@@ -15,66 +14,35 @@ import (
 	sdk "terrascale.tech/sdk"
 )
 
-const (
-	maxDocumentBytes = 1 << 20
-	// maxDemoRows is the most rows one in-memory demo query returns.
-	maxDemoRows = 100
-)
-
 var selectPattern = regexp.MustCompile(`(?i)^select\s+\*\s+from\s+([a-z][a-z0-9_-]*)(?:\s+limit\s+([0-9]{1,3}))?\s*;?$`)
 
-type documentView struct {
-	ID    string         `json:"id"`
-	Value jsontext.Value `json:"value"`
-}
-
+// Mount owns the database data routes and tools: documents, schemas,
+// indexes, SQL, and saved queries.
 func Mount(mux *http.ServeMux, deps core.Deps) {
+	service := Service{deps: deps}
+	mountTools(deps.Tools, service)
 	mountPages(mux, deps)
-	mountQueryRoutes(mux, deps)
+	mountQueryRoutes(mux, deps, service)
 	mux.HandleFunc("GET /api/v1/dashboard/data/documents", func(w http.ResponseWriter, r *http.Request) {
-		p, db, err := selectedDB(deps, r, r.URL.Query().Get("databaseId"))
+		p, ok := principal(w, r, deps)
+		if !ok {
+			return
+		}
+		query := r.URL.Query()
+		docs, err := service.Documents(r.Context(), p, query.Get("databaseId"), documentQuery{Collection: strings.TrimSpace(query.Get("collection"))})
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		collection := strings.TrimSpace(r.URL.Query().Get("collection"))
-		if !validCollection(collection) {
-			http.Error(w, "invalid collection", http.StatusBadRequest)
-			return
-		}
-		var docs []documentView
-		if deps.Demo {
-			for id, body := range db.Documents[collection] {
-				docs = append(docs, documentView{ID: id, Value: jsontext.Value(body).Clone()})
-			}
-			slices.SortFunc(docs, func(a, b documentView) int { return strings.Compare(a.ID, b.ID) })
-		} else {
-			client, err := client(deps, p)
-			if err != nil {
-				writeError(w, err)
-				return
-			}
-			page, err := client.Documents.List(r.Context(), db.Name, collection, 100, "")
-			if err != nil {
-				http.Error(w, "document list failed: "+err.Error(), http.StatusBadGateway)
-				return
-			}
-			for _, row := range page.Documents {
-				docs = append(docs, documentView{ID: row.ID, Value: jsontext.Value(row.Value)})
-			}
-		}
 		core.WriteJSON(w, http.StatusOK, docs)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/data/documents", func(w http.ResponseWriter, r *http.Request) {
-		if !deps.VerifyCSRF(w, r) {
-			return
-		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxDocumentBytes+4096)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid document form", http.StatusBadRequest)
+		p, ok := deps.FormPrincipal(w, r)
+		if !ok {
 			return
 		}
-		p, db, err := selectedDB(deps, r, r.FormValue("databaseId"))
+		db, err := service.database(p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
@@ -121,88 +89,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			failed(http.StatusBadRequest, "A patch must be a JSON object; its fields are merged into the document.")
 			return
 		}
-		if deps.Demo {
-			err = deps.Store.UpdateAs(p, func(a *core.Account) error {
-				project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-				if err != nil {
-					return err
-				}
-				if !a.Organizations[p.OrganizationID].CanWrite(p.UserID) {
-					return core.ErrForbidden
-				}
-				current, ok := project.Databases[db.ID]
-				if !ok || current.ProjectID != project.ID {
-					return core.ErrNotFound
-				}
-				if current.Documents == nil {
-					current.Documents = make(map[string]map[string][]byte)
-				}
-				docs := current.Documents[collection]
-				if docs == nil {
-					docs = make(map[string][]byte)
-				}
-				old, exists := docs[id]
-				switch operation {
-				case "create":
-					if exists {
-						return core.ErrConflict
-					}
-					docs[id] = slices.Clone(body)
-				case "replace":
-					if !exists {
-						return core.ErrNotFound
-					}
-					docs[id] = slices.Clone(body)
-				case "patch":
-					if !exists {
-						return core.ErrNotFound
-					}
-					merged, err := mergePatch(old, body)
-					if err != nil {
-						return core.ErrInvalid
-					}
-					docs[id] = merged
-				case "delete":
-					if !exists {
-						return core.ErrNotFound
-					}
-					delete(docs, id)
-				}
-				if current.DocumentHistory == nil {
-					current.DocumentHistory = make(map[string]map[string][][]byte)
-				}
-				if current.DocumentHistory[collection] == nil {
-					current.DocumentHistory[collection] = make(map[string][][]byte)
-				}
-				version := docs[id]
-				if operation == "delete" {
-					version = []byte("null")
-				}
-				current.DocumentHistory[collection][id] = append(current.DocumentHistory[collection][id], slices.Clone(version))
-				current.Documents[collection] = docs
-				project.Databases[db.ID] = current
-				org := a.Organizations[p.OrganizationID]
-				org.Projects[p.ProjectID] = project
-				a.Organizations[p.OrganizationID] = org
-				return nil
-			})
-		} else {
-			var sdkClient *sdk.Client
-			sdkClient, err = client(deps, p)
-			if err == nil {
-				opts := []sdk.RequestOption{sdk.WithIdempotencyKey(core.NewID("docop"))}
-				switch operation {
-				case "create":
-					_, err = sdkClient.Documents.Create(r.Context(), db.Name, collection, id, stdjson.RawMessage(body), opts...)
-				case "replace":
-					_, err = sdkClient.Documents.Put(r.Context(), db.Name, collection, id, stdjson.RawMessage(body), opts...)
-				case "patch":
-					_, err = sdkClient.Documents.Patch(r.Context(), db.Name, collection, id, stdjson.RawMessage(body), opts...)
-				case "delete":
-					err = sdkClient.Documents.Delete(r.Context(), db.Name, collection, id, opts...)
-				}
-			}
-		}
+		result, err := service.WriteDocument(r.Context(), p, db.ID, collection, operation, id, body)
 		if err != nil {
 			status, message := documentFailure(err, id, collection)
 			failed(status, message)
@@ -212,50 +99,27 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			http.Redirect(w, r, sectionPath(db.ID, "documents", url.Values{"collection": {collection}}), http.StatusSeeOther)
 			return
 		}
-		core.WriteJSON(w, http.StatusOK, map[string]string{"id": id, "operation": operation})
+		core.WriteJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /api/v1/dashboard/schema", func(w http.ResponseWriter, r *http.Request) {
-		p, db, err := selectedDB(deps, r, r.URL.Query().Get("databaseId"))
+		p, ok := principal(w, r, deps)
+		if !ok {
+			return
+		}
+		schema, err := service.Schema(r.Context(), p, r.URL.Query().Get("databaseId"), strings.TrimSpace(r.URL.Query().Get("collection")))
 		if err != nil {
 			writeError(w, err)
-			return
-		}
-		collection := strings.TrimSpace(r.URL.Query().Get("collection"))
-		if !validCollection(collection) {
-			http.Error(w, "invalid collection", http.StatusBadRequest)
-			return
-		}
-		if deps.Demo {
-			body, ok := db.Schemas[collection]
-			if !ok {
-				writeError(w, core.ErrNotFound)
-				return
-			}
-			core.WriteJSON(w, http.StatusOK, jsontext.Value(body))
-			return
-		}
-		client, err := client(deps, p)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		schema, err := client.Databases.GetCollectionSchema(r.Context(), db.Name, collection)
-		if err != nil {
-			http.Error(w, "schema read failed: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 		core.WriteJSON(w, http.StatusOK, schema)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/schema", func(w http.ResponseWriter, r *http.Request) {
-		if !deps.VerifyCSRF(w, r) {
-			return
-		}
 		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid form", http.StatusBadRequest)
+		p, ok := deps.FormPrincipal(w, r)
+		if !ok {
 			return
 		}
-		p, db, err := selectedDB(deps, r, r.FormValue("databaseId"))
+		db, err := service.database(p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
@@ -268,47 +132,11 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		failed := func(status int, message string) {
 			formFailed(w, r, deps, db.ID, "schema", status, message, func(d *pageData) { d.Schema = string(body) })
 		}
-		schema, problem := parseSchema(collection, body)
-		if problem != "" {
+		if _, problem := parseSchema(collection, body); problem != "" {
 			failed(http.StatusBadRequest, problem)
 			return
 		}
-		if deps.Demo {
-			err = deps.Store.UpdateAs(p, func(a *core.Account) error {
-				project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-				if err != nil {
-					return err
-				}
-				if !a.Organizations[p.OrganizationID].CanManage(p.UserID) {
-					return core.ErrForbidden
-				}
-				current, ok := project.Databases[db.ID]
-				if !ok {
-					return core.ErrNotFound
-				}
-				if current.Schemas == nil {
-					current.Schemas = make(map[string][]byte)
-				}
-				current.Schemas[collection] = slices.Clone(body)
-				project.Databases[db.ID] = current
-				org := a.Organizations[p.OrganizationID]
-				org.Projects[p.ProjectID] = project
-				a.Organizations[p.OrganizationID] = org
-				return nil
-			})
-		} else {
-			var sdkClient *sdk.Client
-			sdkClient, err = client(deps, p)
-			if err == nil {
-				current, getErr := sdkClient.Databases.GetCollectionSchema(r.Context(), db.Name, collection)
-				if getErr != nil {
-					err = getErr
-				} else {
-					_, err = sdkClient.Databases.PutCollectionSchema(r.Context(), db.Name, collection, schema, sdk.WithIdempotencyKey(core.NewID("schema")), sdk.WithSchemaGeneration(current.Generation))
-				}
-			}
-		}
-		if err != nil {
+		if err := service.SetSchema(r.Context(), p, db.ID, collection, body); err != nil {
 			status, message := failure(err, "The data plane rejected the schema")
 			failed(status, message)
 			return
@@ -320,148 +148,41 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		core.WriteJSON(w, http.StatusOK, map[string]string{"collection": collection, "status": "applied"})
 	})
 	mux.HandleFunc("GET /api/v1/dashboard/indexes", func(w http.ResponseWriter, r *http.Request) {
-		p, db, err := selectedDB(deps, r, r.URL.Query().Get("databaseId"))
+		p, ok := principal(w, r, deps)
+		if !ok {
+			return
+		}
+		indexes, err := service.Indexes(r.Context(), p, r.URL.Query().Get("databaseId"), strings.TrimSpace(r.URL.Query().Get("collection")))
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		collection := strings.TrimSpace(r.URL.Query().Get("collection"))
-		if !validCollection(collection) {
-			http.Error(w, "invalid collection", http.StatusBadRequest)
-			return
-		}
-		if deps.Demo {
-			core.WriteJSON(w, http.StatusOK, db.Indexes[collection])
-			return
-		}
-		client, err := client(deps, p)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		page, err := client.Databases.ListIndexes(r.Context(), db.Name, collection, sdk.PageRequest{})
-		if err != nil {
-			http.Error(w, "index list failed: "+err.Error(), http.StatusBadGateway)
-			return
-		}
-		core.WriteJSON(w, http.StatusOK, page.Indexes)
+		core.WriteJSON(w, http.StatusOK, indexes)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/indexes/recommendations/apply", func(w http.ResponseWriter, r *http.Request) {
-		if !deps.VerifyCSRF(w, r) {
-			return
-		}
 		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid form", http.StatusBadRequest)
+		p, ok := deps.FormPrincipal(w, r)
+		if !ok {
 			return
 		}
-		p, _, _, err := selectedProject(deps, r)
+		result, err := service.ApplyRecommendation(p, strings.TrimSpace(r.FormValue("databaseId")),
+			strings.TrimSpace(r.FormValue("collection")), strings.TrimSpace(r.FormValue("recommendationId")))
 		if err != nil {
 			writeError(w, err)
-			return
-		}
-		if !deps.Store.Can(p, core.Organization.CanManage) {
-			writeError(w, core.ErrForbidden)
-			return
-		}
-		requestedDatabaseID := strings.TrimSpace(r.FormValue("databaseId"))
-		requestedCollection := strings.TrimSpace(r.FormValue("collection"))
-		recommendationID := strings.TrimSpace(r.FormValue("recommendationId"))
-		if (requestedCollection != "" && !validCollection(requestedCollection)) || recommendationID == "" || len(recommendationID) > 128 {
-			writeError(w, core.ErrInvalid)
-			return
-		}
-		if !deps.Demo {
-			http.Error(w, "index recommendations are only available in the in-memory demo", http.StatusNotImplemented)
-			return
-		}
-		status := "applied"
-		resolvedDatabaseID, resolvedCollection := "", ""
-		err = deps.Store.UpdateAs(p, func(a *core.Account) error {
-			project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-			if err != nil {
-				return err
-			}
-			if !a.Organizations[p.OrganizationID].CanManage(p.UserID) {
-				return core.ErrForbidden
-			}
-			var current core.Database
-			recommendationIndex, matches := -1, 0
-			for databaseID, database := range project.Databases {
-				if database.ProjectID != project.ID || (requestedDatabaseID != "" && databaseID != requestedDatabaseID) {
-					continue
-				}
-				for i, recommendation := range database.IndexRecommendations {
-					if recommendation.ID != recommendationID || recommendation.DatabaseID != databaseID || (requestedCollection != "" && recommendation.Collection != requestedCollection) {
-						continue
-					}
-					matches++
-					resolvedDatabaseID, resolvedCollection = databaseID, recommendation.Collection
-					current, recommendationIndex = database, i
-				}
-			}
-			if matches == 0 {
-				return core.ErrNotFound
-			}
-			if matches > 1 {
-				return core.ErrConflict
-			}
-			if !validCollection(resolvedCollection) {
-				return core.ErrInvalid
-			}
-			recommendation := current.IndexRecommendations[recommendationIndex]
-			if recommendation.State == "applied" {
-				status = "already-applied"
-				return nil
-			}
-			if recommendation.State != "recommended" || len(recommendation.Fields) == 0 {
-				return core.ErrConflict
-			}
-			for _, field := range recommendation.Fields {
-				if field == "" || len(field) > 128 || strings.ContainsAny(field, "/\\\x00\n\r") {
-					return core.ErrInvalid
-				}
-			}
-			if current.Indexes == nil {
-				current.Indexes = make(map[string][]string)
-			}
-			for _, field := range recommendation.Fields {
-				if slices.Contains(current.Indexes[resolvedCollection], field) {
-					continue
-				}
-				current.Indexes[resolvedCollection] = append(current.Indexes[resolvedCollection], field)
-				current.IndexBuilds = append(current.IndexBuilds, core.IndexBuild{ID: core.NewID("index"), Collection: resolvedCollection, Field: field, Status: "building"})
-			}
-			current.IndexRecommendations[recommendationIndex].State = "applied"
-			project.Databases[resolvedDatabaseID] = current
-			org := a.Organizations[p.OrganizationID]
-			org.Projects[p.ProjectID] = project
-			a.Organizations[p.OrganizationID] = org
-			return nil
-		})
-		if err != nil {
-			status, message := failure(err, "The recommendation could not be applied")
-			if errors.Is(err, core.ErrNotFound) || errors.Is(err, core.ErrConflict) {
-				message = "This recommendation is no longer available to apply."
-			}
-			formFailed(w, r, deps, requestedDatabaseID, "indexes", status, message, func(d *pageData) { d.IndexView = "recommendations" })
 			return
 		}
 		if core.WantsHTML(r) {
-			http.Redirect(w, r, sectionPath(resolvedDatabaseID, "indexes", url.Values{"view": {"recommendations"}, "collection": {resolvedCollection}}), http.StatusSeeOther)
+			http.Redirect(w, r, sectionPath(result.DatabaseID, "indexes", url.Values{"view": {"recommendations"}, "collection": {result.Collection}}), http.StatusSeeOther)
 			return
 		}
-		core.WriteJSON(w, http.StatusOK, map[string]string{"recommendationId": recommendationID, "status": status})
+		core.WriteJSON(w, http.StatusOK, map[string]string{"recommendationId": result.RecommendationID, "status": result.Status})
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/indexes", func(w http.ResponseWriter, r *http.Request) {
-		if !deps.VerifyCSRF(w, r) {
+		p, ok := deps.FormPrincipal(w, r)
+		if !ok {
 			return
 		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid form", http.StatusBadRequest)
-			return
-		}
-		p, db, err := selectedDB(deps, r, r.FormValue("databaseId"))
+		db, err := service.database(p, r.FormValue("databaseId"))
 		if err != nil {
 			writeError(w, err)
 			return
@@ -478,39 +199,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			failed(http.StatusBadRequest, "Enter a field name of at most 128 characters.")
 			return
 		}
-		if deps.Demo {
-			err = deps.Store.UpdateAs(p, func(a *core.Account) error {
-				project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-				if err != nil {
-					return err
-				}
-				if !a.Organizations[p.OrganizationID].CanManage(p.UserID) {
-					return core.ErrForbidden
-				}
-				current, ok := project.Databases[db.ID]
-				if !ok {
-					return core.ErrNotFound
-				}
-				if current.Indexes == nil {
-					current.Indexes = make(map[string][]string)
-				}
-				if !slices.Contains(current.Indexes[collection], field) {
-					current.Indexes[collection] = append(current.Indexes[collection], field)
-				}
-				project.Databases[db.ID] = current
-				org := a.Organizations[p.OrganizationID]
-				org.Projects[p.ProjectID] = project
-				a.Organizations[p.OrganizationID] = org
-				return nil
-			})
-		} else {
-			var sdkClient *sdk.Client
-			sdkClient, err = client(deps, p)
-			if err == nil {
-				_, err = sdkClient.Databases.CreateIndex(r.Context(), db.Name, collection, sdk.CreateIndexRequest{Field: field}, sdk.WithIdempotencyKey(core.NewID("index")))
-			}
-		}
-		if err != nil {
+		if err := service.CreateIndex(r.Context(), p, db.ID, collection, field); err != nil {
 			status, message := failure(err, "The data plane could not create the index")
 			failed(status, message)
 			return
@@ -523,35 +212,18 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 }
 
-func selectedDB(deps core.Deps, r *http.Request, databaseID string) (core.Principal, core.Database, error) {
+// principal resolves the signed-in principal with a selected project.
+func principal(w http.ResponseWriter, r *http.Request, deps core.Deps) (core.Principal, bool) {
 	p, ok := deps.Sessions.Principal(r)
 	if !ok || p.ProjectID == "" {
-		return core.Principal{}, core.Database{}, core.ErrUnauthorized
+		writeError(w, core.ErrUnauthorized)
+		return core.Principal{}, false
 	}
-	a, err := deps.Store.SnapshotAs(p)
-	if err != nil {
-		return core.Principal{}, core.Database{}, err
-	}
-	project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-	if err != nil {
-		return core.Principal{}, core.Database{}, err
-	}
-	db, ok := project.Databases[databaseID]
-	if !ok || db.ProjectID != project.ID {
-		return core.Principal{}, core.Database{}, core.ErrNotFound
-	}
-	return p, db, nil
+	return p, true
 }
 
 func validCollection(collection string) bool {
 	return collection != "" && len(collection) <= 128 && !strings.ContainsAny(collection, "/\\\x00\n\r")
-}
-
-func client(deps core.Deps, p core.Principal) (*sdk.Client, error) {
-	if deps.SDK == nil {
-		return nil, errors.New("live data plane unavailable")
-	}
-	return deps.SDK.ForScope(p.OrganizationID, p.ProjectID)
 }
 
 func mergePatch(original, patch []byte) ([]byte, error) {
@@ -589,12 +261,19 @@ func mergePatch(original, patch []byte) ([]byte, error) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	var provider core.ProviderError
 	switch {
+	case errors.Is(err, core.ErrDataPlane):
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+	case errors.Is(err, errDemoOnly):
+		http.Error(w, err.Error(), http.StatusNotImplemented)
+	case errors.As(err, &provider):
+		http.Error(w, err.Error(), http.StatusBadGateway)
 	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)
 	case errors.Is(err, core.ErrInvalid):
-		http.Error(w, "invalid input", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
 		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 	}

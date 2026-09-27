@@ -1,6 +1,8 @@
 package profile
 
 import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 
@@ -27,12 +29,15 @@ templ profileView(data pageData, csrfToken string) {
 			{Label: "Profile", URL: "/profile?tab=profile", Active: data.Tab == "profile"},
 			{Label: "Security", URL: "/profile?tab=security", Active: data.Tab == "security"},
 			{Label: "Sessions", URL: "/profile?tab=sessions", Active: data.Tab == "sessions"},
+			{Label: "Access tokens", URL: "/profile?tab=access-tokens", Active: data.Tab == "access-tokens"},
 		})
 		switch data.Tab {
 			case "profile":
 				@profileTab(data, csrfToken)
 			case "security":
 				@securityTab(data, csrfToken)
+			case "access-tokens":
+				@accessTokensTab(data, csrfToken)
 			default:
 				@sessionsTab(data)
 		}
@@ -297,6 +302,101 @@ templ sessionsTab(data pageData) {
 	}
 }
 
+templ accessTokensTab(data pageData, csrfToken string) {
+	if data.CreatedToken != nil {
+		// The secret answers a POST: swap the address for the tab's own, so
+		// reloading never creates another token.
+		<div class="ts-alert ts-alert-success" role="status" aria-live="polite" id="access-token-created" data-init="history.replaceState(null, '', '/profile?tab=access-tokens')">
+			<p class="ts-alert-title">Access token “{ data.CreatedToken.Token.Name }” created</p>
+			<p class="ts-alert-body">Copy the token now. It is shown only once and cannot be displayed again.</p>
+			<label class="ts-label" for="access-token-secret">New access token</label>
+			<input class="ts-input ts-mono" id="access-token-secret" value={ data.CreatedToken.Secret } readonly autocomplete="off" spellcheck="false"/>
+		</div>
+	}
+	<div class="ts-split">
+		@ui.Card(ui.CardProps{ID: "profile-access-tokens", Title: "Personal access tokens", Description: "Tokens let AI assistants act as you through the TerraScale MCP server, with the same permissions you have in the dashboard.", Flush: true}) {
+			if len(data.AccessTokens) == 0 {
+				@ui.Empty("No access tokens", "Create a token to connect Claude, Cursor, or another MCP client.")
+			} else {
+				<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Access tokens table. Scroll horizontally to see all columns.">
+					<table class="ts-table">
+						<caption class="ts-sr-only">Your live personal access tokens with their expiry.</caption>
+						<thead>
+							<tr><th scope="col">Name</th><th scope="col">Token</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr>
+						</thead>
+						<tbody>
+							for _, token := range data.AccessTokens {
+								<tr>
+									<td class="ts-strong">{ token.Name }</td>
+									<td class="ts-table-mono">tspat_…{ token.LastFour }</td>
+									<td>{ token.CreatedAt.UTC().Format("Jan 2, 2006") }</td>
+									<td>{ token.ExpiresAt.UTC().Format("Jan 2, 2006") }</td>
+									<td>
+										@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "revoke-" + token.ID, Label: "Revoke", Variant: "danger", Small: true})
+										@ui.Dialog(ui.DialogProps{ID: "revoke-" + token.ID, Title: "Revoke “" + token.Name + "”?", Description: "Assistants using this token lose access immediately. This cannot be undone."}) {
+											<form method="post" action={ templ.SafeURL("/api/v1/dashboard/profile/access-tokens/" + token.ID + "/revoke") }>
+												<input type="hidden" name="_csrf" value={ csrfToken }/>
+												@ui.DialogActions("revoke-" + token.ID) {
+													<button class="ts-btn ts-btn-danger" type="submit">Revoke token</button>
+												}
+											</form>
+										}
+									</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+		}
+		@ui.Card(ui.CardProps{ID: "profile-access-token-create", Title: "Create access token", Description: "Name the token after the assistant or machine that will use it."}) {
+			<form class="ts-form" method="post" action="/api/v1/dashboard/profile/access-tokens">
+				<input type="hidden" name="_csrf" value={ csrfToken }/>
+				@ui.Field(ui.FieldProps{ID: "accessTokenName", Label: "Token name"}) {
+					<input class="ts-input" id="accessTokenName" name="name" maxlength="64" placeholder="Claude on work laptop" autocomplete="off" required/>
+				}
+				@ui.Field(ui.FieldProps{ID: "accessTokenExpiry", Label: "Expiration"}) {
+					<select class="ts-select" id="accessTokenExpiry" name="expiresInDays">
+						<option value="7">7 days</option>
+						<option value="30">30 days</option>
+						<option value="90" selected>90 days</option>
+						<option value="365">1 year</option>
+					</select>
+				}
+				@ui.Field(ui.FieldProps{ID: "accessTokenPassword", Label: "Current password", Hint: "A token acts as you until it expires, so creating one needs your password."}) {
+					<input class="ts-input" id="accessTokenPassword" name="password" type="password" autocomplete="current-password" required/>
+				}
+				<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Create token</button></div>
+			</form>
+		}
+	</div>
+	@ui.Card(ui.CardProps{ID: "profile-mcp-config", Title: "Connect an MCP client", Description: "Add the TerraScale server to your assistant's MCP settings and send the token as a bearer credential."}) {
+		<pre class="ts-code"><code>{ mcpClientConfig(data) }</code></pre>
+	}
+}
+
+// mcpClientConfig is the MCP client configuration for this dashboard,
+// including the new secret right after creation. It is encoded, not spliced,
+// so no endpoint or token can break the JSON.
+func mcpClientConfig(data pageData) string {
+	token := "<your-access-token>"
+	if data.CreatedToken != nil {
+		token = data.CreatedToken.Secret
+	}
+	type server struct {
+		Type    string            `json:"type"`
+		URL     string            `json:"url"`
+		Headers map[string]string `json:"headers"`
+	}
+	config := struct {
+		MCPServers map[string]server `json:"mcpServers"`
+	}{MCPServers: map[string]server{"terrascale": {Type: "http", URL: data.MCPEndpoint, Headers: map[string]string{"Authorization": "Bearer " + token}}}}
+	encoded, err := json.Marshal(config, jsontext.WithIndent("  "))
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
 
 func onOff(on bool) string {
 	if on {

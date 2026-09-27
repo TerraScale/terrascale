@@ -17,63 +17,63 @@ import (
 )
 
 type userRow struct {
-	AccountID         string
-	UserID            string
-	Name              string
-	Email             string
-	PlatformAdmin     bool
-	CreatedAt         string
-	OrganizationCount int
-	ProjectCount      int
+	AccountID         string `json:"accountId"`
+	UserID            string `json:"userId"`
+	Name              string `json:"name"`
+	Email             string `json:"email"`
+	PlatformAdmin     bool   `json:"platformAdmin"`
+	CreatedAt         string `json:"createdAt"`
+	OrganizationCount int    `json:"organizationCount"`
+	ProjectCount      int    `json:"projectCount"`
 }
 
 type organizationRow struct {
-	AccountID    string
-	ID           string
-	Name         string
-	Status       string
-	OwnerEmail   string
-	ProjectCount int
-	CreatedAt    string
+	AccountID    string `json:"accountId"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Status       string `json:"status"`
+	OwnerEmail   string `json:"ownerEmail"`
+	ProjectCount int    `json:"projectCount"`
+	CreatedAt    string `json:"createdAt"`
 }
 
 type projectRow struct {
-	AccountID      string
-	OrganizationID string
-	Organization   string
-	ID             string
-	Name           string
-	Region         string
-	Status         string
-	DatabaseCount  int
-	CreatedAt      string
+	AccountID      string `json:"accountId"`
+	OrganizationID string `json:"organizationId"`
+	Organization   string `json:"organization"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Region         string `json:"region"`
+	Status         string `json:"status"`
+	DatabaseCount  int    `json:"databaseCount"`
+	CreatedAt      string `json:"createdAt"`
 }
 
 type databaseRow struct {
-	AccountID      string
-	OrganizationID string
-	Organization   string
-	ProjectID      string
-	Project        string
-	ID             string
-	Name           string
-	Region         string
-	Status         string
-	CreatedAt      string
+	AccountID      string `json:"accountId"`
+	OrganizationID string `json:"organizationId"`
+	Organization   string `json:"organization"`
+	ProjectID      string `json:"projectId"`
+	Project        string `json:"project"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Region         string `json:"region"`
+	Status         string `json:"status"`
+	CreatedAt      string `json:"createdAt"`
 }
 
 type estateRow struct {
-	Region            string
-	Location          string
-	ObservedProjects  int
-	ObservedDatabases int
+	Region            string `json:"region"`
+	Location          string `json:"location"`
+	ObservedProjects  int    `json:"observedProjects"`
+	ObservedDatabases int    `json:"observedDatabases"`
 }
 
 type inventoryCounts struct {
-	Accounts      int
-	Organizations int
-	Projects      int
-	Databases     int
+	Accounts      int `json:"accounts"`
+	Organizations int `json:"organizations"`
+	Projects      int `json:"projects"`
+	Databases     int `json:"databases"`
 }
 
 type pageData struct {
@@ -102,6 +102,7 @@ var adminEstateTabs = [...]string{"regions", "hosts", "operations"}
 // Mount registers the in-memory platform administration pages and actions.
 func Mount(mux *http.ServeMux, deps core.Deps) {
 	service := NewService(deps.Store)
+	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /admin", adminRoot(deps))
 	mux.HandleFunc("GET /admin/users", adminPage(deps, service, "users"))
 	mux.HandleFunc("GET /admin/organizations", adminPage(deps, service, "organizations"))
@@ -290,7 +291,7 @@ func savePlan(deps core.Deps, service Service) http.HandlerFunc {
 			PriceCents: price, AnnualPriceCents: annualPrice, TrialDays: trialDays,
 			Visible: r.FormValue("visible") == "true", StorageMiB: storage, MonthlyRequests: requests,
 		}
-		if err := service.SavePlan(principal, plan); err != nil {
+		if _, err := service.SavePlan(principal, plan); err != nil {
 			writeMutationError(w, r, "/admin/plans", err)
 			return
 		}

@@ -2,10 +2,13 @@ package data
 
 import (
 	"encoding/json/jsontext"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
+
+	"terrascale.tech/dashboard/internal/core"
 )
 
 func TestSQLResultColumnsFollowFirstUse(t *testing.T) {
@@ -91,21 +94,25 @@ func TestDemoSelectReportsTheRowsItsDefaultCapLeavesOut(t *testing.T) {
 	for i := range maxDemoRows + 20 {
 		documents[fmt.Sprintf("doc_%03d", i)] = []byte(`{}`)
 	}
+	db := core.Database{Documents: map[string]map[string][]byte{"orders": documents}}
 
-	rows, matched, ok := demoSelect(documents, "")
-	if !ok || len(rows) != maxDemoRows || matched != maxDemoRows+20 || rows[0].ID != "doc_000" {
-		t.Fatalf("without a LIMIT: %d rows from %q, matched %d; want the first %d of %d", len(rows), rows[0].ID, matched, maxDemoRows, maxDemoRows+20)
+	rows, matched, err := demoSelect(db, "SELECT * FROM orders")
+	if err != nil || len(rows) != maxDemoRows || matched != maxDemoRows+20 || rows[0].ID != "doc_000" {
+		t.Fatalf("without a LIMIT: %d rows, matched %d, %v; want the first %d of %d", len(rows), matched, err, maxDemoRows, maxDemoRows+20)
 	}
 	if !newSQLResult(rows, matched).Truncated() {
 		t.Fatal("a query cut by the demo cap says so")
 	}
-	if rows, matched, ok = demoSelect(documents, "5"); !ok || len(rows) != 5 || matched != 5 {
-		t.Fatalf("LIMIT 5: %d rows, matched %d; the LIMIT is part of the query", len(rows), matched)
+	if rows, matched, err = demoSelect(db, "SELECT * FROM orders LIMIT 5"); err != nil || len(rows) != 5 || matched != 5 {
+		t.Fatalf("LIMIT 5: %d rows, matched %d, %v; the LIMIT is part of the query", len(rows), matched, err)
 	}
 	for _, limit := range []string{"0", "101"} {
-		if _, _, ok := demoSelect(documents, limit); ok {
-			t.Errorf("LIMIT %s is outside 1 to %d and is refused", limit, maxDemoRows)
+		if _, _, err := demoSelect(db, "SELECT * FROM orders LIMIT "+limit); !errors.Is(err, core.ErrInvalid) {
+			t.Errorf("LIMIT %s is outside 1 to %d and is refused, got %v", limit, maxDemoRows, err)
 		}
+	}
+	if _, _, err := demoSelect(db, "SELECT id FROM orders"); !errors.Is(err, core.ErrInvalid) {
+		t.Errorf("a statement the demo cannot run is refused, got %v", err)
 	}
 }
 

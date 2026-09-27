@@ -17,14 +17,14 @@ import (
 )
 
 type memberView struct {
-	ID       string
-	Name     string
-	Email    string
-	Role     string
-	IsOwner  bool
-	IsSelf   bool
-	CanEdit  bool
-	JoinedAt string
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Role     string `json:"role"`
+	IsOwner  bool   `json:"isOwner"`
+	IsSelf   bool   `json:"isSelf"`
+	CanEdit  bool   `json:"canEdit" jsonschema:"Whether the caller may change this member's role or remove them."`
+	JoinedAt string `json:"joinedAt" jsonschema:"Join date as YYYY-MM-DD."`
 }
 
 type projectView struct {
@@ -37,11 +37,11 @@ type projectView struct {
 }
 
 type invitationView struct {
-	ID        string
-	Email     string
-	Role      string
-	Status    string
-	ExpiresAt string
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	Status    string `json:"status" jsonschema:"Pending, Accepted, Declined, Canceled, or Expired."`
+	ExpiresAt string `json:"expiresAt" jsonschema:"RFC 3339 expiry time."`
 }
 
 // shareView is one colored row of a distribution chart.
@@ -91,11 +91,12 @@ type invitationPageData struct {
 }
 
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	organizationService := organization.NewService(deps.Store)
-	service := NewService(deps.Store)
+	organizationService := organization.NewService(deps.Store, deps.Sessions)
+	service := NewService(deps.Store, organizationService)
+	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /access", accessPage(deps, organizationService))
-	mux.HandleFunc("POST /api/v1/access/invitations", createInvitation(deps, organizationService))
-	mux.HandleFunc("POST /api/v1/access/invitations/{invitationID}/resend", resendInvitation(deps, organizationService))
+	mux.HandleFunc("POST /api/v1/access/invitations", createInvitation(deps, service))
+	mux.HandleFunc("POST /api/v1/access/invitations/{invitationID}/resend", resendInvitation(deps, service))
 	mux.HandleFunc("POST /api/v1/access/invitations/{invitationID}/revoke", revokeInvitation(deps, organizationService))
 	mux.HandleFunc("POST /api/v1/access/members/{userID}/role", updateMemberRole(deps, organizationService))
 	mux.HandleFunc("POST /api/v1/access/members/{userID}/revoke", revokeMember(deps, organizationService))
@@ -167,26 +168,7 @@ func buildPageData(account core.Account, org core.Organization, p core.Principal
 		roleFilter = "all"
 	}
 
-	allMembers := make([]memberView, 0, len(org.Members))
-	for _, member := range org.Members {
-		if member.Status != "active" {
-			continue
-		}
-		if roleFilter != "all" && member.Role != roleFilter {
-			continue
-		}
-		if search != "" && !strings.Contains(strings.ToLower(member.Name), strings.ToLower(search)) && !strings.Contains(strings.ToLower(member.Email), strings.ToLower(search)) {
-			continue
-		}
-		allMembers = append(allMembers, memberView{
-			ID: member.UserID, Name: member.Name, Email: member.Email, Role: member.Role,
-			IsOwner:  member.UserID == org.OwnerUserID || member.Role == "owner",
-			IsSelf:   member.UserID == p.UserID,
-			CanEdit:  org.OwnerUserID == p.UserID && member.UserID != p.UserID && member.UserID != org.OwnerUserID && member.Role != "owner",
-			JoinedAt: member.CreatedAt.UTC().Format("2006-01-02"),
-		})
-	}
-	slices.SortFunc(allMembers, func(a, b memberView) int { return strings.Compare(a.Name, b.Name) })
+	allMembers := memberViews(org, p, search, roleFilter)
 
 	allProjects := make([]projectView, 0, len(org.Projects))
 	for _, project := range org.Projects {
@@ -201,27 +183,7 @@ func buildPageData(account core.Account, org core.Organization, p core.Principal
 	}
 	slices.SortFunc(allProjects, func(a, b projectView) int { return strings.Compare(a.Name, b.Name) })
 
-	allInvitations := make([]invitationView, 0, len(org.Invitations))
-	for _, invitation := range org.Invitations {
-		if invitation.Email == "" {
-			continue
-		}
-		allInvitations = append(allInvitations, invitationView{
-			ID: invitation.ID, Email: invitation.Email, Role: invitation.Role,
-			Status:    invitationStatusLabel(invitation.Status),
-			ExpiresAt: invitation.ExpiresAt.UTC().Format(time.RFC3339),
-		})
-	}
-	slices.SortFunc(allInvitations, func(a, b invitationView) int {
-		aPending, bPending := strings.EqualFold(a.Status, "pending"), strings.EqualFold(b.Status, "pending")
-		if aPending && !bPending {
-			return -1
-		}
-		if !aPending && bPending {
-			return 1
-		}
-		return strings.Compare(a.Email, b.Email)
-	})
+	allInvitations := invitationViews(org)
 
 	const pageSize = 10
 	filtered := 0
@@ -410,41 +372,37 @@ func invitationStatusLabel(status string) string {
 	}
 }
 
-func createInvitation(deps core.Deps, service organization.Service) http.HandlerFunc {
+func createInvitation(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, form, ok := parseMutation(w, r, deps)
 		if !ok {
 			return
 		}
-		role := form.Get("role")
-		if role == "" {
-			role = "member"
-		}
-		_, token, err := service.CreateInvitation(p, form.Get("email"), role)
+		_, link, err := service.Invite(p, form.Get("email"), form.Get("role"))
 		if err != nil {
 			redirectAccessError(w, r, err)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		renderAccessPage(w, r, deps, service, p, "/invitations/"+url.PathEscape(token), "")
+		renderAccessPage(w, r, deps, service.organizations, p, link, "")
 	}
 }
 
-func resendInvitation(deps core.Deps, service organization.Service) http.HandlerFunc {
+func resendInvitation(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, _, ok := parseMutation(w, r, deps)
 		if !ok {
 			return
 		}
-		_, token, err := service.ResendInvitation(p, r.PathValue("invitationID"))
+		_, link, err := service.Resend(p, r.PathValue("invitationID"))
 		if err != nil {
 			redirectAccessError(w, r, err)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		renderAccessPage(w, r, deps, service, p, "/invitations/"+url.PathEscape(token), "")
+		renderAccessPage(w, r, deps, service.organizations, p, link, "")
 	}
 }
 
@@ -482,21 +440,9 @@ func revokeMember(deps core.Deps, service organization.Service) http.HandlerFunc
 		if !ok {
 			return
 		}
-		_, org, err := service.Snapshot(p)
-		if err != nil {
-			writeProblem(w, err)
-			return
-		}
-		userID := r.PathValue("userID")
-		member, exists := org.Members[userID]
-		if err := service.RemoveMember(p, userID); err != nil {
+		if err := service.RemoveMember(p, r.PathValue("userID")); err != nil {
 			redirectAccessError(w, r, err)
 			return
-		}
-		if exists {
-			if target, found := deps.Store.FindByEmail(member.Email); found {
-				deps.Sessions.RevokeUser(target.ID, userID)
-			}
 		}
 		http.Redirect(w, r, "/access?tab=members", http.StatusSeeOther)
 	}

@@ -23,8 +23,7 @@ const (
 )
 
 func IsSeededMarioAccount(demo bool, account core.Account, org core.Organization) bool {
-	return demo && account.User.ID == MarioUserID && account.ActiveOrganizationID == org.ID &&
-		org.ID == MarioOrganizationID && org.Slug == "terrascale-labs"
+	return demo && account.User.ID == MarioUserID && org.ID == MarioOrganizationID && org.Slug == "terrascale-labs"
 }
 
 func NormalizeRange(value string) string {

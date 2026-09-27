@@ -69,6 +69,7 @@ type Account struct {
 	DemoSecurity         DemoProfileSecurity
 	Notifications        []Notification
 	AuditEvents          []AuditEvent
+	AccessTokens         []AccessToken
 	CreatedAt            time.Time
 }
 
@@ -549,6 +550,7 @@ type Deps struct {
 	Events   Events
 	SDK      SDKFactory
 	Throttle Throttle
+	Tools    *Tools
 	Demo     bool
 }
 
@@ -556,10 +558,16 @@ func NormalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
+// Principal returns the account's principal for its saved dashboard
+// selection.
 func (a Account) Principal() Principal {
+	return a.scopedPrincipal(a.ActiveOrganizationID, a.ActiveProjectID)
+}
+
+func (a Account) scopedPrincipal(organizationID, projectID string) Principal {
 	p := Principal{
-		UserID: a.User.ID, AccountID: a.ID, OrganizationID: a.ActiveOrganizationID,
-		ProjectID: a.ActiveProjectID, Role: a.User.Role,
+		UserID: a.User.ID, AccountID: a.ID, OrganizationID: organizationID,
+		ProjectID: projectID, Role: a.User.Role,
 		PlatformAdmin: a.User.PlatformAdmin, AuthVersion: a.AuthVersion,
 	}
 	if org, ok := a.Organizations[p.OrganizationID]; ok {
@@ -675,4 +683,16 @@ func (o Organization) CanWrite(userID string) bool {
 		return false
 	}
 	return o.CanManage(userID) || strings.EqualFold(m.Role, "member")
+}
+
+// RecordAudit appends a low-risk dashboard audit event for an action the
+// principal took in its selected scope and returns it.
+func (a *Account) RecordAudit(p Principal, action, target, targetType string, at time.Time) AuditEvent {
+	event := AuditEvent{
+		ID: NewID("evt"), OrganizationID: p.OrganizationID, ProjectID: p.ProjectID,
+		Actor: a.User.Email, Action: action, Target: target, TargetType: targetType,
+		Risk: "low", Source: "dashboard", OccurredAt: at,
+	}
+	a.AuditEvents = append(a.AuditEvents, event)
+	return event
 }

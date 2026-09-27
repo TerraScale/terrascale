@@ -5,18 +5,12 @@ import (
 	"errors"
 	"maps"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
-	sdk "terrascale.tech/sdk"
 )
-
-var viewNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
-var demoQueryPattern = regexp.MustCompile(`(?i)^select\s+\*\s+from\s+[a-z][a-z0-9_-]*(?:\s+limit\s+(?:[1-9]|[1-9][0-9]|100))?\s*;?$`)
 
 type databaseChoice struct{ ID, Name string }
 
@@ -37,18 +31,17 @@ type configForm struct {
 	DatabaseID, Name, Query, Transport string
 }
 
-// Mount registers the demo configuration page. It never starts a live stream.
+// Mount registers the demo configuration page, routes, and tools. It never
+// starts a live stream.
 func Mount(mux *http.ServeMux, deps core.Deps) {
+	service := Service{deps: deps}
+	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /subscriptions", func(w http.ResponseWriter, r *http.Request) {
 		render(w, r, deps, http.StatusOK, nil)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/subscriptions/attach", func(w http.ResponseWriter, r *http.Request) {
-		if !verifyMutation(w, r, deps) {
-			return
-		}
-		p, _, err := selected(deps, r)
-		if err != nil {
-			writeError(w, err)
+		p, ok := formPrincipal(w, r, deps)
+		if !ok {
 			return
 		}
 		form := configForm{
@@ -57,72 +50,36 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			Query:      strings.TrimSpace(r.FormValue("query")),
 			Transport:  r.FormValue("transport"),
 		}
-		failed := func(status int, message string) {
-			refused(w, r, deps, status, message, form)
-		}
-		switch {
-		case !viewNamePattern.MatchString(form.Name):
-			failed(http.StatusBadRequest, "Name the view with 1 to 64 lowercase letters, digits, underscores, and hyphens, starting with a letter.")
-			return
-		case len(form.Query) > 4096 || !demoQueryPattern.MatchString(form.Query) || sdk.ValidateSQL(form.Query, nil) != nil:
-			failed(http.StatusBadRequest, "The demo shares SELECT * FROM collection with an optional LIMIT of 1 to 100.")
-			return
-		case form.Transport != "http" && form.Transport != "websocket":
-			failed(http.StatusBadRequest, "Choose HTTP + CDN or WebSocket delivery.")
-			return
-		}
-		config := core.SharedResultConfig{ID: core.NewID("cfg"), DatabaseID: form.DatabaseID, Name: form.Name, Query: form.Query, Transport: form.Transport, Status: "saved", CreatedAt: time.Now().UTC()}
-		err = deps.Store.UpdateAs(p, func(account *core.Account) error {
-			project, err := account.ProjectFor(p, p.OrganizationID, p.ProjectID)
-			if err != nil {
-				return err
-			}
-			if !account.Organizations[p.OrganizationID].CanWrite(p.UserID) {
-				return core.ErrForbidden
-			}
-			if db, ok := project.Databases[form.DatabaseID]; !ok || db.ProjectID != project.ID {
-				return errDatabaseMissing
-			}
-			for _, existing := range project.SharedResultConfigs {
-				if existing.Name == form.Name {
-					return core.ErrConflict
-				}
-			}
-			if project.SharedResultConfigs == nil {
-				project.SharedResultConfigs = make(map[string]core.SharedResultConfig)
-			}
-			project.SharedResultConfigs[config.ID] = config
-			org := account.Organizations[p.OrganizationID]
-			org.Projects[p.ProjectID] = project
-			account.Organizations[p.OrganizationID] = org
-			return nil
-		})
-		if err != nil {
-			failed(failure(err))
-			return
-		}
-		http.Redirect(w, r, "/subscriptions", http.StatusSeeOther)
+		_, err := service.Attach(p, attachInput{DatabaseID: form.DatabaseID, Name: form.Name, Query: form.Query, Transport: form.Transport})
+		redirectAfter(w, r, deps, err, form)
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/subscriptions/pause", func(w http.ResponseWriter, r *http.Request) {
-		changeConfig(w, r, deps, func(project *core.Project, config core.SharedResultConfig) {
-			config.Status = "paused"
-			project.SharedResultConfigs[config.ID] = config
-		})
+		if p, ok := formPrincipal(w, r, deps); ok {
+			redirectAfter(w, r, deps, service.Pause(p, r.FormValue("configId")), configForm{})
+		}
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/subscriptions/resume", func(w http.ResponseWriter, r *http.Request) {
-		changeConfig(w, r, deps, func(project *core.Project, config core.SharedResultConfig) {
-			config.Status = "saved"
-			project.SharedResultConfigs[config.ID] = config
-		})
+		if p, ok := formPrincipal(w, r, deps); ok {
+			redirectAfter(w, r, deps, service.Resume(p, r.FormValue("configId")), configForm{})
+		}
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/subscriptions/detach", func(w http.ResponseWriter, r *http.Request) {
-		changeConfig(w, r, deps, func(project *core.Project, config core.SharedResultConfig) {
-			delete(project.SharedResultConfigs, config.ID)
-		})
+		if p, ok := formPrincipal(w, r, deps); ok {
+			redirectAfter(w, r, deps, service.Detach(p, r.FormValue("configId")), configForm{})
+		}
 	})
 }
 
-var errDatabaseMissing = errors.New("database not in project")
+// redirectAfter returns a successful form post to the subscriptions page and
+// explains a refused one, refilling form when it was a new configuration.
+func redirectAfter(w http.ResponseWriter, r *http.Request, deps core.Deps, err error, form configForm) {
+	if err != nil {
+		status, message := failure(err)
+		refused(w, r, deps, status, message, form)
+		return
+	}
+	http.Redirect(w, r, "/subscriptions", http.StatusSeeOther)
+}
 
 // render shows the configurations page with status; a refused post passes
 // edit to explain it and refill its form.
@@ -169,57 +126,23 @@ func refused(w http.ResponseWriter, r *http.Request, deps core.Deps, status int,
 	})
 }
 
-// changeConfig applies change to the configuration the form names.
-func changeConfig(w http.ResponseWriter, r *http.Request, deps core.Deps, change func(*core.Project, core.SharedResultConfig)) {
-	if !verifyMutation(w, r, deps) {
-		return
-	}
-	p, _, err := selected(deps, r)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	id := r.FormValue("configId")
-	err = deps.Store.UpdateAs(p, func(account *core.Account) error {
-		project, err := account.ProjectFor(p, p.OrganizationID, p.ProjectID)
-		if err != nil {
-			return err
-		}
-		if !account.Organizations[p.OrganizationID].CanWrite(p.UserID) {
-			return core.ErrForbidden
-		}
-		config, ok := project.SharedResultConfigs[id]
-		if !ok {
-			return core.ErrNotFound
-		}
-		change(&project, config)
-		org := account.Organizations[p.OrganizationID]
-		org.Projects[p.ProjectID] = project
-		account.Organizations[p.OrganizationID] = org
-		return nil
-	})
-	if err != nil {
-		status, message := failure(err)
-		refused(w, r, deps, status, message, configForm{})
-		return
-	}
-	http.Redirect(w, r, "/subscriptions", http.StatusSeeOther)
-}
-
-func verifyMutation(w http.ResponseWriter, r *http.Request, deps core.Deps) bool {
-	if !deps.VerifyCSRF(w, r) {
-		return false
-	}
+// formPrincipal resolves a form post through core.FormPrincipal with a
+// bounded body, then refuses live mutations and principals without a project.
+func formPrincipal(w http.ResponseWriter, r *http.Request, deps core.Deps) (core.Principal, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
-		return false
+	p, ok := deps.FormPrincipal(w, r)
+	if !ok {
+		return core.Principal{}, false
 	}
 	if !deps.Demo {
-		http.Error(w, "live shared-result configuration is unavailable", http.StatusServiceUnavailable)
-		return false
+		writeError(w, errLive)
+		return core.Principal{}, false
 	}
-	return true
+	if p.ProjectID == "" {
+		writeError(w, core.ErrUnauthorized)
+		return core.Principal{}, false
+	}
+	return p, true
 }
 
 func selected(deps core.Deps, r *http.Request) (core.Principal, core.Project, error) {
@@ -238,9 +161,10 @@ func selected(deps core.Deps, r *http.Request) (core.Principal, core.Project, er
 // failure maps an error from a configuration change to its status and the
 // message the page shows.
 func failure(err error) (int, string) {
+	reason, invalid := core.InvalidReason(err)
 	switch {
-	case errors.Is(err, errDatabaseMissing):
-		return http.StatusBadRequest, "Choose a database in this project."
+	case invalid:
+		return http.StatusBadRequest, reason
 	case errors.Is(err, core.ErrConflict):
 		return http.StatusConflict, "Another configuration already uses that view name."
 	case errors.Is(err, core.ErrForbidden):
@@ -254,6 +178,8 @@ func failure(err error) (int, string) {
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, errLive):
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "view name already exists", http.StatusConflict)
