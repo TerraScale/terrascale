@@ -182,7 +182,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		name := strings.TrimSpace(r.FormValue("name"))
-		if name == "" || len(name) > 63 || strings.ContainsAny(name, "/\\ \t\n") {
+		if !core.ValidDatabaseName(name) {
 			http.Error(w, "invalid restore database name", http.StatusBadRequest)
 			return
 		}
@@ -353,6 +353,8 @@ func setStatus(deps core.Deps, p core.Principal, databaseID, status string) erro
 func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case core.WriteAccessError(w, err):
+	case errors.Is(err, core.ErrDatabaseLimit):
+		http.Error(w, core.ErrDatabaseLimit.Error(), http.StatusConflict)
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)
 	default:

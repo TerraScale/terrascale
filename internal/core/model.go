@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,7 +18,19 @@ var (
 	ErrForbidden        = errors.New("forbidden")
 	ErrInvalid          = errors.New("invalid input")
 	ErrAlreadyProcessed = errors.New("already processed")
+	// ErrDatabaseLimit rejects a change that would give an organization more
+	// databases than its plan allows.
+	ErrDatabaseLimit = errors.New("plan database limit reached")
 )
+
+// databaseName is the rule every database name follows: 1 to 63 lowercase
+// letters, digits, and inner hyphens.
+var databaseName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// ValidDatabaseName reports whether name follows the database name rule.
+func ValidDatabaseName(name string) bool {
+	return databaseName.MatchString(name)
+}
 
 // Principal is the identity and selected scope for one request. Every feature
 // mutation must resolve its target organization and project against this scope.
@@ -548,6 +561,15 @@ func (a Account) ProjectFor(p Principal, organizationID, projectID string) (Proj
 		return Project{}, ErrNotFound
 	}
 	return project, nil
+}
+
+// DatabaseCount returns how many databases the organization's projects hold.
+func (o Organization) DatabaseCount() int {
+	count := 0
+	for _, project := range o.Projects {
+		count += len(project.Databases)
+	}
+	return count
 }
 
 func (o Organization) CanProvisionResources(userID string) bool {

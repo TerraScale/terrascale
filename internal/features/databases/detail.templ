@@ -106,7 +106,7 @@ templ detailBackups(page core.Page, d detailData) {
 												<input type="hidden" name="databaseId" value={ d.Database.ID }/>
 												<input type="hidden" name="backupId" value={ backup.ID }/>
 												<label class="ts-sr-only" for={ "restore-name-" + backup.ID }>New database name</label>
-												<input class="ts-input ts-input-sm" id={ "restore-name-" + backup.ID } name="name" placeholder="New database name" required/>
+												<input class="ts-input ts-input-sm" id={ "restore-name-" + backup.ID } name="name" placeholder="New database name" pattern="[a-z0-9][a-z0-9\-]*" maxlength="63" required/>
 												<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Restore side by side</button>
 											</form>
 										} else {
