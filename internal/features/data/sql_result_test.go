@@ -15,7 +15,8 @@ func TestSQLResultColumnsFollowFirstUse(t *testing.T) {
 		{ID: "ord_3", Value: jsontext.Value(`"legacy"`)},
 	}, 3)
 
-	if want := []string{"total", "status", "tags", "note", "customer", "value"}; !slices.Equal(result.Columns, want) {
+	want := []sqlColumn{{"total", true}, {"status", false}, {"tags", false}, {"note", false}, {"customer", false}, {"value", false}}
+	if !slices.Equal(result.Columns, want) {
 		t.Fatalf("columns = %v, want %v", result.Columns, want)
 	}
 	cells := func(row int) []string {
@@ -25,14 +26,14 @@ func TestSQLResultColumnsFollowFirstUse(t *testing.T) {
 		}
 		return out
 	}
-	want := [][]string{
+	cellsWant := [][]string{
 		{"number:725.5", `string:paid`, `array:["a"]`, "missing:", "missing:", "missing:"},
 		{"missing:", "string:open", "missing:", "null:null", `object:{"id":"cus_2"}`, "missing:"},
 		{"missing:", "missing:", "missing:", "missing:", "missing:", "string:legacy"},
 	}
-	for row := range want {
-		if got := cells(row); !slices.Equal(got, want[row]) {
-			t.Errorf("row %d cells = %q, want %q", row, got, want[row])
+	for row := range cellsWant {
+		if got := cells(row); !slices.Equal(got, cellsWant[row]) {
+			t.Errorf("row %d cells = %q, want %q", row, got, cellsWant[row])
 		}
 	}
 	if result.Truncated() || result.HiddenColumns != 0 {
@@ -68,6 +69,10 @@ func TestSQLResultBoundsLargeResults(t *testing.T) {
 	cell := formatCell(jsontext.Value(`"` + long + `"`))
 	if n := len([]rune(cell.Text)); n != maxCellRunes || !strings.HasSuffix(cell.Text, "…") || cell.Title == "" {
 		t.Fatalf("a long value is cut to %d runes with the longer text as its title; got %d runes, title %q", maxCellRunes, n, cell.Title)
+	}
+	digits := strings.Repeat("9", maxCellRunes+10)
+	if number := formatCell(jsontext.Value(digits)); number.Text != digits {
+		t.Fatalf("numbers are never cut, got %q", number.Text)
 	}
 }
 

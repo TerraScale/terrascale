@@ -22,7 +22,7 @@ const (
 // column per top-level field in the order the rows first use it. Rows whose
 // value is not a JSON object show it in a "value" column.
 type sqlResult struct {
-	Columns []string
+	Columns []sqlColumn
 	Rows    []sqlResultRow
 	// Matched counts every row the query matched; the table may show fewer.
 	Matched int
@@ -31,6 +31,13 @@ type sqlResult struct {
 	Explain       *sdk.SQLExplainResponse
 	// JSON is the shown rows, indented, for the raw view.
 	JSON string
+}
+
+// sqlColumn is one field of the result. Numeric columns hold only numbers
+// where set; they are right-aligned and never cut.
+type sqlColumn struct {
+	Name    string
+	Numeric bool
 }
 
 type sqlResultRow struct {
@@ -72,7 +79,10 @@ func newSQLResult(rows []documentView, matched int) sqlResult {
 		result.HiddenColumns = len(columns) - maxResultColumns
 		columns = columns[:maxResultColumns]
 	}
-	result.Columns = columns
+	result.Columns = make([]sqlColumn, len(columns))
+	for j, name := range columns {
+		result.Columns[j] = sqlColumn{Name: name, Numeric: true}
+	}
 	for i, row := range rows {
 		cells := make([]sqlCell, len(columns))
 		for j, column := range columns {
@@ -82,6 +92,9 @@ func newSQLResult(rows []documentView, matched int) sqlResult {
 				continue
 			}
 			cells[j] = formatCell(value)
+			if cells[j].Kind != "number" {
+				result.Columns[j].Numeric = false
+			}
 		}
 		result.Rows = append(result.Rows, sqlResultRow{ID: row.ID, Cells: cells})
 	}
@@ -134,7 +147,9 @@ func formatCell(value jsontext.Value) sqlCell {
 	if cell.Kind == "string" {
 		_ = json.Unmarshal(value, &text)
 	}
-	if utf8.RuneCountInString(text) > maxCellRunes {
+	// Numbers are never cut: a right-aligned cell would lose its leading
+	// digits without an ellipsis.
+	if cell.Kind != "number" && utf8.RuneCountInString(text) > maxCellRunes {
 		cell.Title = truncateRunes(text, 4*maxCellRunes)
 		text = truncateRunes(text, maxCellRunes)
 	}

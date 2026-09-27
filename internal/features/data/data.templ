@@ -320,7 +320,7 @@ templ sqlResultView(r sqlResult) {
 							<tr>
 								<th scope="col">id</th>
 								for _, column := range r.Columns {
-									<th scope="col">{ column }</th>
+									<th scope="col" class={ templ.KV("ts-num", column.Numeric) }>{ column.Name }</th>
 								}
 							</tr>
 						</thead>
@@ -328,8 +328,9 @@ templ sqlResultView(r sqlResult) {
 							for _, row := range r.Rows {
 								<tr>
 									<td class="ts-data-result-id">{ row.ID }</td>
-									for _, cell := range row.Cells {
+									for i, cell := range row.Cells {
 										<td
+											class={ templ.KV("ts-num", r.Columns[i].Numeric) }
 											data-kind={ cell.Kind }
 											if cell.Title != "" {
 												title={ cell.Title }

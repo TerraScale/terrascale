@@ -192,11 +192,20 @@
   overflow: auto;
 }
 
+/* Separate borders move with the sticky header; collapsed ones stay behind
+   in the table grid. The header draws its divider as a shadow. */
+.ts-data-result {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
 .ts-data-result thead th {
   position: sticky;
   top: 0;
   z-index: 1;
+  border-bottom: 0;
   background: var(--ts-canvas);
+  box-shadow: inset 0 -1px 0 var(--ts-line-strong);
   font-family: var(--ts-font-mono);
   letter-spacing: 0;
   text-transform: none;
@@ -216,9 +225,9 @@
   font-weight: 600;
 }
 
-.ts-data-result td[data-kind="number"] {
-  font-variant-numeric: tabular-nums;
-  text-align: right;
+/* Numeric columns align right and grow to fit instead of cutting digits. */
+.ts-data-result td.ts-num {
+  max-width: none;
 }
 
 .ts-data-result td[data-kind="null"],
