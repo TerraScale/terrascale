@@ -16,7 +16,7 @@ templ databasesContent(page core.Page, d pageData) {
 				@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-database", Label: "New database", Icon: icons.Plus(16), Variant: "primary"})
 			}
 		}
-		if d.Error != "" {
+		if d.Error != "" && !d.OpenCreate {
 			@ui.Alert("danger", "", d.Error)
 		}
 		if d.Summary.Total > 0 {
@@ -78,9 +78,16 @@ templ createDatabase(page core.Page, d pageData) {
 	@ui.Dialog(ui.DialogProps{ID: "create-database", Title: "New database", Description: "Choose a name and the region closest to your users.", Open: d.OpenCreate, Wide: true}) {
 		<form method="post" action="/api/v1/dashboard/databases" class="ts-db-create-form">
 			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+			if d.Limit != nil {
+				@ui.Alert("warning", "Database limit reached", planLimitMessage(*d.Limit)) {
+					<a class="ts-link" href="/billing">Compare plans</a>
+				}
+			} else if d.Error != "" && d.OpenCreate {
+				@ui.Alert("danger", "", d.Error)
+			}
 			<div class="ts-form">
-				@ui.Field(ui.FieldProps{ID: "database-name", Label: "Name", Hint: "Lowercase letters, digits, and hyphens."}) {
-					<input class="ts-input" id="database-name" name="name" pattern="[a-z0-9][a-z0-9\-]*" maxlength="63" required autofocus/>
+				@ui.Field(ui.FieldProps{ID: "database-name", Label: "Name", Hint: "1 to 63 lowercase letters, digits, and hyphens; start and end with a letter or digit."}) {
+					<input class="ts-input" id="database-name" name="name" value={ d.Name } pattern={ namePatternHTML } maxlength="63" required autofocus/>
 				}
 				@ui.Field(ui.FieldProps{ID: "database-region", Label: "Region"}) {
 					<select class="ts-select" id="database-region" name="region">
@@ -124,6 +131,10 @@ func plural(count int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+func planLimitMessage(limit planLimit) string {
+	return fmt.Sprintf("The %s plan includes %d %s, and every one is in use. Upgrade the plan or delete a database to create another.", limit.Plan, limit.Databases, plural(limit.Databases, "database", "databases"))
 }
 
 func databaseCount(d pageData) string {

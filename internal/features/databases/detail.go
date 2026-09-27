@@ -29,6 +29,17 @@ type detailData struct {
 	Info      detailInfo
 	Error     string
 	CanManage bool
+	// OpenDelete reopens the delete dialog after a refused delete.
+	OpenDelete bool
+	// Refill holds the input of a refused backup form.
+	Refill backupRefill
+}
+
+// backupRefill is what a refused restore or policy form submitted.
+type backupRefill struct {
+	RestoreBackupID, RestoreName         string
+	FullCron, IncrementalCron, Retention string
+	Policy                               bool
 }
 
 func renderDetail(w http.ResponseWriter, r *http.Request, deps core.Deps, tab string) {
@@ -48,12 +59,22 @@ func renderDetail(w http.ResponseWriter, r *http.Request, deps core.Deps, tab st
 	}
 	org := a.Organizations[p.OrganizationID]
 	canManage := org.CanManage(p.UserID)
+	query := r.URL.Query()
 	data := detailData{
-		Database:  db,
-		Tab:       tab,
-		Info:      makeDetailInfo(deps.Demo, p, a, project, db, canManage, canManage && org.CanProvisionResources(p.UserID)),
-		Error:     r.URL.Query().Get("error"),
-		CanManage: canManage,
+		Database:   db,
+		Tab:        tab,
+		Info:       makeDetailInfo(deps.Demo, p, a, project, db, canManage, canManage && org.CanProvisionResources(p.UserID)),
+		Error:      formError(query.Get("error")),
+		CanManage:  canManage,
+		OpenDelete: tab == "overview" && query.Get("delete") == "1",
+	}
+	if data.Error != "" && tab == "backups" {
+		refill := func(key string) string { return truncate(query.Get(key), 128) }
+		data.Refill = backupRefill{
+			RestoreBackupID: refill("restore"), RestoreName: refill("name"),
+			FullCron: refill("fullBackupCron"), IncrementalCron: refill("incrementalBackupCron"), Retention: refill("retentionDays"),
+			Policy: query.Has("retentionDays"),
+		}
 	}
 	page := core.Page{Layout: "shell", Title: db.Name + " · " + detailTabs[tab], Principal: p, View: func(page core.Page) templ.Component { return detailContent(page, data) }, CSRFToken: deps.CSRF.Token(w, r)}
 	if err := deps.Render.Page(w, r, page); err != nil {
@@ -141,6 +162,26 @@ func regionDisplay(code string) string {
 	}
 }
 
+// namePatternHTML is namePattern for an input's pattern attribute.
+const namePatternHTML = `[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?`
+
+// restoreName refills the restore form of the backup a refused restore used.
+func restoreName(d detailData, backupID string) string {
+	if d.Refill.RestoreBackupID == backupID {
+		return d.Refill.RestoreName
+	}
+	return ""
+}
+
+// policyValue is a policy field's submitted value after a refused save,
+// otherwise the saved one.
+func policyValue(d detailData, submitted, saved string) string {
+	if d.Refill.Policy {
+		return submitted
+	}
+	return saved
+}
+
 func backupRetentionDays(days int) string {
 	if days < 1 {
 		return "7"
@@ -181,6 +222,28 @@ func backupAvailability(info detailInfo) string {
 	default:
 		return "Only project managers can change this policy."
 	}
+}
+
+// truncate cuts a refilled form value to at most n bytes.
+func truncate(value string, n int) string {
+	if len(value) > n {
+		return value[:n]
+	}
+	return value
+}
+
+// byteSize formats a size in bytes with binary units.
+func byteSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+	value, exponent := float64(n)/unit, 0
+	for value >= unit && exponent < 4 {
+		value /= unit
+		exponent++
+	}
+	return strconv.FormatFloat(value, 'f', 1, 64) + " " + [...]string{"KiB", "MiB", "GiB", "TiB", "PiB"}[exponent]
 }
 
 func backupTone(status string) string {

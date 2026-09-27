@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -62,9 +63,13 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if r.URL.Path == "/api/v1/dashboard/databases/create" && !hasRegion {
 			regionValue = project.Region
 		}
+		// failed reopens the create dialog with the error and the input.
+		failed := func(status int, code string) {
+			FormFailed(w, r, status, "/databases", code, url.Values{"create": {"1"}, "name": {name}, "region": {regionValue}})
+		}
 		region, err := sdk.ParseRegionCode(regionValue)
 		if !core.ValidDatabaseName(name) || err != nil {
-			http.Error(w, "valid database name and region are required", http.StatusBadRequest)
+			failed(http.StatusBadRequest, ErrInvalidName)
 			return
 		}
 		db := core.Database{ID: core.NewID("db"), ProjectID: p.ProjectID, Name: name, Region: string(region), Status: "provisioning", CreatedAt: time.Now().UTC(), Documents: make(map[string]map[string][]byte)}
@@ -94,26 +99,26 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return nil
 		})
 		if err != nil {
-			writeError(w, err)
+			failed(failure(err))
 			return
 		}
 		if !deps.Demo {
 			if deps.SDK == nil {
 				setStatus(deps, p, db.ID, "failed")
-				http.Error(w, "live data plane unavailable", http.StatusServiceUnavailable)
+				failed(http.StatusServiceUnavailable, ErrUnavailable)
 				return
 			}
 			client, err := deps.SDK.ForScope(p.OrganizationID, p.ProjectID)
 			if err != nil {
 				setStatus(deps, p, db.ID, "failed")
-				http.Error(w, "live data plane unavailable", http.StatusServiceUnavailable)
+				failed(http.StatusServiceUnavailable, ErrUnavailable)
 				return
 			}
 			operationID := db.ID
 			result, err := client.Databases.CreateDatabase(r.Context(), sdk.CreateDatabaseRequest{Name: name, Placement: []sdk.RegionCode{region}, OperationID: operationID}, sdk.WithIdempotencyKey(operationID))
 			if err != nil {
 				setStatus(deps, p, db.ID, "failed")
-				http.Error(w, "database provisioning failed: "+err.Error(), http.StatusBadGateway)
+				failed(http.StatusBadGateway, ErrProvider)
 				return
 			}
 			if result.Operation != nil {
@@ -122,11 +127,11 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 				db.Status = "ready"
 			} else {
 				setStatus(deps, p, db.ID, "failed")
-				http.Error(w, "database provisioning returned no identity", http.StatusBadGateway)
+				failed(http.StatusBadGateway, ErrProvider)
 				return
 			}
 			if err := setStatus(deps, p, db.ID, db.Status); err != nil {
-				writeError(w, err)
+				failed(failure(err))
 				return
 			}
 		}
@@ -164,33 +169,37 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, core.ErrNotFound)
 			return
 		}
+		// failed reopens the delete dialog with the error.
+		failed := func(status int, code string) {
+			FormFailed(w, r, status, TabPath(db.ID, "overview", nil), code, url.Values{"delete": {"1"}})
+		}
 		if r.Method == http.MethodPost {
 			confirmation := r.FormValue("confirmName")
 			if _, hasConfirmName := r.Form["confirmName"]; !hasConfirmName {
 				confirmation = strings.TrimSpace(r.FormValue("confirm"))
 			}
 			if confirmation != db.Name {
-				http.Error(w, "type the database name to confirm deletion", http.StatusBadRequest)
+				failed(http.StatusBadRequest, ErrConfirmName)
 				return
 			}
 		}
-		if db.Status == "provisioning" || db.Status == "accepted" || db.Status == "pending" {
-			http.Error(w, "database provisioning is in progress", http.StatusConflict)
+		if provisioning(db.Status) {
+			failed(http.StatusConflict, ErrProvisioning)
 			return
 		}
 		if !deps.Demo {
 			if deps.SDK == nil {
-				http.Error(w, "live data plane unavailable", http.StatusServiceUnavailable)
+				failed(http.StatusServiceUnavailable, ErrUnavailable)
 				return
 			}
 			client, err := deps.SDK.ForScope(p.OrganizationID, p.ProjectID)
 			if err != nil {
-				http.Error(w, "live data plane unavailable", http.StatusServiceUnavailable)
+				failed(http.StatusServiceUnavailable, ErrUnavailable)
 				return
 			}
 			opID := core.NewID("del")
 			if _, err := client.Databases.DeleteDatabase(r.Context(), db.Name, sdk.WithIdempotencyKey(opID), sdk.WithDeleteConfirmation(db.Name)); err != nil {
-				http.Error(w, "database deletion failed: "+err.Error(), http.StatusBadGateway)
+				failed(http.StatusBadGateway, ErrProvider)
 				return
 			}
 		}
@@ -212,7 +221,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return nil
 		})
 		if err != nil {
-			writeError(w, err)
+			failed(failure(err))
 			return
 		}
 		if core.WantsHTML(r) {
@@ -234,6 +243,16 @@ type pageData struct {
 	Search       string
 	OpenCreate   bool
 	CanProvision bool
+	// Name refills the create dialog after a refused post.
+	Name string
+	// Limit explains a plan whose database allowance is used up.
+	Limit *planLimit
+}
+
+// planLimit is a plan's database allowance when every database is in use.
+type planLimit struct {
+	Plan      string
+	Databases int
 }
 
 // databaseSummary holds the headline numbers for every database in the
@@ -272,6 +291,11 @@ func summarize(databases map[string]core.Database) databaseSummary {
 	return summary
 }
 
+// provisioning reports whether a database is still being created.
+func provisioning(status string) bool {
+	return status == "provisioning" || status == "accepted" || status == "pending"
+}
+
 // statusTone colors a database status: ready, in progress, failed, or other.
 func statusTone(status string) string {
 	switch status {
@@ -296,11 +320,28 @@ func renderList(w http.ResponseWriter, r *http.Request, deps core.Deps) {
 		writeError(w, err)
 		return
 	}
-	data := pageData{ProjectID: project.ID, Summary: summarize(project.Databases), Region: cmp.Or(project.Region, "GRU"), Error: r.URL.Query().Get("error"), Search: strings.TrimSpace(r.URL.Query().Get("q")), OpenCreate: r.URL.Query().Get("create") == "1"}
+	query := r.URL.Query()
+	data := pageData{
+		ProjectID:  project.ID,
+		Summary:    summarize(project.Databases),
+		Region:     cmp.Or(project.Region, "GRU"),
+		Error:      formError(query.Get("error")),
+		Search:     strings.TrimSpace(query.Get("q")),
+		OpenCreate: query.Get("create") == "1",
+		Name:       query.Get("name"),
+	}
+	if region, err := sdk.ParseRegionCode(query.Get("region")); err == nil {
+		data.Region = string(region)
+	}
 	if len(data.Search) > 256 {
 		data.Search = data.Search[:256]
 	}
-	data.CanProvision = a.Organizations[p.OrganizationID].CanProvisionResources(p.UserID)
+	data.Name = truncate(data.Name, 63)
+	org := a.Organizations[p.OrganizationID]
+	data.CanProvision = org.CanProvisionResources(p.UserID)
+	if plan, ok := deps.Store.Plan(org.PlanID); ok && plan.MaxDatabases > 0 && org.DatabaseCount() >= plan.MaxDatabases {
+		data.Limit = &planLimit{Plan: plan.Name, Databases: plan.MaxDatabases}
+	}
 	search := strings.ToLower(data.Search)
 	for _, db := range project.Databases {
 		if data.Search == "" || strings.Contains(strings.ToLower(db.Name), search) {
@@ -346,10 +387,24 @@ func setStatus(deps core.Deps, p core.Principal, databaseID, status string) erro
 	})
 }
 
-func writeError(w http.ResponseWriter, err error) {
+// failure maps an error from a database change to its status and error code.
+func failure(err error) (int, string) {
 	switch {
 	case errors.Is(err, core.ErrDatabaseLimit):
-		http.Error(w, core.ErrDatabaseLimit.Error(), http.StatusConflict)
+		return http.StatusConflict, ErrPlanLimit
+	case errors.Is(err, core.ErrConflict):
+		return http.StatusConflict, ErrNameTaken
+	case errors.Is(err, core.ErrForbidden), errors.Is(err, core.ErrUnauthorized):
+		return http.StatusForbidden, ErrForbidden
+	case errors.Is(err, core.ErrNotFound):
+		return http.StatusNotFound, ErrMissing
+	default:
+		return http.StatusServiceUnavailable, ErrUnavailable
+	}
+}
+
+func writeError(w http.ResponseWriter, err error) {
+	switch {
 	case core.WriteAccessError(w, err):
 	case errors.Is(err, core.ErrConflict):
 		http.Error(w, "conflict", http.StatusConflict)
