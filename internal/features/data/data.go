@@ -80,21 +80,41 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		collection, operation := strings.TrimSpace(r.FormValue("collection")), strings.TrimSpace(r.FormValue("operation"))
-		id := strings.TrimSpace(r.FormValue("id"))
-		if !validCollection(collection) || (id != "" && len(id) > 256) {
-			http.Error(w, "invalid collection or document ID", http.StatusBadRequest)
+		submittedID := strings.TrimSpace(r.FormValue("id"))
+		body := []byte(r.FormValue("document"))
+		// failed shows the error in the form the post came from, refilled.
+		failed := func(status int, message string) {
+			formFailed(w, r, deps, db.ID, "documents", status, message, func(d *pageData) {
+				switch operation {
+				case "create":
+					d.Dialog, d.NewDocumentID, d.NewDocument = "add-document", submittedID, string(body)
+				case "replace", "patch":
+					d.Dialog, d.DocumentID, d.EditJSON, d.EditOperation = "edit-document", submittedID, string(body), operation
+				}
+			})
+		}
+		if !validCollection(collection) {
+			failed(http.StatusBadRequest, "Enter a collection name without slashes or line breaks.")
 			return
 		}
+		if len(submittedID) > 256 {
+			failed(http.StatusBadRequest, "Document IDs are at most 256 characters.")
+			return
+		}
+		id := submittedID
 		if operation == "create" && id == "" {
 			id = core.NewID("doc")
 		}
 		if id == "" || !slices.Contains([]string{"create", "replace", "patch", "delete"}, operation) {
-			http.Error(w, "invalid document operation", http.StatusBadRequest)
+			failed(http.StatusBadRequest, "Choose a document and an operation.")
 			return
 		}
-		body := []byte(r.FormValue("document"))
 		if operation != "delete" && (len(body) == 0 || len(body) > maxDocumentBytes || !jsontext.Value(body).IsValid()) {
-			http.Error(w, "document must be valid JSON within 1 MiB", http.StatusBadRequest)
+			failed(http.StatusBadRequest, "Enter a valid JSON document of 1 MiB or less.")
+			return
+		}
+		if operation == "patch" && jsontext.Value(body).Kind() != '{' {
+			failed(http.StatusBadRequest, "A patch must be a JSON object; its fields are merged into the document.")
 			return
 		}
 		if deps.Demo {
@@ -180,11 +200,8 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			}
 		}
 		if err != nil {
-			if deps.Demo {
-				writeError(w, err)
-			} else {
-				http.Error(w, "document operation failed: "+err.Error(), http.StatusBadGateway)
-			}
+			status, message := documentFailure(err, id, collection)
+			failed(status, message)
 			return
 		}
 		if core.WantsHTML(r) {
@@ -244,9 +261,12 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		collection, body := strings.TrimSpace(r.FormValue("collection")), []byte(r.FormValue("schema"))
-		var schema sdk.CollectionSchema
-		if !validCollection(collection) || len(body) == 0 || len(body) > 128<<10 || json.Unmarshal(body, &schema) != nil || schema.Name != collection || schema.Validate() != nil {
-			http.Error(w, "schema must be valid JSON for the selected collection", http.StatusBadRequest)
+		failed := func(status int, message string) {
+			formFailed(w, r, deps, db.ID, "schema", status, message, func(d *pageData) { d.Schema = string(body) })
+		}
+		schema, problem := parseSchema(collection, body)
+		if problem != "" {
+			failed(http.StatusBadRequest, problem)
 			return
 		}
 		if deps.Demo {
@@ -285,11 +305,8 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			}
 		}
 		if err != nil {
-			if deps.Demo {
-				writeError(w, err)
-			} else {
-				http.Error(w, "schema apply failed: "+err.Error(), http.StatusBadGateway)
-			}
+			status, message := failure(err, "The data plane rejected the schema")
+			failed(status, message)
 			return
 		}
 		if core.WantsHTML(r) {
@@ -419,7 +436,11 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return nil
 		})
 		if err != nil {
-			writeError(w, err)
+			status, message := failure(err, "The recommendation could not be applied")
+			if errors.Is(err, core.ErrNotFound) || errors.Is(err, core.ErrConflict) {
+				message = "This recommendation is no longer available to apply."
+			}
+			formFailed(w, r, deps, requestedDatabaseID, "indexes", status, message, func(d *pageData) { d.IndexView = "recommendations" })
 			return
 		}
 		if core.WantsHTML(r) {
@@ -446,8 +467,11 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		collection, field := strings.TrimSpace(r.FormValue("collection")), strings.TrimSpace(r.FormValue("field"))
+		failed := func(status int, message string) {
+			formFailed(w, r, deps, db.ID, "indexes", status, message, func(d *pageData) { d.IndexField = field })
+		}
 		if !validCollection(collection) || field == "" || len(field) > 128 {
-			http.Error(w, "invalid collection or field", http.StatusBadRequest)
+			failed(http.StatusBadRequest, "Enter a field name of at most 128 characters.")
 			return
 		}
 		if deps.Demo {
@@ -483,11 +507,8 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			}
 		}
 		if err != nil {
-			if deps.Demo {
-				writeError(w, err)
-			} else {
-				http.Error(w, "index create failed: "+err.Error(), http.StatusBadGateway)
-			}
+			status, message := failure(err, "The data plane could not create the index")
+			failed(status, message)
 			return
 		}
 		if core.WantsHTML(r) {
@@ -573,4 +594,58 @@ func writeError(w http.ResponseWriter, err error) {
 	default:
 		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 	}
+}
+
+// failure maps an error from a change to the status and message its form
+// shows. Any other error comes from the data plane and keeps its explanation
+// after action.
+func failure(err error, action string) (int, string) {
+	switch {
+	case errors.Is(err, core.ErrForbidden):
+		return http.StatusForbidden, "Your role cannot make this change. Ask a project manager."
+	case errors.Is(err, core.ErrNotFound):
+		return http.StatusNotFound, "This item no longer exists. Reload the page and try again."
+	case errors.Is(err, core.ErrConflict):
+		return http.StatusConflict, "This change conflicts with the current data. Reload the page and try again."
+	case errors.Is(err, core.ErrInvalid):
+		return http.StatusBadRequest, "Check the values you entered."
+	default:
+		return http.StatusBadGateway, action + ": " + err.Error()
+	}
+}
+
+// documentFailure names the document in the messages a document form shows.
+func documentFailure(err error, id, collection string) (int, string) {
+	switch {
+	case errors.Is(err, core.ErrConflict):
+		return http.StatusConflict, "A document with ID " + id + " already exists in " + collection + ". Choose another ID or edit that document."
+	case errors.Is(err, core.ErrNotFound):
+		return http.StatusNotFound, "Document " + id + " no longer exists in " + collection + "."
+	case errors.Is(err, core.ErrInvalid):
+		return http.StatusBadRequest, "A patch must be a JSON object; its fields are merged into the document."
+	default:
+		return failure(err, "The data plane rejected the change")
+	}
+}
+
+// parseSchema decodes a collection schema in the terrascale.schema.json
+// format and returns the reason it cannot be applied, if any.
+func parseSchema(collection string, body []byte) (sdk.CollectionSchema, string) {
+	var schema sdk.CollectionSchema
+	switch {
+	case !validCollection(collection):
+		return schema, "Enter a collection name without slashes or line breaks."
+	case len(body) == 0 || len(body) > 128<<10:
+		return schema, "Enter a schema of at most 128 KiB."
+	}
+	if err := json.Unmarshal(body, &schema); err != nil {
+		return schema, "The schema is not valid JSON for a collection schema: " + strings.TrimPrefix(err.Error(), "json: ")
+	}
+	if schema.Name != collection {
+		return schema, `The schema "name" must be "` + collection + `", the collection it applies to.`
+	}
+	if err := schema.Validate(); err != nil {
+		return schema, "The schema is invalid: " + strings.TrimPrefix(err.Error(), "sdk: ") + "."
+	}
+	return schema, ""
 }

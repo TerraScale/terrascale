@@ -1,6 +1,7 @@
 package data
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -8,6 +9,7 @@ import (
 	"terrascale.tech/dashboard/internal/features/databases"
 	"terrascale.tech/dashboard/internal/ui"
 	"terrascale.tech/dashboard/internal/ui/icons"
+	sdk "terrascale.tech/sdk"
 )
 
 // path links to a section of the open database, keeping the collection.
@@ -23,6 +25,10 @@ templ sectionPage(page core.Page, frame databases.FrameProps, d pageData) {
 	@databases.Frame(frame) {
 		if d.Error != "" {
 			@ui.Alert("danger", "", d.Error)
+		}
+		// Dialog forms and the SQL console show their errors beside the input.
+		if d.FormError != "" && d.Dialog == "" && d.Section != "sql" {
+			@ui.Alert("danger", "", d.FormError)
 		}
 		switch d.Section {
 			case "documents":
@@ -98,15 +104,16 @@ templ documentsView(page core.Page, d pageData) {
 		}
 	}
 	if d.CanWrite {
-		@ui.Dialog(ui.DialogProps{ID: "add-document", Title: "Add document", Description: "Create a document in the " + d.Collection + " collection.", Wide: true}) {
+		@ui.Dialog(ui.DialogProps{ID: "add-document", Title: "Add document", Description: "Create a document in the " + d.Collection + " collection.", Open: d.Dialog == "add-document", Wide: true}) {
 			<form method="post" action="/api/v1/dashboard/data/documents" class="ts-form">
 				@documentScope(page, d)
 				<input type="hidden" name="operation" value="create"/>
+				@dialogError(d, "add-document")
 				@ui.Field(ui.FieldProps{ID: "new-document-id", Label: "Document ID", Hint: "Leave empty to generate one."}) {
-					<input class="ts-input ts-mono" id="new-document-id" name="id" maxlength="256"/>
+					<input class="ts-input ts-mono" id="new-document-id" name="id" maxlength="256" value={ d.NewDocumentID }/>
 				}
 				@ui.Field(ui.FieldProps{ID: "new-document-json", Label: "JSON document"}) {
-					@ui.CodeEditor(ui.CodeEditorProps{ID: "new-document-json", Name: "document", Language: ui.CodeJSON, Value: "{}", Rows: 10})
+					@ui.CodeEditor(ui.CodeEditorProps{ID: "new-document-json", Name: "document", Language: ui.CodeJSON, Value: newDocument(d), Rows: 10})
 				}
 				@ui.DialogActions("add-document") {
 					<button class="ts-btn ts-btn-primary" type="submit">Add document</button>
@@ -114,8 +121,18 @@ templ documentsView(page core.Page, d pageData) {
 			</form>
 		}
 	}
-	if d.EditJSON != "" {
+	if d.EditJSON != "" || d.Dialog == "edit-document" {
 		@editDocument(page, d)
+	}
+	if d.CanWrite && d.DeleteID != "" {
+		@deleteDocument(page, d)
+	}
+}
+
+// dialogError shows a failed post's error inside the dialog it came from.
+templ dialogError(d pageData, dialog string) {
+	if d.FormError != "" && d.Dialog == dialog {
+		@ui.Alert("danger", "", d.FormError)
 	}
 }
 
@@ -129,13 +146,22 @@ templ documentMenu(page core.Page, d pageData, id string) {
 		@ui.MenuItem(ui.MenuItemProps{Href: path(d, "history", "id", id), Icon: icons.History(15), Label: "History"})
 		if d.CanWrite {
 			@ui.MenuSeparator()
-			<form method="post" action="/api/v1/dashboard/data/documents">
-				@documentScope(page, d)
-				<input type="hidden" name="operation" value="delete"/>
-				<input type="hidden" name="id" value={ id }/>
-				@ui.MenuItem(ui.MenuItemProps{Type: "submit", Icon: icons.Trash2(15), Label: "Delete", Danger: true})
-			</form>
+			@ui.MenuItem(ui.MenuItemProps{Href: path(d, "documents", "delete", id), Icon: icons.Trash2(15), Label: "Delete", Danger: true})
 		}
+	}
+}
+
+// deleteDocument confirms a delete chosen from a document's menu.
+templ deleteDocument(page core.Page, d pageData) {
+	@ui.Dialog(ui.DialogProps{ID: "delete-document", Title: "Delete " + d.DeleteID + "?", Description: "This removes the document from the " + d.Collection + " collection. Its revision history keeps the deletion.", Open: true}) {
+		<form method="post" action="/api/v1/dashboard/data/documents" class="ts-form">
+			@documentScope(page, d)
+			<input type="hidden" name="operation" value="delete"/>
+			<input type="hidden" name="id" value={ d.DeleteID }/>
+			@ui.DialogActions("delete-document") {
+				<button class="ts-btn ts-btn-danger" type="submit">Delete document</button>
+			}
+		</form>
 	}
 }
 
@@ -145,10 +171,11 @@ templ editDocument(page core.Page, d pageData) {
 			<form method="post" action="/api/v1/dashboard/data/documents" class="ts-form">
 				@documentScope(page, d)
 				<input type="hidden" name="id" value={ d.DocumentID }/>
+				@dialogError(d, "edit-document")
 				@ui.Field(ui.FieldProps{ID: "operation", Label: "Operation", Hint: "Replace writes the whole document; patch merges the JSON into it."}) {
 					<select class="ts-select" id="operation" name="operation">
 						<option value="replace">Replace</option>
-						<option value="patch">Patch</option>
+						<option value="patch" selected?={ d.EditOperation == "patch" }>Patch</option>
 					</select>
 				}
 				@ui.Field(ui.FieldProps{ID: "document-json", Label: "JSON document or patch"}) {
@@ -209,10 +236,11 @@ templ sqlView(page core.Page, d pageData) {
 					</div>
 				</form>
 			}
-			if d.SQLResult != "" {
-				@ui.Card(ui.CardProps{ID: "sql-result", Title: "Query result"}) {
-					<pre class="ts-code">{ d.SQLResult }</pre>
-				}
+			if d.FormError != "" && d.Dialog == "" {
+				@ui.Alert("danger", "Query failed", d.FormError)
+			}
+			if d.SQLResult != nil {
+				@sqlResultView(*d.SQLResult)
 			}
 			if d.SQLAnalysis.OK {
 				@sqlCheck(d)
@@ -235,12 +263,16 @@ templ savedQueries(page core.Page, d pageData) {
 							<code>{ query.SQL }</code>
 						</a>
 						if d.CanWrite {
-							<form method="post" action="/api/v1/dashboard/data/saved-queries/delete">
-								<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-								<input type="hidden" name="databaseId" value={ d.Database.ID }/>
-								<input type="hidden" name="id" value={ query.ID }/>
-								<button class="ts-icon-btn" type="submit" aria-label={ "Delete " + query.Name }>@icons.Trash2(15)</button>
-							</form>
+							<button class="ts-icon-btn" type="button" command="show-modal" commandfor={ "delete-query-" + query.ID } aria-label={ "Delete " + query.Name }>@icons.Trash2(15)</button>
+							@ui.Dialog(ui.DialogProps{ID: "delete-query-" + query.ID, Title: "Delete " + query.Name + "?", Description: "Everyone in this project loses this saved query."}) {
+								<form method="post" action="/api/v1/dashboard/data/saved-queries/delete" class="ts-form">
+									@documentScope(page, d)
+									<input type="hidden" name="id" value={ query.ID }/>
+									@ui.DialogActions("delete-query-" + query.ID) {
+										<button class="ts-btn ts-btn-danger" type="submit">Delete query</button>
+									}
+								</form>
+							}
 						}
 					</li>
 				}
@@ -250,12 +282,12 @@ templ savedQueries(page core.Page, d pageData) {
 		}
 	}
 	if d.CanWrite {
-		@ui.Dialog(ui.DialogProps{ID: "save-query", Title: "Save query", Description: "Saved queries are available to everyone with access to this project."}) {
+		@ui.Dialog(ui.DialogProps{ID: "save-query", Title: "Save query", Description: "Saved queries are available to everyone with access to this project.", Open: d.Dialog == "save-query"}) {
 			<form method="post" action="/api/v1/dashboard/data/saved-queries" class="ts-form">
-				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-				<input type="hidden" name="databaseId" value={ d.Database.ID }/>
+				@documentScope(page, d)
+				@dialogError(d, "save-query")
 				@ui.Field(ui.FieldProps{ID: "query-name", Label: "Name"}) {
-					<input class="ts-input" id="query-name" name="name" required/>
+					<input class="ts-input" id="query-name" name="name" maxlength="128" value={ d.QueryName } required/>
 				}
 				@ui.Field(ui.FieldProps{ID: "saved-sql", Label: "SQL query"}) {
 					@ui.CodeEditor(ui.CodeEditorProps{ID: "saved-sql", Name: "sql", Language: ui.CodeSQL, Value: d.SQL, Rows: 6, Required: true})
@@ -272,6 +304,69 @@ templ saveQueryAction(d pageData) {
 	if d.CanWrite {
 		@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "save-query", Label: "Save query", Icon: icons.Save(14), Small: true})
 	}
+}
+
+templ sqlResultView(r sqlResult) {
+	@ui.Card(ui.CardProps{ID: "sql-result", Title: "Query result", Description: resultSummary(r), Flush: true}) {
+		switch {
+			case r.Explain != nil:
+				@explainPlan(*r.Explain)
+			case len(r.Rows) == 0:
+				@ui.Empty("No rows matched.", "The query ran and returned no rows.")
+			default:
+				<div class="ts-table-wrap ts-data-result-wrap" role="region" tabindex="0" aria-labelledby="sql-result-title">
+					<table class="ts-table ts-data-result">
+						<thead>
+							<tr>
+								<th scope="col">id</th>
+								for _, column := range r.Columns {
+									<th scope="col">{ column }</th>
+								}
+							</tr>
+						</thead>
+						<tbody>
+							for _, row := range r.Rows {
+								<tr>
+									<td class="ts-data-result-id">{ row.ID }</td>
+									for _, cell := range row.Cells {
+										<td
+											data-kind={ cell.Kind }
+											if cell.Title != "" {
+												title={ cell.Title }
+											}
+										>
+											if cell.Kind == "missing" {
+												<span aria-hidden="true">—</span>
+												<span class="ts-sr-only">not set</span>
+											} else {
+												{ cell.Text }
+											}
+										</td>
+									}
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+				<details class="ts-data-raw">
+					<summary>Raw JSON</summary>
+					<pre class="ts-code">{ r.JSON }</pre>
+				</details>
+		}
+	}
+}
+
+templ explainPlan(plan sdk.SQLExplainResponse) {
+	<dl class="ts-kv">
+		<div><dt>Dialect</dt><dd>{ plan.Dialect }</dd></div>
+		if plan.Collection != nil {
+			<div><dt>Collection</dt><dd class="ts-mono">{ *plan.Collection }</dd></div>
+		}
+		<div><dt>Access</dt><dd class="ts-mono">{ plan.Access }</dd></div>
+		for _, order := range plan.Order {
+			<div><dt>Order</dt><dd class="ts-mono">{ order.Field } { order.Direction }</dd></div>
+		}
+	</dl>
 }
 
 templ sqlCheck(d pageData) {
@@ -313,13 +408,13 @@ templ schemaView(page core.Page, d pageData) {
 	<div class="ts-data-bar">
 		@collectionScope(d, "schema")
 	</div>
-	@ui.Card(ui.CardProps{ID: "collection-schema", Title: "Collection schema", Description: "JSON schema applied to documents in " + d.Collection + "."}) {
+	@ui.Card(ui.CardProps{ID: "collection-schema", Title: "Collection schema", Description: "Fields, indexes, TTL, and merge policy declared for " + d.Collection + " in the terrascale.schema.json format."}) {
 		<form method="post" action="/api/v1/dashboard/schema" class="ts-form">
 			@documentScope(page, d)
-			@ui.Field(ui.FieldProps{ID: "schema-json", Label: "Schema JSON"}) {
-				@ui.CodeEditor(ui.CodeEditorProps{ID: "schema-json", Name: "schema", Language: ui.CodeJSON, Value: d.Schema, Rows: 14, Required: true, ReadOnly: !d.CanWrite})
+			@ui.Field(ui.FieldProps{ID: "schema-json", Label: "Schema JSON", Hint: schemaHint(d.CanManage)}) {
+				@ui.CodeEditor(ui.CodeEditorProps{ID: "schema-json", Name: "schema", Language: ui.CodeJSON, Value: d.Schema, Rows: 14, Required: true, ReadOnly: !d.CanManage})
 			}
-			if d.CanWrite {
+			if d.CanManage {
 				<div class="ts-form-actions">
 					<button class="ts-btn ts-btn-primary" type="submit">Apply schema</button>
 				</div>
@@ -355,13 +450,13 @@ templ indexesView(page core.Page, d pageData) {
 				} else {
 					<p class="ts-meta">No indexes yet.</p>
 				}
-				if d.CanWrite {
+				if d.CanManage {
 					<div class="ts-card-section">
 						<form method="post" action="/api/v1/dashboard/indexes" class="ts-filters ts-data-index-form">
 							@documentScope(page, d)
 							<label class="ts-filter-field ts-data-grow" for="index-field">
 								Field
-								<input class="ts-input" id="index-field" name="field" required/>
+								<input class="ts-input" id="index-field" name="field" maxlength="128" value={ d.IndexField } required/>
 							</label>
 							<button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Create index</button>
 						</form>
@@ -421,6 +516,47 @@ func runDescription(demo bool) string {
 		return "Demo execution supports SELECT * FROM collection [LIMIT n]. Checking validates a read-only statement without running it."
 	}
 	return "Run a read-only statement against this database, or check it without running it."
+}
+
+// newDocument is the add-document editor's content: the submitted JSON after
+// a failed post, otherwise an empty object.
+func newDocument(d pageData) string {
+	if d.Dialog == "add-document" {
+		return d.NewDocument
+	}
+	return "{}"
+}
+
+func resultSummary(r sqlResult) string {
+	if r.Explain != nil {
+		return "Query plan"
+	}
+	summary := plural(len(r.Rows), "row", "rows")
+	if r.Truncated() {
+		summary = fmt.Sprintf("First %d of %d matched rows; add a LIMIT to narrow the query", len(r.Rows), r.Matched)
+	}
+	if r.HiddenColumns > 0 {
+		summary += fmt.Sprintf(" · %d more %s in the raw JSON", r.HiddenColumns, pluralWord(r.HiddenColumns, "field", "fields"))
+	}
+	return summary
+}
+
+func plural(count int, one, many string) string {
+	return fmt.Sprintf("%d %s", count, pluralWord(count, one, many))
+}
+
+func pluralWord(count int, one, many string) string {
+	if count == 1 {
+		return one
+	}
+	return many
+}
+
+func schemaHint(canManage bool) string {
+	if canManage {
+		return "Applying replaces the declared schema of this collection."
+	}
+	return "Only project managers can change the schema."
 }
 
 func historyTitle(id string) string {

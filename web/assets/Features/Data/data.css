@@ -185,6 +185,66 @@
   }
 }
 
+/* Query results: one row per document and one column per field. The table
+   scrolls inside a bounded frame and keeps its header in view. */
+.ts-data-result-wrap {
+  max-height: min(70vh, 640px);
+  overflow: auto;
+}
+
+.ts-data-result thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ts-canvas);
+  font-family: var(--ts-font-mono);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.ts-data-result td {
+  max-width: 32ch;
+  overflow: hidden;
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-data-result .ts-data-result-id {
+  color: var(--ts-ink);
+  font-weight: 600;
+}
+
+.ts-data-result td[data-kind="number"] {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ts-data-result td[data-kind="null"],
+.ts-data-result td[data-kind="missing"],
+.ts-data-result td[data-kind="object"],
+.ts-data-result td[data-kind="array"] {
+  color: var(--ts-ink-3);
+}
+
+.ts-data-raw > summary {
+  width: fit-content;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  cursor: pointer;
+}
+
+.ts-data-raw[open] {
+  display: grid;
+  gap: var(--ts-s3);
+}
+
+.ts-data-raw > .ts-code {
+  max-height: 480px;
+  overflow: auto;
+}
+
 /* SQL check results. */
 .ts-data-checks {
   display: grid;

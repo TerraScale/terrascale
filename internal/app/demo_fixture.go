@@ -38,7 +38,7 @@ func seedMarioDemoFixture(account *core.Account) {
 			},
 		},
 		Schemas: map[string][]byte{
-			"sessions": []byte(`{"type":"object","properties":{"startedAt":{"type":"string","format":"date-time"},"status":{"type":"string"},"userId":{"type":"string"}}}`),
+			"sessions": []byte(`{"name":"sessions","fields":[{"name":"userId","type":"string","required":true,"indexed":true},{"name":"startedAt","type":"timestamp","required":true,"indexed":false},{"name":"status","type":"string","required":true,"indexed":false}],"historyRetentionDays":7,"mergePolicy":"last-write-wins"}`),
 		},
 	}
 	edgeProject.Databases[edgeEventsID] = core.Database{
@@ -51,7 +51,7 @@ func seedMarioDemoFixture(account *core.Account) {
 			},
 		},
 		Schemas: map[string][]byte{
-			"events": []byte(`{"type":"object","properties":{"occurredAt":{"type":"string","format":"date-time"},"type":{"type":"string"}}}`),
+			"events": []byte(`{"name":"events","fields":[{"name":"type","type":"string","required":true,"indexed":true},{"name":"occurredAt","type":"timestamp","required":true,"indexed":false}],"historyRetentionDays":7,"mergePolicy":"last-write-wins"}`),
 		},
 	}
 	sandboxProject.Databases[sandboxDBID] = core.Database{
@@ -142,7 +142,7 @@ func marioPrimaryDatabase(id, projectID string) core.Database {
 			},
 		},
 		Schemas: map[string][]byte{
-			"orders": []byte(`{"type":"object","properties":{"createdAt":{"type":"string","format":"date-time"},"customerId":{"type":"string"},"status":{"type":"string"},"total":{"type":"number"}},"required":["customerId","status","total"]}`),
+			"orders": []byte(`{"name":"orders","fields":[{"name":"customerId","type":"string","required":true,"indexed":true},{"name":"status","type":"string","required":true,"indexed":false},{"name":"total","type":"float","required":true,"indexed":false},{"name":"createdAt","type":"timestamp","required":false,"indexed":false}],"historyRetentionDays":7,"mergePolicy":"last-write-wins"}`),
 		},
 		IndexRecommendations: []core.IndexRecommendation{{
 			ID: "idxrec_01JC9YQ8T0V2X5A8C1E4G7J0N", DatabaseID: id, Collection: "orders",

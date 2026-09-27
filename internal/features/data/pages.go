@@ -54,12 +54,29 @@ type pageData struct {
 	Queries         []core.SavedQuery
 	DocumentID      string
 	EditJSON        string
-	SQL             string
-	SQLResult       string
-	SQLAnalysis     sqlAnalysis
-	SQLChecked      bool
-	History         []historyVersion
-	Error           string
+	// EditOperation keeps the replace or patch choice of a failed edit.
+	EditOperation string
+	// DeleteID names the document whose delete confirmation is open.
+	DeleteID    string
+	SQL         string
+	SQLResult   *sqlResult
+	SQLAnalysis sqlAnalysis
+	// CheckRequested is set when the statement was sent to the server check.
+	CheckRequested bool
+	SQLChecked     bool
+	History        []historyVersion
+	// Error reports that the section could not load from the data plane.
+	Error string
+	// FormError explains why a form post failed; Dialog names the dialog
+	// that reopens with the submitted input, if the form came from one.
+	FormError string
+	Dialog    string
+	// NewDocumentID, NewDocument, QueryName, and IndexField refill the
+	// add-document, save-query, and create-index forms after a failed post.
+	NewDocumentID string
+	NewDocument   string
+	QueryName     string
+	IndexField    string
 }
 
 type historyVersion struct {
@@ -71,7 +88,7 @@ type historyVersion struct {
 func mountPages(mux *http.ServeMux, deps core.Deps) {
 	for section := range sections {
 		mux.HandleFunc("GET /databases/{databaseID}/"+section, func(w http.ResponseWriter, r *http.Request) {
-			renderSection(w, r, deps, r.PathValue("databaseID"), section, nil)
+			renderSection(w, r, deps, r.PathValue("databaseID"), section, http.StatusOK, nil)
 		})
 	}
 }
@@ -81,14 +98,10 @@ func sectionPath(databaseID, section string, query url.Values) string {
 	return databases.TabPath(databaseID, section, query)
 }
 
-type sqlPageResult struct {
-	Collection, Statement, JSON string
-	CheckOnly                   bool
-}
-
-// renderSection renders one data section of a database. SQL form posts pass
-// their result so the statement and its output never travel in the URL.
-func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, databaseID, section string, result *sqlPageResult) {
+// renderSection renders one data section of a database. Form posts pass
+// their outcome through edit and a status, so the input they carry and the
+// result never travel in the URL.
+func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, databaseID, section string, status int, edit func(*pageData)) {
 	p, a, project, err := selectedProject(deps, r)
 	if err != nil {
 		if errors.Is(err, core.ErrUnauthorized) {
@@ -106,19 +119,16 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 	query := r.URL.Query()
 	org := a.Organizations[p.OrganizationID]
 	data := pageData{
-		Section:    section,
-		Database:   db,
-		CanWrite:   org.CanWrite(p.UserID),
-		CanManage:  org.CanManage(p.UserID),
-		Demo:       deps.Demo,
-		Search:     strings.TrimSpace(query.Get("q")),
-		IndexView:  query.Get("view"),
-		Collection: strings.TrimSpace(query.Get("collection")),
+		Section:   section,
+		Database:  db,
+		CanWrite:  org.CanWrite(p.UserID),
+		CanManage: org.CanManage(p.UserID),
+		Demo:      deps.Demo,
+		Search:    strings.TrimSpace(query.Get("q")),
+		IndexView: query.Get("view"),
+		// Form posts carry the collection in their body.
+		Collection: strings.TrimSpace(r.FormValue("collection")),
 		DocumentID: query.Get("id"),
-		Error:      query.Get("error"),
-	}
-	if result != nil && result.Collection != "" {
-		data.Collection = result.Collection
 	}
 	if !validCollection(data.Collection) {
 		data.Collection = "users"
@@ -131,6 +141,7 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 	}
 	if section == "documents" {
 		data.DocumentID = query.Get("edit")
+		data.DeleteID = query.Get("delete")
 	}
 	if deps.Demo {
 		loadDemo(&data, a, p, db)
@@ -143,28 +154,61 @@ func renderSection(w http.ResponseWriter, r *http.Request, deps core.Deps, datab
 		if saved, ok := project.SavedQueries[query.Get("savedQueryId")]; ok {
 			data.SQL = saved.SQL
 		}
-		if result != nil {
-			data.SQL = result.Statement
-			data.SQLResult = result.JSON
-		}
-		data.SQLAnalysis = analyzeSQL(data.SQL)
-		data.SQLChecked = result != nil && result.CheckOnly && data.SQLAnalysis.OK
 	}
 	if section == "documents" && data.DocumentID != "" {
 		if i := slices.IndexFunc(data.Documents, func(d documentView) bool { return d.ID == data.DocumentID }); i >= 0 {
 			data.EditJSON = indented(data.Documents[i].Value)
 		}
 	}
+	if section == "documents" && !slices.ContainsFunc(data.Documents, func(d documentView) bool { return d.ID == data.DeleteID }) {
+		data.DeleteID = ""
+	}
 	if search := strings.ToLower(data.Search); search != "" && section == "documents" {
 		data.Documents = slices.DeleteFunc(data.Documents, func(document documentView) bool {
 			return !strings.Contains(strings.ToLower(document.ID+" "+document.Value.String()), search)
 		})
 	}
+	if edit != nil {
+		edit(&data)
+	}
+	if section == "sql" {
+		data.SQLAnalysis = analyzeSQL(data.SQL)
+		data.SQLChecked = data.CheckRequested && data.SQLAnalysis.OK
+	}
+	if section == "schema" && data.Schema == "" {
+		data.Schema = starterSchema(data.Collection)
+	}
 	frame := databases.FrameProps{Database: db, Tab: sections[section].Tab, Collection: data.Collection}
-	page := core.Page{Layout: "shell", Title: db.Name + " · " + sections[section].Title, Principal: p, View: func(page core.Page) templ.Component { return sectionPage(page, frame, data) }, CSRFToken: deps.CSRF.Token(w, r)}
+	page := core.Page{Layout: "shell", Title: db.Name + " · " + sections[section].Title, Principal: p, View: func(page core.Page) templ.Component { return sectionPage(page, frame, data) }, CSRFToken: deps.CSRF.Token(w, r), Status: status}
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render database data", http.StatusInternalServerError)
 	}
+}
+
+// formFailed answers a form post that could not be applied. API clients get
+// the status and message as plain text; a browser gets the section again with
+// the message, and edit refills the input it submitted.
+func formFailed(w http.ResponseWriter, r *http.Request, deps core.Deps, databaseID, section string, status int, message string, edit func(*pageData)) {
+	if !core.WantsHTML(r) || databaseID == "" {
+		http.Error(w, message, status)
+		return
+	}
+	renderSection(w, r, deps, databaseID, section, status, func(d *pageData) {
+		d.FormError = message
+		if edit != nil {
+			edit(d)
+		}
+	})
+}
+
+// starterSchema is the smallest valid schema of a collection, the starting
+// point when none is declared yet.
+func starterSchema(collection string) string {
+	encoded, err := json.Marshal(sdk.NewCollectionSchema(collection))
+	if err != nil {
+		return ""
+	}
+	return indented(encoded)
 }
 
 // indented formats a document with two-space indentation for reading and
@@ -186,7 +230,9 @@ func loadDemo(data *pageData, a core.Account, p core.Principal, db core.Database
 		data.Documents = append(data.Documents, documentView{ID: id, Value: body})
 	}
 	slices.SortFunc(data.Documents, func(a, b documentView) int { return strings.Compare(a.ID, b.ID) })
-	data.Schema = string(db.Schemas[data.Collection])
+	if schema, ok := db.Schemas[data.Collection]; ok {
+		data.Schema = indented(schema)
+	}
 	data.Indexes = slices.Clone(db.Indexes[data.Collection])
 	for _, build := range db.IndexBuilds {
 		if build.Collection == data.Collection {
@@ -255,6 +301,6 @@ func loadLive(r *http.Request, deps core.Deps, p core.Principal, data *pageData)
 			data.Error = err.Error()
 			return
 		}
-		data.Schema = string(encoded)
+		data.Schema = indented(encoded)
 	}
 }
