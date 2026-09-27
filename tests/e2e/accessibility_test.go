@@ -173,9 +173,14 @@ var axeSource = sync.OnceValues(func() (string, error) {
 	return string(source), nil
 })
 
-// axeRun checks the element matching the selector argument, or the whole
-// document, and describes every violation with the elements it affects.
+// axeRun waits for running transitions and finite animations, such as a
+// dialog fading in, to settle; then it checks the element matching the
+// selector argument, or the whole document, and describes every violation
+// with the elements it affects.
 const axeRun = `async (selector) => {
+	await Promise.all(document.getAnimations()
+		.filter((animation) => animation.effect?.getComputedTiming().endTime !== Infinity)
+		.map((animation) => animation.finished.catch(() => {})));
 	const result = await axe.run(selector ? document.querySelector(selector) : document, {
 		runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"] },
 		resultTypes: ["violations"],
