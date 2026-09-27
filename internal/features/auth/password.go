@@ -9,14 +9,28 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"testing"
 )
 
 const (
 	passwordHashVersion = "pbkdf2-sha256"
-	passwordIterations  = 600_000
 	passwordKeyLength   = 32
 	passwordSaltLength  = 16
 )
+
+// passwordIterations is the PBKDF2 cost of new hashes and the least a stored
+// hash may use.
+var passwordIterations = 600_000
+
+// UseTestPasswordCost makes password hashing cheap in a test binary, where
+// suites register and sign in many accounts under the race detector. It
+// changes nothing outside a test binary, so a production build always hashes
+// at full cost. Call it before any password is hashed.
+func UseTestPasswordCost() {
+	if testing.Testing() {
+		passwordIterations = 1_000
+	}
+}
 
 // derivations bounds concurrent key derivations to half the CPUs. Each one
 // takes a CPU for a noticeable time, so a burst of password checks waits

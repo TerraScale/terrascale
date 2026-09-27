@@ -21,6 +21,7 @@ import (
 	"github.com/mxschmitt/playwright-go"
 
 	"terrascale.tech/dashboard/internal/app"
+	"terrascale.tech/dashboard/internal/features/auth"
 	"terrascale.tech/dashboard/internal/platform/config"
 )
 
@@ -36,6 +37,9 @@ func TestMain(m *testing.M) {
 }
 
 func run(m *testing.M) int {
+	// The in-process dashboard runs under the race detector, where full-cost
+	// password hashing queues parallel sign-ups past the browser timeouts.
+	auth.UseTestPasswordCost()
 	admin = credentials{
 		Email:    cmp.Or(os.Getenv("DASHBOARD_E2E_ADMIN_EMAIL"), "e2e-admin-seed@example.test"),
 		Password: cmp.Or(os.Getenv("DASHBOARD_E2E_ADMIN_PASSWORD"), "E2e-admin-seed-123!"),
