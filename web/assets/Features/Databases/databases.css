@@ -71,7 +71,8 @@
   gap: var(--ts-s6);
 }
 
-.ts-db-create-form > .ts-dialog-footer {
+.ts-db-create-form > .ts-dialog-footer,
+.ts-db-create-form > .ts-alert {
   grid-column: 1 / -1;
 }
 

@@ -1,6 +1,7 @@
 package databases
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -33,12 +34,19 @@ func mountBranch(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, core.ErrNotFound)
 			return
 		}
+		failed := func(status int, code string) {
+			FormFailed(w, r, status, TabPath(source.ID, "branches", nil), code, nil)
+		}
 		name := strings.TrimSpace(r.FormValue("name"))
 		if _, hasName := r.Form["name"]; !hasName {
 			name = previewBranchName(source.Name)
 		}
-		if !core.ValidDatabaseName(name) || source.Status != "ready" {
-			http.Error(w, "valid branch name and ready source database are required", http.StatusBadRequest)
+		if !core.ValidDatabaseName(name) {
+			failed(http.StatusBadRequest, ErrInvalidName)
+			return
+		}
+		if source.Status != "ready" {
+			failed(http.StatusConflict, ErrNotReady)
 			return
 		}
 		branch := core.Database{ID: core.NewID("db"), ProjectID: project.ID, Name: name, Region: source.Region, Status: "provisioning", CreatedAt: time.Now().UTC()}
@@ -75,30 +83,34 @@ func mountBranch(mux *http.ServeMux, deps core.Deps) {
 			return nil
 		})
 		if err != nil {
-			writeError(w, err)
+			status, code := failure(err)
+			if errors.Is(err, core.ErrNotFound) {
+				status, code = http.StatusConflict, ErrNotReady
+			}
+			failed(status, code)
 			return
 		}
 		if !deps.Demo {
 			if deps.SDK == nil {
 				_ = setStatus(deps, p, branch.ID, "failed")
-				http.Error(w, "live data plane unavailable", http.StatusServiceUnavailable)
+				failed(http.StatusServiceUnavailable, ErrUnavailable)
 				return
 			}
 			client, err := deps.SDK.ForScope(p.OrganizationID, p.ProjectID)
 			if err != nil {
 				_ = setStatus(deps, p, branch.ID, "failed")
-				http.Error(w, "live data plane unavailable", http.StatusServiceUnavailable)
+				failed(http.StatusServiceUnavailable, ErrUnavailable)
 				return
 			}
 			result, err := client.DatabaseBranches.CreateBranch(r.Context(), source.Name, sdk.CreateBranchRequest{Name: name, OperationID: branch.ID}, sdk.WithIdempotencyKey(branch.ID))
 			if err != nil {
 				_ = setStatus(deps, p, branch.ID, "failed")
-				http.Error(w, "branch request failed: "+err.Error(), http.StatusBadGateway)
+				failed(http.StatusBadGateway, ErrProvider)
 				return
 			}
 			branch.Status = result.State
 			if err := setStatus(deps, p, branch.ID, branch.Status); err != nil {
-				writeError(w, err)
+				failed(failure(err))
 				return
 			}
 		}

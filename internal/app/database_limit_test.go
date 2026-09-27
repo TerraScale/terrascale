@@ -92,8 +92,8 @@ func TestDatabaseRoutesKeepThePlanDatabaseLimit(t *testing.T) {
 		{"/api/v1/dashboard/settings/restore", url.Values{"generation": {backupID}}},
 	} {
 		status, body := routes.serve(http.MethodPost, attempt.path, attempt.form)
-		if status != http.StatusConflict || body != "plan database limit reached" {
-			t.Errorf("POST %s at the limit = %d %q, want 409 plan database limit reached", attempt.path, status, body)
+		if status != http.StatusConflict || !strings.Contains(body, "database limit") {
+			t.Errorf("POST %s at the limit = %d %q, want 409 naming the database limit", attempt.path, status, body)
 		}
 	}
 

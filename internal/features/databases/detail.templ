@@ -15,7 +15,7 @@ type fact struct {
 
 templ detailContent(page core.Page, d detailData) {
 	@Frame(FrameProps{Database: d.Database, Tab: d.Tab}) {
-		if d.Error != "" {
+		if d.Error != "" && !d.OpenDelete {
 			@ui.Alert("danger", "", d.Error)
 		}
 		switch d.Tab {
@@ -98,7 +98,7 @@ templ detailBackups(page core.Page, d detailData) {
 								<tr>
 									<td class="ts-mono">{ backup.CreatedAt.UTC().Format("2006-01-02 15:04 UTC") }</td>
 									<td>@ui.Badge(backupTone(backup.Status), backup.Status)</td>
-									<td class="ts-num">{ strconv.FormatInt(backup.SizeBytes, 10) } bytes</td>
+									<td class="ts-num">{ byteSize(backup.SizeBytes) }</td>
 									<td>
 										if d.Info.CanRestoreBackups {
 											<form class="ts-db-restore" method="post" action="/api/v1/dashboard/backups/restore">
@@ -106,7 +106,7 @@ templ detailBackups(page core.Page, d detailData) {
 												<input type="hidden" name="databaseId" value={ d.Database.ID }/>
 												<input type="hidden" name="backupId" value={ backup.ID }/>
 												<label class="ts-sr-only" for={ "restore-name-" + backup.ID }>New database name</label>
-												<input class="ts-input ts-input-sm" id={ "restore-name-" + backup.ID } name="name" placeholder="New database name" pattern="[a-z0-9][a-z0-9\-]*" maxlength="63" required/>
+												<input class="ts-input ts-input-sm" id={ "restore-name-" + backup.ID } name="name" value={ restoreName(d, backup.ID) } placeholder="New database name" pattern={ namePatternHTML } maxlength="63" title="Lowercase letters, digits, and hyphens" required/>
 												<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Restore side by side</button>
 											</form>
 										} else {
@@ -148,13 +148,13 @@ templ detailBackups(page core.Page, d detailData) {
 					<input type="hidden" name="databaseId" value={ d.Database.ID }/>
 					<input type="hidden" name="disabled" value={ backupToggleDisabled(d.Info.BackupPolicy.Disabled) }/>
 					@ui.Field(ui.FieldProps{ID: "full-cron", Label: "Full backup schedule"}) {
-						<input class="ts-input ts-mono" id="full-cron" name="fullBackupCron" value={ d.Info.BackupPolicy.FullBackupCron } placeholder="0 2 * * *"/>
+						<input class="ts-input ts-mono" id="full-cron" name="fullBackupCron" value={ policyValue(d, d.Refill.FullCron, d.Info.BackupPolicy.FullBackupCron) } placeholder="0 2 * * *"/>
 					}
 					@ui.Field(ui.FieldProps{ID: "incremental-cron", Label: "Incremental schedule"}) {
-						<input class="ts-input ts-mono" id="incremental-cron" name="incrementalBackupCron" value={ d.Info.BackupPolicy.IncrementalBackupCron } placeholder="0 * * * *"/>
+						<input class="ts-input ts-mono" id="incremental-cron" name="incrementalBackupCron" value={ policyValue(d, d.Refill.IncrementalCron, d.Info.BackupPolicy.IncrementalBackupCron) } placeholder="0 * * * *"/>
 					}
 					@ui.Field(ui.FieldProps{ID: "retention", Label: "Retention days"}) {
-						<input class="ts-input" id="retention" name="retentionDays" type="number" min="1" max="365" value={ backupRetentionDays(d.Info.BackupPolicy.RetentionDays) }/>
+						<input class="ts-input" id="retention" name="retentionDays" type="number" min="1" max="365" value={ policyValue(d, d.Refill.Retention, backupRetentionDays(d.Info.BackupPolicy.RetentionDays)) } required/>
 					}
 					<div class="ts-form-actions">
 						<button class="ts-btn ts-btn-primary" type="submit">Save policy</button>
@@ -209,7 +209,7 @@ templ detailBranches(page core.Page, d detailData) {
 				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 				<input type="hidden" name="databaseId" value={ d.Database.ID }/>
 				@ui.Field(ui.FieldProps{ID: "branch-name", Label: "New database name", Hint: "Lowercase letters, digits, and hyphens."}) {
-					<input class="ts-input" id="branch-name" name="name" pattern="[a-z0-9][a-z0-9\-]*" maxlength="63" required/>
+					<input class="ts-input" id="branch-name" name="name" pattern={ namePatternHTML } maxlength="63" required/>
 				}
 				@ui.DialogActions("name-branch") {
 					<button class="ts-btn ts-btn-primary" type="submit">Create branch</button>
@@ -220,17 +220,20 @@ templ detailBranches(page core.Page, d detailData) {
 }
 
 templ detailDelete(page core.Page, d detailData) {
-	<section class="ts-db-danger" aria-labelledby="delete-database-title">
+	<section class="ts-db-danger" aria-labelledby="danger-zone-title">
 		<div class="ts-list-main">
-			<h2 class="ts-section-title" id="delete-database-title">Danger zone</h2>
+			<h2 class="ts-section-title" id="danger-zone-title">Danger zone</h2>
 			<p class="ts-meta">Permanently remove this database and its data.</p>
 		</div>
 		@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "delete-database", Label: "Delete database", Icon: icons.Trash2(15), Variant: "danger"})
 	</section>
-	@ui.Dialog(ui.DialogProps{ID: "delete-database", Title: "Delete " + d.Database.Name, Description: "This permanently removes the database and all of its data."}) {
+	@ui.Dialog(ui.DialogProps{ID: "delete-database", Title: "Delete " + d.Database.Name, Description: "This permanently removes the database and all of its data.", Open: d.OpenDelete}) {
 		<form method="post" action="/api/v1/dashboard/databases/delete" class="ts-form">
 			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 			<input type="hidden" name="databaseId" value={ d.Database.ID }/>
+			if d.OpenDelete && d.Error != "" {
+				@ui.Alert("danger", "", d.Error)
+			}
 			@ui.Field(ui.FieldProps{ID: "confirm-name", Label: "Type " + d.Database.Name + " to confirm"}) {
 				<input class="ts-input" id="confirm-name" name="confirmName" required autocomplete="off"/>
 			}

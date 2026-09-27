@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/databases"
 	sdk "terrascale.tech/sdk"
 )
 
@@ -63,12 +64,15 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
+		failed := func(status int, code string) {
+			databases.FormFailed(w, r, status, backupsTab(db.ID), code, nil)
+		}
 		if !deps.Store.Can(p, core.Organization.CanManage) {
-			writeError(w, core.ErrForbidden)
+			failed(http.StatusForbidden, databases.ErrForbidden)
 			return
 		}
 		if !deps.Demo {
-			http.Error(w, "on-demand backup is unavailable in the published SDK contract", http.StatusServiceUnavailable)
+			failed(http.StatusServiceUnavailable, databases.ErrBackupsOffline)
 			return
 		}
 		var created core.Backup
@@ -98,11 +102,11 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return nil
 		})
 		if err != nil {
-			writeError(w, err)
+			failed(failure(err))
 			return
 		}
 		if core.WantsHTML(r) {
-			redirectToDatabase(w, r, db.ID)
+			http.Redirect(w, r, backupsTab(db.ID), http.StatusSeeOther)
 			return
 		}
 		core.WriteJSON(w, http.StatusCreated, backupView{ID: created.ID, Status: created.Status, CreatedAt: created.CreatedAt, SizeBytes: created.SizeBytes})
@@ -120,20 +124,30 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
+		full, incremental := strings.Join(strings.Fields(r.FormValue("fullBackupCron")), " "), strings.Join(strings.Fields(r.FormValue("incrementalBackupCron")), " ")
+		failed := func(status int, code string) {
+			databases.FormFailed(w, r, status, backupsTab(db.ID), code, url.Values{
+				"fullBackupCron": {full}, "incrementalBackupCron": {incremental}, "retentionDays": {r.FormValue("retentionDays")},
+			})
+		}
 		if !deps.Store.Can(p, core.Organization.CanManage) {
-			writeError(w, core.ErrForbidden)
+			failed(http.StatusForbidden, databases.ErrForbidden)
 			return
 		}
 		if !deps.Demo {
-			http.Error(w, "backup scheduling is unavailable in the published SDK contract", http.StatusServiceUnavailable)
+			failed(http.StatusServiceUnavailable, databases.ErrBackupsOffline)
 			return
 		}
-		retention, err := strconv.Atoi(r.FormValue("retentionDays"))
+		retention, err := strconv.Atoi(strings.TrimSpace(r.FormValue("retentionDays")))
 		if err != nil || retention < 1 || retention > 365 {
-			http.Error(w, "retention must be 1 to 365 days", http.StatusBadRequest)
+			failed(http.StatusBadRequest, databases.ErrRetention)
 			return
 		}
-		policy := core.BackupPolicy{FullBackupCron: strings.TrimSpace(r.FormValue("fullBackupCron")), IncrementalBackupCron: strings.TrimSpace(r.FormValue("incrementalBackupCron")), RetentionDays: retention, Disabled: r.FormValue("disabled") == "1", UpdatedAt: time.Now().UTC()}
+		if !validCron(full) || !validCron(incremental) {
+			failed(http.StatusBadRequest, databases.ErrSchedule)
+			return
+		}
+		policy := core.BackupPolicy{FullBackupCron: full, IncrementalBackupCron: incremental, RetentionDays: retention, Disabled: r.FormValue("disabled") == "1", UpdatedAt: time.Now().UTC()}
 		err = deps.Store.UpdateAs(p, func(a *core.Account) error {
 			project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 			if err != nil {
@@ -155,11 +169,11 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return nil
 		})
 		if err != nil {
-			writeError(w, err)
+			failed(failure(err))
 			return
 		}
 		if core.WantsHTML(r) {
-			redirectToDatabase(w, r, db.ID)
+			http.Redirect(w, r, backupsTab(db.ID), http.StatusSeeOther)
 			return
 		}
 		core.WriteJSON(w, http.StatusOK, policy)
@@ -177,18 +191,22 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			writeError(w, err)
 			return
 		}
+		name, backupID := strings.TrimSpace(r.FormValue("name")), r.FormValue("backupId")
+		// failed refills the name in the restore form of the chosen backup.
+		failed := func(status int, code string) {
+			databases.FormFailed(w, r, status, backupsTab(db.ID), code, url.Values{"restore": {backupID}, "name": {name}})
+		}
 		if !deps.Store.Can(p, core.Organization.CanManage) {
-			writeError(w, core.ErrForbidden)
+			failed(http.StatusForbidden, databases.ErrForbidden)
 			return
 		}
-		name := strings.TrimSpace(r.FormValue("name"))
 		if !core.ValidDatabaseName(name) {
-			http.Error(w, "invalid restore database name", http.StatusBadRequest)
+			failed(http.StatusBadRequest, databases.ErrInvalidName)
 			return
 		}
 		if !deps.Demo {
 			if !deps.Store.Can(p, core.Organization.CanProvisionResources) {
-				writeError(w, core.ErrForbidden)
+				failed(http.StatusForbidden, databases.ErrForbidden)
 				return
 			}
 			var at *int64
@@ -224,24 +242,28 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 				return nil
 			})
 			if err != nil {
-				writeError(w, err)
+				failed(failure(err))
 				return
 			}
 			client, err := liveClient(deps, p)
 			if err != nil {
 				_ = setStatus(deps, p, target.ID, "failed")
-				writeError(w, err)
+				failed(http.StatusServiceUnavailable, databases.ErrUnavailable)
 				return
 			}
 			opID := target.ID
 			result, err := client.Backups.RestoreBackup(r.Context(), db.Name, sdk.RestoreBackupRequest{Name: name, At: at, OperationID: opID}, sdk.WithIdempotencyKey(opID))
 			if err != nil {
 				_ = setStatus(deps, p, target.ID, "failed")
-				http.Error(w, "restore failed: "+err.Error(), http.StatusBadGateway)
+				failed(http.StatusBadGateway, databases.ErrProvider)
 				return
 			}
 			if err := setStatus(deps, p, target.ID, result.State); err != nil {
-				writeError(w, err)
+				failed(failure(err))
+				return
+			}
+			if core.WantsHTML(r) {
+				http.Redirect(w, r, databases.TabPath(target.ID, "overview", nil), http.StatusSeeOther)
 				return
 			}
 			core.WriteJSON(w, http.StatusAccepted, struct {
@@ -250,17 +272,14 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			}{DatabaseID: target.ID, Operation: result})
 			return
 		}
-		backupID := r.FormValue("backupId")
 		var restored core.Database
 		err = deps.Store.UpdateAs(p, func(a *core.Account) error {
 			project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
 			if err != nil {
 				return err
 			}
-			if !a.Organizations[p.OrganizationID].CanManage(p.UserID) {
-				return core.ErrForbidden
-			}
-			if !a.Organizations[p.OrganizationID].CanProvisionResources(p.UserID) {
+			org := a.Organizations[p.OrganizationID]
+			if !org.CanManage(p.UserID) || !org.CanProvisionResources(p.UserID) {
 				return core.ErrForbidden
 			}
 			current, ok := project.Databases[db.ID]
@@ -274,22 +293,21 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			}
 			index := slices.IndexFunc(current.Backups, func(b core.Backup) bool { return b.ID == backupID && b.Status == "ready" })
 			if index < 0 {
-				return core.ErrNotFound
+				return errBackupMissing
 			}
 			backup := current.Backups[index]
 			restored = core.Database{ID: core.NewID("db"), ProjectID: project.ID, Name: name, Region: current.Region, Status: "ready", CreatedAt: time.Now().UTC(), Documents: core.CloneDocuments(backup.Documents), Schemas: core.CloneSchemas(backup.Schemas), Indexes: core.CloneIndexes(backup.Indexes)}
 			project.Databases[restored.ID] = restored
-			org := a.Organizations[p.OrganizationID]
 			org.Projects[p.ProjectID] = project
 			a.Organizations[p.OrganizationID] = org
 			return nil
 		})
 		if err != nil {
-			writeError(w, err)
+			failed(failure(err))
 			return
 		}
 		if core.WantsHTML(r) {
-			http.Redirect(w, r, "/databases/"+url.PathEscape(restored.ID), http.StatusSeeOther)
+			http.Redirect(w, r, databases.TabPath(restored.ID, "overview", nil), http.StatusSeeOther)
 			return
 		}
 		core.WriteJSON(w, http.StatusCreated, struct {
@@ -299,9 +317,41 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 }
 
-// redirectToDatabase returns form submissions to the database's backups tab.
-func redirectToDatabase(w http.ResponseWriter, r *http.Request, databaseID string) {
-	http.Redirect(w, r, "/databases/"+url.PathEscape(databaseID)+"?tab=backups", http.StatusSeeOther)
+var errBackupMissing = errors.New("backup is not available")
+
+// backupsTab is the database page that holds the backup forms.
+func backupsTab(databaseID string) string {
+	return databases.TabPath(databaseID, "backups", nil)
+}
+
+// validCron accepts an empty schedule or five cron fields made of digits,
+// ranges, lists, steps, and wildcards.
+func validCron(schedule string) bool {
+	if schedule == "" {
+		return true
+	}
+	fields := strings.Fields(schedule)
+	return len(fields) == 5 && !slices.ContainsFunc(fields, func(field string) bool {
+		return strings.Trim(field, "0123456789*,-/") != "" || !strings.ContainsAny(field, "0123456789*")
+	})
+}
+
+// failure maps an error from a backup change to its status and error code.
+func failure(err error) (int, string) {
+	switch {
+	case errors.Is(err, errBackupMissing):
+		return http.StatusNotFound, databases.ErrBackupMissing
+	case errors.Is(err, core.ErrDatabaseLimit):
+		return http.StatusConflict, databases.ErrPlanLimit
+	case errors.Is(err, core.ErrConflict):
+		return http.StatusConflict, databases.ErrNameTaken
+	case errors.Is(err, core.ErrForbidden), errors.Is(err, core.ErrUnauthorized):
+		return http.StatusForbidden, databases.ErrForbidden
+	case errors.Is(err, core.ErrNotFound):
+		return http.StatusNotFound, databases.ErrMissing
+	default:
+		return http.StatusServiceUnavailable, databases.ErrUnavailable
+	}
 }
 
 func selected(deps core.Deps, r *http.Request, databaseID string) (core.Principal, core.Project, core.Database, error) {
