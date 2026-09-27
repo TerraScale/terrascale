@@ -55,7 +55,7 @@ func TestParseReadsIncidentsAndMaintenance(t *testing.T) {
 		t.Fatalf("parsed %d incidents and %d maintenances, want 3 and 3", len(s.Incidents), len(s.Maintenances))
 	}
 	if got := s.Incidents[0]; got.Name != "Slow sign-in" || got.Impact != "minor" || got.Status != "monitoring" ||
-		got.Shortlink != "https://status.terrascale.tech/incidents/1" || len(got.Updates) != 2 || got.Updates[0].Body != "A fix is rolling out." {
+		got.Shortlink != "https://status.terrascale.tech/incidents/1" || got.Headline != "A fix is rolling out." || got.Updates != nil {
 		t.Fatalf("incident = %+v", got)
 	}
 	if got := s.Maintenances[1]; got.Status != "scheduled" ||
@@ -131,6 +131,29 @@ func TestNoticesSkipMaintenanceOutsideTheWindowAndSanitizeLinks(t *testing.T) {
 	}
 	unknown := noticesAt(summary{Incidents: []incident{{Name: "Odd", Status: "identified", Impact: "catastrophic"}}}, sampleNow, home)
 	assertNotices(t, unknown, []core.StatusNotice{{Impact: "none", Label: "Incident", Title: "Odd", URL: home}})
+}
+
+func TestNoticesQuoteTheFirstParagraphOfLongUpdates(t *testing.T) {
+	sentence := "We are investigating elevated latency for queries routed through the Frankfurt hub. "
+	long := strings.Repeat(sentence, 4)
+	for _, tc := range []struct{ name, body, want string }{
+		{"short", "A fix is rolling out.", "A fix is rolling out."},
+		{"whitespace", "  Writes are\n\tunaffected.  ", "Writes are unaffected."},
+		{"first paragraph", "\n\nIdentified the cause.\r\nRolling back.\r\n\r\nDetails follow: 1, 2, 3.", "Identified the cause. Rolling back."},
+		{"word boundary", long, strings.Repeat(sentence, 2) + "We are investigating elevated…"},
+		{"exact word end", strings.Repeat("a", maxMessageRunes) + " tail", strings.Repeat("a", maxMessageRunes) + "…"},
+		{"one long word", strings.Repeat("é", maxMessageRunes+10), strings.Repeat("é", maxMessageRunes) + "…"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := headline(tc.body)
+			if got != tc.want {
+				t.Fatalf("headline = %q, want %q", got, tc.want)
+			}
+			if n := len([]rune(got)); n > maxMessageRunes+1 {
+				t.Fatalf("headline has %d runes, want at most %d", n, maxMessageRunes+1)
+			}
+		})
+	}
 }
 
 func TestClientCachesTheSummaryForThirtySeconds(t *testing.T) {
