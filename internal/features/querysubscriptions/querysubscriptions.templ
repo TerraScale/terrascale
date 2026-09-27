@@ -3,37 +3,50 @@ package querysubscriptions
 import (
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/icons"
 )
 
 templ subscriptionsContent(page core.Page, d pageData) {
 	<main class="ts-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
 		@ui.PageHeader("Subscriptions")
 		@ui.Alert("info", "", "Demo configuration only. Live revisions, checkpoints, subscriber counts, and delivery metrics are unavailable.")
+		if d.Error != "" {
+			@ui.Alert("danger", "", d.Error)
+		}
 		<div class="ts-split">
 			@ui.Card(ui.CardProps{ID: "saved-configurations", Title: "Saved configurations", Description: "Shared views saved in this project.", Flush: true}) {
 				if len(d.Configs) == 0 {
-					@ui.Empty("No shared-result configurations yet.", "Save a read-only query to share its results.")
+					@ui.Empty("No shared-result configurations yet.", emptyDetail(d.CanWrite))
 				} else {
 					<div class="ts-table-wrap">
 						<table class="ts-table">
-							<thead><tr><th>View</th><th>Database</th><th>SQL</th><th>Preference</th><th>Status</th><th class="ts-table-actions">Actions</th></tr></thead>
+							<thead>
+								<tr>
+									<th>View</th>
+									<th>Database</th>
+									<th>SQL</th>
+									<th>Preference</th>
+									<th>Status</th>
+									if d.CanWrite {
+										<th class="ts-table-actions"><span class="ts-sr-only">Actions</span></th>
+									}
+								</tr>
+							</thead>
 							<tbody>
 								for _, config := range d.Configs {
 									<tr>
 										<td class="ts-strong">{ config.Name }</td>
 										<td>{ databaseName(d, config.DatabaseID) }</td>
 										<td><code>{ config.Query }</code></td>
-										<td>{ config.Transport }</td>
-										<td>@ui.Badge(configTone(config.Status), config.Status)
-</td>
-										<td class="ts-table-actions">
-											<div class="ts-row ts-row-end">
-												if config.Status == "saved" {
-													<form method="post" action="/api/v1/dashboard/subscriptions/pause"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="configId" value={ config.ID }/><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Pause</button></form>
-												}
-												<form method="post" action="/api/v1/dashboard/subscriptions/detach"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="configId" value={ config.ID }/><button class="ts-btn ts-btn-ghost ts-btn-sm" type="submit">Detach</button></form>
-											</div>
+										<td>{ transportLabel(config.Transport) }</td>
+										<td>
+											@ui.Badge(configTone(config.Status), statusLabel(config.Status))
 										</td>
+										if d.CanWrite {
+											<td class="ts-table-actions">
+												@configActions(page, config)
+											</td>
+										}
 									</tr>
 								}
 							</tbody>
@@ -42,34 +55,76 @@ templ subscriptionsContent(page core.Page, d pageData) {
 				}
 			}
 			@ui.Card(ui.CardProps{ID: "shared-result", Title: "Shared result configuration", Description: "Choose an authorized database, a read-only query, and a delivery preference."}) {
-				<form method="post" action="/api/v1/dashboard/subscriptions/attach" class="ts-form" aria-label="Save a shared view configuration">
-					<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
-					@ui.Field(ui.FieldProps{ID: "subscription-database", Label: "Database"}) {
-						<select class="ts-select" id="subscription-database" name="databaseId" disabled?={ len(d.Databases) == 0 }>
-							if len(d.Databases) == 0 {
-								<option value="">No databases available</option>
-							}
-							for _, db := range d.Databases {
-								<option value={ db.ID }>{ db.Name }</option>
-							}
-						</select>
-					}
-					@ui.Field(ui.FieldProps{ID: "subscription-name", Label: "View name", Hint: "Lowercase letters, digits, underscores, and hyphens."}) {
-						<input class="ts-input" id="subscription-name" name="name" pattern="[a-z][a-z0-9_\-]*" maxlength="64" required/>
-					}
-					@ui.Field(ui.FieldProps{ID: "subscription-query", Label: "Read-only SQL statement", Hint: "Demo accepts SELECT * FROM collection with an optional LIMIT up to 100."}) {
-						@ui.CodeEditor(ui.CodeEditorProps{ID: "subscription-query", Name: "query", Language: ui.CodeSQL, Value: "SELECT * FROM documents LIMIT 100", Rows: 5, Required: true})
-					}
-					@ui.Field(ui.FieldProps{ID: "subscription-transport", Label: "Delivery preference"}) {
-						<select class="ts-select" id="subscription-transport" name="transport"><option value="http">HTTP + CDN</option><option value="websocket">WebSocket</option></select>
-					}
-					<div class="ts-form-actions">
-						<button class="ts-btn ts-btn-primary" type="submit" disabled?={ len(d.Databases) == 0 }>Save configuration</button>
-					</div>
-				</form>
+				if d.CanWrite {
+					@attachForm(page, d)
+				} else {
+					<p class="ts-meta">Your role can view shared results but not change them. Ask a project member or admin to add one.</p>
+				}
 			}
 		</div>
 	</main>
+}
+
+templ configActions(page core.Page, config core.SharedResultConfig) {
+	<div class="ts-row ts-row-end">
+		if config.Status == "paused" {
+			<form method="post" action="/api/v1/dashboard/subscriptions/resume">
+				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+				<input type="hidden" name="configId" value={ config.ID }/>
+				<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit" aria-label={ "Resume " + config.Name }>Resume</button>
+			</form>
+		} else {
+			<form method="post" action="/api/v1/dashboard/subscriptions/pause">
+				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+				<input type="hidden" name="configId" value={ config.ID }/>
+				<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit" aria-label={ "Pause " + config.Name }>Pause</button>
+			</form>
+		}
+		<button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" command="show-modal" commandfor={ "detach-" + config.ID } aria-label={ "Detach " + config.Name }>Detach</button>
+	</div>
+	@ui.Dialog(ui.DialogProps{ID: "detach-" + config.ID, Title: "Detach " + config.Name + "?", Description: "This deletes the saved configuration. Clients reading the " + config.Name + " view stop receiving results."}) {
+		<form method="post" action="/api/v1/dashboard/subscriptions/detach" class="ts-form">
+			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+			<input type="hidden" name="configId" value={ config.ID }/>
+			@ui.DialogActions("detach-" + config.ID) {
+				<button class="ts-btn ts-btn-danger" type="submit">Detach view</button>
+			}
+		</form>
+	}
+}
+
+templ attachForm(page core.Page, d pageData) {
+	<form method="post" action="/api/v1/dashboard/subscriptions/attach" class="ts-form" aria-label="Save a shared view configuration">
+		<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+		if d.FormError != "" {
+			@ui.Alert("danger", "", d.FormError)
+		}
+		@ui.Field(ui.FieldProps{ID: "subscription-database", Label: "Database"}) {
+			<select class="ts-select" id="subscription-database" name="databaseId" disabled?={ len(d.Databases) == 0 }>
+				if len(d.Databases) == 0 {
+					<option value="">No databases available</option>
+				}
+				for _, db := range d.Databases {
+					<option value={ db.ID } selected?={ db.ID == d.Form.DatabaseID }>{ db.Name }</option>
+				}
+			</select>
+		}
+		@ui.Field(ui.FieldProps{ID: "subscription-name", Label: "View name", Hint: "Lowercase letters, digits, underscores, and hyphens, starting with a letter."}) {
+			<input class="ts-input" id="subscription-name" name="name" value={ d.Form.Name } pattern="[a-z][a-z0-9_\-]*" maxlength="64" required/>
+		}
+		@ui.Field(ui.FieldProps{ID: "subscription-query", Label: "Read-only SQL statement", Hint: "Demo accepts SELECT * FROM collection with an optional LIMIT up to 100."}) {
+			@ui.CodeEditor(ui.CodeEditorProps{ID: "subscription-query", Name: "query", Language: ui.CodeSQL, Value: d.Form.Query, Rows: 5, Required: true})
+		}
+		@ui.Field(ui.FieldProps{ID: "subscription-transport", Label: "Delivery preference"}) {
+			<select class="ts-select" id="subscription-transport" name="transport">
+				<option value="http">{ transportLabel("http") }</option>
+				<option value="websocket" selected?={ d.Form.Transport == "websocket" }>{ transportLabel("websocket") }</option>
+			</select>
+		}
+		<div class="ts-form-actions">
+			<button class="ts-btn ts-btn-primary" type="submit" disabled?={ len(d.Databases) == 0 }>@icons.Save(16)<span>Save configuration</span></button>
+		</div>
+	</form>
 }
 
 func databaseName(d pageData, databaseID string) string {
@@ -86,4 +141,25 @@ func configTone(status string) string {
 		return "success"
 	}
 	return "neutral"
+}
+
+func statusLabel(status string) string {
+	if status == "saved" {
+		return "active"
+	}
+	return status
+}
+
+func transportLabel(transport string) string {
+	if transport == "websocket" {
+		return "WebSocket"
+	}
+	return "HTTP + CDN"
+}
+
+func emptyDetail(canWrite bool) string {
+	if canWrite {
+		return "Save a read-only query to share its results."
+	}
+	return "Project members can save a read-only query to share its results."
 }

@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -54,6 +55,31 @@ func newPage(t *testing.T) playwright.Page {
 
 func watchedPage(t *testing.T, context playwright.BrowserContext) playwright.Page {
 	t.Helper()
+	return watchedPageExcept(t, context, nil)
+}
+
+// rejectedFormDocument matches the console error Chromium logs when a form
+// post is answered with the page again under a 4xx status.
+var rejectedFormDocument = regexp.MustCompile(`^Failed to load resource: the server responded with a status of 4\d\d `)
+
+// formErrorPage opens a page for tests that submit rejected forms on purpose
+// and assert the status of each post themselves.
+func formErrorPage(t *testing.T) playwright.Page {
+	t.Helper()
+	return watchedPageExcept(t, newContext(t, baseURL), func(message playwright.ConsoleMessage) bool {
+		location := message.Location()
+		if location == nil || !rejectedFormDocument.MatchString(message.Text()) {
+			return false
+		}
+		parsed, err := url.Parse(location.URL)
+		return err == nil && strings.HasPrefix(parsed.Path, "/api/v1/dashboard/")
+	})
+}
+
+// watchedPageExcept is watchedPage, except that console errors expected
+// reports are not failures.
+func watchedPageExcept(t *testing.T, context playwright.BrowserContext, expected func(playwright.ConsoleMessage) bool) playwright.Page {
+	t.Helper()
 	page, err := context.NewPage()
 	must(t, err)
 	var (
@@ -66,7 +92,7 @@ func watchedPage(t *testing.T, context playwright.BrowserContext) playwright.Pag
 		errors = append(errors, message)
 	}
 	page.OnConsole(func(message playwright.ConsoleMessage) {
-		if message.Type() == "error" {
+		if message.Type() == "error" && (expected == nil || !expected(message)) {
 			record("console: " + message.Text())
 		}
 	})
