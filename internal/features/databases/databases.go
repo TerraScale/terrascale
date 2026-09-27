@@ -26,202 +26,86 @@ func view(db core.Database) databaseView {
 	return databaseView{ID: db.ID, Name: db.Name, Status: db.Status, Region: db.Region, CreatedAt: db.CreatedAt}
 }
 
-// Mount owns the database lifecycle routes for the selected project.
+// Mount owns the database lifecycle routes and tools for the selected project.
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	mountBranch(mux, deps)
+	service := Service{deps: deps}
+	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /databases", func(w http.ResponseWriter, r *http.Request) { renderList(w, r, deps) })
 	mountDetail(mux, deps)
 	mux.HandleFunc("GET /api/v1/dashboard/databases", func(w http.ResponseWriter, r *http.Request) {
-		_, _, project, err := selected(deps, r)
+		p, ok := deps.Sessions.Principal(r)
+		if !ok {
+			writeError(w, core.ErrUnauthorized)
+			return
+		}
+		list, err := service.List(p)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		list := make([]databaseView, 0, len(project.Databases))
-		for _, db := range project.Databases {
-			list = append(list, view(db))
-		}
-		slices.SortFunc(list, func(a, b databaseView) int { return strings.Compare(a.Name, b.Name) })
 		core.WriteJSON(w, http.StatusOK, list)
 	})
-	createDatabase := func(w http.ResponseWriter, r *http.Request) {
-		if !deps.VerifyCSRF(w, r) {
+	mux.HandleFunc("POST /api/v1/dashboard/databases", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := deps.FormPrincipal(w, r)
+		if !ok {
 			return
 		}
-		p, _, project, err := selected(deps, r)
+		name, region := strings.TrimSpace(r.FormValue("name")), r.FormValue("region")
+		db, err := service.Create(r.Context(), p, name, region)
 		if err != nil {
-			writeError(w, err)
+			// Reopen the create dialog with the error and the input.
+			status, code := failure(err, ErrInvalidName)
+			FormFailed(w, r, status, "/databases", code, url.Values{"create": {"1"}, "name": {name}, "region": {region}})
 			return
-		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid form", http.StatusBadRequest)
-			return
-		}
-		name := strings.TrimSpace(r.FormValue("name"))
-		regionValue := r.FormValue("region")
-		_, hasRegion := r.Form["region"]
-		if r.URL.Path == "/api/v1/dashboard/databases/create" && !hasRegion {
-			regionValue = project.Region
-		}
-		// failed reopens the create dialog with the error and the input.
-		failed := func(status int, code string) {
-			FormFailed(w, r, status, "/databases", code, url.Values{"create": {"1"}, "name": {name}, "region": {regionValue}})
-		}
-		region, err := sdk.ParseRegionCode(regionValue)
-		if !core.ValidDatabaseName(name) || err != nil {
-			failed(http.StatusBadRequest, ErrInvalidName)
-			return
-		}
-		db := core.Database{ID: core.NewID("db"), ProjectID: p.ProjectID, Name: name, Region: string(region), Status: "provisioning", CreatedAt: time.Now().UTC(), Documents: make(map[string]map[string][]byte)}
-		if deps.Demo {
-			db.Status = "ready"
-		}
-		err = deps.Store.UpdateAs(p, func(a *core.Account) error {
-			project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-			if err != nil {
-				return err
-			}
-			org := a.Organizations[p.OrganizationID]
-			if !org.CanProvisionResources(p.UserID) {
-				return core.ErrForbidden
-			}
-			for _, existing := range project.Databases {
-				if existing.Name == name {
-					return core.ErrConflict
-				}
-			}
-			if project.Databases == nil {
-				project.Databases = make(map[string]core.Database)
-			}
-			project.Databases[db.ID] = db
-			org.Projects[p.ProjectID] = project
-			a.Organizations[p.OrganizationID] = org
-			return nil
-		})
-		if err != nil {
-			failed(failure(err))
-			return
-		}
-		if !deps.Demo {
-			if deps.SDK == nil {
-				setStatus(deps, p, db.ID, "failed")
-				failed(http.StatusServiceUnavailable, ErrUnavailable)
-				return
-			}
-			client, err := deps.SDK.ForScope(p.OrganizationID, p.ProjectID)
-			if err != nil {
-				setStatus(deps, p, db.ID, "failed")
-				failed(http.StatusServiceUnavailable, ErrUnavailable)
-				return
-			}
-			operationID := db.ID
-			result, err := client.Databases.CreateDatabase(r.Context(), sdk.CreateDatabaseRequest{Name: name, Placement: []sdk.RegionCode{region}, OperationID: operationID}, sdk.WithIdempotencyKey(operationID))
-			if err != nil {
-				setStatus(deps, p, db.ID, "failed")
-				failed(http.StatusBadGateway, ErrProvider)
-				return
-			}
-			if result.Operation != nil {
-				db.Status = result.Operation.State
-			} else if result.Database != nil {
-				db.Status = "ready"
-			} else {
-				setStatus(deps, p, db.ID, "failed")
-				failed(http.StatusBadGateway, ErrProvider)
-				return
-			}
-			if err := setStatus(deps, p, db.ID, db.Status); err != nil {
-				failed(failure(err))
-				return
-			}
 		}
 		if core.WantsHTML(r) {
-			http.Redirect(w, r, "/databases/"+db.ID, http.StatusSeeOther)
+			http.Redirect(w, r, "/databases/"+url.PathEscape(db.ID), http.StatusSeeOther)
 			return
 		}
-		core.WriteJSON(w, http.StatusCreated, view(db))
-	}
-	mux.HandleFunc("POST /api/v1/dashboard/databases", createDatabase)
-	mux.HandleFunc("POST /api/v1/dashboard/databases/create", createDatabase)
-	deleteDatabase := func(w http.ResponseWriter, r *http.Request) {
-		if !deps.VerifyCSRF(w, r) {
+		core.WriteJSON(w, http.StatusCreated, db)
+	})
+	mux.HandleFunc("POST /api/v1/dashboard/databases/branch", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := deps.FormPrincipal(w, r)
+		if !ok {
 			return
 		}
-		p, _, project, err := selected(deps, r)
-		if err != nil {
+		sourceID := r.FormValue("databaseId")
+		branch, err := service.Branch(r.Context(), p, sourceID, r.FormValue("name"))
+		if errors.Is(err, core.ErrNotFound) {
+			// The source database, and so its branches tab, is gone.
 			writeError(w, err)
 			return
 		}
-		if !deps.Store.Can(p, core.Organization.CanManage) {
-			writeError(w, core.ErrForbidden)
-			return
-		}
-		id := r.PathValue("databaseID")
-		if r.Method == http.MethodPost {
-			if err := r.ParseForm(); err != nil {
-				http.Error(w, "invalid form", http.StatusBadRequest)
-				return
-			}
-			id = r.FormValue("databaseId")
-		}
-		db, ok := project.Databases[id]
-		if !ok {
-			writeError(w, core.ErrNotFound)
-			return
-		}
-		// failed reopens the delete dialog with the error.
-		failed := func(status int, code string) {
-			FormFailed(w, r, status, TabPath(db.ID, "overview", nil), code, url.Values{"delete": {"1"}})
-		}
-		if r.Method == http.MethodPost {
-			confirmation := r.FormValue("confirmName")
-			if _, hasConfirmName := r.Form["confirmName"]; !hasConfirmName {
-				confirmation = strings.TrimSpace(r.FormValue("confirm"))
-			}
-			if confirmation != db.Name {
-				failed(http.StatusBadRequest, ErrConfirmName)
-				return
-			}
-		}
-		if provisioning(db.Status) {
-			failed(http.StatusConflict, ErrProvisioning)
-			return
-		}
-		if !deps.Demo {
-			if deps.SDK == nil {
-				failed(http.StatusServiceUnavailable, ErrUnavailable)
-				return
-			}
-			client, err := deps.SDK.ForScope(p.OrganizationID, p.ProjectID)
-			if err != nil {
-				failed(http.StatusServiceUnavailable, ErrUnavailable)
-				return
-			}
-			opID := core.NewID("del")
-			if _, err := client.Databases.DeleteDatabase(r.Context(), db.Name, sdk.WithIdempotencyKey(opID), sdk.WithDeleteConfirmation(db.Name)); err != nil {
-				failed(http.StatusBadGateway, ErrProvider)
-				return
-			}
-		}
-		err = deps.Store.UpdateAs(p, func(a *core.Account) error {
-			project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-			if err != nil {
-				return err
-			}
-			if !a.Organizations[p.OrganizationID].CanManage(p.UserID) {
-				return core.ErrForbidden
-			}
-			if _, ok := project.Databases[db.ID]; !ok {
-				return core.ErrNotFound
-			}
-			project.RemoveDatabase(db.ID, time.Now().UTC())
-			org := a.Organizations[p.OrganizationID]
-			org.Projects[p.ProjectID] = project
-			a.Organizations[p.OrganizationID] = org
-			return nil
-		})
 		if err != nil {
-			failed(failure(err))
+			status, code := failure(err, ErrInvalidName)
+			FormFailed(w, r, status, TabPath(sourceID, "branches", nil), code, nil)
+			return
+		}
+		if core.WantsHTML(r) {
+			http.Redirect(w, r, "/databases/"+url.PathEscape(branch.ID), http.StatusSeeOther)
+			return
+		}
+		core.WriteJSON(w, http.StatusCreated, branch)
+	})
+	mux.HandleFunc("POST /api/v1/dashboard/databases/delete", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := deps.FormPrincipal(w, r)
+		if !ok {
+			return
+		}
+		databaseID := r.FormValue("databaseId")
+		confirmation := r.FormValue("confirmName")
+		if _, hasConfirmName := r.Form["confirmName"]; !hasConfirmName {
+			confirmation = strings.TrimSpace(r.FormValue("confirm"))
+		}
+		err := service.Delete(r.Context(), p, databaseID, confirmation)
+		if errors.Is(err, core.ErrNotFound) {
+			writeError(w, err)
+			return
+		}
+		if err != nil {
+			// Reopen the delete dialog with the error.
+			status, code := failure(err, ErrConfirmName)
+			FormFailed(w, r, status, TabPath(databaseID, "overview", nil), code, url.Values{"delete": {"1"}})
 			return
 		}
 		if core.WantsHTML(r) {
@@ -229,9 +113,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-	}
-	mux.HandleFunc("DELETE /api/v1/dashboard/databases/{databaseID}", deleteDatabase)
-	mux.HandleFunc("POST /api/v1/dashboard/databases/delete", deleteDatabase)
+	})
 }
 
 type pageData struct {
@@ -368,28 +250,17 @@ func selected(deps core.Deps, r *http.Request) (core.Principal, core.Account, co
 	return p, a, project, err
 }
 
-func setStatus(deps core.Deps, p core.Principal, databaseID, status string) error {
-	return deps.Store.UpdateAs(p, func(a *core.Account) error {
-		project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-		if err != nil {
-			return err
-		}
-		db, ok := project.Databases[databaseID]
-		if !ok {
-			return core.ErrNotFound
-		}
-		db.Status = status
-		project.Databases[databaseID] = db
-		org := a.Organizations[p.OrganizationID]
-		org.Projects[p.ProjectID] = project
-		a.Organizations[p.OrganizationID] = org
-		return nil
-	})
-}
-
-// failure maps an error from a database change to its status and error code.
-func failure(err error) (int, string) {
+// failure maps an error from a database change to its status and error
+// code. invalid is the code for the form's own input being rejected.
+func failure(err error, invalid string) (int, string) {
+	var provider core.ProviderError
 	switch {
+	case errors.Is(err, core.ErrInvalid):
+		return http.StatusBadRequest, invalid
+	case errors.Is(err, errNotReady):
+		return http.StatusConflict, ErrNotReady
+	case errors.Is(err, errProvisioning):
+		return http.StatusConflict, ErrProvisioning
 	case errors.Is(err, core.ErrDatabaseLimit):
 		return http.StatusConflict, ErrPlanLimit
 	case errors.Is(err, core.ErrConflict):
@@ -398,6 +269,8 @@ func failure(err error) (int, string) {
 		return http.StatusForbidden, ErrForbidden
 	case errors.Is(err, core.ErrNotFound):
 		return http.StatusNotFound, ErrMissing
+	case errors.As(err, &provider):
+		return http.StatusBadGateway, ErrProvider
 	default:
 		return http.StatusServiceUnavailable, ErrUnavailable
 	}

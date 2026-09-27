@@ -34,7 +34,7 @@ func newDatabaseRoutes(t *testing.T) databaseRoutes {
 	}
 	sessions := session.New(store, session.Options{})
 	guard := csrf.New(sessions, csrf.Options{})
-	deps := core.Deps{Store: store, Sessions: sessions, CSRF: guard, Demo: true}
+	deps := core.Deps{Store: store, Sessions: sessions, CSRF: guard, Tools: core.NewTools(store), Demo: true}
 	mux := http.NewServeMux()
 	databases.Mount(mux, deps)
 	backups.Mount(mux, deps)
@@ -89,7 +89,7 @@ func TestDatabaseRoutesKeepThePlanDatabaseLimit(t *testing.T) {
 		{"/api/v1/dashboard/databases", url.Values{"name": {"second"}, "region": {"GRU"}}},
 		{"/api/v1/dashboard/databases/branch", url.Values{"databaseId": {databaseID}, "name": {"first-branch"}}},
 		{"/api/v1/dashboard/backups/restore", url.Values{"databaseId": {databaseID}, "backupId": {backupID}, "name": {"first-restore"}}},
-		{"/api/v1/dashboard/settings/restore", url.Values{"generation": {backupID}}},
+		{"/api/v1/dashboard/settings/restore", url.Values{"databaseId": {databaseID}, "backupId": {backupID}}},
 	} {
 		status, body := routes.serve(http.MethodPost, attempt.path, attempt.form)
 		if status != http.StatusConflict || !strings.Contains(body, "database limit") {

@@ -92,7 +92,8 @@ type organizationPageData struct {
 
 // Mount registers organization, project, and organization-scope routes.
 func Mount(mux *http.ServeMux, deps core.Deps) {
-	service := NewService(deps.Store)
+	service := NewService(deps.Store, deps.Sessions)
+	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /organization", organizationPage(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/organization/new-organization", newOrganization(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/switch-organization", switchOrganization(deps, service))

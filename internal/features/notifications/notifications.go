@@ -3,9 +3,7 @@ package notifications
 
 import (
 	"net/http"
-	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/a-h/templ"
 
@@ -29,38 +27,19 @@ type pageData struct {
 	HasNext       bool
 }
 
-// Mount registers the notification inbox and its read mutations.
+// Mount registers the notification inbox, its read mutations, and tools.
 func Mount(mux *http.ServeMux, deps core.Deps) {
+	service := Service{store: deps.Store}
+	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /notifications", func(w http.ResponseWriter, r *http.Request) {
-		p, account, ok := signedIn(deps, w, r)
+		p, ok := principal(deps, w, r)
 		if !ok {
 			return
 		}
-		all := slices.DeleteFunc(slices.Clone(account.Notifications), func(n core.Notification) bool { return !n.VisibleTo(p) })
-		total, unread, critical := len(all), 0, 0
-		for _, item := range all {
-			if item.Unread() {
-				unread++
-				if strings.EqualFold(item.Severity, "danger") || strings.EqualFold(item.Severity, "critical") {
-					critical++
-				}
-			}
-		}
-		status := "all"
-		if strings.EqualFold(r.URL.Query().Get("status"), "unread") {
-			status = "unread"
-			all = slices.DeleteFunc(all, func(n core.Notification) bool { return !n.Unread() })
-		}
-		slices.SortFunc(all, func(a, b core.Notification) int { return b.CreatedAt.Compare(a.CreatedAt) })
-		count := len(all)
-		pages := max(1, (count+pageSize-1)/pageSize)
-		page := core.ClampPage(r.URL.Query().Get("page"), pages)
-		start := (page - 1) * pageSize
-		end := min(start+pageSize, count)
-		data := pageData{
-			Notifications: all[start:end], Status: status, Unread: unread, Critical: critical,
-			Total: total, FilteredCount: count, Page: page, PageCount: pages,
-			Previous: max(1, page-1), Next: min(pages, page+1), HasPrevious: page > 1, HasNext: page < pages,
+		data, err := service.Inbox(p, r.URL.Query().Get("status"), r.URL.Query().Get("page"))
+		if err != nil {
+			writeError(w, err)
+			return
 		}
 		render(w, r, deps, p, data)
 	})
@@ -73,17 +52,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		id := r.PathValue("notificationID")
-		err := deps.Store.UpdateAs(p, func(account *core.Account) error {
-			for i := range account.Notifications {
-				if account.Notifications[i].ID == id && account.Notifications[i].VisibleTo(p) {
-					account.Notifications[i].Status = "read"
-					return nil
-				}
-			}
-			return core.ErrNotFound
-		})
-		if err != nil {
+		if _, err := service.MarkRead(p, r.PathValue("notificationID")); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -98,40 +67,12 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		err := deps.Store.UpdateAs(p, func(account *core.Account) error {
-			for i := range account.Notifications {
-				if account.Notifications[i].VisibleTo(p) {
-					account.Notifications[i].Status = "read"
-				}
-			}
-			return nil
-		})
-		if err != nil {
+		if _, err := service.MarkAllRead(p); err != nil {
 			writeError(w, err)
 			return
 		}
 		http.Redirect(w, r, returnHref(r), http.StatusSeeOther)
 	})
-}
-
-// returnHref is the inbox view a mark-read form was posted from, so readers
-// keep their filter and page.
-func returnHref(r *http.Request) string {
-	page, _ := strconv.Atoi(r.PostFormValue("page"))
-	return pageHref(page, r.PostFormValue("status"))
-}
-
-func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Principal, core.Account, bool) {
-	p, ok := principal(deps, w, r)
-	if !ok {
-		return core.Principal{}, core.Account{}, false
-	}
-	account, err := deps.Store.SnapshotAs(p)
-	if err != nil {
-		writeError(w, err)
-		return core.Principal{}, core.Account{}, false
-	}
-	return p, account, true
 }
 
 func principal(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Principal, bool) {
@@ -161,4 +102,11 @@ func writeError(w http.ResponseWriter, err error) {
 	if !core.WriteAccessError(w, err) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
+}
+
+// returnHref is the inbox view a mark-read form was posted from, so readers
+// keep their filter and page.
+func returnHref(r *http.Request) string {
+	page, _ := strconv.Atoi(r.PostFormValue("page"))
+	return pageHref(page, r.PostFormValue("status"))
 }

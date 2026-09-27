@@ -154,7 +154,7 @@ templ detailBackups(page core.Page, d detailData) {
 						<input class="ts-input ts-mono" id="incremental-cron" name="incrementalBackupCron" value={ policyValue(d, d.Refill.IncrementalCron, d.Info.BackupPolicy.IncrementalBackupCron) } placeholder="0 * * * *"/>
 					}
 					@ui.Field(ui.FieldProps{ID: "retention", Label: "Retention days"}) {
-						<input class="ts-input" id="retention" name="retentionDays" type="number" min="1" max="365" value={ policyValue(d, d.Refill.Retention, backupRetentionDays(d.Info.BackupPolicy.RetentionDays)) } required/>
+						<input class="ts-input" id="retention" name="retentionDays" type="number" min="1" max="35" value={ policyValue(d, d.Refill.Retention, backupRetentionDays(d.Info.BackupPolicy.RetentionDays)) } required/>
 					}
 					<div class="ts-form-actions">
 						<button class="ts-btn ts-btn-primary" type="submit">Save policy</button>

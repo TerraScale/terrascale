@@ -20,6 +20,29 @@ func (d Deps) VerifyCSRF(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// FormPrincipal verifies a form post's CSRF token and session, then parses
+// its form. It writes the response and reports false when the handler must
+// stop; signed-out browsers are sent to the login page.
+func (d Deps) FormPrincipal(w http.ResponseWriter, r *http.Request) (Principal, bool) {
+	if !d.VerifyCSRF(w, r) {
+		return Principal{}, false
+	}
+	p, ok := d.Sessions.Principal(r)
+	if !ok {
+		if WantsHTML(r) {
+			RedirectToLogin(w, r)
+		} else {
+			WriteAccessError(w, ErrUnauthorized)
+		}
+		return Principal{}, false
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return Principal{}, false
+	}
+	return p, true
+}
+
 // WriteAccessError writes the plain-text response for authentication,
 // authorization, and missing-resource errors. It writes nothing and reports
 // false for any other error, which the feature maps itself.
@@ -95,4 +118,17 @@ func ClampPage(raw string, pages int) int {
 		return 1
 	}
 	return min(page, pages)
+}
+
+// MCPPath is where the dashboard serves its MCP endpoint.
+const MCPPath = "/mcp"
+
+// MCPEndpoint returns the absolute MCP endpoint URL for the request's host.
+// TLS terminates at the Fly proxy, which reports the scheme it served.
+func MCPEndpoint(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host + MCPPath
 }

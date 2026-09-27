@@ -19,8 +19,8 @@ import (
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/demovisuals"
 	"terrascale.tech/dashboard/internal/features/payments"
+	"terrascale.tech/dashboard/internal/features/subscriptions"
 	"terrascale.tech/dashboard/internal/ui/charts"
-	sdk "terrascale.tech/sdk"
 )
 
 var amountPattern = regexp.MustCompile(`^\d+(?:\.\d{1,2})?$`)
@@ -109,8 +109,6 @@ type invoicePage struct {
 	First         int
 }
 
-const invoicePageSize = 10
-
 type pageData struct {
 	Tab                   string
 	Projects              []projectRow
@@ -147,7 +145,6 @@ type pageData struct {
 	BillingStatus         string
 	BillingRenewal        time.Time
 	BillingSummary        billingSummary
-	Invoices              []invoiceRow
 	InvoicePage           invoicePage
 	Requests              int64
 	Reads                 int64
@@ -184,9 +181,11 @@ type limitWarning struct {
 	Title, Detail string
 }
 
-// Mount registers the usage page and spending controls. billing is nil in
-// demo mode.
+// Mount registers the usage page, spending controls, and their tools.
+// billing is nil in demo mode.
 func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
+	service := Service{deps: deps}
+	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /usage", func(w http.ResponseWriter, r *http.Request) {
 		p, account, ok := signedIn(deps, w, r)
 		if !ok {
@@ -216,7 +215,7 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		if _, exists := project.Databases[databaseFilter]; !exists {
 			databaseFilter = ""
 		}
-		data := buildPage(r.Context(), deps, p, org, project, tab, databaseFilter)
+		data := buildPage(r.Context(), service, p, org, project, tab, databaseFilter)
 		data.ExplicitProjectFilter = r.URL.Query().Get("project") == project.ID
 		data.HistoryRange = demovisuals.NormalizeRange(r.URL.Query().Get("range"))
 		data.HistoryRangeLabel = demovisuals.RangeLabel(data.HistoryRange)
@@ -225,7 +224,7 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		}
 		now := time.Now().UTC()
 		data.InvoicePage = makeInvoicePage(
-			data.Invoices,
+			org.Billing.Invoices,
 			r.URL.Query().Get("status"),
 			r.URL.Query().Get("issued"),
 			r.URL.Query().Get("page"),
@@ -293,16 +292,11 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		if !deps.VerifyCSRF(w, r) {
 			return
 		}
-		p, account, ok := signedIn(deps, w, r)
+		p, _, ok := signedIn(deps, w, r)
 		if !ok {
 			return
 		}
-		org, exists := account.Organizations[p.OrganizationID]
-		if !exists {
-			http.Error(w, "selected organization is unavailable", http.StatusForbidden)
-			return
-		}
-		if !canManage(org, p.UserID) {
+		if !deps.Store.Can(p, core.Organization.CanManage) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -310,65 +304,25 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
+		var controls spendingControls
 		organizationCap, hasOrganizationCap, valid := formCap(r.Form, "spendCap")
 		if !valid {
 			redirect(w, r, "invalid")
 			return
 		}
-		projectCaps, valid := capsFromForm(r.Form, "projCap_")
-		if !valid {
+		if hasOrganizationCap {
+			paidExcess := r.FormValue("paidExcess") == "true" || r.FormValue("paidExcess") == "on"
+			controls.OrganizationCapCents, controls.PaidExcess = &organizationCap, &paidExcess
+		}
+		if controls.ProjectCaps, valid = capsFromForm(r.Form, "projCap_"); !valid {
 			redirect(w, r, "invalid")
 			return
 		}
-		databaseCaps, valid := capsFromForm(r.Form, "dbCap_")
-		if !valid {
+		if controls.DatabaseCaps, valid = capsFromForm(r.Form, "dbCap_"); !valid {
 			redirect(w, r, "invalid")
 			return
 		}
-		err := deps.Store.UpdateAs(p, func(current *core.Account) error {
-			org, err := current.OrganizationFor(p, p.OrganizationID)
-			if err != nil {
-				return err
-			}
-			if !canManage(org, p.UserID) {
-				return core.ErrForbidden
-			}
-			if hasOrganizationCap {
-				org.Billing.SpendCapCents = organizationCap
-				org.Billing.PaidExcessEnabled = r.FormValue("paidExcess") == "true" || r.FormValue("paidExcess") == "on"
-			}
-			for projectID, cap := range projectCaps {
-				project, exists := org.Projects[projectID]
-				if !exists {
-					return core.ErrNotFound
-				}
-				project.SpendCapCents = cap
-				org.Projects[projectID] = project
-			}
-			for databaseID, cap := range databaseCaps {
-				found := false
-				for projectID, project := range org.Projects {
-					database, exists := project.Databases[databaseID]
-					if !exists {
-						continue
-					}
-					database.SpendCapCents = cap
-					project.Databases[databaseID] = database
-					org.Projects[projectID] = project
-					found = true
-					break
-				}
-				if !found {
-					return core.ErrNotFound
-				}
-			}
-			current.Organizations[org.ID] = org
-			if hasOrganizationCap || len(projectCaps) > 0 || len(databaseCaps) > 0 {
-				record(current, p, "usage.spending_controls_updated", org.Name)
-			}
-			return nil
-		})
-		if err != nil {
+		if err := service.SetSpendingControls(p, controls); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -531,215 +485,81 @@ func planName(store *core.Store, key string) string {
 	return key
 }
 
-func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.Organization, project core.Project, tab, databaseFilter string) pageData {
-	projects := make([]projectRow, 0, len(org.Projects))
+func buildPage(ctx context.Context, service Service, p core.Principal, org core.Organization, project core.Project, tab, databaseFilter string) pageData {
+	report := service.report(ctx, p, org, project, databaseFilter)
+	projects := make([]projectRow, 0, len(report.Projects))
+	for _, item := range report.Projects {
+		projects = append(projects, projectRow{
+			ID: item.ID, Name: item.Name, Region: item.Region, DatabaseCount: item.DatabaseCount,
+			SpendCap: dollars(item.SpendCapCents), Effective: capLabel(item.EffectiveCapCents), Selected: item.Selected,
+			StoredBytes: item.StoredBytes, StoredSize: formatStoredBytes(item.StoredBytes), SharePercent: item.SharePercent,
+		})
+	}
+	databases := make([]databaseRow, 0, len(report.Databases))
+	for _, item := range report.Databases {
+		databases = append(databases, databaseRow{
+			ID: item.ID, Name: item.Name, Region: item.Region, SpendCap: dollars(item.SpendCapCents), Effective: capLabel(item.EffectiveCapCents),
+			Status: item.Status, Documents: item.Documents, StoredBytes: item.StoredBytes, StoredSize: formatStoredBytes(item.StoredBytes), SharePercent: item.SharePercent,
+		})
+	}
 	databaseOptions := make([]databaseOption, 0, len(project.Databases))
-	selectedDatabases := make([]databaseRow, 0, len(project.Databases))
-	regions := make(map[string]struct{})
-	for _, item := range org.Projects {
-		region := item.Region
-		if strings.TrimSpace(region) == "" {
-			region = "Not configured"
-		}
-		row := projectRow{ID: item.ID, Name: item.Name, Region: region, DatabaseCount: len(item.Databases), SpendCap: dollars(item.SpendCapCents), Selected: item.ID == project.ID}
-		for _, database := range item.Databases {
-			row.StoredBytes += storedDocumentBytes(database)
-		}
-		row.StoredSize = formatStoredBytes(row.StoredBytes)
-		row.Effective = effectiveCap(org.Billing.SpendCapCents, item.SpendCapCents)
-		projects = append(projects, row)
-	}
 	for _, database := range project.Databases {
-		if database.Region != "" {
-			regions[database.Region] = struct{}{}
-		}
 		databaseOptions = append(databaseOptions, databaseOption{ID: database.ID, Name: database.Name})
-		if databaseFilter != "" && database.ID != databaseFilter {
-			continue
-		}
-		storedBytes := storedDocumentBytes(database)
-		selectedDatabases = append(selectedDatabases, databaseRow{
-			ID: database.ID, Name: database.Name, Region: database.Region,
-			SpendCap: dollars(database.SpendCapCents), Effective: effectiveCap(org.Billing.SpendCapCents, project.SpendCapCents, database.SpendCapCents),
-			Status: database.Status, Documents: documentCount(database), StoredBytes: storedBytes, StoredSize: formatStoredBytes(storedBytes),
-		})
 	}
-	var projectStoredBytes, databaseStoredBytes int64
-	for _, item := range projects {
-		projectStoredBytes += item.StoredBytes
-	}
-	for i := range projects {
-		projects[i].SharePercent = sharePercent(projects[i].StoredBytes, projectStoredBytes)
-	}
-	for _, item := range selectedDatabases {
-		databaseStoredBytes += item.StoredBytes
-	}
-	for i := range selectedDatabases {
-		selectedDatabases[i].SharePercent = sharePercent(selectedDatabases[i].StoredBytes, databaseStoredBytes)
-	}
-	slices.SortFunc(projects, func(a, b projectRow) int { return strings.Compare(a.Name, b.Name) })
 	slices.SortFunc(databaseOptions, func(a, b databaseOption) int { return strings.Compare(a.Name, b.Name) })
-	slices.SortFunc(selectedDatabases, func(a, b databaseRow) int { return strings.Compare(a.Name, b.Name) })
-	planName, storageAllowance, requestAllowance := "No billing plan", "Not configured", "Not configured"
-	if plan, ok := deps.Store.Plan(org.PlanID); ok {
-		planName = plan.Name
-		storageAllowance = plan.StorageAllowance()
-		requestAllowance = plan.OperationsAllowance()
+	return pageData{
+		Tab: tab, Projects: projects, DatabaseOptions: databaseOptions, Databases: databases, SelectedProject: project.ID,
+		SelectedDatabase: databaseFilter, OrganizationCap: dollars(report.SpendCapCents),
+		PaidExcess: report.PaidExcessEnabled, EffectiveCap: capLabel(report.ProjectEffectiveCapCents),
+		PlanName: report.PlanName, PlanStorageAllowance: report.PlanStorageAllowance, PlanRequestAllowance: report.PlanRequestAllowance,
+		PlanUsageNote: report.PlanUsageNote, BillingStatus: org.BillingStatus, BillingRenewal: org.BillingRenewal,
+		BillingSummary:  summarizeBilling(org.Billing.Invoices, time.Now().UTC()),
+		InvoiceCount:    len(org.Billing.Invoices),
+		ActiveDatabases: report.ActiveDatabases, RegionCount: report.RegionCount, CanManage: report.CanManage,
+		Requests: report.Totals.Requests, Reads: report.Totals.Reads, Writes: report.Totals.Writes,
+		StorageByteSeconds: report.Totals.StorageByteSeconds, UsageSource: report.Totals.Source,
+		UsageError: report.Totals.Error, UsageAvailable: report.Totals.Available,
 	}
-	invoices := make([]invoiceRow, 0, len(org.Billing.Invoices))
-	for _, invoice := range org.Billing.Invoices {
-		invoices = append(invoices, invoiceRow{
-			Number: invoice.Number, Status: invoice.Status,
-			Amount:    fmt.Sprintf("%s %d.%02d", strings.ToUpper(invoice.Currency), invoice.AmountCents/100, invoice.AmountCents%100),
-			CreatedAt: invoice.CreatedAt, PeriodStart: invoice.PeriodStart, PeriodEnd: invoice.PeriodEnd,
-			HostedURL: httpsInvoiceURL(invoice.HostedURL), PDFURL: httpsInvoiceURL(invoice.PDFURL),
-		})
-	}
-	slices.SortStableFunc(invoices, func(a, b invoiceRow) int { return b.CreatedAt.Compare(a.CreatedAt) })
-	data := pageData{
-		Tab: tab, Projects: projects, DatabaseOptions: databaseOptions, Databases: selectedDatabases, SelectedProject: project.ID,
-		SelectedDatabase: databaseFilter, OrganizationCap: dollars(org.Billing.SpendCapCents),
-		PaidExcess: org.Billing.PaidExcessEnabled, EffectiveCap: effectiveCap(org.Billing.SpendCapCents, project.SpendCapCents),
-		PlanName: planName, PlanStorageAllowance: storageAllowance, PlanRequestAllowance: requestAllowance,
-		PlanUsageNote: "Provider totals have no billing-period attribution, so allowance utilization is unavailable.",
-		BillingStatus: org.BillingStatus, BillingRenewal: org.BillingRenewal,
-		BillingSummary: summarizeBilling(org.Billing.Invoices, time.Now().UTC()),
-		Invoices:       invoices, InvoiceCount: len(invoices),
-		ActiveDatabases: len(project.Databases), RegionCount: len(regions), CanManage: canManage(org, p.UserID),
-	}
-	if deps.Demo {
-		data.UsageSource = "Sample dashboard data; these values are not provider-metered usage."
-		data.PlanUsageNote = "Demo mode has no measured usage feed, so allowance utilization is unavailable."
-		data.Writes = int64(localDocuments(project, databaseFilter))
-		data.UsageAvailable = true
-		return data
-	}
-	if project.ID == "" {
-		return data
-	}
-	if deps.SDK == nil {
-		data.UsageSource = "Live usage provider is not configured."
-		data.UsageError = "Usage totals are unavailable until the ts-go provider is connected."
-		data.PlanUsageNote = "The usage provider is not configured, so allowance utilization is unavailable."
-		return data
-	}
-	client, err := deps.SDK.ForScope(p.OrganizationID, project.ID)
-	if err != nil {
-		data.UsageSource = "Live usage provider could not be reached."
-		data.UsageError = "Usage totals are unavailable for this project."
-		data.PlanUsageNote = "The usage provider could not be reached, so allowance utilization is unavailable."
-		return data
-	}
-	data.UsageSource = "Live usage facts from TerraScale."
-	usageFetched := len(project.Databases) == 0
-	for _, database := range project.Databases {
-		if databaseFilter != "" && database.ID != databaseFilter {
-			continue
-		}
-		usage, err := client.Usage.GetDatabaseUsage(ctx, database.Name)
-		if err != nil {
-			data.UsageError = "Some database usage could not be loaded."
-			continue
-		}
-		usageFetched = true
-		for _, meter := range usage.Meters {
-			value, err := strconv.ParseInt(meter.Units, 10, 64)
-			if err != nil || value < 0 {
-				data.UsageError = "The provider returned an invalid usage meter."
-				continue
-			}
-			switch meter.Meter {
-			case sdk.MeterDocumentWriteUnits:
-				if !addUsage(&data.Writes, value) {
-					data.UsageError = "The provider reported more writes than this page can display."
-				}
-			case sdk.MeterStorageByteSeconds:
-				if !addUsage(&data.StorageByteSeconds, value) {
-					data.UsageError = "The provider reported more storage activity than this page can display."
-				}
-			}
-		}
-		if usage.Reads.TotalReads > uint64(math.MaxInt64-data.Reads) {
-			data.UsageError = "The provider reported more reads than this page can display."
-		} else {
-			data.Reads += int64(usage.Reads.TotalReads)
-		}
-	}
-	if !addUsage(&data.Requests, data.Reads) || !addUsage(&data.Requests, data.Writes) {
-		data.Requests = math.MaxInt64
-		data.UsageError = "The provider reported more operations than this page can display."
-	}
-	data.UsageAvailable = usageFetched
-	return data
 }
 
-func makeInvoicePage(invoices []invoiceRow, rawStatus, rawIssued, rawPage string, now time.Time) invoicePage {
+// makeInvoicePage pages invoices for the billing tab. Filter values the
+// page doesn't offer are ignored rather than rejected.
+func makeInvoicePage(invoices []core.Invoice, rawStatus, rawIssued, rawPage string, now time.Time) invoicePage {
 	statusOptions := []invoiceFilterOption{
 		{Value: "paid", Label: "Paid"},
 		{Value: "open", Label: "Open"},
 		{Value: "void", Label: "Void"},
 	}
-	status := ""
-	for _, option := range statusOptions {
-		if option.Value == rawStatus {
-			status = rawStatus
-			break
-		}
-	}
-
 	issuedOptions := invoiceIssuedOptions(now)
-	issued := ""
-	for _, option := range issuedOptions {
-		if option.Value == rawIssued {
-			issued = rawIssued
-			break
+	offered := func(options []invoiceFilterOption, value string) string {
+		if slices.ContainsFunc(options, func(option invoiceFilterOption) bool { return option.Value == value }) {
+			return value
 		}
+		return ""
 	}
-
-	cutoff := time.Time{}
-	issuedYear := 0
-	switch issued {
-	case "3m":
-		cutoff = now.AddDate(0, -3, 0)
-	case "6m":
-		cutoff = now.AddDate(0, -6, 0)
-	case "12m":
-		cutoff = now.AddDate(0, -12, 0)
-	case "":
-	default:
-		issuedYear, _ = strconv.Atoi(issued)
+	status, issued := offered(statusOptions, rawStatus), offered(issuedOptions, rawIssued)
+	number, err := strconv.Atoi(rawPage)
+	if err != nil {
+		number = 1
 	}
-
-	filtered := slices.DeleteFunc(slices.Clone(invoices), func(invoice invoiceRow) bool {
-		if status != "" && invoice.Status != status {
-			return true
-		}
-		if issued == "" {
-			return false
-		}
-		if issuedYear != 0 {
-			return invoice.CreatedAt.UTC().Year() != issuedYear
-		}
-		return invoice.CreatedAt.Before(cutoff)
-	})
-	slices.SortStableFunc(filtered, func(a, b invoiceRow) int { return b.CreatedAt.Compare(a.CreatedAt) })
-
-	pageCount := max(1, (len(filtered)+invoicePageSize-1)/invoicePageSize)
-	page, err := strconv.Atoi(rawPage)
-	if err != nil || page < 1 {
-		page = 1
+	found, _ := subscriptions.PageInvoices(invoices, status, issued, number, now)
+	rows := make([]invoiceRow, 0, len(found.Invoices))
+	for _, invoice := range found.Invoices {
+		rows = append(rows, invoiceRow{
+			Number: invoice.Number, Status: invoice.Status,
+			Amount:    fmt.Sprintf("%s %d.%02d", strings.ToUpper(invoice.Currency), invoice.AmountCents/100, invoice.AmountCents%100),
+			CreatedAt: invoice.CreatedAt, PeriodStart: invoice.PeriodStart, PeriodEnd: invoice.PeriodEnd,
+			HostedURL: subscriptions.InvoiceURL(invoice.HostedURL), PDFURL: subscriptions.InvoiceURL(invoice.PDFURL),
+		})
 	}
-	page = min(page, pageCount)
-	start := (page - 1) * invoicePageSize
-	end := min(start+invoicePageSize, len(filtered))
 	first := 0
-	if len(filtered) > 0 {
-		first = start + 1
+	if found.Total > 0 {
+		first = (found.Page-1)*subscriptions.InvoicePageSize + 1
 	}
 	return invoicePage{
-		Rows: filtered[start:end], Status: status, Issued: issued,
+		Rows: rows, Status: status, Issued: issued,
 		StatusOptions: statusOptions, IssuedOptions: issuedOptions,
-		Page: page, PageCount: pageCount, Total: len(filtered), First: first,
+		Page: found.Page, PageCount: found.PageCount, Total: found.Total, First: first,
 	}
 }
 
@@ -781,14 +601,6 @@ func invoiceDate(value time.Time) string {
 	return value.UTC().Format("Jan 2, 2006")
 }
 
-func httpsInvoiceURL(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
-		return ""
-	}
-	return parsed.String()
-}
-
 func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Principal, core.Account, bool) {
 	if deps.Sessions == nil {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
@@ -807,32 +619,6 @@ func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Prin
 	return p, account, true
 }
 
-func canManage(org core.Organization, userID string) bool {
-	if org.OwnerUserID == userID {
-		return true
-	}
-	member, ok := org.Members[userID]
-	return ok && member.Status == "active" && (member.Role == "owner" || member.Role == "admin")
-}
-
-func documentCount(database core.Database) int {
-	count := 0
-	for _, collection := range database.Documents {
-		count += len(collection)
-	}
-	return count
-}
-
-func storedDocumentBytes(database core.Database) int64 {
-	var total int64
-	for _, collection := range database.Documents {
-		for _, document := range collection {
-			total += int64(len(document))
-		}
-	}
-	return total
-}
-
 func formatStoredBytes(value int64) string {
 	if value < 1024 {
 		return fmt.Sprintf("%d B", value)
@@ -841,13 +627,6 @@ func formatStoredBytes(value int64) string {
 		return fmt.Sprintf("%.1f KiB", float64(value)/1024)
 	}
 	return fmt.Sprintf("%.1f MiB", float64(value)/(1024*1024))
-}
-
-func sharePercent(part, total int64) int {
-	if part <= 0 || total <= 0 {
-		return 0
-	}
-	return max(1, int(float64(part)/float64(total)*100+0.5))
 }
 
 func addMarioSampleVisuals(data *pageData) {
@@ -945,17 +724,6 @@ func formatInvoiceMoney(cents int64, currency string) string {
 	return strings.ToUpper(currency) + " " + amount
 }
 
-func localDocuments(project core.Project, databaseFilter string) int {
-	count := 0
-	for _, database := range project.Databases {
-		if databaseFilter != "" && database.ID != databaseFilter {
-			continue
-		}
-		count += documentCount(database)
-	}
-	return count
-}
-
 func formCap(values url.Values, key string) (int64, bool, bool) {
 	value, exists := values[key]
 	if !exists {
@@ -996,14 +764,6 @@ func capsFromForm(values url.Values, prefix string) (map[string]int64, bool) {
 	return caps, true
 }
 
-func addUsage(total *int64, value int64) bool {
-	if value < 0 || *total > math.MaxInt64-value {
-		return false
-	}
-	*total += value
-	return true
-}
-
 func parseCents(value string) (int64, bool) {
 	if !amountPattern.MatchString(value) {
 		return 0, false
@@ -1036,25 +796,12 @@ func dollars(cents int64) string {
 	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
 }
 
-func effectiveCap(caps ...int64) string {
-	var smallest int64
-	for _, cap := range caps {
-		if cap > 0 && (smallest == 0 || cap < smallest) {
-			smallest = cap
-		}
-	}
-	if smallest == 0 {
+// capLabel describes an effective spend cap in cents; 0 means no limit.
+func capLabel(cents int64) string {
+	if cents <= 0 {
 		return "No limit"
 	}
-	return "$" + dollars(smallest)
-}
-
-func record(account *core.Account, p core.Principal, action, target string) {
-	account.AuditEvents = append(account.AuditEvents, core.AuditEvent{
-		ID: core.NewID("evt"), OrganizationID: p.OrganizationID, ProjectID: p.ProjectID,
-		Actor: account.User.Email, Action: action, Target: target, TargetType: "usage control",
-		Risk: "low", Source: "dashboard", OccurredAt: time.Now().UTC(),
-	})
+	return "$" + dollars(cents)
 }
 
 func redirect(w http.ResponseWriter, r *http.Request, saved string) {

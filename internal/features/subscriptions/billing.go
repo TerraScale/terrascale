@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	ErrBillingOwnerRequired = errors.New("organization owner role required for billing")
-	ErrCheckoutUnavailable  = errors.New("checkout session is unavailable")
-	ErrPlanUnavailable      = errors.New("selected billing plan is unavailable")
+	ErrBillingOwnerRequired = fmt.Errorf("%w: organization owner role required for billing", core.ErrForbidden)
+	ErrCheckoutUnavailable  = fmt.Errorf("%w: checkout session is unavailable", core.ErrNotFound)
+	ErrPlanUnavailable      = fmt.Errorf("%w: selected billing plan is unavailable", core.ErrInvalid)
 )
 
 const (
@@ -68,7 +68,7 @@ func (service BillingService) ScheduleDemoChange(principal core.Principal, planK
 	}
 	return service.store.UpdateAs(principal, func(account *core.Account) error {
 		org, ok := account.Organizations[principal.OrganizationID]
-		if !ok || account.ActiveOrganizationID != org.ID || org.OwnerUserID != principal.UserID || org.Archived || org.DeletionRequested {
+		if !ok || org.OwnerUserID != principal.UserID || org.Archived || org.DeletionRequested {
 			return ErrBillingOwnerRequired
 		}
 		if org.Billing.SubscriptionID == "" || effectiveAt.IsZero() {
@@ -99,7 +99,7 @@ func (service BillingService) ScheduleDemoChange(principal core.Principal, planK
 func (service BillingService) UndoDemoChange(principal core.Principal) error {
 	return service.store.UpdateAs(principal, func(account *core.Account) error {
 		org, ok := account.Organizations[principal.OrganizationID]
-		if !ok || account.ActiveOrganizationID != org.ID || org.OwnerUserID != principal.UserID {
+		if !ok || org.OwnerUserID != principal.UserID {
 			return ErrBillingOwnerRequired
 		}
 		if org.Billing.SubscriptionID == "" {
@@ -120,7 +120,7 @@ func (service BillingService) ChangeDemoPlan(principal core.Principal, planKey, 
 	}
 	return service.store.UpdateAs(principal, func(account *core.Account) error {
 		org, ok := account.Organizations[principal.OrganizationID]
-		if !ok || account.ActiveOrganizationID != org.ID || org.OwnerUserID != principal.UserID || org.Archived || org.DeletionRequested {
+		if !ok || org.OwnerUserID != principal.UserID || org.Archived || org.DeletionRequested {
 			return ErrBillingOwnerRequired
 		}
 		if org.Billing.SubscriptionID == "" {
@@ -174,15 +174,12 @@ func (service BillingService) BeginDemoCheckout(principal core.Principal, planKe
 		if err := validatePlanSelection(plan, planKey, interval); err != nil {
 			return err
 		}
-		if account.ActiveOrganizationID != principal.OrganizationID {
-			return core.ErrForbidden
-		}
 		organization, ok := account.Organizations[principal.OrganizationID]
 		if !ok || organization.OwnerUserID != principal.UserID || organization.Status != "active" || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
 		}
 		if organization.Billing.SubscriptionID != "" && organization.Billing.Status != "canceled" && organization.Billing.Status != "incomplete_expired" {
-			return core.ErrConflict
+			return payments.ErrSubscriptionManaged
 		}
 		session.PlanID = plan.ID
 		organization.CheckoutSessions = map[string]core.CheckoutSession{session.ID: session}
@@ -200,8 +197,24 @@ func (service BillingService) BeginDemoCheckout(principal core.Principal, planKe
 	return session, nil
 }
 
-// Checkout returns only the current active organization's own checkout, so a
-// session ID cannot cross tenant boundaries or follow an organization switch.
+// CheckoutPrincipal scopes a browser principal to the organization that owns
+// the checkout session. MCP tools start checkouts in any organization the
+// owner names, not only the one selected in the dashboard.
+func (service BillingService) CheckoutPrincipal(principal core.Principal, sessionID string) (core.Principal, error) {
+	account, err := service.store.SnapshotAs(principal)
+	if err != nil {
+		return core.Principal{}, err
+	}
+	for id, organization := range account.Organizations {
+		if _, ok := organization.CheckoutSessions[sessionID]; ok && id != principal.OrganizationID {
+			return service.store.ScopedPrincipal(principal, core.Scope{OrganizationID: id})
+		}
+	}
+	return principal, nil
+}
+
+// Checkout returns only the principal organization's own open checkout, so a
+// session ID cannot cross tenant boundaries.
 func (service BillingService) Checkout(principal core.Principal, sessionID string) (core.CheckoutSession, error) {
 	if sessionID == "" {
 		return core.CheckoutSession{}, core.ErrNotFound
@@ -209,9 +222,6 @@ func (service BillingService) Checkout(principal core.Principal, sessionID strin
 	account, err := service.store.SnapshotAs(principal)
 	if err != nil {
 		return core.CheckoutSession{}, err
-	}
-	if account.ActiveOrganizationID != principal.OrganizationID {
-		return core.CheckoutSession{}, core.ErrForbidden
 	}
 	organization, err := account.OrganizationFor(principal, principal.OrganizationID)
 	if err != nil {
@@ -233,9 +243,6 @@ func (service BillingService) CompleteDemoCheckout(principal core.Principal, ses
 	}
 	var returnTo string
 	mutate := func(account *core.Account, plan core.Plan) error {
-		if account.ActiveOrganizationID != principal.OrganizationID {
-			return core.ErrForbidden
-		}
 		organization, ok := account.Organizations[principal.OrganizationID]
 		if !ok || organization.OwnerUserID != principal.UserID || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
@@ -301,9 +308,6 @@ func (service BillingService) RecordCustomer(principal core.Principal, createdID
 	}
 	var customerID string
 	err := service.store.UpdateAs(principal, func(account *core.Account) error {
-		if account.ActiveOrganizationID != principal.OrganizationID {
-			return core.ErrForbidden
-		}
 		organization, ok := account.Organizations[principal.OrganizationID]
 		if !ok || organization.OwnerUserID != principal.UserID || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
@@ -342,9 +346,6 @@ func (service BillingService) RecordExternalCheckout(principal core.Principal, p
 		if err := validatePlanSelection(plan, planKey, interval); err != nil {
 			return err
 		}
-		if account.ActiveOrganizationID != principal.OrganizationID {
-			return core.ErrForbidden
-		}
 		organization, ok := account.Organizations[principal.OrganizationID]
 		if !ok || organization.OwnerUserID != principal.UserID || organization.Status != "active" || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
@@ -380,9 +381,6 @@ func (service BillingService) RecordExternalCheckout(principal core.Principal, p
 // provider confirms that the matching remote Checkout Session has expired.
 func (service BillingService) ExpireExternalCheckout(principal core.Principal, sessionID string) error {
 	return service.store.UpdateAs(principal, func(account *core.Account) error {
-		if account.ActiveOrganizationID != principal.OrganizationID {
-			return core.ErrForbidden
-		}
 		organization, ok := account.Organizations[principal.OrganizationID]
 		if !ok || organization.OwnerUserID != principal.UserID || organization.Archived || organization.DeletionRequested {
 			return ErrBillingOwnerRequired
@@ -410,9 +408,6 @@ func (service BillingService) CheckoutOutcome(principal core.Principal, sessionI
 	account, err := service.store.SnapshotAs(principal)
 	if err != nil {
 		return "", "", err
-	}
-	if account.ActiveOrganizationID != principal.OrganizationID {
-		return "", "", core.ErrForbidden
 	}
 	organization, err := account.OrganizationFor(principal, principal.OrganizationID)
 	if err != nil {

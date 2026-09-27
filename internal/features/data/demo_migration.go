@@ -5,11 +5,11 @@ import "terrascale.tech/dashboard/internal/core"
 // The migration shown for Mario's seeded orders collection is an immutable
 // sample snapshot. It is not derived from provider work or local index builds.
 type demoIndexMigration struct {
-	State     string
-	Completed int
-	Total     int
-	Percent   int
-	Watermark string
+	State     string `json:"state"`
+	Completed int    `json:"completed" jsonschema:"Documents backfilled so far."`
+	Total     int    `json:"total"`
+	Percent   int    `json:"percent"`
+	Watermark string `json:"watermark" jsonschema:"Last backfilled document ID."`
 }
 
 func marioIndexMigration(account core.Account, principal core.Principal, database core.Database, collection string) *demoIndexMigration {

@@ -53,32 +53,40 @@ type filters struct {
 	Severity string `json:"severity"`
 }
 
-// Mount registers audit history and export routes.
+// Mount registers audit history and export routes and tools.
 func Mount(mux *http.ServeMux, deps core.Deps) {
+	service := Service{store: deps.Store}
+	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /audit", func(w http.ResponseWriter, r *http.Request) {
-		p, account, ok := signedIn(deps, w, r)
+		p, ok := signedIn(deps, w, r)
 		if !ok {
 			return
 		}
-		org := account.Organizations[p.OrganizationID]
-		all := retained(scoped(account.AuditEvents, p), org.AuditRetentionDays, time.Now().UTC())
-		data, _ := buildPage(all, org.AuditRetentionDays, r.URL.Query().Get("search"), r.URL.Query().Get("action"), r.URL.Query().Get("severity"), r.URL.Query().Get("range"), r.URL.Query().Get("page"), time.Now().UTC())
+		query := r.URL.Query()
+		data, err := service.Page(p, query.Get("search"), query.Get("action"), query.Get("severity"), query.Get("range"), query.Get("page"), pageSize)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		page(w, r, deps, p, data)
 	})
 
 	mux.HandleFunc("GET /audit/export", func(w http.ResponseWriter, r *http.Request) {
-		p, account, ok := signedIn(deps, w, r)
+		p, ok := signedIn(deps, w, r)
 		if !ok {
 			return
 		}
-		org := account.Organizations[p.OrganizationID]
-		now := time.Now().UTC()
 		query := r.URL.Query()
 		f := filters{
 			Action: query.Get("action"), Search: strings.TrimSpace(query.Get("search")),
 			Range: normalizeRange(query.Get("range")), Severity: normalizeSeverity(query.Get("severity")),
 		}
-		filtered := filter(retained(scoped(account.AuditEvents, p), org.AuditRetentionDays, now), f, now, org.AuditRetentionDays)
+		now := time.Now().UTC()
+		filtered, err := service.Export(p, f, now)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		filename := fmt.Sprintf("terrascale-audit-%s-%s", filenamePart(p.ProjectID), now.Format("2006-01-02T15-04-05Z"))
 		if query.Get("format") == "json" {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -115,22 +123,17 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 	})
 }
 
-func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Principal, core.Account, bool) {
+func signedIn(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Principal, bool) {
 	if deps.Sessions == nil {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
-		return core.Principal{}, core.Account{}, false
+		return core.Principal{}, false
 	}
 	p, ok := deps.Sessions.Principal(r)
 	if !ok {
 		core.RedirectToLogin(w, r)
-		return core.Principal{}, core.Account{}, false
+		return core.Principal{}, false
 	}
-	account, err := deps.Store.SnapshotAs(p)
-	if err != nil {
-		writeError(w, err)
-		return core.Principal{}, core.Account{}, false
-	}
-	return p, account, true
+	return p, true
 }
 
 func page(w http.ResponseWriter, r *http.Request, deps core.Deps, p core.Principal, data pageData) {
@@ -156,19 +159,13 @@ func scoped(events []core.AuditEvent, p core.Principal) []core.AuditEvent {
 }
 
 func retained(events []core.AuditEvent, retention int, now time.Time) []core.AuditEvent {
-	if retention < 1 || retention > 90 {
-		retention = 90
-	}
 	cutoff := now.Add(-time.Duration(retention) * 24 * time.Hour)
 	return slices.DeleteFunc(events, func(event core.AuditEvent) bool {
 		return !event.OccurredAt.IsZero() && event.OccurredAt.Before(cutoff)
 	})
 }
 
-func buildPage(events []core.AuditEvent, retention int, search, action, rawSeverity, rawRange, rawPage string, now time.Time) (pageData, []core.AuditEvent) {
-	if retention < 1 || retention > 90 {
-		retention = 90
-	}
+func buildPage(events []core.AuditEvent, retention int, search, action, rawSeverity, rawRange, rawPage string, size int, now time.Time) pageData {
 	f := filters{
 		Action: normalizeAction(action), Search: strings.TrimSpace(search),
 		Range: normalizeRange(rawRange), Severity: normalizeSeverity(rawSeverity),
@@ -183,10 +180,10 @@ func buildPage(events []core.AuditEvent, retention int, search, action, rawSever
 		}
 	}
 	slices.Sort(options[1:])
-	pageCount := max(1, (len(filtered)+pageSize-1)/pageSize)
+	pageCount := max(1, (len(filtered)+size-1)/size)
 	page := core.ClampPage(rawPage, pageCount)
-	start := (page - 1) * pageSize
-	end := min(start+pageSize, len(filtered))
+	start := (page - 1) * size
+	end := min(start+size, len(filtered))
 	rows := make([]row, 0, end-start)
 	critical, warn, info := 0, 0, 0
 	for _, event := range filtered {
@@ -211,7 +208,7 @@ func buildPage(events []core.AuditEvent, retention int, search, action, rawSever
 		ActionOptions: options, Critical: critical, Warn: warn, Info: info, Filtered: len(filtered),
 		Page: page, PageCount: pageCount, Previous: max(1, page-1), Next: min(pageCount, page+1),
 		HasPrevious: page > 1, HasNext: page < pageCount, Retention: retention,
-	}, filtered
+	}
 }
 
 func filter(events []core.AuditEvent, f filters, now time.Time, retention int) []core.AuditEvent {

@@ -35,6 +35,7 @@ import (
 	"terrascale.tech/dashboard/internal/platform/config"
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/datastar"
+	"terrascale.tech/dashboard/internal/platform/mcpserver"
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
 	"terrascale.tech/dashboard/internal/platform/statuspage"
@@ -74,7 +75,7 @@ func New(cfg config.Config) (*Application, error) {
 	renderer := render.New(store, guard, notices, cfg.Dev)
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
-		Events: datastar.Events{}, Demo: cfg.Demo,
+		Events: datastar.Events{}, Demo: cfg.Demo, Tools: core.NewTools(store),
 		SDK: sdkFactory, Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader}),
 	}
 	mux := http.NewServeMux()
@@ -85,7 +86,7 @@ func New(cfg config.Config) (*Application, error) {
 	auth.Mount(mux, deps)
 	admin.Mount(mux, deps)
 	authentication.Mount(mux, deps)
-	onboarding.Mount(mux, deps)
+	onboarding.Mount(mux, deps, billing)
 	profile.Mount(mux, deps)
 	settings.Mount(mux, deps)
 	organization.Mount(mux, deps)
@@ -110,7 +111,12 @@ func New(cfg config.Config) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Application{Handler: compress(securityHeaders(cfg.SecureCookies, invalidatePrefetch(dropForeignMessages(guard.Protect(mux)))))}, nil
+	// The MCP endpoint authenticates every request with a bearer access
+	// token instead of cookies, so it sits outside the CSRF guard.
+	root := http.NewServeMux()
+	root.Handle(core.MCPPath, mcpserver.New(store, deps.Tools))
+	root.Handle("/", invalidatePrefetch(dropForeignMessages(guard.Protect(mux))))
+	return &Application{Handler: compress(securityHeaders(cfg.SecureCookies, root))}, nil
 }
 
 // securityHeaders sets the headers every response shares; rendered pages add

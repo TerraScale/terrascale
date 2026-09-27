@@ -18,12 +18,12 @@ templ settingsView(data pageData, csrfToken string) {
 		@ui.Card(ui.CardProps{ID: "security-summary", Title: "Security summary", Description: "Persisted authentication, credential, backup, and retention settings for this project"}) {
 			<div class="ts-settings-summary ts-stats-compact">
 				@ui.Stats("Security summary") {
-					@ui.Stat("Authentication integration", enabledLabel(data.Authentication), "")
+					@ui.Stat("Authentication integration", enabledLabel(data.AuthenticationEnabled), "")
 					@ui.Stat("Saved identity provider configurations", fmt.Sprint(len(data.IdentityProviders)), "")
 					@ui.Stat("Active project credentials", fmt.Sprint(data.ActiveCredentials), "")
 					@ui.Stat("Active M2M clients", fmt.Sprint(data.ActiveM2MClients), "")
-					@ui.Stat("Saved backup policies", fmt.Sprint(data.ConfiguredBackups), "")
-					@ui.Stat("Audit retention", fmt.Sprint(data.AuditRetention)+" days", "")
+					@ui.Stat("Saved backup policies", fmt.Sprint(data.SavedBackupPolicies), "")
+					@ui.Stat("Audit retention", fmt.Sprint(data.AuditRetentionDays)+" days", "")
 				}
 			</div>
 		}
@@ -59,7 +59,7 @@ templ identityTab(data pageData, csrfToken string) {
 		if data.CanManage {
 			<form class="ts-form" method="post" action="/api/v1/dashboard/settings/authentication">
 				<input type="hidden" name="_csrf" value={ csrfToken }/>
-				<label class="ts-check"><input type="checkbox" name="enabled" value="true" checked?={ data.Authentication }/><span>Enable authentication integration</span></label>
+				<label class="ts-check"><input type="checkbox" name="enabled" value="true" checked?={ data.AuthenticationEnabled }/><span>Enable authentication integration</span></label>
 				<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save identity settings</button></div>
 			</form>
 		} else {
@@ -175,10 +175,11 @@ templ backupsTab(data pageData, csrfToken string) {
 									<span class="ts-strong">{ backup.CreatedAt.UTC().Format("Jan 2, 2006 15:04 UTC") }</span>
 								</div>
 								@ui.Badge(backupTone(backup.Status), backup.Status)
-								if backup.Status == "Succeeded" {
+								if backup.Status == "ready" {
 									<form method="post" action="/api/v1/dashboard/settings/restore">
 										<input type="hidden" name="_csrf" value={ csrfToken }/>
-										<input type="hidden" name="generation" value={ backup.ID }/>
+										<input type="hidden" name="databaseId" value={ data.SelectedDatabaseID }/>
+										<input type="hidden" name="backupId" value={ backup.ID }/>
 										<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Restore side by side</button>
 									</form>
 								}
@@ -207,7 +208,7 @@ templ auditTab(data pageData, csrfToken string) {
 				<input type="hidden" name="_csrf" value={ csrfToken }/>
 				<div class="ts-form-grid ts-settings-narrow">
 					@ui.Field(ui.FieldProps{ID: "audit-retention-days", Label: "Retention days", Hint: "Between 1 and 90 days."}) {
-						<input class="ts-input" id="audit-retention-days" type="number" name="retentionDays" min="1" max="90" value={ fmt.Sprint(data.AuditRetention) } required/>
+						<input class="ts-input" id="audit-retention-days" type="number" name="retentionDays" min="1" max="90" value={ fmt.Sprint(data.AuditRetentionDays) } required/>
 					}
 				</div>
 				<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save retention</button></div>
@@ -254,9 +255,9 @@ func enabledLabel(enabled bool) string {
 
 func backupTone(status string) string {
 	switch status {
-	case "Succeeded":
+	case "ready":
 		return "success"
-	case "Failed":
+	case "failed":
 		return "danger"
 	}
 	return "info"

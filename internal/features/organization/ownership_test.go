@@ -15,7 +15,7 @@ import (
 func sharedOrganization(t *testing.T) (Service, core.Principal, core.Principal) {
 	t.Helper()
 	store := core.NewStore()
-	service := NewService(store)
+	service := NewService(store, nil)
 	ownerAccount, err := store.CreateAccount(core.User{Name: "Olivia Owner", Email: "owner@example.test", PasswordHash: "hash"})
 	if err != nil {
 		t.Fatal(err)

@@ -86,7 +86,7 @@ func homeView(data pageData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if data.Tab == "connect" {
-			templ_7745c5c3_Err = connectView().Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = connectView(data).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -186,7 +186,7 @@ func overviewView(data pageData) templ.Component {
 			var templ_7745c5c3_Var6 string
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(data.ActivityTotalLabel)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 37, Col: 110}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 39, Col: 110}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
@@ -199,7 +199,7 @@ func overviewView(data pageData) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprint(data.ActivityEvents))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 37, Col: 154}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 39, Col: 154}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -354,7 +354,7 @@ func rangeTrigger(activityRange string) templ.Component {
 		var templ_7745c5c3_Var12 string
 		templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(activityRange)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 63, Col: 44}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 66, Col: 44}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 		if templ_7745c5c3_Err != nil {
@@ -420,7 +420,7 @@ func gettingStartedStep(number int, title, description, href, cta string, done b
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprint(number))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 72, Col: 24}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 75, Col: 24}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -434,7 +434,7 @@ func gettingStartedStep(number int, title, description, href, cta string, done b
 		var templ_7745c5c3_Var17 string
 		templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 77, Col: 35}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 80, Col: 35}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 		if templ_7745c5c3_Err != nil {
@@ -462,7 +462,7 @@ func gettingStartedStep(number int, title, description, href, cta string, done b
 		var templ_7745c5c3_Var18 string
 		templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(description)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 84, Col: 35}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 87, Col: 35}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 		if templ_7745c5c3_Err != nil {
@@ -475,7 +475,7 @@ func gettingStartedStep(number int, title, description, href, cta string, done b
 		var templ_7745c5c3_Var19 templ.SafeURL
 		templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(href))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 85, Col: 48}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 88, Col: 48}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 		if templ_7745c5c3_Err != nil {
@@ -488,7 +488,7 @@ func gettingStartedStep(number int, title, description, href, cta string, done b
 		var templ_7745c5c3_Var20 string
 		templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(cta)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 85, Col: 56}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 88, Col: 56}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 		if templ_7745c5c3_Err != nil {
@@ -502,7 +502,7 @@ func gettingStartedStep(number int, title, description, href, cta string, done b
 	})
 }
 
-func connectView() templ.Component {
+func connectView(data pageData) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -527,19 +527,19 @@ func connectView() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = connectOption(icons.Bot(18), "AI assistants", "Connect Claude, Cursor, and other MCP-compatible assistants to your project.").Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = connectOption(icons.Bot(18), "AI assistants", "Connect Claude, Cursor, and other MCP-compatible assistants to manage your organizations, projects, and databases.", true).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = connectOption(icons.FileJson(18), "TypeScript SDK", "Install the SDK and query your databases directly from your application.").Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = connectOption(icons.FileJson(18), "TypeScript SDK", "Install the SDK and query your databases directly from your application.", false).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = connectOption(icons.Globe(18), "REST API", "Call the project API from any language with a scoped credential.").Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = connectOption(icons.Globe(18), "REST API", "Call the project API from any language with a scoped credential.", false).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = connectOption(icons.Terminal(18), "CLI and CI", "Manage databases and run queries from your terminal or pipeline.").Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = connectOption(icons.Terminal(18), "CLI and CI", "Manage databases and run queries from your terminal or pipeline.", false).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -559,32 +559,26 @@ func connectView() templ.Component {
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "<pre class=\"ts-code\"><code>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "<ol class=\"ts-home-steps\"><li class=\"ts-home-step\"><span class=\"ts-home-step-number\" aria-hidden=\"true\">1</span><div class=\"ts-stack-sm\"><span class=\"ts-strong\">Create a personal access token</span><p class=\"ts-meta\">Tokens expire and can be revoked at any time from your profile.</p><a class=\"ts-link\" href=\"/profile?tab=access-tokens\">Open access tokens →</a></div></li><li class=\"ts-home-step\"><span class=\"ts-home-step-number\" aria-hidden=\"true\">2</span><div class=\"ts-stack-sm\"><span class=\"ts-strong\">Add the server with the token as a bearer credential</span><pre class=\"ts-code\"><code>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var23 string
-			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(`{
-  "mcpServers": {
-    "terrascale": {
-      "url": "https://<your-terrascale-host>/mcp"
-    }
-  }
-}`)
+			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(mcpClientConfig(data.MCPEndpoint))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 104, Col: 2}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 114, Col: 67}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "</code></pre>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "</code></pre></div></li></ol>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "mcp-config", Title: "MCP client configuration", Description: "Add this server to your assistant's MCP settings."}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var22), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "mcp-config", Title: "MCP client configuration", Description: "Add this server to your assistant's MCP settings. Assistants act as you, with your dashboard permissions."}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var22), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -592,7 +586,7 @@ func connectView() templ.Component {
 	})
 }
 
-func connectOption(icon templ.Component, title, description string) templ.Component {
+func connectOption(icon templ.Component, title, description string, available bool) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -628,19 +622,26 @@ func connectOption(icon templ.Component, title, description string) templ.Compon
 		var templ_7745c5c3_Var25 string
 		templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 115, Col: 35}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 128, Col: 35}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "</span>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "</span> ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = ui.Badge("neutral", "Preview").Render(ctx, templ_7745c5c3_Buffer)
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
+		if available {
+			templ_7745c5c3_Err = ui.Badge("success", "Available").Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		} else {
+			templ_7745c5c3_Err = ui.Badge("neutral", "Preview").Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
 		}
 		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "</div><p class=\"ts-meta\">")
 		if templ_7745c5c3_Err != nil {
@@ -649,7 +650,7 @@ func connectOption(icon templ.Component, title, description string) templ.Compon
 		var templ_7745c5c3_Var26 string
 		templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(description)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 118, Col: 35}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/home/home.templ`, Line: 135, Col: 35}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 		if templ_7745c5c3_Err != nil {
@@ -661,6 +662,21 @@ func connectOption(icon templ.Component, title, description string) templ.Compon
 		}
 		return nil
 	})
+}
+
+// mcpClientConfig is the MCP client configuration for endpoint.
+func mcpClientConfig(endpoint string) string {
+	return `{
+  "mcpServers": {
+    "terrascale": {
+      "type": "http",
+      "url": "` + endpoint + `",
+      "headers": {
+        "Authorization": "Bearer <your-access-token>"
+      }
+    }
+  }
+}`
 }
 
 func homeTitle(tab string) string {

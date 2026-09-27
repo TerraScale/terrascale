@@ -50,7 +50,7 @@ func TestAccountInformationRenamesAMemberOfAnotherOrganization(t *testing.T) {
 
 	sessions := session.New(store, session.Options{})
 	mux := http.NewServeMux()
-	Mount(mux, core.Deps{Store: store, Sessions: sessions, Demo: true})
+	Mount(mux, core.Deps{Store: store, Sessions: sessions, Tools: core.NewTools(store), Demo: true}, nil)
 	signIn := httptest.NewRecorder()
 	if err := sessions.Start(signIn, httptest.NewRequest(http.MethodGet, "/", nil), principal); err != nil {
 		t.Fatal(err)

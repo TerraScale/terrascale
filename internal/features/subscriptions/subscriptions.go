@@ -60,6 +60,7 @@ type portalPage struct {
 // Mount registers the billing pages. billing is nil in demo mode.
 func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 	service := NewBillingService(deps.Store)
+	mountTools(deps.Tools, service)
 	mux.HandleFunc("GET /billing", func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := requestPrincipal(deps, w, r)
 		if !ok {
@@ -111,7 +112,7 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 			http.NotFound(w, r)
 			return
 		}
-		principal, ok := requestPrincipal(deps, w, r)
+		principal, ok := checkoutPrincipal(deps, service, w, r)
 		if !ok {
 			return
 		}
@@ -156,7 +157,7 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 			return
 		}
 		view, err := service.Snapshot(principal)
-		if err != nil || view.Account.ActiveOrganizationID != principal.OrganizationID || view.Organization.OwnerUserID != principal.UserID || view.Organization.Archived || view.Organization.DeletionRequested {
+		if err != nil || view.Organization.OwnerUserID != principal.UserID || view.Organization.Archived || view.Organization.DeletionRequested {
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -196,16 +197,7 @@ func makePlanView(plan core.Plan, index int, interval, currentKey, currentInterv
 			card.Billed = "Monthly billing only"
 		}
 	}
-	if plan.StorageMiB > 0 {
-		card.Features = append(card.Features, formatStorage(plan.StorageMiB)+" storage")
-	}
-	if plan.MonthlyRequests > 0 {
-		card.Features = append(card.Features, formatCount(plan.MonthlyRequests)+" requests per month")
-	}
-	card.Features = append(card.Features, plan.DatabaseAllowance(), plan.MemberAllowance())
-	if plan.TrialDays > 0 {
-		card.Features = append(card.Features, fmt.Sprintf("%d-day free trial", plan.TrialDays))
-	}
+	card.Features = planFeatures(plan)
 	switch {
 	case key == currentKey && card.Interval == currentInterval:
 		card.Current, card.Action = true, "Current plan"
@@ -217,6 +209,22 @@ func makePlanView(plan core.Plan, index int, interval, currentKey, currentInterv
 		card.Action = "Switch to " + plan.Name
 	}
 	return card
+}
+
+// planFeatures lists a plan's allowances as a plan card shows them.
+func planFeatures(plan core.Plan) []string {
+	var features []string
+	if plan.StorageMiB > 0 {
+		features = append(features, formatStorage(plan.StorageMiB)+" storage")
+	}
+	if plan.MonthlyRequests > 0 {
+		features = append(features, formatCount(plan.MonthlyRequests)+" requests per month")
+	}
+	features = append(features, plan.DatabaseAllowance(), plan.MemberAllowance())
+	if plan.TrialDays > 0 {
+		features = append(features, fmt.Sprintf("%d-day free trial", plan.TrialDays))
+	}
+	return features
 }
 
 func formatStorage(mib int64) string {
@@ -297,7 +305,7 @@ func completeDemoCheckout(deps core.Deps, service BillingService, w http.Respons
 		http.NotFound(w, r)
 		return
 	}
-	principal, ok := requestPrincipal(deps, w, r)
+	principal, ok := checkoutPrincipal(deps, service, w, r)
 	if !ok {
 		return
 	}
@@ -307,6 +315,21 @@ func completeDemoCheckout(deps core.Deps, service BillingService, w http.Respons
 		return
 	}
 	http.Redirect(w, r, returnTo, http.StatusSeeOther)
+}
+
+// checkoutPrincipal is the request principal scoped to the organization of
+// the checkout session in the path.
+func checkoutPrincipal(deps core.Deps, service BillingService, w http.ResponseWriter, r *http.Request) (core.Principal, bool) {
+	principal, ok := requestPrincipal(deps, w, r)
+	if !ok {
+		return core.Principal{}, false
+	}
+	principal, err := service.CheckoutPrincipal(principal, r.PathValue("sessionID"))
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return core.Principal{}, false
+	}
+	return principal, true
 }
 
 func requestPrincipal(deps core.Deps, w http.ResponseWriter, r *http.Request) (core.Principal, bool) {

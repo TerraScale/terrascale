@@ -39,11 +39,14 @@ type pageData struct {
 	TOTPEnrollmentToken  string
 	TOTPSecret           string
 	RecoveryCodes        []string
-	Passkeys             []passkeyView
+	Passkeys             []passkeyPageView
 	Sessions             []sessionView
+	AccessTokens         []accessTokenView
+	CreatedToken         *createdAccessToken
+	MCPEndpoint          string
 }
 
-type passkeyView struct {
+type passkeyPageView struct {
 	ID        string
 	Name      string
 	CreatedAt string
@@ -55,18 +58,39 @@ type sessionView struct {
 	ExpiresAt string
 }
 
+const (
+	tabProfile      = "profile"
+	tabSecurity     = "security"
+	tabSessions     = "sessions"
+	tabAccessTokens = "access-tokens"
+)
+
 func Mount(mux *http.ServeMux, deps core.Deps) {
+	service := Service{deps: deps}
+	mountTools(deps.Tools, service)
+	mountAccessTokens(mux, deps, service)
 	mux.HandleFunc("GET /profile", getProfile(deps))
-	mux.HandleFunc("POST /api/v1/dashboard/profile", updateProfile(deps))
+	mux.HandleFunc("POST /api/v1/dashboard/profile", updateProfile(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/profile/password", changePassword(deps))
 	mux.HandleFunc("POST /api/v1/dashboard/profile/email-change", changeEmail(deps))
-	mux.HandleFunc("POST /api/v1/dashboard/profile/language", changeLanguage(deps))
+	mux.HandleFunc("POST /api/v1/dashboard/profile/language", changeLanguage(deps, service))
 	mux.HandleFunc("POST /api/v1/dashboard/profile/mfa/enroll", beginTOTP(deps))
 	mux.HandleFunc("POST /api/v1/dashboard/profile/mfa/verify", verifyTOTP(deps))
 	mux.HandleFunc("POST /api/v1/dashboard/profile/mfa/remove", removeTOTP(deps))
 	mux.HandleFunc("POST /api/v1/dashboard/profile/mfa/recovery-codes", regenerateRecoveryCodes(deps))
 	mux.HandleFunc("POST /api/v1/dashboard/profile/passkeys/register", registerPasskey(deps))
 	mux.HandleFunc("POST /api/v1/dashboard/profile/passkeys/remove", removePasskey(deps))
+}
+
+// profileRequest selects what one profile page render shows.
+type profileRequest struct {
+	Tab    string
+	Error  string
+	Status string
+	// Enroll is the pending demo TOTP enrollment the page may reveal.
+	Enroll string
+	// Created is a just-issued access token whose secret is shown once.
+	Created *createdAccessToken
 }
 
 func getProfile(deps core.Deps) http.HandlerFunc {
@@ -76,87 +100,97 @@ func getProfile(deps core.Deps) http.HandlerFunc {
 			core.RedirectToLogin(w, r)
 			return
 		}
-		account, err := deps.Store.SnapshotAs(principal)
-		if err != nil {
-			http.Error(w, "account scope is no longer available", http.StatusUnauthorized)
-			return
-		}
-		tab := r.URL.Query().Get("tab")
-		if tab != "security" && tab != "sessions" {
-			tab = "profile"
-		}
-		var totpSecret string
-		var recoveryCodes []string
-		if deps.Demo && tab == "security" {
-			if token := r.URL.Query().Get("enroll"); token != "" || len(account.DemoSecurity.PendingRecoveryCodes) != 0 {
-				if err := deps.Store.UpdateAs(principal, func(current *core.Account) error {
-					if token != "" && current.DemoSecurity.PendingTOTPToken == token {
-						totpSecret = current.DemoSecurity.PendingTOTPSecret
-						current.DemoSecurity.PendingTOTPSecret = ""
-					}
-					recoveryCodes = current.DemoSecurity.PendingRecoveryCodes
-					current.DemoSecurity.PendingRecoveryCodes = nil
-					return nil
-				}); err != nil {
-					http.Error(w, "account scope is no longer available", http.StatusUnauthorized)
-					return
+		query := r.URL.Query()
+		renderProfile(w, r, deps, principal, profileRequest{
+			Tab: query.Get("tab"), Error: query.Get("error"), Status: profileStatus(query.Get("status")), Enroll: query.Get("enroll"),
+		})
+	}
+}
+
+func renderProfile(w http.ResponseWriter, r *http.Request, deps core.Deps, principal core.Principal, request profileRequest) {
+	account, err := deps.Store.SnapshotAs(principal)
+	if err != nil {
+		http.Error(w, "account scope is no longer available", http.StatusUnauthorized)
+		return
+	}
+	tab := request.Tab
+	if tab != tabSecurity && tab != tabSessions && tab != tabAccessTokens {
+		tab = tabProfile
+	}
+	var totpSecret string
+	var recoveryCodes []string
+	if deps.Demo && tab == tabSecurity {
+		if token := request.Enroll; token != "" || len(account.DemoSecurity.PendingRecoveryCodes) != 0 {
+			if err := deps.Store.UpdateAs(principal, func(current *core.Account) error {
+				if token != "" && current.DemoSecurity.PendingTOTPToken == token {
+					totpSecret = current.DemoSecurity.PendingTOTPSecret
+					current.DemoSecurity.PendingTOTPSecret = ""
 				}
+				recoveryCodes = current.DemoSecurity.PendingRecoveryCodes
+				current.DemoSecurity.PendingRecoveryCodes = nil
+				return nil
+			}); err != nil {
+				http.Error(w, "account scope is no longer available", http.StatusUnauthorized)
+				return
 			}
 		}
-		organizationName := ""
-		if org, ok := account.Organizations[account.ActiveOrganizationID]; ok {
-			organizationName = org.Name
-		}
-		role, roles, permissions := profileAuthorization(account, principal)
-		data := pageData{
-			AccountID:            account.ID,
-			UserID:               account.User.ID,
-			Role:                 role,
-			Roles:                roles,
-			Permissions:          permissions,
-			OrganizationName:     organizationName,
-			ActiveOrganizationID: account.ActiveOrganizationID,
-			ActiveProjectID:      account.ActiveProjectID,
-			Name:                 account.User.Name,
-			Email:                account.User.Email,
-			Phone:                account.User.Phone,
-			Locale:               account.User.Locale,
-			Tab:                  tab,
-			Error:                r.URL.Query().Get("error"),
-			Status:               profileStatus(r.URL.Query().Get("status")),
-			Demo:                 deps.Demo,
-			MFAEnabled:           account.DemoSecurity.MFAEnabled,
-			RecoveryCodes:        recoveryCodes,
-			TOTPSecret:           totpSecret,
-		}
-		if token := r.URL.Query().Get("enroll"); token != "" && account.DemoSecurity.PendingTOTPToken == token {
-			data.TOTPEnrollmentToken = token
-		}
-		for _, passkey := range account.DemoSecurity.Passkeys {
-			data.Passkeys = append(data.Passkeys, passkeyView{
-				ID: passkey.ID, Name: passkey.Name, CreatedAt: passkey.CreatedAt.UTC().Format("Jan 2, 2006"),
+	}
+	organizationName := ""
+	if org, ok := account.Organizations[principal.OrganizationID]; ok {
+		organizationName = org.Name
+	}
+	role, roles, permissions := profileAuthorization(account, principal)
+	data := pageData{
+		AccountID:            account.ID,
+		UserID:               account.User.ID,
+		Role:                 role,
+		Roles:                roles,
+		Permissions:          permissions,
+		OrganizationName:     organizationName,
+		ActiveOrganizationID: account.ActiveOrganizationID,
+		ActiveProjectID:      account.ActiveProjectID,
+		Name:                 account.User.Name,
+		Email:                account.User.Email,
+		Phone:                account.User.Phone,
+		Locale:               account.User.Locale,
+		Tab:                  tab,
+		Error:                request.Error,
+		Status:               request.Status,
+		Demo:                 deps.Demo,
+		MFAEnabled:           account.DemoSecurity.MFAEnabled,
+		RecoveryCodes:        recoveryCodes,
+		TOTPSecret:           totpSecret,
+		AccessTokens:         accessTokenViews(account.AccessTokens),
+		CreatedToken:         request.Created,
+		MCPEndpoint:          core.MCPEndpoint(r),
+	}
+	if token := request.Enroll; token != "" && account.DemoSecurity.PendingTOTPToken == token {
+		data.TOTPEnrollmentToken = token
+	}
+	for _, passkey := range account.DemoSecurity.Passkeys {
+		data.Passkeys = append(data.Passkeys, passkeyPageView{
+			ID: passkey.ID, Name: passkey.Name, CreatedAt: passkey.CreatedAt.UTC().Format("Jan 2, 2006"),
+		})
+	}
+	if lister, ok := deps.Sessions.(interface {
+		SessionsForUser(core.Principal, *http.Request) []core.SessionInfo
+	}); ok {
+		for _, session := range lister.SessionsForUser(principal, r) {
+			data.Sessions = append(data.Sessions, sessionView{
+				ID: session.ID, Current: session.Current, ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
 			})
 		}
-		if lister, ok := deps.Sessions.(interface {
-			SessionsForUser(core.Principal, *http.Request) []core.SessionInfo
-		}); ok {
-			for _, session := range lister.SessionsForUser(principal, r) {
-				data.Sessions = append(data.Sessions, sessionView{
-					ID: session.ID, Current: session.Current, ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
-				})
-			}
-		}
-		page := core.Page{
-			Layout:    "shell",
-			Title:     "Profile",
-			Principal: principal,
-			View: func(p core.Page) templ.Component {
-				return profileView(data, p.CSRFToken)
-			},
-		}
-		if err := deps.Render.Page(w, r, page); err != nil {
-			http.Error(w, "could not render profile page", http.StatusInternalServerError)
-		}
+	}
+	page := core.Page{
+		Layout:    "shell",
+		Title:     "Profile",
+		Principal: principal,
+		View: func(p core.Page) templ.Component {
+			return profileView(data, p.CSRFToken)
+		},
+	}
+	if err := deps.Render.Page(w, r, page); err != nil {
+		http.Error(w, "could not render profile page", http.StatusInternalServerError)
 	}
 }
 
@@ -196,7 +230,7 @@ func profileAuthorization(account core.Account, principal core.Principal) (strin
 	return role, roles, permissions
 }
 
-func updateProfile(deps core.Deps) http.HandlerFunc {
+func updateProfile(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid profile form", http.StatusBadRequest)
@@ -207,29 +241,8 @@ func updateProfile(deps core.Deps) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		name := strings.TrimSpace(r.Form.Get("name"))
-		phone := strings.TrimSpace(r.Form.Get("phoneNumber"))
-		if !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
-			http.Redirect(w, r, "/profile?error="+url.QueryEscape("Enter a valid name."), http.StatusSeeOther)
-			return
-		}
-		if utf8.RuneCountInString(name) > 128 {
-			http.Redirect(w, r, "/profile?error="+url.QueryEscape("Use a name with 128 characters or fewer."), http.StatusSeeOther)
-			return
-		}
-		if !utf8.ValidString(phone) || len(phone) > 64 || strings.ContainsFunc(phone, unicode.IsControl) {
-			http.Redirect(w, r, "/profile?error="+url.QueryEscape("Enter a valid phone number."), http.StatusSeeOther)
-			return
-		}
-		err := deps.Store.UpdateAs(principal, func(account *core.Account) error {
-			if name != "" {
-				account.User.Name = name
-			}
-			account.User.Phone = phone
-			return nil
-		})
-		if err != nil {
-			writeUpdateError(w, err)
+		if err := service.UpdateProfile(principal, r.Form.Get("name"), new(r.Form.Get("phoneNumber"))); err != nil {
+			writeServiceError(w, r, tabProfile, err)
 			return
 		}
 		http.Redirect(w, r, "/profile", http.StatusSeeOther)
@@ -326,25 +339,17 @@ func changeEmail(deps core.Deps) http.HandlerFunc {
 	}
 }
 
-func changeLanguage(deps core.Deps) http.HandlerFunc {
+func changeLanguage(deps core.Deps, service Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := demoProfileForm(deps, w, r)
 		if !ok {
 			return
 		}
-		locale := r.Form.Get("locale")
-		if locale != "en" && locale != "pt-BR" {
-			redirectProfileError(w, r, "profile", "Choose an available language.")
+		if err := service.SetLanguage(principal, r.Form.Get("locale")); err != nil {
+			writeServiceError(w, r, tabProfile, err)
 			return
 		}
-		if err := deps.Store.UpdateAs(principal, func(account *core.Account) error {
-			account.User.Locale = locale
-			return nil
-		}); err != nil {
-			writeUpdateError(w, err)
-			return
-		}
-		redirectProfileStatus(w, r, "profile", "language-saved")
+		redirectProfileStatus(w, r, tabProfile, "language-saved")
 	}
 }
 
@@ -585,6 +590,8 @@ func profileStatus(status string) string {
 		return "Demo passkey record added. It does not authenticate sign-in."
 	case "passkey-removed":
 		return "Demo passkey record removed."
+	case "token-revoked":
+		return "Access token revoked. Assistants using it can no longer connect."
 	default:
 		return ""
 	}
@@ -592,6 +599,16 @@ func profileStatus(status string) string {
 
 func redirectPasswordError(w http.ResponseWriter, r *http.Request, message string) {
 	http.Redirect(w, r, "/profile?tab=security&error="+url.QueryEscape(message), http.StatusSeeOther)
+}
+
+// writeServiceError redirects a validation failure back to the profile tab
+// and maps any other error like writeUpdateError.
+func writeServiceError(w http.ResponseWriter, r *http.Request, tab string, err error) {
+	if message, ok := errors.AsType[profileError](err); ok {
+		redirectProfileError(w, r, tab, string(message))
+		return
+	}
+	writeUpdateError(w, err)
 }
 
 func writeUpdateError(w http.ResponseWriter, err error) {

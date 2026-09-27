@@ -1,6 +1,7 @@
 package subscriptions
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -45,8 +46,8 @@ func TestPersonalPlanChangeUsesExistingSubscriptionAndSchedulesFree(t *testing.T
 	if originalID == "" {
 		t.Fatal("demo checkout did not bind a subscription")
 	}
-	if _, err := service.BeginDemoCheckout(principal, "pro", "monthly", "/usage?tab=billing"); err != core.ErrConflict {
-		t.Fatalf("second checkout = %v, want conflict", err)
+	if _, err := service.BeginDemoCheckout(principal, "pro", "monthly", "/usage?tab=billing"); !errors.Is(err, payments.ErrSubscriptionManaged) {
+		t.Fatalf("second checkout = %v, want the managed subscription conflict", err)
 	}
 	mux := http.NewServeMux()
 	payments.Mount(mux, core.Deps{Store: store, Sessions: planChangeSessions{principal: principal}, Demo: true}, service, nil)

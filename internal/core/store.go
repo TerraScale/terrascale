@@ -22,6 +22,7 @@ type Store struct {
 	accounts      map[string]Account
 	byEmail       map[string]string
 	organizations map[string]Organization
+	byAccessToken map[string]string
 	plans         map[string]Plan
 	adminActions  []AdminAction
 }
@@ -29,7 +30,7 @@ type Store struct {
 func NewStore() *Store {
 	return &Store{
 		accounts: make(map[string]Account), byEmail: make(map[string]string),
-		organizations: make(map[string]Organization),
+		organizations: make(map[string]Organization), byAccessToken: make(map[string]string),
 		plans: map[string]Plan{
 			"plan_free":     {ID: "plan_free", Key: "free", Name: "Free", Visible: true, MaxDatabases: 1},
 			"plan_starter":  {ID: "plan_starter", Key: "starter", Name: "Starter", PriceCents: 500, AnnualPriceCents: 5000, TrialDays: 30, Visible: true, MaxDatabases: 5, MaxMembers: 5, OperationsPerMonth: 1_000_000, StorageLabel: "5 GB-region storage"},
@@ -337,7 +338,10 @@ func (s *Store) updateLocked(accountID string, mutate func(*Account) error) erro
 	}
 	syncMemberships(&next)
 	if next.User.PasswordHash != current.User.PasswordHash {
+		// A credential change ends every personal access token along with
+		// the sessions the new AuthVersion invalidates.
 		next.AuthVersion = current.AuthVersion + 1
+		next.AccessTokens = nil
 	} else {
 		next.AuthVersion = current.AuthVersion
 	}
@@ -432,9 +436,16 @@ func memberActive(org Organization, userID string) bool {
 	return member.Status == "" || strings.EqualFold(member.Status, "active")
 }
 
-// putLocked commits a's own fields and memberships to accounts and a copy of
-// each of its organizations to organizations.
+// putLocked commits a's own fields and memberships to accounts, a copy of
+// each of its organizations to organizations, and its access token digests
+// to the token index.
 func (s *Store) putLocked(a Account) {
+	for _, token := range s.accounts[a.ID].AccessTokens {
+		delete(s.byAccessToken, token.SecretHash)
+	}
+	for _, token := range a.AccessTokens {
+		s.byAccessToken[token.SecretHash] = a.ID
+	}
 	s.accounts[a.ID] = detachAccount(a)
 	for id, org := range a.Organizations {
 		s.organizations[id] = cloneOrganization(org)
@@ -516,6 +527,7 @@ func cloneAccountFields(a Account) Account {
 	n.DemoSecurity.Passkeys = slices.Clone(a.DemoSecurity.Passkeys)
 	n.Notifications = slices.Clone(a.Notifications)
 	n.AuditEvents = slices.Clone(a.AuditEvents)
+	n.AccessTokens = slices.Clone(a.AccessTokens)
 	n.Organizations = nil
 	return n
 }

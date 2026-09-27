@@ -134,124 +134,43 @@ func typeOf(kind string, scopes []string) credentialType {
 
 type databaseChoice struct{ ID, Name string }
 
-func mountPages(mux *http.ServeMux, deps core.Deps) {
-	mux.HandleFunc("GET /api-keys", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, revealed{}) })
-	mux.HandleFunc("POST /api/v1/dashboard/credentials/key", func(w http.ResponseWriter, r *http.Request) {
-		if !deps.VerifyCSRF(w, r) {
-			return
+func mountPages(mux *http.ServeMux, deps core.Deps, service Service) {
+	mux.HandleFunc("GET /api-keys", func(w http.ResponseWriter, r *http.Request) { renderPage(w, r, deps, service, revealed{}) })
+	create := func(kind, dialog string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			p, ok := deps.FormPrincipal(w, r)
+			if !ok {
+				return
+			}
+			input := sdk.CreateProjectAPIKeyRequest{Name: r.PostFormValue("name"), DatabaseID: r.PostFormValue("databaseId"), Scopes: formScopes(r.PostFormValue("scopes"))}
+			created, err := service.Create(r.Context(), p, kind, input)
+			if err != nil {
+				redirectPageError(w, r, err, dialog)
+				return
+			}
+			renderPage(w, r, deps, service, revealed{Name: created.APIKey.Name, Secret: created.Secret})
 		}
-		p, project, _, err := selectedPage(deps, r)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		if !deps.Store.Can(p, core.Organization.CanManage) {
-			writeError(w, core.ErrForbidden)
-			return
-		}
-		if !deps.Demo {
-			http.Error(w, "live credential issuance is unavailable until a published producer contract exists", http.StatusServiceUnavailable)
-			return
-		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid form", http.StatusBadRequest)
-			return
-		}
-		input := sdk.CreateProjectAPIKeyRequest{Name: r.PostFormValue("name"), DatabaseID: r.PostFormValue("databaseId"), Scopes: formScopes(r.PostFormValue("scopes"))}
-		if err := validateInput(project, input); err != nil {
-			redirectPageError(w, r, err, "key")
-			return
-		}
-		key, secret, err := createDemoKey(deps, p, input)
-		if err != nil {
-			redirectPageError(w, r, err, "key")
-			return
-		}
-		renderPage(w, r, deps, revealed{Name: key.Name, Secret: secret})
-	})
-	mux.HandleFunc("POST /api/v1/dashboard/credentials/m2m", func(w http.ResponseWriter, r *http.Request) {
-		if !deps.VerifyCSRF(w, r) {
-			return
-		}
-		p, project, _, err := selectedPage(deps, r)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		if !deps.Store.Can(p, core.Organization.CanManage) {
-			writeError(w, core.ErrForbidden)
-			return
-		}
-		if !deps.Demo {
-			http.Error(w, "live machine credentials are unavailable until a published producer contract exists", http.StatusServiceUnavailable)
-			return
-		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid form", http.StatusBadRequest)
-			return
-		}
-		input := sdk.CreateProjectAPIKeyRequest{Name: r.PostFormValue("name"), DatabaseID: r.PostFormValue("databaseId"), Scopes: formScopes(r.PostFormValue("scopes"))}
-		if err := validateInput(project, input); err != nil {
-			redirectPageError(w, r, err, "m2m")
-			return
-		}
-		key, secret, err := createDemoCredential(deps, p, input, "m2m")
-		if err != nil {
-			redirectPageError(w, r, err, "m2m")
-			return
-		}
-		renderPage(w, r, deps, revealed{Name: key.Name, Secret: secret})
-	})
+	}
+	mux.HandleFunc("POST /api/v1/dashboard/credentials/key", create(kindAPIKey, "key"))
+	mux.HandleFunc("POST /api/v1/dashboard/credentials/m2m", create(kindM2M, "m2m"))
 	mux.HandleFunc("POST /api/v1/dashboard/credentials/rotate", func(w http.ResponseWriter, r *http.Request) {
-		if !deps.VerifyCSRF(w, r) {
+		p, ok := deps.FormPrincipal(w, r)
+		if !ok {
 			return
 		}
-		p, _, _, err := selectedPage(deps, r)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		if !deps.Store.Can(p, core.Organization.CanManage) {
-			writeError(w, core.ErrForbidden)
-			return
-		}
-		if !deps.Demo {
-			http.Error(w, "live credential rotation is unavailable until a published producer contract exists", http.StatusServiceUnavailable)
-			return
-		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid form", http.StatusBadRequest)
-			return
-		}
-		key, secret, err := rotateDemoKey(deps, p, r.PostFormValue("keyId"))
+		rotated, err := service.Rotate(r.Context(), p, r.PostFormValue("keyId"), "")
 		if err != nil {
 			redirectPageError(w, r, err, "")
 			return
 		}
-		renderPage(w, r, deps, revealed{Name: key.Name, Secret: secret, Rotated: true})
+		renderPage(w, r, deps, service, revealed{Name: rotated.APIKey.Name, Secret: rotated.Secret, Rotated: true})
 	})
 	mux.HandleFunc("POST /api/v1/dashboard/credentials/revoke", func(w http.ResponseWriter, r *http.Request) {
-		if !deps.VerifyCSRF(w, r) {
+		p, ok := deps.FormPrincipal(w, r)
+		if !ok {
 			return
 		}
-		p, _, _, err := selectedPage(deps, r)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		if !deps.Store.Can(p, core.Organization.CanManage) {
-			writeError(w, core.ErrForbidden)
-			return
-		}
-		if !deps.Demo {
-			http.Error(w, "live credential revocation is unavailable until a published producer contract exists", http.StatusServiceUnavailable)
-			return
-		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid form", http.StatusBadRequest)
-			return
-		}
-		if err := revokeDemoKey(deps, p, r.PostFormValue("keyId")); err != nil {
+		if _, err := service.Revoke(r.Context(), p, r.PostFormValue("keyId"), ""); err != nil {
 			redirectPageError(w, r, err, "")
 			return
 		}
@@ -262,19 +181,6 @@ func mountPages(mux *http.ServeMux, deps core.Deps) {
 // formScopes splits the scopes field on commas and whitespace.
 func formScopes(value string) []string {
 	return strings.FieldsFunc(value, func(char rune) bool { return char == ',' || char == ' ' || char == '\n' || char == '\t' })
-}
-
-func selectedPage(deps core.Deps, r *http.Request) (core.Principal, core.Project, core.Account, error) {
-	p, ok := deps.Sessions.Principal(r)
-	if !ok || p.ProjectID == "" {
-		return core.Principal{}, core.Project{}, core.Account{}, core.ErrUnauthorized
-	}
-	a, err := deps.Store.SnapshotAs(p)
-	if err != nil {
-		return core.Principal{}, core.Project{}, core.Account{}, err
-	}
-	project, err := a.ProjectFor(p, p.OrganizationID, p.ProjectID)
-	return p, project, a, err
 }
 
 // redirectPageError returns a failed credential form to the API keys page,
@@ -297,6 +203,8 @@ func redirectPageError(w http.ResponseWriter, r *http.Request, err error, create
 		message = "That credential no longer exists or was already revoked."
 	case errors.Is(err, core.ErrForbidden):
 		message = "Only organization owners and admins can manage credentials."
+	case errors.Is(err, errLiveCredentials):
+		message = "Credentials cannot be issued, rotated, or revoked here yet."
 	default:
 		slog.Error("change credential", "path", r.URL.Path, "error", err)
 	}
@@ -317,8 +225,13 @@ func redirectPageError(w http.ResponseWriter, r *http.Request, err error, create
 	http.Redirect(w, r, "/api-keys?"+query.Encode(), http.StatusSeeOther)
 }
 
-func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, reveal revealed) {
-	p, project, a, err := selectedPage(deps, r)
+func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, service Service, reveal revealed) {
+	p, ok := deps.Sessions.Principal(r)
+	if !ok || p.ProjectID == "" {
+		core.RedirectToLogin(w, r)
+		return
+	}
+	a, project, err := service.selected(p)
 	if err != nil {
 		if errors.Is(err, core.ErrUnauthorized) {
 			core.RedirectToLogin(w, r)
@@ -334,16 +247,24 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, reveal r
 	} else {
 		data.Create = ""
 	}
-	search := strings.ToLower(data.Search)
-	for _, key := range project.APIKeys {
-		item := keyView{ProjectAPIKey: publicKey(key, a.User.Email), Type: typeOf(key.Kind, key.Scopes), DatabaseName: key.DatabaseID}
-		if db, ok := project.Databases[key.DatabaseID]; ok {
-			item.DatabaseName = db.Name
+	filter := credentialFilter{Status: data.Status, DatabaseID: data.DatabaseID, Search: data.Search}
+	switch data.Kind {
+	case "key":
+		filter.Kind = kindAPIKey
+	case "m2m":
+		filter.Kind = kindM2M
+	}
+	credentials, err := service.List(p, filter)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	for _, item := range credentials {
+		view := keyView{ProjectAPIKey: item.ProjectAPIKey, Type: typeOf(item.Kind, item.Scopes), DatabaseName: item.DatabaseID}
+		if db, ok := project.Databases[item.DatabaseID]; ok {
+			view.DatabaseName = db.Name
 		}
-		if data.Kind == "key" && key.Kind != "api-key" || data.Kind == "m2m" && key.Kind != "m2m" || data.Status == "active" && !item.Active || data.Status == "inactive" && item.Active || data.DatabaseID != "" && item.DatabaseID != data.DatabaseID || data.Search != "" && !strings.Contains(strings.ToLower(item.Name+" "+item.Prefix), search) {
-			continue
-		}
-		data.Keys = append(data.Keys, item)
+		data.Keys = append(data.Keys, view)
 	}
 	for _, db := range project.Databases {
 		data.Databases = append(data.Databases, databaseChoice{ID: db.ID, Name: db.Name})

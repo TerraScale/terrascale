@@ -56,7 +56,7 @@ func newReviewFixture(t *testing.T) reviewFixture {
 	if _, err := fixture.billing.CompleteDemoCheckout(fixture.principal, session.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	Mount(fixture.mux, core.Deps{Store: store, Sessions: reviewSessions{principal: fixture.principal}, Render: viewRenderer{}, Demo: true}, nil)
+	Mount(fixture.mux, core.Deps{Store: store, Sessions: reviewSessions{principal: fixture.principal}, Render: viewRenderer{}, Tools: core.NewTools(store), Demo: true}, nil)
 	return fixture
 }
 

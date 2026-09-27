@@ -38,7 +38,7 @@ var formErrors = map[string]string{
 	ErrMissing:        "That database or backup no longer exists.",
 	ErrUnavailable:    "The data plane is unavailable. Try again shortly.",
 	ErrProvider:       "The data plane refused the request. Try again, or contact support if it keeps failing.",
-	ErrRetention:      "Keep snapshots for 1 to 365 days.",
+	ErrRetention:      "Set snapshot retention from 1 to 35 days.",
 	ErrSchedule:       "Enter schedules as five cron fields, such as 0 2 * * *, or leave them empty.",
 	ErrBackupMissing:  "That restore point is no longer available.",
 	ErrBackupsOffline: "On-demand backups and schedules are unavailable in the published SDK contract.",
