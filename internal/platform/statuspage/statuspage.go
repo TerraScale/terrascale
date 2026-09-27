@@ -168,6 +168,9 @@ type incident struct {
 	Impact    string   `json:"impact"`
 	Shortlink string   `json:"shortlink"`
 	Updates   []update `json:"incident_updates"`
+	// Headline is the newest update's headline, worked out once per fetch
+	// so rendering a page never rescans update bodies under the lock.
+	Headline string `json:"-"`
 }
 
 type maintenance struct {
@@ -199,6 +202,13 @@ func parse(r io.Reader) (summary, error) {
 	if document.Status.Indicator == "" {
 		return summary{}, errNoSummary
 	}
+	for i := range document.Incidents {
+		if updates := document.Incidents[i].Updates; len(updates) > 0 {
+			document.Incidents[i].Headline = headline(updates[0].Body)
+		}
+		// Only the headline is shown; keeping the bodies would only hold memory.
+		document.Incidents[i].Updates = nil
+	}
 	return summary{Incidents: document.Incidents, Maintenances: document.Maintenances}, nil
 }
 
@@ -219,10 +229,7 @@ func noticesAt(s summary, now time.Time, home string) []core.StatusNotice {
 			continue
 		}
 		impact := impactOf(i.Impact)
-		notice := core.StatusNotice{Impact: impact, Label: incidentLabels[impact], Title: i.Name, URL: link(i.Shortlink, home)}
-		if len(i.Updates) > 0 {
-			notice.Message = headline(i.Updates[0].Body)
-		}
+		notice := core.StatusNotice{Impact: impact, Label: incidentLabels[impact], Title: i.Name, Message: i.Headline, URL: link(i.Shortlink, home)}
 		list = append(list, ranked{rank: incidentRanks[impact], StatusNotice: notice})
 	}
 	for _, m := range s.Maintenances {

@@ -55,7 +55,7 @@ func TestParseReadsIncidentsAndMaintenance(t *testing.T) {
 		t.Fatalf("parsed %d incidents and %d maintenances, want 3 and 3", len(s.Incidents), len(s.Maintenances))
 	}
 	if got := s.Incidents[0]; got.Name != "Slow sign-in" || got.Impact != "minor" || got.Status != "monitoring" ||
-		got.Shortlink != "https://status.terrascale.tech/incidents/1" || len(got.Updates) != 2 || got.Updates[0].Body != "A fix is rolling out." {
+		got.Shortlink != "https://status.terrascale.tech/incidents/1" || got.Headline != "A fix is rolling out." || got.Updates != nil {
 		t.Fatalf("incident = %+v", got)
 	}
 	if got := s.Maintenances[1]; got.Status != "scheduled" ||
