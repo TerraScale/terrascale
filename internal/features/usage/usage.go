@@ -171,6 +171,17 @@ type billingPlanChoice struct {
 type billingPlanReview struct {
 	Open, Ready, Immediate                                                                     bool
 	Key, Name, Interval, Price, Effect, Estimate, Storage, Requests, Databases, Members, Error string
+	// CanUndo offers to undo the scheduled change that blocks this one.
+	CanUndo bool
+	// Warnings name the allowances the organization already exceeds on the
+	// target plan.
+	Warnings []limitWarning
+}
+
+// limitWarning is one allowance the organization exceeds on a plan and what
+// the plan's limit then blocks.
+type limitWarning struct {
+	Title, Detail string
 }
 
 // Mount registers the usage page and spending controls. billing is nil in
@@ -226,8 +237,8 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		data.BillingPlanKey = org.Billing.PlanKey
 		data.BillingInterval = org.Billing.Interval
 		data.BillingSubscription = org.Billing.SubscriptionID != "" && org.Billing.Status != "canceled" && org.Billing.Status != "incomplete_expired"
-		data.ScheduledPlan = org.Billing.ScheduledPlanKey
-		data.PendingPlan = org.Billing.PendingPlanKey
+		data.ScheduledPlan = planName(deps.Store, org.Billing.ScheduledPlanKey)
+		data.PendingPlan = planName(deps.Store, org.Billing.PendingPlanKey)
 		data.ScheduledAt = org.Billing.ScheduledAt
 		if data.BillingPlanKey == "" && org.PlanID == "plan_free" {
 			data.BillingPlanKey = "free"
@@ -375,14 +386,36 @@ func priceUSD(cents int64) string {
 func reviewBillingPlan(r *http.Request, deps core.Deps, billing *payments.Stripe, org core.Organization, data pageData) billingPlanReview {
 	key, interval := strings.ToLower(r.URL.Query().Get("plan")), strings.ToLower(r.URL.Query().Get("interval"))
 	review := billingPlanReview{Open: true, Key: key, Interval: interval}
+	// Billing applies one change at a time and needs a healthy subscription,
+	// so these states would reject any confirmation.
+	if data.BillingSubscription {
+		switch {
+		case data.PendingPlan != "":
+			review.Error = "Stripe is still confirming the change to " + data.PendingPlan + ". You can change plans again once it’s confirmed."
+			return review
+		case data.ScheduledPlan != "":
+			review.Error = "A change to " + data.ScheduledPlan + " is scheduled to take effect " + whenScheduled(data.ScheduledAt) + ". Undo it to choose a different plan."
+			review.CanUndo = true
+			return review
+		case org.BillingStatus == "billing_required", !payments.IsEntitledStatus(org.Billing.Status):
+			review.Error = "Stripe reports a payment problem with this subscription. Resolve it in Manage payment before changing plans."
+			return review
+		case org.Billing.CancelAtPeriodEnd:
+			// Personal workspaces see this as a scheduled change to Free; an
+			// organization's subscription can only be resumed in the portal.
+			review.Error = "This subscription ends " + whenScheduled(org.BillingRenewal) + ". Resume it in Manage payment before changing plans."
+			return review
+		}
+	}
 	if key == "free" {
 		if !data.Personal || !data.BillingSubscription {
 			review.Error = "Free is available after a Personal paid subscription."
 			return review
 		}
-		review.Name, review.Price, review.Effect, review.Estimate = "Free", "US$ 0.00", "At the current renewal date", "No charge today"
+		review.Name, review.Price, review.Effect, review.Estimate = "Free", "US$ 0.00", atRenewal(org.BillingRenewal), "No charge today"
 		if free, exists := deps.Store.Plan("free"); exists {
 			review.Storage, review.Requests, review.Databases, review.Members = free.StorageAllowance(), free.OperationsAllowance(), free.DatabaseAllowance(), free.MemberAllowance()
+			review.Warnings = limitWarnings(org, free, time.Now())
 		}
 		review.Ready = true
 		return review
@@ -397,12 +430,12 @@ func reviewBillingPlan(r *http.Request, deps core.Deps, billing *payments.Stripe
 		return review
 	}
 	review.Name = plan.Name
-	cents := plan.PriceCents
+	review.Price = priceUSD(plan.PriceCents) + " / month"
 	if interval == "annual" {
-		cents = plan.AnnualPriceCents
+		review.Price = priceUSD(plan.AnnualPriceCents) + " / year"
 	}
-	review.Price = priceUSD(cents)
 	review.Storage, review.Requests, review.Databases, review.Members = plan.StorageAllowance(), plan.OperationsAllowance(), plan.DatabaseAllowance(), plan.MemberAllowance()
+	review.Warnings = limitWarnings(org, plan, time.Now())
 	if !data.BillingSubscription {
 		review.Effect = "After Stripe confirms checkout"
 		if !org.Billing.TrialUsed && plan.TrialDays > 0 {
@@ -432,10 +465,70 @@ func reviewBillingPlan(r *http.Request, deps core.Deps, billing *payments.Stripe
 			}
 		}
 	} else {
-		review.Effect = "At renewal on " + org.BillingRenewal.UTC().Format("Jan 2, 2006")
+		review.Effect = atRenewal(org.BillingRenewal)
 		review.Estimate, review.Ready = "No charge today", true
 	}
 	return review
+}
+
+// atRenewal says when a change scheduled for the renewal date applies.
+func atRenewal(renewal time.Time) string {
+	if renewal.IsZero() {
+		return "At the next renewal"
+	}
+	return "At renewal on " + renewal.UTC().Format("Jan 2, 2006")
+}
+
+// whenScheduled says when a scheduled change applies. Stripe may not report
+// the period end yet, and then the change applies at the next renewal.
+func whenScheduled(at time.Time) string {
+	if at.IsZero() {
+		return "at the next renewal"
+	}
+	return "on " + at.UTC().Format("Jan 2, 2006")
+}
+
+// limitWarnings names each allowance the organization already exceeds on the
+// target plan. A plan change never removes resources; the limits only block
+// new databases and invitations.
+func limitWarnings(org core.Organization, target core.Plan, now time.Time) []limitWarning {
+	var warnings []limitWarning
+	databases := 0
+	for _, project := range org.Projects {
+		databases += len(project.Databases)
+	}
+	if target.MaxDatabases > 0 && databases > target.MaxDatabases {
+		warnings = append(warnings, limitWarning{
+			Title:  "More databases than " + target.Name + " allows",
+			Detail: fmt.Sprintf("%s has %d databases and %s allows %d. Existing databases stay, but new ones can’t be created until it’s under the limit.", org.Name, databases, target.Name, target.MaxDatabases),
+		})
+	}
+	seats := 0
+	for _, member := range org.Members {
+		if member.Status == "active" {
+			seats++
+		}
+	}
+	for _, invitation := range org.Invitations {
+		if invitation.Status == "pending" && invitation.ExpiresAt.After(now) {
+			seats++
+		}
+	}
+	if target.MaxMembers > 0 && seats > target.MaxMembers {
+		warnings = append(warnings, limitWarning{
+			Title:  "More members than " + target.Name + " allows",
+			Detail: fmt.Sprintf("%s has %d members and pending invitations and %s allows %d. Current members keep access, but new invitations are blocked until it’s under the limit.", org.Name, seats, target.Name, target.MaxMembers),
+		})
+	}
+	return warnings
+}
+
+// planName is a plan key's display name, or the key when no plan has it.
+func planName(store *core.Store, key string) string {
+	if plan, ok := store.Plan(key); ok {
+		return plan.Name
+	}
+	return key
 }
 
 func buildPage(ctx context.Context, deps core.Deps, p core.Principal, org core.Organization, project core.Project, tab, databaseFilter string) pageData {
