@@ -282,7 +282,7 @@ templ billingTab(data pageData, csrfToken string) {
 		}
 		if data.ScheduledPlan != "" {
 			<div class="ts-card-section ts-stack-sm">
-				@ui.Alert("info", "Change scheduled", "Your plan will change to "+data.ScheduledPlan+" on "+data.ScheduledAt.UTC().Format("Jan 2, 2006")+".")
+				@ui.Alert("info", "Change scheduled", "Your plan will change to "+data.ScheduledPlan+" "+whenScheduled(data.ScheduledAt)+".")
 				if data.CanManageBilling {
 					<form method="post" action="/billing/change/undo">
 						<input type="hidden" name="_csrf" value={ csrfToken }/>

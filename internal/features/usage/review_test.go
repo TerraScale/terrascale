@@ -129,8 +129,18 @@ func TestPlanReviewBlocksChangesWhileAChangeIsScheduled(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := fixture.review(t, "business", "monthly")
-	requireContains(t, html, "A change to Free is scheduled for Oct 27, 2026.", `action="/billing/change/undo"`, "Your plan will change to Free on Oct 27, 2026.")
+	requireContains(t, html, "A change to Free is scheduled to take effect on Oct 27, 2026.", `action="/billing/change/undo"`, "Your plan will change to Free on Oct 27, 2026.")
 	requireOmits(t, html, "Confirm change")
+}
+
+func TestPlanReviewNamesTheNextRenewalWhenTheScheduledDateIsUnknown(t *testing.T) {
+	fixture := newReviewFixture(t)
+	fixture.update(t, func(org *core.Organization) {
+		org.Billing.ScheduledPlanKey, org.Billing.ScheduledInterval = "free", ""
+	})
+	html := fixture.review(t, "business", "monthly")
+	requireContains(t, html, "A change to Free is scheduled to take effect at the next renewal.", "Your plan will change to Free at the next renewal.")
+	requireOmits(t, html, "Jan 1, 1")
 }
 
 func TestPlanReviewBlocksChangesWhileAnUpgradeAwaitsPayment(t *testing.T) {

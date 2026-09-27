@@ -394,7 +394,7 @@ func reviewBillingPlan(r *http.Request, deps core.Deps, billing *payments.Stripe
 			review.Error = "Stripe is still confirming the change to " + data.PendingPlan + ". You can change plans again once it’s confirmed."
 			return review
 		case data.ScheduledPlan != "":
-			review.Error = "A change to " + data.ScheduledPlan + " is scheduled for " + data.ScheduledAt.UTC().Format("Jan 2, 2006") + ". Undo it to choose a different plan."
+			review.Error = "A change to " + data.ScheduledPlan + " is scheduled to take effect " + whenScheduled(data.ScheduledAt) + ". Undo it to choose a different plan."
 			review.CanUndo = true
 			return review
 		case org.BillingStatus == "billing_required":
@@ -472,6 +472,15 @@ func atRenewal(renewal time.Time) string {
 		return "At the next renewal"
 	}
 	return "At renewal on " + renewal.UTC().Format("Jan 2, 2006")
+}
+
+// whenScheduled says when a scheduled change applies. Stripe may not report
+// the period end yet, and then the change applies at the next renewal.
+func whenScheduled(at time.Time) string {
+	if at.IsZero() {
+		return "at the next renewal"
+	}
+	return "on " + at.UTC().Format("Jan 2, 2006")
 }
 
 // limitWarnings names each allowance the organization already exceeds on the

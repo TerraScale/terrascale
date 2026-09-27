@@ -1400,7 +1400,7 @@ func billingTab(data pageData, csrfToken string) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = ui.Alert("info", "Change scheduled", "Your plan will change to "+data.ScheduledPlan+" on "+data.ScheduledAt.UTC().Format("Jan 2, 2006")+".").Render(ctx, templ_7745c5c3_Buffer)
+				templ_7745c5c3_Err = ui.Alert("info", "Change scheduled", "Your plan will change to "+data.ScheduledPlan+" "+whenScheduled(data.ScheduledAt)+".").Render(ctx, templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
