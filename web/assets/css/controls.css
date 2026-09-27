@@ -44,12 +44,12 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
 }
 
 .ts-btn-primary {
-  background: var(--ts-accent);
+  background: var(--ts-accent-fill);
   color: var(--ts-on-accent);
 }
 
 .ts-btn-primary:hover {
-  background: var(--ts-accent-hover);
+  background: var(--ts-accent-fill-hover);
 }
 
 .ts-btn-secondary,
@@ -172,7 +172,7 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
   min-width: 0;
   height: var(--ts-control-h);
   padding: 0 var(--ts-s3);
-  border: 1px solid var(--ts-line-strong);
+  border: 1px solid var(--ts-control-line);
   border-radius: var(--ts-radius);
   background: var(--ts-surface);
   color: var(--ts-ink);
@@ -194,7 +194,7 @@ textarea.ts-input {
 
 .ts-input:hover,
 .ts-select:hover {
-  border-color: rgb(148 163 184 / 0.34);
+  border-color: var(--ts-control-line-hover);
 }
 
 .ts-input:focus,

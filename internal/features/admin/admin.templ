@@ -384,7 +384,8 @@ templ estateSection(data pageData, csrfToken string) {
 			<div class="ts-split">
 				@ui.Card(ui.CardProps{ID: "admin-estate-action-log", Title: "Recorded actions", Description: "Platform-wide entries for this in-memory demo.", Flush: true}) {
 					if len(data.EstateActions) > 0 {
-						<div class="ts-table-wrap">
+						// Nothing in the rows takes focus, so the scroll area itself does.
+						<div class="ts-table-wrap" role="region" aria-labelledby="admin-estate-action-log-title" tabindex="0">
 							<table class="ts-table">
 								<caption class="ts-sr-only">Recorded platform administrator estate actions, newest first</caption>
 								<thead><tr><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Reason</th><th scope="col">Actor user ID</th><th scope="col">Recorded</th></tr></thead>

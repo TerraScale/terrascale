@@ -60,7 +60,7 @@
 
 .ts-onboarding-step-current .ts-onboarding-step-icon {
   border-color: transparent;
-  background: var(--ts-accent);
+  background: var(--ts-accent-fill);
   color: var(--ts-on-accent);
 }
 

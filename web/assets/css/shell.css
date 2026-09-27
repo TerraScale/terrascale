@@ -5,11 +5,10 @@
   display: grid;
   grid-template-columns: var(--ts-sidebar-width) minmax(0, 1fr);
   min-height: 100dvh;
-  /* Paint the sidebar column to the bottom of long pages. */
-  background: linear-gradient(90deg, var(--ts-sidebar) var(--ts-sidebar-width), transparent 0);
 }
 
-/* The sidebar stays pinned at full viewport height while the page scrolls. */
+/* The sidebar stays pinned at full viewport height while the page scrolls,
+   so its own background covers the column. */
 .ts-sidebar {
   position: sticky;
   top: 0;
@@ -19,6 +18,7 @@
   height: 100dvh;
   padding: var(--ts-s5) var(--ts-s3) var(--ts-s3);
   overflow: hidden;
+  background: var(--ts-sidebar);
 }
 
 .ts-sidebar-header {
@@ -327,7 +327,7 @@ details[open] > .ts-context-trigger {
   padding: 0 6px;
   border-radius: var(--ts-radius-pill);
   background: color-mix(in oklab, var(--tone) 18%, transparent);
-  color: var(--tone);
+  color: color-mix(in oklab, var(--tone) 60%, var(--ts-ink));
   font-size: 11px;
   font-weight: 600;
   line-height: 20px;
@@ -380,7 +380,7 @@ details[open] > .ts-account-trigger {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--ts-accent);
+  background: var(--ts-accent-fill);
   color: var(--ts-on-accent);
   font-size: 12px;
   font-weight: 700;
@@ -539,17 +539,12 @@ details[open] > .ts-account-trigger {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .ts-shell {
-    background: none;
-  }
-
   .ts-inset {
     border-left: 0;
   }
 
   .ts-sidebar {
     position: fixed;
-    background-color: var(--ts-sidebar);
     inset: 0 auto 0 0;
     z-index: var(--ts-z-modal);
     width: min(86vw, 300px);

@@ -192,16 +192,18 @@
   font-weight: 600;
 }
 
+/* Long lines wrap instead of scrolling, so code stays readable without a
+   keyboard-inaccessible scroll area and reflows on narrow screens. */
 .ts-code,
 .ts-snippet-body {
   margin: 0;
   padding: var(--ts-s4);
-  overflow-x: auto;
   color: #c9d4ff;
   font-family: var(--ts-font-mono);
   font-size: var(--ts-fs-sm);
   line-height: 1.6;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .ts-snippet > .ts-snippet-body {
