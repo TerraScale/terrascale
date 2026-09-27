@@ -204,5 +204,5 @@ func TestLandingRegistrationLinkOpensSignup(t *testing.T) {
 	waitForPath(t, page, func(u *url.URL) bool {
 		return u.Path == "/onboarding" && u.RawQuery == "plan=pro&return=%2Fpricing"
 	})
-	visible(t, page.Locator(`form[action="/onboarding/register"]`))
+	visible(t, page.Locator(`form[action="/onboarding"]`))
 }

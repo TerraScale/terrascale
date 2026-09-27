@@ -459,8 +459,11 @@ type CSRF interface {
 }
 
 type Page struct {
-	Layout    string
-	Title     string
+	Layout string
+	Title  string
+	// Status is the response status code; zero means 200 OK. Forms that fail
+	// validation render their page again with a 4xx status.
+	Status    int
 	Principal Principal
 	View      View
 	CSRFToken string

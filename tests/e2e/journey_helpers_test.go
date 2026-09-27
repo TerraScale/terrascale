@@ -37,13 +37,13 @@ func registerAndOnboard(t *testing.T, page playwright.Page, account credentials,
 func registerAndOpenPaymentStep(t *testing.T, page playwright.Page, account credentials) {
 	t.Helper()
 	goTo(t, page, "/onboarding")
-	form := page.Locator(`form[action="/onboarding/register"]`)
+	form := page.Locator(`form[action="/onboarding"]`)
 	fill(t, form.Locator(`[name="displayName"]`), account.DisplayName)
 	fill(t, form.Locator(`[name="email"]`), account.Email)
 	fill(t, form.Locator(`[name="password"]`), account.Password)
 	fill(t, form.Locator(`[name="confirmPassword"]`), account.Password)
 	must(t, form.Locator(`[name="terms"]`).Check())
-	click(t, byRole(form, *playwright.AriaRoleButton, "Save"))
+	click(t, byRole(form, *playwright.AriaRoleButton, "Create account"))
 
 	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/onboarding" })
 	onboardingStep(t, page, "payment-method")
@@ -52,7 +52,7 @@ func registerAndOpenPaymentStep(t *testing.T, page playwright.Page, account cred
 func login(t *testing.T, page playwright.Page, email, password string) {
 	t.Helper()
 	goTo(t, page, "/login")
-	form := page.Locator(`form[action="/api/v1/auth/password/login"]`)
+	form := page.Locator(`form[action="/login"]`)
 	fill(t, form.Locator(`[name="email"]`), email)
 	fill(t, form.Locator(`[name="password"]`), password)
 	click(t, byRole(form, *playwright.AriaRoleButton, "Sign in"))

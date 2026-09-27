@@ -112,6 +112,9 @@ func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) er
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Content-Security-Policy", contentSecurityPolicy(page.Nonce, features))
+	if page.Status != 0 {
+		w.WriteHeader(page.Status)
+	}
 	_, err := w.Write(output.Bytes())
 	return err
 }
