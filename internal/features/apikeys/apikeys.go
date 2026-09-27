@@ -201,17 +201,18 @@ func rotateDemoKey(deps core.Deps, p core.Principal, keyID string) (core.APIKey,
 		if !a.Organizations[p.OrganizationID].CanManage(p.UserID) {
 			return core.ErrForbidden
 		}
-		key, ok := project.APIKeys[keyID]
-		if !ok || !key.RevokedAt.IsZero() {
+		current, ok := project.APIKeys[keyID]
+		if !ok || !current.RevokedAt.IsZero() {
 			return core.ErrNotFound
 		}
-		if key.Kind == "m2m" {
+		if current.Kind == "m2m" {
 			secret = "tsm_demo_" + strings.TrimPrefix(core.NewID(""), "_")
 		}
-		key.SecretHash = hash(secret)
-		key.Prefix = secret[:min(len(secret), 16)]
-		key.LastFour = secret[len(secret)-4:]
-		project.APIKeys[keyID] = key
+		current.SecretHash = hash(secret)
+		current.Prefix = secret[:min(len(secret), 16)]
+		current.LastFour = secret[len(secret)-4:]
+		project.APIKeys[keyID] = current
+		key = current
 		org := a.Organizations[p.OrganizationID]
 		org.Projects[p.ProjectID] = project
 		a.Organizations[p.OrganizationID] = org

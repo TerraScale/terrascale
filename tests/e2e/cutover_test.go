@@ -83,14 +83,15 @@ func TestCutoverOwnerCreatesAndRevokesAPIKeyThenInvitesMember(t *testing.T) {
 	fill(t, createKey.Locator(`[name="scopes"]`), "database:read")
 	submitAndExpect(t, page, "/api/v1/dashboard/credentials/key", 200, byRole(createKey, *playwright.AriaRoleButton, "Create key").Click)
 	secret := func() playwright.Locator {
-		return page.Locator(`section[role="status"]`).Filter(playwright.LocatorFilterOptions{HasText: "Copy this secret now"})
+		return page.Locator(`section[role="status"]`).Filter(playwright.LocatorFilterOptions{HasText: "Secret for " + keyName})
 	}
 	must(t, expect.Locator(secret().Locator("code")).ToContainText(regexp.MustCompile(`^tsk_demo_`)))
 	keyRow := page.Locator("table.ts-table tbody tr").Filter(playwright.LocatorFilterOptions{HasText: keyName})
 	must(t, expect.Locator(keyRow).ToContainText("Active"))
+	click(t, byRole(keyRow, *playwright.AriaRoleButton, "Revoke"))
 	submitAndExpect(t, page, "/api/v1/dashboard/credentials/revoke", 303,
-		keyRow.Locator(`form[action="/api/v1/dashboard/credentials/revoke"] button`).Click)
-	must(t, expect.Locator(keyRow).ToContainText("Revoked or expired"))
+		byRole(page.Locator("dialog[open]"), *playwright.AriaRoleButton, "Revoke credential").Click)
+	must(t, expect.Locator(keyRow).ToContainText("Revoked"))
 	must(t, expect.Locator(secret()).ToHaveCount(0))
 
 	goToOK(t, page, "/access")

@@ -14,15 +14,23 @@ templ apiKeysContent(page core.Page, d pageData) {
 				@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-key", Label: "Create key", Icon: credentialIcon("key"), Variant: "primary"})
 			}
 		}
-		if d.Error != "" {
+		// A create dialog reopened after invalid input shows its own error.
+		if d.Error != "" && d.Create == "" {
 			@ui.Alert("danger", "", d.Error)
 		}
-		if d.CreatedSecret != "" {
-			<section class="ts-alert ts-alert-success ts-apikeys-secret" role="status">
-				<h2 class="ts-alert-title">Copy this secret now</h2>
-				<p class="ts-alert-body">It is shown only in this response.</p>
+		if d.Revealed.Secret != "" {
+			// The secret answers a POST: swap the address for the page's own, so
+			// reloading or going back never issues or rotates a credential again.
+			<section class="ts-alert ts-alert-success ts-apikeys-secret" role="status" data-init="history.replaceState(null, '', '/api-keys')">
+				if d.Revealed.Rotated {
+					<h2 class="ts-alert-title">New secret for { d.Revealed.Name }</h2>
+					<p class="ts-alert-body">The previous secret has stopped working. Copy this one now and update every client that uses it. It is shown only once.</p>
+				} else {
+					<h2 class="ts-alert-title">Secret for { d.Revealed.Name }</h2>
+					<p class="ts-alert-body">Copy it now: it is shown only once. If you lose it, rotate the credential to issue a new one.</p>
+				}
 				<div class="ts-row">
-					<code class="ts-apikeys-secret-value">{ d.CreatedSecret }</code>
+					<code class="ts-apikeys-secret-value">{ d.Revealed.Secret }</code>
 					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-signals="{_copied: false}" data-on:click="navigator.clipboard.writeText(el.previousElementSibling.textContent).then(() => $_copied = true)">
 						@icons.Copy(14)
 						<span data-text="$_copied ? 'Copied' : 'Copy'">Copy</span>
@@ -95,8 +103,11 @@ templ createCredential(page core.Page, d pageData, kind, action, title, descript
 	@ui.Dialog(ui.DialogProps{ID: "create-" + kind, Title: title, Description: description, Open: d.Create == kind}) {
 		<form method="post" action={ "/api/v1/dashboard/credentials/" + kind } class="ts-form">
 			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+			if d.Error != "" && d.Create == kind {
+				@ui.Alert("danger", "", d.Error)
+			}
 			@ui.Field(ui.FieldProps{ID: kind + "-name", Label: "Name"}) {
-				<input class="ts-input" id={ kind + "-name" } name="name" required/>
+				<input class="ts-input" id={ kind + "-name" } name="name" maxlength="128" required/>
 			}
 			@ui.Field(ui.FieldProps{ID: kind + "-scopes", Label: "Scopes", Hint: "Comma-separated, for example database:read,database:write."}) {
 				<input class="ts-input" id={ kind + "-scopes" } name="scopes" value={ scopes } required/>
@@ -142,27 +153,45 @@ templ credentialRow(page core.Page, canManage bool, key keyView) {
 		</td>
 		<td class="ts-meta">
 			if key.DatabaseID != "" {
-				{ key.DatabaseID }
+				{ key.DatabaseName }
 			} else {
 				All project databases
 			}
 		</td>
 		<td>
-			if key.Active {
-				@ui.Badge("success", "Active")
-			} else {
-				@ui.Badge("neutral", "Revoked or expired")
+			switch {
+				case key.Active:
+					@ui.Badge("success", "Active")
+				case key.RevokedAt != "":
+					@ui.Badge("neutral", "Revoked")
+				default:
+					@ui.Badge("warning", "Expired")
 			}
 		</td>
 		if canManage {
 			<td class="ts-table-actions">
 				if key.Active {
 					<div class="ts-row ts-row-end">
-						<form method="post" action="/api/v1/dashboard/credentials/rotate"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="keyId" value={ key.ID }/><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Rotate</button></form>
-						<form method="post" action="/api/v1/dashboard/credentials/revoke"><input type="hidden" name="_csrf" value={ page.CSRFToken }/><input type="hidden" name="keyId" value={ key.ID }/><button class="ts-btn ts-btn-danger ts-btn-sm" type="submit">Revoke</button></form>
+						@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "rotate-" + key.ID, Label: "Rotate", Small: true})
+						@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "revoke-" + key.ID, Label: "Revoke", Variant: "danger", Small: true})
 					</div>
+					@credentialAction(page, key, "rotate", "Rotate "+key.Name+"?", "A new secret is issued and the current one stops working immediately. Clients that use it fail until you update them.", "Rotate secret", "primary")
+					@credentialAction(page, key, "revoke", "Revoke "+key.Name+"?", "Revoking is permanent: requests that use this credential are rejected from now on. Create a new credential to restore access.", "Revoke credential", "danger")
 				}
 			</td>
 		}
 	</tr>
+}
+
+// credentialAction confirms a rotate or revoke in a dialog before posting it.
+templ credentialAction(page core.Page, key keyView, action, title, description, label, variant string) {
+	@ui.Dialog(ui.DialogProps{ID: action + "-" + key.ID, Title: title, Description: description}) {
+		<form method="post" action={ "/api/v1/dashboard/credentials/" + action }>
+			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
+			<input type="hidden" name="keyId" value={ key.ID }/>
+			@ui.DialogActions(action + "-" + key.ID) {
+				<button class={ "ts-btn", "ts-btn-" + variant } type="submit">{ label }</button>
+			}
+		</form>
+	}
 }
