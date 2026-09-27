@@ -18,8 +18,10 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/platform/buildinfo"
@@ -36,8 +38,11 @@ const (
 	// upcomingWindow is how far ahead scheduled maintenance is announced.
 	upcomingWindow = 24 * time.Hour
 	// maxNotices caps the banner so it never pushes the page out of view.
-	maxNotices   = 3
-	maxBodyBytes = 1 << 20
+	maxNotices = 3
+	// maxMessageRunes bounds the incident update a notice quotes; the full
+	// text is on the status page.
+	maxMessageRunes = 200
+	maxBodyBytes    = 1 << 20
 )
 
 // Client serves the status page's active notices from an in-memory cache
@@ -216,7 +221,7 @@ func noticesAt(s summary, now time.Time, home string) []core.StatusNotice {
 		impact := impactOf(i.Impact)
 		notice := core.StatusNotice{Impact: impact, Label: incidentLabels[impact], Title: i.Name, URL: link(i.Shortlink, home)}
 		if len(i.Updates) > 0 {
-			notice.Message = i.Updates[0].Body
+			notice.Message = headline(i.Updates[0].Body)
 		}
 		list = append(list, ranked{rank: incidentRanks[impact], StatusNotice: notice})
 	}
@@ -250,6 +255,29 @@ var (
 		"critical": "Critical incident", "major": "Major incident", "minor": "Minor incident", "none": "Incident",
 	}
 )
+
+// headline is the first paragraph of an incident update with its whitespace
+// collapsed, cut at a word boundary to maxMessageRunes.
+func headline(body string) string {
+	var words []string
+	for line := range strings.Lines(body) {
+		fields := strings.Fields(line)
+		if len(fields) == 0 && len(words) > 0 {
+			break
+		}
+		words = append(words, fields...)
+	}
+	text := strings.Join(words, " ")
+	if utf8.RuneCountInString(text) <= maxMessageRunes {
+		return text
+	}
+	runes := []rune(text)
+	cut := string(runes[:maxMessageRunes])
+	if space := strings.LastIndexByte(cut, ' '); space > 0 && runes[maxMessageRunes] != ' ' {
+		cut = cut[:space]
+	}
+	return strings.TrimRight(cut, " ,.;:") + "…"
+}
 
 // impactOf maps an incident impact onto the banner's finite variants.
 func impactOf(impact string) string {

@@ -518,8 +518,14 @@ details[open] > .ts-account-trigger {
   font-weight: 600;
 }
 
+/* The status page holds the full update; two lines keep the banner short. */
 .ts-status-notice-message {
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--ts-ink-2);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .ts-status-notice-link {

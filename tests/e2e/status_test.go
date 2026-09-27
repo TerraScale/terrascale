@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,13 +35,15 @@ func TestShellAnnouncesStatusPageIncidentsAndMaintenance(t *testing.T) {
 	}
 	t.Parallel()
 	starts := time.Now().UTC().Add(3 * time.Hour).Truncate(time.Hour)
+	// A long, two-paragraph update: the banner quotes the start of the first.
+	update := strings.Repeat("We are investigating elevated error rates in gru. ", 12) + `\n\nRoot cause: a saturated connection pool.`
 	statusPage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"status": {"indicator": "major", "description": "Partial System Outage"},
 			"incidents": [{"name": "Elevated database API errors", "status": "investigating", "impact": "major",
 				"shortlink": "https://status.terrascale.tech/incidents/e2e",
-				"incident_updates": [{"body": "We are investigating elevated error rates in gru."}]}],
+				"incident_updates": [{"body": "` + update + `"}]}],
 			"scheduled_maintenances": [{"name": "Storage engine upgrade", "status": "scheduled",
 				"scheduled_for": "` + starts.Format(time.RFC3339) + `",
 				"scheduled_until": "` + starts.Add(time.Hour).Format(time.RFC3339) + `",
@@ -61,13 +64,21 @@ func TestShellAnnouncesStatusPageIncidentsAndMaintenance(t *testing.T) {
 	incident := banner.Locator(`[data-impact="major"]`)
 	must(t, expect.Locator(incident).ToContainText("Major incident"))
 	must(t, expect.Locator(incident).ToContainText("Elevated database API errors"))
-	must(t, expect.Locator(incident).ToContainText("We are investigating elevated error rates in gru."))
+	message := incident.Locator(".ts-status-notice-message")
+	must(t, expect.Locator(message).ToContainText("We are investigating elevated error rates in gru."))
+	must(t, expect.Locator(message).Not().ToContainText("Root cause"))
 	must(t, expect.Locator(byRole(incident, *playwright.AriaRoleLink, "View status of Elevated database API errors")).
 		ToHaveAttribute("href", "https://status.terrascale.tech/incidents/e2e"))
 	maintenance := banner.Locator(`[data-impact="maintenance"]`)
 	must(t, expect.Locator(maintenance).ToContainText("Scheduled maintenance"))
 	must(t, expect.Locator(maintenance).ToContainText("Storage engine upgrade"))
 	screenshot(t, page, "status-banner")
+	must(t, page.SetViewportSize(390, 844))
+	box, err := banner.BoundingBox()
+	must(t, err)
+	if box.Height > 280 {
+		t.Fatalf("banner is %.0fpx tall on a 390px wide screen, want at most 280px", box.Height)
+	}
 
 	// The in-process shared dashboard reads no status page, so its shell
 	// shows no banner.
