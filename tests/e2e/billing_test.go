@@ -20,9 +20,10 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Plans and billing"))
 	visible(t, page.GetByText("Demo billing"))
 
-	proPlan := page.Locator("article").Filter(playwright.LocatorFilterOptions{
-		Has: pageByRole(page, *playwright.AriaRoleHeading, "Pro", true),
-	})
+	proPlan := planCard(page, "Pro")
+	for _, allowance := range []string{"25 GB-region storage", "100M operations/month", "25 databases", "25 team members", "30-day free trial"} {
+		must(t, expect.Locator(proPlan).ToContainText(allowance))
+	}
 	click(t, byRole(proPlan, *playwright.AriaRoleButton, "Upgrade to Pro"))
 	must(t, page.WaitForURL(regexp.MustCompile(`/checkout/cs_local_`)))
 
@@ -41,6 +42,7 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 		must(t, expect.Locator(currentPlan).ToContainText(text))
 	}
 	must(t, expect.Locator(byRole(proPlan, *playwright.AriaRoleButton, "Current plan")).ToBeDisabled())
+	must(t, expect.Locator(page.Locator(".ts-billing-grid")).Not().ToContainText("free trial"))
 
 	click(t, byRole(pageByRole(page, *playwright.AriaRoleNavigation, "Billing interval"), *playwright.AriaRoleLink, "Annual"))
 	waitForPath(t, page, func(u *url.URL) bool { return u.Query().Get("interval") == "annual" })
@@ -55,4 +57,42 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Local billing portal"))
 	must(t, expect.Locator(status).ToContainText("Demo simulator only"))
 	must(t, expect.Locator(status).ToContainText("does not collect payment details or contact Stripe"))
+}
+
+func TestBillingPageShowsScheduledDowngradeUntilUndone(t *testing.T) {
+	t.Parallel()
+	page := newPage(t)
+	registerAndOnboard(t, page, newAccount("billing-scheduled"), "starter")
+	review := page.Locator("#review-billing-plan")
+
+	goToOK(t, page, "/billing")
+	click(t, byRole(planCard(page, "Pro"), *playwright.AriaRoleButton, "Upgrade to Pro"))
+	click(t, byRole(review, *playwright.AriaRoleButton, "Confirm change"))
+	waitForPath(t, page, func(u *url.URL) bool { return u.Query().Get("billing") == "changed" })
+
+	goToOK(t, page, "/billing")
+	click(t, byRole(planCard(page, "Starter"), *playwright.AriaRoleButton, "Switch to Starter"))
+	click(t, byRole(review, *playwright.AriaRoleButton, "Confirm change"))
+	waitForPath(t, page, func(u *url.URL) bool { return u.Query().Get("billing") == "scheduled" })
+
+	goToOK(t, page, "/billing")
+	summary := page.Locator("#billing-summary")
+	must(t, expect.Locator(summary).ToContainText("Change scheduled"))
+	must(t, expect.Locator(summary).ToContainText("moves to Starter, billed monthly"))
+	must(t, expect.Locator(planCard(page, "Starter")).ToContainText("Scheduled"))
+	must(t, expect.Locator(byRole(planCard(page, "Business"), *playwright.AriaRoleButton, "Upgrade to Business")).ToBeDisabled())
+	screenshot(t, page, "billing-scheduled-downgrade")
+
+	click(t, byRole(summary, *playwright.AriaRoleButton, "Undo scheduled change"))
+	waitForPath(t, page, func(u *url.URL) bool { return u.Query().Get("billing") == "undone" })
+	goToOK(t, page, "/billing")
+	must(t, expect.Locator(page.Locator("#billing-summary")).Not().ToContainText("Change scheduled"))
+	must(t, expect.Locator(byRole(planCard(page, "Business"), *playwright.AriaRoleButton, "Upgrade to Business")).ToBeEnabled())
+}
+
+// planCard is the plan's card on the Plans and billing page.
+func planCard(page playwright.Page, name string) playwright.Locator {
+	return page.Locator("article").Filter(playwright.LocatorFilterOptions{
+		Has: pageByRole(page, *playwright.AriaRoleHeading, name, true),
+	})
 }

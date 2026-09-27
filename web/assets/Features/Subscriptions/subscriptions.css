@@ -134,3 +134,10 @@
   margin-top: 2px;
   color: var(--tone);
 }
+
+/* The plan an accepted change moves to. */
+.ts-plan-upcoming {
+  border-color: color-mix(in oklab, var(--tone) 45%, transparent);
+  border-style: dashed;
+  border-top: 2px solid var(--tone);
+}

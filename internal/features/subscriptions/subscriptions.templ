@@ -13,12 +13,14 @@ templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
 			if data.Demo {
 				@ui.Badge("info", "Demo billing")
 			}
-			<a class="ts-btn ts-btn-secondary" href="/billing/portal">@icons.ExternalLink(15)<span>Manage billing</span></a>
+			if data.ShowPortal {
+				<a class="ts-btn ts-btn-secondary" href="/billing/portal">@icons.ExternalLink(15)<span>Manage billing</span></a>
+			}
 		}
 		if data.PaymentNotice != "" {
 			@ui.Alert("info", "", data.PaymentNotice)
 		}
-		@ui.Card(ui.CardProps{ID: "billing-summary", Title: "Current plan", Description: data.OrganizationName + " is billed on this plan."}) {
+		@ui.Card(ui.CardProps{ID: "billing-summary", Title: "Current plan", Description: data.Summary}) {
 			<div class="ts-billing-current">
 				<div class="ts-billing-plan">
 					<span class="ts-billing-plan-icon" aria-hidden="true">@icons.CreditCard(20)</span>
@@ -42,12 +44,22 @@ templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
 					</div>
 				</dl>
 			</div>
+			if data.AwaitingPayment {
+				@ui.Alert("warning", "Choose a plan", "Projects and databases can’t be created in "+data.OrganizationName+" until a plan is active.")
+			}
+			@changeNotice(csrfToken, data)
 		}
 		<section class="ts-billing-plans" aria-labelledby="available-plans-title">
 			<header class="ts-billing-plans-head">
 				<div>
 					<h2 class="ts-card-title" id="available-plans-title">Available plans</h2>
-					<p class="ts-card-description">Pick the capacity your organization needs.</p>
+					<p class="ts-card-description">
+						if data.CanManage {
+							Pick the capacity your organization needs.
+						} else {
+							Only the organization owner can change the plan.
+						}
+					</p>
 				</div>
 				<nav class="ts-segmented" aria-label="Billing interval">
 					@intervalOption(data.Interval, intervalMonthly, "Monthly", 0)
@@ -59,12 +71,30 @@ templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
 			} else {
 				<div class="ts-billing-grid">
 					for _, plan := range data.Plans {
-						@planCard(csrfToken, plan, data.HasSubscription)
+						@planCard(csrfToken, plan, data)
 					}
 				</div>
 			}
 		</section>
 	</main>
+}
+
+// changeNotice explains a plan change billing accepted but has not applied.
+// Billing takes one change at a time, so it also says how to pick another.
+templ changeNotice(csrfToken string, data subscriptionsPage) {
+	if data.Change.Pending {
+		@ui.Alert("warning", "Awaiting payment", "Stripe is confirming the change to "+data.Change.Label()+". "+data.PlanName+" stays active until then, and you can change plans again once it’s confirmed.")
+	} else if data.Change.Key != "" {
+		<div class="ts-stack-sm">
+			@ui.Alert("info", "Change scheduled", data.PlanName+" stays active until "+data.Change.Date+", then "+data.OrganizationName+" moves to "+data.Change.Label()+". Undo the change to choose a different plan.")
+			if data.CanManage {
+				<form method="post" action="/billing/change/undo">
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Undo scheduled change</button>
+				</form>
+			}
+		</div>
+	}
 }
 
 templ intervalOption(active, interval, label string, savings int) {
@@ -82,12 +112,14 @@ templ intervalOption(active, interval, label string, savings int) {
 	</a>
 }
 
-templ planCard(csrfToken string, plan planView, hasSubscription bool) {
-	<article class={ "ts-plan", templ.KV("ts-plan-current", plan.Current) } data-tone={ plan.Tone } aria-labelledby={ "plan-" + plan.Key }>
+templ planCard(csrfToken string, plan planView, data subscriptionsPage) {
+	<article class={ "ts-plan", templ.KV("ts-plan-current", plan.Current), templ.KV("ts-plan-upcoming", plan.Upcoming) } data-tone={ plan.Tone } aria-labelledby={ "plan-" + plan.Key }>
 		<header class="ts-plan-head">
 			<h3 id={ "plan-" + plan.Key } class="ts-plan-name">{ plan.Name }</h3>
 			if plan.Current {
 				@ui.StatusBadge("emerald", "Current")
+			} else if plan.Badge != "" {
+				@ui.StatusBadge("sky", plan.Badge)
 			}
 		</header>
 		<div>
@@ -99,15 +131,15 @@ templ planCard(csrfToken string, plan planView, hasSubscription bool) {
 				<li>@icons.Check(15)<span>{ feature }</span></li>
 			}
 		</ul>
-		if hasSubscription {
+		if data.CanManage && data.HasSubscription {
 			<form method="get" action="/usage">
 				<input type="hidden" name="tab" value="billing"/>
 				<input type="hidden" name="review" value="1"/>
 				<input type="hidden" name="plan" value={ plan.Key }/>
 				<input type="hidden" name="interval" value={ plan.Interval }/>
-				<button class={ "ts-btn", "ts-btn-block", templ.KV("ts-btn-primary", !plan.Current), templ.KV("ts-btn-secondary", plan.Current) } type="submit" disabled?={ plan.Current }>{ plan.Action }</button>
+				<button class={ "ts-btn", "ts-btn-block", templ.KV("ts-btn-primary", !plan.Current && !plan.Locked), templ.KV("ts-btn-secondary", plan.Current || plan.Locked) } type="submit" disabled?={ plan.Current || plan.Locked }>{ plan.Action }</button>
 			</form>
-		} else {
+		} else if data.CanManage {
 			<form method="post" action="/billing/checkout">
 				<input type="hidden" name="_csrf" value={ csrfToken }/>
 				<input type="hidden" name="plan" value={ plan.Key }/>

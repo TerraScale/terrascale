@@ -2,39 +2,59 @@ package core
 
 import "fmt"
 
+// Allowance labels describe a plan's limits the same way on every billing
+// surface.
+
 func (plan Plan) StorageAllowance() string {
-	if plan.StorageLabel != "" {
+	switch {
+	case plan.StorageLabel != "":
 		return plan.StorageLabel
-	}
-	if plan.StorageMiB > 0 {
+	case plan.StorageMiB >= 1024 && plan.StorageMiB%1024 == 0:
+		return fmt.Sprintf("%d GiB storage", plan.StorageMiB/1024)
+	case plan.StorageMiB > 0:
 		return fmt.Sprintf("%d MiB storage", plan.StorageMiB)
 	}
 	return "Limit not published"
 }
 
 func (plan Plan) OperationsAllowance() string {
-	if plan.OperationsPerMonth > 0 {
-		if plan.OperationsPerMonth%1_000_000 == 0 {
-			return fmt.Sprintf("%dM operations/month", plan.OperationsPerMonth/1_000_000)
-		}
-		return fmt.Sprintf("%d operations/month", plan.OperationsPerMonth)
-	}
-	if plan.MonthlyRequests > 0 {
-		return fmt.Sprintf("%d requests/month", plan.MonthlyRequests)
+	switch {
+	case plan.OperationsPerMonth > 0:
+		return compactCount(plan.OperationsPerMonth) + " operations/month"
+	case plan.MonthlyRequests > 0:
+		return compactCount(plan.MonthlyRequests) + " requests/month"
 	}
 	return "Limit not published"
 }
 
 func (plan Plan) DatabaseAllowance() string {
 	if plan.MaxDatabases > 0 {
-		return fmt.Sprintf("%d databases", plan.MaxDatabases)
+		return countOf(plan.MaxDatabases, "database")
 	}
 	return "Limit not published"
 }
 
 func (plan Plan) MemberAllowance() string {
 	if plan.MaxMembers > 0 {
-		return fmt.Sprintf("%d team members", plan.MaxMembers)
+		return countOf(plan.MaxMembers, "team member")
 	}
 	return "Limit not published"
+}
+
+// compactCount writes whole thousands and millions as K and M.
+func compactCount(n int64) string {
+	switch {
+	case n >= 1_000_000 && n%1_000_000 == 0:
+		return fmt.Sprintf("%dM", n/1_000_000)
+	case n >= 1_000 && n%1_000 == 0:
+		return fmt.Sprintf("%dK", n/1_000)
+	}
+	return fmt.Sprint(n)
+}
+
+func countOf(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
