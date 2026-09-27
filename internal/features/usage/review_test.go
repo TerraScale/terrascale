@@ -163,6 +163,27 @@ func TestPlanReviewBlocksChangesWhileAPaymentFails(t *testing.T) {
 	requireOmits(t, html, "Confirm change")
 }
 
+func TestPlanReviewBlocksChangesWhileTheSubscriptionIsNotEntitled(t *testing.T) {
+	fixture := newReviewFixture(t)
+	fixture.update(t, func(org *core.Organization) {
+		org.Billing.Status = "incomplete"
+	})
+	html := fixture.review(t, "pro", "monthly")
+	requireContains(t, html, "Stripe reports a payment problem with this subscription.")
+	requireOmits(t, html, "Confirm change")
+}
+
+func TestPlanReviewBlocksChangesWhileTheSubscriptionEndsAtRenewal(t *testing.T) {
+	fixture := newReviewFixture(t)
+	renewal := time.Date(2026, time.November, 3, 0, 0, 0, 0, time.UTC)
+	fixture.update(t, func(org *core.Organization) {
+		org.Billing.CancelAtPeriodEnd, org.BillingRenewal = true, renewal
+	})
+	html := fixture.review(t, "business", "monthly")
+	requireContains(t, html, "This subscription ends on Nov 3, 2026. Resume it in Manage payment before changing plans.")
+	requireOmits(t, html, "Confirm change")
+}
+
 func TestLimitWarningsCountMembersAndPendingInvitations(t *testing.T) {
 	now := time.Date(2026, time.September, 27, 0, 0, 0, 0, time.UTC)
 	starter := core.Plan{Name: "Starter", MaxDatabases: 5, MaxMembers: 5}

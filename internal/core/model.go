@@ -312,16 +312,19 @@ type APIKey struct {
 }
 
 type Billing struct {
-	CustomerID            string
-	SubscriptionID        string
-	TrialUsed             bool
-	ChangeVersion         uint64
-	PendingPlanKey        string
-	PendingInterval       string
-	ScheduledPlanKey      string
-	ScheduledInterval     string
-	ScheduledAt           time.Time
-	ScheduleID            string
+	CustomerID        string
+	SubscriptionID    string
+	TrialUsed         bool
+	ChangeVersion     uint64
+	PendingPlanKey    string
+	PendingInterval   string
+	ScheduledPlanKey  string
+	ScheduledInterval string
+	ScheduledAt       time.Time
+	ScheduleID        string
+	// CancelAtPeriodEnd mirrors Stripe: the subscription ends at renewal
+	// unless it is resumed in the billing portal.
+	CancelAtPeriodEnd     bool
 	PaymentMethodLastFour string
 	PaymentMethodExpiry   string
 	PaymentMethodBrand    string

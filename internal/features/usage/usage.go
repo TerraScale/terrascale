@@ -397,8 +397,13 @@ func reviewBillingPlan(r *http.Request, deps core.Deps, billing *payments.Stripe
 			review.Error = "A change to " + data.ScheduledPlan + " is scheduled to take effect " + whenScheduled(data.ScheduledAt) + ". Undo it to choose a different plan."
 			review.CanUndo = true
 			return review
-		case org.BillingStatus == "billing_required":
+		case org.BillingStatus == "billing_required", !payments.IsEntitledStatus(org.Billing.Status):
 			review.Error = "Stripe reports a payment problem with this subscription. Resolve it in Manage payment before changing plans."
+			return review
+		case org.Billing.CancelAtPeriodEnd:
+			// Personal workspaces see this as a scheduled change to Free; an
+			// organization's subscription can only be resumed in the portal.
+			review.Error = "This subscription ends " + whenScheduled(org.BillingRenewal) + ". Resume it in Manage payment before changing plans."
 			return review
 		}
 	}

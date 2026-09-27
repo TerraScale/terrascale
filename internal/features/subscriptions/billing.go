@@ -474,6 +474,7 @@ func projectSubscription(organization *core.Organization, state payments.Custome
 	entitled := payments.IsEntitledStatus(state.Status)
 	billing.SubscriptionID = state.SubscriptionID
 	billing.Status = state.Status
+	billing.CancelAtPeriodEnd = state.CancelAtPeriodEnd
 	billing.TrialUsed = billing.TrialUsed || state.TrialUsed || entitled
 	billing.Invoices = state.Invoices
 	billing.PaymentMethodBrand, billing.PaymentMethodLastFour, billing.PaymentMethodExpiry = "", "", ""
