@@ -8,7 +8,7 @@ import (
 
 templ subscriptionsContent(page core.Page, d pageData) {
 	<main class="ts-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
-		@ui.PageHeader("Subscriptions")
+		@ui.PageHeader("Query subscriptions")
 		@ui.Alert("info", "", "Demo configuration only. Live revisions, checkpoints, subscriber counts, and delivery metrics are unavailable.")
 		if d.Error != "" {
 			@ui.Alert("danger", "", d.Error)

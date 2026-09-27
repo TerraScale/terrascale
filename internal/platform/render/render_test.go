@@ -1,7 +1,9 @@
 package render
 
 import (
+	"maps"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
@@ -26,5 +28,46 @@ func TestShellReturnURLIsTheCurrentSection(t *testing.T) {
 		if shell.ReturnURL != want {
 			t.Errorf("ReturnURL on %s = %q, want %q", target, shell.ReturnURL, want)
 		}
+	}
+}
+
+func TestShellNavigationNamesItsCounts(t *testing.T) {
+	t.Parallel()
+	p := core.Principal{AccountID: "acc_1", UserID: "usr_1", OrganizationID: "org_1", ProjectID: "prj_1"}
+	account := core.Account{
+		ID: p.AccountID, User: core.User{ID: p.UserID},
+		Organizations: map[string]core.Organization{
+			"org_1": {Name: "Acme", OwnerUserID: p.UserID},
+			"org_2": {Name: "Globex", OwnerUserID: p.UserID},
+		},
+	}
+	for range 120 {
+		account.Notifications = append(account.Notifications, core.Notification{OrganizationID: "org_1", Status: "unread"})
+	}
+	account.Notifications = append(account.Notifications,
+		core.Notification{OrganizationID: "org_1", Status: "read"},
+		core.Notification{OrganizationID: "org_2", Status: "unread"},
+	)
+
+	shell := shellFor(account, p, "shell", httptest.NewRequest("GET", "/", nil))
+	want := map[string]struct {
+		count int
+		label string
+	}{
+		"/organization":  {2, "2 organizations"},
+		"/notifications": {120, "99+ unread"},
+	}
+	for _, group := range shell.Navigation {
+		for _, item := range group.Items {
+			if expected, ok := want[item.URL]; ok {
+				if item.BadgeCount != expected.count || item.BadgeLabel != expected.label {
+					t.Errorf("%s badge = %d %q, want %d %q", item.URL, item.BadgeCount, item.BadgeLabel, expected.count, expected.label)
+				}
+				delete(want, item.URL)
+			}
+		}
+	}
+	if len(want) > 0 {
+		t.Errorf("navigation lacks %v", slices.Collect(maps.Keys(want)))
 	}
 }

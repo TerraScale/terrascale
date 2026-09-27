@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/a-h/templ"
@@ -21,6 +22,7 @@ type navDestination struct {
 
 var navDestinations = map[string]navDestination{
 	"/":                    {icons.LayoutDashboard, "violet"},
+	"/notifications":       {icons.Bell, "amber"},
 	"/databases":           {icons.Database, "blue"},
 	"/api-keys":            {icons.KeyRound, "amber"},
 	"/access":              {icons.Users, "pink"},
@@ -45,6 +47,43 @@ func navIcon(url string) templ.Component {
 		return destination.icon(16)
 	}
 	return icons.Circle(16)
+}
+
+// countText shows a navigation count, capped so the pill keeps its width.
+func countText(count int) string {
+	if count > 99 {
+		return "99+"
+	}
+	return strconv.Itoa(count)
+}
+
+// CountLabel names a navigation count for assistive technology as its pill
+// shows it, e.g. "1 organization" or "99+ organizations".
+func CountLabel(count int, one, many string) string {
+	if count == 1 {
+		return "1 " + one
+	}
+	return countText(count) + " " + many
+}
+
+// UnreadLabel names an unread notifications count, e.g. "3 unread".
+func UnreadLabel(count int) string {
+	return CountLabel(count, "unread", "unread")
+}
+
+// notificationsItem is the Notifications link shown outside the section
+// navigation: in the top bar and in the admin sidebar.
+func notificationsItem(unread int) core.NavItem {
+	return core.NavItem{Label: "Notifications", URL: "/notifications", BadgeCount: unread, BadgeLabel: UnreadLabel(unread)}
+}
+
+// navLabel is a navigation link's accessible name: its label, then its count
+// as BadgeLabel names it, e.g. "Notifications, 3 unread".
+func navLabel(item core.NavItem) string {
+	if item.BadgeCount == 0 || item.BadgeLabel == "" {
+		return item.Label
+	}
+	return item.Label + ", " + item.BadgeLabel
 }
 
 func title(value string) string {

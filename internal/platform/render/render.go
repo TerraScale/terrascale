@@ -142,17 +142,19 @@ func documentTitle(title string) string {
 
 var (
 	shellNavigation = []core.NavGroup{
+		{Items: []core.NavItem{
+			{Label: "Overview", URL: "/"}, {Label: "Notifications", URL: "/notifications"},
+		}},
 		{Label: "Build", Items: []core.NavItem{
-			{Label: "Overview", URL: "/"}, {Label: "Databases", URL: "/databases"},
+			{Label: "Databases", URL: "/databases"}, {Label: "Query subscriptions", URL: "/subscriptions"},
 		}},
 		{Label: "Secure", Items: []core.NavItem{
 			{Label: "API keys", URL: "/api-keys"}, {Label: "Team", URL: "/access"},
 			{Label: "Authentication", URL: "/auth", Children: core.AuthNavigation()}, {Label: "Audit", URL: "/audit"},
 		}},
 		{Label: "Manage", Items: []core.NavItem{
-			{Label: "Usage", URL: "/usage"}, {Label: "Subscriptions", URL: "/subscriptions"},
-			{Label: "Billing", URL: "/billing"}, {Label: "Organization", URL: "/organization"},
-			{Label: "Settings", URL: "/settings"},
+			{Label: "Usage", URL: "/usage"}, {Label: "Billing", URL: "/billing"},
+			{Label: "Organization", URL: "/organization"}, {Label: "Project settings", URL: "/settings"},
 		}},
 	}
 	adminNavigation = []core.NavGroup{
@@ -197,6 +199,11 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 			}
 		}
 	}
+	for _, notification := range account.Notifications {
+		if notification.VisibleTo(p) && notification.Unread() {
+			shell.UnreadNotifications++
+		}
+	}
 	byName := func(a, b string) int { return strings.Compare(strings.ToLower(a), strings.ToLower(b)) }
 	slices.SortFunc(shell.Organizations, func(a, b core.OrganizationOption) int { return byName(a.Name, b.Name) })
 	slices.SortFunc(shell.Projects, func(a, b core.ProjectOption) int { return byName(a.Name, b.Name) })
@@ -206,7 +213,7 @@ func shellFor(account core.Account, p core.Principal, layout string, r *http.Req
 	}
 	shell.Navigation = make([]core.NavGroup, len(groups))
 	for i, group := range groups {
-		shell.Navigation[i] = core.NavGroup{Label: group.Label, Items: navItems(group.Items, r.URL.Path, len(shell.Organizations))}
+		shell.Navigation[i] = core.NavGroup{Label: group.Label, Items: navItems(group.Items, r.URL.Path, shell)}
 	}
 	shell.ReturnURL = switchReturnURL(shell.Navigation, r.URL)
 	return shell
@@ -240,14 +247,19 @@ func activeSection(items []core.NavItem) string {
 }
 
 // navItems copies items for one request, flagging the sections that contain
-// path at every sub-navigation level.
-func navItems(items []core.NavItem, path string, organizations int) []core.NavItem {
+// path at every sub-navigation level and counting what they hold.
+func navItems(items []core.NavItem, path string, shell core.Shell) []core.NavItem {
 	items = slices.Clone(items)
 	for i := range items {
 		items[i].Active = navActive(items[i].URL, path)
-		items[i].Children = navItems(items[i].Children, path, organizations)
-		if items[i].URL == "/organization" {
-			items[i].BadgeCount = organizations
+		items[i].Children = navItems(items[i].Children, path, shell)
+		switch items[i].URL {
+		case "/organization":
+			items[i].BadgeCount = len(shell.Organizations)
+			items[i].BadgeLabel = ui.CountLabel(items[i].BadgeCount, "organization", "organizations")
+		case "/notifications":
+			items[i].BadgeCount = shell.UnreadNotifications
+			items[i].BadgeLabel = ui.UnreadLabel(shell.UnreadNotifications)
 		}
 	}
 	return items

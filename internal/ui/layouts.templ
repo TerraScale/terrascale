@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"strconv"
-
 	static "terrascale.tech/dashboard/web/static"
 
 	"terrascale.tech/dashboard/internal/core"
@@ -105,6 +103,13 @@ templ signedInDocument(page core.Page, body templ.Component, admin bool) {
 						@icons.PanelLeft(18)
 					</button>
 					<img class="ts-topbar-brand" src={ static.URL("brand/logo-terrascale-principal.svg") } alt="TerraScale" decoding="async"/>
+					{{ notifications := notificationsItem(page.Shell.UnreadNotifications) }}
+					<a class="ts-icon-btn ts-topbar-notifications" href={ notifications.URL } data-tone="amber" aria-label={ navLabel(notifications) }>
+						@icons.Bell(18)
+						if notifications.BadgeCount > 0 {
+							<span class="ts-nav-count" aria-hidden="true">{ countText(notifications.BadgeCount) }</span>
+						}
+					</a>
 				</header>
 				@StatusBanner(page.Shell.Notices)
 				<div id="ts-main" class="ts-main" tabindex="-1">
@@ -169,6 +174,10 @@ templ shellSidebar(page core.Page, admin bool) {
 				<a class="ts-nav-link" href="/" data-tone="slate">
 					<span class="ts-nav-icon" aria-hidden="true">@icons.ArrowLeft(16)</span>
 					<span class="ts-nav-label">Back to dashboard</span>
+				</a>
+				{{ notifications := notificationsItem(page.Shell.UnreadNotifications) }}
+				<a class="ts-nav-link" href={ notifications.URL } data-tone="amber" aria-label={ navLabel(notifications) }>
+					@navLinkContent(notifications)
 				</a>
 			}
 			@accountMenu(page)
@@ -267,8 +276,6 @@ templ accountMenu(page core.Page) {
 		</div>
 		@MenuSeparator()
 		@MenuItem(MenuItemProps{Href: "/profile", Tone: "pink", Icon: icons.UserRound(15), Label: "Profile"})
-		@MenuItem(MenuItemProps{Href: "/notifications", Tone: "amber", Icon: icons.Bell(15), Label: "Notifications"})
-		@MenuItem(MenuItemProps{Href: "/settings", Tone: "slate", Icon: icons.Settings(15), Label: "Settings"})
 		if page.Principal.PlatformAdmin {
 			@MenuItem(MenuItemProps{Href: "/admin", Tone: "violet", Icon: icons.ShieldCheck(15), Label: "Administration"})
 		}
@@ -328,6 +335,9 @@ templ sidebarNavigation(items []core.NavItem) {
 						if item.Active {
 							aria-current="page"
 						}
+						if item.BadgeCount > 0 && item.BadgeLabel != "" {
+							aria-label={ navLabel(item) }
+						}
 					>
 						@navLinkContent(item)
 					</a>
@@ -343,6 +353,6 @@ templ navLinkContent(item core.NavItem) {
 	</span>
 	<span class="ts-nav-label">{ item.Label }</span>
 	if item.BadgeCount > 0 {
-		<span class="ts-nav-count" aria-hidden="true">{ strconv.Itoa(item.BadgeCount) }</span>
+		<span class="ts-nav-count" aria-hidden="true">{ countText(item.BadgeCount) }</span>
 	}
 }
