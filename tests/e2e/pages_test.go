@@ -235,7 +235,7 @@ func TestPagesSignedOutVisitorsRedirectToLogin(t *testing.T) {
 		logout(t, page)
 
 		goTo(t, page, "/api-keys?kind=m2m")
-		form := page.Locator(`form[action="/api/v1/auth/password/login"]`)
+		form := page.Locator(`form[action="/login"]`)
 		fill(t, form.Locator(`[name="email"]`), account.Email)
 		fill(t, form.Locator(`[name="password"]`), account.Password)
 		click(t, byRole(form, *playwright.AriaRoleButton, "Sign in"))

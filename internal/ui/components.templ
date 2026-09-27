@@ -1,6 +1,10 @@
 package ui
 
-import "terrascale.tech/dashboard/internal/ui/icons"
+import (
+	"strings"
+
+	"terrascale.tech/dashboard/internal/ui/icons"
+)
 
 // Shared page building blocks. Feature pages compose these instead of
 // hand-writing header, card, stat, and empty-state markup; the matching
@@ -162,11 +166,34 @@ templ Tabs(label string, tabs []Tab) {
 	</nav>
 }
 
-// FieldProps labels one form control; children are the control itself.
+// FieldProps labels one form control; children are the control itself. Error
+// is the message from a failed submission; the control spreads ControlAttrs so
+// assistive technology announces the hint and error with it.
 type FieldProps struct {
 	ID    string
 	Label string
 	Hint  string
+	Error string
+}
+
+// ControlAttrs describes the control by the field's hint and error. A field
+// with an error marks its control invalid and autofocuses it; the browser
+// focuses the first such control on the page.
+func (p FieldProps) ControlAttrs() templ.Attributes {
+	attrs := templ.Attributes{}
+	var describedBy []string
+	if p.Hint != "" {
+		describedBy = append(describedBy, p.ID+"-hint")
+	}
+	if p.Error != "" {
+		describedBy = append(describedBy, p.ID+"-error")
+		attrs["aria-invalid"] = "true"
+		attrs["autofocus"] = true
+	}
+	if len(describedBy) > 0 {
+		attrs["aria-describedby"] = strings.Join(describedBy, " ")
+	}
+	return attrs
 }
 
 templ Field(p FieldProps) {
@@ -174,7 +201,10 @@ templ Field(p FieldProps) {
 		<label class="ts-label" for={ p.ID }>{ p.Label }</label>
 		{ children... }
 		if p.Hint != "" {
-			<p class="ts-hint">{ p.Hint }</p>
+			<p class="ts-hint" id={ p.ID + "-hint" }>{ p.Hint }</p>
+		}
+		if p.Error != "" {
+			<p class="ts-field-error" id={ p.ID + "-error" }>{ p.Error }</p>
 		}
 	</div>
 }
@@ -186,13 +216,15 @@ func alertRole(tone string) string {
 	return "status"
 }
 
-// PasswordProps configures a password control. Name defaults to ID.
+// PasswordProps configures a password control. Name defaults to ID; Attrs
+// are added to the input, such as a field's ControlAttrs.
 type PasswordProps struct {
 	ID           string
 	Name         string
 	Autocomplete string
 	Placeholder  string
 	MinLength    int
+	Attrs        templ.Attributes
 }
 
 // PasswordInput is a required password field whose reveal toggle appears once
@@ -213,6 +245,7 @@ templ PasswordInput(p PasswordProps) {
 				minlength={ p.MinLength }
 			}
 			required
+			{ p.Attrs... }
 			data-attr:type={ "$" + passwordSignal(p.ID, "reveal") + " ? 'text' : 'password'" }
 			data-on:input={ "$" + passwordSignal(p.ID, "filled") + " = el.value !== ''; $" + passwordSignal(p.ID, "filled") + " || ($" + passwordSignal(p.ID, "reveal") + " = false)" }
 		/>

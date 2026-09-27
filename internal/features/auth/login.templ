@@ -23,18 +23,22 @@ templ loginView(data loginPageData, csrfToken string) {
 				if data.Error != "" {
 					@ui.Alert("danger", "", data.Error)
 				}
-				<form class="ts-form" method="post" action="/api/v1/auth/password/login" novalidate>
+				<form class="ts-form" method="post" action="/login" novalidate>
 					<input type="hidden" name="_csrf" value={ csrfToken }/>
 					<input type="hidden" name="redirectTo" value={ data.RedirectTo }/>
-					@ui.Field(ui.FieldProps{ID: "email", Label: "Email"}) {
-						<input class="ts-input ts-input-lg" type="email" id="email" name="email" autocomplete="email" placeholder="name@company.com" required/>
+					{{ email := ui.FieldProps{ID: "email", Label: "Email", Error: data.EmailError} }}
+					@ui.Field(email) {
+						<input class="ts-input ts-input-lg" type="email" id="email" name="email" value={ data.Email } autocomplete="email" placeholder="name@company.com" required { email.ControlAttrs()... }/>
 					}
 					<div class="ts-field">
 						<div class="ts-row-between">
 							<label class="ts-label" for="password">Password</label>
 							<a class="ts-link ts-meta" href="/reset-password">Forgot password</a>
 						</div>
-						@ui.PasswordInput(ui.PasswordProps{ID: "password", Autocomplete: "current-password", Placeholder: "Enter your password"})
+						@ui.PasswordInput(ui.PasswordProps{ID: "password", Autocomplete: "current-password", Placeholder: "Enter your password", Attrs: passwordAttrs(data)})
+						if data.PasswordError != "" {
+							<p class="ts-field-error" id="password-error">{ data.PasswordError }</p>
+						}
 					</div>
 					<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Sign in</button>
 				</form>

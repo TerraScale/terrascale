@@ -103,6 +103,12 @@
   border-top: 1px solid var(--ts-line);
 }
 
+/* A footer note wraps its own text so the action keeps its place. */
+.ts-onboarding-footer > p {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 /* Segmented radio control (billing interval). */
 .ts-segmented {
   display: inline-flex;
@@ -225,5 +231,9 @@
   .ts-onboarding-footer {
     flex-direction: column-reverse;
     align-items: stretch;
+  }
+
+  .ts-onboarding-footer > p {
+    flex: none;
   }
 }

@@ -15,14 +15,19 @@ import (
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/auth"
 	"terrascale.tech/dashboard/internal/features/subscriptions"
+	"terrascale.tech/dashboard/internal/ui"
 )
 
+// pageData is the onboarding page. Error is shown above the step's form, or
+// under the control named by ErrorField.
 type pageData struct {
 	Registration    bool
 	Demo            bool
 	DisplayName     string
 	Email           string
+	AcceptedTerms   bool
 	Error           string
+	ErrorField      string
 	PaymentCanceled bool
 	Plans           []core.Plan
 	Step            string
@@ -50,7 +55,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		http.Redirect(w, r, target, http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /onboarding", getOnboarding(deps))
-	mux.HandleFunc("POST /onboarding/register", register(deps))
+	mux.HandleFunc("POST /onboarding", register(deps))
 	mux.HandleFunc("POST /onboarding/step", saveStep(deps))
 }
 
@@ -58,13 +63,12 @@ func getOnboarding(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := deps.Sessions.Principal(r)
 		if !ok {
-			data := pageData{Registration: true, Error: r.URL.Query().Get("error")}
-			render(w, r, deps, data)
+			render(w, r, deps, http.StatusOK, pageData{Registration: true})
 			return
 		}
 		account, err := deps.Store.SnapshotAs(principal)
 		if err != nil {
-			render(w, r, deps, pageData{Registration: true})
+			render(w, r, deps, http.StatusOK, pageData{Registration: true})
 			return
 		}
 		if account.OnboardingCompleted {
@@ -131,7 +135,7 @@ func getOnboarding(deps core.Deps) http.HandlerFunc {
 			}
 			return cmp.Compare(a.Key, b.Key)
 		})
-		render(w, r, deps, data)
+		render(w, r, deps, http.StatusOK, data)
 	}
 }
 
@@ -141,21 +145,29 @@ func register(deps core.Deps) http.HandlerFunc {
 			http.Error(w, "invalid registration form", http.StatusBadRequest)
 			return
 		}
-		account, err := auth.RegisterAccount(deps, auth.RegistrationInput{
+		input := auth.RegistrationInput{
 			DisplayName:     r.Form.Get("displayName"),
 			Email:           r.Form.Get("email"),
 			Password:        r.Form.Get("password"),
 			ConfirmPassword: r.Form.Get("confirmPassword"),
 			AcceptedTerms:   r.Form.Get("terms") == "true",
-		})
+		}
+		account, err := auth.RegisterAccount(deps, input)
 		if err != nil {
-			message := "Could not create account. Try again."
-			if inputError, ok := errors.AsType[auth.InputError](err); ok {
-				message = inputError.Error()
-			} else if errors.Is(err, core.ErrConflict) {
-				message = "An account with this email already exists."
+			// Render the form again with everything but the passwords kept.
+			data := pageData{Registration: true, DisplayName: input.DisplayName, Email: input.Email, AcceptedTerms: input.AcceptedTerms}
+			status := http.StatusUnprocessableEntity
+			switch inputError, isInputError := errors.AsType[auth.InputError](err); {
+			case isInputError:
+				data.ErrorField, data.Error = inputError.Field, inputError.Message
+			case errors.Is(err, core.ErrConflict):
+				status = http.StatusConflict
+				data.ErrorField, data.Error = "email", "An account with this email already exists. Sign in to it, or use another email."
+			default:
+				status = http.StatusInternalServerError
+				data.Error = "Could not create your account. Try again."
 			}
-			http.Redirect(w, r, "/onboarding?error="+url.QueryEscape(message), http.StatusSeeOther)
+			render(w, r, deps, status, data)
 			return
 		}
 		if err := deps.Sessions.Start(w, r, account.Principal()); err != nil {
@@ -350,7 +362,7 @@ func steps(current string) []stepView {
 	return result
 }
 
-func render(w http.ResponseWriter, r *http.Request, deps core.Deps, data pageData) {
+func render(w http.ResponseWriter, r *http.Request, deps core.Deps, status int, data pageData) {
 	data.Demo = deps.Demo
 	if data.Registration {
 		data.Step = "account-information"
@@ -367,9 +379,14 @@ func render(w http.ResponseWriter, r *http.Request, deps core.Deps, data pageDat
 	if data.TotalSteps > 0 {
 		data.Progress = data.CurrentStep * 100 / data.TotalSteps
 	}
+	title := "Activate your TerraScale account"
+	if data.Registration {
+		title = "Create account"
+	}
 	page := core.Page{
 		Layout: "auth",
-		Title:  "Activate your TerraScale account",
+		Title:  title,
+		Status: status,
 		View: func(p core.Page) templ.Component {
 			return onboardingView(data, p.CSRFToken)
 		},
@@ -377,6 +394,16 @@ func render(w http.ResponseWriter, r *http.Request, deps core.Deps, data pageDat
 	if err := deps.Render.Page(w, r, page); err != nil {
 		http.Error(w, "could not render onboarding page", http.StatusInternalServerError)
 	}
+}
+
+// field labels one registration control and attaches the submission's error
+// when it belongs to that control.
+func field(data pageData, id, label, hint string) ui.FieldProps {
+	props := ui.FieldProps{ID: id, Label: label, Hint: hint}
+	if data.ErrorField == id {
+		props.Error = data.Error
+	}
+	return props
 }
 
 func onboardingStepCurrent(step stepView) string {

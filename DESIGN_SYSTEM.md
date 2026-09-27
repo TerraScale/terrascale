@@ -52,7 +52,7 @@ it with Lightning CSS into the single stylesheet `web/static/css/terrascale.css`
 | `ui.Empty` | Empty lists and charts; children hold the call to action |
 | `ui.Alert` | `info`, `success`, `warning`, `danger` messages |
 | `ui.Badge` | Status pills: `neutral`, `info`, `success`, `warning`, `danger`, `violet` |
-| `ui.Field` | Label, control (children) and hint |
+| `ui.Field` | Label, control (children), hint and error; the control spreads `ControlAttrs` |
 | `ui.PasswordInput` | Password field with a Datastar reveal toggle |
 | `ui.RegionMap` | Server-rendered region map; highlights the hubs chosen in a select |
 

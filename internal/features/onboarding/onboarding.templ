@@ -34,34 +34,44 @@ templ onboardingView(data pageData, csrfToken string) {
 			if data.Step == "payment-method" && data.PaymentCanceled {
 				@ui.Alert("warning", "Payment setup canceled", "Your earlier account progress is still saved. No payment method was changed; you can continue on the Free plan or try the demo checkout again.")
 			}
-			if data.Error != "" {
+			if data.Error != "" && data.ErrorField == "" {
 				@ui.Alert("danger", "", data.Error)
 			}
 			if data.Registration {
-				@stepHeading("create-account-title", "Create your account", "Your Personal workspace is ready as soon as you save.")
-				<form class="ts-form" method="post" action="/onboarding/register" aria-labelledby="create-account-title">
+				@stepHeading("create-account-title", "Create your account", "Your Personal workspace is ready as soon as your account is created.")
+				<form class="ts-form" method="post" action="/onboarding" aria-labelledby="create-account-title">
 					<input type="hidden" name="_csrf" value={ csrfToken }/>
-					@ui.Field(ui.FieldProps{ID: "displayName", Label: "Full name"}) {
-						<input class="ts-input" id="displayName" name="displayName" autocomplete="name" maxlength="128" required/>
+					{{ displayName := field(data, "displayName", "Full name", "") }}
+					@ui.Field(displayName) {
+						<input class="ts-input" id="displayName" name="displayName" value={ data.DisplayName } autocomplete="name" maxlength="128" required { displayName.ControlAttrs()... }/>
 					}
-					@ui.Field(ui.FieldProps{ID: "email", Label: "Email"}) {
-						<input class="ts-input" id="email" name="email" type="email" autocomplete="email" placeholder="name@company.com" required/>
+					{{ email := field(data, "email", "Email", "") }}
+					@ui.Field(email) {
+						<input class="ts-input" id="email" name="email" type="email" value={ data.Email } autocomplete="email" placeholder="name@company.com" required { email.ControlAttrs()... }/>
 					}
 					<div class="ts-form-grid">
-						@ui.Field(ui.FieldProps{ID: "password", Label: "Password"}) {
-							@ui.PasswordInput(ui.PasswordProps{ID: "password", Autocomplete: "new-password", Placeholder: "Enter your password"})
+						{{ password := field(data, "password", "Password", "Use at least 12 characters.") }}
+						@ui.Field(password) {
+							@ui.PasswordInput(ui.PasswordProps{ID: "password", Autocomplete: "new-password", MinLength: 12, Attrs: password.ControlAttrs()})
 						}
-						@ui.Field(ui.FieldProps{ID: "confirmPassword", Label: "Confirm password"}) {
-							@ui.PasswordInput(ui.PasswordProps{ID: "confirmPassword", Autocomplete: "new-password"})
+						{{ confirmPassword := field(data, "confirmPassword", "Confirm password", "") }}
+						@ui.Field(confirmPassword) {
+							@ui.PasswordInput(ui.PasswordProps{ID: "confirmPassword", Autocomplete: "new-password", Attrs: confirmPassword.ControlAttrs()})
 						}
 					</div>
-					<label class="ts-check">
-						<input type="checkbox" name="terms" value="true" required/>
-						<span>I accept the Terms of Service</span>
-					</label>
+					{{ terms := field(data, "terms", "", "") }}
+					<div class="ts-field">
+						<label class="ts-check">
+							<input type="checkbox" id="terms" name="terms" value="true" checked?={ data.AcceptedTerms } required { terms.ControlAttrs()... }/>
+							<span>I accept the Terms of Service</span>
+						</label>
+						if terms.Error != "" {
+							<p class="ts-field-error" id="terms-error">{ terms.Error }</p>
+						}
+					</div>
 					<div class="ts-onboarding-footer">
 						<p class="ts-meta">Already have an account? <a class="ts-link" href="/login">Sign in</a></p>
-						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save <span aria-hidden="true">→</span></button>
+						<button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create account <span aria-hidden="true">→</span></button>
 					</div>
 				</form>
 			} else if data.Step == "account-information" {

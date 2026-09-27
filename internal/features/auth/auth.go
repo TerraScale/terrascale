@@ -14,6 +14,7 @@ import (
 
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/ui"
 )
 
 const maxLoginBody = 1 << 20
@@ -30,9 +31,14 @@ type apiError struct {
 	Error string `json:"error"`
 }
 
+// loginPageData is the sign-in form. Error is shown above the form; the field
+// errors sit under the email and password controls.
 type loginPageData struct {
-	Error      string
-	RedirectTo string
+	Email         string
+	RedirectTo    string
+	Error         string
+	EmailError    string
+	PasswordError string
 }
 
 type authStatusPageData struct {
@@ -67,9 +73,17 @@ type currentUserResponse struct {
 	User currentUserData `json:"user"`
 }
 
-type InputError string
+// InputError is registration input that failed validation. Field names the
+// form control the message belongs to.
+type InputError struct {
+	Field   string
+	Message string
+}
 
-func (e InputError) Error() string { return string(e) }
+func (e InputError) Error() string { return e.Message }
+
+// errInvalidCredentials hides whether the email or the password was wrong.
+var errInvalidCredentials = errors.New("invalid credentials")
 
 var dummyPasswordHash = sync.OnceValue(func() string {
 	hash, err := HashPassword("dashboard-invalid-login-dummy-password")
@@ -82,33 +96,8 @@ var dummyPasswordHash = sync.OnceValue(func() string {
 func Mount(mux *http.ServeMux, deps core.Deps) {
 	_ = dummyPasswordHash()
 
-	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
-		if principal, ok := currentPrincipal(deps.Sessions, r); ok {
-			if account, err := deps.Store.SnapshotAs(principal); err == nil {
-				location := "/"
-				if !account.OnboardingCompleted {
-					location = "/onboarding"
-				}
-				http.Redirect(w, r, location, http.StatusSeeOther)
-				return
-			}
-		}
-		returnTo := r.URL.Query().Get("returnTo")
-		if returnTo == "" {
-			returnTo = r.URL.Query().Get("next")
-		}
-		data := loginPageData{Error: r.URL.Query().Get("error"), RedirectTo: safeRedirectTarget(returnTo)}
-		page := core.Page{
-			Layout: "auth",
-			Title:  "Sign in",
-			View: func(p core.Page) templ.Component {
-				return loginView(data, p.CSRFToken)
-			},
-		}
-		if err := deps.Render.Page(w, r, page); err != nil {
-			http.Error(w, "could not render login page", http.StatusInternalServerError)
-		}
-	})
+	mux.HandleFunc("GET /login", loginPage(deps))
+	mux.HandleFunc("POST /login", loginForm(deps))
 	mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) {
 		renderAuthStatus(w, r, deps, authStatusPageData{
 			Title:         "Reset password",
@@ -166,9 +155,95 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			Flow:        true,
 		})
 	})
-	mux.HandleFunc("POST /api/v1/auth/password/login", login(deps))
+	mux.HandleFunc("POST /api/v1/auth/password/login", loginAPI(deps))
 	mux.HandleFunc("POST /api/v1/auth/logout", logout(deps))
 	mux.HandleFunc("GET /api/v1/auth/me", currentUser(deps))
+}
+
+func loginPage(deps core.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if principal, ok := currentPrincipal(deps.Sessions, r); ok {
+			if account, err := deps.Store.SnapshotAs(principal); err == nil {
+				location := "/"
+				if !account.OnboardingCompleted {
+					location = "/onboarding"
+				}
+				http.Redirect(w, r, location, http.StatusSeeOther)
+				return
+			}
+		}
+		returnTo := r.URL.Query().Get("returnTo")
+		if returnTo == "" {
+			returnTo = r.URL.Query().Get("next")
+		}
+		renderLogin(w, r, deps, http.StatusOK, loginPageData{RedirectTo: safeRedirectTarget(returnTo)})
+	}
+}
+
+// loginForm signs in from the browser form. A failed attempt renders the form
+// again with the email kept, so the visitor only retypes the password.
+func loginForm(deps core.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxLoginBody)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid login form", http.StatusBadRequest)
+			return
+		}
+		data := loginPageData{
+			Email:      strings.TrimSpace(r.PostForm.Get("email")),
+			RedirectTo: safeRedirectTarget(r.PostForm.Get("redirectTo")),
+		}
+		password := r.PostForm.Get("password")
+		if data.Email == "" {
+			data.EmailError = "Enter your email address."
+		}
+		if password == "" {
+			data.PasswordError = "Enter your password."
+		}
+		if data.EmailError != "" || data.PasswordError != "" {
+			renderLogin(w, r, deps, http.StatusUnprocessableEntity, data)
+			return
+		}
+		account, err := startPasswordSession(w, r, deps, data.Email, password)
+		if errors.Is(err, errInvalidCredentials) {
+			data.Error = "Incorrect email or password."
+			renderLogin(w, r, deps, http.StatusUnauthorized, data)
+			return
+		}
+		if err != nil {
+			http.Error(w, "could not create session", http.StatusInternalServerError)
+			return
+		}
+		location := data.RedirectTo
+		if location == "/" && !account.OnboardingCompleted {
+			location = "/onboarding"
+		}
+		http.Redirect(w, r, location, http.StatusSeeOther)
+	}
+}
+
+// passwordAttrs links the password control to its error and focuses it after
+// rejected credentials, when only the password needs retyping.
+func passwordAttrs(data loginPageData) templ.Attributes {
+	attrs := ui.FieldProps{ID: "password", Error: data.PasswordError}.ControlAttrs()
+	if data.Error != "" {
+		attrs["autofocus"] = true
+	}
+	return attrs
+}
+
+func renderLogin(w http.ResponseWriter, r *http.Request, deps core.Deps, status int, data loginPageData) {
+	page := core.Page{
+		Layout: "auth",
+		Title:  "Sign in",
+		Status: status,
+		View: func(p core.Page) templ.Component {
+			return loginView(data, p.CSRFToken)
+		},
+	}
+	if err := deps.Render.Page(w, r, page); err != nil {
+		http.Error(w, "could not render login page", http.StatusInternalServerError)
+	}
 }
 
 func oauthConsent(deps core.Deps) http.HandlerFunc {
@@ -222,36 +297,42 @@ func renderAuthStatus(w http.ResponseWriter, r *http.Request, deps core.Deps, da
 func RegisterAccount(deps core.Deps, input RegistrationInput) (core.Account, error) {
 	name := strings.TrimSpace(input.DisplayName)
 	if name == "" {
-		return core.Account{}, InputError("This field is required.")
+		return core.Account{}, InputError{"displayName", "Enter your full name."}
 	}
 	if !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
-		return core.Account{}, InputError("Enter a valid name.")
+		return core.Account{}, InputError{"displayName", "Enter a valid name."}
 	}
 	if utf8.RuneCountInString(name) > 128 {
-		return core.Account{}, InputError("Use a name with 128 characters or fewer.")
+		return core.Account{}, InputError{"displayName", "Use a name with 128 characters or fewer."}
 	}
 
 	email := core.NormalizeEmail(input.Email)
+	if email == "" {
+		return core.Account{}, InputError{"email", "Enter your email address."}
+	}
 	if len(email) > 254 || !utf8.ValidString(email) || strings.ContainsFunc(email, unicode.IsControl) || !validEmail(email) {
-		return core.Account{}, InputError("Enter a valid email address.")
+		return core.Account{}, InputError{"email", "Enter a valid email address, like name@company.com."}
 	}
 	if input.Password == "" {
-		return core.Account{}, InputError("This field is required.")
+		return core.Account{}, InputError{"password", "Enter a password."}
 	}
 	if !utf8.ValidString(input.Password) {
-		return core.Account{}, InputError("Use a valid UTF-8 password.")
+		return core.Account{}, InputError{"password", "Use a valid UTF-8 password."}
 	}
 	if utf8.RuneCountInString(input.Password) < 12 {
-		return core.Account{}, InputError("Use at least 12 characters.")
+		return core.Account{}, InputError{"password", "Use a password with at least 12 characters."}
 	}
 	if len(input.Password) > 1024 {
-		return core.Account{}, InputError("Use a password with 1024 bytes or fewer.")
+		return core.Account{}, InputError{"password", "Use a password with 1024 bytes or fewer."}
+	}
+	if input.ConfirmPassword == "" {
+		return core.Account{}, InputError{"confirmPassword", "Enter your password again."}
 	}
 	if input.ConfirmPassword != input.Password {
-		return core.Account{}, InputError("Passwords do not match.")
+		return core.Account{}, InputError{"confirmPassword", "Passwords do not match."}
 	}
 	if !input.AcceptedTerms {
-		return core.Account{}, InputError("You must accept the terms to continue.")
+		return core.Account{}, InputError{"terms", "Accept the Terms of Service to continue."}
 	}
 	if _, exists := deps.Store.FindByEmail(email); exists {
 		return core.Account{}, core.ErrConflict
@@ -279,82 +360,29 @@ func validEmail(email string) bool {
 	return err == nil && address.Address == email
 }
 
-func login(deps core.Deps) http.HandlerFunc {
+// loginAPI signs in with a JSON body and answers with the signed-in user.
+func loginAPI(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxLoginBody)
-		var input struct {
-			Email      string `json:"email"`
-			Password   string `json:"password"`
-			RedirectTo string `json:"redirectTo"`
-		}
-		mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		isForm := mediaType == "application/x-www-form-urlencoded" || mediaType == "multipart/form-data"
-		if isForm {
-			var err error
-			if mediaType == "multipart/form-data" {
-				err = r.ParseMultipartForm(maxLoginBody)
-				if r.MultipartForm != nil {
-					defer r.MultipartForm.RemoveAll()
-				}
-			} else {
-				err = r.ParseForm()
-			}
-			if err != nil {
-				http.Error(w, "invalid login form", http.StatusBadRequest)
-				return
-			}
-			input.Email = r.PostForm.Get("email")
-			input.Password = r.PostForm.Get("password")
-			input.RedirectTo = r.PostForm.Get("redirectTo")
-		} else if mediaType == "application/json" {
-			if err := json.UnmarshalRead(r.Body, &input); err != nil {
-				http.Error(w, "invalid login request", http.StatusBadRequest)
-				return
-			}
-		} else {
+		if mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mediaType != "application/json" {
 			http.Error(w, "unsupported content type", http.StatusUnsupportedMediaType)
 			return
 		}
-
-		account, exists := deps.Store.FindByEmail(input.Email)
-		passwordHash := dummyPasswordHash()
-		if exists {
-			passwordHash = account.User.PasswordHash
+		var input struct {
+			Email    string `json:"email"`
+			Password string `json:"password"`
 		}
-		passwordMatches := VerifyPassword(passwordHash, input.Password)
-		if !exists || !passwordMatches {
-			if isForm {
-				redirectToLoginAfterFormFailure(w, r, input.RedirectTo)
-				return
-			}
+		if err := json.UnmarshalRead(r.Body, &input); err != nil {
+			http.Error(w, "invalid login request", http.StatusBadRequest)
+			return
+		}
+		account, err := startPasswordSession(w, r, deps, input.Email, input.Password)
+		if errors.Is(err, errInvalidCredentials) {
 			writeJSON(w, http.StatusUnauthorized, apiError{Error: "invalid_credentials"})
 			return
 		}
-
-		credentialSessions, ok := deps.Sessions.(core.CredentialSessions)
-		if !ok {
-			http.Error(w, "credential-bound sessions are unavailable", http.StatusInternalServerError)
-			return
-		}
-		if err := credentialSessions.StartIfPasswordHash(w, r, account.Principal(), account.User.PasswordHash); err != nil {
-			if !errors.Is(err, core.ErrConflict) && !errors.Is(err, core.ErrUnauthorized) &&
-				!errors.Is(err, core.ErrForbidden) && !errors.Is(err, core.ErrNotFound) {
-				http.Error(w, "could not create session", http.StatusInternalServerError)
-				return
-			}
-			if isForm {
-				redirectToLoginAfterFormFailure(w, r, input.RedirectTo)
-				return
-			}
-			writeJSON(w, http.StatusUnauthorized, apiError{Error: "invalid_credentials"})
-			return
-		}
-		if isForm {
-			location := safeRedirectTarget(input.RedirectTo)
-			if location == "/" && !account.OnboardingCompleted {
-				location = "/onboarding"
-			}
-			http.Redirect(w, r, location, http.StatusSeeOther)
+		if err != nil {
+			http.Error(w, "could not create session", http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, http.StatusOK, loginResponse{User: loginUser{
@@ -362,6 +390,33 @@ func login(deps core.Deps) http.HandlerFunc {
 			Name: account.User.Name, OnboardingCompleted: account.OnboardingCompleted,
 		}})
 	}
+}
+
+// startPasswordSession checks the credentials and starts a session bound to
+// the account's current password hash. An unknown email is checked against a
+// dummy hash, so the response time does not reveal which accounts exist.
+func startPasswordSession(w http.ResponseWriter, r *http.Request, deps core.Deps, email, password string) (core.Account, error) {
+	account, exists := deps.Store.FindByEmail(email)
+	passwordHash := dummyPasswordHash()
+	if exists {
+		passwordHash = account.User.PasswordHash
+	}
+	passwordMatches := VerifyPassword(passwordHash, password)
+	if !exists || !passwordMatches {
+		return core.Account{}, errInvalidCredentials
+	}
+	credentialSessions, ok := deps.Sessions.(core.CredentialSessions)
+	if !ok {
+		return core.Account{}, errors.New("credential-bound sessions are unavailable")
+	}
+	if err := credentialSessions.StartIfPasswordHash(w, r, account.Principal(), account.User.PasswordHash); err != nil {
+		if errors.Is(err, core.ErrConflict) || errors.Is(err, core.ErrUnauthorized) ||
+			errors.Is(err, core.ErrForbidden) || errors.Is(err, core.ErrNotFound) {
+			return core.Account{}, errInvalidCredentials
+		}
+		return core.Account{}, err
+	}
+	return account, nil
 }
 
 func logout(deps core.Deps) http.HandlerFunc {
@@ -407,12 +462,6 @@ func safeRedirectTarget(raw string) string {
 		return "/"
 	}
 	return target.RequestURI()
-}
-
-func redirectToLoginAfterFormFailure(w http.ResponseWriter, r *http.Request, returnTo string) {
-	location := "/login?error=" + url.QueryEscape("Incorrect email or password.") +
-		"&returnTo=" + url.QueryEscape(safeRedirectTarget(returnTo))
-	http.Redirect(w, r, location, http.StatusSeeOther)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
