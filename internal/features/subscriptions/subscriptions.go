@@ -22,12 +22,20 @@ type planView struct {
 	Features []string
 	Interval string
 	Current  bool
-	Action   string
+	// Upcoming marks the plan an accepted change moves to; its Badge says
+	// whether the change is scheduled or waiting for payment.
+	Upcoming bool
+	Badge    string
+	// Locked disables the action while another change is in flight, since
+	// billing accepts one change at a time.
+	Locked bool
+	Action string
 }
 
 type subscriptionsPage struct {
 	OrganizationName string
 	PlanName         string
+	Summary          string
 	BillingStatus    string
 	StatusTone       string
 	BillingInterval  string
@@ -35,11 +43,36 @@ type subscriptionsPage struct {
 	PaymentValidated bool
 	PaymentMethod    string
 	HasSubscription  bool
+	AwaitingPayment  bool
+	CanManage        bool
+	ShowPortal       bool
+	Change           upcomingPlanChange
 	Demo             bool
 	PaymentNotice    string
 	Interval         string
 	AnnualSavings    int
 	Plans            []planView
+}
+
+// upcomingPlanChange is a plan change billing accepted but has not applied yet: a
+// downgrade scheduled for renewal, or an upgrade waiting for its payment.
+type upcomingPlanChange struct {
+	Key      string
+	Interval string
+	PlanName string
+	Pending  bool
+	Date     string
+}
+
+// Label names the target plan and, for paid plans, its billing interval.
+func (change upcomingPlanChange) Label() string {
+	switch change.Interval {
+	case intervalMonthly:
+		return change.PlanName + ", billed monthly"
+	case intervalAnnual:
+		return change.PlanName + ", billed annually"
+	}
+	return change.PlanName
 }
 
 type checkoutPage struct {
@@ -75,28 +108,9 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 		if r.URL.Query().Get("interval") == intervalAnnual {
 			interval = intervalAnnual
 		}
-		data := subscriptionsPage{
-			OrganizationName: view.Organization.Name,
-			PlanName:         cmp.Or(view.Plan.Name, "Free"),
-			BillingStatus:    billingLabel(view.Organization),
-			StatusTone:       billingTone(view.Organization),
-			BillingInterval:  intervalLabel(view.Organization.Billing.Interval),
-			Renewal:          formatRenewal(view.Organization.BillingRenewal),
-			PaymentValidated: view.Organization.PaymentMethodValidated,
-			PaymentMethod:    paymentMethodLabel(view.Organization.Billing),
-			HasSubscription:  view.Organization.Billing.SubscriptionID != "" && view.Organization.Billing.Status != "canceled" && view.Organization.Billing.Status != "incomplete_expired",
-			Demo:             deps.Demo,
-			PaymentNotice:    paymentNotice(r.URL.Query().Get("payment")),
-			Interval:         interval,
-			Plans:            make([]planView, 0, len(view.Plans)),
-		}
-		current := normalizePlanKey(view.Organization.Billing.PlanKey)
-		for i, plan := range view.Plans {
-			data.Plans = append(data.Plans, makePlanView(plan, i, interval, current, view.Organization.Billing.Interval, view.Plan.PriceCents))
-			if plan.AnnualPriceCents > 0 {
-				data.AnnualSavings = max(data.AnnualSavings, int(100-plan.AnnualPriceCents*100/(plan.PriceCents*12)))
-			}
-		}
+		data := billingPage(deps.Store, principal, view, interval)
+		data.Demo = deps.Demo
+		data.PaymentNotice = paymentNotice(r.URL.Query().Get("payment"))
 		if err := deps.Render.Page(w, r, core.Page{
 			Layout: "shell", Title: "Billing | TerraScale", Principal: principal,
 			View: func(page core.Page) templ.Component {
@@ -181,68 +195,161 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 // planTones color plan cards from the cheapest plan up.
 var planTones = []string{"cyan", "violet", "amber", "rose"}
 
-func makePlanView(plan core.Plan, index int, interval, currentKey, currentInterval string, currentPrice int64) planView {
+// billingPage describes the organization's plan and prices every available
+// plan against it for the billing interval the page shows.
+func billingPage(store *core.Store, principal core.Principal, view BillingSnapshot, interval string) subscriptionsPage {
+	org := view.Organization
+	hasSubscription := org.Billing.SubscriptionID != "" && org.Billing.Status != "canceled" && org.Billing.Status != "incomplete_expired"
+	// Billing routes accept changes only from the owner of an active
+	// organization.
+	owner := org.OwnerUserID == principal.UserID && org.Status == "active" && !org.Archived && !org.DeletionRequested
+	data := subscriptionsPage{
+		OrganizationName: org.Name,
+		PlanName:         cmp.Or(view.Plan.Name, "Free"),
+		Summary:          org.Name + " is billed on this plan.",
+		BillingStatus:    billingLabel(org),
+		StatusTone:       billingTone(org),
+		BillingInterval:  intervalLabel(org.Billing.Interval),
+		Renewal:          formatRenewal(org.BillingRenewal),
+		PaymentValidated: org.PaymentMethodValidated,
+		PaymentMethod:    paymentMethodLabel(org.Billing),
+		HasSubscription:  hasSubscription,
+		AwaitingPayment:  !hasSubscription && org.BillingStatus == "billing_required",
+		CanManage:        owner,
+		ShowPortal:       owner && (hasSubscription || org.Billing.CustomerID != ""),
+		Change:           upcomingChange(store, org.Billing),
+		Interval:         interval,
+		Plans:            make([]planView, 0, len(view.Plans)),
+	}
+	if data.AwaitingPayment {
+		data.PlanName, data.Summary = "No plan", org.Name+" has no active plan."
+	}
+	current := planCardContext{
+		Interval: interval, Key: normalizePlanKey(org.Billing.PlanKey), BillingInterval: org.Billing.Interval,
+		PriceCents: view.Plan.PriceCents, AnnualPriceCents: view.Plan.AnnualPriceCents,
+		TrialEligible:   !hasSubscription && !org.Billing.TrialUsed,
+		AwaitingPayment: data.AwaitingPayment, Change: data.Change,
+	}
+	for i, plan := range view.Plans {
+		data.Plans = append(data.Plans, makePlanView(plan, i, current))
+		if plan.AnnualPriceCents > 0 {
+			data.AnnualSavings = max(data.AnnualSavings, int(100-plan.AnnualPriceCents*100/(plan.PriceCents*12)))
+		}
+	}
+	return data
+}
+
+// upcomingChange reads the plan change billing accepted but has not applied.
+// Billing holds at most one: a pending upgrade or a scheduled downgrade.
+func upcomingChange(store *core.Store, billing core.Billing) upcomingPlanChange {
+	// Until Stripe reports the period end, the change applies at the next
+	// renewal.
+	change := upcomingPlanChange{Key: billing.ScheduledPlanKey, Interval: billing.ScheduledInterval, Date: "the next renewal"}
+	if !billing.ScheduledAt.IsZero() {
+		change.Date = formatRenewal(billing.ScheduledAt)
+	}
+	if billing.PendingPlanKey != "" {
+		change = upcomingPlanChange{Key: billing.PendingPlanKey, Interval: billing.PendingInterval, Pending: true}
+	}
+	if change.Key == "" {
+		return upcomingPlanChange{}
+	}
+	change.PlanName = humanizePlanKey(change.Key)
+	if plan, ok := store.Plan(change.Key); ok {
+		change.PlanName = plan.Name
+	}
+	return change
+}
+
+func humanizePlanKey(key string) string {
+	key = strings.ReplaceAll(strings.ReplaceAll(key, "-", " "), "_", " ")
+	if key == "" {
+		return "Plan"
+	}
+	return strings.ToUpper(key[:1]) + key[1:]
+}
+
+// planCardContext is the organization's billing state that each plan card is
+// compared against.
+type planCardContext struct {
+	Interval         string
+	Key              string
+	BillingInterval  string
+	PriceCents       int64
+	AnnualPriceCents int64
+	TrialEligible    bool
+	AwaitingPayment  bool
+	Change           upcomingPlanChange
+}
+
+func makePlanView(plan core.Plan, index int, current planCardContext) planView {
 	key := normalizePlanKey(plan.Key)
 	card := planView{
 		Key: key, Name: plan.Name, Tone: planTones[index%len(planTones)],
 		Price: formatUSD(plan.PriceCents), Billed: "Billed monthly",
 		Interval: intervalMonthly,
+		Features: planFeatures(plan),
 	}
-	if interval == intervalAnnual {
+	if current.Interval == intervalAnnual {
 		if plan.AnnualPriceCents > 0 {
-			card.Price = formatUSD(plan.AnnualPriceCents / 12)
+			// The monthly equivalent is rounded to the nearest cent.
+			card.Price = formatUSD((plan.AnnualPriceCents + 6) / 12)
 			card.Billed = formatUSD(plan.AnnualPriceCents) + " billed annually"
 			card.Interval = intervalAnnual
 		} else {
 			card.Billed = "Monthly billing only"
 		}
 	}
-	card.Features = planFeatures(plan)
+	// Checkout grants a trial only to an organization that never had one;
+	// plan changes on a subscription never include one.
+	if current.TrialEligible && plan.TrialDays > 0 {
+		card.Features = append(card.Features, fmt.Sprintf("%d-day free trial", plan.TrialDays))
+	}
+	currentPrice := monthlyEquivalentPrice(current.PriceCents, current.AnnualPriceCents, current.BillingInterval)
+	planPrice := monthlyEquivalentPrice(plan.PriceCents, plan.AnnualPriceCents, card.Interval)
 	switch {
-	case key == currentKey && card.Interval == currentInterval:
+	case current.AwaitingPayment:
+		card.Action = "Choose " + plan.Name
+	case key == current.Key && card.Interval == current.BillingInterval:
 		card.Current, card.Action = true, "Current plan"
-	case key == currentKey:
+	case key == current.Key:
 		card.Action = "Switch to " + card.Interval + " billing"
-	case plan.PriceCents > currentPrice:
+	case planPrice > currentPrice:
 		card.Action = "Upgrade to " + plan.Name
 	default:
 		card.Action = "Switch to " + plan.Name
 	}
+	if current.Change.Key != "" && !card.Current {
+		card.Locked = true
+		card.Action = "Unavailable while a change is in progress"
+		if current.Change.Key == key && current.Change.Interval == card.Interval {
+			card.Upcoming, card.Badge = true, "Scheduled"
+			if current.Change.Pending {
+				card.Badge = "Awaiting payment"
+			}
+			card.Action = card.Badge
+		}
+	}
 	return card
 }
 
-// planFeatures lists a plan's allowances as a plan card shows them.
+// planFeatures lists a plan's published allowances as a plan card shows
+// them. Whether a trial applies depends on the organization, so callers add it.
 func planFeatures(plan core.Plan) []string {
-	var features []string
-	if plan.StorageMiB > 0 {
-		features = append(features, formatStorage(plan.StorageMiB)+" storage")
-	}
-	if plan.MonthlyRequests > 0 {
-		features = append(features, formatCount(plan.MonthlyRequests)+" requests per month")
-	}
-	features = append(features, plan.DatabaseAllowance(), plan.MemberAllowance())
-	if plan.TrialDays > 0 {
-		features = append(features, fmt.Sprintf("%d-day free trial", plan.TrialDays))
+	features := make([]string, 0, 4)
+	for _, allowance := range []string{plan.StorageAllowance(), plan.OperationsAllowance(), plan.DatabaseAllowance(), plan.MemberAllowance()} {
+		if allowance != core.AllowanceUnpublished {
+			features = append(features, allowance)
+		}
 	}
 	return features
 }
 
-func formatStorage(mib int64) string {
-	if mib >= 1024 && mib%1024 == 0 {
-		return fmt.Sprintf("%d GiB", mib/1024)
+func monthlyEquivalentPrice(monthlyPrice, annualPrice int64, interval string) int64 {
+	if interval == intervalAnnual && annualPrice > 0 {
+		return (annualPrice + 6) / 12
 	}
-	return fmt.Sprintf("%d MiB", mib)
-}
-
-func formatCount(n int64) string {
-	switch {
-	case n >= 1_000_000 && n%1_000_000 == 0:
-		return fmt.Sprintf("%dM", n/1_000_000)
-	case n >= 1_000 && n%1_000 == 0:
-		return fmt.Sprintf("%dK", n/1_000)
-	default:
-		return fmt.Sprint(n)
-	}
+	return monthlyPrice
 }
 
 func intervalLabel(interval string) string {
