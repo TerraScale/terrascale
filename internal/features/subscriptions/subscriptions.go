@@ -242,7 +242,12 @@ func billingPage(store *core.Store, principal core.Principal, view BillingSnapsh
 // upcomingChange reads the plan change billing accepted but has not applied.
 // Billing holds at most one: a pending upgrade or a scheduled downgrade.
 func upcomingChange(store *core.Store, billing core.Billing) upcomingPlanChange {
-	change := upcomingPlanChange{Key: billing.ScheduledPlanKey, Interval: billing.ScheduledInterval, Date: formatRenewal(billing.ScheduledAt)}
+	// Until Stripe reports the period end, the change applies at the next
+	// renewal.
+	change := upcomingPlanChange{Key: billing.ScheduledPlanKey, Interval: billing.ScheduledInterval, Date: "the next renewal"}
+	if !billing.ScheduledAt.IsZero() {
+		change.Date = formatRenewal(billing.ScheduledAt)
+	}
 	if billing.PendingPlanKey != "" {
 		change = upcomingPlanChange{Key: billing.PendingPlanKey, Interval: billing.PendingInterval, Pending: true}
 	}

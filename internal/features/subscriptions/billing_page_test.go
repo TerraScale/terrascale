@@ -181,6 +181,25 @@ func TestBillingPageExplainsScheduledFreeChangeWithoutAFreeCard(t *testing.T) {
 	}
 }
 
+func TestBillingPageNamesTheNextRenewalWhenTheScheduledDateIsUnknown(t *testing.T) {
+	fixture := newBillingFixture(t)
+	fixture.subscribe(t, "pro", intervalMonthly)
+	if err := fixture.store.UpdateAs(fixture.principal, func(account *core.Account) error {
+		org := account.Organizations[fixture.principal.OrganizationID]
+		org.Billing.ScheduledPlanKey = "starter"
+		org.Billing.ScheduledInterval = intervalMonthly
+		account.Organizations[org.ID] = org
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	html := renderBillingPage(t, fixture.page(t, fixture.principal, intervalMonthly))
+	if !strings.Contains(html, "Pro stays active until the next renewal, then") || strings.Contains(html, "until Not scheduled") {
+		t.Errorf("scheduled change without a date reads wrong:\n%s", html)
+	}
+}
+
 func TestUpcomingChangeHumanizesMissingPlanKey(t *testing.T) {
 	fixture := newBillingFixture(t)
 	change := upcomingChange(fixture.store, core.Billing{ScheduledPlanKey: "missing_plan-key"})
