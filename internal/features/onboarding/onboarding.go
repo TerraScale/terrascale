@@ -66,7 +66,9 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 func getOnboarding(deps core.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
-		registration := pageData{Registration: true, Plan: query.Get("plan"), ReturnTo: returnPath(query.Get("returnTo"))}
+		plans := offeredPlans(deps)
+		// Landing pages link with return=; sign-in and the dashboard use returnTo.
+		registration := pageData{Registration: true, Plan: offeredPlan(plans, query.Get("plan")), ReturnTo: returnPath(cmp.Or(query.Get("returnTo"), query.Get("return")))}
 		principal, ok := deps.Sessions.Principal(r)
 		if !ok {
 			render(w, r, deps, http.StatusOK, registration)
@@ -121,27 +123,14 @@ func getOnboarding(deps core.Deps) http.HandlerFunc {
 		if paymentOutcome == "success" && data.Step == "payment-method" {
 			data.Error = "Payment setup could not be confirmed. Finish checkout or continue without payment."
 		}
-		for _, plan := range deps.Store.Plans() {
-			if plan.Visible && plan.PriceCents > 0 {
-				data.Plans = append(data.Plans, plan)
-			}
+		data.Plans = plans
+		requested := query.Get("plan")
+		if requested == "" && data.PaymentCanceled {
+			// A canceled checkout comes back without the link's plan; offer
+			// the plan it was for again.
+			requested = checkoutPlan(account, principal, plans)
 		}
-		planRank := map[string]int{"starter": 0, "pro": 1, "business": 2}
-		slices.SortFunc(data.Plans, func(a, b core.Plan) int {
-			aRank, aKnown := planRank[a.Key]
-			bRank, bKnown := planRank[b.Key]
-			if !aKnown {
-				aRank = len(planRank)
-			}
-			if !bKnown {
-				bRank = len(planRank)
-			}
-			if order := cmp.Compare(aRank, bRank); order != 0 {
-				return order
-			}
-			return cmp.Compare(a.Key, b.Key)
-		})
-		data.Plan = selectedPlan(data.Plans, query.Get("plan"))
+		data.Plan = cmp.Or(offeredPlan(plans, requested), firstPlan(plans))
 		render(w, r, deps, http.StatusOK, data)
 	}
 }
@@ -159,7 +148,7 @@ func register(deps core.Deps) http.HandlerFunc {
 			ConfirmPassword: r.Form.Get("confirmPassword"),
 			AcceptedTerms:   r.Form.Get("terms") == "true",
 		}
-		plan, returnTo := r.Form.Get("plan"), returnPath(r.Form.Get("returnTo"))
+		plan, returnTo := offeredPlan(offeredPlans(deps), r.Form.Get("plan")), returnPath(r.Form.Get("returnTo"))
 		account, err := auth.RegisterAccount(deps, input)
 		if err != nil {
 			// Render the form again with everything but the passwords kept.
@@ -301,7 +290,12 @@ func saveStep(deps core.Deps) http.HandlerFunc {
 			return
 		}
 		if message != "" {
-			http.Redirect(w, r, "/onboarding?error="+url.QueryEscape(message), http.StatusSeeOther)
+			query := url.Values{"error": {message}}
+			// A refused payment step keeps the plan that was picked.
+			if plan := offeredPlan(offeredPlans(deps), r.Form.Get("plan")); r.Form.Get("step") == "payment-method" && plan != "" {
+				query.Set("plan", plan)
+			}
+			http.Redirect(w, r, "/onboarding?"+query.Encode(), http.StatusSeeOther)
 			return
 		}
 		if r.Form.Get("step") == "project" {
@@ -416,16 +410,60 @@ func returnPath(raw string) string {
 	return ""
 }
 
-// selectedPlan is the plan the payment step preselects: the requested one
-// when it is offered, otherwise the first.
-func selectedPlan(plans []core.Plan, requested string) string {
-	for _, plan := range plans {
-		if plan.Key == requested {
-			return requested
+// offeredPlans are the paid plans the payment step offers, cheapest first.
+func offeredPlans(deps core.Deps) []core.Plan {
+	var plans []core.Plan
+	for _, plan := range deps.Store.Plans() {
+		if plan.Visible && plan.PriceCents > 0 {
+			plans = append(plans, plan)
 		}
 	}
-	if len(plans) > 0 {
-		return plans[0].Key
+	planRank := map[string]int{"starter": 0, "pro": 1, "business": 2}
+	slices.SortFunc(plans, func(a, b core.Plan) int {
+		aRank, aKnown := planRank[a.Key]
+		bRank, bKnown := planRank[b.Key]
+		if !aKnown {
+			aRank = len(planRank)
+		}
+		if !bKnown {
+			bRank = len(planRank)
+		}
+		if order := cmp.Compare(aRank, bRank); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.Key, b.Key)
+	})
+	return plans
+}
+
+// offeredPlan returns requested when it is an offered plan's key, otherwise "".
+func offeredPlan(plans []core.Plan, requested string) string {
+	if slices.ContainsFunc(plans, func(plan core.Plan) bool { return plan.Key == requested }) {
+		return requested
+	}
+	return ""
+}
+
+func firstPlan(plans []core.Plan) string {
+	if len(plans) == 0 {
+		return ""
+	}
+	return plans[0].Key
+}
+
+// checkoutPlan is the key of the plan in the principal's latest onboarding
+// checkout, if it is still offered.
+func checkoutPlan(account core.Account, principal core.Principal, plans []core.Plan) string {
+	var latest core.CheckoutSession
+	for _, checkout := range account.Organizations[principal.OrganizationID].CheckoutSessions {
+		if checkout.OwnerUserID == principal.UserID && checkout.ReturnPath == "/onboarding" && checkout.CreatedAt.After(latest.CreatedAt) {
+			latest = checkout
+		}
+	}
+	for _, plan := range plans {
+		if plan.ID == latest.PlanID && latest.PlanID != "" {
+			return plan.Key
+		}
 	}
 	return ""
 }
