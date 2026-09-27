@@ -330,10 +330,16 @@ func TestPagesPreloadTheMonospaceFontOnlyWhenSignedIn(t *testing.T) {
 		must(t, expect.Locator(preload).ToHaveCount(0))
 	}
 	if n := monoRequests.Load(); n != 0 {
-		t.Fatalf("sign-in pages requested the monospace font %d times, want 0", n)
+		t.Fatalf("signed-out pages requested the monospace font %d times, want 0", n)
 	}
 
-	login(t, page, sampleAccount.Email, sampleAccount.Password)
+	// The checkout simulator uses the sign-in layout but shows its session
+	// ID in the monospace face.
+	registerAndOpenPaymentStep(t, page, newAccount("mono-preload"))
+	payment := onboardingStep(t, page, "payment-method")
+	must(t, payment.Locator(`[name="plan"][value="starter"]`).Check())
+	click(t, byRole(payment, *playwright.AriaRoleButton, "Continue to checkout"))
+	must(t, page.WaitForURL(regexp.MustCompile(`/checkout/cs_local_`)))
 	must(t, expect.Locator(preload).ToHaveCount(1))
 	eventually(t, "monospace font request", func() bool { return monoRequests.Load() > 0 })
 }
