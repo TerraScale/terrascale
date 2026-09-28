@@ -1,9 +1,10 @@
 name: ts-auth CI
 
 # fast and release run in parallel and keep compiled dependencies in per-job
-# Cargo target directories on the runner's persistent /cache volume
-# (scripts/ci/cargo-cache.sh). publish never reads that shared cache: it
-# builds the released binary from a clean target directory and Cargo home.
+# Cargo target directories on the runner's persistent /cache volume, compiling
+# through the shared kache store there (scripts/ci/cargo-cache.sh). publish
+# never reads either cache: it builds the released binary from a clean target
+# directory and Cargo home, without kache.
 # Release binaries are static x86_64 musl executables built with the job
 # image's musl toolchain, like TerraBase's.
 

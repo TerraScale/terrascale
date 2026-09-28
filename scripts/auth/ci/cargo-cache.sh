@@ -8,11 +8,20 @@
 # job can rebuild those files underneath it. An oversized directory starts
 # over rather than growing without bound. Without TS_AUTH_CARGO_CACHE_DIR the
 # command runs as is.
+#
+# Rust compiles go through kache, whose store is shared by every job on the
+# runner. Units an earlier run compiled, in any job, are restored instead of
+# rebuilt, so a target directory that starts over costs restores rather than
+# a full build. The store sits on the same /cache mount as the target
+# directories, so restores are reflinks, not copies.
 set -euo pipefail
 
 test "$#" -gt 0 || { echo "usage: $0 COMMAND [ARG...]" >&2; exit 2; }
 [[ -n ${TS_AUTH_CARGO_CACHE_DIR:-} ]] || exec "$@"
 export CARGO_TARGET_DIR=$TS_AUTH_CARGO_CACHE_DIR
+export RUSTC_WRAPPER=kache KACHE_CACHE_DIR=/cache/kache
+# Sockets, locks, and event logs stay private to this job.
+export KACHE_RUNTIME_DIR=${RUNNER_TEMP:?}/kache
 
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 sdk=$(cd "$repo/../ts-rust" && pwd)
