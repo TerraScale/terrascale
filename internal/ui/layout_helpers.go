@@ -158,7 +158,13 @@ func passwordSignals(id string) string {
 // regionSync copies the codes selected in selectID onto the map's
 // data-selected attribute, which the stylesheet uses to light up hubs.
 func regionSync(selectID string) string {
-	return "el.dataset.selected = [...document.getElementById('" + selectID + "').selectedOptions].map(o => o.value).join(' ')"
+	return "(() => { const selected = [...document.getElementById('" + selectID + "').selectedOptions].map(o => o.value); el.dataset.selected = selected.join(' '); el.querySelectorAll('button[data-region]').forEach(node => node.setAttribute('aria-pressed', String(selected.includes(node.dataset.region)))) })()"
+}
+
+// regionPick changes the native select and dispatches its change event so the
+// map and any other select listeners observe the same value.
+func regionPick(selectID string) string {
+	return "(() => { const select = document.getElementById('" + selectID + "'); const option = [...select.options].find(o => o.value === el.dataset.region); if (!option || option.disabled) return; if (select.multiple) option.selected = !option.selected; else select.value = option.value; select.dispatchEvent(new Event('change', { bubbles: true })) })()"
 }
 
 // regionArc is a quadratic curve lifted above the straight line between hubs.

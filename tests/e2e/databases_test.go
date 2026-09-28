@@ -19,6 +19,36 @@ func createDatabase(t *testing.T, page playwright.Page, name, region string) {
 	submitAndExpect(t, page, "/api/v1/dashboard/databases", 303, byRole(form, *playwright.AriaRoleButton, "Create database").Click)
 }
 
+func TestCreateDatabaseRegionMapAndSelectStayInSync(t *testing.T) {
+	t.Parallel()
+	page := newPage(t)
+	login(t, page, sampleAccount.Email, sampleAccount.Password)
+	goToOK(t, page, "/databases?create=1")
+	dialog := pageByRole(page, *playwright.AriaRoleDialog, "New database")
+	region := dialog.Locator("#database-region")
+	regionMap := dialog.Locator(`.ts-region-map[data-select-id="database-region"]`)
+	frankfurt := regionMap.Locator(`button[data-region="FRA"]`)
+
+	click(t, frankfurt)
+	must(t, expect.Locator(region).ToHaveValue("FRA"))
+	must(t, expect.Locator(regionMap).ToHaveAttribute("data-selected", "FRA"))
+	must(t, expect.Locator(frankfurt).ToHaveAttribute("aria-pressed", "true"))
+	visible(t, frankfurt.Locator(".ts-region-node-label"))
+	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-label")).ToHaveCSS("opacity", "1"))
+	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-label")).ToContainText("Frankfurt"))
+	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-label")).ToContainText("Ping unavailable"))
+	expectAccessible(t, page, "new database region map", "")
+	screenshot(t, page, "database-region-selected")
+
+	selectOption(t, region, "GRU")
+	must(t, expect.Locator(regionMap).ToHaveAttribute("data-selected", "GRU"))
+	must(t, expect.Locator(regionMap.Locator(`button[data-region="GRU"]`)).ToHaveAttribute("aria-pressed", "true"))
+	must(t, expect.Locator(frankfurt).ToHaveAttribute("aria-pressed", "false"))
+	must(t, frankfurt.Hover())
+	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-label")).ToHaveCSS("opacity", "1"))
+	screenshot(t, page, "database-region-dropdown")
+}
+
 func TestDatabaseFreePlanLimitIsExplainedAndHoldsForBranchesAndRestores(t *testing.T) {
 	t.Parallel()
 	page := newPage(t)
