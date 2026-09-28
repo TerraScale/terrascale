@@ -43,7 +43,7 @@
   --ts-cat-2: #22d3ee;
   --ts-cat-3: #a5b4fc;
 
-  /* Page accent. Components can override it with their [data-tone]. */
+  /* Page accent. Navigation icons override it with their [data-tone]. */
   --tone: var(--ts-accent);
 
   /* Type. Oxanium carries the brand; body copy stays at a readable 14px. */

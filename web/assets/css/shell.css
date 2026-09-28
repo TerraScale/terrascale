@@ -221,14 +221,9 @@ details[open] > .ts-context-trigger {
   width: 28px;
   height: 28px;
   border-radius: 7px;
-  background: var(--ts-surface-2);
-  color: var(--ts-ink-3);
+  background: color-mix(in oklab, var(--tone) 14%, transparent);
+  color: var(--tone);
   transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
-}
-
-.ts-nav-link:hover .ts-nav-icon {
-  background: var(--ts-surface-3);
-  color: var(--ts-ink-2);
 }
 
 .ts-nav-label {
@@ -246,13 +241,8 @@ details[open] > .ts-context-trigger {
 }
 
 .ts-nav-link[aria-current="page"] .ts-nav-icon {
-  background: var(--ts-surface-3);
-  color: var(--ts-ink);
-}
-
-.ts-nav-collapsible:has([aria-current="page"]) > summary .ts-nav-icon {
-  background: var(--ts-surface-3);
-  color: var(--ts-ink);
+  background: var(--tone);
+  color: #0a0c12;
 }
 
 /* Collapsible section: the summary looks like a link and the chevron turns
@@ -328,7 +318,7 @@ details[open] > .ts-context-trigger {
   left: calc(-1 * var(--ts-s3) - 1px);
   width: 2px;
   border-radius: 2px;
-  background: var(--ts-accent);
+  background: var(--tone);
   content: "";
 }
 
@@ -336,8 +326,8 @@ details[open] > .ts-context-trigger {
   min-width: 20px;
   padding: 0 6px;
   border-radius: var(--ts-radius-pill);
-  background: var(--ts-surface-3);
-  color: var(--ts-ink-2);
+  background: color-mix(in oklab, var(--tone) 18%, transparent);
+  color: color-mix(in oklab, var(--tone) 60%, var(--ts-ink));
   font-size: 11px;
   font-weight: 600;
   line-height: 20px;
