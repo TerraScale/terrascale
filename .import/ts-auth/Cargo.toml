@@ -27,6 +27,7 @@ saml-rs = { version = "=0.5.0", default-features = false, features = ["crypto-ru
 quick-xml = "=0.41.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+mimalloc = { version = "=0.1.52", default-features = false }
 terrascale = { path = "../ts-rust" }
 auth-contracts = { path = "crates/auth-contracts" }
 auth-store = { path = "crates/auth-store" }

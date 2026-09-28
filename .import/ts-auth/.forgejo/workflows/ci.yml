@@ -1,5 +1,12 @@
 name: ts-auth CI
 
+# fast and release run in parallel and keep compiled dependencies in per-job
+# Cargo target directories on the runner's persistent /cache volume
+# (scripts/ci/cargo-cache.sh). publish never reads that shared cache: it
+# builds the released binary from a clean target directory and Cargo home.
+# Release binaries are static x86_64 musl executables built with the job
+# image's musl toolchain, like TerraBase's.
+
 on:
   push:
     branches: [main]
@@ -11,16 +18,17 @@ concurrency:
   group: ts-auth-${{ forgejo.workflow }}-${{ forgejo.ref }}
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
+env:
+  FORGEJO_SHA: ${{ forgejo.sha }}
+  TS_RUST_REV: c590cd41eabf05bbd5982a1580c1bb01880c346a
+
 jobs:
-  ci:
-    name: Check and build Rust ts-auth
+  fast:
+    name: Check and test Rust ts-auth
     runs-on: terrascale-builder
     timeout-minutes: 60
     env:
-      FORGEJO_SHA: ${{ forgejo.sha }}
-      TS_RUST_REV: c590cd41eabf05bbd5982a1580c1bb01880c346a
-      # Incremental build state survives across jobs on the shared cache.
-      CARGO_TARGET_DIR: /cache/cargo-target/ts-auth
+      TS_AUTH_CARGO_CACHE_DIR: /cache/cargo-target/ts-auth/fast
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -30,31 +38,18 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # The workspace depends on the SDK through `path = "../ts-rust"`, which
-      # carries its own rust-toolchain.toml. RUSTUP_TOOLCHAIN pins every
-      # rustup proxy (including rustc runs inside ../ts-rust) to this
-      # repository's toolchain.
       - name: Check out the pinned Rust SDK and select the toolchain
         env:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
-        run: |
-          set -euo pipefail
-          git init -q ../ts-rust
-          git -C ../ts-rust fetch -q --depth 1 \
-            "https://oauth2:${ORG_READ_TOKEN:?org read token is required}@git.terrascale.tech/TerraScale/ts-rust.git" \
-            "${TS_RUST_REV}"
-          git -C ../ts-rust checkout -q --detach FETCH_HEAD
-          test "$(git -C ../ts-rust rev-parse HEAD)" = "${TS_RUST_REV}"
-          toolchain="$(sed -nE 's/^channel = "([^"]+)"$/\1/p' rust-toolchain.toml)"
-          echo "RUSTUP_TOOLCHAIN=${toolchain:?rust-toolchain.toml has no channel}" >> "${GITHUB_ENV}"
+        run: bash scripts/ci/checkout-sdk.sh
 
       - name: Check formatting and run Rust tests
         run: |
           set -euo pipefail
           cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets --locked -- -D warnings
+          bash scripts/ci/cargo-cache.sh cargo clippy --workspace --all-targets --locked -- -D warnings
           mkdir -p artifacts/ci/tests
-          cargo test --workspace --all-targets --locked 2>&1 | tee artifacts/ci/tests/auth-tests.log
+          bash scripts/ci/cargo-cache.sh cargo test --workspace --all-targets --locked 2>&1 | tee artifacts/ci/tests/auth-tests.log
           bash scripts/check-rust-test-results.sh artifacts/ci/tests/auth-tests.log
           (cd artifacts/ci/tests && sha256sum auth-tests.log > SHA256SUMS)
           (cd artifacts/ci/tests && sha256sum --check --strict SHA256SUMS)
@@ -76,73 +71,6 @@ jobs:
           bash scripts/check-rsa-private-usage.sh
           cargo audit --file Cargo.lock --ignore RUSTSEC-2023-0071
 
-      - name: Build and inspect the release image
-        run: |
-          set -euo pipefail
-          source_commit="$(git rev-parse HEAD)"
-          test "${source_commit}" = "${FORGEJO_SHA:?event SHA is required}"
-          # Build against Debian's older glibc so the binary runs in the
-          # distroless Debian 13 runtime even when the host runner is newer.
-          # The registry and target dir ride the shared cache. TS_AUTH_REVISION
-          # is compiled into the version reported by /healthz and /readyz.
-          mkdir -p /cache/cargo /cache/cargo-target/ts-auth-release
-          podman run --rm --security-opt label=disable \
-            --volume "$PWD:/work/ts-auth" \
-            --volume "$(realpath ../ts-rust):/work/ts-rust:ro" \
-            --volume /cache/cargo:/cargo-home \
-            --volume /cache/cargo-target/ts-auth-release:/cargo-target \
-            --workdir /work/ts-auth \
-            --env CARGO_HOME=/cargo-home \
-            --env CARGO_TARGET_DIR=/cargo-target \
-            --env "TS_AUTH_REVISION=${source_commit:0:12}" \
-            "docker.io/library/rust:${RUSTUP_TOOLCHAIN}-bookworm" \
-            cargo build --release --locked -p auth-app
-          mkdir -p artifacts/ci/container-publish
-          cp -- /cache/cargo-target/ts-auth-release/release/auth-app artifacts/ci/container-publish/ts-auth
-          test -s artifacts/ci/container-publish/ts-auth
-          podman build \
-            --pull=missing \
-            --platform linux/amd64 \
-            --tag "localhost/terrascale/ts-auth:${source_commit}" \
-            --file Containerfile .
-          image="localhost/terrascale/ts-auth:${source_commit}"
-          podman image inspect "${image}"
-          test "$(podman image inspect "${image}" --format '{{.Architecture}}')" = amd64
-          test "$(podman image inspect "${image}" --format '{{.Os}}')" = linux
-
-          # Exercise the packaged binary and composed router without a live
-          # TerraBase implementation; readiness must fail closed.
-          port="$(python3 - <<'PY'
-          import socket
-          with socket.socket() as listener:
-              listener.bind(('127.0.0.1', 0))
-              print(listener.getsockname()[1])
-          PY
-          )"
-          container="ts-auth-ci-${source_commit:0:12}"
-          podman run --detach --rm --name "${container}" --network host \
-            --env TS_AUTH_ENVIRONMENT=Development \
-            --env "TS_AUTH_LISTEN=http://127.0.0.1:${port}" \
-            --env "TS_AUTH_PUBLIC_ORIGIN=http://127.0.0.1:${port}" \
-            --env TS_AUTH_TERRASCALE_API_URL=http://127.0.0.1:1 \
-            --env TS_AUTH_TERRASCALE_API_KEY=ci-contract-key \
-            --env TS_AUTH_DATABASE=ci-contract-db \
-            --env TS_AUTH_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
-            --env TS_AUTH_OPERATOR_KEY=ci-operator \
-            --env TS_AUTH_METRICS_KEY=ci-metrics \
-            "${image}"
-          trap 'podman stop "${container}" >/dev/null 2>&1 || true' EXIT
-          ready=0
-          for _ in $(seq 1 30); do
-            if curl --silent --fail --max-time 2 "http://127.0.0.1:${port}/healthz" >/dev/null; then ready=1; break; fi
-            sleep 1
-          done
-          if test "${ready}" != 1; then podman logs "${container}"; exit 1; fi
-          curl --silent --fail "http://127.0.0.1:${port}/healthz" | \
-            jq -e --arg revision "${source_commit:0:12}" '.version | endswith("+" + $revision)'
-          curl --silent --fail "http://127.0.0.1:${port}/openapi/v1.json" | jq -e '.info.title == "TerraScale Auth API" and .paths["/healthz"] != null'
-          test "$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/readyz")" = 503
-
       # Playwright and Chromium are baked into the ts-builder job image.
       - name: Run admin browser acceptance
         env:
@@ -151,11 +79,65 @@ jobs:
           set -euo pipefail
           TS_AUTH_CHROMIUM_PATH="$(node -p 'require("playwright").chromium.executablePath()')"
           export TS_AUTH_CHROMIUM_PATH
-          cargo test --locked -p auth-app --test admin_browser -- --ignored --nocapture
-          cargo test --locked -p auth-app --test device_authorization -- --ignored --nocapture
+          bash scripts/ci/cargo-cache.sh cargo test --locked -p auth-app --test admin_browser -- --ignored --nocapture
+          bash scripts/ci/cargo-cache.sh cargo test --locked -p auth-app --test device_authorization -- --ignored --nocapture
 
-      - name: Publish immutable container on protected main
-        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+  release:
+    name: Build and inspect the static release image
+    runs-on: terrascale-builder
+    timeout-minutes: 60
+    env:
+      TS_AUTH_CARGO_CACHE_DIR: /cache/cargo-target/ts-auth/release
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned Rust SDK and select the toolchain
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/ci/checkout-sdk.sh
+
+      - name: Build the static release binary
+        run: bash scripts/ci/cargo-cache.sh bash scripts/ci/stage-release.sh artifacts/ci/container-publish
+
+      - name: Package and smoke-check the release image
+        run: bash scripts/ci/package-image.sh
+
+  publish:
+    name: Publish the immutable container on protected main
+    needs: [fast, release]
+    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+    runs-on: terrascale-builder
+    timeout-minutes: 60
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned Rust SDK and select the toolchain
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/ci/checkout-sdk.sh
+
+      - name: Build the static release binary from a clean cache
+        run: |
+          set -euo pipefail
+          export CARGO_HOME="${RUNNER_TEMP:?}/cargo-home" CARGO_TARGET_DIR="${RUNNER_TEMP:?}/cargo-target"
+          bash scripts/ci/stage-release.sh artifacts/ci/container-publish
+
+      - name: Package and smoke-check the release image
+        run: bash scripts/ci/package-image.sh
+
+      - name: Push the image
         env:
           REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
           REPOSITORY_OWNER: ${{ forgejo.repository_owner }}

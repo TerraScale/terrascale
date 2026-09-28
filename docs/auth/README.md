@@ -371,14 +371,18 @@ rotation.
 
 ## CI
 
-`.forgejo/workflows/ci.yml` checks out a pinned `ts-rust` revision, checks
-formatting, runs Clippy with warnings denied and the Cargo tests, and runs a
-locked dependency advisory audit. It builds the Rust release binary in a
-Debian bookworm Rust container, packages it into the distroless
-`Containerfile`, smoke-checks `/healthz`, `/openapi/v1.json` and fail-closed
-`/readyz`, then runs the explicit Chromium admin and device-authorization
-tests. Pushes to `main` publish the image as
-`git.terrascale.tech/<owner>/ts-auth:<commit>`.
+`.forgejo/workflows/ci.yml` checks out a pinned `ts-rust` revision and runs
+two jobs in parallel. `fast` checks formatting, runs Clippy with warnings
+denied and the Cargo tests, runs a locked dependency advisory audit, and runs
+the explicit Chromium admin and device-authorization tests. `release` builds
+`auth-app` as a static x86_64 musl executable with the job image's musl
+toolchain (`scripts/ci/stage-release.sh`), packages it into the distroless
+`Containerfile`, and smoke-checks `/healthz`, `/openapi/v1.json` and
+fail-closed `/readyz` (`scripts/ci/package-image.sh`). Both keep compiled
+dependencies in their own Cargo target directory on the runner's shared
+`/cache` (`scripts/ci/cargo-cache.sh`). Once both pass, pushes to `main`
+rebuild the binary from a clean Cargo cache, repeat the image checks, and
+publish the image as `git.terrascale.tech/<owner>/ts-auth:<commit>`.
 
 The locked dependency audit ignores only `RUSTSEC-2023-0071` for `rsa`:
 ts-auth currently uses RSA public-key signature verification for JWT,
