@@ -1,1 +1,0 @@
-{"Path":"/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/terrabase-tiered-100k-20260923T033017Z.service","MemoryMax":"4294967296","MemoryPeak":"1240461312","SwapMax":"0","MemoryEvents":"low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"}

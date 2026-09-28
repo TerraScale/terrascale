@@ -1,6 +1,0 @@
-5685f163bb7e9339e8eb0c839fe2512aaf562648
-a7d2c0f66857ebbc669997e3922d164ce11d18720a90a27f3edec6fbf110f385  bench/firecracker-harness/noble-base-tool-inspection-20260924-a/recipe.toml
-496754492fb28b4d3049432f2ca787449331e23fb14f0dd3fffea86bf5a93eb4  bench/firecracker-harness/noble-base-tool-inspection-20260924-a/ubuntu-amd64-child-manifest.json
-008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3  bench/firecracker-harness/noble-base-tool-inspection-20260924-a/ubuntu-index.json
-7d11b89f916dc305287083f5a4dc70187f66163607644be396aa17290dff4f3e  bench/firecracker-harness/noble-base-tool-inspection-20260924-a/EVIDENCE.sha256
-1b1b5ab2b44f55a51b89215120b201ef81a02edfbe3ff4164479f0af445fc3de  firecracker-harness/images/terrabase-noble-podman-v1/recipe.toml

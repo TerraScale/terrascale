@@ -53,8 +53,8 @@ pins the repository's Rust 1.98.1 toolchain; older toolchains have not been
 verified. Its **private** `Cargo.lock` was generated under a lock-only
 resource lease. A compile check found and prompted a correction to an
 ambiguous integer type; no successful run or speed result existed when this
-host protocol was registered. Use the low-priority Make targets under an
-exclusive build window; refresh the lock only when that window permits it:
+host protocol was registered. Use the Make targets; refresh the lock only
+when needed:
 
 ```sh
 make -C ts-benchmark local-engine-fmt local-engine-check local-engine-lint

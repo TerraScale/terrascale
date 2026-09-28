@@ -1,5 +1,0 @@
-make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-lintfix-20260924T201828Z/ts-benchmark/terra-rust'
-nice -n 19 ionice -c 3 cargo check --locked -j 2
-    Checking terrabase-sqlite-baseline v0.1.0 (/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-lintfix-20260924T201828Z/ts-benchmark/terra-rust)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.50s
-make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-analyzer-launcher-lintfix-20260924T201828Z/ts-benchmark/terra-rust'

@@ -1,2 +1,0 @@
-2026-09-24T18:29:13.063719181 [anonymous-instance:main] Firecracker panicked at src/firecracker/src/main.rs:296:48:
-Invalid instance ID: InvalidChar('_', 33)

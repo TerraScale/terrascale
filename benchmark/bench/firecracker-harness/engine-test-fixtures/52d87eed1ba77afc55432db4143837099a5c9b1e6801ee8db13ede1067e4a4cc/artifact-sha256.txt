@@ -1,1 +1,0 @@
-ff85a5db72fe9173069fbdfefd884080bb60004c63d0f10df9cec3591bca0b69  bin/storage_contract-a72eb9822019c2f0

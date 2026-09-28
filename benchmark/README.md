@@ -4,19 +4,17 @@ This repository holds the test environment, drivers, fixtures, raw evidence, and
 scoreboards for the **Rust** TerraBase engine. The acceptance contract is
 [`../terrabase/GOAL.md`](../terrabase/GOAL.md), especially sections 10 and 11.
 The [v1 matrix](bench/terrabase-rust-acceptance-v1.md) registers the required
-cases and thresholds before measurement. Its open rows are open; old .NET
-results in [`history/`](history/README.md) do not qualify the Rust engine.
+cases and thresholds before measurement. Its open rows are open.
 
 | Path | Purpose |
 | --- | --- |
 | `terra-rust/` | Rust benchmark driver and embedded SQLite baseline |
 | `https-document/` | Process-based HTTPS point-read diagnostic driver |
-| `firecracker-harness/` | Optional development microVM tooling and historical environment verification |
+| `firecracker-harness/` | Optional development microVM tooling and environment verification |
 | `bench/terrabase-rust-acceptance-v1.md` | Versioned required-case scoreboard |
 | `bench/firecracker-harness/` | Firecracker environment receipts |
 | `bench/fixtures/` | Versioned seeds, data generators, dataset definitions, and fixture manifests |
 | `bench/<matrix-version>/<case>/<trial>/` | Matrix-qualified results, raw samples, receipts, and profiles |
-| `history/recovered-legacy-pre-rust-2026-09-24/` | Verified export of tracked earlier benchmark code and reports; see `history/README.md` for the original local archive boundary |
 
 ## Build and test boundary
 
@@ -37,12 +35,11 @@ Without mise, prefix Make commands with
 
 Use the root Makefile for the Rust driver's format check, compile check, and
 release build. The engine-enabled `check-engine` and `lint-engine` targets
-compile the real embedded TerraBase caller. Build work runs at the lowest CPU
-and I/O scheduling priority:
+compile the real embedded TerraBase caller:
 
 ```sh
-mise exec -- nice -n 19 ionice -c 3 make fmt check lint build
-mise exec -- nice -n 19 ionice -c 3 make build-guest MUSL_CC=/path/to/musl-gcc
+mise exec -- make fmt check lint build
+mise exec -- make build-guest MUSL_CC=/path/to/musl-gcc
 ```
 
 The HTTPS diagnostic driver has its own Make targets: `fmt`, `check`, `lint`,

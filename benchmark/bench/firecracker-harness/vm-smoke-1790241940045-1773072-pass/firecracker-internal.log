@@ -1,3 +1,0 @@
-2026-09-24T06:27:03.621909743 [vm-smoke-1790241940045-1773072-pass:main:INFO] Running Firecracker v1.15.1
-2026-09-24T06:27:03.623869713 [vm-smoke-1790241940045-1773072-pass:main:ERROR] RunWithApiError error: Failed to bind and run the HTTP server: IO error: path must be shorter than SUN_LEN
-2026-09-24T06:27:03.624130750 [vm-smoke-1790241940045-1773072-pass:main:ERROR] Firecracker exiting with error. exit_code=1

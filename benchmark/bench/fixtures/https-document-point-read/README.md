@@ -28,14 +28,14 @@ directory. The actual cgroup values are captured with the run receipt.
 
 After the product Fast suite passes and the coordinator opens the run slot,
 run the harness with the exact packaged musl binaries from the approved
-integration worktree and the built HTTPS driver. For example:
+TerraBase checkout and the built HTTPS driver. For example:
 
 ```sh
 python3 bench/fixtures/https-document-point-read/run_fixture.py \
-  --integration-repo /home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration \
-  --server-binary /home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration/target/x86_64-unknown-linux-musl/debug/tb-server \
-  --init-binary /home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration/target/x86_64-unknown-linux-musl/debug/terrabase-init \
-  --keygen-binary /home/mariogk/Projects/TerraScale/.terrabase-work/20260926-integration/target/x86_64-unknown-linux-musl/debug/terrabase-keygen \
+  --integration-repo /home/mariogk/Projects/TerraScale/terrabase \
+  --server-binary /home/mariogk/Projects/TerraScale/terrabase/target/x86_64-unknown-linux-musl/debug/tb-server \
+  --init-binary /home/mariogk/Projects/TerraScale/terrabase/target/x86_64-unknown-linux-musl/debug/terrabase-init \
+  --keygen-binary /home/mariogk/Projects/TerraScale/terrabase/target/x86_64-unknown-linux-musl/debug/terrabase-keygen \
   --driver-binary /home/mariogk/Projects/TerraScale/ts-benchmark/https-document/target/release/terrabase-https-document-point-read \
   --run-id https-doc-20260926-a1
 ```

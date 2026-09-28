@@ -1,4 +1,0 @@
-command=nice -n 19 ionice -c 3 /tmp/fch-runtime-repo-final-20260924/fc-harness cleanup-network /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/network-reconcile-crash-runtime-root-20260924-d/network-ownership.json
-controller_sha256=32266d9ec86404070d71f1b12ac43150208cb004634dde12afc6a3dd28be8f20
-exit_code=0
-Thu Sep 24 13:23:38 UTC 2026

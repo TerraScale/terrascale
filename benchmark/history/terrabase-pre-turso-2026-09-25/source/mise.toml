@@ -1,8 +1,0 @@
-# rust-toolchain.toml is the single version source for rustup and mise.
-[settings]
-idiomatic_version_file_enable_tools = ["rust"]
-activate_aggressive = true
-
-[env]
-# Keep rustup aligned with the toolchain selected from rust-toolchain.toml.
-RUSTUP_TOOLCHAIN = { value = "{{ tools.rust.version }}", tools = true }

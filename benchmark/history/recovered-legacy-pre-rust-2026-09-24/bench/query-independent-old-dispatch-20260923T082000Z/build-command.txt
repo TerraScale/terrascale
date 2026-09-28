@@ -1,1 +1,0 @@
-dotnet build terrabase/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj --configuration Release --nologo -p:TerraBaseRepo=/tmp/terrabase-indexing-experiment-old-dispatch-20260923T082000Z

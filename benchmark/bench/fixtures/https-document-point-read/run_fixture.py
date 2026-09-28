@@ -131,7 +131,7 @@ def untracked_hashes(repository: Path) -> list[dict[str, str]]:
         if not raw_path:
             continue
         relative = os.fsdecode(raw_path)
-        if relative.startswith(("target/", "bench/", "history/")):
+        if relative.startswith(("target/", "bench/")):
             continue
         path = repository / relative
         if path.is_symlink():

@@ -1,2 +1,0 @@
-trial=2 output=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/query-independent-deterministic-20260923T165616Z/trial-2
-exit_code=0

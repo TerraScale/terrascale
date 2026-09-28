@@ -1,7 +1,0 @@
-2026-09-24T07:02:16.829374094 [vm-smoke-1790244093192-2161461-pass:main:INFO] Running Firecracker v1.15.1
-2026-09-24T07:02:16.831120609 [vm-smoke-1790244093192-2161461-pass:main:INFO] Listening on API socket ("/tmp/fch-jcuQlQ/api.sock").
-2026-09-24T07:02:16.831564562 [vm-smoke-1790244093192-2161461-pass:fc_api:INFO] API server started.
-2026-09-24T07:02:16.832286562 [vm-smoke-1790244093192-2161461-pass:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"mem_size_mib\":8192,\"smt\":false,\"vcpu_count\":4}".
-2026-09-24T07:02:16.832419182 [vm-smoke-1790244093192-2161461-pass:fc_api:INFO] The request was executed successfully. Status code: 204 No Content.
-2026-09-24T07:02:16.832590461 [vm-smoke-1790244093192-2161461-pass:fc_api:INFO] The API server received a Get request on "/machine-config".
-2026-09-24T07:02:16.832655822 [vm-smoke-1790244093192-2161461-pass:fc_api:INFO] The request was executed successfully. Status code: 200 OK.

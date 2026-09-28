@@ -1,9 +1,0 @@
-8445ed83e3c58e17ec6bbe24def466b100b5e83c1901ec4c8f126814dede9d38  ./artifact-index.tsv
-d8c58363badf01332d52e52a00db4c8e26c48ad2af7bd122382152b7f67a461c  ./artifact-sha256.txt
-3dd8c1d0496f02490d05377f46411425defc343161813117be64307a50dd6ef5  ./bin/tb_protocol-0fecbba6210cd18e
-837e0cf572dc6aea5a466c3da0656513231fdf5bda23b6d5a91dc4dba5afc452  ./build-command.txt
-c1d7fca0164d6fc697e6ccc9d54c32fdbb36ed89d1a255afa89d7603594dbb2f  ./build-receipts.jsonl
-ef5cef2f79c2502895f84b94ebd2d8276b740f1efb7af5d26301840c4030f0cd  ./build.stderr.log
-37d4da12468546e57a5004af05863c7b714e53cdc421593bab1a89bb9e60b0bf  ./source-inventory.after.txt
-37d4da12468546e57a5004af05863c7b714e53cdc421593bab1a89bb9e60b0bf  ./source-inventory.before.txt
-37d4da12468546e57a5004af05863c7b714e53cdc421593bab1a89bb9e60b0bf  ./source-inventory.txt

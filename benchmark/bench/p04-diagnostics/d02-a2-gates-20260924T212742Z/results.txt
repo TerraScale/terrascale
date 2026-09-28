@@ -1,3 +1,0 @@
-fmt-d02 0
-check-d02 0
-lint-d02 2

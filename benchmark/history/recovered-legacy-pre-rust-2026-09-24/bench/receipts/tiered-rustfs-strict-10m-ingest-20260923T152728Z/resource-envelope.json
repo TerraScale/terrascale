@@ -1,1 +1,0 @@
-{"Path":"/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/run-p2756914-i11223374.scope","MemoryMax":"4294967296","MemoryPeak":"46178304","SwapMax":"0","MemoryEvents":"low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0","MemoryCurrent":"46178304","SwapCurrent":"0","IoStat":""}

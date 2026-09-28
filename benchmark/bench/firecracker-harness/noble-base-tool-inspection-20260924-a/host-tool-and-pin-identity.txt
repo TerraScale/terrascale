@@ -1,5 +1,0 @@
-podman version 5.8.6
-402d507d68ed889dec999e688bd242b5ddb634b3bdc9f03ef9243e66baa367fc  /run/current-system/sw/bin/podman
-skopeo version 1.22.2
-accf1e7a21c4b32e50571f4ab25e4897373d36b95a5bed0d9a1a8287a5374b48  /run/current-system/sw/bin/skopeo
-a7d2c0f66857ebbc669997e3922d164ce11d18720a90a27f3edec6fbf110f385  firecracker-harness/images/terrabase-noble-podman-v1/recipe.toml

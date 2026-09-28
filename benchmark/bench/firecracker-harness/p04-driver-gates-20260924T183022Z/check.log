@@ -1,6 +1,0 @@
-make: Entering directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-current-engine-20260924T182737Z/ts-benchmark/terra-rust'
-nice -n 19 ionice -c 3 cargo check --locked -j 2
-error: cannot update the lock file /home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-current-engine-20260924T182737Z/ts-benchmark/terra-rust/Cargo.lock because --locked was passed to prevent this
-help: to generate the lock file without accessing the network, remove the --locked flag and use --offline instead.
-make: *** [Makefile:18: check] Error 101
-make: Leaving directory '/home/mariogk/Projects/TerraScale/ts-benchmark/bench/firecracker-harness/p04-driver-current-engine-20260924T182737Z/ts-benchmark/terra-rust'

@@ -1,5 +1,0 @@
-2026-09-24T06:37:52.904990722 [vm-smoke-shortpath-20260924-a-pass:main:INFO] Running Firecracker v1.15.1
-2026-09-24T06:37:52.910716839 [vm-smoke-shortpath-20260924-a-pass:main:INFO] Listening on API socket ("/tmp/fch/vm-smoke-shortpath-20260924-a-pass/firecracker-api.sock").
-2026-09-24T06:37:52.911181470 [vm-smoke-shortpath-20260924-a-pass:fc_api:INFO] API server started.
-2026-09-24T06:37:52.956747401 [vm-smoke-shortpath-20260924-a-pass:fc_api:INFO] The API server received a Put request on "/machine-config" with body "{\"ht_enabled\":false,\"mem_size_mib\":8192,\"vcpu_count\":4}".
-2026-09-24T06:37:52.956821846 [vm-smoke-shortpath-20260924-a-pass:fc_api:ERROR] SerdeJson(Error("unknown field `ht_enabled`, expected one of `vcpu_count`, `mem_size_mib`, `smt`, `cpu_template`, `track_dirty_pages`, `huge_pages`", line: 1, column: 13))

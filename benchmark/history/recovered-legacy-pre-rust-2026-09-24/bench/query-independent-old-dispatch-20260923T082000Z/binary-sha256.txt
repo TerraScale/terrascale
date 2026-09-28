@@ -1,3 +1,0 @@
-0303572e54405b359aac42291e4c36cbd6170cb2d11a8db574eae296f2d03c1d  /tmp/ts-benchmark-old-dispatch-20260923T074000Z/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll
-116ca0e63c927851f7e4c3322d32292ffd359c759c5d56b5a5b9c643e8c08c7b  /tmp/terrabase-indexing-experiment-old-dispatch-20260923T082000Z/src/TerraBase/bin/Release/net11.0/TerraBase.dll
-82723cae1083974e472f07a526da3fdb87cb74b78615cd91f3e45cd6182fcd1a  /tmp/terrabase-indexing-experiment-old-dispatch-20260923T082000Z/src/TerraBase.ZoneTree/bin/Release/net11.0/TerraBase.ZoneTree.dll

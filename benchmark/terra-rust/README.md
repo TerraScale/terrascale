@@ -10,7 +10,7 @@ TerraBase's local durable commits, and writes one raw JSONL sample per scan.
 The first scan is reported separately from warm repeats. This focused
 diagnostic does not replace the registered full acceptance matrix.
 
-Build the static guest executable at low scheduling priority with
+Build the static guest executable with
 `make build-guest-three-way`. Execute each lane with `make -C
 ../firecracker-harness guest-run` on a fresh VM and unique run ID, using the
 same binary, `--scans 1000`, and the required arguments `--engine`,
@@ -23,16 +23,16 @@ links under `bench/`.
 
 This crate is benchmark-only and lives outside the TerraBase production dependency graph. It pins `rusqlite 0.40.2` and bundled SQLite `3.53.2`. The v1 workload and scoreboard are registered in [`../bench/terrabase-rust-acceptance-v1.md`](../bench/terrabase-rust-acceptance-v1.md). It has SQLite and feature-gated embedded TerraBase callers; their individual diagnostic receipts do not establish a performance verdict without the registered paired trials and resource gates.
 
-Build with the lowest CPU/I/O priority. The guest has Ubuntu 24.04 and no Rust toolchain, so use the statically linked musl artifact. Install the pinned `x86_64-unknown-linux-musl` Rust standard library and provide a musl cross C compiler for bundled SQLite:
+The guest has Ubuntu 24.04 and no Rust toolchain, so use the statically linked musl artifact. Install the pinned `x86_64-unknown-linux-musl` Rust standard library and provide a musl cross C compiler for bundled SQLite:
 
 ```sh
 rustup target add x86_64-unknown-linux-musl --toolchain 1.98.1
-nice -n 19 ionice -c 3 make -C terra-rust build-guest MUSL_CC=/path/to/x86_64-unknown-linux-musl-gcc
+make -C terra-rust build-guest MUSL_CC=/path/to/x86_64-unknown-linux-musl-gcc
 ```
 
-The executable is `terra-rust/target/x86_64-unknown-linux-musl/release/terrabase-sqlite-baseline`; hash this exact artifact in the harness receipt. For the real embedded TerraBase caller, use `make check-engine`, `make lint-engine`, and `make build-guest-engine MUSL_CC=...` (all capped at two build jobs). The resulting feature-enabled binary accepts both `run` (SQLite) and `run-terrabase` (the same CLI arguments, real `tb-storage` API). Use that **same binary hash** for paired guest trials. `make check` compiles source on the host but is not a test or benchmark result. Guest runtime execution supplies the first end-to-end verification.
+The executable is `terra-rust/target/x86_64-unknown-linux-musl/release/terrabase-sqlite-baseline`; hash this exact artifact in the harness receipt. For the real embedded TerraBase caller, use `make check-engine`, `make lint-engine`, and `make build-guest-engine MUSL_CC=...`. The resulting feature-enabled binary accepts both `run` (SQLite) and `run-terrabase` (the same CLI arguments, real `tb-storage` API). Use that **same binary hash** for paired guest trials. `make check` compiles source on the host but is not a test or benchmark result. Guest runtime execution supplies the first end-to-end verification.
 
-Bare `make -C terra-rust` prints help; lockfile refresh requires explicit `make lock`. `make test-build` compiles the feature-enabled unit-test executable for musl with `--no-run`, low CPU/I/O priority, and two build jobs. Cargo prints its path relative to `terra-rust`; resolve it to an absolute path. Run that executable in Firecracker through `make test-vm` (or `make test`) with a unique run ID and a frozen controller/guest-agent pair:
+Bare `make -C terra-rust` prints help; lockfile refresh requires explicit `make lock`. `make test-build` compiles the feature-enabled unit-test executable for musl with `--no-run`. Cargo prints its path relative to `terra-rust`; resolve it to an absolute path. Run that executable in Firecracker through `make test-vm` (or `make test`) with a unique run ID and a frozen controller/guest-agent pair:
 
 ```sh
 make -C terra-rust test-build

@@ -1,6 +1,0 @@
-preflight_attempt=1
-run_id=storage-accessors-default-floor-20260924-a
-command=nice -n 19 ionice -c 3 /tmp/fch-runtime-repo-final-20260924/fc-harness run --benchmark-repo /home/mariogk/Projects/TerraScale/terrabase --subject-repo /home/mariogk/Projects/TerraScale/terrabase --program /home/mariogk/Projects/TerraScale/terrabase/target/verification/tb-storage-stage-admission-accessors-20260924-final-default-artifacts/floor_initialization_contract --run-id storage-accessors-default-floor-20260924-a --timeout-seconds 300 -- --test-threads=1 --nocapture
-exit_code=1
-stdout_stderr=firecracker-harness: /home/mariogk/Projects/TerraScale/terrabase is not a benchmark checkout with firecracker-harness/ and bench/
-result=no VM launch; no guest test executed; run ID directory was not created

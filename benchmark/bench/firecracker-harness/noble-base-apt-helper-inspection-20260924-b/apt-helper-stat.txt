@@ -1,1 +1,0 @@
-regular file 43656 755 -rwxr-xr-x 1000 1000 bench/firecracker-harness/noble-base-apt-helper-inspection-20260924-b/apt-helper

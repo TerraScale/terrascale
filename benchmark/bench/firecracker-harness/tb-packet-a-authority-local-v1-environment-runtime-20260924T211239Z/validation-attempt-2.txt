@@ -1,2 +1,0 @@
-Attempt 2: artifact preflight validation only; no build or runtime launched.
-Outcome: validator stopped at source-path normalization because queue provenance contains the full directory name `...-final-source-snapshot`; the first normalizer expected a path component exactly equal to `final-source-snapshot`. Immutable queue/map/source hashes were already matched. Correct normalization is by the `crates/` path relative to the verified 94-entry source manifest. This was a validator path-parser assumption, not a source or environment failure.

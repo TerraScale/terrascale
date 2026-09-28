@@ -1,4 +1,0 @@
-   Compiling tb-core v0.1.0 (/home/mariogk/Projects/TerraScale/terrabase/crates/tb-core)
-   Compiling tb-format v0.1.0 (/home/mariogk/Projects/TerraScale/terrabase/crates/tb-format)
-   Compiling tb-protocol v0.1.0 (/home/mariogk/Projects/TerraScale/terrabase/crates/tb-protocol)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.39s

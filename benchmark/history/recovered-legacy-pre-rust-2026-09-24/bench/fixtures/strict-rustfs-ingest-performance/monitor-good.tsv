@@ -1,2 +1,0 @@
-utc	state	phase	completed	free	local	memory_current	memory_peak	anon	file	psi_some_avg10	psi_full_avg10	oom	oom_kill	oom_group_kill
-2026-09-24T00:00:00Z	inactive	complete	10000000	100000000000	1000000	4000000000	4295979008	3600000000	695979008	0	0	0	0	0

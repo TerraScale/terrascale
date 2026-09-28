@@ -1,7 +1,0 @@
-lock exit=0
-fmt 0
-check 0
-lint 2
-lintfix-fmt 0
-lintfix-check 0
-lintfix-lint 2

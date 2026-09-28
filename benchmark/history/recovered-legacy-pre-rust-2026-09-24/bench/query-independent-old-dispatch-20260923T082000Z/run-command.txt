@@ -1,1 +1,0 @@
-dotnet /tmp/ts-benchmark-old-dispatch-20260923T074000Z/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload=query-independent --documents=2000 --samples=30 --maximum-indexes=2 --maintenance-documents=0 --output=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/query-independent-old-dispatch-20260923T082000Z

@@ -1,4 +1,0 @@
-5.8.6
-/nix/store/mi7484cckkxv8hgiawq1cg89sxknc3bh-podman-5.8.6/bin/podman
-402d507d68ed889dec999e688bd242b5ddb634b3bdc9f03ef9243e66baa367fc  /run/current-system/sw/bin/podman
-true amd64 v2 systemd /home/mariogk/.local/share/containers/storage

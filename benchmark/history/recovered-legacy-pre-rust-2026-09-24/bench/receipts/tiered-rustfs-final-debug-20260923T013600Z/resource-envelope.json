@@ -1,1 +1,0 @@
-{"Path":"/sys/fs/cgroup/user.slice/user-1000.slice/session-672.scope","MemoryMax":"max","MemoryPeak":"23258378240","SwapMax":"max","MemoryEvents":"low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 472"}

@@ -1,3 +1,0 @@
-Attempt: fc-harness run --help
-Outcome: exit 1; output: firecracker-harness: missing value for --help
-This parser treats --help as a value-bearing option; no output directory or VM was created.

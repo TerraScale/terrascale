@@ -1,1 +1,0 @@
-91aa654ba3f5b68b784dd5ce94d625080fb6f7bdded88885120fd979936bcf8b  bench/firecracker-harness/noble-base-apt-helper-inspection-20260924-b/apt-helper

@@ -2,9 +2,7 @@
 
 The [v1 acceptance matrix](terrabase-rust-acceptance-v1.md) defines the required
 cases and current status. Publish human-readable benchmark comparisons here as
-Markdown tables. Keep the old .NET reports under
-[`../history/`](../history/README.md); their measurements do not close Rust
-acceptance rows.
+Markdown tables.
 
 Use `fixtures/<fixture-id>/` for a generator/seed/dataset manifest. Place new
 matrix-qualified outputs under `<matrix-version>/<case-id>/<trial-id>/`,

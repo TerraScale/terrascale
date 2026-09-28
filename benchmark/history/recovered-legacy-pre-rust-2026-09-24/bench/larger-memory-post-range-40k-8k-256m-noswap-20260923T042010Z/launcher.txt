@@ -1,2 +1,0 @@
-run_dir=/home/mariogk/Projects/TerraScale/ts-benchmark/bench/larger-memory-post-range-40k-8k-256m-noswap-20260923T042010Z
-unit_name=terrabase-larger-memory-post-range-20260923T042010Z

@@ -1,1 +1,0 @@
-{"objectKey":"native-upload-resume/74e139b05b4741aeafe2cbad7d3a91db","bytes":11534336,"sha256":"5996b2f794f909810967c4a94d861a96a7f822ab96fbea84836755ae2de4d84d","checkpointOffset":5242880,"checkpointParts":1,"faultingUploadPartCalls":2,"interruptionType":"BackupUploadException","resumeMilliseconds":328.7417,"digestVerified":true,"checkpointCleared":true}
