@@ -1,3 +1,10 @@
+use mimalloc::MiMalloc;
+
+// Release builds link musl statically; its allocator serializes threads, so
+// the server uses mimalloc on every target.
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
