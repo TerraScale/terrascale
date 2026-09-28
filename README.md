@@ -193,8 +193,8 @@ rename is absent.
 
 ## Verify
 
-`nice -n 19 cargo fmt --all --check`, `nice -n 19 cargo clippy --locked
---workspace --all-targets --all-features -- -D warnings`, and `nice -n 19 cargo
+`cargo fmt --all --check`, `cargo clippy --locked
+--workspace --all-targets --all-features -- -D warnings`, and `cargo
 test --locked --workspace --all-features` run the Rust verification set. Contract
 verification uses `dotnet run scripts/contracts.cs` with an explicit source or
 immutable archive and remains fail-closed without one.
