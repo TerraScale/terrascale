@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,8 +16,18 @@ func createDatabase(t *testing.T, page playwright.Page, name, region string) {
 	goToOK(t, page, "/databases?create=1")
 	form := page.Locator(`form[action="/api/v1/dashboard/databases"]`)
 	fill(t, form.Locator(`[name="name"]`), name)
-	selectOption(t, form.Locator(`[name="region"]`), region)
+	selectDatabaseRegions(t, form, region)
 	submitAndExpect(t, page, "/api/v1/dashboard/databases", 303, byRole(form, *playwright.AriaRoleButton, "Create database").Click)
+}
+
+func selectDatabaseRegions(t *testing.T, scope playwright.Locator, regions ...string) {
+	t.Helper()
+	summary := scope.Locator(".ts-db-region-picker summary")
+	click(t, summary)
+	for _, code := range []string{"GRU", "SFO", "FRA"} {
+		must(t, scope.Locator(`#database-region input[value="`+code+`"]`).SetChecked(slices.Contains(regions, code)))
+	}
+	click(t, summary)
 }
 
 func TestCreateDatabaseRegionMapAndSelectStayInSync(t *testing.T) {
@@ -28,35 +39,93 @@ func TestCreateDatabaseRegionMapAndSelectStayInSync(t *testing.T) {
 	region := dialog.Locator("#database-region")
 	regionMap := dialog.Locator(`.ts-region-map[data-select-id="database-region"]`)
 	frankfurt := regionMap.Locator(`button[data-region="FRA"]`)
+	must(t, expect.Locator(region.Locator(`input[value="SFO"]`)).ToBeChecked())
+	selectDatabaseRegions(t, dialog, "GRU")
 
 	click(t, frankfurt)
-	must(t, expect.Locator(region).ToHaveValue("FRA"))
-	must(t, expect.Locator(regionMap).ToHaveAttribute("data-selected", "FRA"))
+	must(t, expect.Locator(region.Locator(`input[value="GRU"]`)).ToBeChecked())
+	must(t, expect.Locator(region.Locator(`input[value="FRA"]`)).ToBeChecked())
+	must(t, expect.Locator(regionMap).ToHaveAttribute("data-selected", "GRU FRA"))
 	must(t, expect.Locator(frankfurt).ToHaveAttribute("aria-pressed", "true"))
 	visible(t, frankfurt.Locator(".ts-region-node-label"))
 	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-label")).ToHaveCSS("opacity", "1"))
 	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-label")).ToContainText("Frankfurt"))
-	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-label")).ToContainText("Ping unavailable"))
+	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-flag")).ToHaveAttribute("src", assetURL("/flags/de.svg")))
 	expectAccessible(t, page, "new database region map", "")
 	screenshot(t, page, "database-region-selected")
 
-	selectOption(t, region, "GRU")
-	must(t, expect.Locator(regionMap).ToHaveAttribute("data-selected", "GRU"))
-	must(t, expect.Locator(regionMap.Locator(`button[data-region="GRU"]`)).ToHaveAttribute("aria-pressed", "true"))
-	must(t, expect.Locator(frankfurt).ToHaveAttribute("aria-pressed", "false"))
+	selectDatabaseRegions(t, dialog, "SFO", "FRA")
+	must(t, expect.Locator(region.Locator(`input[value="GRU"]`)).Not().ToBeChecked())
+	must(t, expect.Locator(region.Locator(`input[value="SFO"]`)).ToBeChecked())
+	click(t, dialog.Locator(".ts-db-region-picker summary"))
+	must(t, expect.Locator(regionMap).ToHaveAttribute("data-selected", "SFO FRA"))
+	must(t, expect.Locator(regionMap.Locator(`button[data-region="SFO"]`)).ToHaveAttribute("aria-pressed", "true"))
+	must(t, expect.Locator(regionMap.Locator(`button[data-region="GRU"]`)).ToHaveAttribute("aria-pressed", "false"))
+	must(t, expect.Locator(dialog.Locator("[data-region-summary]")).ToContainText("San Francisco"))
+	screenshot(t, page, "database-region-dropdown")
+	click(t, dialog.Locator(".ts-db-region-picker summary"))
 	must(t, frankfurt.Hover())
 	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-label")).ToHaveCSS("opacity", "1"))
-	screenshot(t, page, "database-region-dropdown")
 
 	must(t, page.SetViewportSize(320, 700))
-	must(t, frankfurt.Hover())
 	mapBounds, err := regionMap.BoundingBox()
 	must(t, err)
-	labelBounds, err := frankfurt.Locator(".ts-region-node-label").BoundingBox()
-	must(t, err)
-	if labelBounds.X < mapBounds.X || labelBounds.X+labelBounds.Width > mapBounds.X+mapBounds.Width {
-		t.Fatalf("Frankfurt label bounds %+v extend past map bounds %+v at 320px", labelBounds, mapBounds)
+	for _, code := range []string{"SFO", "GRU", "FRA"} {
+		pin := regionMap.Locator(`button[data-region="` + code + `"]`)
+		must(t, pin.Hover())
+		labelBounds, err := pin.Locator(".ts-region-node-label").BoundingBox()
+		must(t, err)
+		if labelBounds.X < mapBounds.X || labelBounds.X+labelBounds.Width > mapBounds.X+mapBounds.Width {
+			t.Fatalf("%s label bounds %+v extend past map bounds %+v at 320px", code, labelBounds, mapBounds)
+		}
 	}
+
+	must(t, page.SetViewportSize(1280, 800))
+	sanFrancisco := regionMap.Locator(`button[data-region="SFO"]`)
+	click(t, sanFrancisco)
+	must(t, frankfurt.Hover())
+	must(t, expect.Locator(sanFrancisco.Locator(".ts-region-node-label")).ToHaveCSS("opacity", "0"))
+	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-label")).ToHaveCSS("opacity", "1"))
+}
+
+func TestCreateDatabaseWithMultiplePlacementRegions(t *testing.T) {
+	t.Parallel()
+	page := newPage(t)
+	registerAndOnboard(t, page, newAccount("db-regions"))
+	goToOK(t, page, "/databases?create=1")
+	dialog := pageByRole(page, *playwright.AriaRoleDialog, "New database")
+	region := dialog.Locator("#database-region")
+	selectDatabaseRegions(t, dialog, "GRU")
+	click(t, dialog.Locator(`.ts-region-map button[data-region="FRA"]`))
+	must(t, expect.Locator(region.Locator(`input[value="GRU"]`)).ToBeChecked())
+	must(t, expect.Locator(region.Locator(`input[value="FRA"]`)).ToBeChecked())
+	name := uniqueName("multi-region")
+	fill(t, dialog.Locator("#database-name"), name)
+	submitAndExpect(t, page, "/api/v1/dashboard/databases", 303, byRole(dialog, *playwright.AriaRoleButton, "Create database").Click)
+	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
+	must(t, expect.Locator(page.Locator("main")).ToContainText("GRU · São Paulo"))
+	must(t, expect.Locator(page.Locator("main")).ToContainText("FRA · Frankfurt"))
+	goToOK(t, page, "/databases")
+	row := page.Locator("#project-databases tbody tr").Filter(playwright.LocatorFilterOptions{HasText: name})
+	must(t, expect.Locator(row).ToContainText("GRU · São Paulo, FRA · Frankfurt"))
+}
+
+func TestCreateDatabaseRegionsWorkWithoutScripts(t *testing.T) {
+	t.Parallel()
+	page := newPage(t)
+	registerAndOnboard(t, page, newAccount("db-regions-native"))
+	nativePage := watchedPage(t, cloneSession(t, page.Context(), false))
+	goToOK(t, nativePage, "/databases")
+	click(t, pageByRole(nativePage, *playwright.AriaRoleButton, "New database").First())
+	dialog := pageByRole(nativePage, *playwright.AriaRoleDialog, "New database")
+	selectDatabaseRegions(t, dialog, "SFO", "FRA")
+	must(t, expect.Locator(dialog.Locator(`#database-region input[value="SFO"]`)).ToBeChecked())
+	must(t, expect.Locator(dialog.Locator(`#database-region input[value="FRA"]`)).ToBeChecked())
+	fill(t, dialog.Locator("#database-name"), uniqueName("native-regions"))
+	submitAndExpect(t, nativePage, "/api/v1/dashboard/databases", 303, byRole(dialog, *playwright.AriaRoleButton, "Create database").Click)
+	waitForPath(t, nativePage, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
+	must(t, expect.Locator(nativePage.Locator("main")).ToContainText("SFO · San Francisco"))
+	must(t, expect.Locator(nativePage.Locator("main")).ToContainText("FRA · Frankfurt"))
 }
 
 func TestDatabaseFreePlanLimitIsExplainedAndHoldsForBranchesAndRestores(t *testing.T) {
@@ -86,7 +155,7 @@ func TestDatabaseFreePlanLimitIsExplainedAndHoldsForBranchesAndRestores(t *testi
 	must(t, expect.Locator(dialog.GetByRole(*playwright.AriaRoleAlert)).ToContainText("The Free plan includes 1 database"))
 	must(t, expect.Locator(byRole(dialog, *playwright.AriaRoleLink, "Compare plans")).ToHaveAttribute("href", "/billing"))
 	must(t, expect.Locator(dialog.Locator("#database-name")).ToHaveValue(second))
-	must(t, expect.Locator(dialog.Locator("#database-region")).ToHaveValue("FRA"))
+	must(t, expect.Locator(dialog.Locator(`#database-region input[value="FRA"]`)).ToBeChecked())
 
 	// Branches and restores count against the same limit.
 	goToOK(t, page, databasePath+"/branches")
@@ -116,7 +185,7 @@ func TestDatabaseNameConflictAndDeleteConfirmationStayInTheirDialogs(t *testing.
 	visible(t, dialog)
 	must(t, expect.Locator(dialog.GetByRole(*playwright.AriaRoleAlert)).ToContainText("Another database in this project already uses that name."))
 	must(t, expect.Locator(dialog.Locator("#database-name")).ToHaveValue("core-primary"))
-	must(t, expect.Locator(dialog.Locator("#database-region")).ToHaveValue("FRA"))
+	must(t, expect.Locator(dialog.Locator(`#database-region input[value="FRA"]`)).ToBeChecked())
 
 	name := uniqueName("e2e-delete")
 	createDatabase(t, page, name, "GRU")

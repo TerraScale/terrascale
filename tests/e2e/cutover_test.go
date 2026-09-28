@@ -152,7 +152,7 @@ func TestCutoverSQLCheckExplainsQueryAndCollectionIndexIsCreated(t *testing.T) {
 	goToOK(t, page, "/databases?create=1")
 	database := page.Locator(`form[action="/api/v1/dashboard/databases"]`)
 	fill(t, database.Locator(`[name="name"]`), uniqueName("cutover"))
-	selectOption(t, database.Locator(`[name="region"]`), "GRU")
+	selectDatabaseRegions(t, database, "GRU")
 	submitAndExpect(t, page, "/api/v1/dashboard/databases", 303, byRole(database, *playwright.AriaRoleButton, "Create database").Click)
 	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
 	databasePath := currentPath(t, page)

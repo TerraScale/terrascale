@@ -28,7 +28,7 @@ func Mount(mux *http.ServeMux, dev bool) error {
 	if dev {
 		root = os.DirFS("web/static")
 	}
-	for _, name := range []string{"brand", "css", "fonts", "img", "js"} {
+	for _, name := range []string{"brand", "css", "flags", "fonts", "img", "js"} {
 		files, err := fs.Sub(root, name)
 		if err != nil {
 			return err

@@ -163,16 +163,16 @@ func regionJSString(value string) string {
 	return string(quoted)
 }
 
-// regionSync copies the codes selected in selectID onto the map's
+// regionSync copies the codes selected in a select or checkbox group onto the map's
 // data-selected attribute, which the stylesheet uses to light up hubs.
 func regionSync(selectID string) string {
-	return "(() => { const selected = [...document.getElementById(" + regionJSString(selectID) + ").selectedOptions].map(o => o.value); el.dataset.selected = selected.join(' '); el.querySelectorAll('button[data-region]').forEach(node => node.setAttribute('aria-pressed', String(selected.includes(node.dataset.region)))) })()"
+	return "(() => { const control = document.getElementById(" + regionJSString(selectID) + "); const selected = control.tagName === 'SELECT' ? [...control.selectedOptions].map(o => o.value) : [...control.querySelectorAll('input[type=checkbox]:checked')].map(i => i.value); el.dataset.selected = selected.join(' '); el.querySelectorAll('button[data-region]').forEach(node => node.setAttribute('aria-pressed', String(selected.includes(node.dataset.region)))) })()"
 }
 
-// regionPick changes the native select and dispatches its change event so the
-// map and any other select listeners observe the same value.
+// regionPick changes the matching native control and dispatches its change
+// event so the map and any other listeners observe the same value.
 func regionPick(selectID string) string {
-	return "(() => { const select = document.getElementById(" + regionJSString(selectID) + "); const option = [...select.options].find(o => o.value === el.dataset.region); if (!option || option.disabled) return; if (select.multiple) option.selected = !option.selected; else select.value = option.value; select.dispatchEvent(new Event('change', { bubbles: true })) })()"
+	return "(() => { const control = document.getElementById(" + regionJSString(selectID) + "); if (control.tagName === 'SELECT') { const option = [...control.options].find(o => o.value === el.dataset.region); if (!option || option.disabled) return; if (control.multiple) option.selected = !option.selected; else control.value = option.value; control.dispatchEvent(new Event('change', { bubbles: true })); } else { const input = [...control.querySelectorAll('input[type=checkbox]')].find(i => i.value === el.dataset.region); if (!input || input.disabled) return; input.checked = !input.checked; input.dispatchEvent(new Event('change', { bubbles: true })); } })()"
 }
 
 // regionArc is a quadratic curve lifted above the straight line between hubs.

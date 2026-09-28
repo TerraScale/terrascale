@@ -554,6 +554,7 @@ func cloneOrganization(org Organization) Organization {
 		p.Databases = make(map[string]Database, len(project.Databases))
 		for dbID, database := range project.Databases {
 			db := database
+			db.Regions = slices.Clone(database.Regions)
 			db.IndexRecommendations = make([]IndexRecommendation, len(database.IndexRecommendations))
 			for i, recommendation := range database.IndexRecommendations {
 				recommendation.Fields = slices.Clone(recommendation.Fields)

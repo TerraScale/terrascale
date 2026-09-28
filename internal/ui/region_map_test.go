@@ -19,7 +19,7 @@ func TestRegionMapRendersInitialSelection(t *testing.T) {
 		{"GRU", "true"},
 		{"FRA", "true"},
 	} {
-		button := `data-region="` + tc.code + `" aria-label=`
+		button := `data-region="` + tc.code + `"`
 		start := strings.Index(markup, button)
 		if start < 0 || !strings.Contains(markup[start:strings.Index(markup[start:], ">")+start], `aria-pressed="`+tc.pressed+`"`) {
 			t.Errorf("%s pin should start with aria-pressed=%s", tc.code, tc.pressed)
@@ -43,7 +43,7 @@ func TestRegionMapQuotesSelectIDInEveryExpression(t *testing.T) {
 	if err := RegionMap(id).Render(t.Context(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(html.UnescapeString(out.String()), "evt.target.id === "+want) {
+	if !strings.Contains(html.UnescapeString(out.String()), "document.getElementById("+want+").contains(evt.target)") {
 		t.Fatal("change handler does not quote the select ID")
 	}
 }

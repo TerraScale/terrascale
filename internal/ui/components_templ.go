@@ -1284,15 +1284,15 @@ func PasswordInput(p PasswordProps) templ.Component {
 }
 
 type regionPin struct {
-	code, name string
-	x, y       float64
+	code, name, country string
+	x, y                float64
 }
 
 // regionPins are the hub positions in the 136×80 viewBox of brand/region-map.svg.
-var regionPins = []regionPin{{"SFO", "San Francisco", 21, 28.58}, {"GRU", "São Paulo", 50, 59.76}, {"FRA", "Frankfurt", 71.5, 20.78}}
+var regionPins = []regionPin{{"SFO", "San Francisco", "us", 21, 28.58}, {"GRU", "São Paulo", "br", 50, 59.76}, {"FRA", "Frankfurt", "de", 71.5, 20.78}}
 
-// RegionMap mirrors a native select and lets pointer users choose a hub on the
-// map. The select remains the canonical keyboard and no-script control.
+// RegionMap mirrors a native select or checkbox group and lets pointer users
+// choose a hub on the map. The form controls remain canonical without scripts.
 func RegionMap(selectID string, selected ...string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -1325,7 +1325,7 @@ func RegionMap(selectID string, selected ...string) templ.Component {
 			}
 		}
 		if selectID != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 98, " role=\"group\" aria-label=\"Choose a region on the map\" data-select-id=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 98, " role=\"group\" aria-label=\"Choose regions on the map\" data-select-id=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1369,9 +1369,9 @@ func RegionMap(selectID string, selected ...string) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var65 string
-			templ_7745c5c3_Var65, templ_7745c5c3_Err = templ.ResolveAttributeValue("evt.target.id === " + regionJSString(selectID) + " && (" + regionSync(selectID) + ")")
+			templ_7745c5c3_Var65, templ_7745c5c3_Err = templ.ResolveAttributeValue("document.getElementById(" + regionJSString(selectID) + ").contains(evt.target) && (" + regionSync(selectID) + ")")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 295, Col: 114}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 295, Col: 142}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var65)
 			if templ_7745c5c3_Err != nil {
@@ -1448,83 +1448,106 @@ func RegionMap(selectID string, selected ...string) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 111, "\" aria-label=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 111, "\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				if pin.x > 136/2 {
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 112, " data-flip")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 113, " aria-label=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var69 string
-				templ_7745c5c3_Var69, templ_7745c5c3_Err = templ.ResolveAttributeValue(pin.name + " (" + pin.code + "), ping unavailable")
+				templ_7745c5c3_Var69, templ_7745c5c3_Err = templ.ResolveAttributeValue(pin.name + " (" + pin.code + ")")
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 310, Col: 137}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 310, Col: 148}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var69)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 112, "\" aria-pressed=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 114, "\" aria-pressed=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var70 string
 				templ_7745c5c3_Var70, templ_7745c5c3_Err = templ.ResolveAttributeValue(fmt.Sprint(slices.Contains(selected, pin.code)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 310, Col: 202}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 310, Col: 213}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var70)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 113, "\" data-on:click=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 115, "\" data-on:click=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var71 string
 				templ_7745c5c3_Var71, templ_7745c5c3_Err = templ.ResolveAttributeValue(regionPick(selectID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 310, Col: 241}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 310, Col: 252}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var71)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 114, "\"><span class=\"ts-region-node-ring\" aria-hidden=\"true\"></span> <span class=\"ts-region-node-core\" aria-hidden=\"true\"></span> <span class=\"ts-region-node-label\" aria-hidden=\"true\"><strong>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 116, "\"><img class=\"ts-region-node-flag\" src=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var72 string
-				templ_7745c5c3_Var72, templ_7745c5c3_Err = templ.JoinStringErrs(pin.name)
+				templ_7745c5c3_Var72, templ_7745c5c3_Err = templ.ResolveAttributeValue(static.URL("flags/" + pin.country + ".svg"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 313, Col: 77}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 311, Col: 87}
 				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var72))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 115, "</strong><small>Ping unavailable</small></span></button>")
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var72)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 116, "<span class=\"ts-region-node\" data-region=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 117, "\" alt=\"\" aria-hidden=\"true\"> <span class=\"ts-region-node-ring\" aria-hidden=\"true\"></span> <span class=\"ts-region-node-core\" aria-hidden=\"true\"></span> <span class=\"ts-region-node-label\" aria-hidden=\"true\"><strong>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var73 string
-				templ_7745c5c3_Var73, templ_7745c5c3_Err = templ.ResolveAttributeValue(pin.code)
+				templ_7745c5c3_Var73, templ_7745c5c3_Err = templ.JoinStringErrs(pin.name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 316, Col: 55}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 314, Col: 77}
 				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var73)
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var73))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 117, "\"><span class=\"ts-region-node-ring\"></span> <span class=\"ts-region-node-core\"></span></span>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 118, "</strong></span></button>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			} else {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 119, "<span class=\"ts-region-node\" data-region=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var74 string
+				templ_7745c5c3_Var74, templ_7745c5c3_Err = templ.ResolveAttributeValue(pin.code)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components.templ`, Line: 317, Col: 55}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var74)
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 120, "\"><span class=\"ts-region-node-ring\"></span> <span class=\"ts-region-node-core\"></span></span>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 118, "</div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 121, "</div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

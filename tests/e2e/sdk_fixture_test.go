@@ -37,6 +37,7 @@ import (
 type sdkFixture struct {
 	dashboardURL string
 	publicAPIURL string
+	producer     *fixtureProducer
 }
 
 // startSDKFixture starts both loopback servers; they close with the test.
@@ -69,13 +70,14 @@ func startSDKFixture(t *testing.T) sdkFixture {
 	})
 	dashboard := httptest.NewServer(guard.Protect(mux))
 	t.Cleanup(dashboard.Close)
-	return sdkFixture{dashboardURL: dashboard.URL, publicAPIURL: public.URL}
+	return sdkFixture{dashboardURL: dashboard.URL, publicAPIURL: public.URL, producer: producer}
 }
 
 type fixtureScope struct{ tenant, project string }
 
 type fixtureDatabase struct {
 	documents map[string]map[string][]byte
+	placement []sdk.RegionCode
 	revision  uint64
 }
 
@@ -139,7 +141,7 @@ func (p *fixtureProducer) createDatabase(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "database already exists", http.StatusConflict)
 		return
 	}
-	p.databases[s][input.Name] = &fixtureDatabase{documents: make(map[string]map[string][]byte)}
+	p.databases[s][input.Name] = &fixtureDatabase{documents: make(map[string]map[string][]byte), placement: slices.Clone(input.Placement)}
 	writeFixtureJSON(w, http.StatusCreated, sdk.DatabaseRecord{
 		Name: input.Name, Placement: string(input.Placement[0]), CreatedAt: time.Now().UnixMilli(),
 	})

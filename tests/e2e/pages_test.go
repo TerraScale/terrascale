@@ -267,7 +267,7 @@ func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 	click(t, mapPage.Locator(`button[command="show-modal"][commandfor="create-project"]`))
 	regionMap := mapPage.Locator(`.ts-region-map[data-select-id="project-region"]`)
 	must(t, expect.Locator(regionMap).ToHaveAttribute("role", "group"))
-	mapImage := regionMap.Locator("img")
+	mapImage := regionMap.Locator("img.ts-region-map-image")
 	must(t, expect.Locator(mapImage).ToHaveAttribute("src", assetURL("/brand/region-map.svg")))
 	must(t, expect.Locator(mapImage).ToHaveAttribute("loading", "lazy"))
 	must(t, mapImage.ScrollIntoViewIfNeeded())

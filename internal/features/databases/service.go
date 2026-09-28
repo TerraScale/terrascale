@@ -74,9 +74,9 @@ func (s Service) Detail(p core.Principal, databaseID string) (databaseDetail, er
 	return detail, nil
 }
 
-// Create provisions a database in the selected project. An empty region
-// uses the project's primary region.
-func (s Service) Create(ctx context.Context, p core.Principal, name, region string) (databaseView, error) {
+// Create provisions a database across the selected regions. No region uses
+// the project's primary region for callers that omit placement.
+func (s Service) Create(ctx context.Context, p core.Principal, name string, regions ...string) (databaseView, error) {
 	_, project, err := s.selected(p)
 	if err != nil {
 		return databaseView{}, err
@@ -85,15 +85,24 @@ func (s Service) Create(ctx context.Context, p core.Principal, name, region stri
 	if !core.ValidDatabaseName(name) {
 		return databaseView{}, errInvalidName
 	}
-	if region == "" {
-		region = project.Region
+	if len(regions) == 0 || len(regions) == 1 && regions[0] == "" {
+		regions = []string{project.Region}
 	}
-	code, err := sdk.ParseRegionCode(region)
-	if err != nil {
-		return databaseView{}, core.Invalid(fmt.Sprintf("unknown region %q", region))
+	placement := make([]sdk.RegionCode, 0, len(regions))
+	codes := make([]string, 0, len(regions))
+	for _, region := range regions {
+		code, err := sdk.ParseRegionCode(region)
+		if err != nil {
+			return databaseView{}, core.Invalid(fmt.Sprintf("unknown region %q", region))
+		}
+		if slices.Contains(codes, string(code)) {
+			return databaseView{}, core.Invalid(fmt.Sprintf("duplicate region %q", region))
+		}
+		placement = append(placement, code)
+		codes = append(codes, string(code))
 	}
 	db := core.Database{
-		ID: core.NewID("db"), ProjectID: p.ProjectID, Name: name, Region: string(code), Status: "provisioning",
+		ID: core.NewID("db"), ProjectID: p.ProjectID, Name: name, Region: codes[0], Regions: codes, Status: "provisioning",
 		CreatedAt: time.Now().UTC(), Documents: make(map[string]map[string][]byte),
 	}
 	if s.deps.Demo {
@@ -134,7 +143,7 @@ func (s Service) Create(ctx context.Context, p core.Principal, name, region stri
 		_ = s.setStatus(p, db.ID, "failed")
 		return databaseView{}, err
 	}
-	result, err := client.Databases.CreateDatabase(ctx, sdk.CreateDatabaseRequest{Name: name, Placement: []sdk.RegionCode{code}, OperationID: db.ID}, sdk.WithIdempotencyKey(db.ID))
+	result, err := client.Databases.CreateDatabase(ctx, sdk.CreateDatabaseRequest{Name: name, Placement: placement, OperationID: db.ID}, sdk.WithIdempotencyKey(db.ID))
 	switch {
 	case err != nil:
 		_ = s.setStatus(p, db.ID, "failed")
@@ -174,7 +183,7 @@ func (s Service) Branch(ctx context.Context, p core.Principal, sourceID, name st
 	if source.Status != "ready" {
 		return databaseView{}, errNotReady
 	}
-	branch := core.Database{ID: core.NewID("db"), ProjectID: project.ID, Name: name, Region: source.Region, Status: "provisioning", CreatedAt: time.Now().UTC()}
+	branch := core.Database{ID: core.NewID("db"), ProjectID: project.ID, Name: name, Region: source.Region, Regions: slices.Clone(databaseRegions(source)), Status: "provisioning", CreatedAt: time.Now().UTC()}
 	if s.deps.Demo {
 		branch.Status = "ready"
 	}

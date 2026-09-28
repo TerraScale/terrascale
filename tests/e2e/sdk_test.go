@@ -4,6 +4,7 @@ import (
 	"context"
 	json "encoding/json/v2"
 	"errors"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +14,40 @@ import (
 
 	sdk "terrascale.tech/sdk"
 )
+
+func TestMultiRegionDatabasePlacementReachesProvider(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a second in-process dashboard with the SDK fixture")
+	}
+	t.Parallel()
+	fixture := startSDKFixture(t)
+	page := watchedPage(t, newContext(t, fixture.dashboardURL))
+	registerAndOnboard(t, page, newAccount("sdk-regions"), "starter")
+	goToOK(t, page, "/databases?create=1")
+	scope := fixtureScope{
+		tenant:  requiredAttribute(t, page.Locator("[data-active-organization-id]"), "data-active-organization-id", "organization scope"),
+		project: requiredAttribute(t, page.Locator("main[data-project-id]"), "data-project-id", "project scope"),
+	}
+	dialog := pageByRole(page, *playwright.AriaRoleDialog, "New database")
+	name := uniqueName("sdk-multi")
+	fill(t, dialog.Locator("#database-name"), name)
+	selectDatabaseRegions(t, dialog, "GRU")
+	click(t, dialog.Locator(`.ts-region-map button[data-region="FRA"]`))
+	must(t, expect.Locator(dialog.Locator(`#database-region input[value="GRU"]`)).ToBeChecked())
+	must(t, expect.Locator(dialog.Locator(`#database-region input[value="FRA"]`)).ToBeChecked())
+	submitAndExpect(t, page, "/api/v1/dashboard/databases", 303, byRole(dialog, *playwright.AriaRoleButton, "Create database").Click)
+	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
+	fixture.producer.mu.Lock()
+	db := fixture.producer.databases[scope][name]
+	var placement []sdk.RegionCode
+	if db != nil {
+		placement = slices.Clone(db.placement)
+	}
+	fixture.producer.mu.Unlock()
+	if !slices.Equal(placement, []sdk.RegionCode{sdk.RegionGRU, sdk.RegionFRA}) {
+		t.Fatalf("provider placement = %v, want [GRU FRA]", placement)
+	}
+}
 
 func TestAccountCreatedDatabaseWorksThroughIssuedCredentialsAndGoSDK(t *testing.T) {
 	if testing.Short() {
