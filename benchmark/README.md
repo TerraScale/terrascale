@@ -54,25 +54,6 @@ contract. The `test-build`, `test-vm`, and `vm-*` Make targets remain available
 for optional Firecracker development work. Bare `make` in the root and harness
 directories prints help.
 
-Forgejo CI checks out this repository at the event revision under
-`ts-benchmark/` and a paired TerraBase checkout under sibling `terrabase/`.
-Configure `TERRABASE_CI_SHA` as a full, published TerraBase commit SHA whose
-tree contains `crates/tb-core` and `crates/tb-storage`; CI checks the resolved
-commit and both manifests before compiling either driver mode. Even SQLite-only
-Cargo commands resolve those optional path dependencies, so the sibling
-checkout is required. The default job token must have read access to the
-TerraBase repository; when it does not, configure the read-only
-`TERRABASE_READ_TOKEN` secret. The current local engine source needs publication
-before a paired CI build can be configured. On `terrascale-builder`, CI checks
-and lints both `terra-rust` driver modes and builds its host SQLite executable;
-it also validates and builds the HTTPS diagnostic driver. CI does not launch
-Firecracker or perform benchmark measurements. TerraBase's own Fast and Slow
-suites provide process integration coverage for the product. These compile
-checks establish neither that a product caller ran nor a benchmark acceptance
-result. CI selects the same pinned Rust toolchain through rustup proxies; it
-does not require mise on the runner. The Makefiles lower priority only for
-local work; CI sets `CI=true` and builds at full priority.
-
 `build` is a host artifact. `build-guest` produces the statically linked
 `terra-rust/target/x86_64-unknown-linux-musl/release/terrabase-sqlite-baseline`
 used by the optional guest image. The pinned Rust musl target and a musl C
