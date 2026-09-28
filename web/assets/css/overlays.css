@@ -371,6 +371,11 @@ dialog.ts-dialog::backdrop {
   transition: opacity var(--ts-fast) var(--ts-ease);
 }
 
+.ts-region-map[data-select-id] button.ts-region-node[data-region="FRA"] .ts-region-node-label {
+  left: auto;
+  right: 22px;
+}
+
 .ts-region-node-label strong,
 .ts-region-node-label small { display: block; }
 .ts-region-node-label small { margin-top: 2px; color: var(--ts-ink-2); }

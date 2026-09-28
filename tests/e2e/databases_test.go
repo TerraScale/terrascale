@@ -47,6 +47,16 @@ func TestCreateDatabaseRegionMapAndSelectStayInSync(t *testing.T) {
 	must(t, frankfurt.Hover())
 	must(t, expect.Locator(frankfurt.Locator(".ts-region-node-label")).ToHaveCSS("opacity", "1"))
 	screenshot(t, page, "database-region-dropdown")
+
+	must(t, page.SetViewportSize(320, 700))
+	must(t, frankfurt.Hover())
+	mapBounds, err := regionMap.BoundingBox()
+	must(t, err)
+	labelBounds, err := frankfurt.Locator(".ts-region-node-label").BoundingBox()
+	must(t, err)
+	if labelBounds.X < mapBounds.X || labelBounds.X+labelBounds.Width > mapBounds.X+mapBounds.Width {
+		t.Fatalf("Frankfurt label bounds %+v extend past map bounds %+v at 320px", labelBounds, mapBounds)
+	}
 }
 
 func TestDatabaseFreePlanLimitIsExplainedAndHoldsForBranchesAndRestores(t *testing.T) {

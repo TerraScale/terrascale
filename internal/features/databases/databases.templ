@@ -1,6 +1,7 @@
 package databases
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 
@@ -97,7 +98,7 @@ templ createDatabase(page core.Page, d pageData) {
 					</select>
 				}
 			</div>
-			@ui.RegionMap("database-region")
+			@ui.RegionMap("database-region", cmp.Or(d.Region, "GRU"))
 			@ui.DialogActions("create-database") {
 				<button class="ts-btn ts-btn-primary" type="submit">Create database</button>
 			}
