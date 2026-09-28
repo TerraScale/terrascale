@@ -70,7 +70,7 @@ templ strategySwitch(data pageData, item strategy, csrfToken string) {
 		<input type="hidden" name="setting" value={ item.Key }/>
 		<input type="hidden" name="enabled" value={ strconv.FormatBool(!item.get(data.Settings)) }/>
 		<button
-			class="ts-idp-switch"
+			class="ts-switch"
 			type="submit"
 			role="switch"
 			aria-checked={ strconv.FormatBool(item.get(data.Settings)) }
