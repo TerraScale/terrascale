@@ -85,9 +85,10 @@ func TestPagesMemberNavigationKeyboardAndMobile(t *testing.T) {
 
 	navigation := pageByRole(page, *playwright.AriaRoleNavigation, "Dashboard sections")
 	visible(t, byRole(navigation, *playwright.AriaRoleLink, "Overview"))
-	for _, label := range []string{"Databases", "Query subscriptions", "Team", "Usage", "Billing", "Project settings"} {
+	for _, label := range []string{"Databases", "Team", "Usage", "Billing", "Project settings"} {
 		visible(t, byRole(navigation, *playwright.AriaRoleLink, label, true))
 	}
+	must(t, expect.Locator(byRole(navigation, *playwright.AriaRoleLink, "Query subscriptions", true)).ToHaveCount(0))
 	viewportScreenshot(t, page, "member-desktop-navigation")
 
 	projectMenu := page.Locator("details.ts-context-menu")
