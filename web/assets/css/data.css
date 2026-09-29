@@ -91,6 +91,8 @@
 /* Divided rows: members, keys, steps. */
 .ts-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   list-style: none;
 }
 
@@ -99,6 +101,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--ts-s3);
+  min-width: 0;
   padding: var(--ts-s3) 0;
   border-bottom: 1px solid var(--ts-line);
 }
@@ -109,6 +112,7 @@
 
 .ts-list-main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   flex: 1;
   gap: 2px;
   min-width: 0;
@@ -116,6 +120,12 @@
 
 .ts-list-main > * {
   justify-self: start;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.ts-list-main > .ts-truncate {
+  justify-self: stretch;
 }
 
 /* Key-value definitions. Accepts dt/dd pairs directly or wrapped in divs. */
