@@ -380,9 +380,12 @@ toolchain (`scripts/ci/stage-release.sh`), packages it into the distroless
 `Containerfile`, and smoke-checks `/healthz`, `/openapi/v1.json` and
 fail-closed `/readyz` (`scripts/ci/package-image.sh`). Both keep compiled
 dependencies in their own Cargo target directory on the runner's shared
-`/cache` (`scripts/ci/cargo-cache.sh`). Once both pass, pushes to `main`
-rebuild the binary from a clean Cargo cache, repeat the image checks, and
-publish the image as `git.terrascale.tech/<owner>/ts-auth:<commit>`.
+`/cache` and compile through the kache store at `/cache/kache`, which every
+TerraScale Rust job shares, so units an earlier job built are restored
+instead of recompiled (`scripts/ci/cargo-cache.sh`). Once both pass, pushes
+to `main` rebuild the binary from a clean Cargo cache without kache, repeat
+the image checks, and publish the image as
+`git.terrascale.tech/<owner>/ts-auth:<commit>`.
 
 The locked dependency audit ignores only `RUSTSEC-2023-0071` for `rsa`:
 ts-auth currently uses RSA public-key signature verification for JWT,
