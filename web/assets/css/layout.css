@@ -101,7 +101,7 @@
 /* The sidebar consumes 264px on desktop; query the page column instead of
    the viewport before adding columns. Container rems use the 14px root font
    (unlike media-query rems), so use px for the 60rem/960px breakpoint. */
-@container (width < 960px) {
+@container page (width < 960px) {
   .ts-split,
   .ts-grid-3 {
     grid-template-columns: minmax(0, 1fr);
@@ -121,7 +121,7 @@
   }
 }
 
-@container (width < 768px) {
+@container page (width < 768px) {
   .ts-grid-2 {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -459,7 +459,7 @@ details[open] > .ts-account-trigger {
 
 .ts-main {
   flex: 1;
-  container-type: inline-size;
+  container: page / inline-size;
   outline: none;
 }
 

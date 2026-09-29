@@ -72,16 +72,25 @@ it with Lightning CSS into the single stylesheet `web/static/css/terrascale.css`
 
 ### Content-column breakpoints
 
-The signed-in `.ts-main` is an inline-size query container. Page layouts in
-`layout.css` respond to its width, not the viewport: `.ts-grid-2` becomes one
-column below **48rem (768px)**, while `.ts-grid-3` and `.ts-split` stack
-below **60rem (960px)** (the split keeps a hairline between its stacked sections).
+The signed-in `.ts-main` is the named `page` inline-size query container.
+Page layouts in `layout.css` respond to its width, not the viewport:
+`.ts-grid-2` becomes one column below **48rem (768px)**, while `.ts-grid-3`
+and `.ts-split` stack below **60rem (960px)** (the split keeps a hairline between
+its stacked sections). The named queries keep nested containers from changing
+which column the layout uses; they do not apply to public/auth layouts outside
+`.ts-main`. Give those layouts their own container when reusing these helpers.
+
 The queries use px because container-query rems resolve against the 14px root
 font size, whereas viewport-query rems resolve against 16px. On desktop the
 264px sidebar means these transitions happen at roughly 1030px and 1225px
 window widths. At phone widths the sidebar becomes a drawer and the page
 padding tightens at the existing 48rem viewport breakpoint. Give grid and list
 children a shrinkable track when adding copyable or unbroken text.
+
+Inline-size containment also creates a stacking context and containing block:
+page-local fixed/absolute overlays may position relative to `.ts-main` and
+cannot stack above outside chrome. Render viewport-level overlays outside
+`.ts-main`, or use the dialog top layer.
 
 ## Charts
 

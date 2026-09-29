@@ -43,6 +43,8 @@ func TestPageLayoutsFitContentColumn(t *testing.T) {
 					const visible = el => el.getClientRects().length > 0;
 					const box = el => el.getBoundingClientRect();
 					const inside = (child, parent) => box(child).right <= box(parent).right + 1;
+					if (getComputedStyle(main).containerName !== 'page')
+						problems.push('.ts-main is not the named page container');
 					if (document.documentElement.scrollWidth > innerWidth + 1)
 						problems.push('horizontal page scroll: ' + document.documentElement.scrollWidth + ' > ' + innerWidth);
 					for (const [selector, breakpoint] of [['.ts-grid-2', 768], ['.ts-grid-3', 960], ['.ts-split', 960]]) {
@@ -52,6 +54,16 @@ func TestPageLayoutsFitContentColumn(t *testing.T) {
 							const expected = columnWidth < breakpoint ? 1 : (selector === '.ts-grid-3' ? 3 : 2);
 							if (columns !== expected) problems.push(selector + ' has ' + columns + ' columns, want ' + expected);
 						}
+					}
+					if (location.pathname === '/access' && innerWidth === 1440) {
+						const nested = document.createElement('div');
+						nested.style.width = '600px';
+						nested.style.containerType = 'inline-size';
+						nested.innerHTML = '<div class="ts-grid-2"><span>A</span><span>B</span></div>';
+						main.append(nested);
+						const columns = getComputedStyle(nested.firstElementChild).gridTemplateColumns.split(/\s+/).length;
+						nested.remove();
+						if (columns !== 2) problems.push('nested container overrides the page breakpoint');
 					}
 					for (const text of document.querySelectorAll('.ts-list-main > .ts-truncate')) {
 						if (visible(text) && (!inside(text, text.parentElement) || !inside(text, text.closest('.ts-list-item, .ts-list') || text.parentElement)))
