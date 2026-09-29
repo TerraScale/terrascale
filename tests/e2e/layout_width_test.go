@@ -74,6 +74,15 @@ func TestPageLayoutsFitContentColumn(t *testing.T) {
 							.find(el => el.textContent.trim() === 'mario@terrascale.tech');
 						if (!email || email.scrollWidth <= email.clientWidth)
 							problems.push('long member email is not truncated');
+						const list = document.createElement('ul');
+						list.className = 'ts-list';
+						list.style.width = '180px';
+						list.innerHTML = '<li class="ts-list-item"><div class="ts-list-main"><code class="ts-mono">prj_abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz</code></div></li>';
+						main.append(list);
+						const code = list.querySelector('code');
+						if (!inside(code, list) || code.scrollWidth > code.clientWidth + 1)
+							problems.push('unbroken list value escapes its row');
+						list.remove();
 					}
 					for (const row of document.querySelectorAll('.ts-idp-copy')) {
 						if (!visible(row)) continue;

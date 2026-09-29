@@ -112,6 +112,7 @@
 
 .ts-list-main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   flex: 1;
   gap: 2px;
   min-width: 0;
@@ -119,6 +120,8 @@
 
 .ts-list-main > * {
   justify-self: start;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .ts-list-main > .ts-truncate {

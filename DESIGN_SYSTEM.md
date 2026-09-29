@@ -89,8 +89,10 @@ children a shrinkable track when adding copyable or unbroken text.
 
 Inline-size containment also creates a stacking context and containing block:
 page-local fixed/absolute overlays may position relative to `.ts-main` and
-cannot stack above outside chrome. Render viewport-level overlays outside
-`.ts-main`, or use the dialog top layer.
+cannot stack above outside chrome. In particular, an in-page dropdown scrolled
+under the mobile sticky topbar is covered by it. Keep such menus below the
+header; render viewport-level overlays outside `.ts-main`, or use the dialog
+top layer.
 
 ## Charts
 

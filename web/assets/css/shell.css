@@ -457,6 +457,9 @@ details[open] > .ts-account-trigger {
   display: none;
 }
 
+/* Containment also scopes fixed descendants and stacks in-page overlays below
+   the mobile sticky topbar. Viewport overlays belong outside this container or
+   in the dialog top layer. */
 .ts-main {
   flex: 1;
   container: page / inline-size;
