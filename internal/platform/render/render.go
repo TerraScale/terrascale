@@ -146,7 +146,9 @@ var (
 			{Label: "Overview", URL: "/"}, {Label: "Notifications", URL: "/notifications"},
 		}},
 		{Label: "Build", Items: []core.NavItem{
-			{Label: "Databases", URL: "/databases"}, {Label: "Query subscriptions", URL: "/subscriptions"},
+			// Query subscriptions (/subscriptions) is hidden from the navigation;
+			// the page and its endpoints stay available.
+			{Label: "Databases", URL: "/databases"},
 		}},
 		{Label: "Secure", Items: []core.NavItem{
 			{Label: "API keys", URL: "/api-keys"}, {Label: "Team", URL: "/access"},
