@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 
 	"terrascale.tech/dashboard/internal/ui/icons"
@@ -269,23 +271,28 @@ templ PasswordInput(p PasswordProps) {
 }
 
 type regionPin struct {
-	code string
+	code, name, country string
 	x, y float64
 }
 
 // regionPins are the hub positions in the 136×80 viewBox of brand/region-map.svg.
-var regionPins = []regionPin{{"SFO", 21, 28.58}, {"GRU", 50, 59.76}, {"FRA", 71.5, 20.78}}
+var regionPins = []regionPin{{"SFO", "San Francisco", "us", 21, 28.58}, {"GRU", "São Paulo", "br", 50, 59.76}, {"FRA", "Frankfurt", "de", 71.5, 20.78}}
 
-// RegionMap renders the decorative region map. With a selectID it highlights
-// the hubs chosen in that <select>; without one it shows the animated network.
-templ RegionMap(selectID string) {
+// RegionMap mirrors a native select or checkbox group and lets pointer users
+// choose a hub on the map. The form controls remain canonical without scripts.
+templ RegionMap(selectID string, selected ...string) {
 	<div
 		class="ts-region-map"
-		aria-hidden="true"
+		if selectID == "" {
+			aria-hidden="true"
+		}
 		if selectID != "" {
+			role="group"
+			aria-label="Choose regions on the map"
 			data-select-id={ selectID }
+			data-selected={ strings.Join(selected, " ") }
 			data-init={ regionSync(selectID) }
-			data-on:change__window={ "evt.target.id === '" + selectID + "' && (" + regionSync(selectID) + ")" }
+			data-on:change__window={ "document.getElementById(" + regionJSString(selectID) + ").contains(evt.target) && (" + regionSync(selectID) + ")" }
 		} else {
 			data-highlights="SFO,GRU,FRA"
 		}
@@ -299,10 +306,19 @@ templ RegionMap(selectID string) {
 			</svg>
 		}
 		for _, pin := range regionPins {
-			<span class="ts-region-node" data-region={ pin.code }>
-				<span class="ts-region-node-ring"></span>
-				<span class="ts-region-node-core"></span>
-			</span>
+			if selectID != "" {
+				<button type="button" class="ts-region-node" data-region={ pin.code } data-flip?={ pin.x > 136/2 } aria-label={ pin.name + " (" + pin.code + ")" } aria-pressed={ fmt.Sprint(slices.Contains(selected, pin.code)) } data-on:click={ regionPick(selectID) }>
+					<img class="ts-region-node-flag" src={ static.URL("flags/" + pin.country + ".svg") } alt="" aria-hidden="true"/>
+					<span class="ts-region-node-ring" aria-hidden="true"></span>
+					<span class="ts-region-node-core" aria-hidden="true"></span>
+					<span class="ts-region-node-label" aria-hidden="true"><strong>{ pin.name }</strong></span>
+				</button>
+			} else {
+				<span class="ts-region-node" data-region={ pin.code }>
+					<span class="ts-region-node-ring"></span>
+					<span class="ts-region-node-core"></span>
+				</span>
+			}
 		}
 	</div>
 }

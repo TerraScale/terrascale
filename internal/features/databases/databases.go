@@ -19,11 +19,22 @@ type databaseView struct {
 	Name      string    `json:"name"`
 	Status    string    `json:"status"`
 	Region    string    `json:"region"`
+	Placement []string  `json:"placement"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
 func view(db core.Database) databaseView {
-	return databaseView{ID: db.ID, Name: db.Name, Status: db.Status, Region: db.Region, CreatedAt: db.CreatedAt}
+	return databaseView{ID: db.ID, Name: db.Name, Status: db.Status, Region: db.Region, Placement: slices.Clone(databaseRegions(db)), CreatedAt: db.CreatedAt}
+}
+
+func databaseRegions(db core.Database) []string {
+	if len(db.Regions) > 0 {
+		return db.Regions
+	}
+	if db.Region != "" {
+		return []string{db.Region}
+	}
+	return nil
 }
 
 // Mount owns the database lifecycle routes and tools for the selected project.
@@ -50,12 +61,20 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		name, region := strings.TrimSpace(r.FormValue("name")), r.FormValue("region")
-		db, err := service.Create(r.Context(), p, name, region)
+		name, regions := strings.TrimSpace(r.FormValue("name")), r.Form["region"]
+		if len(regions) == 0 && core.WantsHTML(r) {
+			FormFailed(w, r, http.StatusBadRequest, "/databases", ErrInvalidRegions, url.Values{"create": {"1"}, "name": {name}, "regionSelection": {"1"}})
+			return
+		}
+		db, err := service.Create(r.Context(), p, name, regions...)
 		if err != nil {
 			// Reopen the create dialog with the error and the input.
-			status, code := failure(err, ErrInvalidName)
-			FormFailed(w, r, status, "/databases", code, url.Values{"create": {"1"}, "name": {name}, "region": {region}})
+			invalid := ErrInvalidRegions
+			if errors.Is(err, errInvalidName) {
+				invalid = ErrInvalidName
+			}
+			status, code := failure(err, invalid)
+			FormFailed(w, r, status, "/databases", code, url.Values{"create": {"1"}, "name": {name}, "region": regions, "regionSelection": {"1"}})
 			return
 		}
 		if core.WantsHTML(r) {
@@ -120,7 +139,7 @@ type pageData struct {
 	ProjectID    string
 	Summary      databaseSummary
 	Databases    []databaseView
-	Region       string
+	Regions      []string
 	Error        string
 	Search       string
 	OpenCreate   bool
@@ -161,8 +180,10 @@ func summarize(databases map[string]core.Database) databaseSummary {
 		case "rose":
 			summary.Failed++
 		}
-		if db.Region != "" && !slices.Contains(summary.Regions, db.Region) {
-			summary.Regions = append(summary.Regions, db.Region)
+		for _, region := range databaseRegions(db) {
+			if !slices.Contains(summary.Regions, region) {
+				summary.Regions = append(summary.Regions, region)
+			}
 		}
 		summary.Collections += len(db.Documents)
 		for _, documents := range db.Documents {
@@ -206,14 +227,19 @@ func renderList(w http.ResponseWriter, r *http.Request, deps core.Deps) {
 	data := pageData{
 		ProjectID:  project.ID,
 		Summary:    summarize(project.Databases),
-		Region:     cmp.Or(project.Region, "GRU"),
+		Regions:    []string{cmp.Or(project.Region, "GRU")},
 		Error:      formError(query.Get("error")),
 		Search:     strings.TrimSpace(query.Get("q")),
 		OpenCreate: query.Get("create") == "1",
 		Name:       query.Get("name"),
 	}
-	if region, err := sdk.ParseRegionCode(query.Get("region")); err == nil {
-		data.Region = string(region)
+	if query.Get("regionSelection") == "1" {
+		data.Regions = nil
+		for _, value := range query["region"] {
+			if region, err := sdk.ParseRegionCode(value); err == nil && !slices.Contains(data.Regions, string(region)) {
+				data.Regions = append(data.Regions, string(region))
+			}
+		}
 	}
 	if len(data.Search) > 256 {
 		data.Search = data.Search[:256]

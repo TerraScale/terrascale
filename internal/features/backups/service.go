@@ -255,7 +255,7 @@ func (s Service) Restore(ctx context.Context, p core.Principal, databaseID strin
 	if in.AtMillis != nil && *in.AtMillis < 0 {
 		return restoreResult{}, core.Invalid("restore timestamp must not be negative")
 	}
-	target := core.Database{ID: core.NewID("db"), ProjectID: p.ProjectID, Region: db.Region, Status: "provisioning", CreatedAt: time.Now().UTC()}
+	target := core.Database{ID: core.NewID("db"), ProjectID: p.ProjectID, Region: db.Region, Regions: slices.Clone(db.Regions), Status: "provisioning", CreatedAt: time.Now().UTC()}
 	if s.deps.Demo {
 		target.Status = "ready"
 	}

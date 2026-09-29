@@ -29,8 +29,9 @@ type databaseInput struct {
 
 type createDatabaseInput struct {
 	core.Scope
-	Name   string `json:"name" jsonschema:"Database name: 1-63 lowercase letters, digits, and inner hyphens."`
-	Region string `json:"region,omitempty" jsonschema:"Region code such as GRU, SFO, or FRA. Defaults to the project's primary region."`
+	Name    string   `json:"name" jsonschema:"Database name: 1-63 lowercase letters, digits, and inner hyphens."`
+	Region  string   `json:"region,omitempty" jsonschema:"Region code such as GRU, SFO, or FRA. Defaults to the project's primary region."`
+	Regions []string `json:"regions,omitempty" jsonschema:"Placement regions for one database, such as GRU and FRA. Takes precedence over region."`
 }
 
 type branchDatabaseInput struct {
@@ -67,6 +68,9 @@ func mountTools(tools *core.Tools, service Service) {
 		Name: "create_database", Title: "Create database",
 		Description: "Provision a new database in a project. Requires an owner or admin role and a plan with database capacity.",
 	}, func(ctx context.Context, p core.Principal, in createDatabaseInput) (databaseView, error) {
+		if len(in.Regions) > 0 {
+			return service.Create(ctx, p, in.Name, in.Regions...)
+		}
 		return service.Create(ctx, p, in.Name, in.Region)
 	})
 	core.AddTool(tools, core.ToolSpec{

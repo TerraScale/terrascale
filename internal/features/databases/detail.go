@@ -136,12 +136,14 @@ func makeDetailInfo(demo bool, principal core.Principal, account core.Account, p
 		db.ID == "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC" &&
 		db.ProjectID == project.ID &&
 		db.Name == "core-primary" && db.Region == "SFO"
-	region := detailRegion{Name: regionDisplay(db.Region), Estimate: "Not measured", Sample: sample}
-	if sample {
-		region.Estimate = "0 ms · demo estimate"
+	for _, code := range databaseRegions(db) {
+		region := detailRegion{Name: regionDisplay(code), Estimate: "Not measured", Sample: sample && code == db.Region}
+		if region.Sample {
+			region.Estimate = "0 ms · demo estimate"
+		}
+		info.Regions = append(info.Regions, region)
 	}
-	info.Regions = append(info.Regions, region)
-	if backupRegion := project.BackupRegion; backupRegion != "" && !strings.EqualFold(backupRegion, db.Region) {
+	if backupRegion := project.BackupRegion; backupRegion != "" && !slices.ContainsFunc(databaseRegions(db), func(code string) bool { return strings.EqualFold(code, backupRegion) }) {
 		info.Regions = append(info.Regions, detailRegion{Name: regionDisplay(backupRegion) + " · backup region", Estimate: "Not measured"})
 	}
 	return info
@@ -160,6 +162,24 @@ func regionDisplay(code string) string {
 	default:
 		return strings.ToUpper(code)
 	}
+}
+
+func regionListDisplay(codes []string) string {
+	if len(codes) == 0 {
+		return regionDisplay("")
+	}
+	labels := make([]string, len(codes))
+	for i, code := range codes {
+		labels[i] = regionDisplay(code)
+	}
+	return strings.Join(labels, ", ")
+}
+
+func regionChoiceSummary(codes []string) string {
+	if len(codes) == 0 {
+		return "Choose regions"
+	}
+	return regionListDisplay(codes)
 }
 
 // namePatternHTML is namePattern for an input's pattern attribute.

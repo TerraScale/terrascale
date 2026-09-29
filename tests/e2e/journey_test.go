@@ -130,7 +130,7 @@ func createDatabaseFromUI(t *testing.T, page playwright.Page, name string) {
 	visible(t, dialog)
 	form := dialog.Locator(`form[action="/api/v1/dashboard/databases"]`)
 	fill(t, form.Locator(`[name="name"]`), name)
-	selectOption(t, form.Locator(`[name="region"]`), "GRU")
+	selectDatabaseRegions(t, form, "GRU")
 	click(t, byRole(form, *playwright.AriaRoleButton, "Create database"))
 	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
 }

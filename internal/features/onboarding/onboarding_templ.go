@@ -841,7 +841,7 @@ func onboardingView(data pageData, csrfToken string) templ.Component {
 					}()
 				}
 				ctx = templ.InitializeContext(ctx)
-				templ_7745c5c3_Err = ui.RegionMap("region").Render(ctx, templ_7745c5c3_Buffer)
+				templ_7745c5c3_Err = ui.RegionMap("region", "GRU").Render(ctx, templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}

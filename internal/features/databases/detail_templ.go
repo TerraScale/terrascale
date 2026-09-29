@@ -292,7 +292,7 @@ func detailPlacement(d detailData) templ.Component {
 			}
 			ctx = templ.InitializeContext(ctx)
 			templ_7745c5c3_Err = facts([]fact{
-				{Label: "Placement lock", Value: regionDisplay(d.Database.Region)},
+				{Label: "Placement lock", Value: regionListDisplay(databaseRegions(d.Database))},
 				{Label: "Placement status", Value: "Not reported"},
 				{Label: "Generation", Value: "Not reported"},
 				{Label: "Replication", Value: "Not reported"},
@@ -304,7 +304,7 @@ func detailPlacement(d detailData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = ui.Alert("info", "Configured region", "The dashboard records the database region. Provider placement status, generation, and replication are not available in this dashboard.").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = ui.Alert("info", "Configured regions", "The dashboard records the database regions. Provider placement status, generation, and replication are not available in this dashboard.").Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -371,7 +371,7 @@ func detailPlacement(d detailData) templ.Component {
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "placement", Title: "Placement and latency", Description: "Configured region for this database"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var9), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "placement", Title: "Placement and latency", Description: "Configured regions for this database"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var9), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

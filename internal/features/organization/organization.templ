@@ -274,7 +274,7 @@ templ regionPlacement(p placement) {
 		<legend class="ts-label">Project regions</legend>
 		<div class="ts-field">
 			<label class="ts-label" for={ p.RegionsID }>Allowed regions</label>
-			@ui.RegionMap(p.RegionsID)
+			@ui.RegionMap(p.RegionsID, selectedRegionCodes(p.Regions)...)
 			<select class="ts-select" id={ p.RegionsID } name="regions" multiple size={ fmt.Sprint(len(p.Regions)) } required?={ p.RequireRegions } aria-describedby={ p.RegionsID + "-hint" }>
 				for _, region := range p.Regions {
 					<option value={ region.Code } selected?={ region.Selected }>{ region.Code }</option>
@@ -290,7 +290,7 @@ templ regionPlacement(p placement) {
 templ regionSelect(id, label, name string, regions []string, selected string, required bool) {
 	<div class="ts-field">
 		<label class="ts-label" for={ id }>{ label }</label>
-		@ui.RegionMap(id)
+		@ui.RegionMap(id, initialRegion(regions, selected))
 		<select class="ts-select" id={ id } name={ name } required?={ required }>
 			for _, region := range regions {
 				<option value={ region } selected?={ region == selected }>{ region }</option>
@@ -314,6 +314,26 @@ func allSelected(regions []string) []regionView {
 		views[i] = regionView{Code: region, Selected: true}
 	}
 	return views
+}
+
+func selectedRegionCodes(regions []regionView) []string {
+	selected := make([]string, 0, len(regions))
+	for _, region := range regions {
+		if region.Selected {
+			selected = append(selected, region.Code)
+		}
+	}
+	return selected
+}
+
+func initialRegion(regions []string, selected string) string {
+	if selected != "" {
+		return selected
+	}
+	if len(regions) > 0 {
+		return regions[0]
+	}
+	return ""
 }
 
 func organizationKindLabel(kind string) string {

@@ -169,6 +169,7 @@ type Database struct {
 	Name                 string
 	Status               string
 	Region               string
+	Regions              []string
 	Endpoint             string
 	CreatedAt            time.Time
 	Documents            map[string]map[string][]byte   // collection -> document ID -> JSON bytes

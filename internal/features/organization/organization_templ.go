@@ -1488,7 +1488,7 @@ func regionPlacement(p placement) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = ui.RegionMap(p.RegionsID).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.RegionMap(p.RegionsID, selectedRegionCodes(p.Regions)...).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1684,7 +1684,7 @@ func regionSelect(id, label, name string, regions []string, selected string, req
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = ui.RegionMap(id).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.RegionMap(id, initialRegion(regions, selected)).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1793,6 +1793,26 @@ func allSelected(regions []string) []regionView {
 		views[i] = regionView{Code: region, Selected: true}
 	}
 	return views
+}
+
+func selectedRegionCodes(regions []regionView) []string {
+	selected := make([]string, 0, len(regions))
+	for _, region := range regions {
+		if region.Selected {
+			selected = append(selected, region.Code)
+		}
+	}
+	return selected
+}
+
+func initialRegion(regions []string, selected string) string {
+	if selected != "" {
+		return selected
+	}
+	if len(regions) > 0 {
+		return regions[0]
+	}
+	return ""
 }
 
 func organizationKindLabel(kind string) string {
