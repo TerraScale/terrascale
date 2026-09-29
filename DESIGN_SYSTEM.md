@@ -70,6 +70,19 @@ it with Lightning CSS into the single stylesheet `web/static/css/terrascale.css`
 | Data | `ts-table-wrap` `ts-table` `ts-list` `ts-list-item` `ts-kv` `ts-pager` `ts-progress` `ts-code` `ts-snippet` `ts-dot` `ts-avatar` |
 | Overlays | `ts-menu` (`<details { ui.MenuBehavior... }>` + `ts-menu-panel`, `ts-menu-item`), `dialog.ts-dialog`, `ts-tip` |
 
+### Content-column breakpoints
+
+The signed-in `.ts-main` is an inline-size query container. Page layouts in
+`layout.css` respond to its width, not the viewport: `.ts-grid-2` becomes one
+column below **48rem (768px)**, while `.ts-grid-3` and `.ts-split` stack
+below **60rem (960px)** (the split keeps a hairline between its stacked sections).
+The queries use px because container-query rems resolve against the 14px root
+font size, whereas viewport-query rems resolve against 16px. On desktop the
+264px sidebar means these transitions happen at roughly 1030px and 1225px
+window widths. At phone widths the sidebar becomes a drawer and the page
+padding tightens at the existing 48rem viewport breakpoint. Give grid and list
+children a shrinkable track when adding copyable or unbroken text.
+
 ## Charts
 
 `internal/ui/charts` renders SVG on the server: monotone curves, a gradient

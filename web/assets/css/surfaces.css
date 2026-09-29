@@ -55,6 +55,7 @@
 
 .ts-card-body {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: var(--ts-s4);
   min-width: 0;
@@ -90,6 +91,7 @@
   display: grid;
   align-content: start;
   gap: var(--ts-s1);
+  min-width: 0;
   margin-left: -1px;
   padding: var(--ts-s1) var(--ts-s5) var(--ts-s6);
   border-left: 1px solid var(--ts-line);
@@ -107,6 +109,7 @@
 }
 
 .ts-stat-value {
+  overflow-wrap: anywhere;
   color: var(--ts-ink);
   font-size: var(--ts-fs-3xl);
   font-weight: 600;
