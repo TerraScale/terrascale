@@ -81,8 +81,8 @@ templ invoiceFilters(data pageData) {
 	<form class="ts-filters" method="get" action="/usage" role="search" aria-label="Filter payment history">
 		<input type="hidden" name="tab" value="billing"/>
 		<input type="hidden" name="project" value={ data.SelectedProject }/>
-		<label class="ts-filter-field" for="invoice-status">
-			Invoice status
+		<label class="ts-filter-inline" for="invoice-status">
+			<span class="ts-filter-inline-label">Invoice status</span>
 			<select class="ts-select" id="invoice-status" name="status">
 				<option value="" selected?={ data.InvoicePage.Status == "" }>All statuses</option>
 				for _, option := range data.InvoicePage.StatusOptions {
@@ -90,8 +90,8 @@ templ invoiceFilters(data pageData) {
 				}
 			</select>
 		</label>
-		<label class="ts-filter-field" for="invoice-issued">
-			Issued
+		<label class="ts-filter-inline" for="invoice-issued">
+			<span class="ts-filter-inline-label">Issued</span>
 			<select class="ts-select" id="invoice-issued" name="issued">
 				<option value="" selected?={ data.InvoicePage.Issued == "" }>Any time</option>
 				for _, option := range data.InvoicePage.IssuedOptions {

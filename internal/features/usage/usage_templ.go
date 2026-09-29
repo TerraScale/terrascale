@@ -301,7 +301,7 @@ func invoiceFilters(data pageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "\"> <label class=\"ts-filter-field\" for=\"invoice-status\">Invoice status <select class=\"ts-select\" id=\"invoice-status\" name=\"status\"><option value=\"\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "\"> <label class=\"ts-filter-inline\" for=\"invoice-status\"><span class=\"ts-filter-inline-label\">Invoice status</span> <select class=\"ts-select\" id=\"invoice-status\" name=\"status\"><option value=\"\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -357,7 +357,7 @@ func invoiceFilters(data pageData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "</select></label> <label class=\"ts-filter-field\" for=\"invoice-issued\">Issued <select class=\"ts-select\" id=\"invoice-issued\" name=\"issued\"><option value=\"\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "</select></label> <label class=\"ts-filter-inline\" for=\"invoice-issued\"><span class=\"ts-filter-inline-label\">Issued</span> <select class=\"ts-select\" id=\"invoice-issued\" name=\"issued\"><option value=\"\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
