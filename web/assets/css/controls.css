@@ -416,6 +416,56 @@ legend {
   letter-spacing: 0;
 }
 
+/* Inline filter variant: the label sits inside the control as a muted prefix
+   and the select loses its own chrome to the wrapper. */
+.ts-filter-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  min-width: 150px;
+  height: var(--ts-control-h-sm);
+  padding-left: var(--ts-s3);
+  border: 1px solid var(--ts-control-line);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface);
+  transition: border-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-filter-inline:hover {
+  border-color: var(--ts-control-line-hover);
+}
+
+.ts-filter-inline:has(.ts-select:focus-visible) {
+  border-color: var(--ts-accent);
+  outline: 1px solid var(--ts-accent);
+  outline-offset: 0;
+}
+
+.ts-filter-inline-label {
+  flex: none;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.ts-filter-inline .ts-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding-left: 0;
+  border: 0;
+  background-color: transparent;
+  font-size: var(--ts-fs-sm);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.ts-filter-inline .ts-select:focus-visible {
+  outline: none;
+}
+
 /* Segmented control: links that switch between sibling views. */
 .ts-segmented {
   display: inline-flex;

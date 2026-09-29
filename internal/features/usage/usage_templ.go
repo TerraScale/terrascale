@@ -137,7 +137,7 @@ func overviewFilters(data pageData) templ.Component {
 			templ_7745c5c3_Var2 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<form class=\"ts-filters\" method=\"get\" action=\"/usage\" role=\"search\" aria-label=\"Filter usage\"><input type=\"hidden\" name=\"tab\" value=\"overview\"> <label class=\"ts-filter-field\" for=\"usage-project\">Project <select class=\"ts-select\" id=\"usage-project\" name=\"project\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<form class=\"ts-filters\" method=\"get\" action=\"/usage\" role=\"search\" aria-label=\"Filter usage\"><input type=\"hidden\" name=\"tab\" value=\"overview\"> <label class=\"ts-filter-inline\" for=\"usage-project\"><span class=\"ts-filter-inline-label\">Project</span> <select class=\"ts-select\" id=\"usage-project\" name=\"project\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -183,7 +183,7 @@ func overviewFilters(data pageData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</select></label> <label class=\"ts-filter-field\" for=\"usage-database\">Database <select class=\"ts-select\" id=\"usage-database\" name=\"database\"><option value=\"\">All databases</option> ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</select></label> <label class=\"ts-filter-inline\" for=\"usage-database\"><span class=\"ts-filter-inline-label\">Database</span> <select class=\"ts-select\" id=\"usage-database\" name=\"database\"><option value=\"\">All databases</option> ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -229,7 +229,7 @@ func overviewFilters(data pageData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</select></label> <label class=\"ts-filter-field\" for=\"usage-range\">Period <select class=\"ts-select\" id=\"usage-range\" name=\"range\"><option value=\"24h\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</select></label> <label class=\"ts-filter-inline\" for=\"usage-range\"><span class=\"ts-filter-inline-label\">Period</span> <select class=\"ts-select\" id=\"usage-range\" name=\"range\"><option value=\"24h\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
