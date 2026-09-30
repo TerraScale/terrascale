@@ -129,6 +129,25 @@ pub struct RoutingDocument {
 /// Uppercase region-code shape accepted from untrusted metadata.
 #[must_use]
 pub fn is_region_code(code: &str) -> bool {
+    if matches!(
+        code,
+        "API"
+            | "ATLAS"
+            | "AUTH"
+            | "SYNC"
+            | "STATUS"
+            | "WWW"
+            | "APP"
+            | "DASH"
+            | "DOCS"
+            | "GIT"
+            | "CDN"
+            | "ADMIN"
+            | "MCP"
+            | "MAIL"
+    ) {
+        return false;
+    }
     let bytes = code.as_bytes();
     if bytes.is_empty() || bytes.len() > 16 {
         return false;
@@ -176,6 +195,9 @@ pub fn is_dev_host(host: &str) -> bool {
 /// (or dev origins when the client itself runs against loopback).
 #[must_use]
 pub fn validate_endpoint_url(raw: &str, region: &str, loopback_client: bool) -> Option<String> {
+    if !is_region_code(&region.to_ascii_uppercase()) {
+        return None;
+    }
     if raw.is_empty() || raw.len() > 2_048 {
         return None;
     }
@@ -1126,6 +1148,10 @@ mod tests {
             |doc: &mut Value| doc["endpoints"][0]["url"] = json!("https://evil.example"),
             |doc: &mut Value| doc["endpoints"][0]["url"] = json!("http://fra.terrascale.tech"),
             |doc: &mut Value| doc["endpoints"][0]["region"] = json!("fra"),
+            |doc: &mut Value| {
+                doc["endpoints"][0]["region"] = json!("STATUS");
+                doc["endpoints"][0]["url"] = json!("https://status.terrascale.tech");
+            },
             |doc: &mut Value| doc["endpoints"][0]["capabilities"] = json!([]),
             |doc: &mut Value| doc["endpoints"][0]["capabilities"] = json!(["admin"]),
             |doc: &mut Value| doc["endpoints"][0]["priority"] = json!(0),
