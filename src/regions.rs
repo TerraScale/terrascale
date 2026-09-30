@@ -100,7 +100,12 @@ pub const GLOBAL_SYNC_BASE_URL: &str = "https://sync.api.terrascale.tech";
 /// Regional hostname for pinned REST traffic.
 #[must_use]
 pub fn regional_host(region: RegionCode) -> String {
-    format!("{}.terrascale.tech", region.as_str())
+    regional_host_for_code(region.as_str())
+}
+
+/// The regional hostname contract also applies to newly admitted catalog codes.
+pub(crate) fn regional_host_for_code(region: &str) -> String {
+    format!("{}.terrascale.tech", region.to_ascii_lowercase())
 }
 
 /// Resolve the base URL for pinned traffic.

@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::error::{Error, ErrorKind, Result};
 use crate::management::{RegionCatalogResponse, RegionDetails};
-use crate::regions::{RegionCode, GLOBAL_API_HOST};
+use crate::regions::{regional_host_for_code, RegionCode, GLOBAL_API_HOST};
 use crate::transport::{HttpTransport, Method, Request};
 
 /// Default discovery/catalog origin (ADR 0050 §8): `ts-atlas` serves
@@ -126,26 +126,18 @@ pub struct RoutingDocument {
     pub endpoints: Vec<RoutingEndpoint>,
 }
 
-/// Uppercase region-code shape accepted from untrusted metadata.
+/// Service reservations mirror the producer policy in ts-atlas/docs/design.md §2:
+/// <https://git.terrascale.tech/TerraScale/ts-atlas/src/branch/main/docs/design.md>.
+/// Reserve additional service labels there and in SDKs before publishing their DNS.
+const RESERVED_SERVICE_LABELS: &[&str] = &[
+    "API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH", "DOCS", "GIT", "CDN", "ADMIN",
+    "MCP", "MAIL",
+];
+
+/// Uppercase regional code shape, excluding the producer's reserved service labels.
 #[must_use]
 pub fn is_region_code(code: &str) -> bool {
-    if matches!(
-        code,
-        "API"
-            | "ATLAS"
-            | "AUTH"
-            | "SYNC"
-            | "STATUS"
-            | "WWW"
-            | "APP"
-            | "DASH"
-            | "DOCS"
-            | "GIT"
-            | "CDN"
-            | "ADMIN"
-            | "MCP"
-            | "MAIL"
-    ) {
+    if RESERVED_SERVICE_LABELS.contains(&code) {
         return false;
     }
     let bytes = code.as_bytes();
@@ -212,7 +204,7 @@ pub fn validate_endpoint_url(raw: &str, region: &str, loopback_client: bool) -> 
         return None;
     }
     let host = url.host_str()?.to_ascii_lowercase();
-    let expected = format!("{}.terrascale.tech", region.to_ascii_lowercase());
+    let expected = regional_host_for_code(region);
     if url.scheme() == "https" && host == expected {
         return Some(format!("https://{expected}"));
     }
@@ -383,14 +375,13 @@ pub fn parse_region_catalog(
     let mut hosts = BTreeMap::new();
     for (code, raw) in raw_hosts {
         let raw = raw.as_str()?;
-        let origin = if raw
-            .eq_ignore_ascii_case(&format!("{}.terrascale.tech", code.to_ascii_lowercase()))
-        {
-            format!("https://{raw}")
+        // Catalogs contain hostnames; discovery endpoints require absolute URLs.
+        // Every hosts entry must be a regional API, matching the Atlas contract.
+        let url = if raw.eq_ignore_ascii_case(&regional_host_for_code(code)) {
+            validate_endpoint_url(&format!("https://{raw}"), code, loopback_client)?
         } else {
-            raw.to_owned()
+            validate_endpoint_url(raw, code, loopback_client)?
         };
-        let url = validate_endpoint_url(&origin, code, loopback_client)?;
         hosts.insert(code.clone(), url);
     }
     if regions
@@ -1195,6 +1186,19 @@ mod tests {
         });
         let parsed = parse_region_catalog(&catalog, false).expect("catalog");
         assert_eq!(parsed.hosts["GRU"], "https://gru.terrascale.tech");
+
+        let mut bare_host = catalog.clone();
+        bare_host["hosts"]["GRU"] = json!("gru.terrascale.tech");
+        assert_eq!(
+            parse_region_catalog(&bare_host, false)
+                .expect("bare catalog host")
+                .hosts["GRU"],
+            "https://gru.terrascale.tech"
+        );
+
+        let mut reserved_host = catalog.clone();
+        reserved_host["hosts"]["STATUS"] = json!("status.terrascale.tech");
+        assert!(parse_region_catalog(&reserved_host, false).is_none());
 
         let mut bad_host = catalog.clone();
         bad_host["hosts"]["GRU"] = json!("https://evil.example");
