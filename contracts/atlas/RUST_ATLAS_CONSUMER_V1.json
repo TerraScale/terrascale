@@ -1,9 +1,35 @@
 {
+  "actual_fixtures": {
+    "native-discovery-forbidden-receipt.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-discovery-forbidden-receipt.json",
+      "sha256": "2b63d132df8b304286ebb0e9b4ab967a317544e8128f9105c7d71a138721528f"
+    },
+    "native-discovery-forbidden.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-discovery-forbidden.json",
+      "sha256": "3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c"
+    },
+    "native-discovery-success-receipt.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-discovery-success-receipt.json",
+      "sha256": "c34ed011a4f10065b3fba4168b0a940eb7f3ef945a70414ae8210908ad8080ba"
+    },
+    "native-discovery-success.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-discovery-success.json",
+      "sha256": "d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0"
+    },
+    "native-wire-export.log": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-wire-export.log",
+      "sha256": "7f6538d64923b3a9bd994c606d034e590333075b24f82631b2cbab1ba05b1dc4"
+    },
+    "native-wire-identity.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-wire-identity.json",
+      "sha256": "b789d6fb7782e34ece3b516139856f2b6d2dea0543436820eefa50ff31355538"
+    }
+  },
   "base_commit": "2c7f60a8d3b3a931b9485e022443e05e4e4634e9",
   "invariant": [
     "Dedicated native router uses only canonical https://atlas.terrascale.tech/api/v1/discovery and one validated native TBK1 bearer; reject custom discovery origins before transport; authentication discovery/credentials remain separate.",
     "Closed duplicate-rejecting typed response validates exact native UUID/full-u64 scope, canonical authority and positive epoch/revision strings, required nullable residency/writer, all eight explicit capabilities, catalog SHA256, distinct dynamic uppercase region codes/direct origins, and contiguous ranked priorities.",
-    "Use receiver-ranked order among endpoints supporting requested operation and residency. Transport, 5xx and 421 demote and re-pin safe traffic; discovery unavailability falls back to the owner-decided Atlas API proxy. Optional bounded measured RTT hints use the admitted header.",
+    "Use receiver-ranked order only among endpoints supporting requested operation/residency; no static region/health/test API widening. Optional bounded unique measured RTT hints use only the admitted header.",
     "Keep bounded per-scope observations through lease expiry; reject controlling deployment/cell changes and lower epoch/revision; preserve all-or-none observed query fields and atomic cache publication. No eviction that erases retained observation floors.",
     "Use current checked Unix time and a conservative monotonic lease from request start, clamped DOWN by returned refreshSeconds<=10 and received whole remaining expiry. Reject expired/future/backward/failed clock state; never upward clamp. Actual measured healthy clock/provenance remains runtime qualification gate.",
     "Advanced write capabilities and security-writer authority stay closed under current v1; direct admitted native origin behavior remains supported. Mutation uncertainty and no automatic mutation replay remain unchanged.",
@@ -73,31 +99,5 @@
     "scripts/qualification/README.md",
     "scripts/qualification/run.sh",
     "scripts/qualification/src/main.rs"
-  ],
-  "codec_fixtures": {
-    "native-discovery-forbidden-receipt.json": {
-      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-discovery-forbidden-receipt.json",
-      "sha256": "2b63d132df8b304286ebb0e9b4ab967a317544e8128f9105c7d71a138721528f"
-    },
-    "native-discovery-forbidden.json": {
-      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-discovery-forbidden.json",
-      "sha256": "3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c"
-    },
-    "native-discovery-success-receipt.json": {
-      "path": "contracts/atlas/native-discovery-success-receipt.json",
-      "sha256": "d56ccaaef70693c5df168a7ae1c8c854f0c504c331d551d4273000fdac6c246d"
-    },
-    "native-discovery-success.json": {
-      "path": "contracts/atlas/native-discovery-success.json",
-      "sha256": "82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec"
-    },
-    "native-wire-export.log": {
-      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-wire-export.log",
-      "sha256": "7f6538d64923b3a9bd994c606d034e590333075b24f82631b2cbab1ba05b1dc4"
-    },
-    "native-wire-identity.json": {
-      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-wire-identity.json",
-      "sha256": "b789d6fb7782e34ece3b516139856f2b6d2dea0543436820eefa50ff31355538"
-    }
-  }
+  ]
 }

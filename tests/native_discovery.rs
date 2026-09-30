@@ -234,7 +234,7 @@ async fn actual_worker_sqlite_bytes_preserve_full_u64_and_fixed_clock_provenance
         .resolve(&scope(), NativeRequirement::Point)
         .await
         .unwrap();
-    assert_eq!(resolved.endpoint.url, "https://gru.api.terrascale.tech");
+    assert_eq!(resolved.endpoint.url, "https://gru.terrascale.tech");
     assert_eq!(
         resolved.endpoint.catalog_digest,
         Digest::from_bytes([0xcc; 32])
@@ -311,7 +311,7 @@ async fn credentials_custom_origin_nil_scope_and_zero_shard_fail_before_transpor
     ] {
         let router = AtlasDiscovery::new(
             ClientConfig::builder()
-                .discovery_base_url(origin)
+                .atlas_base_url(origin)
                 .api_key(native_key())
                 .build()
                 .unwrap(),
@@ -328,7 +328,7 @@ async fn credentials_custom_origin_nil_scope_and_zero_shard_fail_before_transpor
     }
     assert_eq!(
         ClientConfig::builder()
-            .discovery_base_url("http://atlas.terrascale.tech")
+            .atlas_base_url("http://atlas.terrascale.tech")
             .api_key(native_key())
             .build()
             .unwrap_err()
@@ -402,7 +402,7 @@ async fn receiver_ranking_dynamic_regions_residency_and_operation_capabilities_a
     let mut body = fixture();
     let mut first = body["endpoints"][0].clone();
     first["region"] = json!("Z9-NEW");
-    first["url"] = json!("https://z9-new.api.terrascale.tech");
+    first["url"] = json!("https://z9-new.terrascale.tech");
     first["capabilities"]["query"] = json!(false);
     first["capabilities"]["subscriptions"] = json!(false);
     first["capabilities"]["write"] = json!(false);
@@ -438,6 +438,18 @@ async fn receiver_ranking_dynamic_regions_residency_and_operation_capabilities_a
             "GRU"
         );
     }
+    // Selecting a less highly ranked endpoint for a different capability must
+    // not pin later reads away from the first admitted endpoint.
+    assert_eq!(
+        router
+            .resolve(&scope(), NativeRequirement::Point)
+            .await
+            .unwrap()
+            .endpoint
+            .region,
+        "Z9-NEW"
+    );
+    assert_eq!(mock.requests.lock().unwrap().len(), 1);
     for requirement in [
         NativeRequirement::Commit {
             conditional: true,
@@ -535,14 +547,15 @@ async fn closed_schema_nullable_fields_duplicates_and_invalid_native_metadata_fa
     }
     for url in [
         "https://api.terrascale.tech",
+        "https://gru.api.terrascale.tech",
         "https://evil.invalid",
-        "https://gru.api.terrascale.tech/",
-        "https://gru.api.terrascale.tech:443",
-        "https://GRU.api.terrascale.tech",
-        "http://gru.api.terrascale.tech",
-        "https://gru.api.terrascale.tech?x=1",
-        "https://key@gru.api.terrascale.tech",
-        "https://gru.api.terrascale.tech.",
+        "https://gru.terrascale.tech/",
+        "https://gru.terrascale.tech:443",
+        "https://GRU.terrascale.tech",
+        "http://gru.terrascale.tech",
+        "https://gru.terrascale.tech?x=1",
+        "https://key@gru.terrascale.tech",
+        "https://gru.terrascale.tech.",
     ] {
         let mut body = fixture();
         body["endpoints"][0]["url"] = json!(url);
@@ -1125,215 +1138,6 @@ fn current_fixture() -> Json {
     body["expires_at"] = json!(now + 9);
     body
 }
-
-fn ranked_fixture() -> Json {
-    let mut body = current_fixture();
-    let mut next = body["endpoints"][0].clone();
-    next["region"] = json!("FRA");
-    next["url"] = json!("https://fra.api.terrascale.tech");
-    next["priority"] = json!(2);
-    body["endpoints"].as_array_mut().unwrap().push(next);
-    body
-}
-
-async fn point(client: &TerraScaleClient) -> Result<Point> {
-    client
-        .documents()
-        .get(
-            &scope(),
-            "30000000-0000-0000-0000-000000000001".parse().unwrap(),
-            "40000000-0000-0000-0000-000000000001".parse().unwrap(),
-        )
-        .await
-}
-fn absent() -> Json {
-    json!({"version":1,"state":"absent","context":[],"siblings":[],"state_version":null})
-}
-
-#[tokio::test]
-async fn default_and_explicit_global_base_discover_then_pin_top_region() {
-    for explicit in [false, true] {
-        let mock = Arc::new(Mock::default());
-        let mut builder = ClientConfig::builder().api_key(native_key());
-        if explicit {
-            builder = builder.api_base_url(DEFAULT_API_BASE_URL);
-        }
-        let client = TerraScaleClient::with_transport(builder.build().unwrap(), mock.clone());
-        mock.response(200, &ranked_fixture());
-        mock.response(200, &absent());
-        mock.response(200, &absent());
-        point(&client).await.unwrap();
-        point(&client).await.unwrap();
-        let requests = mock.requests.lock().unwrap();
-        assert_eq!(requests.len(), 3);
-        assert!(requests[0].url.starts_with(ATLAS_BASE_URL));
-        assert!(requests[1]
-            .url
-            .starts_with("https://gru.api.terrascale.tech/v1/"));
-        assert_eq!(requests[1].url, requests[2].url);
-    }
-}
-
-#[tokio::test]
-async fn transport_5xx_and_421_fail_over_then_repin_with_default_options() {
-    for failure in [None, Some(500), Some(503), Some(599), Some(421)] {
-        let mock = Arc::new(Mock::default());
-        let client = TerraScaleClient::with_transport(config(), mock.clone());
-        mock.response(200, &ranked_fixture());
-        let response = failure.map_or_else(
-            || Err(Error::transport("region offline")),
-            |status| {
-                Ok(Response::json(
-                    status,
-                    &json!({"error":{"code":"unavailable","message":"region rejected request"}}),
-                ))
-            },
-        );
-        mock.replies.lock().unwrap().push_back((response, 0));
-        mock.response(200, &absent());
-        mock.response(200, &absent());
-        point(&client).await.unwrap();
-        point(&client).await.unwrap();
-        let requests = mock.requests.lock().unwrap();
-        assert_eq!(requests.len(), 4, "failure {failure:?}");
-        assert!(requests[1]
-            .url
-            .starts_with("https://gru.api.terrascale.tech/v1/"));
-        assert!(requests[2]
-            .url
-            .starts_with("https://fra.api.terrascale.tech/v1/"));
-        assert_eq!(requests[2].url, requests[3].url);
-    }
-}
-
-#[tokio::test]
-async fn discovery_transport_and_5xx_failures_fall_back_to_atlas_api_proxy() {
-    for failure in [None, Some(200), Some(400), Some(404), Some(503)] {
-        let mock = Arc::new(Mock::default());
-        let client = TerraScaleClient::with_transport(config(), mock.clone());
-        let response = failure.map_or_else(|| Err(Error::transport("Atlas offline")), |status|
-            Ok(Response::json(status, &json!({"error":{"code":"discovery_unconfigured","message":"offline","fix":"retry"}}))));
-        mock.replies.lock().unwrap().push_back((response, 0));
-        mock.response(200, &absent());
-        mock.response(200, &absent());
-        point(&client).await.unwrap();
-        point(&client).await.unwrap();
-        let requests = mock.requests.lock().unwrap();
-        assert_eq!(requests.len(), 3);
-        assert!(requests[0].url.starts_with(ATLAS_BASE_URL));
-        assert!(requests[1]
-            .url
-            .starts_with("https://api.terrascale.tech/v1/"));
-        assert_eq!(requests[1].url, requests[2].url);
-    }
-}
-
-#[tokio::test]
-async fn another_scopes_discovery_failure_does_not_interrupt_a_live_pin() {
-    let mock = Arc::new(Mock::default());
-    let client = TerraScaleClient::with_transport(config(), mock.clone());
-    mock.response(200, &ranked_fixture());
-    mock.response(200, &absent());
-    point(&client).await.unwrap();
-    mock.replies
-        .lock()
-        .unwrap()
-        .push_back((Err(Error::transport("Atlas offline")), 0));
-    mock.response(200, &absent());
-    let mut other = scope();
-    other.database = "20000000-0000-0000-0000-000000000002".parse().unwrap();
-    client
-        .documents()
-        .get(
-            &other,
-            "30000000-0000-0000-0000-000000000001".parse().unwrap(),
-            "40000000-0000-0000-0000-000000000001".parse().unwrap(),
-        )
-        .await
-        .unwrap();
-    mock.response(200, &absent());
-    point(&client).await.unwrap();
-    let requests = mock.requests.lock().unwrap();
-    assert_eq!(requests.len(), 5);
-    assert!(requests[3]
-        .url
-        .starts_with("https://api.terrascale.tech/v1/"));
-    assert_eq!(requests[1].url, requests[4].url);
-}
-
-#[tokio::test]
-async fn custom_base_disables_discovery_even_with_a_discovery_override() {
-    let mock = Arc::new(Mock::default());
-    let client = TerraScaleClient::with_transport(
-        ClientConfig::builder()
-            .api_key("test-key")
-            .api_base_url("https://custom.test")
-            .discovery_base_url("https://unused-discovery.test")
-            .build()
-            .unwrap(),
-        mock.clone(),
-    );
-    mock.response(200, &absent());
-    point(&client).await.unwrap();
-    let requests = mock.requests.lock().unwrap();
-    assert_eq!(requests.len(), 1);
-    assert!(requests[0].url.starts_with("https://custom.test/v1/"));
-}
-
-#[tokio::test(start_paused = true)]
-async fn discovery_timeout_falls_back_to_the_atlas_api_proxy() {
-    let transport = Arc::new(LifecycleTransport::default());
-    transport.pending();
-    transport.reply(Ok(Response::json(200, &absent())));
-    let client = TerraScaleClient::with_transport(config(), transport.clone());
-    point(&client).await.unwrap();
-    let requests = transport.requests.lock().unwrap();
-    assert_eq!(requests.len(), 2);
-    assert!(requests[0].url.starts_with(ATLAS_BASE_URL));
-    assert!(requests[1]
-        .url
-        .starts_with("https://api.terrascale.tech/v1/"));
-    assert_eq!(transport.active.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn strict_affinity_is_direct_and_failover_affinity_honors_preference() {
-    for affinity in [RegionAffinity::Strict, RegionAffinity::Failover] {
-        let mock = Arc::new(Mock::default());
-        let client = TerraScaleClient::with_transport(
-            ClientConfig::builder()
-                .api_key(native_key())
-                .preferred_region("FRA")
-                .region_affinity(affinity)
-                .build()
-                .unwrap(),
-            mock.clone(),
-        );
-        if affinity == RegionAffinity::Failover {
-            mock.response(200, &ranked_fixture());
-        }
-        mock.response(200, &absent());
-        point(&client).await.unwrap();
-        let requests = mock.requests.lock().unwrap();
-        assert_eq!(
-            requests.len(),
-            if affinity == RegionAffinity::Strict {
-                1
-            } else {
-                2
-            }
-        );
-        assert!(requests
-            .last()
-            .unwrap()
-            .url
-            .starts_with("https://fra.api.terrascale.tech/v1/"));
-    }
-    assert!(ClientConfig::builder()
-        .region_affinity(RegionAffinity::Strict)
-        .build()
-        .is_err());
-}
 fn operation() -> PreparedTransaction {
     PreparedTransaction::new(
         scope(),
@@ -1351,6 +1155,109 @@ fn operation() -> PreparedTransaction {
     )
     .unwrap()
 }
+async fn default_point(client: &TerraScaleClient) -> Result<Point> {
+    client
+        .documents()
+        .get(
+            &scope(),
+            "30000000-0000-0000-0000-000000000001".parse().unwrap(),
+            "40000000-0000-0000-0000-000000000001".parse().unwrap(),
+        )
+        .await
+}
+
+#[tokio::test]
+async fn default_client_discovery_failures_never_dispatch_native_or_cache_a_bypass() {
+    let mut wrong_origin = current_fixture();
+    wrong_origin["endpoints"][0]["url"] = json!("https://gru.api.terrascale.tech");
+    let failures = [
+        (
+            Ok(raw(403, FORBIDDEN)),
+            ErrorKind::Authorization,
+            "discovery_forbidden",
+        ),
+        (
+            Ok(Response::json(
+                503,
+                &json!({"error":{"code":"no_eligible_region","message":"unavailable","fix":"retry"}}),
+            )),
+            ErrorKind::Unavailable,
+            "no_eligible_region",
+        ),
+        (
+            Ok(raw(200, b"{")),
+            ErrorKind::InvalidResponse,
+            "invalid_response",
+        ),
+        (
+            Ok(Response::json(200, &wrong_origin)),
+            ErrorKind::InvalidResponse,
+            "invalid_response",
+        ),
+        (
+            Err(Error::transport("Atlas offline")),
+            ErrorKind::Transport,
+            "transport",
+        ),
+    ];
+    for (reply, kind, code) in failures {
+        let mock = Arc::new(Mock::default());
+        let client = TerraScaleClient::with_transport(config(), mock.clone());
+        for _ in 0..2 {
+            mock.replies.lock().unwrap().push_back((reply.clone(), 0));
+            let error = default_point(&client).await.unwrap_err();
+            assert_eq!(error.kind, kind, "{code}");
+            assert_eq!(error.code, code);
+        }
+        let requests = mock.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2, "{code}");
+        assert!(requests.iter().all(|request| {
+            request.method == Method::Get
+                && request.route_name == "native.discovery"
+                && request
+                    .url
+                    .starts_with(&format!("{ATLAS_BASE_URL}/api/v1/discovery?"))
+        }));
+    }
+}
+
+#[tokio::test]
+async fn default_commit_discovery_denial_never_dispatches_mutation() {
+    let mock = Arc::new(Mock::default());
+    let client = TerraScaleClient::with_transport(config(), mock.clone());
+    mock.raw(403, FORBIDDEN, 0);
+    let error = client
+        .transactions()
+        .commit(&operation())
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Authorization);
+    assert_eq!(error.status, Some(403));
+    assert_eq!(error.code, "discovery_forbidden");
+    let requests = mock.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method, Method::Get);
+    assert_eq!(requests[0].route_name, "native.discovery");
+    assert!(requests[0].url.starts_with(ATLAS_BASE_URL));
+    assert!(requests[0].body.is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn default_client_discovery_timeout_releases_work_without_native_dispatch() {
+    let transport = Arc::new(LifecycleTransport::default());
+    transport.pending();
+    let client = TerraScaleClient::with_transport(config(), transport.clone());
+    let error = default_point(&client).await.unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Transport);
+    assert_eq!(error.code, "transport");
+    let requests = transport.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].route_name, "native.discovery");
+    assert!(requests[0].url.starts_with(ATLAS_BASE_URL));
+    assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+    assert_eq!(transport.released.load(Ordering::SeqCst), 1);
+}
+
 #[tokio::test]
 async fn default_client_selects_authenticated_native_origin_and_status_after_downshift() {
     let mock = Arc::new(Mock::default());
@@ -1386,7 +1293,7 @@ async fn default_client_selects_authenticated_native_origin_and_status_after_dow
     let requests = mock.requests.lock().unwrap();
     assert!(requests[1]
         .url
-        .starts_with("https://gru.api.terrascale.tech/v1/"));
+        .starts_with("https://gru.terrascale.tech/v1/"));
     assert!(requests[1].url.ends_with("/transactions/status"));
     assert_eq!(
         requests[1]
@@ -1456,7 +1363,7 @@ async fn default_point_routes_discovery_then_native_and_transport_loss_never_rep
     assert!(requests[0].url.starts_with(ATLAS_BASE_URL));
     assert!(requests[1]
         .url
-        .starts_with("https://gru.api.terrascale.tech/v1/"));
+        .starts_with("https://gru.terrascale.tech/v1/"));
     assert_eq!(requests[2].body.as_deref(), Some(operation.body()));
 }
 
@@ -1483,7 +1390,7 @@ async fn safe_native_retry_refreshes_expired_routing_before_second_dispatch() {
     let mut refreshed = current_fixture();
     refreshed["revision"] = json!("42");
     refreshed["endpoints"][0]["region"] = json!("IAD");
-    refreshed["endpoints"][0]["url"] = json!("https://iad.api.terrascale.tech");
+    refreshed["endpoints"][0]["url"] = json!("https://iad.terrascale.tech");
     mock.response(200, &refreshed);
     mock.response(
         200,
@@ -1502,14 +1409,14 @@ async fn safe_native_retry_refreshes_expired_routing_before_second_dispatch() {
     assert_eq!(requests.len(), 4);
     assert!(requests[1]
         .url
-        .starts_with("https://gru.api.terrascale.tech/v1/"));
+        .starts_with("https://gru.terrascale.tech/v1/"));
     assert!(requests[2]
         .url
         .starts_with("https://atlas.terrascale.tech/api/v1/discovery?"));
     assert!(requests[2].url.ends_with("&observed_deployment_id=fixture-deployment&observed_cell=gru&observed_publisher_generation=18446744073709551615&rev=41"));
     assert!(requests[3]
         .url
-        .starts_with("https://iad.api.terrascale.tech/v1/"));
+        .starts_with("https://iad.terrascale.tech/v1/"));
 }
 
 #[derive(Debug)]

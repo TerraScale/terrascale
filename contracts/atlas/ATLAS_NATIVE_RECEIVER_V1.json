@@ -65,7 +65,7 @@
           "priority": "1-based ranked integer",
           "region": "Admitted configured region",
           "security_writer": null,
-          "url": "EXACT https://<lowercase region>.api.terrascale.tech"
+          "url": "EXACT https://<lowercase region>.terrascale.tech"
         }
       ],
       "expires_at": "Conservative accepted expiry Unix seconds",

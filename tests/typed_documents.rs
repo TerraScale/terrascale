@@ -466,7 +466,7 @@ fn request_capacity_and_nullable_cursor_boundaries_are_strict() {
         Request::json(
             "native.query",
             Method::Post,
-            "https://gru.api.terrascale.tech".into(),
+            "https://gru.terrascale.tech".into(),
             &body
         )
         .unwrap_err()

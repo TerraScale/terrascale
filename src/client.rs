@@ -2,8 +2,8 @@
 
 use crate::auth_idp::AuthIdpClient;
 use crate::auth_routing::AuthRouter;
-use crate::config::{ClientConfig, DEFAULT_API_BASE_URL};
-use crate::discovery::{AtlasDiscovery, NativeRequirement, ScopeKey};
+use crate::config::ClientConfig;
+use crate::discovery::{AtlasDiscovery, NativeRequirement};
 use crate::documents::{DatabaseScope, DocumentsClient};
 use crate::error::{Error, ErrorKind, Result};
 use crate::subscriptions::SubscriptionsClient;
@@ -12,9 +12,8 @@ use crate::transport::{
     HttpTransport, Method, Request, ReqwestTransport, Response, MAX_JSON_BYTES,
 };
 use serde::de::DeserializeOwned;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 // Retained only as internal auth credential-isolation markers, never sent.
 pub(crate) const SKIP_AUTH_MARKER: &str = "x-terrascale-sdk-skip-auth";
@@ -27,7 +26,6 @@ pub(crate) struct Shared {
     config: ClientConfig,
     auth_router: Option<AuthRouter>,
     native_router: AtlasDiscovery,
-    discovery_failed_until: Mutex<HashMap<ScopeKey, Instant>>,
 }
 pub(crate) type SharedClient = Arc<Shared>;
 
@@ -36,11 +34,10 @@ impl Shared {
         let auth_router = AuthRouter::for_config(
             config.auth_base_url(),
             config.auth_reverse_proxy(),
-            config.discovery_base_url(),
+            config.atlas_base_url(),
         );
         Self {
             native_router: AtlasDiscovery::new(config.clone(), transport.clone()),
-            discovery_failed_until: Mutex::new(HashMap::new()),
             transport,
             config,
             auth_router,
@@ -64,51 +61,14 @@ impl Shared {
                 ));
             }
         }
-        if !self.config.discovery_enabled() {
-            return Ok(self
-                .config
-                .api_base_url()
-                .unwrap_or(DEFAULT_API_BASE_URL)
-                .to_owned());
-        }
-        let scope_key = (scope.tenant, scope.database, scope.shard);
-        if self
-            .discovery_failed_until
-            .lock()
-            .ok()
-            .is_some_and(|until| {
-                until
-                    .get(&scope_key)
-                    .is_some_and(|until| Instant::now() < *until)
-            })
-        {
-            return Ok(DEFAULT_API_BASE_URL.to_owned());
-        }
-        match self.native_router.resolve(scope, requirement).await {
-            Ok(resolved) => Ok(resolved.endpoint.url),
-            Err(error)
-                if error.kind == ErrorKind::Transport
-                    || error.kind == ErrorKind::InvalidResponse
-                    || (error.status.is_some()
-                        && error.code != "routing_observation_regressed") =>
-            {
-                if let Ok(mut until) = self.discovery_failed_until.lock() {
-                    let now = Instant::now();
-                    until.retain(|_, expires| *expires > now);
-                    if until.len() >= 128 {
-                        if let Some(oldest) = until
-                            .iter()
-                            .min_by_key(|(_, expires)| **expires)
-                            .map(|(key, _)| *key)
-                        {
-                            until.remove(&oldest);
-                        }
-                    }
-                    until.insert(scope_key, now + Duration::from_secs(1));
-                }
-                Ok(DEFAULT_API_BASE_URL.to_owned())
-            }
-            Err(error) => Err(error),
+        match self.config.api_base_url() {
+            Some(origin) => Ok(origin.to_owned()),
+            None => Ok(self
+                .native_router
+                .resolve(scope, requirement)
+                .await?
+                .endpoint
+                .url),
         }
     }
 
@@ -163,14 +123,11 @@ impl Shared {
         };
         let mut endpoint_index = 0;
         let mut retries = 0;
-        let mut failed_origins = std::collections::HashSet::new();
         loop {
             let mut attempt = request.clone();
-            let mut native_origin = None;
             if let Some((scope, requirement)) = native {
                 let origin = self.native_origin(scope, requirement).await?;
                 rebase(&mut attempt, &origin)?;
-                native_origin = Some(origin);
             }
             if let Some(endpoints) = &endpoints {
                 rebase(&mut attempt, &endpoints[endpoint_index])?;
@@ -203,37 +160,6 @@ impl Shared {
             match result {
                 Ok(response) => return Ok(response),
                 Err(error) => {
-                    let safe = request.method == Method::Get
-                        || matches!(
-                            request.route_name.as_str(),
-                            "native.query" | "native.subscription" | "native.transaction_status"
-                        );
-                    let routing_failure = error.kind == ErrorKind::Transport
-                        || error
-                            .status
-                            .is_some_and(|status| status == 421 || status >= 500);
-                    if routing_failure && self.config.discovery_enabled() {
-                        if let (Some((scope, requirement)), Some(origin)) = (native, native_origin)
-                        {
-                            if failed_origins.insert(origin.clone()) {
-                                let alternative = self
-                                    .native_router
-                                    .failover(scope, &origin, requirement)
-                                    .await;
-                                if alternative
-                                    && safe
-                                    && error
-                                        .retry_after
-                                        .is_none_or(|delay| delay <= MAX_RETRY_AFTER)
-                                {
-                                    if let Some(delay) = error.retry_after {
-                                        tokio::time::sleep(delay).await;
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                    }
                     // GET authentication discovery can fail over. Mutations never replay.
                     if request.method == Method::Get
                         && endpoints
@@ -244,6 +170,11 @@ impl Shared {
                         endpoint_index += 1;
                         continue;
                     }
+                    let safe = request.method == Method::Get
+                        || matches!(
+                            request.route_name.as_str(),
+                            "native.query" | "native.subscription" | "native.transaction_status"
+                        );
                     if !safe
                         || retries >= self.config.max_retry_attempts()
                         || !is_retryable(&error)

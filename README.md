@@ -26,26 +26,7 @@ let _fields = point.live_fields()?;
 
 `subscriptions().snapshot()` pages a native predicate view and yields a poll cursor. `subscriptions().poll()` returns complete ordered groups; a null effect removes a document from the view. `SubscriptionView` binds tenant/database/shard, collection and predicate, requires the actual request cursor to match its snapshot/poll phase, and validates a complete page before publishing groups and the next cursor. Cursors stay opaque and are bound by the producer to scope and predicate.
 
-The default API base is `https://api.terrascale.tech`, the Atlas reverse proxy.
-The SDK first resolves scoped native discovery at
-`https://atlas.terrascale.tech/api/v1/discovery`, using the existing canonical
-`tbk1` credential and UUID scope contract, then pins direct traffic to the
-top-ranked eligible `https://<region>.api.terrascale.tech` endpoint. The pin
-lasts for the document's conservative `refreshSeconds`/expiry lifetime.
-Transport failures, 5xx, and 421 demote the failed region, fail over safe
-requests to the next ranked eligible endpoint, and re-pin later requests.
-Unavailable, malformed, or timed-out discovery use the Atlas API proxy, with a
-short failure backoff. Local credential, scope, capability, clock, and observation validation
-remain enforced. An explicit custom `api_base_url` disables discovery.
-
-`preferred_region` and `region_affinity(RegionAffinity::Failover)` prefer an
-eligible region while allowing failover; `RegionAffinity::Strict` requires a
-preferred region and uses its `.api.` origin directly. `discovery_base_url`
-selects the metadata origin (native credentials require canonical Atlas), and
-`discovery_timeout` defaults to three seconds. `RegionRtt` hints supply measured
-ranking inputs; Atlas owns ranking and admission. Routing failover does not
-consume `max_retry_attempts`; native commits are never automatically replayed.
-See [regional routing](docs/regional-routing.md) for routing and fallback details.
+Default native routing sends an authenticated scoped GET only to `https://atlas.terrascale.tech/api/v1/discovery`, using one canonical native `tbk1` credential. Atlas verifies signed current serving publications; the SDK validates the closed response and chooses the first receiver-ranked direct endpoint supporting the operation and residency. Optional `RegionRtt` hints provide measured ranking inputs without adding eligibility. Custom Atlas origins fail before native credentials are sent. An explicit reviewed direct origin remains available for producer qualification. There is no global API fallback.
 
 Discovery caches at most 128 scopes without evicting their authority/revision floors. Floors survive lease expiry within the client instance; deployment/cell moves and generation/revision regressions fail closed. A lease is at most ten seconds, clamped down by absolute expiry and transport time, and checked with wall and monotonic clocks. The client does not persist floors across process restart; the receiver owns durable floors. Clock failures/regressions fail closed. Runtime acceptance still requires independently measured healthy clock bounds and provenance. Safe native retries refresh expired routing; mutations are never automatically replayed.
 
@@ -55,4 +36,4 @@ Authentication remains a separate `auth_idp()` client using `auth_base_url` and 
 
 The obsolete HTTP SQL, management, file, schema and reactive shim APIs have been removed. SQL is a required integration capability through TerraBase's actual PostgreSQL `sql_wire`; a PostgreSQL consumer implementation and packaged qualification remain open work. Native unique/schema extensions, actual Atlas/native packaged caller and clock qualification, durable security authority and real packaged producer evidence remain release blockers. Local codec tests are not deployment or serving evidence.
 
-Run `cargo fmt --all --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`, and `cargo test --locked --all-features`. `scripts/check-native-contract.py` verifies the exact producer contract pin and `scripts/check-atlas-contract.py` separately verifies the receiver contract and fixed-clock codec fixtures migrated to the regional endpoint decision; `scripts/qualification/run.sh` exercises a separately unpacked `.crate` against a real native producer and fails when required fixture configuration is absent.
+Run `cargo fmt --all --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`, and `cargo test --locked --all-features`. `scripts/check-native-contract.py` verifies the exact producer contract pin and `scripts/check-atlas-contract.py` separately verifies the frozen receiver contract and fixed-clock raw codec fixtures; `scripts/qualification/run.sh` exercises a separately unpacked `.crate` against a real native producer and fails when required fixture configuration is absent.
