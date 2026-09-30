@@ -35,19 +35,28 @@ func validateNativeOrigin(raw string) (string, error) {
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" || (u.Path != "" && u.Path != "/") || u.RawPath != "" {
 		return "", fmt.Errorf("sdk: native data origin must be an absolute origin without credentials, path, query or fragment")
 	}
-	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
-	if host == "" {
+	hostname := u.Hostname()
+	if hostname == "" {
 		return "", fmt.Errorf("sdk: native data origin requires a hostname")
 	}
 	// net/http applies IDNA normalization to Unicode hostnames before dialing.
 	// Require the ASCII form so the validated host is exactly the dial target.
-	for _, char := range host {
+	for _, char := range hostname {
 		if char > 0x7f {
 			return "", fmt.Errorf("sdk: native data origin requires an ASCII hostname")
 		}
 	}
-	if host == "api.terrascale.tech" || strings.HasSuffix(host, ".api.terrascale.tech") {
-		return "", fmt.Errorf("sdk: the test API host family cannot be a native runtime data origin")
+	host := strings.ToLower(hostname)
+	if strings.HasSuffix(host, ".") {
+		return "", fmt.Errorf("sdk: native data origin cannot use a trailing-dot hostname")
+	}
+	if host == "terrascale.tech" {
+		return "", fmt.Errorf("sdk: native data origin requires a direct regional hostname")
+	}
+	if region, hosted := strings.CutSuffix(host, ".terrascale.tech"); hosted {
+		if hostname != host || !validNativeDiscoveryRegion(strings.ToUpper(region)) {
+			return "", fmt.Errorf("sdk: TerraScale native data origin requires a canonical direct regional hostname")
+		}
 	}
 	if u.Scheme != "https" {
 		ip := net.ParseIP(host)

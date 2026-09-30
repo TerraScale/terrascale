@@ -32,8 +32,11 @@ effects. Reconcile through transaction status before explicitly retrying.
 
 An explicit `DataBaseURL` is a source-preparation or separately authorized
 deployment option. It requires an ASCII HTTPS origin without credentials,
-paths, query, fragment, or the API host family. HTTP is limited to loopback
-development. An explicit-origin fixture does not qualify hosted runtime routing.
+paths, query, fragment, or trailing-dot hostname. TerraScale origins must use a
+lowercase direct regional hostname; the apex, reserved service labels, nested
+service hosts, and the API host family are rejected. Independent HTTPS origins
+remain valid for source preparation. HTTP is limited to loopback development.
+An explicit-origin fixture does not qualify hosted runtime routing.
 
 The archived Atlas success/denial captures are retained unchanged. Local caller
 regressions derive finite routing fixtures from them; these checks do not claim

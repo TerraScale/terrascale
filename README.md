@@ -42,7 +42,9 @@ admission. Native discovery and data never send cookies or follow redirects.
 
 An explicit `DataBaseURL` bypasses discovery for source preparation or a separately
 authorized deployment. It requires HTTPS and an ASCII hostname; credentials,
-paths, queries, fragments, and the `api.terrascale.tech` host family are rejected.
+paths, queries, fragments, trailing-dot aliases, and reserved TerraScale service
+hosts are rejected. TerraScale endpoints require a lowercase direct regional
+hostname; independent HTTPS origins remain available for source preparation.
 Explicit loopback development origins may use HTTP. Direct-origin fixtures do
 not qualify public runtime routing.
 

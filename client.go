@@ -96,6 +96,8 @@ type Config struct {
 	// DataBaseURL explicitly configures an HTTPS native regional origin with an
 	// ASCII hostname; HTTP is allowed only for loopback development. Empty uses
 	// authenticated UUID Atlas admission and never falls back to APIBaseURL.
+	// TerraScale hosts require a canonical direct region; reserved service hosts
+	// and trailing-dot aliases are rejected. Independent HTTPS origins are valid.
 	DataBaseURL string
 	// DataAccessToken and DataTokenProvider are native data credentials. They
 	// never inherit product or TSAuth management credentials.
