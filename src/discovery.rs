@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::error::{Error, ErrorKind, Result};
 use crate::management::{RegionCatalogResponse, RegionDetails};
-use crate::regions::{RegionCode, GLOBAL_API_HOST};
+use crate::regions::{regional_host_for_code, RegionCode, GLOBAL_API_HOST};
 use crate::transport::{HttpTransport, Method, Request};
 
 /// Default discovery/catalog origin (ADR 0050 §8): `ts-atlas` serves
@@ -80,7 +80,7 @@ impl RoutingCapability {
 pub struct RoutingEndpoint {
     /// Uppercase region code as published by the catalog.
     pub region: String,
-    /// Validated absolute origin, e.g. `https://fra.api.terrascale.tech`.
+    /// Validated absolute origin, e.g. `https://fra.terrascale.tech`.
     pub url: String,
     /// Rank within the document (1 = first choice).
     pub priority: u32,
@@ -126,9 +126,20 @@ pub struct RoutingDocument {
     pub endpoints: Vec<RoutingEndpoint>,
 }
 
-/// Uppercase region-code shape accepted from untrusted metadata.
+/// Service reservations mirror the producer policy in ts-atlas/docs/design.md §2:
+/// <https://git.terrascale.tech/TerraScale/ts-atlas/src/branch/main/docs/design.md>.
+/// Reserve additional service labels there and in SDKs before publishing their DNS.
+const RESERVED_SERVICE_LABELS: &[&str] = &[
+    "API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH", "DOCS", "GIT", "CDN", "ADMIN",
+    "MCP", "MAIL",
+];
+
+/// Uppercase regional code shape, excluding the producer's reserved service labels.
 #[must_use]
 pub fn is_region_code(code: &str) -> bool {
+    if RESERVED_SERVICE_LABELS.contains(&code) {
+        return false;
+    }
     let bytes = code.as_bytes();
     if bytes.is_empty() || bytes.len() > 16 {
         return false;
@@ -176,6 +187,9 @@ pub fn is_dev_host(host: &str) -> bool {
 /// (or dev origins when the client itself runs against loopback).
 #[must_use]
 pub fn validate_endpoint_url(raw: &str, region: &str, loopback_client: bool) -> Option<String> {
+    if !is_region_code(region) {
+        return None;
+    }
     if raw.is_empty() || raw.len() > 2_048 {
         return None;
     }
@@ -190,7 +204,7 @@ pub fn validate_endpoint_url(raw: &str, region: &str, loopback_client: bool) -> 
         return None;
     }
     let host = url.host_str()?.to_ascii_lowercase();
-    let expected = format!("{}.{}", region.to_ascii_lowercase(), GLOBAL_API_HOST);
+    let expected = regional_host_for_code(region);
     if url.scheme() == "https" && host == expected {
         return Some(format!("https://{expected}"));
     }
@@ -360,7 +374,14 @@ pub fn parse_region_catalog(
     let raw_hosts = doc.get("hosts")?.as_object()?;
     let mut hosts = BTreeMap::new();
     for (code, raw) in raw_hosts {
-        let url = validate_endpoint_url(raw.as_str()?, code, loopback_client)?;
+        let raw = raw.as_str()?;
+        // Catalogs contain hostnames; discovery endpoints require absolute URLs.
+        // Every hosts entry must be a regional API, matching the Atlas contract.
+        let url = if raw.eq_ignore_ascii_case(&regional_host_for_code(code)) {
+            validate_endpoint_url(&format!("https://{raw}"), code, loopback_client)?
+        } else {
+            validate_endpoint_url(raw, code, loopback_client)?
+        };
         hosts.insert(code.clone(), url);
     }
     if regions
@@ -1070,9 +1091,9 @@ mod tests {
             "placement": "known",
             "refreshSeconds": 300,
             "endpoints": [
-                { "region": "FRA", "url": "https://fra.api.terrascale.tech",
+                { "region": "FRA", "url": "https://fra.terrascale.tech",
                   "priority": 1, "capabilities": ["read", "write", "sql", "reactive"] },
-                { "region": "GRU", "url": "https://gru.api.terrascale.tech",
+                { "region": "GRU", "url": "https://gru.terrascale.tech",
                   "priority": 2, "capabilities": ["read", "sql", "reactive"] },
             ],
         })
@@ -1116,8 +1137,13 @@ mod tests {
             |doc: &mut Value| doc["refreshSeconds"] = json!(0),
             |doc: &mut Value| doc["endpoints"] = json!([]),
             |doc: &mut Value| doc["endpoints"][0]["url"] = json!("https://evil.example"),
-            |doc: &mut Value| doc["endpoints"][0]["url"] = json!("http://fra.api.terrascale.tech"),
+            |doc: &mut Value| doc["endpoints"][0]["url"] = json!("http://fra.terrascale.tech"),
+            |doc: &mut Value| doc["endpoints"][0]["url"] = json!("https://fra.api.terrascale.tech"),
             |doc: &mut Value| doc["endpoints"][0]["region"] = json!("fra"),
+            |doc: &mut Value| {
+                doc["endpoints"][0]["region"] = json!("STATUS");
+                doc["endpoints"][0]["url"] = json!("https://status.terrascale.tech");
+            },
             |doc: &mut Value| doc["endpoints"][0]["capabilities"] = json!([]),
             |doc: &mut Value| doc["endpoints"][0]["capabilities"] = json!(["admin"]),
             |doc: &mut Value| doc["endpoints"][0]["priority"] = json!(0),
@@ -1141,6 +1167,8 @@ mod tests {
 
     #[test]
     fn loopback_clients_admit_dev_endpoint_urls_only() {
+        assert!(validate_endpoint_url("https://fra.terrascale.tech", "fra", false).is_none());
+        assert!(validate_endpoint_url("http://localhost:8787", "fra", true).is_none());
         let mut doc = document();
         doc["endpoints"][0]["url"] = json!("http://localhost:8787");
         assert!(parse_routing_document(&doc, "orders", "main", false).is_none());
@@ -1157,10 +1185,37 @@ mod tests {
                 {"code": "GRU", "name": "São Paulo", "country": "BR",
                  "latitude": -23.5, "longitude": -46.6, "available": true},
             ],
-            "hosts": {"GRU": "https://gru.api.terrascale.tech"},
+            "hosts": {"GRU": "https://gru.terrascale.tech"},
         });
         let parsed = parse_region_catalog(&catalog, false).expect("catalog");
-        assert_eq!(parsed.hosts["GRU"], "https://gru.api.terrascale.tech");
+        assert_eq!(parsed.hosts["GRU"], "https://gru.terrascale.tech");
+
+        let mut bare_host = catalog.clone();
+        bare_host["hosts"]["GRU"] = json!("gru.terrascale.tech");
+        assert_eq!(
+            parse_region_catalog(&bare_host, false)
+                .expect("bare catalog host")
+                .hosts["GRU"],
+            "https://gru.terrascale.tech"
+        );
+
+        for label in [
+            "API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH", "DOCS", "GIT", "CDN",
+            "ADMIN", "MCP", "MAIL",
+        ] {
+            let host = regional_host_for_code(label);
+            assert!(!is_region_code(label), "{label} must remain reserved");
+            assert!(validate_endpoint_url(&format!("https://{host}"), label, false).is_none());
+            let mut reserved_host = catalog.clone();
+            reserved_host["hosts"][label] = json!(host);
+            assert!(parse_region_catalog(&reserved_host, false).is_none());
+        }
+
+        for host in ["gru.api.terrascale.tech", "https://gru.api.terrascale.tech"] {
+            let mut legacy_host = catalog.clone();
+            legacy_host["hosts"]["GRU"] = json!(host);
+            assert!(parse_region_catalog(&legacy_host, false).is_none());
+        }
 
         let mut bad_host = catalog.clone();
         bad_host["hosts"]["GRU"] = json!("https://evil.example");
@@ -1324,7 +1379,7 @@ mod tests {
             .resolve(&transport, "orders", false)
             .await
             .expect("resolved");
-        assert_eq!(origin, "https://fra.api.terrascale.tech");
+        assert_eq!(origin, "https://fra.terrascale.tech");
         assert_eq!(region, "FRA");
         let cold = recorder.take_requests();
         assert_eq!(cold.len(), 1);

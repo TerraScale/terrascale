@@ -3,7 +3,7 @@
 //! Failover-affinity clients on the public origin discover eligible regional
 //! endpoints through Atlas (`crate::discovery`, ADR 0050) and connect
 //! directly; strict-affinity clients pin REST (and optional WebSocket)
-//! traffic to their configured region (`<region>.api.terrascale.tech`). A
+//! traffic to their configured region (`<region>.terrascale.tech`). A
 //! `421` with `X-TerraScale-Placement` repairs a stale route.
 
 use std::fmt;
@@ -86,12 +86,12 @@ pub enum RegionAffinity {
     Strict,
 }
 
-/// Global REST entry point (GOAL D-24). Since ADR 0050 §8 this origin serves
-/// only dashboard-owned product routes; member traffic goes regional.
+/// Global REST entry point and nearest-region router (GOAL D-24).
+/// SDK data traffic uses discovered regional endpoints or strict region pinning.
 pub const GLOBAL_API_BASE_URL: &str = "https://api.terrascale.tech";
 
 /// Host of [`GLOBAL_API_BASE_URL`]; regional members live under
-/// `{region}.api.terrascale.tech`.
+/// `{region}.terrascale.tech`.
 pub const GLOBAL_API_HOST: &str = "api.terrascale.tech";
 
 /// Default reactive delivery origin.
@@ -100,7 +100,12 @@ pub const GLOBAL_SYNC_BASE_URL: &str = "https://sync.api.terrascale.tech";
 /// Regional hostname for pinned REST traffic.
 #[must_use]
 pub fn regional_host(region: RegionCode) -> String {
-    format!("{}.api.terrascale.tech", region.as_str())
+    regional_host_for_code(region.as_str())
+}
+
+/// The regional hostname contract also applies to newly admitted catalog codes.
+pub(crate) fn regional_host_for_code(region: &str) -> String {
+    format!("{}.terrascale.tech", region.to_ascii_lowercase())
 }
 
 /// Resolve the base URL for pinned traffic.

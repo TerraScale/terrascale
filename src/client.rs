@@ -19,7 +19,9 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::files::FilesClient;
 use crate::management::ManagementClient;
 use crate::reactive::ReactiveClient;
-use crate::regions::{normalize_base_url, pin_base_url, RegionAffinity, RegionCode};
+use crate::regions::{
+    normalize_base_url, pin_base_url, regional_host, RegionAffinity, RegionCode, GLOBAL_API_HOST,
+};
 use crate::sql::SqlClient;
 use crate::tenants::TenantsClient;
 use crate::transport::{HttpTransport, Method, Request, ReqwestTransport, Response};
@@ -386,13 +388,10 @@ impl Shared {
         else {
             return true;
         };
-        !matches!(
-            host.as_str(),
-            "api.terrascale.tech"
-                | "gru.api.terrascale.tech"
-                | "sfo.api.terrascale.tech"
-                | "fra.api.terrascale.tech"
-        )
+        host != GLOBAL_API_HOST
+            && ![RegionCode::Gru, RegionCode::Sfo, RegionCode::Fra]
+                .into_iter()
+                .any(|region| host == regional_host(region))
     }
 
     fn check(&self, route_name: &str, response: &Response, database: Option<&str>) -> Result<()> {

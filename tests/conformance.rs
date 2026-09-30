@@ -542,7 +542,7 @@ async fn region_pinning_and_421_repair() {
     // A custom origin serves the catalog route directly.
     let mock = Mock::new(vec![Response::json(
         200,
-        &json!({"regions":[{"code":"GRU","name":"São Paulo","country":"BR","latitude":-23.5,"longitude":-46.6,"available":true}],"hosts":{"GRU":"https://gru.api.terrascale.tech"}}),
+        &json!({"regions":[{"code":"GRU","name":"São Paulo","country":"BR","latitude":-23.5,"longitude":-46.6,"available":true}],"hosts":{"GRU":"https://gru.terrascale.tech"}}),
     )]);
     let sdk = client(Arc::clone(&mock));
     sdk.management().regions().catalog().await.expect("regions");
@@ -574,7 +574,7 @@ async fn region_pinning_and_421_repair() {
     assert!(strict.pinned_region() == Some(RegionCode::Gru));
     assert_eq!(
         mock.last_request().url,
-        "https://gru.api.terrascale.tech/api/v1/health"
+        "https://gru.terrascale.tech/api/v1/health"
     );
     assert_eq!(mock.last_request().route_name, "regions.status");
 
