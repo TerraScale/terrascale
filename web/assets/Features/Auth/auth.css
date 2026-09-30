@@ -55,7 +55,7 @@
   display: grid;
   align-content: center;
   gap: var(--ts-s5);
-  width: 100%;
+  width: min(22rem, 100%);
   margin-inline: auto;
   padding: var(--ts-s10) var(--ts-s6);
 }
@@ -84,10 +84,6 @@
 
   .ts-login-column {
     border-left: 0;
-  }
-
-  .ts-login-panel {
-    width: min(22rem, calc(100% - 2 * var(--ts-s4)));
   }
 
   .ts-login-logo {

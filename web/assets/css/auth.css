@@ -81,7 +81,7 @@
 
 .ts-auth-providers {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(min-content, 1fr));
   gap: var(--ts-s2);
 }
 
