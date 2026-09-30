@@ -76,7 +76,9 @@ internal static class TerraScaleRoutingValidation
     public const int MaxRefreshSeconds = 3600;
     public const int MaxEndpoints = 20;
 
-    private const string GlobalApiHostname = "api.terrascale.tech";
+    internal const string RegionalApiDomain = "terrascale.tech";
+
+    internal static string RegionalApiHostname(string region) => $"{region.ToLowerInvariant()}.{RegionalApiDomain}";
 
     /// <summary>Loopback and <c>*.localhost</c> origins: the dev worker publishes these from its DEV_ORIGINS.</summary>
     internal static bool IsDevOrigin(Uri uri) =>
@@ -112,7 +114,7 @@ internal static class TerraScaleRoutingValidation
 
     /// <summary>
     /// Validates one discovered endpoint URL: HTTPS on the
-    /// <c>{region}.api.terrascale.tech</c> family only, or an HTTP dev origin
+    /// <c>{region}.terrascale.tech</c> family only, or an HTTP dev origin
     /// when the client itself targets loopback. The canonical origin is
     /// returned; anything else is rejected.
     /// </summary>
@@ -132,7 +134,7 @@ internal static class TerraScaleRoutingValidation
             return false;
         }
 
-        var expectedHostname = $"{region.ToLowerInvariant()}.{GlobalApiHostname}";
+        var expectedHostname = RegionalApiHostname(region);
         if (parsed.Scheme == Uri.UriSchemeHttps &&
             string.Equals(parsed.Host, expectedHostname, StringComparison.OrdinalIgnoreCase))
         {
@@ -433,8 +435,16 @@ internal static class TerraScaleRoutingValidation
                     return null;
                 }
 
-                if (host.Value.ValueKind != JsonValueKind.String ||
-                    !TryValidateEndpointUrl(host.Value.GetString(), host.Name, loopbackClient, out var url))
+                if (host.Value.ValueKind != JsonValueKind.String)
+                {
+                    return null;
+                }
+
+                // Atlas catalogs publish bare hostnames; discovery endpoints require absolute URLs.
+                var rawHost = host.Value.GetString()!;
+                var origin = string.Equals(rawHost, RegionalApiHostname(host.Name), StringComparison.OrdinalIgnoreCase)
+                    ? $"https://{rawHost}" : rawHost;
+                if (!TryValidateEndpointUrl(origin, host.Name, loopbackClient, out var url))
                 {
                     return null;
                 }

@@ -80,7 +80,7 @@ public sealed class TerraScaleReactiveHttpClientTests
         var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions
         {
             BaseAddress = new Uri("https://sync.api.terrascale.tech"),
-            ApiBaseAddress = new Uri("https://member.api.terrascale.tech"),
+            ApiBaseAddress = new Uri("https://member.terrascale.tech"),
             BearerToken = "token",
             RegionHint = "gru",
             MaxRetryAttempts = 0,
