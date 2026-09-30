@@ -1,12 +1,7 @@
 /* Databases list and detail: search, name cell, detail header, create dialog,
    facts grid, backup switch, and the danger zone. */
 
-/* The table actions are content-sized; the search shrinks as needed and
-   takes its own full-width row on mobile. */
-#project-databases .ts-card-actions {
-  min-width: 0;
-}
-
+/* Search shrinks as needed and takes its own full-width row on mobile. */
 .ts-db-search {
   flex: 0 1 240px;
   flex-wrap: nowrap;

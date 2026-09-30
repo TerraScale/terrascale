@@ -218,7 +218,7 @@ func databasesContent(page core.Page, d pageData) templ.Component {
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "project-databases", Title: "Project databases", Description: databaseCount(d), Actions: databaseActions(d), Flush: true}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var4), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "project-databases", Title: "Project databases", Description: databaseCount(d), Actions: databaseActions(d), Flush: true, ShrinkActions: true}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var4), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
