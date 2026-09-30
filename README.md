@@ -25,7 +25,7 @@ The explicit remote qualification lane runs against a real sandbox branch and
 fails closed unless all sandbox credentials are supplied:
 
 ```bash
-TERRASCALE_SANDBOX_URL=https://<region>.terrascale.tech \
+TERRASCALE_SANDBOX_URL=https://<region>.api.terrascale.tech \
 TERRASCALE_SANDBOX_API_KEY=ts_... \
 TERRASCALE_SANDBOX_DATABASE_ID=db_... \
 npm run test:remote
