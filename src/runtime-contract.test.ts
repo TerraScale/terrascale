@@ -120,8 +120,10 @@ test("browser automation names every supported browser family", async () => {
 test("public guidance records the runtime and API compatibility policy", async () => {
   const readme = await readFile(path.join(repositoryRoot, "README.md"), "utf8");
   assert.match(readme, /Node\.js 22 and 24/u);
-  assert.match(readme, /current stable major versions of Chrome, Firefox, Safari, and Edge/u);
-  assert.match(readme, /public API `\/api\/v1`/u);
+  assert.match(readme, /current stable major versions of\s+Chrome, Firefox, Safari, and Edge/u);
+  assert.match(readme, /scoped `\/v1` document protocol/u);
+  assert.match(readme, /canonical UUID tenant\/database\/collection\/document IDs/u);
+  assert.match(readme, /api\.terrascale\.tech` is a test host and is rejected/u);
   assert.match(readme, /exact packed tarball/u);
 });
 

@@ -3,6 +3,7 @@ import {
   isRegionCode,
   terraScaleDiscoveryHostname,
   terraScaleGlobalApiHostname,
+  regionalApiHostname,
   type TerraScaleRegionCode,
 } from "./regions.js";
 
@@ -56,7 +57,7 @@ export type TerraScaleRoutingOptions = {
 export const defaultDiscoveryTimeoutMs = 3_000;
 export const defaultRequestTimeoutMs = 30_000;
 
-const minRefreshSeconds = 60;
+const minRefreshSeconds = 1;
 const maxRefreshSeconds = 3_600;
 const maxEndpoints = 20;
 
@@ -109,7 +110,7 @@ function validateEndpointUrl(raw: unknown, region: TerraScaleRegionCode, loopbac
   }
   if (url.username !== "" || url.password !== "") return null;
   if (url.hash !== "" || url.search !== "") return null;
-  const expectedHostname = `${region.toLowerCase()}.${terraScaleGlobalApiHostname}`;
+  const expectedHostname = regionalApiHostname(region);
   if (url.protocol === "https:" && url.hostname.toLowerCase() === expectedHostname) {
     return `${url.protocol}//${expectedHostname}`;
   }
@@ -224,7 +225,7 @@ export function routingDocumentFromPlacement(
   if (unique.length === 0) return null;
   const endpoints = unique.slice(0, maxEndpoints).map((region, index) => ({
     region,
-    url: `https://${region.toLowerCase()}.${terraScaleGlobalApiHostname}`,
+    url: `https://${regionalApiHostname(region)}`,
     priority: index + 1,
     capabilities: [...routingCapabilities],
   }));

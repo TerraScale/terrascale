@@ -1,4 +1,6 @@
 export * from "./config.js";
+export * from "./database.js";
+export * from "./database-types.js";
 export * from "./discovery.js";
 export * from "./factory.js";
 export * from "./models.js";

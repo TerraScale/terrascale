@@ -25,8 +25,8 @@ function validDocumentPayload(overrides: Record<string, unknown> = {}): Record<s
     placement: "known",
     refreshSeconds: 300,
     endpoints: [
-      { region: "FRA", url: "https://fra.api.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] },
-      { region: "GRU", url: "https://gru.api.terrascale.tech", priority: 2, capabilities: ["read", "sql", "reactive"] },
+      { region: "FRA", url: "https://fra.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] },
+      { region: "GRU", url: "https://gru.terrascale.tech", priority: 2, capabilities: ["read", "sql", "reactive"] },
     ],
     ...overrides,
   };
@@ -49,9 +49,9 @@ describe("parseRoutingDocument", () => {
     expect(parseRoutingDocument(validDocumentPayload({ residency: 7 }), { database: "orders", branch: "main" })).toBeNull();
   });
 
-  it("clamps refreshSeconds into the 60–3600 window", () => {
+  it("preserves short producer validity and caps refreshSeconds at 3600", () => {
     const short = parseRoutingDocument(validDocumentPayload({ refreshSeconds: 1 }), { database: "orders", branch: "main" });
-    expect(short?.refreshSeconds).toBe(60);
+    expect(short?.refreshSeconds).toBe(1);
     const long = parseRoutingDocument(validDocumentPayload({ refreshSeconds: 10_000 }), { database: "orders", branch: "main" });
     expect(long?.refreshSeconds).toBe(3_600);
   });
@@ -64,15 +64,15 @@ describe("parseRoutingDocument", () => {
     expect(parse(validDocumentPayload({ placement: "elsewhere" }))).toBeNull();
     expect(parse(validDocumentPayload({ revision: -1 }))).toBeNull();
     expect(parse(validDocumentPayload({ endpoints: [] }))).toBeNull();
-    expect(parse(validDocumentPayload({ endpoints: [{ region: "fra", url: "https://fra.api.terrascale.tech", priority: 1, capabilities: ["read"] }] }))).toBeNull();
+    expect(parse(validDocumentPayload({ endpoints: [{ region: "fra", url: "https://fra.terrascale.tech", priority: 1, capabilities: ["read"] }] }))).toBeNull();
     expect(parse(validDocumentPayload({ endpoints: [
-      { region: "FRA", url: "https://fra.api.terrascale.tech", priority: 1, capabilities: ["read"] },
-      { region: "FRA", url: "https://fra.api.terrascale.tech", priority: 2, capabilities: ["read"] },
+      { region: "FRA", url: "https://fra.terrascale.tech", priority: 1, capabilities: ["read"] },
+      { region: "FRA", url: "https://fra.terrascale.tech", priority: 2, capabilities: ["read"] },
     ] }))).toBeNull();
     expect(parse(validDocumentPayload({ endpoints: [{ region: "FRA", url: "https://evil.example.com", priority: 1, capabilities: ["read"] }] }))).toBeNull();
-    expect(parse(validDocumentPayload({ endpoints: [{ region: "FRA", url: "https://user:pass@fra.api.terrascale.tech", priority: 1, capabilities: ["read"] }] }))).toBeNull();
-    expect(parse(validDocumentPayload({ endpoints: [{ region: "FRA", url: "https://fra.api.terrascale.tech", priority: 1, capabilities: ["federation"] }] }))).toBeNull();
-    expect(parse(validDocumentPayload({ endpoints: [{ region: "FRA", url: "https://fra.api.terrascale.tech", priority: 2, capabilities: ["read"] }] }))).toBeNull();
+    expect(parse(validDocumentPayload({ endpoints: [{ region: "FRA", url: "https://user:pass@fra.terrascale.tech", priority: 1, capabilities: ["read"] }] }))).toBeNull();
+    expect(parse(validDocumentPayload({ endpoints: [{ region: "FRA", url: "https://fra.terrascale.tech", priority: 1, capabilities: ["federation"] }] }))).toBeNull();
+    expect(parse(validDocumentPayload({ endpoints: [{ region: "FRA", url: "https://fra.terrascale.tech", priority: 2, capabilities: ["read"] }] }))).toBeNull();
   });
 
   it("never admits plain-http endpoints for public clients but admits loopback for dev clients", () => {
@@ -129,8 +129,8 @@ function catalogPayload(overrides: Record<string, unknown> = {}): Record<string,
       { code: "GRU", name: "Sao Paulo", country: "BR", latitude: -23.5475, longitude: -46.6361, available: false },
     ],
     hosts: {
-      FRA: "https://fra.api.terrascale.tech",
-      GRU: "https://gru.api.terrascale.tech",
+      FRA: "https://fra.terrascale.tech",
+      GRU: "https://gru.terrascale.tech",
     },
     ...overrides,
   };
@@ -140,13 +140,13 @@ describe("parseRegionCatalog", () => {
   it("accepts a well-formed catalog", () => {
     const catalog = parseRegionCatalog(catalogPayload());
     expect(catalog?.regions).toHaveLength(2);
-    expect(catalog?.hosts.FRA).toBe("https://fra.api.terrascale.tech");
+    expect(catalog?.hosts.FRA).toBe("https://fra.terrascale.tech");
   });
 
   it("rejects unknown regions, duplicates, and structural doubts", () => {
     expect(parseRegionCatalog(catalogPayload({ regions: [
       { code: "fra", name: "Frankfurt", country: "DE", latitude: 1, longitude: 1, available: true },
-    ], hosts: { fra: "https://fra.api.terrascale.tech" } }))).toBeNull();
+    ], hosts: { fra: "https://fra.terrascale.tech" } }))).toBeNull();
     expect(parseRegionCatalog(catalogPayload({ regions: [
       { code: "FRA", name: "Frankfurt", country: "DE", latitude: 1, longitude: 1, available: true },
       { code: "FRA", name: "Frankfurt", country: "DE", latitude: 1, longitude: 1, available: false },
@@ -158,13 +158,13 @@ describe("parseRegionCatalog", () => {
     expect(parseRegionCatalog(catalogPayload({ regions: [
       { code: "FRA", name: "Frankfurt", country: "DE", latitude: 1, longitude: 1, available: "yes" },
     ] }))).toBeNull();
-    expect(parseRegionCatalog(catalogPayload({ hosts: { SFO: "https://sfo.api.terrascale.tech", FRA: "https://fra.api.terrascale.tech", GRU: "https://gru.api.terrascale.tech" } }))).toBeNull();
+    expect(parseRegionCatalog(catalogPayload({ hosts: { SFO: "https://sfo.terrascale.tech", FRA: "https://fra.terrascale.tech", GRU: "https://gru.terrascale.tech" } }))).toBeNull();
   });
 
   it("rejects missing hosts entries and non-trusted hosts", () => {
-    expect(parseRegionCatalog(catalogPayload({ hosts: { FRA: "https://fra.api.terrascale.tech" } }))).toBeNull();
-    expect(parseRegionCatalog(catalogPayload({ hosts: { FRA: "https://evil.example.com", GRU: "https://gru.api.terrascale.tech" } }))).toBeNull();
-    expect(parseRegionCatalog(catalogPayload({ hosts: { FRA: "http://fra.api.terrascale.tech", GRU: "https://gru.api.terrascale.tech" } }))).toBeNull();
+    expect(parseRegionCatalog(catalogPayload({ hosts: { FRA: "https://fra.terrascale.tech" } }))).toBeNull();
+    expect(parseRegionCatalog(catalogPayload({ hosts: { FRA: "https://evil.example.com", GRU: "https://gru.terrascale.tech" } }))).toBeNull();
+    expect(parseRegionCatalog(catalogPayload({ hosts: { FRA: "http://fra.terrascale.tech", GRU: "https://gru.terrascale.tech" } }))).toBeNull();
   });
 
   it("admits loopback hosts only for loopback clients", () => {
@@ -305,9 +305,9 @@ describe("TerraScaleDiscoveryRouter", () => {
       return Response.json(validDocumentPayload());
     });
     const read = await router.resolveBase("orders", false);
-    expect(read?.baseUrl).toBe("https://fra.api.terrascale.tech");
+    expect(read?.baseUrl).toBe("https://fra.terrascale.tech");
     const write = await router.resolveBase("orders", true);
-    expect(write?.baseUrl).toBe("https://fra.api.terrascale.tech");
+    expect(write?.baseUrl).toBe("https://fra.terrascale.tech");
     expect(new URL(seen!.url).searchParams.get("database")).toBe("orders");
     expect(new URL(seen!.url).searchParams.get("branch")).toBe("main");
   });
@@ -315,13 +315,13 @@ describe("TerraScaleDiscoveryRouter", () => {
   it("moves writes past a draining endpoint and keeps the moved-to region sticky", async () => {
     const router = routerWith(async () => Response.json(validDocumentPayload({
       endpoints: [
-        { region: "FRA", url: "https://fra.api.terrascale.tech", priority: 1, capabilities: ["read", "sql", "reactive"] },
-        { region: "GRU", url: "https://gru.api.terrascale.tech", priority: 2, capabilities: ["read", "write"] },
+        { region: "FRA", url: "https://fra.terrascale.tech", priority: 1, capabilities: ["read", "sql", "reactive"] },
+        { region: "GRU", url: "https://gru.terrascale.tech", priority: 2, capabilities: ["read", "write"] },
       ],
     })));
-    expect((await router.resolveBase("orders", true))?.baseUrl).toBe("https://gru.api.terrascale.tech");
+    expect((await router.resolveBase("orders", true))?.baseUrl).toBe("https://gru.terrascale.tech");
     // GRU stays pinned for reads while it remains eligible (ADR 0050 §5.5).
-    expect((await router.resolveBase("orders", false))?.baseUrl).toBe("https://gru.api.terrascale.tech");
+    expect((await router.resolveBase("orders", false))?.baseUrl).toBe("https://gru.terrascale.tech");
   });
 
   it("caches per scope and shares one in-flight discovery", async () => {
@@ -373,8 +373,8 @@ describe("TerraScaleDiscoveryRouter", () => {
       discoveryTimeoutMs: 500,
     }, new TerraScaleRoutingCache(), catalogCache);
     // GRU is listed second but unavailable; the first available region wins.
-    expect(await router.resolveCatalogBase()).toBe("https://fra.api.terrascale.tech");
-    expect(await router.resolveCatalogBase()).toBe("https://fra.api.terrascale.tech");
+    expect(await router.resolveCatalogBase()).toBe("https://fra.terrascale.tech");
+    expect(await router.resolveCatalogBase()).toBe("https://fra.terrascale.tech");
     expect(catalogFetches).toBe(1);
     clock += 301_000;
     await router.resolveCatalogBase();
@@ -398,7 +398,7 @@ describe("TerraScaleDiscoveryRouter", () => {
     expect(await router.resolveCatalogBase()).toBeUndefined();
     fail = false;
     // Refresh on failure: nothing was cached, so the next call refetches.
-    expect(await router.resolveCatalogBase()).toBe("https://fra.api.terrascale.tech");
+    expect(await router.resolveCatalogBase()).toBe("https://fra.terrascale.tech");
     expect(catalogFetches).toBe(2);
   });
 
@@ -419,8 +419,8 @@ describe("TerraScaleDiscoveryRouter", () => {
       discoveryBaseUrl: "https://api.terrascale.tech",
       fetch: async () => Response.json(validDocumentPayload(gruFirst ? {
         endpoints: [
-          { region: "GRU", url: "https://gru.api.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] },
-          { region: "FRA", url: "https://fra.api.terrascale.tech", priority: 2, capabilities: ["read", "write", "sql", "reactive"] },
+          { region: "GRU", url: "https://gru.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] },
+          { region: "FRA", url: "https://fra.terrascale.tech", priority: 2, capabilities: ["read", "write", "sql", "reactive"] },
         ],
       } : {})),
       timeoutMs: 30_000,
@@ -442,7 +442,7 @@ describe("TerraScaleDiscoveryRouter", () => {
       origin: "https://api.terrascale.tech",
       discoveryBaseUrl: "https://api.terrascale.tech",
       fetch: async () => Response.json(withFra ? validDocumentPayload() : validDocumentPayload({
-        endpoints: [{ region: "GRU", url: "https://gru.api.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] }],
+        endpoints: [{ region: "GRU", url: "https://gru.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] }],
       })),
       timeoutMs: 30_000,
       discoveryTimeoutMs: 500,

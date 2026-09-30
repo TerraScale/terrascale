@@ -71,12 +71,14 @@
     "!dist/**/*capture*",
     "!dist/**/*.map",
     "sdk-route-manifest.json",
+    "sdk-current-contract.json",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
     "qualify:artifact": "node scripts/qualify-npm-artifact.ts",
+    "qualify:current-producer": "node scripts/qualification/current-producer-consumer.mjs",
     "check:route-manifest": "node scripts/generate-client-route-manifest.ts --check",
     "check:openapi-contract-descriptor": "node scripts/generate-openapi-contract-descriptor.ts --check",
     "check:public-contract-fixture": "vitest run test/public-contract-fixture.test.ts",

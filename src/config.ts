@@ -103,7 +103,10 @@ export function resolveRuntimeConfig(
     throw new TypeError("requestTimeoutMs must be an integer between 0 and 300000.");
   }
 
-  const globalApiBaseUrl = normalizeBaseUrl(config.apiBaseUrl ?? "https://api.terrascale.tech");
+  if (config.apiBaseUrl === undefined) {
+    throw new TypeError("This service client requires its actual apiBaseUrl. Use createTerraBaseClient for Atlas-discovered database requests.");
+  }
+  const globalApiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
   const apiBaseUrl = regionAffinity === "strict"
     ? strictRegionalBaseUrl(globalApiBaseUrl, preferredRegion!)
     : globalApiBaseUrl;
@@ -157,18 +160,20 @@ function normalizeBaseUrl(baseUrl: string): string {
   ) {
     throw new TypeError("TerraScale SDK clients may target only the public API, not TBEP or TerraBase.");
   }
+  const hostname = url.hostname.replace(/\.+$/u, "");
+  if (hostname === "api.terrascale.tech" || hostname.endsWith(".api.terrascale.tech")) {
+    throw new TypeError("The test API host is not an admitted service origin.");
+  }
 
   return normalized;
 }
 
 function strictRegionalBaseUrl(baseUrl: string, region: TerraScaleRegionCode): string {
   const url = new URL(`${baseUrl}/`);
-  const regionalHostname = `${region.toLowerCase()}.api.terrascale.tech`;
-  if (url.hostname === "api.terrascale.tech") {
-    url.hostname = regionalHostname;
-  } else if (url.hostname !== regionalHostname) {
+  const regionalHostname = `${region.toLowerCase()}.terrascale.tech`;
+  if (url.hostname !== regionalHostname) {
     throw new TypeError(
-      "Strict regional affinity requires the global TerraScale API URL or the selected regional URL.",
+      "Strict regional affinity requires the selected direct regional URL.",
     );
   }
 

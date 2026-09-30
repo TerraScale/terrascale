@@ -3,7 +3,7 @@ export const terraScaleRegionCodes = ["GRU", "SFO", "FRA"] as const;
 /** Region codes are admitted by the published catalog and may grow over time. */
 export type TerraScaleRegionCode = string;
 
-/** The public global REST origin. Regional hosts are derived from this name. */
+/** A test-only host retained solely for rejection/classification during package cutover. */
 export const terraScaleGlobalApiHostname = "api.terrascale.tech";
 
 /**
@@ -17,7 +17,7 @@ export const terraScaleDiscoveryBaseUrl = `https://${terraScaleDiscoveryHostname
 
 /** Return the canonical public hostname for a Region's REST member. */
 export function regionalApiHostname(region: TerraScaleRegionCode): string {
-  return `${region.toLowerCase()}.${terraScaleGlobalApiHostname}`;
+  return `${region.toLowerCase()}.terrascale.tech`;
 }
 
 /**
