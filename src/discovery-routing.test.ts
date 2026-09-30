@@ -1,409 +1,504 @@
-import assert from "node:assert/strict";
-import { describe, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { createTerraBaseClient } from "./database.js";
+import { TerraBaseDiscoveryRouter } from "./discovery.js";
+import type { DatabaseCommit } from "./database-types.js";
 
-import { TerraScaleHttp } from "./http.js";
+// Exact actual receiver bytes; mutations below are deterministic negative/ranking conformance only.
+const successBytes = "{\"schema_version\":1,\"scope\":{\"tenant_id\":\"10000000-0000-0000-0000-000000000001\",\"database_id\":\"20000000-0000-0000-0000-000000000001\",\"shard_id\":\"18446744073709551615\"},\"authority\":{\"deployment_id\":\"fixture-deployment\",\"cell\":\"gru\",\"publisher_id\":\"publisher-a\",\"publisher_generation\":\"18446744073709551615\"},\"revision\":\"41\",\"published_at\":1790769600,\"expires_at\":1790769609,\"refreshSeconds\":8,\"residency\":null,\"endpoints\":[{\"region\":\"GRU\",\"url\":\"https://gru.terrascale.tech\",\"catalog\":{\"digest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},\"capabilities\":{\"atomic_groups\":false,\"client_v1\":true,\"conditional_mutation\":false,\"query\":true,\"read\":true,\"security_state\":false,\"subscriptions\":true,\"write\":true},\"security_writer\":null,\"priority\":1}]}";
+const forbiddenBytes = "{\"error\":{\"code\":\"discovery_forbidden\",\"message\":\"native discovery admission is unavailable\",\"fix\":\"retry with current authorized native scope metadata\"}}";
+const now = 1790769600000;
+const scope = { tenant: "10000000-0000-0000-0000-000000000001", database: "20000000-0000-0000-0000-000000000001", shard: 18446744073709551615n };
+const collection = "30000000-0000-0000-0000-000000000001";
+const document = "40000000-0000-0000-0000-000000000001";
+const replica = "50000000-0000-0000-0000-000000000001";
+const key = "tbk1." + Buffer.alloc(16, 5).toString("base64url") + "." + Buffer.alloc(32, 6).toString("base64url");
+const rotatedKey = "tbk1." + Buffer.alloc(16, 7).toString("base64url") + "." + Buffer.alloc(32, 8).toString("base64url");
+const headers = { "content-type": "application/json", "cache-control": "private, no-store" };
+const response = (value: unknown, status = 200): Response => new Response(typeof value === "string" ? value : JSON.stringify(value), { status, headers });
+const fixture = (): Record<string, any> => JSON.parse(successBytes);
+const point = { version: 1, state: "absent", state_version: null, context: [], siblings: [] };
+const commit = (): DatabaseCommit => ({
+  transaction_id: { expires_at_unix_ms: 1790770200000n, nonce: "01".repeat(16) }, authority: { mode: "leaderless" },
+  writes: [{ collection, document, schema_generation: 1n, schema_digest: "cc".repeat(32), condition: { kind: "none" }, observed: [], value: { kind: "live", fields: [] } }],
+});
+const advanceLease = (value: Record<string, any>, time: number): void => {
+  value.published_at = time / 1000; value.expires_at = time / 1000 + 9; value.refreshSeconds = 8;
+};
 
-function discoveryPayload(database: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    v: 1,
-    database,
-    branch: "main",
-    revision: 11,
-    updated: 1_725_300_000,
-    residency: null,
-    placement: "known",
-    refreshSeconds: 300,
-    endpoints: [
-      { region: "FRA", url: "https://fra.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] },
-      { region: "GRU", url: "https://gru.terrascale.tech", priority: 2, capabilities: ["read", "write", "sql", "reactive"] },
-    ],
-    ...overrides,
-  };
-}
+afterEach(() => vi.useRealTimers());
 
-type ScriptedResponse = (request: Request) => Response | Promise<Response>;
-
-function catalogPayload(overrides: {
-  regions?: Record<string, unknown>[];
-  hosts?: Record<string, string>;
-} = {}): Record<string, unknown> {
-  return {
-    regions: overrides.regions ?? [
-      { code: "FRA", name: "Frankfurt", country: "DE", latitude: 50.1109, longitude: 8.6821, available: true },
-      { code: "GRU", name: "Sao Paulo", country: "BR", latitude: -23.5475, longitude: -46.6361, available: true },
-    ],
-    hosts: overrides.hosts ?? {
-      FRA: "fra.terrascale.tech",
-      GRU: "gru.terrascale.tech",
-    },
-  };
-}
-
-/**
- * A fetch fake that records every request and answers discovery and the
- * region catalog separately. Each test uses a distinct database name (and,
- * for catalog-dependent tests, a distinct `routing.baseUrl`) so the
- * process-wide routing and catalog caches stay hermetic across tests.
- */
-function scriptedFetch(database: string, options: {
-  discovery?: (request: Request) => Response | Promise<Response>;
-  catalog?: (request: Request) => Response | Promise<Response>;
-  data?: ScriptedResponse;
-} = {}): { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>; requests: Request[] } {
-  const requests: Request[] = [];
-  return {
-    requests,
-    fetch: async (input) => {
-      const request = new Request(input);
-      requests.push(request.clone());
-      const url = new URL(request.url);
-      if (url.pathname === "/api/v1/discovery") {
-        return options.discovery?.(request) ?? Response.json(discoveryPayload(database));
-      }
-      if (url.pathname === "/api/v1/regions") {
-        return options.catalog?.(request) ?? Response.json(catalogPayload());
-      }
-      return options.data?.(request) ?? Response.json({ ok: true });
-    },
-  };
-}
-
-function http(options: {
-  fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-  accessToken?: string | (() => Promise<string | undefined>);
-  projectId?: string;
-  maxRetryAttempts?: number;
-  retryDelayMs?: number;
-  routingBaseUrl?: string;
-}): TerraScaleHttp {
-  return new TerraScaleHttp({
-    fetch: options.fetch,
-    ...(options.accessToken === undefined ? {} : { accessToken: options.accessToken }),
-    ...(options.projectId === undefined ? {} : { projectId: options.projectId as never }),
-    ...(options.maxRetryAttempts === undefined ? {} : { maxRetryAttempts: options.maxRetryAttempts }),
-    ...(options.retryDelayMs === undefined ? {} : { retryDelayMs: options.retryDelayMs }),
-    ...(options.routingBaseUrl === undefined ? {} : { routing: { baseUrl: options.routingBaseUrl } }),
-  });
-}
-
-function documentPath(database: string): string {
-  return `api/v1/databases/${database}/collections/users/documents/ada`;
-}
-
-describe("discovery-driven request routing (ADR 0050)", () => {
-  test("database-scoped requests discover once at atlas, then connect directly", async () => {
-    const transport = scriptedFetch("orders-once");
-    const client = http({ fetch: transport.fetch });
-    const path = documentPath("orders-once");
-
-    const first = await client.request<unknown>({ method: "GET", path, routeName: "documents.get" });
-    assert.equal(first.ok, true);
-    const second = await client.request<unknown>({ method: "GET", path, routeName: "documents.get" });
-    assert.equal(second.ok, true);
-
-    const urls = transport.requests.map((request) => new URL(request.url).origin + new URL(request.url).pathname);
-    assert.deepEqual(urls, [
-      "https://atlas.terrascale.tech/api/v1/discovery",
-      `https://fra.terrascale.tech/${path}`,
-      `https://fra.terrascale.tech/${path}`,
-    ]);
+describe("native Atlas routing freshness and observation", () => {
+  test("uses receiver priority among operation-eligible regions, independently of array or static region order", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const value = fixture();
+    value.endpoints.push({ ...structuredClone(value.endpoints[0]), region: "FRA", url: "https://fra.terrascale.tech", priority: 1 });
+    value.endpoints[0].priority = 2; value.endpoints[1].capabilities.read = false;
+    const router = new TerraBaseDiscoveryRouter(scope, async () => response(value));
+    expect((await router.resolve(key, ["client_v1", "write"])).region).toBe("FRA");
+    expect((await router.resolve(key, ["client_v1", "read"])).region).toBe("GRU");
+    expect((await router.resolve(key, ["client_v1", "read", "query"])).region).toBe("GRU");
   });
 
-  test("database-less member routes select a regional endpoint from the catalog", async () => {
-    const transport = scriptedFetch("orders-list");
-    const client = http({ fetch: transport.fetch, routingBaseUrl: "https://atlas-member.test" });
-    const result = await client.request<unknown>({ method: "GET", path: "api/v1/databases", routeName: "databases.list" });
-    assert.equal(result.ok, true);
-    const urls = transport.requests.map((request) => new URL(request.url).origin + new URL(request.url).pathname);
-    assert.deepEqual(urls, [
-      "https://atlas-member.test/api/v1/regions",
-      "https://fra.terrascale.tech/api/v1/databases",
-    ]);
+  test("never rounds a short lease up; expiry requests all four exact observed cursor fields", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const requests: Request[] = [];
+    const value = fixture(); value.refreshSeconds = 1;
+    const router = new TerraBaseDiscoveryRouter(scope, async input => { requests.push(input as Request); return response(value); });
+    await router.resolve(key, ["read"]);
+    vi.setSystemTime(now + 999); await router.resolve(key, ["read"]); expect(requests).toHaveLength(1);
+    vi.setSystemTime(now + 1000); await router.resolve(key, ["read"]); expect(requests).toHaveLength(2);
+    expect(Object.fromEntries(new URL(requests[1]!.url).searchParams)).toEqual({
+      tenant_id: scope.tenant, database_id: scope.database, shard_id: scope.shard.toString(),
+      observed_deployment_id: "fixture-deployment", observed_cell: "gru", observed_publisher_generation: "18446744073709551615", rev: "41",
+    });
   });
 
-  test("discovery failure degrades to catalog selection, never to a proxy", async () => {
-    const transport = scriptedFetch("orders-fallback", {
-      discovery: () => new Response("unavailable", { status: 503 }),
-    });
-    const client = http({ fetch: transport.fetch, routingBaseUrl: "https://atlas-fallback.test" });
-    const result = await client.request<unknown>({ method: "GET", path: documentPath("orders-fallback"), routeName: "documents.get" });
-    assert.equal(result.ok, true);
-    const urls = transport.requests.map((request) => new URL(request.url).origin + new URL(request.url).pathname);
-    assert.deepEqual(urls, [
-      "https://atlas-fallback.test/api/v1/discovery",
-      "https://atlas-fallback.test/api/v1/regions",
-      `https://fra.terrascale.tech/${documentPath("orders-fallback")}`,
-    ]);
-    // The retired per-request proxy: no data request ever targets the product origin.
-    assert.equal(urls.some((url) => url.startsWith("https://api.terrascale.tech/")), false);
+  test("subtracts network delay and never serves beyond absolute expiry", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    let calls = 0;
+    const router = new TerraBaseDiscoveryRouter(scope, async () => { calls++; vi.setSystemTime(calls === 1 ? now + 7500 : now + 9000); return response(successBytes); });
+    await router.resolve(key, ["read"]); expect(calls).toBe(1);
+    vi.setSystemTime(now + 8000);
+    await expect(router.resolve(key, ["read"])).rejects.toMatchObject({ code: "invalid_response" });
+    expect(calls).toBe(2);
   });
 
-  test("writes skip a draining endpoint", async () => {
-    const transport = scriptedFetch("orders-drain", {
-      discovery: () => Response.json(discoveryPayload("orders-drain", {
-        endpoints: [
-          { region: "FRA", url: "https://fra.terrascale.tech", priority: 1, capabilities: ["read", "sql", "reactive"] },
-          { region: "GRU", url: "https://gru.terrascale.tech", priority: 2, capabilities: ["read", "write", "sql", "reactive"] },
-        ],
-      })),
-    });
-    const client = http({ fetch: transport.fetch, accessToken: "secret" });
-    const result = await client.request<unknown>({
-      method: "PUT",
-      path: documentPath("orders-drain"),
-      routeName: "documents.put",
-      body: { name: "Ada" },
-      idempotencyKey: "write-1",
-    });
-    assert.equal(result.ok, true);
-    assert.equal(new URL(transport.requests[1]!.url).origin, "https://gru.terrascale.tech");
+  test("network delay consuming the complete TTL fails without caching", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const router = new TerraBaseDiscoveryRouter(scope, async () => { vi.setSystemTime(now + 8000); return response(successBytes); });
+    await expect(router.resolve(key, ["read"])).rejects.toMatchObject({ code: "routing_expired" });
   });
 
-  test("a member 421 adopts placement and repairs once", async () => {
-    let dataCalls = 0;
-    const transport = scriptedFetch("orders-421", {
-      data: () => {
-        dataCalls++;
-        if (dataCalls === 1) {
-          return new Response(JSON.stringify({ error: "misdirected", message: "not hosted in FRA" }), {
-            status: 421,
-            headers: { "x-terrascale-placement": "SFO,GRU", "content-type": "application/json" },
-          });
-        }
-        return Response.json({ ok: true });
-      },
-    });
-    const client = http({ fetch: transport.fetch });
-    const path = documentPath("orders-421");
-    const result = await client.request<unknown>({ method: "GET", path, routeName: "documents.get" });
-    assert.equal(result.ok, true);
-
-    // Discovery, misdirected regional attempt, repaired replay on SFO.
-    assert.equal(new URL(transport.requests[0]!.url).pathname, "/api/v1/discovery");
-    assert.equal(new URL(transport.requests[1]!.url).origin, "https://fra.terrascale.tech");
-    assert.equal(new URL(transport.requests[2]!.url).origin, "https://sfo.terrascale.tech");
-
-    // The placement header now routes follow-ups directly to SFO.
-    await client.request<unknown>({ method: "GET", path, routeName: "documents.get" });
-    assert.equal(new URL(transport.requests[3]!.url).origin, "https://sfo.terrascale.tech");
-    assert.equal(transport.requests.filter((request) => request.url.includes("/api/v1/discovery")).length, 1);
+  test("a backward wall-clock step cannot extend the monotonic deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const monotonic = vi.spyOn(performance, "now").mockReturnValue(1000);
+    let calls = 0;
+    try {
+      const router = new TerraBaseDiscoveryRouter(scope, async () => { calls++; return response(successBytes); });
+      await router.resolve(key, ["read"]);
+      vi.setSystemTime(now - 1000); monotonic.mockReturnValue(9000);
+      await expect(router.resolve(key, ["read"])).rejects.toMatchObject({ code: "invalid_response" });
+      expect(calls).toBe(2);
+    } finally { monotonic.mockRestore(); }
   });
 
-  test("a retryable regional failure fails over to the next endpoint", async () => {
-    let gruCalls = 0;
-    const transport = scriptedFetch("orders-failover", {
-      data: (request) => {
-        const origin = new URL(request.url).origin;
-        if (origin === "https://fra.terrascale.tech") {
-          return Response.json({ error: { code: "database_unavailable", message: "down" } }, { status: 503 });
-        }
-        gruCalls++;
-        return Response.json({ ok: true });
-      },
-    });
-    const client = http({ fetch: transport.fetch, maxRetryAttempts: 1, retryDelayMs: 0 });
-    const result = await client.request<unknown>({ method: "GET", path: documentPath("orders-failover"), routeName: "documents.get" });
-    assert.equal(result.ok, true);
-    assert.equal(gruCalls, 1);
-    const origins = transport.requests.map((request) => new URL(request.url).origin);
-    assert.deepEqual(origins, [
-      "https://atlas.terrascale.tech",
-      "https://fra.terrascale.tech",
-      "https://gru.terrascale.tech",
-    ]);
+  test("a backward wall step within the monotonic lease rejects a publication that is now future", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const monotonic = vi.spyOn(performance, "now").mockReturnValue(1000);
+    let calls = 0;
+    try {
+      const router = new TerraBaseDiscoveryRouter(scope, async () => { calls++; return response(successBytes); });
+      const selected = await router.resolve(key, ["read"]);
+      vi.setSystemTime(now - 1); monotonic.mockReturnValue(1500);
+      expect(() => router.assertCurrent(selected)).toThrow("routing_expired");
+      await expect(router.resolve(key, ["read"])).rejects.toMatchObject({ code: "invalid_response" });
+      expect(calls).toBe(2);
+      vi.setSystemTime(now);
+      expect(() => router.assertCurrent(selected)).not.toThrow();
+    } finally { monotonic.mockRestore(); }
   });
 
-  test("an expired token refreshes exactly once and replays", async () => {
-    // Resolution sequence: expired on the first attempt, refreshed after the
-    // 401, then stuck on a second dead token with nothing newer to offer.
-    const resolutions = ["expired-token", "fresh-token", "fresh-token", "still-expired"];
-    let resolutionsServed = 0;
-    let dataCalls = 0;
-    const transport = scriptedFetch("orders-auth", {
-      data: (request) => {
-        dataCalls++;
-        if (request.headers.get("authorization") === "Bearer fresh-token") {
-          return Response.json({ ok: true });
-        }
-        return Response.json({ error: { code: "unauthenticated", message: "expired" } }, { status: 401 });
-      },
-    });
-    const client = http({
-      fetch: transport.fetch,
-      accessToken: () => Promise.resolve(resolutions[Math.min(resolutionsServed++, resolutions.length - 1)]),
-    });
-    const first = await client.request<unknown>({ method: "GET", path: documentPath("orders-auth"), routeName: "documents.get" });
-    assert.equal(first.ok, true);
-    assert.equal(dataCalls, 2);
-
-    // A provider that keeps returning the same dead token surfaces the 401.
-    const second = await client.request<unknown>({ method: "GET", path: documentPath("orders-auth"), routeName: "documents.get" });
-    assert.equal(second.ok, false);
-    assert.equal(dataCalls, 3);
+  test("credential rotation invalidates the route lease and retains observation floors", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const requests: Request[] = [];
+    const router = new TerraBaseDiscoveryRouter(scope, async input => { requests.push(input as Request); return requests.length === 1 ? response(successBytes) : response(forbiddenBytes, 403); });
+    await router.resolve(key, ["read"]);
+    await expect(router.resolve(rotatedKey, ["read"])).rejects.toMatchObject({ code: "discovery_forbidden", status: 403 });
+    expect(requests[1]!.headers.get("authorization")).toBe("Bearer " + rotatedKey);
+    expect(new URL(requests[1]!.url).searchParams.get("rev")).toBe("41");
   });
 
-  test("a 401 replays a rotated token even when a concurrent request already resolved it", async () => {
-    // Resolution order: this request's attempt (t1), a concurrent request
-    // (t2), then the 401 re-resolution (t2 again). The replay must compare
-    // against the token the failing attempt actually sent, not a shared
-    // latest value that the concurrent request already moved to t2.
-    const tokens = ["t1", "t2", "t2"];
-    let served = 0;
-    let dataCalls = 0;
-    let releaseData!: (response: Response) => void;
-    const transport = scriptedFetch("orders-rotate", {
-      data: (request) => {
-        dataCalls++;
-        if (request.headers.get("authorization") === "Bearer t2") return Response.json({ ok: true });
-        if (dataCalls === 1) return new Promise<Response>(resolve => { releaseData = resolve; });
-        return Response.json({ error: { code: "unauthenticated", message: "expired" } }, { status: 401 });
-      },
-    });
-    const client = http({
-      fetch: transport.fetch,
-      accessToken: () => Promise.resolve(tokens[Math.min(served++, tokens.length - 1)]),
-    });
-    const pending = client.request<unknown>({ method: "GET", path: documentPath("orders-rotate"), routeName: "documents.get" });
-    await new Promise<void>(resolve => {
-      const check = () => dataCalls >= 1 ? resolve() : setTimeout(check, 0);
-      check();
-    });
-    // A concurrent request resolves the provider to the rotated token. The
-    // product route skips discovery and the catalog entirely.
-    const concurrent = await client.request<unknown>({ method: "GET", path: "api/v1/organizations", routeName: "organizations.list" });
-    assert.equal(concurrent.ok, true);
-    // Only now does the first attempt's 401 arrive.
-    releaseData(Response.json({ error: { code: "unauthenticated", message: "expired" } }, { status: 401 }));
-    const result = await pending;
-    assert.equal(result.ok, true);
-    assert.equal(dataCalls, 3);
-    assert.equal(transport.requests[transport.requests.length - 1]!.headers.get("authorization"), "Bearer t2");
+  test.each(["deployment", "cell", "epoch", "revision"] as const)("rejects changed/regressed %s and retains the previous cursor after failure", async field => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const initial = fixture(); initial.authority.publisher_generation = "2";
+    const changed = structuredClone(initial); advanceLease(changed, now + 8000);
+    if (field === "deployment") changed.authority.deployment_id = "another-deployment";
+    if (field === "cell") changed.authority.cell = "fra";
+    if (field === "epoch") { changed.authority.publisher_generation = "1"; changed.revision = "42"; }
+    if (field === "revision") { changed.authority.publisher_generation = "3"; changed.revision = "40"; }
+    const requests: Request[] = [];
+    const router = new TerraBaseDiscoveryRouter(scope, async input => { requests.push(input as Request); return response(requests.length === 1 ? initial : changed); });
+    await router.resolve(key, ["read"]); vi.setSystemTime(now + 8000);
+    await expect(router.resolve(key, ["read"])).rejects.toMatchObject({ code: "routing_observation_regressed" });
+    await expect(router.resolve(key, ["read"])).rejects.toMatchObject({ code: "routing_observation_regressed" });
+    expect(new URL(requests[2]!.url).searchParams.get("observed_publisher_generation")).toBe("2");
+    expect(new URL(requests[2]!.url).searchParams.get("rev")).toBe("41");
   });
 
-  test("caller cancellation does not abort or poison the shared discovery request", async () => {
-    const discoverySignals: AbortSignal[] = [];
-    let releaseDiscovery!: (response: Response) => void;
-    const transport = scriptedFetch("orders-cancel", {
-      discovery: (request) => {
-        discoverySignals.push(request.signal);
-        return new Promise<Response>(resolve => { releaseDiscovery = resolve; });
-      },
+  test("concurrent late responses cannot overwrite a newer accepted observation", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    let release!: (response: Response) => void;
+    let started!: () => void;
+    const firstStarted = new Promise<void>(resolve => { started = resolve; });
+    let calls = 0;
+    const router = new TerraBaseDiscoveryRouter(scope, async () => {
+      calls++;
+      if (calls === 1) { started(); return new Promise<Response>(resolve => { release = resolve; }); }
+      const value = fixture(); value.revision = "42"; return response(value);
     });
-    const client = http({ fetch: transport.fetch });
+    const old = router.resolve(key, ["read"]); await firstStarted;
+    await router.resolve(rotatedKey, ["read"]); release(response(successBytes));
+    await expect(old).rejects.toMatchObject({ code: "routing_observation_regressed" });
+  });
+
+  test("a selected lease is rechecked against a concurrently advanced credential observation before dispatch", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    let calls = 0;
+    const router = new TerraBaseDiscoveryRouter(scope, async () => { const value = fixture(); value.revision = String(41 + calls++); return response(value); });
+    const old = await router.resolve(key, ["read"]);
+    const current = await router.resolve(rotatedKey, ["read"]);
+    expect(() => router.assertCurrent(old)).toThrow("routing_observation_regressed");
+    expect(() => router.assertCurrent(current)).not.toThrow();
+    vi.setSystemTime(now + 8000);
+    expect(() => router.assertCurrent(current)).toThrow("routing_expired");
+  });
+
+  test("rejects publisher substitution at an unchanged epoch and publication revision", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const requests: Request[] = [];
+    const router = new TerraBaseDiscoveryRouter(scope, async input => {
+      requests.push(input as Request);
+      const value = fixture();
+      if (requests.length > 1) value.authority.publisher_id = "publisher-b";
+      return response(value);
+    });
+    const original = await router.resolve(key, ["read"]);
+    await expect(router.resolve(rotatedKey, ["read"])).rejects.toMatchObject({ code: "routing_observation_regressed" });
+    await expect(router.resolve(rotatedKey, ["read"])).rejects.toMatchObject({ code: "routing_observation_regressed" });
+    expect(() => router.assertCurrent(original)).not.toThrow();
+    expect(new URL(requests[2]!.url).searchParams.get("observed_publisher_generation")).toBe("18446744073709551615");
+    expect(new URL(requests[2]!.url).searchParams.get("rev")).toBe("41");
+    vi.setSystemTime(now + 8000);
+    expect(() => router.assertCurrent(original)).toThrow("routing_expired");
+  });
+
+  test("accepts a legitimate same-epoch publisher replacement only at a newer publication revision", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    let calls = 0;
+    const router = new TerraBaseDiscoveryRouter(scope, async () => {
+      const value = fixture();
+      if (calls++ > 0) { value.authority.publisher_id = "publisher-b"; value.revision = "42"; }
+      return response(value);
+    });
+    const old = await router.resolve(key, ["read"]);
+    const current = await router.resolve(rotatedKey, ["read"]);
+    expect(() => router.assertCurrent(old)).toThrow("routing_observation_regressed");
+    expect(() => router.assertCurrent(current)).not.toThrow();
+  });
+
+  test.each([
+    [400, "invalid_cursor"], [503, "discovery_unconfigured"], [503, "no_eligible_region"], [503, "routing_observation_regressed"],
+  ])("Atlas failure %s/%s never creates regional/catalog/default eligibility", async (status, code) => {
+    let calls = 0;
+    const router = new TerraBaseDiscoveryRouter(scope, async () => { calls++; return response({ error: { code, message: "unavailable", fix: "retry current admission" } }, status); });
+    await expect(router.resolve(key, ["read"])).rejects.toMatchObject({ code, status });
+    expect(calls).toBe(1);
+  });
+
+  test("pre-cancellation and a bounded pending Atlas request do no data dispatch", async () => {
+    const controller = new AbortController(); controller.abort();
+    let calls = 0, release!: (value: Response) => void;
+    const eventual = new Promise<Response>(resolve => { release = resolve; });
+    const router = new TerraBaseDiscoveryRouter(scope, async () => { calls++; return eventual; }, 10);
+    await expect(router.resolve(key, ["read"], controller.signal)).rejects.toBe(controller.signal.reason);
+    expect(calls).toBe(0);
+    const keepAlive = setTimeout(() => undefined, 100);
+    try { await expect(router.resolve(key, ["read"])).rejects.toMatchObject({ code: "discovery_unavailable" }); }
+    finally {
+      clearTimeout(keepAlive); release(new Response(null));
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    expect(calls).toBe(1);
+  });
+});
+
+describe("native Atlas response cancellation", () => {
+  function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void } {
+    let resolve!: (value: T) => void, reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((accept, deny) => { resolve = accept; reject = deny; });
+    return { promise, resolve, reject };
+  }
+
+  const flush = async (): Promise<void> => { await new Promise<void>(resolve => setImmediate(resolve)); };
+
+  test("discards a late body from an abort-ignoring fetch without waiting, retrying, or accepting its observation", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const started = deferred<void>(), late = deferred<Response>(), controller = new AbortController();
+    const requests: Request[] = [];
+    const router = new TerraBaseDiscoveryRouter(scope, async input => {
+      requests.push(input as Request);
+      if (requests.length === 1) { started.resolve(undefined); return late.promise; }
+      return response(successBytes);
+    });
+    const reason = new Error("caller canceled native discovery");
+    const pending = router.resolve(key, ["read"], controller.signal);
+    await started.promise; controller.abort(reason);
+    await expect(pending).rejects.toBe(reason); expect(requests).toHaveLength(1);
+    let canceled = 0;
+    const value = fixture(); value.revision = "42";
+    const unread = new Response(new ReadableStream<Uint8Array>({
+      start(stream) { stream.enqueue(new TextEncoder().encode(JSON.stringify(value))); },
+      cancel() { canceled++; },
+    }), { headers });
+    try {
+      late.resolve(unread); await flush();
+      expect(canceled).toBe(1); expect(unread.bodyUsed).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect((await router.resolve(key, ["read"])).region).toBe("GRU");
+      expect(requests).toHaveLength(2);
+      expect(new URL(requests[1]!.url).searchParams.has("rev")).toBe(false);
+    } finally {
+      late.resolve(unread); await flush();
+      if (!unread.bodyUsed) await unread.body?.cancel();
+    }
+  });
+
+  test("discards an eventual body after the bounded discovery deadline", async () => {
+    const started = deferred<void>(), late = deferred<Response>();
+    let calls = 0, canceled = 0;
+    const router = new TerraBaseDiscoveryRouter(scope, async () => { calls++; started.resolve(undefined); return late.promise; }, 10);
+    const pending = router.resolve(key, ["read"]);
+    const keepAlive = setTimeout(() => undefined, 100);
+    const unread = new Response(new ReadableStream({ cancel() { canceled++; } }), { headers });
+    try {
+      await started.promise;
+      await expect(pending).rejects.toMatchObject({ code: "discovery_unavailable" });
+      expect(calls).toBe(1);
+      late.resolve(unread); await flush(); expect(canceled).toBe(1);
+    } finally {
+      clearTimeout(keepAlive); late.resolve(unread); await flush();
+      if (!unread.bodyUsed) await unread.body?.cancel();
+    }
+  });
+
+  test("cleans up when the fetch aborts its caller synchronously before the cancellation race attaches", async () => {
+    const controller = new AbortController(), reason = new Error("abort inside custom fetch");
+    let calls = 0, canceled = 0;
+    const unread = new Response(new ReadableStream({ cancel() { canceled++; } }), { headers });
+    const router = new TerraBaseDiscoveryRouter(scope, async () => { calls++; controller.abort(reason); return unread; });
+    try {
+      await expect(router.resolve(key, ["read"], controller.signal)).rejects.toBe(reason);
+      await flush(); expect(calls).toBe(1); expect(canceled).toBe(1);
+    } finally { if (!unread.bodyUsed) await unread.body?.cancel(); }
+  });
+
+  test("late cancellation failure is handled and does not change the terminal caller result", async () => {
+    const started = deferred<void>(), late = deferred<Response>(), controller = new AbortController();
+    const reason = new Error("caller cancellation"), cleanupFailure = new Error("custom body cancellation failed");
+    let calls = 0, canceled = 0;
+    const router = new TerraBaseDiscoveryRouter(scope, async () => { calls++; started.resolve(undefined); return late.promise; });
+    const pending = router.resolve(key, ["read"], controller.signal);
+    const unread = new Response(new ReadableStream({ cancel() { canceled++; return Promise.reject(cleanupFailure); } }), { headers });
+    try {
+      await started.promise; controller.abort(reason); await expect(pending).rejects.toBe(reason);
+      late.resolve(unread); await flush();
+      expect(calls).toBe(1); expect(canceled).toBe(1); await expect(pending).rejects.toBe(reason);
+    } finally { late.resolve(unread); await flush(); }
+  });
+
+  test.each(["cancel", "body", "bodyUsed"] as const)("synchronous %s cleanup failure cannot escape or change the terminal caller result", async property => {
+    const started = deferred<void>(), late = deferred<Response>(), controller = new AbortController();
+    const reason = new Error("caller cancellation"), cleanupFailure = new Error("synchronous cleanup failure");
+    let calls = 0, attempts = 0;
+    const stream = new ReadableStream();
+    const unread = new Response(stream, { headers });
+    if (property === "cancel") {
+      Object.defineProperty(stream, "cancel", { configurable: true, value() { attempts++; throw cleanupFailure; } });
+    } else {
+      Object.defineProperty(unread, property, { configurable: true, get() { attempts++; throw cleanupFailure; } });
+    }
+    const router = new TerraBaseDiscoveryRouter(scope, async () => { calls++; started.resolve(undefined); return late.promise; });
+    const pending = router.resolve(key, ["read"], controller.signal);
+    try {
+      await started.promise; controller.abort(reason); await expect(pending).rejects.toBe(reason);
+      late.resolve(unread); await flush();
+      expect(calls).toBe(1); expect(attempts).toBe(1); await expect(pending).rejects.toBe(reason);
+    } finally {
+      late.resolve(unread); await flush();
+      if (property === "cancel") Reflect.deleteProperty(stream, property);
+      else Reflect.deleteProperty(unread, property);
+      await ReadableStream.prototype.cancel.call(stream).catch(() => undefined);
+    }
+  });
+
+  test("late body cleanup is detached from a custom cancel operation that has not completed", async () => {
+    const started = deferred<void>(), late = deferred<Response>(), cancelFinished = deferred<void>(), controller = new AbortController();
+    const reason = new Error("caller cancellation");
+    let canceled = 0;
+    const router = new TerraBaseDiscoveryRouter(scope, async () => { started.resolve(undefined); return late.promise; });
+    const pending = router.resolve(key, ["read"], controller.signal);
+    const unread = new Response(new ReadableStream({ cancel() { canceled++; return cancelFinished.promise; } }), { headers });
+    try {
+      await started.promise; controller.abort(reason); await expect(pending).rejects.toBe(reason);
+      late.resolve(unread); await flush(); expect(canceled).toBe(1);
+      await expect(pending).rejects.toBe(reason);
+    } finally { late.resolve(unread); cancelFinished.resolve(undefined); await flush(); }
+  });
+
+  test("a signal-respecting fetch rejects once without an extra dispatch or unhandled late rejection", async () => {
+    const started = deferred<void>(), controller = new AbortController(), reason = new Error("caller cancellation");
+    let calls = 0;
+    const router = new TerraBaseDiscoveryRouter(scope, async input => {
+      calls++; const request = input as Request;
+      return new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
+        started.resolve(undefined);
+      });
+    });
+    const pending = router.resolve(key, ["read"], controller.signal);
+    await started.promise; controller.abort(reason); await expect(pending).rejects.toBe(reason);
+    await flush(); expect(calls).toBe(1);
+  });
+
+  test("resolved successful bodies are consumed and their accepted lease survives a later caller abort", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
     const controller = new AbortController();
-    const pending = client.request<unknown>({
-      method: "GET", path: documentPath("orders-cancel"), routeName: "documents.get", signal: controller.signal,
-    });
-    await new Promise<void>(resolve => {
-      const check = () => discoverySignals.length >= 1 ? resolve() : setTimeout(check, 0);
-      check();
-    });
-    controller.abort(new Error("caller cancelled"));
-    // One caller's cancellation never aborted the shared discovery fetch.
-    assert.equal(discoverySignals[0]!.aborted, false);
-    releaseDiscovery(Response.json(discoveryPayload("orders-cancel")));
-    const result = await pending;
-    assert.equal(result.ok, false);
-    // The completed discovery served the next request directly: no failure
-    // backoff was armed, so no proxy fallback and no re-discovery.
-    const next = await client.request<unknown>({ method: "GET", path: documentPath("orders-cancel"), routeName: "documents.get" });
-    assert.equal(next.ok, true);
-    assert.equal(transport.requests.filter((request) => request.url.includes("/api/v1/discovery")).length, 1);
-    assert.equal(new URL(transport.requests[transport.requests.length - 1]!.url).origin, "https://fra.terrascale.tech");
+    let calls = 0, canceled = 0;
+    const consumed = new Response(new ReadableStream<Uint8Array>({
+      start(stream) { stream.enqueue(new TextEncoder().encode(successBytes)); stream.close(); },
+      cancel() { canceled++; },
+    }), { headers });
+    const router = new TerraBaseDiscoveryRouter(scope, async () => { calls++; return consumed; });
+    const endpoint = await router.resolve(key, ["read"], controller.signal);
+    controller.abort(); await flush();
+    expect(canceled).toBe(0); expect(consumed.bodyUsed).toBe(true);
+    expect(() => router.assertCurrent(endpoint)).not.toThrow();
+    expect(await router.resolve(key, ["read"])).toBe(endpoint); expect(calls).toBe(1);
   });
 
-  test("an ambiguous write timeout on an unkeyed mutation is never replayed", async () => {
-    let dataCalls = 0;
-    const transport = scriptedFetch("orders-ambiguous", {
-      data: () => {
-        dataCalls++;
-        return new Promise((_resolve, reject) => reject(new TypeError("connection reset mid-flight")));
-      },
+  test("late aborted observations preserve the original accepted lease and durable observation floor", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const started = deferred<void>(), late = deferred<Response>(), controller = new AbortController();
+    const requests: Request[] = [];
+    const router = new TerraBaseDiscoveryRouter(scope, async input => {
+      requests.push(input as Request);
+      if (requests.length === 2) { started.resolve(undefined); return late.promise; }
+      return response(successBytes);
     });
-    const client = http({ fetch: transport.fetch, maxRetryAttempts: 3, retryDelayMs: 0 });
-    const result = await client.request<unknown>({
-      method: "POST",
-      path: "api/v1/databases/orders-ambiguous/collections/users/documents",
-      routeName: "documents.create",
-      body: { name: "Ada" },
-    });
-    assert.equal(result.ok, false);
-    assert.equal(dataCalls, 1);
-  });
-
-  test("routing caches are isolated per authorization scope", async () => {
-    const discoveryDatabases: string[] = [];
-    const transport = scriptedFetch("orders-scoped", {
-      discovery: (request) => {
-        discoveryDatabases.push(new URL(request.url).searchParams.get("database") ?? "");
-        return Response.json(discoveryPayload("orders-scoped"));
-      },
-    });
-    const projectA = http({ fetch: transport.fetch, projectId: "01ARZ3NDEKTSV4RRFFQ69G5FAV" });
-    const projectB = http({ fetch: transport.fetch, projectId: "01BX5ZZKBKACTAV9WEVGEMMVRZ" });
-    await projectA.request<unknown>({ method: "GET", path: documentPath("orders-scoped"), routeName: "documents.get" });
-    await projectB.request<unknown>({ method: "GET", path: documentPath("orders-scoped"), routeName: "documents.get" });
-    // Two scopes, two discovery lookups; neither served the other.
-    assert.equal(discoveryDatabases.length, 2);
-  });
-
-  test("product routes target the product origin without discovery or catalog", async () => {
-    for (const path of [
-      "api/v1/organizations",
-      "api/v1/organizations/01ARZ3NDEKTSV4RRFFQ69G5FAV/projects",
-      "api/v1/projects",
-      "api/v1/regions/FRA",
-    ]) {
-      const transport = scriptedFetch("orders-product");
-      const client = http({ fetch: transport.fetch });
-      const result = await client.request<unknown>({ method: "GET", path, routeName: "organizations.list" });
-      assert.equal(result.ok, true);
-      assert.deepEqual(transport.requests.map((request) => new URL(request.url).origin), ["https://api.terrascale.tech"]);
+    const original = await router.resolve(key, ["read"]);
+    const pending = router.resolve(rotatedKey, ["read"], controller.signal);
+    const reason = new Error("caller cancellation");
+    const unread = response(JSON.stringify({ ...fixture(), revision: "42" }));
+    try {
+      await started.promise; controller.abort(reason); await expect(pending).rejects.toBe(reason);
+      late.resolve(unread); await flush();
+      expect(unread.bodyUsed).toBe(true); expect(requests).toHaveLength(2);
+      expect(() => router.assertCurrent(original)).not.toThrow();
+      await router.resolve(key, ["read"]);
+      expect(requests).toHaveLength(3); expect(new URL(requests[2]!.url).searchParams.get("rev")).toBe("41");
+    } finally {
+      late.resolve(unread); await flush();
+      if (!unread.bodyUsed) await unread.body?.cancel();
     }
   });
+});
 
-  test("the region catalog form itself targets the discovery origin", async () => {
-    const transport = scriptedFetch("orders-catalog-route");
-    const client = http({ fetch: transport.fetch });
-    const result = await client.request<unknown>({ method: "GET", path: "api/v1/regions", routeName: "regions.list" });
-    assert.equal(result.ok, true);
-    assert.deepEqual(transport.requests.map((request) => new URL(request.url).origin), ["https://atlas.terrascale.tech"]);
-    assert.equal(new URL(transport.requests[0]!.url).pathname, "/api/v1/regions");
+describe("native client consumes actual Atlas admission", () => {
+  test("first discovers the exact private tuple then connects directly to the admitted native path", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const requests: Request[] = [];
+    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
+      const request = input as Request; requests.push(request);
+      return response(new URL(request.url).hostname === "atlas.terrascale.tech" ? successBytes : point);
+    } });
+    expect((await client.read(collection, document)).ok).toBe(true);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]!.url).toBe("https://gru.terrascale.tech/v1/tenants/" + scope.tenant + "/databases/" + scope.database + "/shards/18446744073709551615/collections/" + collection + "/documents/" + document);
+    expect(requests[1]!.credentials).toBe("omit"); expect(requests[1]!.redirect).toBe("manual");
+    expect([...requests[1]!.headers]).toEqual([["accept", "application/json"], ["authorization", "Bearer " + key]]);
   });
 
-  test("the catalog is fetched once per five minutes across requests", async () => {
-    const catalogCalls: string[] = [];
-    const transport = scriptedFetch("orders-catalog-reuse", {
-      catalog: (request) => {
-        catalogCalls.push(new URL(request.url).origin);
-        return Response.json(catalogPayload());
-      },
-    });
-    const client = http({ fetch: transport.fetch, routingBaseUrl: "https://atlas-reuse.test" });
-    for (let i = 0; i < 3; i++) {
-      const result = await client.request<unknown>({ method: "GET", path: "api/v1/databases", routeName: "databases.list" });
-      assert.equal(result.ok, true);
-    }
-    assert.deepEqual(catalogCalls, ["https://atlas-reuse.test"]);
-    assert.equal(transport.requests.filter((request) => new URL(request.url).pathname === "/api/v1/regions").length, 1);
-    assert.equal(
-      transport.requests.filter((request) => new URL(request.url).origin === "https://fra.terrascale.tech").length,
-      3,
-    );
+  test("captures one native credential across discovery and data, independently of hosted identity credentials", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    let providers = 0;
+    const requests: Request[] = [];
+    const config = { ...scope, accessToken: "hosted-identity-session", apiKey: () => { providers++; return providers === 1 ? key : rotatedKey; }, fetch: async (input: RequestInfo | URL) => {
+      const request = input as Request; requests.push(request);
+      return response(new URL(request.url).hostname === "atlas.terrascale.tech" ? successBytes : point);
+    } };
+    expect((await createTerraBaseClient(config).read(collection, document)).ok).toBe(true);
+    expect(providers).toBe(1);
+    for (const request of requests) expect(request.headers.get("authorization")).toBe("Bearer " + key);
   });
 
-  test("catalog hosts are validated: an evil host is never contacted", async () => {
-    const transport = scriptedFetch("orders-evil-host", {
-      catalog: () => Response.json(catalogPayload({ hosts: { FRA: "https://evil.example.com", GRU: "https://gru.terrascale.tech" } })),
-    });
-    const client = http({ fetch: transport.fetch, routingBaseUrl: "https://atlas-evil.test" });
-    const result = await client.request<unknown>({ method: "GET", path: "api/v1/databases", routeName: "databases.list" });
-    // The rejected catalog leaves the configured origin as the last resort.
-    assert.equal(result.ok, true);
-    assert.deepEqual(transport.requests.map((request) => new URL(request.url).origin), [
-      "https://atlas-evil.test",
-      "https://api.terrascale.tech",
-    ]);
-    assert.equal(transport.requests.some((request) => new URL(request.url).hostname === "evil.example.com"), false);
+  test.each(["absent", "version", "multiple", "single_writer"] as const)("blocks %s mutation before native dispatch and retains an unresolved immutable identity", async kind => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const requests: Request[] = [];
+    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => { requests.push(input as Request); return response(successBytes); } });
+    const value = commit();
+    const selected: DatabaseCommit = kind === "multiple" ? { ...value, writes: [value.writes[0]!, { ...value.writes[0]!, document: replica }] }
+      : kind === "single_writer" ? { ...value, authority: { mode: "single_writer", generation: 1n, writer: { replica, incarnation: "03".repeat(16) } }, writes: [{ ...value.writes[0]!, condition: { kind: "absent" } }] }
+      : { ...value, writes: [{ ...value.writes[0]!, condition: kind === "absent" ? { kind: "absent" } : { kind: "version", version: "04".repeat(32) } }] };
+    const prepared = await client.prepareCommit(selected);
+    const result = await client.commit(prepared);
+    expect(result).toEqual({ ok: false, error: { code: "capability_unavailable", transaction: prepared, mutation_outcome: "unknown" } });
+    expect(requests).toHaveLength(1); expect(new URL(requests[0]!.url).hostname).toBe("atlas.terrascale.tech");
+  });
+
+  test("retained advanced leaderless status requires write and does not require downshifted conditional/group caps", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const value = commit();
+    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
+      const request = input as Request;
+      if (new URL(request.url).hostname === "atlas.terrascale.tech") return response(successBytes);
+      return response({ ...JSON.parse(await request.text()), state: "unknown", outcome: null });
+    } });
+    const prepared = await client.prepareCommit({ ...value, writes: [{ ...value.writes[0]!, condition: { kind: "absent" } }, { ...value.writes[0]!, document: replica, condition: { kind: "version", version: "04".repeat(32) } }] });
+    const result = await client.transactionStatus(prepared);
+    expect(result.ok && result.value.state).toBe("unknown");
+    expect(result.ok && result.value.outcome).toBeNull();
+  });
+
+  test("read-only native admission cannot resolve write receipts or dispatch an unconditional write", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const value = fixture(); value.endpoints[0].capabilities.write = false;
+    let calls = 0;
+    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async () => { calls++; return response(value); } });
+    const prepared = await client.prepareCommit(commit());
+    expect(await client.commit(prepared)).toMatchObject({ ok: false, error: { code: "capability_unavailable", mutation_outcome: "unknown" } });
+    expect(await client.transactionStatus(prepared)).toMatchObject({ ok: false, error: { code: "capability_unavailable" } });
+    expect(calls).toBe(1);
+  });
+
+  test("single-writer status cannot select a nearest substitute from null writer admission", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    let calls = 0;
+    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async () => { calls++; return response(successBytes); } });
+    const identity = { transaction_id: commit().transaction_id, effect_digest: "04".repeat(32), authority: { mode: "single_writer" as const, generation: 1n, writer: { replica, incarnation: "03".repeat(16) } } };
+    expect(await client.transactionStatus(identity)).toMatchObject({ ok: false, error: { code: "capability_unavailable" } });
+    expect(calls).toBe(1);
+  });
+
+  test("read subscriptions can project committed groups while atomic_groups remains false", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
+      const request = input as Request;
+      return response(new URL(request.url).hostname === "atlas.terrascale.tech" ? successBytes : { version: 1, phase: "poll", groups: [{ sequence: "1", effects: [{ document, point: null }, { document: replica, point: null }] }], poll_cursor: "b3BhcXVl" });
+    } });
+    const result = await client.subscription(collection, { phase: "poll", predicate: { op: "is_missing", path: [1] }, poll_cursor: "b3BhcXVl" });
+    expect(result.ok && result.value.phase === "poll" && result.value.groups[0]?.effects).toHaveLength(2);
+  });
+
+  test("query and subscription capability denial blocks each named data request", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const value = fixture(); value.endpoints[0].capabilities.query = false; value.endpoints[0].capabilities.subscriptions = false;
+    let calls = 0;
+    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async () => { calls++; return response(value); } });
+    expect(await client.query(collection, { predicate: { op: "is_missing", path: [1] }, limit: 1 })).toMatchObject({ ok: false, error: { code: "capability_unavailable" } });
+    expect(await client.subscription(collection, { phase: "snapshot", predicate: { op: "is_missing", path: [1] }, limit: 1 })).toMatchObject({ ok: false, error: { code: "capability_unavailable" } });
+    expect(calls).toBe(1);
+  });
+
+  test("unconditional immutable retries use identical bytes and preserve lost-response uncertainty", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const bodies: string[] = [];
+    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
+      const request = input as Request;
+      if (new URL(request.url).hostname === "atlas.terrascale.tech") return response(successBytes);
+      bodies.push(await request.text()); throw new Error("native response lost");
+    } });
+    const prepared = await client.prepareCommit(commit());
+    for (let i = 0; i < 2; i++) expect(await client.commit(prepared)).toEqual({ ok: false, error: { code: "transport_unavailable", transaction: prepared, mutation_outcome: "uncertain" } });
+    expect(bodies).toHaveLength(2); expect(bodies[0]).toBe(bodies[1]);
   });
 });

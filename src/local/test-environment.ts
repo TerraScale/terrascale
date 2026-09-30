@@ -1,41 +1,77 @@
-import { afterAll } from "vitest";
-
-import {
-  localSqlitePresenceIndicators,
-  localSqliteStageIndicators,
-} from "./environment.js";
-
-const indicatorNames = [
-  ...localSqlitePresenceIndicators,
-  ...localSqliteStageIndicators,
-] as const;
-
-export function installLocalSqliteTestEnvironment(): void {
-  const previous = new Map<string, string | undefined>(
-    indicatorNames.map((name) => [name, process.env[name]]),
-  );
-  for (const name of indicatorNames) {
-    delete process.env[name];
+import { assertLocalSqliteEnvironment } from "./environment.js";
+/** Local development tests never relax CI/deployment/qualification guards. */
+export const localSqliteUnitTestsAllowed = (() => {
+  try {
+    assertLocalSqliteEnvironment();
+    return true;
+  } catch {
+    return false;
   }
-  process.env.NODE_ENV = "test";
-  afterAll(() => {
-    for (const [name, value] of previous) {
-      if (value === undefined) {
-        delete process.env[name];
-      } else {
-        process.env[name] = value;
-      }
-    }
+})();
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomBytes, randomUUID } from "node:crypto";
+import {
+  createTerraScaleSqliteRuntime,
+  type TerraScaleSqliteRuntimeOptions,
+} from "./index.js";
+import type {
+  DatabaseCommit,
+  DatabaseField,
+  DatabasePoint,
+} from "../database-types.js";
+export async function localFixture(
+  options: Omit<TerraScaleSqliteRuntimeOptions, "sqlite"> = {},
+) {
+  const directory = await mkdtemp(join(tmpdir(), "terrascale-local-native-"));
+  const databasePath = join(directory, "development.sqlite");
+  const runtime = createTerraScaleSqliteRuntime({
+    ...options,
+    sqlite: { enabled: true, databasePath },
   });
-}
-
-export function localSqliteTestChildEnvironment(): NodeJS.ProcessEnv {
+  const collection = randomUUID();
+  const binding = {
+    collection,
+    schema_generation: 1n,
+    schema_digest: "a".repeat(64),
+  };
+  await runtime.bindCollection(binding);
+  const client = runtime.createClient();
+  const commit = (
+    document: string,
+    fields: readonly DatabaseField[],
+    point?: DatabasePoint,
+  ): DatabaseCommit => ({
+    transaction_id: {
+      expires_at_unix_ms: BigInt(Date.now() + 60_000),
+      nonce: randomBytes(16).toString("hex"),
+    },
+    authority: runtime.authority,
+    writes: [
+      {
+        ...binding,
+        document,
+        condition:
+          point === undefined
+            ? { kind: "absent" }
+            : { kind: "version", version: point.state_version! },
+        observed: point?.context ?? [],
+        value: { kind: "live", fields },
+      },
+    ],
+  });
   return {
-    ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }),
-    ...(process.env.SystemRoot === undefined ? {} : { SystemRoot: process.env.SystemRoot }),
-    ...(process.env.TMPDIR === undefined ? {} : { TMPDIR: process.env.TMPDIR }),
-    ...(process.env.TMP === undefined ? {} : { TMP: process.env.TMP }),
-    ...(process.env.TEMP === undefined ? {} : { TEMP: process.env.TEMP }),
-    NODE_ENV: "test",
+    runtime,
+    client,
+    collection,
+    binding,
+    directory,
+    databasePath,
+    commit,
+    close: async () => {
+      await runtime.close();
+      await rm(directory, { recursive: true, force: true });
+    },
   };
 }

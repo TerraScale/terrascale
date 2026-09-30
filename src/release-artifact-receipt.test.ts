@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, cp, mkdtemp, mkdir, readFile, readdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  cp,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,16 +20,26 @@ import { promisify } from "node:util";
 import { test } from "vitest";
 
 const run = promisify(execFile);
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 const buildOutputDomain = "terrascale.deploy/candidate-build-output/v1";
-const buildMediaType = "application/vnd.terrascale.candidate-build-receipt.v1+json";
-const qualificationMediaType = "application/vnd.terrascale.npm-qualification.v1+json";
-const npmArchiveIntegrity = "sha512-T67M4L5wNm0cZ7EBLErcEkY1SmzEW/WJ+SADBzsFUY1UdAPfFHXFQtZ6SEXiK0+vzXysCvAsepbMaBTwnrAD+w==";
+const buildMediaType =
+  "application/vnd.terrascale.candidate-build-receipt.v1+json";
+const qualificationMediaType =
+  "application/vnd.terrascale.npm-qualification.v1+json";
+const npmArchiveIntegrity =
+  "sha512-T67M4L5wNm0cZ7EBLErcEkY1SmzEW/WJ+SADBzsFUY1UdAPfFHXFQtZ6SEXiK0+vzXysCvAsepbMaBTwnrAD+w==";
 const npmTreeDigestDomain = "terrascale/npm-cli-tree/v1";
 const nodeVersions = { 22: "v22.23.2", 24: "v24.21.0" } as const;
 
 test("release qualification mode requires its exact clean two-runtime contract", async () => {
-  const qualifier = path.join(repositoryRoot, "scripts", "qualify-npm-artifact.ts");
+  const qualifier = path.join(
+    repositoryRoot,
+    "scripts",
+    "qualify-npm-artifact.ts",
+  );
   await assert.rejects(
     run(process.execPath, [qualifier, "--release", "--allow-dirty"]),
     /--allow-dirty cannot be combined with --release/u,
@@ -30,249 +51,329 @@ test("release qualification mode requires its exact clean two-runtime contract",
     /TERRASCALE_NODE_22 must name an absolute Node executable/u,
   );
   await assert.rejects(
-    run(process.execPath, [qualifier, "--release", "--node", process.execPath], {
-      env: {
-        PATH: process.env.PATH ?? "",
-        TERRASCALE_NODE_22: process.execPath,
-        TERRASCALE_NODE_24: process.execPath,
+    run(
+      process.execPath,
+      [qualifier, "--release", "--node", process.execPath],
+      {
+        env: {
+          PATH: process.env.PATH ?? "",
+          TERRASCALE_NODE_22: process.execPath,
+          TERRASCALE_NODE_24: process.execPath,
+        },
       },
-    }),
+    ),
     /--release obtains its exact Node executables/u,
   );
 });
 
 // Promotion validates the exact publish toolchain; it is reproducible only on
 // the pinned Node 24 runtime and skips elsewhere (CI pins the matrix versions).
-test.skipIf(process.version !== nodeVersions[24])("promotion accepts one fully bound candidate and rejects hostile receipt substitutions", async () => {
-  const workspace = await mkdtemp(path.join(tmpdir(), "terrascale-npm-receipt-test-"));
-  const checkout = path.join(workspace, "sdk");
-  try {
-    await cp(repositoryRoot, checkout, {
-      recursive: true,
-      filter: (source) => ![".git", ".tools", "artifacts", "dist", "node_modules"].includes(path.basename(source)),
-    });
-    await initializeGitCheckout(checkout);
-    await mkdir(path.join(checkout, ".tools"));
-    await writeFile(path.join(checkout, ".tools", "terrascale-deploy"), "downloaded workflow tool\n");
+test.skipIf(process.version !== nodeVersions[24])(
+  "promotion verifies bound candidates, rejects hostile substitutions and blocks publication until producer admission",
+  async () => {
+    const workspace = await mkdtemp(
+      path.join(tmpdir(), "terrascale-npm-receipt-test-"),
+    );
+    const checkout = path.join(workspace, "sdk");
+    try {
+      await cp(repositoryRoot, checkout, {
+        recursive: true,
+        filter: (source) =>
+          ![".git", ".tools", "artifacts", "dist", "node_modules"].includes(
+            path.basename(source),
+          ),
+      });
+      await initializeGitCheckout(checkout);
+      await mkdir(path.join(checkout, ".tools"));
+      await writeFile(
+        path.join(checkout, ".tools", "terrascale-deploy"),
+        "downloaded workflow tool\n",
+      );
 
-    const fixture = await createCandidateFixture(checkout, workspace);
-    await fixture.verify();
-    assert.equal((await run("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: checkout })).stdout, "");
+      const fixture = await createCandidateFixture(checkout, workspace);
+      await fixture.verify();
+      assert.equal(
+        (
+          await run("git", ["status", "--porcelain", "--untracked-files=all"], {
+            cwd: checkout,
+          })
+        ).stdout,
+        "",
+      );
 
-    const hostileCases: readonly {
-      readonly name: string;
-      readonly mutate: () => Promise<void>;
-    }[] = [
-      {
-        name: "missing qualification receipt",
-        mutate: async () => {
-          await unlink(fixture.qualificationPath);
+      const hostileCases: readonly {
+        readonly name: string;
+        readonly mutate: () => Promise<void>;
+      }[] = [
+        {
+          name: "missing qualification receipt",
+          mutate: async () => {
+            await unlink(fixture.qualificationPath);
+          },
         },
-      },
-      {
-        name: "missing build receipt",
-        mutate: async () => {
-          await unlink(fixture.buildReceiptPath);
+        {
+          name: "missing build receipt",
+          mutate: async () => {
+            await unlink(fixture.buildReceiptPath);
+          },
         },
-      },
-      {
-        name: "stale source revision",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.source.revision = "0".repeat(40);
-        }),
-      },
-      {
-        name: "dirty source receipt",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.source.clean = false;
-          receipt.source.dirtyStatusSha256 = "a".repeat(64);
-        }),
-      },
-      {
-        name: "single-runtime receipt",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.runtimes = receipt.runtimes.slice(0, 1);
-        }),
-      },
-      {
-        name: "runtime patch substitution",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.runtimes[0]!.version = "v22.23.1";
-        }),
-      },
-      {
-        name: "runtime policy substitution",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.release.nodeVersions["22"] = "v22.23.1";
-        }),
-      },
-      {
-        name: "npm CLI substitution",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.environment.npm.version = "11.18.1";
-        }),
-      },
-      {
-        name: "npm CLI package tree substitution",
-        mutate: async () => {
-          await writeFile(path.join(fixture.reviewedNpm.packageRoot, "substituted.txt"), "unreviewed npm bytes\n");
+        {
+          name: "stale source revision",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.source.revision = "0".repeat(40);
+            }),
         },
-      },
-      {
-        name: "mismatched tarball digest",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.artifact.sha256 = "b".repeat(64);
-        }),
-      },
-      {
-        name: "substituted tarball bytes",
-        mutate: async () => {
-          await writeFile(fixture.tarballPath, Buffer.concat([await readFile(fixture.tarballPath), Buffer.from("substituted")]));
-          await fixture.refreshBuildReceipt();
+        {
+          name: "dirty source receipt",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.source.clean = false;
+              receipt.source.dirtyStatusSha256 = "a".repeat(64);
+            }),
         },
-      },
-      {
-        name: "mismatched source tree",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.source.tree = "c".repeat(40);
-        }),
-      },
-      {
-        name: "mismatched package version",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.artifact.version = "9.9.9";
-        }),
-      },
-      {
-        name: "mismatched Dashboard contract",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.contract.openApiSha256 = "d".repeat(64);
-        }),
-      },
-      {
-        name: "release limitation",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.limitations = ["not release eligible"];
-        }),
-      },
-      {
-        name: "diagnostic release receipt",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.release.eligible = false;
-        }),
-      },
-      {
-        name: "malformed qualification JSON",
-        mutate: async () => {
-          await writeFile(fixture.qualificationPath, "{");
-          await fixture.refreshBuildReceipt();
+        {
+          name: "single-runtime receipt",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.runtimes = receipt.runtimes.slice(0, 1);
+            }),
         },
-      },
-      {
-        name: "unknown qualification field",
-        mutate: async () => fixture.mutateQualification((receipt) => {
-          receipt.unknown = true;
-        }),
-      },
-      {
-        name: "duplicate qualification field",
-        mutate: async () => {
-          const duplicated = fixture.qualificationBytes.toString("utf8").replace(
-            '  "status": "passed",',
-            '  "status": "passed",\n  "status": "passed",',
-          );
-          await writeFile(fixture.qualificationPath, duplicated);
-          await fixture.refreshBuildReceipt();
+        {
+          name: "runtime patch substitution",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.runtimes[0]!.version = "v22.23.1";
+            }),
         },
-      },
-      {
-        name: "substituted qualification receipt",
-        mutate: async () => {
-          const receipt = structuredClone(fixture.qualification) as QualificationReceipt;
-          receipt.artifact.sha256 = "e".repeat(64);
-          await writeFile(fixture.qualificationPath, `${JSON.stringify(receipt, null, 2)}\n`);
+        {
+          name: "runtime policy substitution",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.release.nodeVersions["22"] = "v22.23.1";
+            }),
         },
-      },
-      {
-        name: "symlinked qualification receipt",
-        mutate: async () => {
-          const target = path.join(workspace, "qualification-target.json");
-          await writeFile(target, fixture.qualificationBytes);
-          await unlink(fixture.qualificationPath);
-          await symlink(target, fixture.qualificationPath);
+        {
+          name: "npm CLI substitution",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.environment.npm.version = "11.18.1";
+            }),
         },
-      },
-      {
-        name: "symlinked tarball",
-        mutate: async () => {
-          const target = path.join(workspace, "tarball-target.tgz");
-          await writeFile(target, fixture.tarballBytes);
-          await unlink(fixture.tarballPath);
-          await symlink(target, fixture.tarballPath);
+        {
+          name: "npm CLI package tree substitution",
+          mutate: async () => {
+            await writeFile(
+              path.join(fixture.reviewedNpm.packageRoot, "substituted.txt"),
+              "unreviewed npm bytes\n",
+            );
+          },
         },
-      },
-      {
-        name: "symlinked build receipt",
-        mutate: async () => {
-          const target = path.join(workspace, "build-receipt-target.json");
-          await writeFile(target, fixture.buildReceiptBytes);
-          await unlink(fixture.buildReceiptPath);
-          await symlink(target, fixture.buildReceiptPath);
+        {
+          name: "mismatched tarball digest",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.artifact.sha256 = "b".repeat(64);
+            }),
         },
-      },
-      {
-        name: "malformed build receipt",
-        mutate: async () => {
-          await writeFile(fixture.buildReceiptPath, "{");
+        {
+          name: "substituted tarball bytes",
+          mutate: async () => {
+            await writeFile(
+              fixture.tarballPath,
+              Buffer.concat([
+                await readFile(fixture.tarballPath),
+                Buffer.from("substituted"),
+              ]),
+            );
+            await fixture.refreshBuildReceipt();
+          },
         },
-      },
-      {
-        name: "uppercase build digest",
-        mutate: async () => {
-          const receipt = structuredClone(fixture.buildReceipt) as BuildReceipt;
-          receipt.output.files[0]!.digest = receipt.output.files[0]!.digest.toUpperCase();
-          await writeFile(fixture.buildReceiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+        {
+          name: "mismatched source tree",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.source.tree = "c".repeat(40);
+            }),
         },
-      },
-      {
-        name: "extra candidate file",
-        mutate: async () => {
-          await writeFile(path.join(fixture.candidateDirectory, "extra.txt"), "not admitted\n");
+        {
+          name: "mismatched package version",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.artifact.version = "9.9.9";
+            }),
         },
-      },
-      {
-        name: "dirty promotion checkout",
-        mutate: async () => {
-          await writeFile(path.join(checkout, "uncommitted-source.txt"), "dirty\n");
+        {
+          name: "mismatched native producer contract",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.contract.openApiSha256 = "d".repeat(64);
+            }),
         },
-      },
-    ];
+        {
+          name: "release limitation",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.limitations = ["not release eligible"];
+            }),
+        },
+        {
+          name: "diagnostic release receipt",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.release.eligible = false;
+            }),
+        },
+        {
+          name: "malformed qualification JSON",
+          mutate: async () => {
+            await writeFile(fixture.qualificationPath, "{");
+            await fixture.refreshBuildReceipt();
+          },
+        },
+        {
+          name: "unknown qualification field",
+          mutate: async () =>
+            fixture.mutateQualification((receipt) => {
+              receipt.unknown = true;
+            }),
+        },
+        {
+          name: "duplicate qualification field",
+          mutate: async () => {
+            const duplicated = fixture.qualificationBytes
+              .toString("utf8")
+              .replace(
+                '  "status": "passed",',
+                '  "status": "passed",\n  "status": "passed",',
+              );
+            await writeFile(fixture.qualificationPath, duplicated);
+            await fixture.refreshBuildReceipt();
+          },
+        },
+        {
+          name: "substituted qualification receipt",
+          mutate: async () => {
+            const receipt = structuredClone(
+              fixture.qualification,
+            ) as QualificationReceipt;
+            receipt.artifact.sha256 = "e".repeat(64);
+            await writeFile(
+              fixture.qualificationPath,
+              `${JSON.stringify(receipt, null, 2)}\n`,
+            );
+          },
+        },
+        {
+          name: "symlinked qualification receipt",
+          mutate: async () => {
+            const target = path.join(workspace, "qualification-target.json");
+            await writeFile(target, fixture.qualificationBytes);
+            await unlink(fixture.qualificationPath);
+            await symlink(target, fixture.qualificationPath);
+          },
+        },
+        {
+          name: "symlinked tarball",
+          mutate: async () => {
+            const target = path.join(workspace, "tarball-target.tgz");
+            await writeFile(target, fixture.tarballBytes);
+            await unlink(fixture.tarballPath);
+            await symlink(target, fixture.tarballPath);
+          },
+        },
+        {
+          name: "symlinked build receipt",
+          mutate: async () => {
+            const target = path.join(workspace, "build-receipt-target.json");
+            await writeFile(target, fixture.buildReceiptBytes);
+            await unlink(fixture.buildReceiptPath);
+            await symlink(target, fixture.buildReceiptPath);
+          },
+        },
+        {
+          name: "malformed build receipt",
+          mutate: async () => {
+            await writeFile(fixture.buildReceiptPath, "{");
+          },
+        },
+        {
+          name: "uppercase build digest",
+          mutate: async () => {
+            const receipt = structuredClone(
+              fixture.buildReceipt,
+            ) as BuildReceipt;
+            receipt.output.files[0]!.digest =
+              receipt.output.files[0]!.digest.toUpperCase();
+            await writeFile(
+              fixture.buildReceiptPath,
+              `${JSON.stringify(receipt, null, 2)}\n`,
+            );
+          },
+        },
+        {
+          name: "extra candidate file",
+          mutate: async () => {
+            await writeFile(
+              path.join(fixture.candidateDirectory, "extra.txt"),
+              "not admitted\n",
+            );
+          },
+        },
+        {
+          name: "dirty promotion checkout",
+          mutate: async () => {
+            await writeFile(
+              path.join(checkout, "uncommitted-source.txt"),
+              "dirty\n",
+            );
+          },
+        },
+      ];
 
-    for (const hostileCase of hostileCases) {
+      for (const hostileCase of hostileCases) {
+        await fixture.reset();
+        await hostileCase.mutate();
+        await assert.rejects(
+          fixture.verify(),
+          `Promotion accepted hostile case: ${hostileCase.name}`,
+        );
+        await rm(path.join(checkout, "uncommitted-source.txt"), {
+          force: true,
+        });
+      }
+
       await fixture.reset();
-      await hostileCase.mutate();
-      await assert.rejects(fixture.verify(), `Promotion accepted hostile case: ${hostileCase.name}`);
-      await rm(path.join(checkout, "uncommitted-source.txt"), { force: true });
+      await assert.rejects(
+        verifyIsolatedPublish(fixture, workspace),
+        /Publication remains blocked/u,
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
     }
-
-    await fixture.reset();
-    await verifyIsolatedPublish(fixture, workspace);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
-});
+  },
+);
 
 async function initializeGitCheckout(checkout: string): Promise<void> {
   await run("git", ["init", "--quiet"], { cwd: checkout });
-  await run("git", ["config", "user.email", "release-test@terrascale.test"], { cwd: checkout });
-  await run("git", ["config", "user.name", "TerraScale Release Test"], { cwd: checkout });
+  await run("git", ["config", "user.email", "release-test@terrascale.test"], {
+    cwd: checkout,
+  });
+  await run("git", ["config", "user.name", "TerraScale Release Test"], {
+    cwd: checkout,
+  });
   await run("git", ["add", "."], { cwd: checkout });
   await run("git", ["commit", "--quiet", "-m", "fixture"], { cwd: checkout });
 }
 
-async function createCandidateFixture(checkout: string, workspace: string): Promise<CandidateFixture> {
+async function createCandidateFixture(
+  checkout: string,
+  workspace: string,
+): Promise<CandidateFixture> {
   const reviewedNpm = await createReviewedNpmFixture(workspace);
-  const sourceManifest = JSON.parse(await readFile(path.join(checkout, "package.json"), "utf8")) as {
+  const sourceManifest = JSON.parse(
+    await readFile(path.join(checkout, "package.json"), "utf8"),
+  ) as {
     readonly name: string;
     readonly version: string;
     readonly private: boolean;
@@ -289,24 +390,56 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
   const packedManifest = {
     ...sourceManifest,
     scripts: {
-      prepublishOnly: "node -e \"require('node:fs').writeFileSync('lifecycle-ran', 'yes')\"",
+      prepublishOnly:
+        "node -e \"require('node:fs').writeFileSync('lifecycle-ran', 'yes')\"",
     },
   };
-  const packedManifestBytes = Buffer.from(`${JSON.stringify(packedManifest, null, 2)}\n`);
-  const routeManifestBytes = await readFile(path.join(checkout, "sdk-route-manifest.json"));
+  const packedManifestBytes = Buffer.from(
+    `${JSON.stringify(packedManifest, null, 2)}\n`,
+  );
+  const routeManifestBytes = await readFile(
+    path.join(checkout, "sdk-route-manifest.json"),
+  );
+  const currentPinBytes = await readFile(
+    path.join(checkout, "sdk-current-contract.json"),
+  );
   const licenseBytes = await readFile(path.join(checkout, "LICENSE"));
   await Promise.all([
     writeFile(path.join(packageDirectory, "package.json"), packedManifestBytes),
-    writeFile(path.join(packageDirectory, "sdk-route-manifest.json"), routeManifestBytes),
+    writeFile(
+      path.join(packageDirectory, "sdk-route-manifest.json"),
+      routeManifestBytes,
+    ),
+    writeFile(
+      path.join(packageDirectory, "sdk-current-contract.json"),
+      currentPinBytes,
+    ),
     writeFile(path.join(packageDirectory, "LICENSE"), licenseBytes),
   ]);
 
-  const tarballPath = path.join(candidateDirectory, `terrascale-sdk-${sourceManifest.version}.tgz`);
-  const qualificationPath = path.join(candidateDirectory, `terrascale-sdk-${sourceManifest.version}.qualification.json`);
-  const buildReceiptPath = path.join(evidenceDirectory, "npm.build-receipt.json");
-  await run("tar", ["-czf", tarballPath, "-C", path.dirname(packageDirectory), "package"]);
+  const tarballPath = path.join(
+    candidateDirectory,
+    `terrascale-sdk-${sourceManifest.version}.tgz`,
+  );
+  const qualificationPath = path.join(
+    candidateDirectory,
+    `terrascale-sdk-${sourceManifest.version}.qualification.json`,
+  );
+  const buildReceiptPath = path.join(
+    evidenceDirectory,
+    "npm.build-receipt.json",
+  );
+  await run("tar", [
+    "-czf",
+    tarballPath,
+    "-C",
+    path.dirname(packageDirectory),
+    "package",
+  ]);
   const tarballBytes = await readFile(tarballPath);
-  const descriptorBytes = await readFile(path.join(checkout, "sdk-openapi-contract-descriptor.json"));
+  const descriptorBytes = await readFile(
+    path.join(checkout, "sdk-openapi-contract-descriptor.json"),
+  );
   const descriptor = JSON.parse(descriptorBytes.toString("utf8")) as {
     readonly descriptorVersion: number;
     readonly routeCount: number;
@@ -350,8 +483,12 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
       sha256: sha256(tarballBytes),
       integrity: `sha512-${createHash("sha512").update(tarballBytes).digest("base64")}`,
       size: tarballBytes.length,
-      unpackedSize: packedManifestBytes.length + routeManifestBytes.length + licenseBytes.length,
-      fileCount: 3,
+      unpackedSize:
+        packedManifestBytes.length +
+        routeManifestBytes.length +
+        currentPinBytes.length +
+        licenseBytes.length,
+      fileCount: 4,
     },
     boundaries: {
       exports: sourceManifest.exports,
@@ -390,20 +527,31 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
     license: { declared: "Apache-2.0", fileSha256: sha256(licenseBytes) },
     security: {
       audit: {
-        vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 },
+        vulnerabilities: {
+          info: 0,
+          low: 0,
+          moderate: 0,
+          high: 0,
+          critical: 0,
+          total: 0,
+        },
       },
       registry: "https://registry.npmjs.org/",
     },
-    command: "npm run qualify:artifact -- --release --output artifacts/candidate",
+    command:
+      "npm run qualify:artifact -- --release --output artifacts/candidate",
     environment: {
       platform: "linux",
       architecture: "x64",
       npm: reviewedNpm.evidence,
     },
     limitations: [],
-    redaction: "No environment values or package contents are embedded; dirty paths and workflow tooling are represented only by bounded classification evidence.",
+    redaction:
+      "No environment values or package contents are embedded; dirty paths and workflow tooling are represented only by bounded classification evidence.",
   } as QualificationReceipt;
-  const qualificationBytes = Buffer.from(`${JSON.stringify(qualification, null, 2)}\n`);
+  const qualificationBytes = Buffer.from(
+    `${JSON.stringify(qualification, null, 2)}\n`,
+  );
   await writeFile(qualificationPath, qualificationBytes);
 
   const buildIdentity = {
@@ -415,12 +563,16 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
   };
 
   async function createBuildReceipt(): Promise<BuildReceipt> {
-    const files = await Promise.all((await readdir(candidateDirectory))
-      .sort(ordinal)
-      .map(async (name) => {
+    const files = await Promise.all(
+      (await readdir(candidateDirectory)).sort(ordinal).map(async (name) => {
         const bytes = await readFile(path.join(candidateDirectory, name));
-        return { path: name, digest: `sha256:${sha256(bytes)}`, bytes: bytes.length };
-      }));
+        return {
+          path: name,
+          digest: `sha256:${sha256(bytes)}`,
+          bytes: bytes.length,
+        };
+      }),
+    );
     const output = {
       root: "artifacts/candidate",
       digest: buildOutputDigest(files),
@@ -450,7 +602,9 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
   }
 
   let buildReceipt = await createBuildReceipt();
-  let buildReceiptBytes = Buffer.from(`${JSON.stringify(buildReceipt, null, 2)}\n`);
+  let buildReceiptBytes = Buffer.from(
+    `${JSON.stringify(buildReceipt, null, 2)}\n`,
+  );
   await writeFile(buildReceiptPath, buildReceiptBytes);
 
   async function reset(): Promise<void> {
@@ -471,27 +625,41 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
 
   async function refreshBuildReceipt(): Promise<void> {
     buildReceipt = await createBuildReceipt();
-    await writeFile(buildReceiptPath, `${JSON.stringify(buildReceipt, null, 2)}\n`);
+    await writeFile(
+      buildReceiptPath,
+      `${JSON.stringify(buildReceipt, null, 2)}\n`,
+    );
   }
 
-  async function mutateQualification(mutator: (receipt: QualificationReceipt) => void): Promise<void> {
+  async function mutateQualification(
+    mutator: (receipt: QualificationReceipt) => void,
+  ): Promise<void> {
     const receipt = structuredClone(qualification) as QualificationReceipt;
     mutator(receipt);
     await writeFile(qualificationPath, `${JSON.stringify(receipt, null, 2)}\n`);
     await refreshBuildReceipt();
   }
 
-  async function verify(environment: NodeJS.ProcessEnv = process.env): Promise<void> {
-    await run(process.execPath, [
-      path.join(checkout, "scripts", "promote-npm-candidate.ts"),
-      "--build-receipt", buildReceiptPath,
-      "--artifacts", candidateDirectory,
-      "--registry", "https://registry.npmjs.org/",
-      "--verify-only",
-    ], {
-      cwd: checkout,
-      env: reviewedNpm.environment(environment),
-    });
+  async function verify(
+    environment: NodeJS.ProcessEnv = process.env,
+  ): Promise<void> {
+    await run(
+      process.execPath,
+      [
+        path.join(checkout, "scripts", "promote-npm-candidate.ts"),
+        "--build-receipt",
+        buildReceiptPath,
+        "--artifacts",
+        candidateDirectory,
+        "--registry",
+        "https://registry.npmjs.org/",
+        "--verify-only",
+      ],
+      {
+        cwd: checkout,
+        env: reviewedNpm.environment(environment),
+      },
+    );
   }
 
   return {
@@ -504,8 +672,12 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
     qualification,
     qualificationBytes,
     reviewedNpm,
-    get buildReceipt() { return buildReceipt; },
-    get buildReceiptBytes() { return buildReceiptBytes; },
+    get buildReceipt() {
+      return buildReceipt;
+    },
+    get buildReceiptBytes() {
+      return buildReceiptBytes;
+    },
     reset,
     refreshBuildReceipt,
     mutateQualification,
@@ -513,22 +685,36 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
   };
 }
 
-async function verifyIsolatedPublish(fixture: CandidateFixture, workspace: string): Promise<void> {
+async function verifyIsolatedPublish(
+  fixture: CandidateFixture,
+  workspace: string,
+): Promise<void> {
   const { availabilityRecord, publishRecord } = fixture.reviewedNpm;
-  await run(process.execPath, [
-    path.join(fixture.checkout, "scripts", "promote-npm-candidate.ts"),
-    "--build-receipt", fixture.buildReceiptPath,
-    "--artifacts", fixture.candidateDirectory,
-    "--registry", "https://registry.npmjs.org/",
-  ], {
-    cwd: fixture.checkout,
-    env: fixture.reviewedNpm.environment({
-      ...process.env,
-      NPM_TOKEN: "test-token",
-    }),
-  });
-  const availability = JSON.parse(await readFile(availabilityRecord, "utf8")) as NpmInvocation;
-  const publish = JSON.parse(await readFile(publishRecord, "utf8")) as NpmInvocation;
+  await run(
+    process.execPath,
+    [
+      path.join(fixture.checkout, "scripts", "promote-npm-candidate.ts"),
+      "--build-receipt",
+      fixture.buildReceiptPath,
+      "--artifacts",
+      fixture.candidateDirectory,
+      "--registry",
+      "https://registry.npmjs.org/",
+    ],
+    {
+      cwd: fixture.checkout,
+      env: fixture.reviewedNpm.environment({
+        ...process.env,
+        NPM_TOKEN: "test-token",
+      }),
+    },
+  );
+  const availability = JSON.parse(
+    await readFile(availabilityRecord, "utf8"),
+  ) as NpmInvocation;
+  const publish = JSON.parse(
+    await readFile(publishRecord, "utf8"),
+  ) as NpmInvocation;
   assert.equal(availability.token, undefined);
   assert.equal(availability.userConfigHasAuth, false);
   assert.equal(availability.globalConfigHasAuth, false);
@@ -547,18 +733,26 @@ async function verifyIsolatedPublish(fixture: CandidateFixture, workspace: strin
   await assert.rejects(readFile(path.join(workspace, "lifecycle-ran")));
 }
 
-async function createReviewedNpmFixture(workspace: string): Promise<ReviewedNpmFixture> {
+async function createReviewedNpmFixture(
+  workspace: string,
+): Promise<ReviewedNpmFixture> {
   const root = path.join(workspace, "reviewed-npm");
   const packageRoot = path.join(root, "package");
   const entrypoint = path.join(packageRoot, "bin", "npm-cli.js");
   const binDirectory = path.join(root, "path-bin");
   const availabilityRecord = path.join(workspace, "availability.json");
   const publishRecord = path.join(workspace, "publish.json");
-  const packageJsonBytes = Buffer.from(`${JSON.stringify({
-    name: "npm",
-    version: "11.18.0",
-    bin: { npm: "bin/npm-cli.js" },
-  }, null, 2)}\n`);
+  const packageJsonBytes = Buffer.from(
+    `${JSON.stringify(
+      {
+        name: "npm",
+        version: "11.18.0",
+        bin: { npm: "bin/npm-cli.js" },
+      },
+      null,
+      2,
+    )}\n`,
+  );
   const entrypointBytes = Buffer.from(`#!/usr/bin/env node
 const { readFileSync, statSync, writeFileSync } = require("node:fs");
 const [command, ...arguments_] = process.argv.slice(2);
@@ -592,8 +786,16 @@ if (command === "publish") {
 process.exit(2);
 `);
   const files = [
-    { path: "bin/npm-cli.js", sha256: sha256(entrypointBytes), bytes: entrypointBytes.length },
-    { path: "package.json", sha256: sha256(packageJsonBytes), bytes: packageJsonBytes.length },
+    {
+      path: "bin/npm-cli.js",
+      sha256: sha256(entrypointBytes),
+      bytes: entrypointBytes.length,
+    },
+    {
+      path: "package.json",
+      sha256: sha256(packageJsonBytes),
+      bytes: packageJsonBytes.length,
+    },
   ];
   const evidence = {
     version: "11.18.0",
@@ -601,7 +803,9 @@ process.exit(2);
     entrypoint: "bin/npm-cli.js",
     entrypointSha256: sha256(entrypointBytes),
     packageJsonSha256: sha256(packageJsonBytes),
-    packageTreeSha256: sha256(Buffer.from(JSON.stringify({ domain: npmTreeDigestDomain, files }))),
+    packageTreeSha256: sha256(
+      Buffer.from(JSON.stringify({ domain: npmTreeDigestDomain, files })),
+    ),
     fileCount: files.length,
     bytes: files.reduce((total, file) => total + file.bytes, 0),
   };
@@ -641,11 +845,15 @@ process.exit(2);
 }
 
 function buildOutputDigest(files: readonly BuildFile[]): string {
-  return `sha256:${sha256(Buffer.from(JSON.stringify({
-    domain: buildOutputDomain,
-    root: "artifacts/candidate",
-    files,
-  })))}`;
+  return `sha256:${sha256(
+    Buffer.from(
+      JSON.stringify({
+        domain: buildOutputDomain,
+        root: "artifacts/candidate",
+        files,
+      }),
+    ),
+  )}`;
 }
 
 function ordinal(left: string, right: string): number {
@@ -691,7 +899,11 @@ type QualificationReceipt = {
     tree: string;
     clean: boolean;
     dirtyStatusSha256: string | null;
-    toolingExclusion: { root: string; classification: string; trackedFiles: number };
+    toolingExclusion: {
+      root: string;
+      classification: string;
+      trackedFiles: number;
+    };
   };
   release: { eligible: boolean; nodeVersions: Record<string, string> };
   artifact: {
@@ -756,7 +968,9 @@ type CandidateFixture = {
   readonly buildReceiptBytes: Buffer;
   readonly reset: () => Promise<void>;
   readonly refreshBuildReceipt: () => Promise<void>;
-  readonly mutateQualification: (mutator: (receipt: QualificationReceipt) => void) => Promise<void>;
+  readonly mutateQualification: (
+    mutator: (receipt: QualificationReceipt) => void,
+  ) => Promise<void>;
   readonly verify: (environment?: NodeJS.ProcessEnv) => Promise<void>;
 };
 

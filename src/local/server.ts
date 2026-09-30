@@ -1,14 +1,17 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import { isIP } from "node:net";
 
-const MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 0;
 
 /** The local HTTP endpoint exposed by a running server. */
 export type LocalServerAddress = Readonly<{
   readonly origin: string;
-  readonly apiBaseUrl: string;
   readonly host: string;
   readonly port: number;
 }>;
@@ -32,17 +35,25 @@ export class TerraScaleLocalHttpServer {
   #startPromise: Promise<LocalServerAddress> | undefined;
   #closePromise: Promise<void> | undefined;
 
-  constructor(handler: LocalRequestHandler, options: ConstructorOptions = false) {
+  constructor(
+    handler: LocalRequestHandler,
+    options: ConstructorOptions = false,
+  ) {
     if (typeof handler !== "function") {
-      throw new TypeError("TerraScaleLocalHttpServer requires a request handler.");
+      throw new TypeError(
+        "TerraScaleLocalHttpServer requires a request handler.",
+      );
     }
 
-    const allowRemote = typeof options === "boolean"
-      ? options
-      : options !== null && typeof options === "object" &&
-          (options.allowRemote === undefined || typeof options.allowRemote === "boolean")
-        ? options.allowRemote ?? false
-        : undefined;
+    const allowRemote =
+      typeof options === "boolean"
+        ? options
+        : options !== null &&
+            typeof options === "object" &&
+            (options.allowRemote === undefined ||
+              typeof options.allowRemote === "boolean")
+          ? (options.allowRemote ?? false)
+          : undefined;
     if (typeof allowRemote !== "boolean") {
       throw new TypeError("allowRemote must be a boolean.");
     }
@@ -194,7 +205,11 @@ function isLoopbackHost(host: string): boolean {
   const family = isIP(normalized);
   if (family === 4) {
     const octets = normalized.split(".").map(Number);
-    return octets.length === 4 && octets[0] === 127 && octets.every((octet) => octet >= 0 && octet <= 255);
+    return (
+      octets.length === 4 &&
+      octets[0] === 127 &&
+      octets.every((octet) => octet >= 0 && octet <= 255)
+    );
   }
   if (family === 6) {
     return normalized === "::1";
@@ -203,9 +218,10 @@ function isLoopbackHost(host: string): boolean {
 }
 
 function makeAddress(host: string, port: number): LocalServerAddress {
-  const urlHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  const urlHost =
+    host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
   const origin = `http://${urlHost}:${port}`;
-  return { origin, apiBaseUrl: origin, host, port };
+  return { origin, host, port };
 }
 
 async function handleRequest(
@@ -248,7 +264,12 @@ async function handleRequest(
       return;
     }
 
-    const request = makeRequest(incoming, body, abortController.signal, fallbackHost);
+    const request = makeRequest(
+      incoming,
+      body,
+      abortController.signal,
+      fallbackHost,
+    );
     const response = await awaitAbortable(
       Promise.resolve().then(() => handler(request)),
       abortController.signal,
@@ -257,14 +278,29 @@ async function handleRequest(
       return;
     }
 
-    await writeResponse(outgoing, response, incoming.method ?? "GET", abortController.signal);
+    await writeResponse(
+      outgoing,
+      response,
+      incoming.method ?? "GET",
+      abortController.signal,
+    );
   } catch (error) {
     if (abortController.signal.aborted || outgoing.destroyed) {
       return;
     }
 
-    const status = error instanceof RequestBodyTooLargeError ? 413 : error instanceof BadRequestError ? 400 : 500;
-    const message = status === 413 ? "Request body exceeds the 2 MiB limit." : status === 400 ? "Malformed request." : "Internal Server Error";
+    const status =
+      error instanceof RequestBodyTooLargeError
+        ? 413
+        : error instanceof BadRequestError
+          ? 400
+          : 500;
+    const message =
+      status === 413
+        ? "Request body exceeds the 4 MiB limit."
+        : status === 400
+          ? "Malformed request."
+          : "Internal Server Error";
     sendErrorResponse(outgoing, status, message);
   } finally {
     incoming.off("aborted", onIncomingAborted);
@@ -325,10 +361,18 @@ function formatHostForUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
 
-async function readRequestBody(incoming: IncomingMessage, signal: AbortSignal): Promise<Uint8Array> {
+async function readRequestBody(
+  incoming: IncomingMessage,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
   const contentLength = incoming.headers["content-length"];
-  const declaredLength = typeof contentLength === "string" ? Number(contentLength) : undefined;
-  if (declaredLength !== undefined && Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BODY_BYTES) {
+  const declaredLength =
+    typeof contentLength === "string" ? Number(contentLength) : undefined;
+  if (
+    declaredLength !== undefined &&
+    Number.isFinite(declaredLength) &&
+    declaredLength > MAX_REQUEST_BODY_BYTES
+  ) {
     incoming.resume();
     throw new RequestBodyTooLargeError();
   }
@@ -364,7 +408,8 @@ async function readRequestBody(incoming: IncomingMessage, signal: AbortSignal): 
       }
     };
     const onData = (chunk: Uint8Array | string): void => {
-      const bytes = typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
+      const bytes =
+        typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
       if (size + bytes.byteLength > MAX_REQUEST_BODY_BYTES) {
         incoming.resume();
         finish(new RequestBodyTooLargeError());
@@ -399,7 +444,9 @@ async function writeResponse(
     outgoing.setHeader(name, value);
   }
 
-  const getSetCookie = (response.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie;
+  const getSetCookie = (
+    response.headers as Headers & { getSetCookie?: () => string[] }
+  ).getSetCookie;
   if (getSetCookie !== undefined) {
     const cookies = getSetCookie.call(response.headers);
     if (cookies.length > 0) {
@@ -408,7 +455,13 @@ async function writeResponse(
   }
   outgoing.writeHead(response.status);
 
-  if (method === "HEAD" || response.body === null || response.status === 204 || response.status === 205 || response.status === 304) {
+  if (
+    method === "HEAD" ||
+    response.body === null ||
+    response.status === 204 ||
+    response.status === 205 ||
+    response.status === 304
+  ) {
     outgoing.end();
     return;
   }
@@ -437,7 +490,11 @@ async function writeResponse(
   }
 }
 
-function writeChunk(outgoing: ServerResponse, chunk: Uint8Array, signal: AbortSignal): Promise<void> {
+function writeChunk(
+  outgoing: ServerResponse,
+  chunk: Uint8Array,
+  signal: AbortSignal,
+): Promise<void> {
   if (signal.aborted || outgoing.destroyed) {
     return Promise.reject(new Error("Response aborted."));
   }
@@ -477,7 +534,10 @@ function writeChunk(outgoing: ServerResponse, chunk: Uint8Array, signal: AbortSi
   });
 }
 
-async function awaitAbortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+async function awaitAbortable<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
   if (signal.aborted) {
     throw new Error("Operation aborted.");
   }
@@ -501,7 +561,11 @@ async function awaitAbortable<T>(promise: Promise<T>, signal: AbortSignal): Prom
   });
 }
 
-function sendErrorResponse(outgoing: ServerResponse, status: number, message: string): void {
+function sendErrorResponse(
+  outgoing: ServerResponse,
+  status: number,
+  message: string,
+): void {
   if (outgoing.destroyed || outgoing.headersSent) {
     if (!outgoing.destroyed && !outgoing.writableEnded) {
       outgoing.destroy();
@@ -521,7 +585,10 @@ function sendErrorResponse(outgoing: ServerResponse, status: number, message: st
 function closeNodeServer(server: ServerLike): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     server.close((error) => {
-      if (error !== undefined && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
+      if (
+        error !== undefined &&
+        (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING"
+      ) {
         reject(error);
         return;
       }

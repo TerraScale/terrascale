@@ -14,12 +14,9 @@ concurrency:
   group: ts-typescript-${{ forgejo.workflow }}-${{ forgejo.ref }}
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
-env:
-  CONTRACT_SOURCE: contracts/terrabase
-  EDGE_CONTRACT_SOURCE: contracts/edge
-
-# Node.js 24 (.node-version) and the Playwright 1.63 Chromium and Firefox
-# engines are baked into the ts-builder job image.
+# Node.js 24 (.node-version) and the Playwright 1.63 engines are baked into
+# ts-builder. CI extracts SHA-bound producer source inputs and provisions
+# actual stable vendor Chrome and Edge binaries with pinned Nix definitions.
 jobs:
   static:
     name: verify/static-contracts
@@ -41,6 +38,12 @@ jobs:
       - name: Provision the reviewed npm CLI
         run: node scripts/provision-reviewed-npm.ts
 
+      - name: Extract the frozen actual producer source inputs
+        run: bash scripts/ci/provision-current-contract-inputs.sh
+
+      - name: Require the exact current producer contract inputs
+        run: npm run check:current-contract-inputs
+
       - name: Install locked dependencies
         run: npm ci
 
@@ -50,38 +53,13 @@ jobs:
       - name: Build the SDK
         run: npm run build
 
-      - name: Check out the pinned producer contract bundles
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          repository: TerraScale/ts-rust
-          ref: 98678aa89bccc709c2fca48319ffdb3a9f94ff5e
-          path: contracts/terrabase-root
-          fetch-depth: 1
-          token: "${{ secrets.REGISTRY_TOKEN }}"
-          persist-credentials: false
-
-      - name: Check out the pinned edge contract bundle
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          repository: TerraScale/ts-atlas
-          ref: e9150027048325dab70003a878f42a4a7e5b25c2
-          path: contracts/edge-root
-          fetch-depth: 1
-          token: "${{ secrets.REGISTRY_TOKEN }}"
-          persist-credentials: false
-
-      - name: Stage the contract bundles for digest verification
-        run: |
-          set -euo pipefail
-          cp -r contracts/terrabase-root/contracts/v1 contracts/terrabase
-          cp -r contracts/edge-root/contracts/v1 contracts/edge
+      - name: Check native OpenAPI and canonical effect vectors
+        run: npm run check:current-contract
 
       - name: Check the public contract fixture
         run: npm run check:public-contract-fixture
 
-      - name: Check Dashboard OpenAPI contract identity
+      - name: Check native OpenAPI contract identity
         run: npm run check:openapi-contract-descriptor
 
       - name: Check the route manifest
@@ -151,42 +129,26 @@ jobs:
       - name: Provision the reviewed npm CLI
         run: node scripts/provision-reviewed-npm.ts
 
+      - name: Extract the frozen actual producer source inputs
+        run: bash scripts/ci/provision-current-contract-inputs.sh
+
+      - name: Require the exact current producer contract inputs
+        run: npm run check:current-contract-inputs
+
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Check out the pinned producer contract bundles
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          repository: TerraScale/ts-rust
-          ref: 98678aa89bccc709c2fca48319ffdb3a9f94ff5e
-          path: contracts/terrabase-root
-          fetch-depth: 1
-          token: "${{ secrets.REGISTRY_TOKEN }}"
-          persist-credentials: false
-
-      - name: Check out the pinned edge contract bundle
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          repository: TerraScale/ts-atlas
-          ref: e9150027048325dab70003a878f42a4a7e5b25c2
-          path: contracts/edge-root
-          fetch-depth: 1
-          token: "${{ secrets.REGISTRY_TOKEN }}"
-          persist-credentials: false
-
-      - name: Stage the contract bundles for digest verification
-        run: |
-          set -euo pipefail
-          cp -r contracts/terrabase-root/contracts/v1 contracts/terrabase
-          cp -r contracts/edge-root/contracts/v1 contracts/edge
+      - name: Check native OpenAPI and canonical effect vectors
+        run: npm run check:current-contract
 
       - name: Build the SDK
         run: npm run build
 
       - name: Run the complete SDK test suite
         run: npm test
+
+      - name: Run actual framework lifecycle regressions
+        run: npm run check:frameworks
 
       - name: Validate the locked dependency SBOM
         run: npm run check:sbom
@@ -220,10 +182,11 @@ jobs:
       - name: Build the SDK
         run: npm run build
 
-      # Chromium and Firefox are baked for this Playwright version; only
-      # WebKit is fetched.
-      - name: Install the pinned Playwright browsers
-        run: npx playwright install chromium firefox webkit
+      - name: Verify the pinned Playwright engine installations
+        run: npx playwright install firefox webkit
+
+      - name: Provision pinned actual Chrome and Edge binaries
+        run: bash scripts/ci/provision-branded-browsers.sh
 
       - name: Run browser qualification against the current package
         run: npm run test:browser

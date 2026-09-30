@@ -1,52 +1,85 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { loadNpmContractEvidence } from "./npm-contract-evidence.ts";
+import { requireCurrentContractInputs } from "./openapi-contract-paths.ts";
 import { inspectNpmCli } from "./npm-cli-evidence.ts";
-import { npmReleasePolicy, qualificationFilename } from "./npm-release-policy.ts";
+import {
+  npmReleasePolicy,
+  qualificationFilename,
+} from "./npm-release-policy.ts";
 import { inspectReleaseSource } from "./npm-release-source.ts";
 
 const execute = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseArguments(process.argv.slice(2));
 const output = path.resolve(root, options.output);
-if (options.release && options.tarball === undefined && output !== path.join(root, npmReleasePolicy.outputRoot)) {
-  throw new Error(`Release qualification output must be ${npmReleasePolicy.outputRoot}.`);
+if (
+  options.release &&
+  options.tarball === undefined &&
+  output !== path.join(root, npmReleasePolicy.outputRoot)
+) {
+  throw new Error(
+    `Release qualification output must be ${npmReleasePolicy.outputRoot}.`,
+  );
 }
 await requireAbsent(output);
-const workspace = await mkdtemp(path.join(tmpdir(), "terrascale-npm-qualification-"));
+const workspace = await mkdtemp(
+  path.join(tmpdir(), "terrascale-npm-qualification-"),
+);
 const packageDirectory = path.join(workspace, "package");
 const consumer = path.join(workspace, "consumer");
 const startedAt = new Date().toISOString();
 const consumerJourney = String.raw`import assert from "node:assert/strict";
-import { createTerraScaleClient } from "@terrascale/sdk";
-import { createTerraScaleAdminClient } from "@terrascale/sdk/admin";
-import { createTerraScaleBetterAuthAdapter, createTerraScaleAuthAdapter, AuthPersistenceClient, runAuthTransaction } from "@terrascale/sdk/better-auth";
-
-const options = { apiBaseUrl: "https://api.example.test" };
-assert.equal(typeof createTerraScaleClient(options), "object");
-assert.equal(typeof createTerraScaleAdminClient(options), "object");
-assert.equal(typeof createTerraScaleBetterAuthAdapter, "function");
-assert.equal(typeof runAuthTransaction, "function");
-assert.equal(typeof createTerraScaleAuthAdapter(new AuthPersistenceClient(options), "auth"), "function");
+import { createTerraBaseClient, terraScaleReleaseBlockers, TerraScaleCapabilityUnavailableError } from "@terrascale/sdk";
+import { requireTerraScaleAdministration } from "@terrascale/sdk/admin";
+import { requireTerraScaleBetterAuth } from "@terrascale/sdk/better-auth";
+import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
+const scope = { tenant: "00000000-0000-0000-0000-000000000001", database: "00000000-0000-0000-0000-000000000002", shard: 1n };
+const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "qualification-constructor-only" });
+assert.equal(typeof client.read, "function");
+assert.equal(typeof client.prepareCommit, "function");
+for (const name of ["request", "documents", "executeSql", "sync", "http"]) assert.equal(name in client, false);
+assert.equal(typeof createTsAuthClient({ apiBaseUrl: "https://auth.terrascale.tech", instanceSlug: "qualification", useReverseProxy: true }), "object");
+assert.throws(requireTerraScaleAdministration, TerraScaleCapabilityUnavailableError);
+assert.throws(requireTerraScaleBetterAuth, TerraScaleCapabilityUnavailableError);
+assert.ok(terraScaleReleaseBlockers.betterAuth.required.includes("bounded transactions"));
 `;
 
 try {
-  const source = await inspectReleaseSource(root, { allowDirty: options.allowDirty });
+  if (options.release) await requireCurrentContractInputs();
+  const source = await inspectReleaseSource(root, {
+    allowDirty: options.allowDirty,
+  });
   const npmCli = await inspectNpmCli({
-    archiveIntegrity: options.release ? npmReleasePolicy.npm.archiveIntegrity : null,
+    archiveIntegrity: options.release
+      ? npmReleasePolicy.npm.archiveIntegrity
+      : null,
   });
   if (options.release) {
     if (npmCli.evidence.version !== npmReleasePolicy.npm.version) {
-      throw new Error(`Release qualification requires npm ${npmReleasePolicy.npm.version}.`);
+      throw new Error(
+        `Release qualification requires npm ${npmReleasePolicy.npm.version}.`,
+      );
     }
     const releaseNode24 = await realpath(options.nodes[1]);
-    if (await realpath(process.execPath) !== releaseNode24) {
-      throw new Error("Release qualification and npm packing must execute with the declared Node 24 binary.");
+    if ((await realpath(process.execPath)) !== releaseNode24) {
+      throw new Error(
+        "Release qualification and npm packing must execute with the declared Node 24 binary.",
+      );
     }
   }
 
@@ -54,26 +87,50 @@ try {
   let tarball;
   let originalArtifact;
   if (options.tarball !== undefined) {
-    if (!path.isAbsolute(options.tarball)) throw new Error("--tarball must be an absolute path.");
+    if (!path.isAbsolute(options.tarball))
+      throw new Error("--tarball must be an absolute path.");
     originalArtifact = await readFile(options.tarball);
     tarball = path.join(output, path.basename(options.tarball));
     await writeFile(tarball, originalArtifact, { flag: "wx" });
   } else {
-    const packed = JSON.parse((await runNpm(npmCli, ["pack", "--ignore-scripts", "--json", "--pack-destination", output], root)).stdout);
-    if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0]?.filename !== "string") {
+    const packed = JSON.parse(
+      (
+        await runNpm(
+          npmCli,
+          ["pack", "--ignore-scripts", "--json", "--pack-destination", output],
+          root,
+        )
+      ).stdout,
+    );
+    if (
+      !Array.isArray(packed) ||
+      packed.length !== 1 ||
+      typeof packed[0]?.filename !== "string"
+    ) {
       throw new Error("npm pack did not describe exactly one artifact.");
     }
     tarball = path.join(output, packed[0].filename);
   }
   const tarballRealPath = await realpath(tarball);
-  if (path.dirname(tarballRealPath) !== await realpath(output)) throw new Error("npm pack artifact escaped the output directory.");
+  if (path.dirname(tarballRealPath) !== (await realpath(output)))
+    throw new Error("npm pack artifact escaped the output directory.");
   await run("tar", ["-xzf", tarball, "-C", workspace], root);
 
-  const manifest = JSON.parse(await readFile(path.join(packageDirectory, "package.json"), "utf8"));
+  const manifest = JSON.parse(
+    await readFile(path.join(packageDirectory, "package.json"), "utf8"),
+  );
   qualifyManifest(manifest);
   const files = await listFiles(packageDirectory);
-  qualifyContents(files);
+  qualifyContents(files, manifest);
   await scanForSecrets(packageDirectory, files);
+  if (
+    !Buffer.from(
+      await readFile(path.join(packageDirectory, "sdk-current-contract.json")),
+    ).equals(await readFile(path.join(root, "sdk-current-contract.json")))
+  )
+    throw new Error(
+      "Packed current producer pin differs from qualified source bytes.",
+    );
   const contract = await loadNpmContractEvidence(
     root,
     path.join(packageDirectory, "sdk-route-manifest.json"),
@@ -81,43 +138,104 @@ try {
   const graphs = {
     root: await browserGraph(packageDirectory, "dist/index.js"),
     admin: await browserGraph(packageDirectory, "dist/admin.js"),
-    betterAuthWorkerd: await browserGraph(packageDirectory, "dist/better-auth.js"),
+    betterAuthWorkerd: await browserGraph(
+      packageDirectory,
+      "dist/better-auth.js",
+    ),
   };
 
   await mkdir(consumer);
-  await writeFile(path.join(consumer, "package.json"), JSON.stringify({
-    private: true,
-    type: "module",
-    // The clean auth consumer explicitly installs the documented optional peer.
-    dependencies: { "@better-auth/core": manifest.peerDependencies["@better-auth/core"] },
-  }));
-  await runNpm(npmCli, ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], consumer);
+  await writeFile(
+    path.join(consumer, "package.json"),
+    JSON.stringify({
+      private: true,
+      type: "module",
+      // The clean auth consumer explicitly installs the documented optional peer.
+      dependencies: {
+        "@better-auth/core": manifest.peerDependencies["@better-auth/core"],
+      },
+    }),
+  );
+  await runNpm(
+    npmCli,
+    ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball],
+    consumer,
+  );
   const journey = path.join(consumer, "qualify.ts");
   await writeFile(journey, consumerJourney);
 
   // Exercise the installed package's condition selection, including browser
   // rejection even when Node's own condition is also present.
-  await run(process.execPath, ["--conditions=workerd", "--conditions=browser", journey], consumer, qualificationEnvironment());
-  await run(process.execPath, ["--conditions=browser", "--input-type=module", "-e", `
+  await run(
+    process.execPath,
+    ["--conditions=workerd", "--conditions=browser", journey],
+    consumer,
+    qualificationEnvironment(),
+  );
+  await run(
+    process.execPath,
+    [
+      "--conditions=workerd",
+      "--input-type=module",
+      "-e",
+      `
     import assert from "node:assert/strict";
-    await assert.rejects(import("@terrascale/sdk/better-auth"), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
-  `], consumer, qualificationEnvironment());
+    for (const entry of ["local", "postgres"]) await assert.rejects(import("@terrascale/sdk/" + entry), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
+  `,
+    ],
+    consumer,
+    qualificationEnvironment(),
+  );
+  await run(
+    process.execPath,
+    [
+      "--conditions=browser",
+      "--input-type=module",
+      "-e",
+      `
+    import assert from "node:assert/strict";
+    for (const entry of ["better-auth", "local", "postgres"]) await assert.rejects(import("@terrascale/sdk/" + entry), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
+  `,
+    ],
+    consumer,
+    qualificationEnvironment(),
+  );
 
   const runtimes = [];
   for (const executable of options.nodes) {
-    if (!path.isAbsolute(executable)) throw new Error(`Node executable must be an absolute path: ${executable}`);
+    if (!path.isAbsolute(executable))
+      throw new Error(
+        `Node executable must be an absolute path: ${executable}`,
+      );
     const resolvedExecutable = await realpath(executable);
     const executableMetadata = await lstat(resolvedExecutable);
     if (!executableMetadata.isFile() || executableMetadata.isSymbolicLink()) {
-      throw new Error(`Node executable must resolve to a regular file: ${executable}`);
+      throw new Error(
+        `Node executable must resolve to a regular file: ${executable}`,
+      );
     }
-    const version = (await run(resolvedExecutable, ["--version"], consumer)).stdout.trim();
-    const major = Number.parseInt(version.replace(/^v/u, "").split(".")[0] ?? "", 10);
-    if (major !== 22 && major !== 24) throw new Error(`${executable} resolved unsupported ${version}; expected Node 22 or 24.`);
+    const version = (
+      await run(resolvedExecutable, ["--version"], consumer)
+    ).stdout.trim();
+    const major = Number.parseInt(
+      version.replace(/^v/u, "").split(".")[0] ?? "",
+      10,
+    );
+    if (major !== 22 && major !== 24)
+      throw new Error(
+        `${executable} resolved unsupported ${version}; expected Node 22 or 24.`,
+      );
     if (options.release && npmReleasePolicy.nodeVersions[major] !== version) {
-      throw new Error(`${executable} resolved ${version}; release qualification requires ${npmReleasePolicy.nodeVersions[major]}.`);
+      throw new Error(
+        `${executable} resolved ${version}; release qualification requires ${npmReleasePolicy.nodeVersions[major]}.`,
+      );
     }
-    await run(resolvedExecutable, [journey], consumer, qualificationEnvironment());
+    await run(
+      resolvedExecutable,
+      [journey],
+      consumer,
+      qualificationEnvironment(),
+    );
     runtimes.push({
       major,
       executable: resolvedExecutable,
@@ -127,40 +245,86 @@ try {
     });
   }
   if (new Set(runtimes.map(({ major }) => major)).size !== runtimes.length) {
-    throw new Error("Each --node executable must qualify a distinct supported major runtime.");
+    throw new Error(
+      "Each --node executable must qualify a distinct supported major runtime.",
+    );
   }
-  if (options.release && runtimes.map(({ major }) => major).sort().join(",") !== "22,24") {
-    throw new Error("Release qualification requires exactly one Node 22 and one Node 24 executable.");
+  if (
+    options.release &&
+    runtimes
+      .map(({ major }) => major)
+      .sort()
+      .join(",") !== "22,24"
+  ) {
+    throw new Error(
+      "Release qualification requires exactly one Node 22 and one Node 24 executable.",
+    );
   }
 
-  const dependencyTree = JSON.parse((await runNpm(npmCli, ["ls", "--omit=dev", "--all", "--json"], consumer)).stdout);
+  const dependencyTree = JSON.parse(
+    (await runNpm(npmCli, ["ls", "--omit=dev", "--all", "--json"], consumer))
+      .stdout,
+  );
   const installedSdk = dependencyTree.dependencies?.[manifest.name];
-  if (installedSdk?.version !== manifest.version) throw new Error("Clean consumer did not install the exact candidate version.");
+  if (installedSdk?.version !== manifest.version)
+    throw new Error(
+      "Clean consumer did not install the exact candidate version.",
+    );
   const productionDependencies = installedSdk.dependencies ?? {};
-  const auditRun = await runNpmAllowFailure(npmCli, ["audit", "--omit=dev", "--json"], consumer);
+  const auditRun = await runNpmAllowFailure(
+    npmCli,
+    ["audit", "--omit=dev", "--json"],
+    consumer,
+  );
   const audit = parseJsonOutput(auditRun.stdout, "npm audit");
   const vulnerabilities = audit?.metadata?.vulnerabilities;
-  if (auditRun.exitCode !== 0 || vulnerabilities === undefined || Object.values(vulnerabilities).some((count) => count !== 0)) {
-    throw new Error(`Production dependency audit failed (exit ${auditRun.exitCode}).`);
+  if (
+    auditRun.exitCode !== 0 ||
+    vulnerabilities === undefined ||
+    Object.values(vulnerabilities).some((count) => count !== 0)
+  ) {
+    throw new Error(
+      `Production dependency audit failed (exit ${auditRun.exitCode}).`,
+    );
   }
 
-  const licenseText = await readFile(path.join(packageDirectory, "LICENSE"), "utf8");
-  if (manifest.license !== "Apache-2.0" || !/Apache License\s+Version 2\.0/iu.test(licenseText)) {
-    throw new Error("Packed license metadata and LICENSE must both identify Apache-2.0.");
+  const licenseText = await readFile(
+    path.join(packageDirectory, "LICENSE"),
+    "utf8",
+  );
+  if (
+    manifest.license !== "Apache-2.0" ||
+    !/Apache License\s+Version 2\.0/iu.test(licenseText)
+  ) {
+    throw new Error(
+      "Packed license metadata and LICENSE must both identify Apache-2.0.",
+    );
   }
 
   const artifactBytes = await readFile(tarball);
-  if (originalArtifact !== undefined && (
-    !artifactBytes.equals(originalArtifact) ||
-    !(await readFile(options.tarball)).equals(originalArtifact)
-  )) throw new Error("Prepacked npm artifact changed during qualification.");
+  if (
+    originalArtifact !== undefined &&
+    (!artifactBytes.equals(originalArtifact) ||
+      !(await readFile(options.tarball)).equals(originalArtifact))
+  )
+    throw new Error("Prepacked npm artifact changed during qualification.");
   let unpackedSize = 0;
-  for (const file of files) unpackedSize += (await readFile(path.join(packageDirectory, file))).length;
+  for (const file of files)
+    unpackedSize += (await readFile(path.join(packageDirectory, file))).length;
 
-  const limitations = [];
-  if (!options.release) limitations.push("Diagnostic qualification was not produced in fail-closed release mode.");
-  if (!source.clean) limitations.push("The qualified Git worktree contained uncommitted source changes.");
-  if (runtimes.length < 2) limitations.push("Node 22 and Node 24 are both required for release admission.");
+  const limitations = [...npmReleasePolicy.activeProducerBlockers];
+  if (!options.release)
+    limitations.push(
+      "Diagnostic qualification was not produced in fail-closed release mode.",
+    );
+  if (!source.clean)
+    limitations.push(
+      "The qualified Git worktree contained uncommitted source changes.",
+    );
+  if (runtimes.length < 2)
+    limitations.push(
+      "Node 22 and Node 24 are both required for release admission.",
+    );
   const receipt = {
     schemaVersion: npmReleasePolicy.qualificationSchemaVersion,
     mediaType: npmReleasePolicy.qualificationMediaType,
@@ -190,41 +354,82 @@ try {
     },
     contract,
     runtimes,
-    dependencies: { count: Object.keys(productionDependencies).length, packages: productionDependencies },
-    license: { declared: manifest.license, fileSha256: sha256(Buffer.from(licenseText)) },
-    security: { audit: audit.metadata, registry: auditRun.registry ?? "https://registry.npmjs.org/" },
-    command: `npm run qualify:artifact -- ${process.argv.slice(2).join(" ")}`.trim(),
-    environment: { platform: process.platform, architecture: process.arch, npm: npmCli.evidence },
+    dependencies: {
+      count: Object.keys(productionDependencies).length,
+      packages: productionDependencies,
+    },
+    license: {
+      declared: manifest.license,
+      fileSha256: sha256(Buffer.from(licenseText)),
+    },
+    security: {
+      audit: audit.metadata,
+      registry: auditRun.registry ?? "https://registry.npmjs.org/",
+    },
+    command:
+      `npm run qualify:artifact -- ${process.argv.slice(2).join(" ")}`.trim(),
+    environment: {
+      platform: process.platform,
+      architecture: process.arch,
+      npm: npmCli.evidence,
+    },
     limitations,
-    redaction: "No environment values or package contents are embedded; dirty paths and workflow tooling are represented only by bounded classification evidence.",
+    redaction:
+      "No environment values or package contents are embedded; dirty paths and workflow tooling are represented only by bounded classification evidence.",
   };
-  const receiptPath = path.join(output, qualificationFilename(manifest.version));
-  await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-  process.stdout.write(`${JSON.stringify({ tarball, receipt: receiptPath, sha256: receipt.artifact.sha256, runtimes, limitations: receipt.limitations }, null, 2)}\n`);
+  const receiptPath = path.join(
+    output,
+    qualificationFilename(manifest.version),
+  );
+  await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  process.stdout.write(
+    `${JSON.stringify({ tarball, receipt: receiptPath, sha256: receipt.artifact.sha256, runtimes, limitations: receipt.limitations }, null, 2)}\n`,
+  );
 } finally {
   await rm(workspace, { recursive: true, force: true });
 }
 
 function parseArguments(args) {
-  const result = { output: "artifacts/npm-qualification", nodes: [], allowDirty: false, release: false, tarball: undefined };
+  const result = {
+    output: "artifacts/npm-qualification",
+    nodes: [],
+    allowDirty: false,
+    release: false,
+    tarball: undefined,
+  };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
-    if (argument === "--tarball") result.tarball = requiredValue(args, ++index, argument);
-    else if (argument === "--output") result.output = requiredValue(args, ++index, argument);
-    else if (argument === "--node") result.nodes.push(requiredValue(args, ++index, argument));
+    if (argument === "--tarball")
+      result.tarball = requiredValue(args, ++index, argument);
+    else if (argument === "--output")
+      result.output = requiredValue(args, ++index, argument);
+    else if (argument === "--node")
+      result.nodes.push(requiredValue(args, ++index, argument));
     else if (argument === "--allow-dirty") result.allowDirty = true;
     else if (argument === "--release") result.release = true;
     else throw new Error(`Unknown argument: ${argument}`);
   }
   if (result.release) {
-    if (result.allowDirty) throw new Error("--allow-dirty cannot be combined with --release.");
-    if (result.nodes.length !== 0) throw new Error("--release obtains its exact Node executables from TERRASCALE_NODE_22 and TERRASCALE_NODE_24.");
+    if (result.allowDirty)
+      throw new Error("--allow-dirty cannot be combined with --release.");
+    if (result.nodes.length !== 0)
+      throw new Error(
+        "--release obtains its exact Node executables from TERRASCALE_NODE_22 and TERRASCALE_NODE_24.",
+      );
     result.nodes.push(
       requiredEnvironmentPath("TERRASCALE_NODE_22"),
       requiredEnvironmentPath("TERRASCALE_NODE_24"),
     );
-    if (process.env.TERRASCALE_NPM_ARCHIVE_INTEGRITY !== npmReleasePolicy.npm.archiveIntegrity) {
-      throw new Error("TERRASCALE_NPM_ARCHIVE_INTEGRITY must match the reviewed npm release archive.");
+    if (
+      process.env.TERRASCALE_NPM_ARCHIVE_INTEGRITY !==
+      npmReleasePolicy.npm.archiveIntegrity
+    ) {
+      throw new Error(
+        "TERRASCALE_NPM_ARCHIVE_INTEGRITY must match the reviewed npm release archive.",
+      );
     }
   } else if (result.nodes.length === 0) {
     result.nodes.push(process.execPath);
@@ -235,39 +440,114 @@ function parseArguments(args) {
 function requiredEnvironmentPath(name) {
   const value = process.env[name];
   if (value === undefined || value.trim() === "" || !path.isAbsolute(value)) {
-    throw new Error(`${name} must name an absolute Node executable for release qualification.`);
+    throw new Error(
+      `${name} must name an absolute Node executable for release qualification.`,
+    );
   }
   return value;
 }
 
 function requiredValue(args, index, option) {
   const value = args[index];
-  if (value === undefined || value.startsWith("--")) throw new Error(`${option} requires a value.`);
+  if (value === undefined || value.startsWith("--"))
+    throw new Error(`${option} requires a value.`);
   return value;
 }
 
 function qualifyManifest(manifest) {
-  if (manifest.name !== "@terrascale/sdk") throw new Error("Unexpected package name.");
-  if (manifest.private !== false) throw new Error("Packed candidate must be public.");
-  if (Object.keys(manifest.dependencies ?? {}).length !== 0) throw new Error("Runtime dependencies require explicit license qualification.");
+  if (manifest.name !== "@terrascale/sdk")
+    throw new Error("Unexpected package name.");
+  if (manifest.private !== false)
+    throw new Error("Packed candidate must be public.");
+  if (Object.keys(manifest.dependencies ?? {}).length !== 0)
+    throw new Error(
+      "Runtime dependencies require explicit license qualification.",
+    );
   for (const name of [".", "./admin"]) {
     const entry = manifest.exports?.[name];
-    if (typeof entry?.import !== "string" || typeof entry?.types !== "string") throw new Error(`${name} must expose import and types conditions.`);
-    if ("node" in entry || "default" in entry) throw new Error(`${name} unexpectedly has a Node-only/default condition.`);
+    if (typeof entry?.import !== "string" || typeof entry?.types !== "string")
+      throw new Error(`${name} must expose import and types conditions.`);
+    if ("node" in entry || "default" in entry)
+      throw new Error(
+        `${name} unexpectedly has a Node-only/default condition.`,
+      );
   }
   for (const name of ["./better-auth"]) {
     const entry = manifest.exports?.[name];
-    if (typeof entry?.node !== "string" || typeof entry?.workerd !== "string" || typeof entry?.types !== "string") throw new Error(`${name} must expose explicit Node and Workerd server conditions.`);
-    if (entry.browser !== null || "import" in entry || "default" in entry) throw new Error(`${name} must block browser and generic imports.`);
-    if (Object.keys(entry).indexOf("workerd") > Object.keys(entry).indexOf("browser")) throw new Error(`${name} must resolve Workerd before its shared browser condition.`);
+    if (
+      typeof entry?.node !== "string" ||
+      typeof entry?.workerd !== "string" ||
+      typeof entry?.types !== "string"
+    )
+      throw new Error(
+        `${name} must expose explicit Node and Workerd server conditions.`,
+      );
+    if (entry.browser !== null || "import" in entry || "default" in entry)
+      throw new Error(`${name} must block browser and generic imports.`);
+    if (
+      Object.keys(entry).indexOf("workerd") >
+      Object.keys(entry).indexOf("browser")
+    )
+      throw new Error(
+        `${name} must resolve Workerd before its shared browser condition.`,
+      );
+  }
+  for (const name of ["./local", "./postgres"]) {
+    const entry = manifest.exports?.[name];
+    if (
+      typeof entry?.node !== "string" ||
+      typeof entry?.types !== "string" ||
+      entry.browser !== null ||
+      entry.workerd !== null ||
+      "import" in entry ||
+      "default" in entry
+    ) {
+      throw new Error(
+        `${name} must expose only explicit Node conditions and block browsers.`,
+      );
+    }
   }
 }
 
-function qualifyContents(files) {
-  const forbidden = [/(^|\/)node_modules\//u, /(^|\/)src\//u, /(^|\/)test(?:s)?\//u, /\.env(?:\.|$)/u, /\.map$/u, /\.test\./u, /capture/iu];
-  for (const file of files) for (const pattern of forbidden) if (pattern.test(file)) throw new Error(`Forbidden packed path: ${file}`);
-  for (const required of ["LICENSE", "README.md", "package.json", "sdk-route-manifest.json", "dist/index.js", "dist/index.d.ts", "dist/admin.js", "dist/admin.d.ts", "dist/better-auth.js"]) {
-    if (!files.includes(required)) throw new Error(`Required packed path is missing: ${required}`);
+function qualifyContents(files, manifest) {
+  const forbidden = [
+    /(^|\/)node_modules\//u,
+    /(^|\/)src\//u,
+    /(^|\/)test(?:s)?\//u,
+    /\.env(?:\.|$)/u,
+    /\.map$/u,
+    /\.test\./u,
+    /capture/iu,
+  ];
+  for (const file of files)
+    for (const pattern of forbidden)
+      if (pattern.test(file)) throw new Error(`Forbidden packed path: ${file}`);
+  for (const required of [
+    "LICENSE",
+    "README.md",
+    "package.json",
+    "sdk-route-manifest.json",
+    "sdk-current-contract.json",
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/admin.js",
+    "dist/admin.d.ts",
+    "dist/better-auth.js",
+  ]) {
+    if (!files.includes(required))
+      throw new Error(`Required packed path is missing: ${required}`);
+  }
+  for (const conditions of Object.values(manifest.exports)) {
+    for (const target of Object.values(conditions)) {
+      if (
+        typeof target === "string" &&
+        !files.includes(target.replace(/^\.\//u, ""))
+      ) {
+        throw new Error(
+          `Declared public export is absent from the packed artifact: ${target}`,
+        );
+      }
+    }
   }
 }
 
@@ -282,7 +562,9 @@ async function scanForSecrets(directory, files) {
     const bytes = await readFile(path.join(directory, file));
     if (bytes.includes(0)) continue;
     const text = bytes.toString("utf8");
-    for (const pattern of patterns) if (pattern.test(text)) throw new Error(`Credential-like material found in ${file}.`);
+    for (const pattern of patterns)
+      if (pattern.test(text))
+        throw new Error(`Credential-like material found in ${file}.`);
   }
 }
 
@@ -299,14 +581,27 @@ async function browserGraph(directory, entry) {
     const source = await readFile(path.join(directory, relative), "utf8");
     for (const dynamicImport of source.matchAll(/\bimport\s*\(\s*/gu)) {
       const quote = source[dynamicImport.index + dynamicImport[0].length];
-      if (quote !== '"' && quote !== "'") throw new Error(`${entry} has an unresolved dynamic import through ${relative}.`);
+      if (quote !== '"' && quote !== "'")
+        throw new Error(
+          `${entry} has an unresolved dynamic import through ${relative}.`,
+        );
     }
-    const specifiers = [...source.matchAll(/(?:from\s*|import\s*(?:\(\s*)?)["']([^"']+)["']/gu)].map((match) => match[1]);
+    const specifiers = [
+      ...source.matchAll(/(?:from\s*|import\s*(?:\(\s*)?)["']([^"']+)["']/gu),
+    ].map((match) => match[1]);
     for (const specifier of specifiers) {
-      if (specifier.startsWith("node:") || specifier === "better-sqlite3") throw new Error(`${entry} browser graph imports ${specifier} through ${relative}.`);
+      if (specifier.startsWith("node:") || specifier === "better-sqlite3")
+        throw new Error(
+          `${entry} browser graph imports ${specifier} through ${relative}.`,
+        );
       if (!specifier.startsWith(".")) continue;
-      const target = path.posix.normalize(path.posix.join(path.posix.dirname(relative), specifier));
-      if (target.startsWith("../")) throw new Error(`${entry} reaches a module outside the browser graph at ${target}.`);
+      const target = path.posix.normalize(
+        path.posix.join(path.posix.dirname(relative), specifier),
+      );
+      if (target.startsWith("../"))
+        throw new Error(
+          `${entry} reaches a module outside the browser graph at ${target}.`,
+        );
       pending.push(target);
     }
   }
@@ -315,11 +610,17 @@ async function browserGraph(directory, entry) {
 
 async function listFiles(directory, prefix = "") {
   const result = [];
-  for (const entry of await readdir(path.join(directory, prefix), { withFileTypes: true })) {
+  for (const entry of await readdir(path.join(directory, prefix), {
+    withFileTypes: true,
+  })) {
     const relative = path.posix.join(prefix, entry.name);
-    if (entry.isDirectory()) result.push(...await listFiles(directory, relative));
+    if (entry.isDirectory())
+      result.push(...(await listFiles(directory, relative)));
     else if (entry.isFile()) result.push(relative);
-    else throw new Error(`Packed artifact contains a non-regular path: ${relative}`);
+    else
+      throw new Error(
+        `Packed artifact contains a non-regular path: ${relative}`,
+      );
   }
   return result.sort();
 }
@@ -333,8 +634,17 @@ async function runAllowFailure(command, args, cwd) {
     const result = await run(command, args, cwd);
     return { ...result, exitCode: 0 };
   } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && "stdout" in error) {
-      return { stdout: String(error.stdout), stderr: String(error.stderr ?? ""), exitCode: Number(error.code) };
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      "stdout" in error
+    ) {
+      return {
+        stdout: String(error.stdout),
+        stderr: String(error.stderr ?? ""),
+        exitCode: Number(error.code),
+      };
     }
     throw error;
   }
@@ -349,21 +659,37 @@ async function runNpmAllowFailure(npmCli, args, cwd) {
 }
 
 function parseJsonOutput(output, command) {
-  try { return JSON.parse(output); } catch { throw new Error(`${command} did not return JSON.`); }
+  try {
+    return JSON.parse(output);
+  } catch {
+    throw new Error(`${command} did not return JSON.`);
+  }
 }
 
 function qualificationEnvironment() {
-  const env = { PATH: process.env.PATH ?? "", NODE_ENV: "production", CI: "true" };
+  const env = {
+    PATH: process.env.PATH ?? "",
+    NODE_ENV: "production",
+    CI: "true",
+  };
   return env;
 }
 
-function sha256(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
 
 async function requireAbsent(target) {
   try {
     await lstat(target);
   } catch (error) {
-    if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
+    if (
+      error !== null &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ENOENT"
+    )
+      return;
     throw error;
   }
   throw new Error(`Qualification output already exists: ${target}`);

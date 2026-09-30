@@ -2,10 +2,14 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
-    // The published artifact and `file:` installs exclude `dist/**/*.map`,
-    // so emitting JS maps would ship dangling sourceMappingURL comments
-    // (vite logs ENOENT for every SDK file). Declaration maps are unaffected.
-    "sourceMap": false
-  }
+    "sourceMap": false,
+    "declarationMap": false
+  },
+  "exclude": [
+    "dist",
+    "node_modules",
+    "src/**/*.test.ts",
+    "src/integration",
+    "src/local/test-environment.ts"
+  ]
 }
-

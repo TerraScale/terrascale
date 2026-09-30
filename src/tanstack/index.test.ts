@@ -1,349 +1,235 @@
 import assert from "node:assert/strict";
 import { describe, test } from "vitest";
+import { createCollection } from "@tanstack/db";
+import { createTerraBaseClient } from "../database.js";
+import { DatabaseSubscriptionView, type DatabaseViewSnapshot } from "../database-view.js";
+import type { DatabasePoint, DatabaseQueryRow } from "../database-types.js";
+import { TerraScaleTanStackCollectionPublisher, TerraScaleTanStackMutationError, terrascaleCollectionOptions, type TerraScaleTanStackChange, type TerraScaleTanStackSyncParams } from "./index.js";
 
-import {
-  encodeTerrascaleSyncV1MsgpackEnvelope,
-  type TerrascaleSyncV1MsgpackMessage,
-} from "../msgpack/generated/terrascale-sync-v1-msgpack.js";
-import { TerraScaleSyncV1Client } from "../sync/v1/client.js";
-import { syncV1ResultDigest, type SyncV1ResultItem } from "../sync/v1/result-view.js";
-import { SyncV1ViewCheckpoint } from "../sync/v1/result-view.js";
-import { terrascaleCollectionOptions, type TerraScaleTanStackMutationResponse } from "./index.js";
+const nativeTestKey = `tbk1.${"A".repeat(22)}.${"A".repeat(43)}`;
+const unavailableDiscovery = async (): Promise<Response> => { throw new Error("Discovery transport is disabled in this lifecycle test."); };
+const uuid = (tail: number): string => `00000000-0000-4000-8000-${tail.toString(16).padStart(12, "0")}`;
+const scope = { tenant: uuid(1), database: uuid(2), shard: 9n };
+const collection = uuid(3);
+const predicate = { op: "is_missing" as const, path: [1] };
+const point: DatabasePoint = { version: 1, state: "absent", state_version: null, context: [], siblings: [] };
+type Row = { readonly id: string; readonly point: DatabasePoint };
+const row = (id: number): DatabaseQueryRow => ({ document: uuid(id), point });
+const mapRow = (value: DatabaseQueryRow): Row => ({ id: value.document, point: value.point });
 
-const encoder = new TextEncoder();
-const item = (identity: string, value: string): SyncV1ResultItem => ({
-  identity,
-  value: { id: encoder.encode(JSON.stringify(identity)), value: encoder.encode(JSON.stringify(value)) },
-});
-
-function frame(message: TerrascaleSyncV1MsgpackMessage): Uint8Array {
-  return encodeTerrascaleSyncV1MsgpackEnvelope({ features: 0, correlation: 1n, causation: 0n, message });
+function cut(rows: readonly DatabaseQueryRow[], poll_cursor: string, generation = 1): DatabaseViewSnapshot {
+  return { rows, position: { generation, poll_cursor } };
 }
 
-function snapshot(items: readonly SyncV1ResultItem[], revision = 1n, generation = 1n) {
-  return {
-    view_generation: generation,
-    authorization_generation: 1n,
-    revision,
-    items: items.map(value => ({
-      identity: value.identity,
-      fields: Object.entries(value.value).map(([path, field]) => ({ path, value: field })),
-    })),
-    digest: syncV1ResultDigest(items),
-    checkpoint: encoder.encode(`checkpoint-${generation}-${revision}`),
-  };
-}
-
-function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void; readonly reject: (error: unknown) => void } {
+function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
+  const promise = new Promise<T>((accept, fail) => { resolve = accept; reject = fail; });
   return { promise, resolve, reject };
 }
 
-async function flush(): Promise<void> {
-  await new Promise<void>(resolve => setTimeout(resolve, 0));
+function callbacks(commit: TerraScaleTanStackSyncParams<Row, string>["commit"] = () => true) {
+  const writes: Array<TerraScaleTanStackChange<Row, string> | { readonly type: "truncate" }> = [];
+  let ready = 0;
+  let commits = 0;
+  const params: TerraScaleTanStackSyncParams<Row, string> = {
+    collection: {}, begin: () => undefined, write: message => writes.push(message),
+    commit: signal => { commits += 1; return commit(signal); },
+    markReady: () => { ready += 1; }, markError: () => undefined,
+    truncate: () => writes.push({ type: "truncate" }),
+  };
+  return { params, writes, ready: () => ready, commits: () => commits };
 }
 
-describe("TerraScale TanStack collection sync", () => {
-  test("publishes a snapshot and delta through the official sync callbacks", () => {
-    const client = new TerraScaleSyncV1Client();
-    const sent: Uint8Array[] = [];
-    const writes: Array<{ type: string; key?: string; value?: Record<string, unknown> }> = [];
-    let ready = 0;
-    const adapter = terrascaleCollectionOptions<{ id: string; value: string }>({
-      client,
-      subscription: "todos",
-      query: "from todos",
-      getKey: row => String(row.id),
-      transport: { send: frameValue => { sent.push(frameValue); } },
-      mutate: async () => ({ status: "rejected" as const }),
-    });
-    const cleanup = adapter.adapter.options.sync.sync({
-      collection: {},
-      begin: () => undefined,
-      write: message => writes.push(message as typeof writes[number]),
-      commit: () => true,
-      markReady: () => { ready += 1; },
-      markError: error => { throw error; },
-      truncate: () => { writes.push({ type: "truncate", key: "" }); },
-    });
-    assert.equal(sent.length, 1);
-    const first = [item("a", "open")];
-    adapter.adapter.receive(frame({ kind: "snapshot", subscription: "todos", snapshot: snapshot(first) }));
-    assert.deepEqual(writes.map(entry => entry.type), ["truncate", "insert"]);
-    assert.equal(writes[1]?.value?.value, "open");
-    assert.equal(ready, 1);
-
-    const second = [item("a", "done")];
-    adapter.adapter.receive(frame({
-      kind: "delta",
-      subscription: "todos",
-      view_generation: 1n,
-      from_revision: 1n,
-      to_revision: 2n,
-      operations: [{ kind: "update", identity: "a", fields: Object.entries(second[0]!.value).map(([path, value]) => ({ path, value })) }],
-      digest: syncV1ResultDigest(second),
-      checkpoint: encoder.encode("checkpoint-1-2"),
-    }));
-    assert.equal(writes.at(-1)?.value?.value, "done");
-    adapter.adapter.receive(frame({
-      kind: "reset",
-      subscription: "todos",
-      reason: "checkpoint_expired",
-      snapshot: snapshot([item("b", "fresh")], 3n, 2n),
-    }));
-    assert.equal(writes.at(-2)?.type, "truncate");
-    assert.equal(writes.at(-1)?.value?.value, "fresh");
-    cleanup?.();
+describe("native TanStack collection publication", () => {
+  test("publishes complete snapshots and atomic poll responses through collection callbacks", async () => {
+    const state = new DatabaseSubscriptionView(scope, { collection, predicate });
+    const output = callbacks();
+    const publisher = new TerraScaleTanStackCollectionPublisher(output.params, mapRow, value => value.id);
+    const first = state.apply({ version: 1, phase: "snapshot", rows: [row(10), row(20)], poll_cursor: "initial" })!;
+    await publisher.publish(first);
+    assert.deepEqual(output.writes.map(value => value.type), ["truncate", "insert", "insert"]);
+    const second = state.apply({ version: 1, phase: "poll", groups: [{ sequence: 5n, effects: [{ document: uuid(10), point: null }, { document: uuid(30), point }] }], poll_cursor: "changed" })!;
+    await publisher.publish(second);
+    assert.deepEqual(output.writes.slice(3).map(value => value.type), ["delete", "insert"]);
+    assert.equal(publisher.getPosition()?.poll_cursor, "changed");
+    assert.equal(output.ready(), 1);
+    publisher.dispose();
   });
 
-  test("keeps optimistic presentation reversible and requires online authoritative acknowledgement", async () => {
-    const client = new TerraScaleSyncV1Client();
-    const writes: Array<{ type: string; key: string; value?: Record<string, unknown> }> = [];
-    const first = [item("a", "open")];
-    const next = [item("a", "done")];
-    const nextValue = next[0]!.value.value!;
-    const adapter = terrascaleCollectionOptions<{ id: string; value: string }>({
-      client,
-      subscription: "todos-mutate",
-      query: "from todos",
-      getKey: row => String(row.id),
-      transport: { send: () => undefined },
-      mutate: async request => {
-        assert.equal(request.idempotencyKey, "transaction-1");
-        return {
-          view_generation: 1n,
-          from_revision: 1n,
-          to_revision: 2n,
-          operations: [{ kind: "Patch", identity: "a", changes: [{ path: "value", value: nextValue }] }],
-          digest: syncV1ResultDigest(next),
-          checkpoint: new SyncV1ViewCheckpoint("checkpoint-1-2"),
-        };
-      },
-    });
-    adapter.adapter.options.sync.sync({
-      collection: {}, begin: () => undefined, write: message => writes.push(message as typeof writes[number]),
-      commit: () => true, markReady: () => undefined, markError: error => { throw error; }, truncate: () => undefined,
-    });
-    adapter.adapter.receive(frame({ kind: "snapshot", subscription: "todos-mutate", snapshot: snapshot(first) }));
-    const mutation = adapter.adapter.options.onUpdate({ transaction: {
-      id: "transaction-1",
-      mutations: [{ type: "update", key: "a", modified: { id: "a", value: "done" }, original: { id: "a", value: "open" } }],
-    } });
-    await mutation;
-    assert.equal(writes.at(-1)?.value?.value, "done");
-    adapter.adapter.dispose();
-    await assert.rejects(() => adapter.adapter.options.onUpdate({ transaction: { id: "after-dispose", mutations: [] } }), /disposed/);
+  test("commits empty projected groups while preserving the rows", async () => {
+    const state = new DatabaseSubscriptionView(scope, { collection, predicate });
+    const output = callbacks();
+    const publisher = new TerraScaleTanStackCollectionPublisher(output.params, mapRow, value => value.id);
+    await publisher.publish(state.apply({ version: 1, phase: "snapshot", rows: [row(10)], poll_cursor: "initial" })!);
+    const writes = output.writes.length;
+    await publisher.publish(state.apply({ version: 1, phase: "poll", groups: [{ sequence: 18_446_744_073_709_551_615n, effects: [] }], poll_cursor: "advanced" })!);
+    assert.equal(output.writes.length, writes);
+    assert.equal(output.commits(), 2);
+    assert.equal(publisher.getPosition()?.poll_cursor, "advanced");
+    assert.equal(publisher.getPosition()?.sequence, 18_446_744_073_709_551_615n);
+    publisher.dispose();
   });
 
-  test("rolls back a rejected optimistic mutation and aborts transport ownership", async () => {
-    const client = new TerraScaleSyncV1Client();
-    const writes: Array<{ type: string; value?: Record<string, unknown> }> = [];
-    const controller = new AbortController();
-    const adapter = terrascaleCollectionOptions<{ id: string; value: string }>({
-      client,
-      subscription: "todos-reject",
-      query: "from todos",
-      getKey: row => row.id,
-      signal: controller.signal,
-      transport: { send: () => undefined },
-      mutate: async () => ({ status: "rejected" as const, error: new Error("conflict") }),
-    });
-    adapter.adapter.options.sync.sync({
-      collection: {}, begin: () => undefined, write: message => writes.push(message as typeof writes[number]),
-      commit: () => true, markReady: () => undefined, markError: error => { throw error; }, truncate: () => undefined,
-    });
-    adapter.adapter.receive(frame({ kind: "snapshot", subscription: "todos-reject", snapshot: snapshot([item("a", "open")]) }));
-    await assert.rejects(() => adapter.adapter.options.onUpdate({ transaction: {
-      id: "reject-1", mutations: [{ type: "update", key: "a", modified: { id: "a", value: "done" } }],
-    } }), /conflict/);
-    assert.equal(writes.at(-1)?.value?.value, "open");
-    controller.abort();
-    assert.throws(() => adapter.adapter.receive(new Uint8Array()), /disposed/);
-  });
-
-  test("does not publish or advance the checkpoint until an async commit succeeds", async () => {
-    const client = new TerraScaleSyncV1Client();
+  test("advances no cursor or readiness until an async collection commit succeeds", async () => {
     const commit = deferred<void>();
-    const errors: unknown[] = [];
-    let ready = 0;
-    const adapter = terrascaleCollectionOptions<{ id: string; value: string }>({
-      client,
-      subscription: "todos-async-commit",
-      query: "from todos",
-      getKey: row => row.id,
-      transport: { send: () => undefined },
-      mutate: async () => ({ status: "rejected" as const }),
-    });
-    adapter.adapter.options.sync.sync({
-      collection: {}, begin: () => undefined, write: () => undefined,
-      commit: () => commit.promise, markReady: () => { ready += 1; },
-      markError: error => { errors.push(error); }, truncate: () => undefined,
-    });
-
-    adapter.adapter.receive(frame({ kind: "snapshot", subscription: "todos-async-commit", snapshot: snapshot([item("a", "open")]) }));
-    assert.equal(adapter.adapter.getCheckpoint(), undefined);
-    assert.equal(ready, 0);
-
-    const failure = new Error("collection commit failed");
-    commit.reject(failure);
-    await flush();
-    assert.equal(adapter.adapter.getCheckpoint(), undefined);
-    assert.equal(ready, 0);
-    assert.deepEqual(errors, [failure]);
-  });
-
-  test("serializes async publications and applies a reset after an earlier failure", async () => {
-    const client = new TerraScaleSyncV1Client();
-    const firstCommit = deferred<void>();
-    const resetCommit = deferred<void>();
-    const commits: Array<Promise<void>> = [firstCommit.promise, resetCommit.promise];
-    const writes: Array<{ type: string; value?: Record<string, unknown> }> = [];
-    const adapter = terrascaleCollectionOptions<{ id: string; value: string }>({
-      client,
-      subscription: "todos-reset-commit",
-      query: "from todos",
-      getKey: row => row.id,
-      transport: { send: () => undefined },
-      mutate: async () => ({ status: "rejected" as const }),
-    });
-    adapter.adapter.options.sync.sync({
-      collection: {}, begin: () => undefined,
-      write: message => writes.push(message as typeof writes[number]),
-      commit: () => commits.shift() ?? true, markReady: () => undefined,
-      markError: () => undefined, truncate: () => undefined,
-    });
-    adapter.adapter.receive(frame({ kind: "snapshot", subscription: "todos-reset-commit", snapshot: snapshot([item("a", "old")]) }));
-    adapter.adapter.receive(frame({
-      kind: "reset", subscription: "todos-reset-commit", reason: "checkpoint_expired",
-      snapshot: snapshot([item("b", "fresh")], 3n, 2n),
-    }));
-    assert.equal(adapter.adapter.getCheckpoint(), undefined);
-
-    firstCommit.reject(new Error("stale publication"));
-    await flush();
-    assert.equal(adapter.adapter.getCheckpoint(), undefined);
-    resetCommit.resolve();
-    await flush();
-    assert.equal(new TextDecoder().decode(adapter.adapter.getCheckpoint() ?? new Uint8Array()), "checkpoint-2-3");
-    assert.equal(writes.at(-1)?.value?.value, "fresh");
-  });
-
-  test("keeps concurrent mutations in invocation order with one idempotent request", async () => {
-    const client = new TerraScaleSyncV1Client();
-    const calls: string[] = [];
-    const responses = [deferred<TerraScaleTanStackMutationResponse>(), deferred<TerraScaleTanStackMutationResponse>()];
-    const adapter = terrascaleCollectionOptions<{ id: string; value: string }>({
-      client,
-      subscription: "todos-order",
-      query: "from todos",
-      getKey: row => row.id,
-      transport: { send: () => undefined },
-      mutate: async request => {
-        calls.push(request.transactionId);
-        return responses[calls.length - 1]!.promise;
-      },
-    });
-    adapter.adapter.options.sync.sync({
-      collection: {}, begin: () => undefined, write: () => undefined,
-      commit: () => true, markReady: () => undefined, markError: error => { throw error; }, truncate: () => undefined,
-    });
-    adapter.adapter.receive(frame({ kind: "snapshot", subscription: "todos-order", snapshot: snapshot([item("a", "open")]) }));
-
-    const first = adapter.adapter.options.onUpdate({ transaction: {
-      id: "tx-a", mutations: [{ type: "update", key: "a", modified: { id: "a", value: "one" } }],
-    } });
-    const retry = adapter.adapter.options.onUpdate({ transaction: {
-      id: "tx-a", mutations: [{ type: "update", key: "a", modified: { id: "a", value: "one" } }],
-    } });
-    const second = adapter.adapter.options.onInsert({ transaction: {
-      id: "tx-b", mutations: [{ type: "insert", key: "b", modified: { id: "b", value: "two" } }],
-    } });
+    const output = callbacks(() => commit.promise);
+    const publisher = new TerraScaleTanStackCollectionPublisher(output.params, mapRow, value => value.id);
+    const publication = publisher.publish(cut([row(10)], "pending"));
     await Promise.resolve();
-    assert.deepEqual(calls, ["tx-a"]);
-
-    const firstRows = [item("a", "one")];
-    responses[0]!.resolve({
-      view_generation: 1n, from_revision: 1n, to_revision: 2n,
-      operations: [{ kind: "Update", identity: "a", value: firstRows[0]!.value }],
-      digest: syncV1ResultDigest(firstRows), checkpoint: new SyncV1ViewCheckpoint("checkpoint-1-2"),
-    });
-    await flush();
-    assert.deepEqual(calls, ["tx-a", "tx-b"]);
-
-    const secondRows = [item("a", "one"), item("b", "two")];
-    responses[1]!.resolve({
-      view_generation: 1n, from_revision: 2n, to_revision: 3n,
-      operations: [{ kind: "Insert", identity: "b", position: 1, value: secondRows[1]!.value }],
-      digest: syncV1ResultDigest(secondRows), checkpoint: new SyncV1ViewCheckpoint("checkpoint-1-3"),
-    });
-    await Promise.all([first, retry, second]);
-    assert.deepEqual(calls, ["tx-a", "tx-b"]);
+    assert.equal(publisher.getPosition(), undefined);
+    assert.equal(output.ready(), 0);
+    commit.resolve();
+    await publication;
+    assert.equal(publisher.getPosition()?.poll_cursor, "pending");
+    assert.equal(output.ready(), 1);
+    publisher.dispose();
   });
 
-  test("sends unsubscribe before aborting the adapter signal", () => {
-    const client = new TerraScaleSyncV1Client();
-    const sent: Array<{ readonly frame: Uint8Array; readonly aborted: boolean }> = [];
-    const adapter = terrascaleCollectionOptions<{ id: string; value: string }>({
-      client,
-      subscription: "todos-dispose-signal",
-      query: "from todos",
-      getKey: row => row.id,
-      transport: { send: (frameValue, signal) => { sent.push({ frame: frameValue, aborted: signal.aborted }); } },
-      mutate: async () => ({ status: "rejected" as const }),
-    });
-    adapter.adapter.options.sync.sync({
-      collection: {}, begin: () => undefined, write: () => undefined,
-      commit: () => true, markReady: () => undefined, markError: () => undefined, truncate: () => undefined,
-    });
-    assert.equal(sent.length, 1);
-    adapter.adapter.dispose();
-    assert.equal(sent.length, 2);
-    assert.equal(sent[1]?.aborted, false);
-    assert.notDeepEqual(sent[0]?.frame, sent[1]?.frame);
+  test("captures concurrent cuts before the prior async collection commit completes", async () => {
+    const commit = deferred<void>();
+    let count = 0;
+    const output = callbacks(() => ++count === 1 ? commit.promise : true);
+    const mutable: { id: string; point: DatabasePoint } = { id: uuid(20), point };
+    const publisher = new TerraScaleTanStackCollectionPublisher(output.params, value => value.document === uuid(20) ? mutable : mapRow(value), value => value.id);
+    const first = publisher.publish(cut([row(10)], "first"));
+    const second = publisher.publish(cut([row(20)], "second"));
+    mutable.id = uuid(99);
+    await Promise.resolve();
+    assert.equal(output.commits(), 1);
+    commit.resolve();
+    await Promise.all([first, second]);
+    const inserts = output.writes.filter(value => value.type === "insert");
+    assert.deepEqual(inserts.flatMap(value => "value" in value ? [value.value.id] : []), [uuid(10), uuid(20)]);
+    assert.equal(publisher.getPosition()?.poll_cursor, "second");
+    publisher.dispose();
   });
 
-  test("keeps another adapter online while one adapter has an async send", async () => {
-    const client = new TerraScaleSyncV1Client();
-    const pendingSend = deferred<void>();
-    const stable = terrascaleCollectionOptions<{ id: string; value: string }>({
-      client,
-      subscription: "todos-stable-online",
-      query: "from todos",
-      getKey: row => row.id,
-      transport: { send: () => undefined },
-      mutate: async () => ({ status: "rejected" as const }),
-    });
-    stable.adapter.options.sync.sync({
-      collection: {}, begin: () => undefined, write: () => undefined,
-      commit: () => true, markReady: () => undefined, markError: () => undefined, truncate: () => undefined,
-    });
-    stable.adapter.receive(frame({ kind: "snapshot", subscription: "todos-stable-online", snapshot: snapshot([item("a", "open")]) }));
+  test("a failed commit keeps the prior cut and forces a full subsequent publication", async () => {
+    let count = 0;
+    const output = callbacks(() => ++count === 2 ? Promise.reject(new Error("collection rejected")) : true);
+    const publisher = new TerraScaleTanStackCollectionPublisher(output.params, mapRow, value => value.id);
+    await publisher.publish(cut([row(10)], "first"));
+    await assert.rejects(publisher.publish(cut([row(20)], "failed")), /collection rejected/u);
+    assert.equal(publisher.getPosition()?.poll_cursor, "first");
+    const before = output.writes.length;
+    await publisher.publish(cut([row(30)], "fresh"));
+    assert.deepEqual(output.writes.slice(before).map(value => value.type), ["truncate", "insert"]);
+    assert.equal(publisher.getPosition()?.poll_cursor, "fresh");
+    publisher.dispose();
+  });
 
-    const changing = terrascaleCollectionOptions<{ id: string; value: string }>({
-      client,
-      subscription: "todos-changing-online",
-      query: "from todos",
-      getKey: row => row.id,
-      transport: { send: () => pendingSend.promise },
-      mutate: async () => ({ status: "rejected" as const }),
-    });
-    changing.adapter.options.sync.sync({
-      collection: {}, begin: () => undefined, write: () => undefined,
-      commit: () => true, markReady: () => undefined, markError: () => undefined, truncate: () => undefined,
-    });
-    assert.equal(client.getSnapshot().online, true);
-    await assert.rejects(() => stable.adapter.options.onUpdate({ transaction: {
-      id: "stable-offline-check",
-      mutations: [{ type: "update", key: "a", modified: { id: "a", value: "done" } }],
-    } }), /the TerraScale mutation was rejected/);
-    assert.equal(client.getSnapshot().online, true);
-    changing.adapter.dispose();
-    stable.adapter.dispose();
-    pendingSend.resolve();
+  test("cancellation and reset fence late commits from advancing position", async () => {
+    for (const action of ["cancel", "reset"] as const) {
+      const commit = deferred<void>();
+      const output = callbacks(() => commit.promise);
+      const publisher = new TerraScaleTanStackCollectionPublisher(output.params, mapRow, value => value.id);
+      const publication = publisher.publish(cut([row(10)], "late"));
+      const rejected = assert.rejects(publication, /abort|reset/iu);
+      await Promise.resolve();
+      if (action === "cancel") publisher.dispose(); else publisher.reset();
+      commit.resolve();
+      await rejected;
+      assert.equal(publisher.getPosition(), undefined);
+      assert.equal(output.ready(), 0);
+      publisher.dispose();
+    }
+  });
+
+  test("consumer changes cannot corrupt private publication values", async () => {
+    const output = callbacks();
+    const publisher = new TerraScaleTanStackCollectionPublisher(output.params, mapRow, value => value.id);
+    await publisher.publish(cut([row(10)], "first"));
+    const inserted = output.writes.find(value => value.type === "insert");
+    assert.equal(inserted?.type, "insert");
+    if (inserted?.type !== "insert") throw new Error("expected insert");
+    (inserted.value as { id: string }).id = uuid(99);
+    const before = output.writes.length;
+    await publisher.publish(cut([row(10)], "same"));
+    assert.equal(output.writes.length, before);
+    assert.equal(publisher.getPosition()?.poll_cursor, "same");
+    publisher.dispose();
+  });
+
+  test("preserves full conflicts and causal context in explicitly mapped rows", async () => {
+    const conflict: DatabasePoint = {
+      version: 1, state: "conflict", state_version: null,
+      context: [{ replica: uuid(4), incarnation: "11".repeat(16), sequence: 18_446_744_073_709_551_615n }, { replica: uuid(5), incarnation: "22".repeat(16), sequence: 1n }],
+      siblings: [
+        { schema_generation: 1n, schema_digest: "33".repeat(32), event: { database: scope.database, shard: scope.shard, replica: uuid(4), incarnation: "11".repeat(16), sequence: 18_446_744_073_709_551_615n }, kind: "live", fields: [{ id: 1, value: { type: "utf8", value: "one" } }] },
+        { schema_generation: 1n, schema_digest: "33".repeat(32), event: { database: scope.database, shard: scope.shard, replica: uuid(5), incarnation: "22".repeat(16), sequence: 1n }, kind: "tombstone" },
+      ],
+    };
+    const output = callbacks();
+    const publisher = new TerraScaleTanStackCollectionPublisher(output.params, mapRow, value => value.id);
+    await publisher.publish(cut([{ document: uuid(10), point: conflict }], "conflict"));
+    const inserted = output.writes.find(value => value.type === "insert");
+    if (inserted?.type !== "insert") throw new Error("expected insert");
+    assert.deepEqual(inserted.value.point, conflict);
+    assert.equal(inserted.value.point.context[0]!.sequence, 18_446_744_073_709_551_615n);
+    publisher.dispose();
+  });
+
+  test("rejects colliding application keys before collection writes", async () => {
+    const output = callbacks();
+    const publisher = new TerraScaleTanStackCollectionPublisher(output.params, mapRow, () => "collision");
+    await assert.rejects(publisher.publish(cut([row(10), row(20)], "bad")), /distinct/u);
+    assert.equal(output.writes.length, 0);
+    assert.equal(publisher.getPosition(), undefined);
+    publisher.dispose();
+  });
+});
+
+describe("native TanStack adapter admission", () => {
+  test("actual TanStack cleanup permits a fresh documented collection restart", async () => {
+    const client = createTerraBaseClient({ ...scope, apiKey: nativeTestKey, fetch: unavailableDiscovery });
+    const options = terrascaleCollectionOptions({ client, collection, predicate, mapRow, getKey: value => value.id });
+    const value = createCollection(options);
+    try {
+      await assert.rejects(value.preload(), /discovery_unavailable/u);
+      await value.cleanup();
+      assert.equal(value.status, "cleaned-up");
+      assert.doesNotThrow(() => value.startSyncImmediate());
+      await assert.rejects(value.preload(), /discovery_unavailable/u);
+      assert.equal(value.status, "error", "missing discovery must still fail closed after restart");
+      assert.equal(options.adapter.getCheckpoint(), undefined);
+    } finally {
+      await value.cleanup();
+      options.adapter.dispose();
+    }
+    assert.throws(() => value.startSyncImmediate(), /disposed/u);
+  });
+
+  test("requires a native snapshot before mutation and fails closed on discovery transport failure", async () => {
+    const errors: unknown[] = [];
+    let prepared = 0;
+    const client = createTerraBaseClient({ ...scope, apiKey: nativeTestKey, fetch: unavailableDiscovery });
+    const options = terrascaleCollectionOptions({ client, collection, predicate, mapRow, getKey: value => value.id, prepareMutation: async () => { prepared += 1; throw new Error("must not prepare an offline mutation"); } });
+    const output = callbacks();
+    const terminal = deferred<void>();
+    const stop = options.sync.sync({ ...output.params, markError: error => { errors.push(error); terminal.resolve(); } });
+    await terminal.promise;
+    assert.equal(errors.length, 1);
+    assert.match(String(errors[0]), /discovery_unavailable/u);
+    await assert.rejects(options.onInsert({ transaction: { id: "never-queued", mutations: [{ key: uuid(10), type: "insert", modified: mapRow(row(10)) }] } }), /current native subscription/u);
+    const frameworkTransaction = {
+      id: "real-shape-not-cloneable", mutationFn: () => undefined,
+      mutations: [{ key: uuid(10), type: "insert" as const, modified: mapRow(row(10)), original: {}, collection: { runtime: () => undefined }, createdAt: new Date() }],
+    };
+    await assert.rejects(options.onInsert({ transaction: frameworkTransaction }), /current native subscription/u);
+    assert.equal(prepared, 0);
+    assert.equal(options.adapter.getCheckpoint(), undefined);
+    stop();
+    await assert.rejects(options.onInsert({ transaction: { id: "cleaned-up", mutations: [{ key: uuid(10), type: "insert", modified: mapRow(row(10)) }] } }), /current native subscription/u);
+    options.adapter.dispose();
+    await assert.rejects(options.onInsert({ transaction: { id: "disposed", mutations: [{ key: uuid(10), type: "insert", modified: mapRow(row(10)) }] } }), /disposed/u);
+  });
+
+  test("keeps typed uncertain outcomes unresolved", () => {
+    const detail = { code: "transport_unavailable", mutation_outcome: "uncertain" as const, transaction: { transaction_id: { expires_at_unix_ms: 100n, nonce: "11".repeat(16) }, authority: { mode: "leaderless" as const }, effect_digest: "22".repeat(32) } };
+    const error = new TerraScaleTanStackMutationError(detail);
+    assert.equal(error.detail.mutation_outcome, "uncertain");
+    assert.equal(error.cause, detail);
+    assert.match(error.message, /uncertain/u);
   });
 });

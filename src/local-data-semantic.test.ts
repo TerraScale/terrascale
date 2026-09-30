@@ -1,148 +1,228 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { test } from "vitest";
+import {
+  localSqliteUnitTestsAllowed,
+  localFixture,
+} from "./local/test-environment.js";
+import type { DatabaseQueryPredicate } from "./database-types.js";
+const predicate: DatabaseQueryPredicate = {
+  op: "equal",
+  path: [1],
+  value: { type: "bool", value: true },
+};
 
-import { createTerraScaleSqliteRuntime } from "./local/index.js";
-import { installLocalSqliteTestEnvironment } from "./local/test-environment.js";
-import type { TerraScaleResult } from "./result.js";
+test.skipIf(!localSqliteUnitTestsAllowed)(
+  "local snapshots freeze one cut and poll publishes complete groups including empty projected effects",
+  async () => {
+    const fixture = await localFixture();
+    try {
+      const documents = [randomUUID(), randomUUID()].sort();
+      for (const document of documents)
+        assert.ok(
+          (
+            await fixture.client.commit(
+              await fixture.client.prepareCommit(
+                fixture.commit(document, [
+                  { id: 1, value: { type: "bool", value: true } },
+                ]),
+              ),
+            )
+          ).ok,
+        );
+      const first = await fixture.client.subscription(fixture.collection, {
+        phase: "snapshot",
+        predicate,
+        limit: 1,
+      });
+      assert.ok(
+        first.ok &&
+          first.value.phase === "snapshot" &&
+          "next_snapshot_cursor" in first.value,
+      );
+      const newDocument = randomUUID();
+      assert.ok(
+        (
+          await fixture.client.commit(
+            await fixture.client.prepareCommit(
+              fixture.commit(newDocument, [
+                { id: 1, value: { type: "bool", value: true } },
+              ]),
+            ),
+          )
+        ).ok,
+      );
+      const terminal = await fixture.client.subscription(fixture.collection, {
+        phase: "snapshot",
+        predicate,
+        limit: 1,
+        snapshot_cursor: first.value.next_snapshot_cursor,
+      });
+      assert.ok(
+        terminal.ok &&
+          terminal.value.phase === "snapshot" &&
+          "poll_cursor" in terminal.value,
+      );
+      assert.deepEqual(
+        [...first.value.rows, ...terminal.value.rows].map(
+          (row) => row.document,
+        ),
+        documents,
+      );
+      const poll = await fixture.client.subscription(fixture.collection, {
+        phase: "poll",
+        predicate,
+        poll_cursor: terminal.value.poll_cursor,
+      });
+      assert.ok(poll.ok && poll.value.phase === "poll");
+      assert.equal(poll.value.groups.length, 1);
+      assert.equal(poll.value.groups[0]?.effects[0]?.document, newDocument);
+      const nonmatch = randomUUID();
+      assert.ok(
+        (
+          await fixture.client.commit(
+            await fixture.client.prepareCommit(
+              fixture.commit(nonmatch, [
+                { id: 1, value: { type: "bool", value: false } },
+              ]),
+            ),
+          )
+        ).ok,
+      );
+      const empty = await fixture.client.subscription(fixture.collection, {
+        phase: "poll",
+        predicate,
+        poll_cursor: poll.value.poll_cursor,
+      });
+      assert.ok(empty.ok && empty.value.phase === "poll");
+      assert.equal(empty.value.groups.length, 1);
+      assert.deepEqual(empty.value.groups[0]?.effects, []);
+      const current = await fixture.client.read(
+        fixture.collection,
+        newDocument,
+      );
+      assert.ok(current.ok);
+      assert.ok(
+        (
+          await fixture.client.commit(
+            await fixture.client.prepareCommit(
+              fixture.commit(
+                newDocument,
+                [{ id: 1, value: { type: "bool", value: false } }],
+                current.value,
+              ),
+            ),
+          )
+        ).ok,
+      );
+      const removal = await fixture.client.subscription(fixture.collection, {
+        phase: "poll",
+        predicate,
+        poll_cursor: empty.value.poll_cursor,
+      });
+      assert.ok(removal.ok && removal.value.phase === "poll");
+      assert.deepEqual(removal.value.groups[0]?.effects, [
+        { document: newDocument, point: null },
+      ]);
+      const changed = await fixture.client.subscription(fixture.collection, {
+        phase: "poll",
+        predicate: { op: "is_missing", path: [2] },
+        poll_cursor: empty.value.poll_cursor,
+      });
+      assert.equal(changed.ok, false);
+      if (!changed.ok) assert.equal(changed.error.code, "invalid_cursor");
+    } finally {
+      await fixture.close();
+    }
+  },
+);
 
-installLocalSqliteTestEnvironment();
+test.skipIf(!localSqliteUnitTestsAllowed)(
+  "local query cursor is finite, bound to limit and invalidated by local restart/reset",
+  async () => {
+    const fixture = await localFixture();
+    try {
+      for (let i = 0; i < 2; i++)
+        assert.ok(
+          (
+            await fixture.client.commit(
+              await fixture.client.prepareCommit(
+                fixture.commit(randomUUID(), [
+                  { id: 1, value: { type: "bool", value: true } },
+                ]),
+              ),
+            )
+          ).ok,
+        );
+      const page = await fixture.client.query(fixture.collection, {
+        predicate,
+        limit: 1,
+      });
+      assert.ok(page.ok && page.value.next_cursor !== undefined);
+      const wrong = await fixture.client.query(fixture.collection, {
+        predicate,
+        limit: 2,
+        cursor: page.value.next_cursor,
+      });
+      assert.equal(wrong.ok, false);
+      const next = await fixture.client.query(fixture.collection, {
+        predicate,
+        limit: 1,
+        cursor: page.value.next_cursor,
+      });
+      assert.ok(next.ok);
+      assert.equal(next.value.next_cursor, undefined);
+      await fixture.runtime.reset();
+      await fixture.runtime.bindCollection(fixture.binding);
+      const reset = await fixture.client.query(fixture.collection, {
+        predicate,
+        limit: 1,
+        cursor: page.value.next_cursor,
+      });
+      assert.equal(reset.ok, false);
+      if (!reset.ok) assert.equal(reset.error.code, "invalid_cursor");
+    } finally {
+      await fixture.close();
+    }
+  },
+);
 
-function expectOk<T>(result: TerraScaleResult<T>): T {
-  if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
-  return result.value;
-}
-
-function expectFailure<T>(result: TerraScaleResult<T>, code: string): void {
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.equal(result.error.code, code);
-}
-
-test("SQLite local data APIs preserve semantic state across CRUD, commands, and reopen", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "terrascale-local-data-semantic-"));
-  const databasePath = join(directory, "semantic.sqlite");
-  let runtime = createTerraScaleSqliteRuntime({
-    sqlite: { enabled: true, databasePath },
-  });
-
-  try {
-    const seed = await runtime.seed();
-    const client = runtime.createClient({
-      projectId: seed.projectId,
-      accessToken: "local-test-token",
-    });
-
-    // Databases: exercise every operation, including the
-    // confirmation-protected database deletion.
-    const initialDatabases = expectOk(await client.databases.list());
-    assert.equal(initialDatabases.some((item) => item.databaseId === seed.databaseId), true);
-    const database = expectOk(await client.databases.create({ name: "semantic database" }));
-    assert.equal(database.name, "semantic database");
-    assert.equal(expectOk(await client.databases.get(database.databaseId)).databaseId, database.databaseId);
-    assert.equal(
-      expectOk(await client.databases.list()).some((item) => item.databaseId === database.databaseId),
-      true,
-    );
-    const deletedDatabase = expectOk(
-      await client.databases.delete(database.databaseId, { confirm: true, idempotencyKey: "semantic-delete" }),
-    );
-    assert.equal(deletedDatabase.deletion.state, "complete");
-    assert.ok(deletedDatabase.deletion.operationId);
-    const replayedDeletion = expectOk(
-      await client.databases.delete(database.databaseId, { confirm: true, idempotencyKey: "semantic-delete" }),
-    );
-    assert.deepEqual(replayedDeletion.deletion, deletedDatabase.deletion);
-    expectFailure(await client.databases.get(database.databaseId), "database_not_found");
-    assert.equal(
-      expectOk(await client.databases.list()).some((item) => item.databaseId === database.databaseId),
-      false,
-    );
-
-    const capability = expectOk(await client.databaseBranches.getCapability());
-    assert.equal(capability.physicalCloneAvailable, false);
-    assert.equal(capability.promotionAvailable, false);
-    assert.equal(capability.mergeAvailable, false);
-    expectFailure(
-      await client.databaseBranches.requestClone({ sourceDatabaseId: seed.databaseId }),
-      "database_branch_unavailable",
-    );
-
-    // Backup policy/confirmation/execute/list/get, restore points, and the
-    // restore operation all use the same durable database state.
-    const policy = expectOk(
-      await client.backups.configurePolicy(seed.databaseId, {
-        fullBackupCron: "0 0 * * *",
-        retentionDays: 7,
-      }),
-    );
-    assert.equal(policy.retentionDays, 7);
-    const policyAgain = expectOk(
-      await client.backups.configurePolicy(seed.databaseId, { fullBackupCron: "0 1 * * *" }),
-    );
-    assert.equal(policyAgain.backupPolicyId, policy.backupPolicyId);
-    const plan = expectOk(
-      await client.backups.planBackup(seed.databaseId, { operationSessionId: "semantic-backup-session" }),
-    );
-    const backup = expectOk(
-      await client.backups.executeBackup(
-        seed.databaseId,
-        { operationSessionId: "semantic-backup-session", confirmationToken: plan.confirmationToken },
-        "semantic-backup-once",
-      ),
-    );
-    const backupReplay = expectOk(
-      await client.backups.executeBackup(
-        seed.databaseId,
-        { operationSessionId: "semantic-backup-session", confirmationToken: plan.confirmationToken },
-        "semantic-backup-once",
-      ),
-    );
-    assert.equal(backupReplay.backupId, backup.backupId);
-    expectFailure(
-      await client.backups.executeBackup(
-        seed.databaseId,
-        { operationSessionId: "different-session", confirmationToken: plan.confirmationToken },
-        "semantic-backup-once",
-      ),
-      "idempotency_key_reused",
-    );
-    assert.equal(expectOk(await client.backups.listBackups(seed.databaseId)).length, 1);
-    assert.equal(expectOk(await client.backups.getBackup(seed.databaseId, backup.backupId)).backupId, backup.backupId);
-    const points = expectOk(await client.backups.listRestorePoints(seed.databaseId));
-    assert.equal(points.some((point) => point.backupId === backup.backupId), true);
-    const restore = expectOk(
-      await client.backups.startRestore(seed.databaseId, {
-        backupId: backup.backupId,
-        idempotencyKey: "semantic-restore-once",
-      }),
-    );
-    const restoreReplay = expectOk(
-      await client.backups.startRestore(seed.databaseId, {
-        backupId: backup.backupId,
-        idempotencyKey: "semantic-restore-once",
-      }),
-    );
-    assert.equal(restoreReplay.restoreId, restore.restoreId);
-    assert.equal(expectOk(await client.backups.getRestore(seed.databaseId, restore.restoreId)).restoreId, restore.restoreId);
-    assert.equal(
-      expectOk(await client.backups.listRestores(seed.databaseId)).some((item) => item.restoreId === restore.restoreId),
-      true,
-    );
-
-    await runtime.close();
-    runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true, databasePath } });
-    const reopened = runtime.createClient({
-      projectId: seed.projectId,
-      accessToken: "local-test-token",
-    });
-    assert.equal(expectOk(await reopened.databases.get(seed.databaseId)).databaseId, seed.databaseId);
-    assert.equal(expectOk(await reopened.backups.listBackups(seed.databaseId)).length, 1);
-    assert.equal(expectOk(await reopened.backups.listRestores(seed.databaseId)).length, 1);
-  } finally {
-    await runtime.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+test.skipIf(!localSqliteUnitTestsAllowed)(
+  "local snapshot pagination respects encoded response bytes without dropping rows",
+  async () => {
+    const fixture = await localFixture();
+    try {
+      const documents = Array.from({ length: 5 }, () => randomUUID()).sort();
+      for (const document of documents) {
+        const prepared = await fixture.client.prepareCommit(
+          fixture.commit(document, [
+            { id: 1, value: { type: "utf8", value: "x".repeat(900_000) } },
+          ]),
+        );
+        assert.ok((await fixture.client.commit(prepared)).ok);
+      }
+      const predicate: DatabaseQueryPredicate = { op: "is_missing", path: [2] };
+      const page = await fixture.client.query(fixture.collection, {
+        predicate,
+        limit: 128,
+      });
+      assert.ok(page.ok && page.value.next_cursor !== undefined);
+      assert.ok(
+        page.value.rows.length > 0 && page.value.rows.length < documents.length,
+      );
+      const next = await fixture.client.query(fixture.collection, {
+        predicate,
+        limit: 128,
+        cursor: page.value.next_cursor,
+      });
+      assert.ok(next.ok);
+      assert.equal(next.value.next_cursor, undefined);
+      assert.deepEqual(
+        [...page.value.rows, ...next.value.rows].map((row) => row.document),
+        documents,
+      );
+    } finally {
+      await fixture.close();
+    }
+  },
+);

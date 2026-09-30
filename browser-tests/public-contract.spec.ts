@@ -1,72 +1,78 @@
 import { expect, test } from "@playwright/test";
 
-test("the browser entrypoint keeps regional routing behavior", async ({ page }) => {
+test("packed browser entrypoint preserves exact native values and preparation identity", async ({
+  page,
+}) => {
   await page.goto("/browser-tests/fixture.html");
-
   const observation = await page.evaluate(async () => {
     const sdk = await import("/candidate/dist/index.js");
-    const requests: { url: string; headers: Record<string, string> }[] = [];
-    const client = sdk.createTerraScaleClient({
-      preferredRegion: "FRA",
-      projectId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-      fetch: async (input: RequestInfo | URL) => {
-        const request = input instanceof Request ? input : new Request(input);
-        requests.push({ url: request.url, headers: Object.fromEntries(request.headers) });
-        return Response.json({});
+    let dispatches = 0;
+    const client = sdk.createTerraBaseClient({
+      tenant: "00000000-0000-0000-0000-000000000001",
+      database: "00000000-0000-0000-0000-000000000002",
+      shard: 1n,
+      endpoint: "https://gru.terrascale.tech",
+      apiKey: "browser-unit-only",
+      fetch: async () => {
+        dispatches += 1;
+        throw new Error("Pure browser preparation must not dispatch.");
       },
     });
-    const databaseId = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
-
-    const result = await client.databases.get(databaseId);
-    return { requests, ok: result.ok };
-  });
-
-  expect(observation.ok).toBe(true);
-  expect(observation.requests).toHaveLength(1);
-  expect(observation.requests[0]?.url).toBe("https://api.terrascale.tech/api/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/01BX5ZZKBKACTAV9WEVGEMMVRZ");
-  expect(observation.requests[0]?.headers["x-terrascale-preferred-region"]).toBe("FRA");
-});
-
-test("the packed browser client decodes the generated reactive protocol", async ({ page }) => {
-  await page.goto("/browser-tests/fixture.html");
-
-  const observation = await page.evaluate(async () => {
-    const sdk = await import("/candidate/dist/index.js");
-    const protocol = await import("/candidate/dist/msgpack/generated/terrascale-sync-v1-msgpack.js");
-    const encoder = new TextEncoder();
-    const client = new sdk.TerraScaleSyncV1Client();
-    const opened = client.openSubscription({
-      subscription: "browser-view",
-      query: "from documents",
-      parameters: new Uint8Array(),
-    });
-    const items = [{ identity: "document-1", value: { title: encoder.encode("ready") } }];
-    const frame = protocol.encodeTerrascaleSyncV1MsgpackEnvelope({
-      features: 0,
-      correlation: 1n,
-      causation: 0n,
-      message: {
-        kind: "snapshot",
-        subscription: "browser-view",
-        snapshot: {
-          view_generation: 1n,
-          authorization_generation: 1n,
-          revision: 1n,
-          items: [{ identity: "document-1", fields: [{ path: "title", value: encoder.encode("ready") }] }],
-          digest: sdk.syncV1ResultDigest(items),
-          checkpoint: encoder.encode("browser-checkpoint"),
+    const bytes = new Uint8Array([0, 255]);
+    const commit = {
+      transaction_id: {
+        expires_at_unix_ms: BigInt(Date.now() + 60_000),
+        nonce: "01".repeat(16),
+      },
+      authority: { mode: "leaderless" },
+      writes: [
+        {
+          collection: "00000000-0000-0000-0000-000000000003",
+          document: "00000000-0000-0000-0000-000000000004",
+          schema_generation: 1n,
+          schema_digest: "ab".repeat(32),
+          condition: { kind: "none" },
+          observed: [],
+          value: {
+            kind: "live",
+            fields: [
+              { id: 1, value: { type: "i64", value: 9_007_199_254_740_993n } },
+              { id: 2, value: { type: "bytes", value: bytes } },
+              { id: 3, value: { type: "null" } },
+            ],
+          },
         },
-      },
-    });
-    client.receive(frame);
+      ],
+    };
+    const prepared = await client.prepareCommit(commit);
+    bytes[0] = 99;
+    const changed = await client.prepareCommit(commit);
     return {
-      checkpoint: opened.subscription.view.getCheckpoint()?.toString(),
-      title: new TextDecoder().decode(opened.subscription.view.getItems()[0]?.value.title),
+      dispatches,
+      immutable: Object.isFrozen(prepared),
+      digest: prepared.effect_digest,
+      changed: prepared.effect_digest !== changed.effect_digest,
+      nonce: prepared.transaction_id.nonce,
+      removed: [
+        "createTerraScaleClient",
+        "TerraScaleSyncV1Client",
+        "TerraScaleHttp",
+        "toUlid",
+      ].filter((name) => name in sdk),
+      methods: [
+        "read",
+        "query",
+        "subscription",
+        "commit",
+        "transactionStatus",
+      ].every((name) => typeof client[name] === "function"),
     };
   });
-
-  expect(observation).toEqual({
-    checkpoint: "[opaque SyncV1ViewCheckpoint]",
-    title: "ready",
-  });
+  expect(observation.dispatches).toBe(0);
+  expect(observation.immutable).toBe(true);
+  expect(observation.digest).toMatch(/^[0-9a-f]{64}$/u);
+  expect(observation.changed).toBe(true);
+  expect(observation.nonce).toBe("01".repeat(16));
+  expect(observation.removed).toEqual([]);
+  expect(observation.methods).toBe(true);
 });

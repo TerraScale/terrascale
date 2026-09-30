@@ -1,14 +1,8 @@
 import { mkdirSync } from "node:fs";
-import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, isAbsolute } from "node:path";
 
-import { isUlid, toUlid, type Ulid } from "../ids.js";
-
 const SCHEMA_VERSION = 1;
-const ULID_STATE_KEY = "__local_ulid_state";
-const ULID_TIME_MAX = 0xffffffffffff;
-const ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /**
  * A small synchronous JSON record store for Node local adapters.
@@ -22,8 +16,7 @@ export class TerraScaleSqliteStore {
 
   #database: DatabaseSync;
   #closed = false;
-  #lastUlidTime: number | undefined;
-  #lastUlidRandom: Uint8Array | undefined;
+  #queue: Promise<void> = Promise.resolve();
   #savepointSequence = 0;
   #transactionDepth = 0;
 
@@ -32,7 +25,9 @@ export class TerraScaleSqliteStore {
       throw new TypeError("databasePath must be a string.");
     }
     if (databasePath !== ":memory:" && !isAbsolute(databasePath)) {
-      throw new TypeError("databasePath must be ':memory:' or an absolute path.");
+      throw new TypeError(
+        "databasePath must be ':memory:' or an absolute path.",
+      );
     }
 
     if (databasePath !== ":memory:") {
@@ -45,16 +40,13 @@ export class TerraScaleSqliteStore {
     try {
       // These are deliberately explicit PRAGMAs rather than relying only on
       // constructor options, which vary between supported Node 22 releases.
-      this.#database.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+      this.#database.exec(
+        "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;",
+      );
       if (databasePath !== ":memory:") {
         this.#database.exec("PRAGMA journal_mode = WAL;");
       }
       this.#migrate();
-      const ulidState = this.getMeta<unknown>(ULID_STATE_KEY);
-      if (isStoredUlidState(ulidState)) {
-        this.#lastUlidTime = ulidState.time;
-        this.#lastUlidRandom = decodeHex(ulidState.random);
-      }
     } catch (error) {
       this.#database.close();
       this.#closed = true;
@@ -67,7 +59,9 @@ export class TerraScaleSqliteStore {
       return;
     }
     if (this.#transactionDepth !== 0) {
-      throw new Error("Cannot close a SQLite store while a transaction is active.");
+      throw new Error(
+        "Cannot close a SQLite store while a transaction is active.",
+      );
     }
     this.#database.close();
     this.#closed = true;
@@ -78,8 +72,6 @@ export class TerraScaleSqliteStore {
     this.transaction(() => {
       this.#database.exec("DELETE FROM records; DELETE FROM metadata;");
     });
-    this.#lastUlidTime = undefined;
-    this.#lastUlidRandom = undefined;
   }
 
   get<T>(namespace: string, scope: string, id: string): T | undefined {
@@ -89,7 +81,9 @@ export class TerraScaleSqliteStore {
     assertKey(id, "id");
 
     const row = this.#database
-      .prepare("SELECT value FROM records WHERE namespace = ? AND scope = ? AND id = ?")
+      .prepare(
+        "SELECT value FROM records WHERE namespace = ? AND scope = ? AND id = ?",
+      )
       .get(namespace, scope, id);
     if (row === undefined) {
       return undefined;
@@ -112,7 +106,11 @@ export class TerraScaleSqliteStore {
 
   listNamespace<T>(
     namespace: string,
-  ): readonly { readonly scope: string; readonly id: string; readonly value: T }[] {
+  ): readonly {
+    readonly scope: string;
+    readonly id: string;
+    readonly value: T;
+  }[] {
     this.#assertOpen();
     assertKey(namespace, "namespace");
 
@@ -151,7 +149,9 @@ export class TerraScaleSqliteStore {
     assertKey(id, "id");
 
     const result = this.#database
-      .prepare("DELETE FROM records WHERE namespace = ? AND scope = ? AND id = ?")
+      .prepare(
+        "DELETE FROM records WHERE namespace = ? AND scope = ? AND id = ?",
+      )
       .run(namespace, scope, id);
     return Number(result.changes) !== 0;
   }
@@ -159,14 +159,18 @@ export class TerraScaleSqliteStore {
   clearNamespace(namespace: string): void {
     this.#assertOpen();
     assertKey(namespace, "namespace");
-    this.#database.prepare("DELETE FROM records WHERE namespace = ?").run(namespace);
+    this.#database
+      .prepare("DELETE FROM records WHERE namespace = ?")
+      .run(namespace);
   }
 
   getMeta<T>(key: string): T | undefined {
     this.#assertOpen();
     assertKey(key, "key");
 
-    const row = this.#database.prepare("SELECT value FROM metadata WHERE key = ?").get(key);
+    const row = this.#database
+      .prepare("SELECT value FROM metadata WHERE key = ?")
+      .get(key);
     if (row === undefined) {
       return undefined;
     }
@@ -187,38 +191,41 @@ export class TerraScaleSqliteStore {
       .run(key, encoded);
   }
 
-  nextUlid(): string {
-    this.#assertOpen();
+  /** Serialize local native requests and async auth callbacks on this connection. */
+  async exclusive<T>(work: () => Promise<T> | T): Promise<T> {
+    const prior = this.#queue;
+    let release!: () => void;
+    this.#queue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await prior;
+    try {
+      this.#assertOpen();
+      return await work();
+    } finally {
+      release();
+    }
+  }
 
-    let timestamp = Date.now();
-    const previousTimestamp = this.#lastUlidTime;
-    let random: Uint8Array;
-
-    if (previousTimestamp !== undefined && timestamp <= previousTimestamp) {
-      timestamp = previousTimestamp;
-      random = this.#lastUlidRandom ?? randomBytes(10);
-      if (!incrementRandom(random)) {
-        if (timestamp >= ULID_TIME_MAX) {
-          throw new RangeError("Unable to generate a ULID: timestamp is exhausted.");
-        }
-        timestamp += 1;
-        random = randomBytes(10);
+  async transactionAsync<T>(work: () => Promise<T>): Promise<T> {
+    return this.exclusive(async () => {
+      if (this.#transactionDepth !== 0)
+        throw new Error(
+          "Nested asynchronous SQLite transaction is unavailable.",
+        );
+      this.#database.exec("BEGIN IMMEDIATE;");
+      this.#transactionDepth += 1;
+      try {
+        const result = await work();
+        this.#database.exec("COMMIT;");
+        return result;
+      } catch (error) {
+        this.#rollback();
+        throw error;
+      } finally {
+        this.#transactionDepth -= 1;
       }
-    } else {
-      random = randomBytes(10);
-    }
-
-    this.#lastUlidTime = timestamp;
-    this.#lastUlidRandom = random;
-    const value = `${encodeTimestamp(timestamp)}${encodeRandom(random)}`;
-    // Keep this check tied to the SDK's canonical ULID contract. It also
-    // guards this generator if the encoding implementation is changed later.
-    const ulid: Ulid = toUlid(value);
-    if (!isUlid(ulid)) {
-      throw new Error("Generated an invalid ULID.");
-    }
-    this.setMeta(ULID_STATE_KEY, { time: timestamp, random: encodeHex(random) });
-    return ulid;
+    });
   }
 
   transaction<T>(work: () => T): T {
@@ -228,7 +235,9 @@ export class TerraScaleSqliteStore {
     }
 
     const nested = this.#transactionDepth !== 0;
-    const savepoint = nested ? `terrascale_tx_${++this.#savepointSequence}` : undefined;
+    const savepoint = nested
+      ? `terrascale_tx_${++this.#savepointSequence}`
+      : undefined;
     if (savepoint === undefined) {
       this.#database.exec("BEGIN IMMEDIATE;");
     } else {
@@ -238,6 +247,8 @@ export class TerraScaleSqliteStore {
 
     try {
       const result = work();
+      if (result instanceof Promise)
+        throw new TypeError("Use transactionAsync for asynchronous callbacks.");
       if (savepoint === undefined) {
         this.#database.exec("COMMIT;");
       } else {
@@ -263,7 +274,9 @@ export class TerraScaleSqliteStore {
       `);
 
       const row = this.#database
-        .prepare("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1")
+        .prepare(
+          "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1",
+        )
         .get();
       const version = row?.version;
       if (version !== undefined && typeof version !== "number") {
@@ -291,7 +304,9 @@ export class TerraScaleSqliteStore {
           ) WITHOUT ROWID;
         `);
         this.#database
-          .prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)")
+          .prepare(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+          )
           .run(SCHEMA_VERSION, new Date().toISOString());
       }
       this.#database.exec("COMMIT;");
@@ -306,7 +321,9 @@ export class TerraScaleSqliteStore {
       if (savepoint === undefined) {
         this.#database.exec("ROLLBACK;");
       } else {
-        this.#database.exec(`ROLLBACK TO SAVEPOINT ${savepoint}; RELEASE SAVEPOINT ${savepoint};`);
+        this.#database.exec(
+          `ROLLBACK TO SAVEPOINT ${savepoint}; RELEASE SAVEPOINT ${savepoint};`,
+        );
       }
     } catch {
       // Preserve the original work/migration exception. SQLite will normally
@@ -319,31 +336,6 @@ export class TerraScaleSqliteStore {
       throw new Error("The SQLite store is closed.");
     }
   }
-}
-
-function isStoredUlidState(value: unknown): value is { readonly time: number; readonly random: string } {
-  if (value === null || typeof value !== "object") {
-    return false;
-  }
-  const state = value as { readonly time?: unknown; readonly random?: unknown };
-  return typeof state.time === "number"
-    && Number.isSafeInteger(state.time)
-    && state.time >= 0
-    && state.time <= ULID_TIME_MAX
-    && typeof state.random === "string"
-    && /^[0-9a-f]{20}$/u.test(state.random);
-}
-
-function encodeHex(value: Uint8Array): string {
-  return [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function decodeHex(value: string): Uint8Array {
-  const result = new Uint8Array(10);
-  for (let index = 0; index < result.length; index++) {
-    result[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
-  }
-  return result;
 }
 
 function assertKey(value: string, name: string): void {
@@ -367,7 +359,10 @@ function stringifyJson(value: unknown): string {
     JSON.parse(encoded);
     return encoded;
   } catch (error) {
-    if (error instanceof TypeError && error.message === "Value must be JSON serializable.") {
+    if (
+      error instanceof TypeError &&
+      error.message === "Value must be JSON serializable."
+    ) {
       throw error;
     }
     throw new TypeError("Value must be JSON serializable.", { cause: error });
@@ -375,7 +370,11 @@ function stringifyJson(value: unknown): string {
 }
 
 function assertJsonValue(value: unknown, ancestors: WeakSet<object>): void {
-  if (value === null || typeof value === "string" || typeof value === "boolean") {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
     return;
   }
   if (typeof value === "number") {
@@ -424,55 +423,8 @@ function parseJson<T>(encoded: unknown, label: string): T {
   try {
     return JSON.parse(encoded) as T;
   } catch (error) {
-    throw new Error(`Invalid ${label}: stored JSON is malformed.`, { cause: error });
+    throw new Error(`Invalid ${label}: stored JSON is malformed.`, {
+      cause: error,
+    });
   }
-}
-
-function incrementRandom(random: Uint8Array): boolean {
-  for (let index = random.length - 1; index >= 0; index -= 1) {
-    const current = random[index];
-    if (current === undefined) {
-      throw new Error("Invalid ULID random state.");
-    }
-    if (current < 0xff) {
-      random[index] = current + 1;
-      return true;
-    }
-    random[index] = 0;
-  }
-  return false;
-}
-
-function encodeTimestamp(timestamp: number): string {
-  let remaining = timestamp;
-  const encoded = new Array<string>(10);
-  for (let index = encoded.length - 1; index >= 0; index -= 1) {
-    const digit = remaining % 32;
-    encoded[index] = ULID_ALPHABET[digit] ?? "";
-    remaining = Math.floor(remaining / 32);
-  }
-  if (remaining !== 0 || encoded.some((character) => character.length !== 1)) {
-    throw new RangeError("Unable to encode ULID timestamp.");
-  }
-  return encoded.join("");
-}
-
-function encodeRandom(random: Uint8Array): string {
-  if (random.length !== 10) {
-    throw new Error("Invalid ULID random state.");
-  }
-  let value = 0n;
-  for (const byte of random) {
-    value = (value << 8n) | BigInt(byte);
-  }
-
-  const encoded = new Array<string>(16);
-  for (let index = encoded.length - 1; index >= 0; index -= 1) {
-    encoded[index] = ULID_ALPHABET[Number(value & 31n)] ?? "";
-    value >>= 5n;
-  }
-  if (value !== 0n || encoded.some((character) => character.length !== 1)) {
-    throw new Error("Unable to encode ULID randomness.");
-  }
-  return encoded.join("");
 }

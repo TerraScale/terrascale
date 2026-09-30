@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "producer": "terrabase",
+  "sourceBase": "470d1f898897d4a0cefc7d638ce8eb72f0ca73b8",
+  "sourceOpenApiSha256": "2c8fc075bb2714de6f0ba10756f903e09e4d2a43ecaa63b2135ccb2042545a52",
+  "sourceAtomicVectorsSha256": "4ce4286b6e2eeae4ee15dec83f788f33cffdba7606a49021ec81afe0a4a9e816",
+  "sourceIdentityStatus": "accepted frozen atomic contract plus evolving uncommitted producer overlay; runtime qualification pending",
+  "atomicContractSha256": "f016ea7b0851a7f286a28a95c3d2186a1be57216105f1f13429160230e843e29",
+  "atlasAdmissionSha256": "8d1e39955e256851b4b89dedf52cdcc26d649ecd9ababa2164ccae021c0ba4b5",
+  "effectFingerprint": "SHA-256 over TB-DOC-EFFECT-v1 NUL domain and canonical native typed effect bytes; transaction identity excluded",
+  "routes": [
+    { "method": "GET", "path": "/v1/tenants/{tenant}/databases/{database}/shards/{shard}/collections/{collection}/documents/{document}", "response": "PointResponse" },
+    { "method": "POST", "path": "/v1/tenants/{tenant}/databases/{database}/shards/{shard}/collections/{collection}/documents/query", "request": "QueryRequest", "response": "QueryResponse" },
+    { "method": "POST", "path": "/v1/tenants/{tenant}/databases/{database}/shards/{shard}/collections/{collection}/documents/subscriptions", "request": "SubscriptionRequest", "response": "SubscriptionResponse" },
+    { "method": "POST", "path": "/v1/tenants/{tenant}/databases/{database}/shards/{shard}/transactions", "request": "CommitRequest", "response": "CommitResponse" },
+    { "method": "POST", "path": "/v1/tenants/{tenant}/databases/{database}/shards/{shard}/transactions/status", "request": "TransactionStatusRequest", "response": "TransactionStatusResponse" }
+  ],
+  "remainingReleaseGates": [
+    "exact producer source/artifact and OpenAPI digests",
+    "real packaged producer and independently installed SDK consumer",
+    "legacy public package cutover",
+    "scoped Atlas UUID/shard authority discovery",
+    "single-writer producer admission",
+    "public C06 catalog/schema/provisioning and C07 credentials",
+    "required deployed TypeScript account journey"
+  ]
+}

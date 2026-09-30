@@ -1,35 +1,45 @@
-export * from "./config.js";
-export * from "./discovery.js";
-export * from "./factory.js";
-export * from "./models.js";
-export * from "./regions.js";
-export * from "./result.js";
+export { createTerraBaseClient, TerraBaseClient } from "./database.js";
+export type {
+  TerraBaseClientConfig,
+  PreparedDatabaseCommit,
+  DatabaseRequestOptions,
+} from "./database.js";
+export type * from "./database-types.js";
+export {
+  terraBaseDiscoveryOrigin,
+  parseTerraBaseRoutingDocument,
+  TerraBaseDiscoveryError,
+  TerraBaseDiscoveryRouter,
+} from "./discovery.js";
+export type {
+  TerraBaseRoutingCapability,
+  TerraBaseRoutingCapabilities,
+  TerraBaseRoutingEndpoint,
+  TerraBaseRoutingDocument,
+} from "./discovery.js";
 export * from "./schema.js";
 export * from "./sql.js";
-export * from "./sync/v1/client.js";
-export * from "./sync/v1/result-view.js";
-export * from "./sync/v1/store/index.js";
-export { sdkRouteManifest } from "./client.js";
+export {
+  terraScaleReleaseBlockers,
+  TerraScaleCapabilityUnavailableError,
+} from "./management-contracts.js";
+export type { TerraScaleBlockedCapability } from "./management-contracts.js";
 export type {
-  AccessClient,
-  AuditClient,
-  BackupsClient,
-  FilesClient,
-  DatabaseBranchesClient,
-  DatabaseDocumentsClient,
-  DatabasesClient,
-  NotificationsClient,
-  OnboardingClient,
-  OrganizationsClient,
-  RegionsClient,
-  SavedQueriesClient,
-  UsageClient,
-} from "./client.js";
-export type { ManagementImportsClient, TerraScaleManagementClient } from "./management.js";
+  TerraScaleResult,
+  TerraScaleError,
+  TerraScaleFailure,
+  TerraScaleSuccess,
+} from "./result.js";
+export {
+  createDatabaseQuery,
+  DatabaseSubscriptionView,
+  DatabaseSubscriptionError,
+} from "./database-view.js";
 export type {
-  CreateImportRequest,
-  ImportJob,
-  OperationListOptions,
-  OperationPage,
-  OperationSummary,
-} from "./management.js";
+  DatabaseQueryOptions,
+  DatabaseViewBinding,
+  DatabaseViewPosition,
+  DatabaseViewSnapshot,
+  DatabaseQueryCallbacks,
+  DatabaseQuerySource,
+} from "./database-view.js";

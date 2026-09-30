@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { inspectNpmCli } from "./npm-cli-evidence.ts";
+import { npmReleasePolicy } from "./npm-release-policy.ts";
 import { execFile } from "node:child_process";
 import { createReadStream, statSync } from "node:fs";
 import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
@@ -15,27 +18,39 @@ const contentTypes = new Map([
   [".json", "application/json; charset=utf-8"],
 ]);
 
-const packageWorkspace = await mkdtemp(path.join(tmpdir(), "terrascale-sdk-browser-package-"));
-const packageTarball = process.env.TERRASCALE_BROWSER_CANDIDATE_TARBALL === undefined
-  ? await packSdk(packageWorkspace)
-  : await verifiedCandidateTarball(process.env.TERRASCALE_BROWSER_CANDIDATE_TARBALL);
+const packageWorkspace = await mkdtemp(
+  path.join(tmpdir(), "terrascale-sdk-browser-package-"),
+);
+const packageTarball =
+  process.env.TERRASCALE_BROWSER_CANDIDATE_TARBALL === undefined
+    ? await packSdk(packageWorkspace)
+    : await verifiedCandidateTarball(
+        process.env.TERRASCALE_BROWSER_CANDIDATE_TARBALL,
+      );
 await run("tar", ["-xzf", packageTarball, "-C", packageWorkspace]);
 const packageRoot = path.join(packageWorkspace, "package");
 
 const server = createServer((request, response) => {
   const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1:4173");
-  const relativePath = decodeURIComponent(requestUrl.pathname).replace(/^\/+/, "");
+  const relativePath = decodeURIComponent(requestUrl.pathname).replace(
+    /^\/+/,
+    "",
+  );
   const [contentRoot, contentPath] = relativePath.startsWith("candidate/")
     ? [packageRoot, relativePath.slice("candidate/".length)]
     : [root, relativePath];
   const candidate = path.resolve(contentRoot, contentPath);
-  if (!candidate.startsWith(`${contentRoot}${path.sep}`) || !statIsFile(candidate)) {
+  if (
+    !candidate.startsWith(`${contentRoot}${path.sep}`) ||
+    !statIsFile(candidate)
+  ) {
     response.writeHead(404).end();
     return;
   }
 
   response.writeHead(200, {
-    "content-type": contentTypes.get(path.extname(candidate)) ?? "application/octet-stream",
+    "content-type":
+      contentTypes.get(path.extname(candidate)) ?? "application/octet-stream",
     "cache-control": "no-store",
   });
   createReadStream(candidate).pipe(response);
@@ -44,16 +59,29 @@ const server = createServer((request, response) => {
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, () => {
     server.close(() => {
-      void rm(packageWorkspace, { recursive: true, force: true }).finally(() => process.exit(0));
+      void rm(packageWorkspace, { recursive: true, force: true }).finally(() =>
+        process.exit(0),
+      );
     });
   });
 }
 
 async function packSdk(destination) {
-  const result = await run("npm", ["pack", "--json", "--pack-destination", destination], { cwd: root });
+  const npm = await inspectNpmCli();
+  if (npm.evidence.version !== npmReleasePolicy.npm.version)
+    throw new Error("Browser packaging requires the reviewed npm CLI.");
+  const result = await run(
+    process.execPath,
+    [npm.entrypoint, "pack", "--json", "--pack-destination", destination],
+    { cwd: root },
+  );
   const metadata = JSON.parse(result.stdout);
   const filename = metadata[0]?.filename;
-  if (typeof filename !== "string" || path.basename(filename) !== filename || !filename.endsWith(".tgz")) {
+  if (
+    typeof filename !== "string" ||
+    path.basename(filename) !== filename ||
+    !filename.endsWith(".tgz")
+  ) {
     throw new Error("npm pack did not produce a safe SDK tarball name.");
   }
 
@@ -64,9 +92,31 @@ async function packSdk(destination) {
 
 async function verifiedCandidateTarball(candidate) {
   const resolved = path.resolve(root, candidate);
-  const [real, metadata] = await Promise.all([realpath(resolved), lstat(resolved)]);
-  if (real !== resolved || !metadata.isFile() || metadata.isSymbolicLink() || !resolved.endsWith(".tgz")) {
-    throw new Error("Browser qualification candidate must be a regular non-symlink npm tarball.");
+  const [real, metadata] = await Promise.all([
+    realpath(resolved),
+    lstat(resolved),
+  ]);
+  if (
+    real !== resolved ||
+    !metadata.isFile() ||
+    metadata.isSymbolicLink() ||
+    !resolved.endsWith(".tgz")
+  ) {
+    throw new Error(
+      "Browser qualification candidate must be a regular non-symlink npm tarball.",
+    );
+  }
+  const expected = process.env.TERRASCALE_BROWSER_CANDIDATE_TARBALL_SHA256;
+  if (
+    expected === undefined ||
+    !/^[0-9a-f]{64}$/u.test(expected) ||
+    createHash("sha256")
+      .update(await readFile(resolved))
+      .digest("hex") !== expected
+  ) {
+    throw new Error(
+      "Browser qualification candidate SHA-256 is missing or does not match.",
+    );
   }
   return resolved;
 }

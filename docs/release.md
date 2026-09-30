@@ -1,109 +1,69 @@
 # SDK release process
 
-`@terrascale/sdk` publishes to the public npm registry. Forgejo package
-registries are not a distribution target.
+The release artifact is one immutable public npm tarball. Qualification installs
+those exact bytes in a separate consumer; source tests alone cannot qualify it.
+Production publication remains blocked by C06/C07 management and credential
+admission, native single-writer security persistence, and installed real-producer
+and deployed authenticated account/browser journeys.
 
-## Current status
+The native Forgejo workflow verifies the event revision on Node 22.23.2 and
+24.21.0 and current browser engines. It provisions the reviewed npm 11.18.0 CLI,
+uses the locked dependency tree, and runs source parity, typecheck, build,
+regression, actual framework lifecycle, SBOM, and vulnerability checks. Exact
+producer OpenAPI and canonical vector bytes are mandatory inputs checked against
+`sdk-current-contract.json`. CI verifies and extracts the immutable
+`scripts/ci/producer-contract-inputs.tar.gz` archive (SHA-256
+`8169fab845e3130b54378ff9a064ff212d1ff59fe15eb82c857718ad919db7e7`).
+Its `producer-inputs-v1.json` and original frozen manifests bind independently
+consumed actual producer files. They are an uncommitted overlay on producer base
+`470d1f898897d4a0cefc7d638ce8eb72f0ca73b8`; the base alone does not reproduce
+them. These inputs establish source parity, with producer runtime qualification
+still pending.
 
-Native CI runs on pushes to `develop` and `main` and on pull requests to
-`main`. The static contract gates, the Node.js `22.23.2` and `24.21.0` matrix,
-and the browser lane run on `terrascale-builder`. Its image includes Node.js
-`24.21.0` and the pinned Playwright Chromium and Firefox engines; the browser
-lane installs WebKit. Jobs check out the event revision, and the static and
-Node jobs also check out the pinned TerraBase (`TerraScale/ts-rust`) and edge
-(`TerraScale/ts-atlas`) contract bundles. Checkouts use `REGISTRY_TOKEN` with
-`persist-credentials: false`; jobs do not receive npm, release, or live API
-secrets.
-
-Production publication remains blocked. The unchanged
-`scripts/promote-npm-candidate.ts` verifier requires a real reviewed
-`ts-deploy` build receipt bound to the source tree, output files, checksums,
-and qualification evidence, and native CI currently has no accepted producer
-for that receipt. The native workflow therefore has no candidate, admission,
-or publish path.
-
-Do not weaken the verifier or publish npm bytes while that producer contract is
-pending.
-
-## Required checks
-
-Run the complete repository set from a clean checkout:
-
-```bash
+```sh
 npm ci
+npm run check:current-contract-inputs
+npm run check:current-contract
 npm run typecheck
 npm run build
 npm test
-npm run check:public-contract-fixture
-npm run check:openapi-contract-descriptor && npm run check:route-manifest \
-  && npm run check:forbidden-surface
-npm run check:sbom && npm run check:vulnerabilities
+npm run check:frameworks
+npm run check:route-manifest
+npm run check:openapi-contract-descriptor
+npm run check:forbidden-surface
+npm run check:sbom
+npm run check:vulnerabilities
 npm run test:browser
+npm run qualify:current-producer
+npm run qualify:auth-authority
+npm run qualify:release-e2e
 ```
 
-Release automation must also pack the package once, install that exact tarball
-in a clean consumer, inspect its public exports, scan it for credentials, and
-run the package against the pinned Node.js 22 and 24 binaries. The browser lane
-uses pinned current Chromium, Firefox, and WebKit engines. A skipped or
-host-blocked required lane blocks publication.
+The Linux browser matrix uses actual stable Chrome and Edge channels and
+Playwright Firefox and WebKit. CI provisions SHA-bound Nix vendor packages from
+revision `b4fd65b198c599cbe814fcb9f42d25d021595ec9` (Chrome 154.0.8037.57 and
+Edge 154.0.4258.37) and exports their actual executable paths. Local runs can set
+`PLAYWRIGHT_CHROME_EXECUTABLE_PATH` and `PLAYWRIGHT_EDGE_EXECUTABLE_PATH` for
+verified runner-provisioned binaries. Refresh these pins as stable releases move.
+WebKit results are engine compatibility evidence; actual Safari qualification
+requires a macOS runner.
 
-The route manifest and OpenAPI descriptor must match the owner-published
-TerraBase and edge contract bundles selected by `CONTRACT_SOURCE` or
-`CONTRACT_URL` and `EDGE_CONTRACT_SOURCE` or `EDGE_CONTRACT_URL`. A missing
-contract stays missing from the SDK.
+Local SQLite tests run only in permitted development environments and must never
+clear deployment indicators. Maintained Better Auth suites verify local adapter
+semantics; their results do not discharge production security gates. Pure packed
+browser tests verify browser compatibility, while the separate real-allocation
+browser journey requires actual service credentials and does not use intercepted
+producer responses.
 
-The reactive gate checks the generated `terrascale.sync.v1.msgpack` manifest,
-hostile decoding, golden bytes, and result-view behavior. MessagePack carries
-the envelope and operation structure. Document bodies remain raw
-TerraScale-canonical JSON bytes, and the client performs one native
-`JSON.parse` per body after decoding the envelope. HTTP is the default
-transport, WebSocket and server-sent events are opt-in upgrades, and there is
-no JSON WebSocket variant.
+`qualify-npm-artifact.ts` preserves clean-source, reviewed toolchain, installed
+consumer, archive, audit, license, and cryptographic evidence checks. Its report
+retains active producer blockers and cannot mark a release eligible while they
+remain. `promote-npm-candidate.ts` requires an admitted build receipt bound to
+source and output bytes and refuses publication with active blockers. The
+required release-E2E check fails before any skip-capable suite until production
+persistence and deployed account flows are admitted. Environment variable
+presence is not successful journey evidence.
 
-The local SQLite runtime cannot qualify live API behavior, authorization,
-multi-Region durability, recovery, billing, or performance. Live integration
-configuration that is absent or invalid is a failed release prerequisite, not
-a passing result.
+Hosted OAuth resource conformance must bind the accepted producer protocol snapshot and its actual HTTP response artifact manifest. Request-only controls use deliberately failing transports; captured-response playback proves decoding only and is not hosted or native qualification. Active resource responses are checked against independently configured canonical issuer, exact registered audience, fresh local time, and user/service session shape. Keep no-resource browser login supported, resource Basic introspection separate from client-secret-post token and client introspection, and management authorization separate from token activity.
 
-## Protected release when publication is restored
-
-Agents commit green changes directly to `develop`; pull requests to `main` run
-the same native CI. The owner may restore a main-only release graph after
-accepting a native receipt producer and promoting `develop` to `main`. That
-protected `main` run must:
-
-1. build one immutable npm tarball from the promoted commit;
-2. bind the tarball to the exact commit, dependency lock, generated contracts,
-   Node binaries, npm version, and browser engines;
-3. verify that the package version is not already present on npm;
-4. run the release-only live checks without exposing their credentials to
-   ordinary branch jobs; and
-5. publish the already verified tarball with `--access public`.
-
-The final publish job receives only the npm credential. Live-test secrets remain
-scoped to their verification job, and the publish job removes inherited npm
-configuration before invoking the unchanged promotion verifier.
-
-If npm publication is interrupted or returns an uncertain result, inspect the
-public registry before retrying. npm versions are immutable. Never overwrite a
-published version or rebuild different bytes under the same version.
-
-## Versioning
-
-Use a patch version for backward-compatible changes. Before `1.0`, a
-source-breaking exported TypeScript change requires a minor version. Update
-`package.json` and `package-lock.json` together before promotion.
-
-## Dependency SBOM
-
-The SDK CI runs `npm run check:sbom`, which generates a CycloneDX 1.5 inventory
-from the committed lockfile, verifies the package identity and every npm
-component reference, rejects duplicate or malformed component identities, and
-records the SHA-256 digest of `package-lock.json` in the evidence envelope. A
-release process must retain that generated envelope with the candidate receipt
-and complete vulnerability review before publication.
-
-For consumers that download the signed edge archive, set both
-`EDGE_CONTRACT_URL` and `EDGE_CONTRACT_ARCHIVE_SHA256`; the SDK refuses an edge
-URL without its immutable digest or when a local source and URL are supplied
-simultaneously.
+Client/resource management responses use exact snake_case records and safe numeric epochs. Verify both client PATCH branches (bare view without rotation, one-time secret envelope with rotation), the always-enveloped resource create/PATCH response, inactive responses, and actual 401/500 errors. Set `TERRASCALE_AUTH_COMPONENT_RESPONSES` to the accepted immutable captured manifest for component-byte decoding checks. An expired retained response must fail acceptance; do not rewrite its timestamps or claim a live authenticated exchange from playback.

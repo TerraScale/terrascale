@@ -6,7 +6,12 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { describe, test } from "vitest";
 
-import { createTsAuthClient, TsAuthUserPatch, verifyTsAuthWebhook, verifyTsAuthWebhookWithTolerance } from "./ts-auth.js";
+import {
+  createTsAuthClient,
+  TsAuthUserPatch,
+  verifyTsAuthWebhook,
+  verifyTsAuthWebhookWithTolerance,
+} from "./ts-auth.js";
 
 const baseUser = {
   id: "usr_1",
@@ -19,18 +24,28 @@ const baseUser = {
   public_metadata: {},
 };
 
-function user(id: string, overrides: Record<string, unknown> = {}): typeof baseUser {
+function user(
+  id: string,
+  overrides: Record<string, unknown> = {},
+): typeof baseUser {
   return { ...baseUser, id, ...overrides };
 }
 
-function json(value: unknown, status = 200, headers: Record<string, string> = {}): Response {
+function json(
+  value: unknown,
+  status = 200,
+  headers: Record<string, string> = {},
+): Response {
   return new Response(value === null ? null : JSON.stringify(value), {
     status,
     headers: { "content-type": "application/json", ...headers },
   });
 }
 
-function capture(requests: Request[], respond: (request: Request, index: number) => Response): typeof fetch {
+function capture(
+  requests: Request[],
+  respond: (request: Request, index: number) => Response,
+): typeof fetch {
   return async (input) => {
     const request = new Request(input);
     requests.push(request.clone());
@@ -59,7 +74,10 @@ function sign(secret: string, timestamp: string, payload: Uint8Array): string {
 describe("ts-auth client edge cases: A. response-decode edges", () => {
   test("A1 user JSON without id still decodes; the id is undefined, never a silent null use", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => json({ email: "ada@acme.test" }), requests);
+    const tsAuth = tsAuthClient(
+      () => json({ email: "ada@acme.test" }),
+      requests,
+    );
     const missing = await tsAuth.users.get("usr_1");
     // pins current behavior: the TS layer decodes structurally (JSON only);
     // required-field validation is compile-time, so no invalid-response error.
@@ -69,8 +87,15 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
 
   test("A2 present-null and absent optional fields deserialize to null and undefined", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient((_request, index) =>
-      json(index === 0 ? { ...user("usr_1"), ban_reason: null, last_sign_in_at: null } : user("usr_1")), requests);
+    const tsAuth = tsAuthClient(
+      (_request, index) =>
+        json(
+          index === 0
+            ? { ...user("usr_1"), ban_reason: null, last_sign_in_at: null }
+            : user("usr_1"),
+        ),
+      requests,
+    );
     const presentNull = await tsAuth.users.get("usr_1");
     assert.equal(presentNull.ok, true);
     if (presentNull.ok) {
@@ -87,19 +112,28 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
 
   test("A3 unknown extra response fields are ignored by the typed view", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => json({ ...user("usr_1"), future_field: { x: 1 } }), requests);
+    const tsAuth = tsAuthClient(
+      () => json({ ...user("usr_1"), future_field: { x: 1 } }),
+      requests,
+    );
     const decoded = await tsAuth.users.get("usr_1");
     assert.equal(decoded.ok, true);
     if (decoded.ok) {
       assert.equal(decoded.value.id, "usr_1");
       // pins current behavior: unknown fields pass through verbatim (no stripping).
-      assert.deepEqual((decoded.value as Record<string, unknown>).future_field, { x: 1 });
+      assert.deepEqual(
+        (decoded.value as Record<string, unknown>).future_field,
+        { x: 1 },
+      );
     }
   });
 
   test("A4 wrong-typed field decodes verbatim without crashing or zeroing", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => json({ ...user("usr_1"), email_verified: "yes", banned: 1 }), requests);
+    const tsAuth = tsAuthClient(
+      () => json({ ...user("usr_1"), email_verified: "yes", banned: 1 }),
+      requests,
+    );
     const decoded = await tsAuth.users.get("usr_1");
     // pins current behavior: no runtime type checking of response fields.
     assert.equal(decoded.ok, true);
@@ -111,41 +145,67 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
 
   test("A5 malformed JSON body maps to an invalid-response error value", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => new Response('{"data": [', { status: 200, headers: { "content-type": "application/json" } }), requests);
+    const tsAuth = tsAuthClient(
+      () =>
+        new Response('{"data": [', {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      requests,
+    );
     const listed = await tsAuth.users.list();
     assert.equal(listed.ok, false);
     if (!listed.ok) {
       assert.equal(listed.status, 200);
       assert.equal(listed.error.kind, "invalid-response");
       assert.equal(listed.error.code, "invalid_response");
-      assert.equal(listed.error.message, "Unexpected end of JSON input");
+      assert.equal(
+        listed.error.message,
+        "ts-auth returned an invalid JSON response body.",
+      );
+      assert.equal(listed.body, undefined);
     }
   });
 
   test("A6 empty body on a JSON-expecting route is an invalid-response error", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => new Response(null, { status: 200 }), requests);
+    const tsAuth = tsAuthClient(
+      () => new Response(null, { status: 200 }),
+      requests,
+    );
     const got = await tsAuth.users.get("usr_1");
     assert.equal(got.ok, false);
     if (!got.ok) {
       assert.equal(got.status, 200);
       assert.equal(got.error.kind, "invalid-response");
       assert.equal(got.error.code, "invalid_response");
-      assert.equal(got.error.message, "ts-auth returned an empty response body.");
+      assert.equal(
+        got.error.message,
+        "ts-auth returned an empty response body.",
+      );
     }
   });
 
   test("A7 non-JSON HTML body is an invalid-response error", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() =>
-      new Response("<html>gateway error</html>", { status: 200, headers: { "content-type": "text/html" } }), requests);
+    const tsAuth = tsAuthClient(
+      () =>
+        new Response("<html>gateway error</html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        }),
+      requests,
+    );
     const got = await tsAuth.users.get("usr_1");
     assert.equal(got.ok, false);
     if (!got.ok) {
       assert.equal(got.status, 200);
       assert.equal(got.error.kind, "invalid-response");
       assert.equal(got.error.code, "invalid_response");
-      assert.equal(got.error.message, "ts-auth returned a non-JSON response body (text/html).");
+      assert.equal(
+        got.error.message,
+        "ts-auth returned a non-JSON response body.",
+      );
     }
   });
 
@@ -153,9 +213,19 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
     const requests: Request[] = [];
     const tsAuth = tsAuthClient((request) => {
       const path = new URL(request.url).pathname;
-      if (path === "/v1/acme/users") return json([user("usr_1"), user("usr_2")]);
+      if (path === "/v1/acme/users")
+        return json([user("usr_1"), user("usr_2")]);
       if (path === "/v1/acme/organizations") {
-        return json({ data: [{ id: "org_1", name: "Acme", slug: "acme", created_at: 1_788_220_800 }] });
+        return json({
+          data: [
+            {
+              id: "org_1",
+              name: "Acme",
+              slug: "acme",
+              created_at: 1_788_220_800,
+            },
+          ],
+        });
       }
       return json({});
     }, requests);
@@ -171,10 +241,11 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
     // pins current behavior: {data} where a bare array was expected yields the
     // envelope object itself.
     assert.equal(organizations.ok, true);
-    if (organizations.ok) assert.equal(Array.isArray(organizations.value), false);
+    if (organizations.ok)
+      assert.equal(Array.isArray(organizations.value), false);
   });
 
-  test("A9 {\"data\": null} list decodes to null; listAll surfaces invalid-response instead of crashing", async () => {
+  test('A9 {"data": null} list decodes to null; listAll surfaces invalid-response instead of crashing', async () => {
     const nullData = tsAuthClient(() => json({ data: null }), []);
     const listed = await nullData.users.list();
     // pins current behavior for list(): no runtime schema validation, so data
@@ -200,7 +271,8 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
         email: `user${index}@acme.test`,
         name: `User ${index}`,
         public_metadata: { tier: "pro", notes: "n".repeat(450) },
-      }));
+      }),
+    );
     assert.ok(JSON.stringify({ data: page }).length > 60_000);
     const requests: Request[] = [];
     const tsAuth = tsAuthClient(() => json({ data: page }), requests);
@@ -210,32 +282,53 @@ describe("ts-auth client edge cases: A. response-decode edges", () => {
       assert.equal(listed.value.data.length, 100);
       assert.equal(listed.value.data[0]?.id, "usr_001");
       assert.equal(listed.value.data[99]?.id, "usr_100");
-      assert.equal(new Set(listed.value.data.map(entry => entry.id)).size, 100);
+      assert.equal(
+        new Set(listed.value.data.map((entry) => entry.id)).size,
+        100,
+      );
     }
   });
 
   test("A11 unicode names round-trip byte-identically in decode and PATCH bodies", async () => {
     const unicodeName = "Ada 🌸 中 é";
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => json(user("usr_1", { name: unicodeName })), requests);
+    const tsAuth = tsAuthClient(
+      () => json(user("usr_1", { name: unicodeName })),
+      requests,
+    );
 
     const got = await tsAuth.users.get("usr_1");
     assert.equal(got.ok, true);
     if (got.ok) assert.equal(got.value.name, unicodeName);
 
     const expectedBytes = `{"name":${JSON.stringify(unicodeName)}}`;
-    const updated = await tsAuth.users.update("usr_1", new TsAuthUserPatch().withName(unicodeName));
+    const updated = await tsAuth.users.update(
+      "usr_1",
+      new TsAuthUserPatch().withName(unicodeName),
+    );
     assert.equal(updated.ok, true);
     const wire = await requests[1]!.text();
     assert.equal(wire, expectedBytes);
-    assert.equal(Buffer.byteLength(wire, "utf8"), Buffer.byteLength(expectedBytes, "utf8"));
+    assert.equal(
+      Buffer.byteLength(wire, "utf8"),
+      Buffer.byteLength(expectedBytes, "utf8"),
+    );
   });
 });
 
 describe("ts-auth client edge cases: B. status-code and error-mapping edges", () => {
   test("B12 401 bad key maps to authentication with the body code and message", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => json({ error: { code: "unauthorized", message: "Invalid management key." } }, 401), requests);
+    const tsAuth = tsAuthClient(
+      () =>
+        json(
+          {
+            error: { code: "unauthorized", message: "Invalid management key." },
+          },
+          401,
+        ),
+      requests,
+    );
     const listed = await tsAuth.users.list();
     assert.equal(listed.ok, false);
     if (!listed.ok) {
@@ -248,8 +341,19 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
 
   test("B13 403 insufficient_scope maps to authorization", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() =>
-      json({ error: { code: "insufficient_scope", message: "Missing scope users:read." } }, 403), requests);
+    const tsAuth = tsAuthClient(
+      () =>
+        json(
+          {
+            error: {
+              code: "insufficient_scope",
+              message: "Missing scope users:read.",
+            },
+          },
+          403,
+        ),
+      requests,
+    );
     const got = await tsAuth.users.get("usr_1");
     assert.equal(got.ok, false);
     if (!got.ok) {
@@ -261,10 +365,16 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
 
   test("B14 404 user_not_found and generic not_found both map with codes preserved", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient((_request, index) =>
-      json(index === 0
-        ? { error: { code: "user_not_found", message: "No such user." } }
-        : { error: { code: "not_found", message: "Not found." } }, 404), requests);
+    const tsAuth = tsAuthClient(
+      (_request, index) =>
+        json(
+          index === 0
+            ? { error: { code: "user_not_found", message: "No such user." } }
+            : { error: { code: "not_found", message: "Not found." } },
+          404,
+        ),
+      requests,
+    );
     for (const code of ["user_not_found", "not_found"]) {
       const got = await tsAuth.users.get("usr_missing");
       assert.equal(got.ok, false);
@@ -277,22 +387,41 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
 
   test("B15 409 email_taken maps to conflict", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() =>
-      json({ error: { code: "email_taken", message: "grace@acme.test is already registered." } }, 409), requests);
+    const tsAuth = tsAuthClient(
+      () =>
+        json(
+          {
+            error: {
+              code: "email_taken",
+              message: "grace@acme.test is already registered.",
+            },
+          },
+          409,
+        ),
+      requests,
+    );
     const created = await tsAuth.users.create({ email: "grace@acme.test" });
     assert.equal(created.ok, false);
     if (!created.ok) {
       assert.equal(created.error.kind, "conflict");
       assert.equal(created.error.code, "email_taken");
-      assert.equal(created.error.message, "grace@acme.test is already registered.");
+      assert.equal(
+        created.error.message,
+        "grace@acme.test is already registered.",
+      );
     }
   });
 
   test("B16 429 rate_limited with Retry-After surfaces immediately at maxRetryAttempts 0", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() =>
-      json({ error: { code: "rate_limited", message: "Slow down." } }, 429, { "retry-after": "2" }),
-      requests, { maxRetryAttempts: 0 });
+    const tsAuth = tsAuthClient(
+      () =>
+        json({ error: { code: "rate_limited", message: "Slow down." } }, 429, {
+          "retry-after": "2",
+        }),
+      requests,
+      { maxRetryAttempts: 0 },
+    );
     const listed = await tsAuth.users.list();
     assert.equal(requests.length, 1);
     assert.equal(listed.ok, false);
@@ -309,13 +438,28 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
 
   test("B17 503 temporarily_unavailable and billing_not_configured map to server kind", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient((request) => {
-      const path = new URL(request.url).pathname;
-      if (path === "/v1/acme/billing/checkout") {
-        return json({ error: { code: "billing_not_configured", message: "No payment method." } }, 503);
-      }
-      return json({ error: { code: "temporarily_unavailable", message: "Try again." } }, 503);
-    }, requests, { maxRetryAttempts: 0 });
+    const tsAuth = tsAuthClient(
+      (request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/v1/acme/billing/checkout") {
+          return json(
+            {
+              error: {
+                code: "billing_not_configured",
+                message: "No payment method.",
+              },
+            },
+            503,
+          );
+        }
+        return json(
+          { error: { code: "temporarily_unavailable", message: "Try again." } },
+          503,
+        );
+      },
+      requests,
+      { maxRetryAttempts: 0 },
+    );
     const listed = await tsAuth.users.list();
     assert.equal(listed.ok, false);
     if (!listed.ok) {
@@ -332,11 +476,25 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
 
   test("B18 flat OAuth 401 with WWW-Authenticate: Basic maps the code without crashing on the header", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() =>
-      json({ error: "invalid_client", error_description: "Client authentication failed." }, 401, {
-        "www-authenticate": 'Basic realm="ts-auth"',
-      }), requests);
-    const token = await tsAuth.oidc.token("clt_1", "cs_wrong", { grant_type: "client_credentials" });
+    const tsAuth = tsAuthClient(
+      () =>
+        json(
+          {
+            error: "invalid_client",
+            error_description: "Client authentication failed.",
+          },
+          401,
+          {
+            "www-authenticate": 'Basic realm="ts-auth"',
+          },
+        ),
+      requests,
+    );
+    const token = await tsAuth.oidc.token("clt_1", "cs_wrong", {
+      grant_type: "client_credentials",
+      resource: "https://api.example.test/management",
+      scope: "management:read",
+    });
     assert.equal(token.ok, false);
     if (!token.ok) {
       assert.equal(token.status, 401);
@@ -348,8 +506,14 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
 
   test("B19 flat OAuth invalid_grant without error_description keeps the OAuth code", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => json({ error: "invalid_grant" }, 401), requests);
-    const token = await tsAuth.oidc.token("clt_1", "cs_1", { grant_type: "refresh_token", refresh_token: "rt_old" });
+    const tsAuth = tsAuthClient(
+      () => json({ error: "invalid_grant" }, 401),
+      requests,
+    );
+    const token = await tsAuth.oidc.token("clt_1", "cs_1", {
+      grant_type: "refresh_token",
+      refresh_token: "rt_old",
+    });
     assert.equal(token.ok, false);
     if (!token.ok) {
       assert.equal(token.error.kind, "authentication");
@@ -362,7 +526,10 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
 
   test("B20 null error code and message fall back to status-derived defaults", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => json({ error: { code: null, message: null } }, 400), requests);
+    const tsAuth = tsAuthClient(
+      () => json({ error: { code: null, message: null } }, 400),
+      requests,
+    );
     const got = await tsAuth.users.get("usr_1");
     assert.equal(got.ok, false);
     if (!got.ok) {
@@ -374,7 +541,10 @@ describe("ts-auth client edge cases: B. status-code and error-mapping edges", ()
 
   test("B21 empty non-JSON 500 body yields a status-derived server error", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => new Response(null, { status: 500 }), requests);
+    const tsAuth = tsAuthClient(
+      () => new Response(null, { status: 500 }),
+      requests,
+    );
     const listed = await tsAuth.users.list();
     assert.equal(listed.ok, false);
     if (!listed.ok) {
@@ -401,7 +571,10 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
     const tsAuth = tsAuthClient(() => json(user("x")), requests);
     await tsAuth.users.get("a/b?c#d%e&f+g 中");
     assert.equal(requests.length, 1);
-    assert.equal(new URL(requests[0]!.url).pathname, "/v1/acme/users/a%2Fb%3Fc%23d%25e%26f%2Bg%20%E4%B8%AD");
+    assert.equal(
+      new URL(requests[0]!.url).pathname,
+      "/v1/acme/users/a%2Fb%3Fc%23d%25e%26f%2Bg%20%E4%B8%AD",
+    );
   });
 
   test("C23 bare dot-segment ids are rejected preflight; embedded slashes are inert once encoded", async () => {
@@ -424,7 +597,14 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
       assert.throws(() => tsAuth.users.get(id), /user id/u, JSON.stringify(id));
     }
     assert.throws(() => tsAuth.organizations.create({ name: " " }), /name/u);
-    assert.throws(() => tsAuth.organizations.createInvitation("org_1", { email: "\t", role: "admin" }), /email/u);
+    assert.throws(
+      () =>
+        tsAuth.organizations.createInvitation("org_1", {
+          email: "\t",
+          role: "admin",
+        }),
+      /email/u,
+    );
     assert.throws(() => tsAuth.apiKeys.create({ name: "" }), /name/u);
     assert.equal(requests.length, 0);
   });
@@ -433,7 +613,10 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
     const requests: Request[] = [];
     const tsAuth = tsAuthClient(() => json({ data: [] }), requests);
     await tsAuth.users.list({ startingAfter: "a&b=c+d%e中" });
-    assert.equal(new URL(requests[0]!.url).search, "?starting_after=a%26b%3Dc%2Bd%25e%E4%B8%AD");
+    assert.equal(
+      new URL(requests[0]!.url).search,
+      "?starting_after=a%26b%3Dc%2Bd%25e%E4%B8%AD",
+    );
   });
 
   test("C26 limit 1 and 100 are sent as-is; 0 and 101 are rejected preflight consistently", async () => {
@@ -445,16 +628,37 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
     assert.equal(new URL(requests[1]!.url).search, "?limit=100");
     // pins current behavior: out-of-range limits never reach the server.
     assert.throws(() => tsAuth.users.list({ limit: 0 }), /between 1 and 100/u);
-    assert.throws(() => tsAuth.users.list({ limit: 101 }), /between 1 and 100/u);
-    assert.throws(() => tsAuth.users.list({ limit: 1.5 }), /between 1 and 100/u);
+    assert.throws(
+      () => tsAuth.users.list({ limit: 101 }),
+      /between 1 and 100/u,
+    );
+    assert.throws(
+      () => tsAuth.users.list({ limit: 1.5 }),
+      /between 1 and 100/u,
+    );
     assert.equal(requests.length, 2);
   });
 
   test("C27 instance slug rejects whitespace, control chars, slashes, and dot segments at construction", () => {
-    const neverFetch = (): Promise<Response> => Promise.reject(new Error("no HTTP expected"));
-    for (const instanceSlug of ["", " ", "ac me", "ac/me", "ac\u0007me", ".", ".."]) {
+    const neverFetch = (): Promise<Response> =>
+      Promise.reject(new Error("no HTTP expected"));
+    for (const instanceSlug of [
+      "",
+      " ",
+      "ac me",
+      "ac/me",
+      "ac\u0007me",
+      ".",
+      "..",
+    ]) {
       assert.throws(
-        () => createTsAuthClient({ apiBaseUrl: "https://auth.acme.test", accessToken: "sk_x", instanceSlug, fetch: neverFetch }),
+        () =>
+          createTsAuthClient({
+            apiBaseUrl: "https://auth.acme.test",
+            accessToken: "sk_x",
+            instanceSlug,
+            fetch: neverFetch,
+          }),
         /instanceSlug/u,
         JSON.stringify(instanceSlug),
       );
@@ -464,14 +668,18 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
   test("C27 an over-255-byte slug is accepted (pins current behavior: no slug length cap)", async () => {
     const requests: Request[] = [];
     const longSlug = "a".repeat(300);
-    const tsAuth = tsAuthClient(() => json({ data: [] }), requests, { instanceSlug: longSlug });
+    const tsAuth = tsAuthClient(() => json({ data: [] }), requests, {
+      instanceSlug: longSlug,
+    });
     await tsAuth.users.list();
     assert.equal(new URL(requests[0]!.url).pathname, `/v1/${longSlug}/users`);
   });
 
   test("C28 a header-breaking API key never reaches fetch (pins current behavior: Headers layer rejects it)", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => json({ data: [] }), requests, { accessToken: "sk_bad\r\nevil: 1" });
+    const tsAuth = tsAuthClient(() => json({ data: [] }), requests, {
+      accessToken: "sk_bad\r\nevil: 1",
+    });
     const listed = await tsAuth.users.list();
     assert.equal(requests.length, 0);
     assert.equal(listed.ok, false);
@@ -499,21 +707,32 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
       .unsetPrivateMetadata();
     const updated = await tsAuth.users.update("usr_1", patch);
     assert.equal(updated.ok, true);
-    assert.equal(await requests[0]!.text(),
-      '{"name":"Ada Lovelace","username":null,"password":"new-password-1","email":"ada2@acme.test","banned":true,"ban_reason":"policy","public_metadata":{"tier":"pro"},"private_metadata":null}');
+    assert.equal(
+      await requests[0]!.text(),
+      '{"name":"Ada Lovelace","username":null,"password":"new-password-1","email":"ada2@acme.test","banned":true,"ban_reason":"policy","public_metadata":{"tier":"pro"},"private_metadata":null}',
+    );
 
-    const single = await tsAuth.users.update("usr_1", new TsAuthUserPatch().withBanned(false));
+    const single = await tsAuth.users.update(
+      "usr_1",
+      new TsAuthUserPatch().withBanned(false),
+    );
     assert.equal(single.ok, true);
     // C30: the body is valid JSON with exactly the configured fields, nothing else.
     const singleBody = await requests[1]!.text();
     assert.equal(singleBody, '{"banned":false}');
-    assert.deepEqual(Object.keys(JSON.parse(singleBody) as Record<string, unknown>), ["banned"]);
+    assert.deepEqual(
+      Object.keys(JSON.parse(singleBody) as Record<string, unknown>),
+      ["banned"],
+    );
   });
 
   test("C31 an empty patch is rejected preflight", async () => {
     const requests: Request[] = [];
     const tsAuth = tsAuthClient(() => json(user("usr_1")), requests);
-    assert.throws(() => tsAuth.users.update("usr_1", new TsAuthUserPatch()), /patch is empty/u);
+    assert.throws(
+      () => tsAuth.users.update("usr_1", new TsAuthUserPatch()),
+      /patch is empty/u,
+    );
     assert.equal(requests.length, 0);
   });
 
@@ -527,10 +746,19 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
 
   test("C33 OIDC form secrets round-trip with every reserved character encoded once", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => json({ access_token: "at_1", token_type: "Bearer", expires_in: 3600 }), requests);
-    const token = await tsAuth.oidc.token("clt_1", "s&=+% #1", { grant_type: "client_credentials" });
-    assert.equal(token.ok, true);
-    assert.equal(await requests[0]!.text(), "client_id=clt_1&client_secret=s%26%3D%2B%25+%231&grant_type=client_credentials");
+    const tsAuth = tsAuthClient(() => {
+      throw new Error("Token form probe; no provider response.");
+    }, requests);
+    const token = await tsAuth.oidc.token("clt_1", "s&=+% #1", {
+      grant_type: "client_credentials",
+      resource: "https://api.example.test/management",
+      scope: "management:read",
+    });
+    assert.equal(token.ok, false);
+    assert.equal(
+      await requests[0]!.text(),
+      "client_id=clt_1&client_secret=s%26%3D%2B%25+%231&grant_type=client_credentials&resource=https%3A%2F%2Fapi.example.test%2Fmanagement&scope=management%3Aread",
+    );
   });
 
   test("C34 nested metadata values serialize faithfully", async () => {
@@ -538,14 +766,24 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
     const tsAuth = tsAuthClient(() => json(user("usr_1")), requests);
     const metadata = {
       plan: "pro",
-      nested: { count: 3, flag: true, none: null, list: [1, "two", { deep: false }] },
+      nested: {
+        count: 3,
+        flag: true,
+        none: null,
+        list: [1, "two", { deep: false }],
+      },
       empty: [],
       zero: 0,
     };
-    const updated = await tsAuth.users.update("usr_1", new TsAuthUserPatch().withPublicMetadata(metadata));
+    const updated = await tsAuth.users.update(
+      "usr_1",
+      new TsAuthUserPatch().withPublicMetadata(metadata),
+    );
     assert.equal(updated.ok, true);
     const bodyText = await requests[0]!.text();
-    assert.deepEqual(JSON.parse(bodyText) as { public_metadata: unknown }, { public_metadata: metadata });
+    assert.deepEqual(JSON.parse(bodyText) as { public_metadata: unknown }, {
+      public_metadata: metadata,
+    });
     assert.equal(bodyText, `{"public_metadata":${JSON.stringify(metadata)}}`);
   });
 });
@@ -553,9 +791,12 @@ describe("ts-auth client edge cases: C. request-construction edges", () => {
 describe("ts-auth client edge cases: D. retry / deadline / cancellation edges", () => {
   test("D35 GET with always-503 surfaces after exactly 3 attempts at maxRetryAttempts 2", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() =>
-      json({ error: { code: "unavailable", message: "Try again." } }, 503),
-      requests, { maxRetryAttempts: 2, retryDelayMs: 0 });
+    const tsAuth = tsAuthClient(
+      () =>
+        json({ error: { code: "unavailable", message: "Try again." } }, 503),
+      requests,
+      { maxRetryAttempts: 2, retryDelayMs: 0 },
+    );
     const listed = await tsAuth.users.list();
     assert.equal(requests.length, 3);
     assert.equal(listed.ok, false);
@@ -568,11 +809,18 @@ describe("ts-auth client edge cases: D. retry / deadline / cancellation edges", 
 
   test("D36 Retry-After: 0 retries immediately despite a 5-second configured backoff", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient((_request, index) =>
-      index === 0
-        ? json({ error: { code: "unavailable", message: "Try again." } }, 503, { "retry-after": "0" })
-        : json({ data: [user("usr_1")] }),
-      requests, { maxRetryAttempts: 1, retryDelayMs: 5_000 });
+    const tsAuth = tsAuthClient(
+      (_request, index) =>
+        index === 0
+          ? json(
+              { error: { code: "unavailable", message: "Try again." } },
+              503,
+              { "retry-after": "0" },
+            )
+          : json({ data: [user("usr_1")] }),
+      requests,
+      { maxRetryAttempts: 1, retryDelayMs: 5_000 },
+    );
     // A real 5s sleep would blow the test timeout; the elapsed bound keeps the
     // Retry-After: 0 pin from silently vanishing behind a raised timeout.
     const startedAt = Date.now();
@@ -585,9 +833,12 @@ describe("ts-auth client edge cases: D. retry / deadline / cancellation edges", 
 
   test("D37 POST with 503 makes exactly one attempt even with retries enabled", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() =>
-      json({ error: { code: "unavailable", message: "Try again." } }, 503),
-      requests, { maxRetryAttempts: 2, retryDelayMs: 0 });
+    const tsAuth = tsAuthClient(
+      () =>
+        json({ error: { code: "unavailable", message: "Try again." } }, 503),
+      requests,
+      { maxRetryAttempts: 2, retryDelayMs: 0 },
+    );
     const created = await tsAuth.users.create({ email: "grace@acme.test" });
     assert.equal(requests.length, 1);
     assert.equal(created.ok, false);
@@ -598,9 +849,15 @@ describe("ts-auth client edge cases: D. retry / deadline / cancellation edges", 
     const requests: Request[] = [];
     const statuses = [400, 409, 401, 403];
     const kinds = ["domain", "conflict", "authentication", "authorization"];
-    const tsAuth = tsAuthClient((_request, index) =>
-      json({ error: { code: `code_${statuses[index]}`, message: "nope" } }, statuses[index]),
-      requests, { maxRetryAttempts: 2, retryDelayMs: 0 });
+    const tsAuth = tsAuthClient(
+      (_request, index) =>
+        json(
+          { error: { code: `code_${statuses[index]}`, message: "nope" } },
+          statuses[index],
+        ),
+      requests,
+      { maxRetryAttempts: 2, retryDelayMs: 0 },
+    );
     for (const [index, status] of statuses.entries()) {
       const listed = await tsAuth.users.list();
       assert.equal(listed.ok, false, `status ${status}`);
@@ -674,9 +931,14 @@ describe("ts-auth client edge cases: D. retry / deadline / cancellation edges", 
 
   test("D41 cancellation during the retry sleep surfaces a transport abort value", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient((_request, index) =>
-      index === 0 ? json({ error: { code: "unavailable", message: "Try again." } }, 503) : json({ data: [] }),
-      requests, { maxRetryAttempts: 1, retryDelayMs: 5_000 });
+    const tsAuth = tsAuthClient(
+      (_request, index) =>
+        index === 0
+          ? json({ error: { code: "unavailable", message: "Try again." } }, 503)
+          : json({ data: [] }),
+      requests,
+      { maxRetryAttempts: 1, retryDelayMs: 5_000 },
+    );
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 20);
     const listed = await tsAuth.users.list({ signal: controller.signal });
@@ -700,20 +962,34 @@ describe("ts-auth client edge cases: E. pagination edges", () => {
       { data: [user("usr_3"), user("usr_4")] },
       { data: [] },
     ];
-    const tsAuth = tsAuthClient((_request, index) => json(pages[index] ?? { data: [] }), requests);
+    const tsAuth = tsAuthClient(
+      (_request, index) => json(pages[index] ?? { data: [] }),
+      requests,
+    );
     const all = await tsAuth.users.listAll({ pageSize: 2 });
     assert.equal(all.ok, true);
-    if (all.ok) assert.deepEqual(all.value.map(entry => entry.id), ["usr_1", "usr_2", "usr_3", "usr_4"]);
+    if (all.ok)
+      assert.deepEqual(
+        all.value.map((entry) => entry.id),
+        ["usr_1", "usr_2", "usr_3", "usr_4"],
+      );
     assert.equal(requests.length, 3);
 
     const hostileRequests: Request[] = [];
-    const hostile = tsAuthClient(() => json({ data: [user("usr_1"), user("usr_2")] }), hostileRequests);
+    const hostile = tsAuthClient(
+      () => json({ data: [user("usr_1"), user("usr_2")] }),
+      hostileRequests,
+    );
     const repeated = await hostile.users.listAll({ pageSize: 2 });
     // The server ignores the cursor and repeats the same full page: the walk
     // stops at the repeated cursor instead of looping forever, surfacing the
     // duplicated rows it already collected.
     assert.equal(repeated.ok, true);
-    if (repeated.ok) assert.deepEqual(repeated.value.map(entry => entry.id), ["usr_1", "usr_2", "usr_1", "usr_2"]);
+    if (repeated.ok)
+      assert.deepEqual(
+        repeated.value.map((entry) => entry.id),
+        ["usr_1", "usr_2", "usr_1", "usr_2"],
+      );
     assert.equal(hostileRequests.length, 2);
   });
 
@@ -723,119 +999,292 @@ describe("ts-auth client edge cases: E. pagination edges", () => {
       { data: [user("usr_1"), user("usr_2")] },
       { data: [user("usr_3")] },
     ];
-    const tsAuth = tsAuthClient((_request, index) => json(pages[index] ?? { data: [] }), requests);
+    const tsAuth = tsAuthClient(
+      (_request, index) => json(pages[index] ?? { data: [] }),
+      requests,
+    );
     const all = await tsAuth.users.listAll({ pageSize: 2 });
     assert.equal(all.ok, true);
-    if (all.ok) assert.deepEqual(all.value.map(entry => entry.id), ["usr_1", "usr_2", "usr_3"]);
+    if (all.ok)
+      assert.deepEqual(
+        all.value.map((entry) => entry.id),
+        ["usr_1", "usr_2", "usr_3"],
+      );
     assert.equal(requests.length, 2);
-    assert.equal(new URL(requests[1]!.url).search, "?limit=2&starting_after=usr_2");
+    assert.equal(
+      new URL(requests[1]!.url).search,
+      "?limit=2&starting_after=usr_2",
+    );
   });
 
   test("E45 an unknown cursor with a server resuming from top decodes without crashing", async () => {
     const requests: Request[] = [];
-    const tsAuth = tsAuthClient(() => json({ data: [user("usr_1"), user("usr_2"), user("usr_3")] }), requests);
-    const listed = await tsAuth.users.list({ limit: 2, startingAfter: "usr_ghost" });
+    const tsAuth = tsAuthClient(
+      () => json({ data: [user("usr_1"), user("usr_2"), user("usr_3")] }),
+      requests,
+    );
+    const listed = await tsAuth.users.list({
+      limit: 2,
+      startingAfter: "usr_ghost",
+    });
     assert.equal(listed.ok, true);
-    if (listed.ok) assert.deepEqual(listed.value.data.map(entry => entry.id), ["usr_1", "usr_2", "usr_3"]);
-    assert.equal(new URL(requests[0]!.url).search, "?limit=2&starting_after=usr_ghost");
+    if (listed.ok)
+      assert.deepEqual(
+        listed.value.data.map((entry) => entry.id),
+        ["usr_1", "usr_2", "usr_3"],
+      );
+    assert.equal(
+      new URL(requests[0]!.url).search,
+      "?limit=2&starting_after=usr_ghost",
+    );
   });
 });
 
 describe("ts-auth client edge cases: F. webhook verifier edges", () => {
   const secret = `whsec_${"k".repeat(40)}`;
   const timestamp = "1758340000";
-  const payload = new TextEncoder().encode(JSON.stringify({ id: "evt_1", type: "user.created", data: {} }));
+  const payload = new TextEncoder().encode(
+    JSON.stringify({ id: "evt_1", type: "user.created", data: {} }),
+  );
   const signature = sign(secret, timestamp, payload);
 
   test("F47 uppercase hex signature is rejected (exact lowercase match)", async () => {
     const upper = `sha256=${signature.slice("sha256=".length).toUpperCase()}`;
     assert.notEqual(upper, signature);
-    assert.equal(await verifyTsAuthWebhook(secret, timestamp, upper, payload), false);
+    assert.equal(
+      await verifyTsAuthWebhook(secret, timestamp, upper, payload),
+      false,
+    );
   });
 
   test("F48 a signature missing the sha256= prefix is rejected", async () => {
-    assert.equal(await verifyTsAuthWebhook(secret, timestamp, signature.slice("sha256=".length), payload), false);
+    assert.equal(
+      await verifyTsAuthWebhook(
+        secret,
+        timestamp,
+        signature.slice("sha256=".length),
+        payload,
+      ),
+      false,
+    );
   });
 
   test("F49 signatures of 63 and 65 hex characters are rejected", async () => {
     const hex = signature.slice("sha256=".length);
-    assert.equal(await verifyTsAuthWebhook(secret, timestamp, `sha256=${hex.slice(0, 63)}`, payload), false);
-    assert.equal(await verifyTsAuthWebhook(secret, timestamp, `sha256=${hex}0`, payload), false);
+    assert.equal(
+      await verifyTsAuthWebhook(
+        secret,
+        timestamp,
+        `sha256=${hex.slice(0, 63)}`,
+        payload,
+      ),
+      false,
+    );
+    assert.equal(
+      await verifyTsAuthWebhook(secret, timestamp, `sha256=${hex}0`, payload),
+      false,
+    );
   });
 
   test("F50 a non-numeric timestamp is rejected by both verifier variants", async () => {
     const nonNumeric = sign(secret, "not-a-number", payload);
-    assert.equal(await verifyTsAuthWebhook(secret, "not-a-number", nonNumeric, payload), false);
-    assert.equal(await verifyTsAuthWebhookWithTolerance(secret, "not-a-number", nonNumeric, payload, 60_000, Number(timestamp) * 1_000), false);
+    assert.equal(
+      await verifyTsAuthWebhook(secret, "not-a-number", nonNumeric, payload),
+      false,
+    );
+    assert.equal(
+      await verifyTsAuthWebhookWithTolerance(
+        secret,
+        "not-a-number",
+        nonNumeric,
+        payload,
+        60_000,
+        Number(timestamp) * 1_000,
+      ),
+      false,
+    );
     // pins current behavior: the numeric-only timestamp regex also rejects a
     // negative timestamp in the plain variant (stricter than the matrix floor).
     const negative = sign(secret, "-1", payload);
-    assert.equal(await verifyTsAuthWebhook(secret, "-1", negative, payload), false);
+    assert.equal(
+      await verifyTsAuthWebhook(secret, "-1", negative, payload),
+      false,
+    );
     // A far-future timestamp passes the plain variant but fails tolerance.
     const farFuture = "9999999999";
     const farSignature = sign(secret, farFuture, payload);
-    assert.equal(await verifyTsAuthWebhook(secret, farFuture, farSignature, payload), true);
     assert.equal(
-      await verifyTsAuthWebhookWithTolerance(secret, farFuture, farSignature, payload, 60_000, Number(timestamp) * 1_000),
+      await verifyTsAuthWebhook(secret, farFuture, farSignature, payload),
+      true,
+    );
+    assert.equal(
+      await verifyTsAuthWebhookWithTolerance(
+        secret,
+        farFuture,
+        farSignature,
+        payload,
+        60_000,
+        Number(timestamp) * 1_000,
+      ),
       false,
     );
   });
 
   test("F51 an empty payload with a correctly computed signature verifies", async () => {
     const empty = new Uint8Array(0);
-    assert.equal(await verifyTsAuthWebhook(secret, timestamp, sign(secret, timestamp, empty), empty), true);
+    assert.equal(
+      await verifyTsAuthWebhook(
+        secret,
+        timestamp,
+        sign(secret, timestamp, empty),
+        empty,
+      ),
+      true,
+    );
   });
 
   test("F52 an empty or missing secret returns false without throwing", async () => {
-    assert.equal(await verifyTsAuthWebhook("", timestamp, signature, payload), false);
-    assert.equal(await verifyTsAuthWebhook(undefined as unknown as string, timestamp, signature, payload), false);
+    assert.equal(
+      await verifyTsAuthWebhook("", timestamp, signature, payload),
+      false,
+    );
+    assert.equal(
+      await verifyTsAuthWebhook(
+        undefined as unknown as string,
+        timestamp,
+        signature,
+        payload,
+      ),
+      false,
+    );
   });
 
   test("F53 tolerance boundary: exactly at tolerance passes, past it fails", async () => {
     const now = Number(timestamp) * 1_000;
-    assert.equal(await verifyTsAuthWebhookWithTolerance(secret, timestamp, signature, payload, 60_000, now + 60_000), true);
-    assert.equal(await verifyTsAuthWebhookWithTolerance(secret, timestamp, signature, payload, 60_000, now - 60_000), true);
-    assert.equal(await verifyTsAuthWebhookWithTolerance(secret, timestamp, signature, payload, 60_000, now + 60_001), false);
-    assert.equal(await verifyTsAuthWebhookWithTolerance(secret, timestamp, signature, payload, 60_000, now - 60_001), false);
+    assert.equal(
+      await verifyTsAuthWebhookWithTolerance(
+        secret,
+        timestamp,
+        signature,
+        payload,
+        60_000,
+        now + 60_000,
+      ),
+      true,
+    );
+    assert.equal(
+      await verifyTsAuthWebhookWithTolerance(
+        secret,
+        timestamp,
+        signature,
+        payload,
+        60_000,
+        now - 60_000,
+      ),
+      true,
+    );
+    assert.equal(
+      await verifyTsAuthWebhookWithTolerance(
+        secret,
+        timestamp,
+        signature,
+        payload,
+        60_000,
+        now + 60_001,
+      ),
+      false,
+    );
+    assert.equal(
+      await verifyTsAuthWebhookWithTolerance(
+        secret,
+        timestamp,
+        signature,
+        payload,
+        60_000,
+        now - 60_001,
+      ),
+      false,
+    );
   });
 
   test("F54 multi-byte UTF-8 payload bytes verify; a flipped byte fails", async () => {
     const unicode = new TextEncoder().encode('{"name":"Ada 🌸 中 é"}');
     const unicodeSignature = sign(secret, timestamp, unicode);
-    assert.equal(await verifyTsAuthWebhook(secret, timestamp, unicodeSignature, unicode), true);
+    assert.equal(
+      await verifyTsAuthWebhook(secret, timestamp, unicodeSignature, unicode),
+      true,
+    );
     const tampered = new Uint8Array(unicode);
     tampered[tampered.length - 2] = tampered[tampered.length - 2]! ^ 1;
-    assert.equal(await verifyTsAuthWebhook(secret, timestamp, unicodeSignature, tampered), false);
+    assert.equal(
+      await verifyTsAuthWebhook(secret, timestamp, unicodeSignature, tampered),
+      false,
+    );
   });
 
   test("F55 two different secrets produce different signatures with no cross-verification", async () => {
     const other = `whsec_${"j".repeat(40)}`;
     const otherSignature = sign(other, timestamp, payload);
     assert.notEqual(signature, otherSignature);
-    assert.equal(await verifyTsAuthWebhook(secret, timestamp, signature, payload), true);
-    assert.equal(await verifyTsAuthWebhook(other, timestamp, otherSignature, payload), true);
-    assert.equal(await verifyTsAuthWebhook(other, timestamp, signature, payload), false);
-    assert.equal(await verifyTsAuthWebhook(secret, timestamp, otherSignature, payload), false);
+    assert.equal(
+      await verifyTsAuthWebhook(secret, timestamp, signature, payload),
+      true,
+    );
+    assert.equal(
+      await verifyTsAuthWebhook(other, timestamp, otherSignature, payload),
+      true,
+    );
+    assert.equal(
+      await verifyTsAuthWebhook(other, timestamp, signature, payload),
+      false,
+    );
+    assert.equal(
+      await verifyTsAuthWebhook(secret, timestamp, otherSignature, payload),
+      false,
+    );
   });
 });
 
 describe("ts-auth client edge cases: G. configuration edges", () => {
-  const neverFetch = (): Promise<Response> => Promise.reject(new Error("no HTTP expected"));
+  const neverFetch = (): Promise<Response> =>
+    Promise.reject(new Error("no HTTP expected"));
 
   test("G56 userinfo and secret-bearing query origins are construction errors; path, query, and fragment are rejected", async () => {
     assert.throws(
-      () => createTsAuthClient({ apiBaseUrl: "https://user:pass@auth.acme.test", accessToken: "sk_x", instanceSlug: "acme", fetch: neverFetch }),
+      () =>
+        createTsAuthClient({
+          apiBaseUrl: "https://user:pass@auth.acme.test",
+          accessToken: "sk_x",
+          instanceSlug: "acme",
+          fetch: neverFetch,
+        }),
       /credentials/u,
     );
     assert.throws(
-      () => createTsAuthClient({ apiBaseUrl: "https://auth.acme.test/hooks?token=x", accessToken: "sk_x", instanceSlug: "acme", fetch: neverFetch }),
+      () =>
+        createTsAuthClient({
+          apiBaseUrl: "https://auth.acme.test/hooks?token=x",
+          accessToken: "sk_x",
+          instanceSlug: "acme",
+          fetch: neverFetch,
+        }),
       /secret-bearing/u,
     );
 
     // Mirrors the ts-auth service rule: the deployment origin is a bare origin.
-    for (const base of ["https://auth.acme.test/prefix", "https://auth.acme.test?limit=5", "https://auth.acme.test/#frag"]) {
+    for (const base of [
+      "https://auth.acme.test/prefix",
+      "https://auth.acme.test?limit=5",
+      "https://auth.acme.test/#frag",
+    ]) {
       assert.throws(
-        () => createTsAuthClient({ apiBaseUrl: base, accessToken: "sk_x", instanceSlug: "acme", fetch: neverFetch }),
+        () =>
+          createTsAuthClient({
+            apiBaseUrl: base,
+            accessToken: "sk_x",
+            instanceSlug: "acme",
+            fetch: neverFetch,
+          }),
         /bare origin/u,
         base,
       );
@@ -845,12 +1294,13 @@ describe("ts-auth client edge cases: G. configuration edges", () => {
   test("G56 a missing or blank apiBaseUrl is a construction error; there is no default origin", () => {
     for (const apiBaseUrl of [undefined, "", "   "]) {
       assert.throws(
-        () => createTsAuthClient({
-          apiBaseUrl: apiBaseUrl as unknown as string,
-          accessToken: "sk_x",
-          instanceSlug: "acme",
-          fetch: neverFetch,
-        }),
+        () =>
+          createTsAuthClient({
+            apiBaseUrl: apiBaseUrl as unknown as string,
+            accessToken: "sk_x",
+            instanceSlug: "acme",
+            fetch: neverFetch,
+          }),
         /apiBaseUrl/u,
         JSON.stringify(apiBaseUrl),
       );
@@ -858,27 +1308,59 @@ describe("ts-auth client edge cases: G. configuration edges", () => {
   });
 
   test("G57 plain-http origins are allowed only for loopback or .test with an explicit test transport", () => {
-    for (const apiBaseUrl of ["http://localhost:9000", "http://127.0.0.1", "http://[::1]:1234", "http://auth.acme.test", "http://test"]) {
-      const client = createTsAuthClient({ apiBaseUrl, accessToken: "sk_x", instanceSlug: "acme", fetch: neverFetch });
+    for (const apiBaseUrl of [
+      "http://localhost:9000",
+      "http://127.0.0.1",
+      "http://[::1]:1234",
+      "http://auth.acme.test",
+      "http://test",
+    ]) {
+      const client = createTsAuthClient({
+        apiBaseUrl,
+        accessToken: "sk_x",
+        instanceSlug: "acme",
+        fetch: neverFetch,
+      });
       assert.ok(client);
     }
     assert.throws(
-      () => createTsAuthClient({ apiBaseUrl: "http://auth.example.com", accessToken: "sk_x", instanceSlug: "acme", fetch: neverFetch }),
+      () =>
+        createTsAuthClient({
+          apiBaseUrl: "http://auth.example.com",
+          accessToken: "sk_x",
+          instanceSlug: "acme",
+          fetch: neverFetch,
+        }),
       /HTTPS/u,
     );
     // .test over plain http without an explicit test transport is still rejected.
     assert.throws(
-      () => createTsAuthClient({ apiBaseUrl: "http://auth.acme.test", accessToken: "sk_x", instanceSlug: "acme" }),
+      () =>
+        createTsAuthClient({
+          apiBaseUrl: "http://auth.acme.test",
+          accessToken: "sk_x",
+          instanceSlug: "acme",
+        }),
       /HTTPS/u,
     );
   });
 
   test("G58 base URLs with and without trailing slashes behave identically", async () => {
-    for (const apiBaseUrl of ["https://auth.acme.test", "https://auth.acme.test/", "https://auth.acme.test///"]) {
+    for (const apiBaseUrl of [
+      "https://auth.acme.test",
+      "https://auth.acme.test/",
+      "https://auth.acme.test///",
+    ]) {
       const requests: Request[] = [];
-      const tsAuth = tsAuthClient(() => json({ data: [] }), requests, { apiBaseUrl });
+      const tsAuth = tsAuthClient(() => json({ data: [] }), requests, {
+        apiBaseUrl,
+      });
       await tsAuth.users.list();
-      assert.equal(requests[0]!.url, "https://auth.acme.test/v1/acme/users", apiBaseUrl);
+      assert.equal(
+        requests[0]!.url,
+        "https://auth.acme.test/v1/acme/users",
+        apiBaseUrl,
+      );
     }
   });
 
@@ -898,6 +1380,94 @@ describe("ts-auth client edge cases: G. configuration edges", () => {
     const listed = await tsAuth.users.list();
     assert.equal(listed.ok, true);
     assert.equal(requests[0]!.url, "https://auth.acme.test/v1/acme/users");
-    assert.equal(requests[0]!.headers.get("authorization"), "Bearer sk_original");
+    assert.equal(
+      requests[0]!.headers.get("authorization"),
+      "Bearer sk_original",
+    );
   });
+});
+
+// Hostile response controls intentionally return invalid envelopes. They do
+// not provide successful provider behavior or qualification evidence.
+test("resource introspection rejects missing, extra, misbound and unhealthy principal claims", async () => {
+  const credentials = {
+    issuer: "https://issuer.example.test/example",
+    audience: "https://api.example.test/management",
+    introspection_client_id: "resource",
+    introspection_secret: "secret",
+  };
+  const now = Math.floor(Date.now() / 1000);
+  const claims = {
+    active: true,
+    token_type: "Bearer",
+    iss: credentials.issuer,
+    sub: "user",
+    aud: credentials.audience,
+    client_id: "client",
+    scope: "management:read",
+    exp: now + 60,
+    iat: now - 10,
+    sid: "session",
+    principal_kind: "user",
+  };
+  const withoutSid = Object.fromEntries(
+    Object.entries(claims).filter(([key]) => key !== "sid"),
+  );
+  for (const hostile of [
+    withoutSid,
+    { ...claims, aud: [credentials.audience] },
+    { ...claims, aud: "https://wrong.example.test" },
+    { ...claims, iss: "https://wrong.example.test/example" },
+    { ...claims, exp: now },
+    { ...claims, exp: now + 0.5 },
+    { ...claims, iat: now + 60 },
+    { ...claims, sid: null },
+    { ...claims, sid: "" },
+    { ...claims, principal_kind: "service", sid: "session" },
+    { ...claims, principal_kind: "service", sid: null, sub: "wrong-service" },
+    { ...claims, principal_kind: "unknown" },
+    { ...claims, family_id: "internal-family" },
+    { ...claims, resource_auth_epoch: 1 },
+    { ...claims, token_use: "access" },
+    { active: false, sub: "retained-principal" },
+    { active: "false" },
+    { ...claims, exp: Number.MAX_SAFE_INTEGER + 1 },
+  ]) {
+    const client = createTsAuthClient({
+      apiBaseUrl: "https://auth.example.test",
+      instanceSlug: "example",
+      fetch: async () => Response.json(hostile),
+    });
+    const result = await client.oidc.introspectResource(credentials, "opaque");
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.kind, "invalid-response");
+      assert.equal(result.body, undefined);
+    }
+  }
+});
+
+test("OAuth policy decoding denies lossy epochs and wrong rotation response branches", async () => {
+  // Missing required view fields remain invalid even when an epoch looks valid.
+  const malformed = [
+    { auth_epoch: Number.MAX_SAFE_INTEGER + 1 },
+    { clientId: "obsolete-camel-case" },
+    { client: {}, client_secret: "rotated" },
+  ];
+  for (const body of malformed) {
+    const client = createTsAuthClient({
+      apiBaseUrl: "https://auth.example.test",
+      instanceSlug: "example",
+      fetch: async () => Response.json(body),
+    });
+    assert.equal((await client.oauthClients.update("id", {})).ok, false);
+    assert.equal(
+      (await client.oauthClients.update("id", { rotate_secret: true })).ok,
+      false,
+    );
+    assert.equal(
+      (await client.oauthResources.update("id", { expected_auth_epoch: 1 })).ok,
+      false,
+    );
+  }
 });

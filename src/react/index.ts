@@ -14,7 +14,7 @@ export * from "./core.js";
 /**
  * React's external-store primitive gives useQuery one SSR-safe snapshot and
  * makes every server update flow through the typed reactive subscription.
- * Keep the source object stable (or provide a stable key) between renders.
+ * Keep the source object stable between renders.
  */
 export function useQuery<TValue>(
   source: ReactiveQuerySource<TValue>,
@@ -31,8 +31,7 @@ export function useQuery<TValue>(
     observer.getServerSnapshot,
   );
   const refetch = useCallback(() => {
-    observer.dispose();
-    observer.start();
+    observer.refetch();
   }, [observer]);
   return useMemo(() => Object.freeze({ ...state, refetch }), [state, refetch]);
 }
@@ -57,7 +56,18 @@ export function useMutation<TValue, TVariables = void>(
   const observer = observerRef.current;
   observer.updateOptions(options);
   const state = useSyncExternalStore(observer.subscribe, observer.getSnapshot, observer.getSnapshot);
-  useEffect(() => () => observer.dispose(), [observer]);
+  const effectGeneration = useRef(0);
+  useEffect(() => {
+    const generation = ++effectGeneration.current;
+    return () => {
+      observer.cancel();
+      // React may immediately mount this effect again in Strict Mode. Cancel
+      // owned work now, then dispose only if the effect stays unmounted.
+      queueMicrotask(() => {
+        if (effectGeneration.current === generation) observer.dispose();
+      });
+    };
+  }, [observer]);
   const mutate = useCallback((variables: TVariables) => observer.mutate(variables), [observer]);
   const mutateAsync = useCallback((variables: TVariables) => observer.mutateAsync(variables), [observer]);
   const cancel = useCallback(() => observer.cancel(), [observer]);
