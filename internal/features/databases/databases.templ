@@ -12,7 +12,7 @@ import (
 )
 
 templ databasesContent(page core.Page, d pageData) {
-	<main class="ts-page ts-databases-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
+	<main class="ts-page ts-page-compact-top" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
 		@ui.PageHeader("Databases")
 		if d.Error != "" && !d.OpenCreate {
 			@ui.Alert("danger", "", d.Error)
