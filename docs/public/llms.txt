@@ -77,12 +77,13 @@ Base domain terrascale.tech. Regions at launch: GRU, SFO, FRA.
 - Region catalog: GET https://atlas.terrascale.tech/api/v1/regions — also
   ts-atlas; the catalog-selection fallback when discovery fails and the
   selector for database-less member routes.
-- Product API origin: https://api.terrascale.tech — dashboard-owned product
-  routes only: /api/v1/organizations, /api/v1/projects,
-  /api/v1/regions/{code}.
-- Direct regional REST + WebSocket: https://gru.api.terrascale.tech,
-  https://sfo.api.terrascale.tech, https://fra.api.terrascale.tech — direct
-  routing with catalog fallback; there is no proxy.
+- Nearest-region API router: https://api.terrascale.tech — forwards requests
+  to the nearest configured regional TerraBase HTTPS API. SDKs use discovery
+  to select direct regional origins.
+- Direct regional REST + WebSocket: https://gru.terrascale.tech,
+  https://sfo.terrascale.tech,
+  https://fra.terrascale.tech — direct
+  routing with catalog fallback; SDK data requests go straight to the region.
 - Reactive HTTP (live queries; CDN-backed long-polling, capability header):
   https://sync.api.terrascale.tech
 - SQL (read-only; JSON or MessagePack):
