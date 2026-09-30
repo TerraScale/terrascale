@@ -7,7 +7,7 @@ namespace TerraScale.DotNet.Tests;
 public sealed class TerraScaleRegionsClientTests
 {
     private const string CatalogBody =
-        """{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5475,"longitude":-46.6361,"available":true},{"code":"FRA","name":"Frankfurt","country":"DE","latitude":50.1109,"longitude":8.6821,"available":false}],"hosts":{"GRU":"https://gru.api.terrascale.tech","FRA":"https://fra.api.terrascale.tech"}}""";
+        """{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5475,"longitude":-46.6361,"available":true},{"code":"FRA","name":"Frankfurt","country":"DE","latitude":50.1109,"longitude":8.6821,"available":false}],"hosts":{"GRU":"https://gru.terrascale.tech","FRA":"https://fra.terrascale.tech"}}""";
 
     [Test]
     public async Task GetAsync_DecodesTheRegionCatalogFromTheConfiguredOrigin()
@@ -22,7 +22,7 @@ public sealed class TerraScaleRegionsClientTests
         await Assert.That(handler.Authorization).IsNull();
         await Assert.That(catalog.Regions.Select(region => region.Code)).IsEquivalentTo(["GRU", "FRA"]);
         await Assert.That(catalog.Regions[1].Available).IsFalse();
-        await Assert.That(catalog.Hosts["GRU"].ToString()).IsEqualTo("https://gru.api.terrascale.tech/");
+        await Assert.That(catalog.Hosts["GRU"].ToString()).IsEqualTo("https://gru.terrascale.tech/");
     }
 
     [Test]

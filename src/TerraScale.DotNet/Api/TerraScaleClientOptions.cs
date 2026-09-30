@@ -235,9 +235,9 @@ public sealed record TerraScaleClientOptions
         var builder = new UriBuilder(baseAddress);
         if (string.Equals(builder.Host, "api.terrascale.tech", StringComparison.OrdinalIgnoreCase))
         {
-            builder.Host = $"{region}.api.terrascale.tech";
+            builder.Host = $"{region}.terrascale.tech";
         }
-        else if (!string.Equals(builder.Host, $"{region}.api.terrascale.tech", StringComparison.OrdinalIgnoreCase))
+        else if (!string.Equals(builder.Host, $"{region}.terrascale.tech", StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException(
                 "Strict regional affinity requires the global TerraScale API URL or the selected regional URL.",

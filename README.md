@@ -16,7 +16,7 @@ member:
 - **Discovery** — the first database-scoped request resolves its routing scope
   (`GET https://atlas.terrascale.tech/api/v1/discovery?database=…&branch=main`).
   The document is strictly validated (region codes, HTTPS
-  `{region}.api.terrascale.tech` endpoints — loopback dev origins for local
+  `{region}.terrascale.tech` endpoints — loopback dev origins for local
   workers — capabilities, priority), cached per scope for the served
   `refreshSeconds` clamped to 60–3600 s, fetched single-flight, and pinned
   regionally while eligible. Refreshes never re-pin a healthy route; a `421`

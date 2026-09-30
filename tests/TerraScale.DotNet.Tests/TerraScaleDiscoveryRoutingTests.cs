@@ -23,8 +23,8 @@ public sealed class TerraScaleDiscoveryRoutingTests
 
         await Assert.That(transport.Requests).IsEquivalentTo([
             "GET https://atlas-once.test/api/v1/discovery?database=orders-once&branch=main",
-            "GET https://fra.api.terrascale.tech/api/v1/databases/orders-once/collections/items/documents/item-1",
-            "GET https://fra.api.terrascale.tech/api/v1/databases/orders-once/collections/items/documents/item-1",
+            "GET https://fra.terrascale.tech/api/v1/databases/orders-once/collections/items/documents/item-1",
+            "GET https://fra.terrascale.tech/api/v1/databases/orders-once/collections/items/documents/item-1",
         ]);
     }
 
@@ -39,7 +39,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
         await Assert.That(transport.Requests).IsEquivalentTo([
             "GET https://atlas-fallback.test/api/v1/discovery?database=orders-fallback&branch=main",
             "GET https://atlas-fallback.test/api/v1/regions",
-            "GET https://gru.api.terrascale.tech/api/v1/databases/orders-fallback/collections/items/documents/item-1",
+            "GET https://gru.terrascale.tech/api/v1/databases/orders-fallback/collections/items/documents/item-1",
         ]);
         await Assert.That(transport.Requests.Any(request => request.Contains(ProductOrigin, StringComparison.Ordinal))).IsFalse();
     }
@@ -55,8 +55,8 @@ public sealed class TerraScaleDiscoveryRoutingTests
 
         await Assert.That(transport.Requests).IsEquivalentTo([
             "GET https://atlas-reuse.test/api/v1/regions",
-            "GET https://gru.api.terrascale.tech/api/v1/databases",
-            "GET https://gru.api.terrascale.tech/api/v1/databases",
+            "GET https://gru.terrascale.tech/api/v1/databases",
+            "GET https://gru.terrascale.tech/api/v1/databases",
         ]);
     }
 
@@ -70,7 +70,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
 
         await Assert.That(transport.Requests).IsEquivalentTo(["GET https://atlas-catalog.test/api/v1/regions"]);
         await Assert.That(catalog.Regions.Select(region => region.Code)).IsEquivalentTo(["GRU", "FRA"]);
-        await Assert.That(catalog.Hosts["GRU"].ToString()).IsEqualTo("https://gru.api.terrascale.tech/");
+        await Assert.That(catalog.Hosts["GRU"].ToString()).IsEqualTo("https://gru.terrascale.tech/");
         await Assert.That(transport.Authorizations.Count).IsEqualTo(1);
         await Assert.That(transport.Authorizations[0]).IsNull();
     }
@@ -102,8 +102,8 @@ public sealed class TerraScaleDiscoveryRoutingTests
         await Assert.That(document.Id).IsEqualTo("item-1");
         await Assert.That(transport.Requests).IsEquivalentTo([
             "GET https://atlas-421.test/api/v1/discovery?database=orders-repair&branch=main",
-            "GET https://fra.api.terrascale.tech/api/v1/databases/orders-repair/collections/items/documents/item-1",
-            "GET https://gru.api.terrascale.tech/api/v1/databases/orders-repair/collections/items/documents/item-1",
+            "GET https://fra.terrascale.tech/api/v1/databases/orders-repair/collections/items/documents/item-1",
+            "GET https://gru.terrascale.tech/api/v1/databases/orders-repair/collections/items/documents/item-1",
         ]);
 
         // The adopted placement is sticky for later requests in the scope.
@@ -111,7 +111,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
         transport.MisdirectDataRequests = false;
         _ = await client.Documents.GetAsync("orders-repair", "items", "item-1");
         await Assert.That(transport.Requests).IsEquivalentTo([
-            "GET https://gru.api.terrascale.tech/api/v1/databases/orders-repair/collections/items/documents/item-1",
+            "GET https://gru.terrascale.tech/api/v1/databases/orders-repair/collections/items/documents/item-1",
         ]);
     }
 
@@ -133,15 +133,15 @@ public sealed class TerraScaleDiscoveryRoutingTests
     {
         var transport = new ScriptedTransport
         {
-            DiscoveryBody = """{"v":1,"database":"PLACEHOLDER","branch":"main","revision":7,"updated":1,"residency":null,"placement":"known","refreshSeconds":300,"endpoints":[{"region":"FRA","url":"https://fra.api.terrascale.tech","priority":1,"capabilities":["read","reactive"]},{"region":"GRU","url":"https://gru.api.terrascale.tech","priority":2,"capabilities":["read","write","sql","reactive"]}]}""",
+            DiscoveryBody = """{"v":1,"database":"PLACEHOLDER","branch":"main","revision":7,"updated":1,"residency":null,"placement":"known","refreshSeconds":300,"endpoints":[{"region":"FRA","url":"https://fra.terrascale.tech","priority":1,"capabilities":["read","reactive"]},{"region":"GRU","url":"https://gru.terrascale.tech","priority":2,"capabilities":["read","write","sql","reactive"]}]}""",
         };
         var client = CreateClient(transport, atlasOrigin: new Uri("https://atlas-write.test"));
 
         _ = await client.Documents.GetAsync("orders-write", "items", "item-1");
         _ = await client.Documents.UpsertAsync("orders-write", "items", "item-1", new { status = "paid" });
 
-        await Assert.That(transport.Requests).Contains("GET https://fra.api.terrascale.tech/api/v1/databases/orders-write/collections/items/documents/item-1");
-        await Assert.That(transport.Requests).Contains("PUT https://gru.api.terrascale.tech/api/v1/databases/orders-write/collections/items/documents/item-1");
+        await Assert.That(transport.Requests).Contains("GET https://fra.terrascale.tech/api/v1/databases/orders-write/collections/items/documents/item-1");
+        await Assert.That(transport.Requests).Contains("PUT https://gru.terrascale.tech/api/v1/databases/orders-write/collections/items/documents/item-1");
     }
 
     [Test]
@@ -157,8 +157,8 @@ public sealed class TerraScaleDiscoveryRoutingTests
 
         await Assert.That(transport.Requests).IsEquivalentTo([
             "GET https://atlas-demote.test/api/v1/discovery?database=orders-demote&branch=main",
-            "GET https://fra.api.terrascale.tech/api/v1/databases/orders-demote/collections/items/documents/item-1",
-            "GET https://gru.api.terrascale.tech/api/v1/databases/orders-demote/collections/items/documents/item-1",
+            "GET https://fra.terrascale.tech/api/v1/databases/orders-demote/collections/items/documents/item-1",
+            "GET https://gru.terrascale.tech/api/v1/databases/orders-demote/collections/items/documents/item-1",
         ]);
     }
 
@@ -176,7 +176,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
         await Assert.That(transport.Requests).IsEquivalentTo([
             "GET https://atlas-evil.test/api/v1/discovery?database=orders-evil&branch=main",
             "GET https://atlas-evil.test/api/v1/regions",
-            "GET https://gru.api.terrascale.tech/api/v1/databases/orders-evil/collections/items/documents/item-1",
+            "GET https://gru.terrascale.tech/api/v1/databases/orders-evil/collections/items/documents/item-1",
         ]);
     }
 
@@ -185,7 +185,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
     {
         var transport = new ScriptedTransport
         {
-            DiscoveryBody = """{"v":1,"database":"some-other-database","branch":"main","revision":7,"updated":1,"residency":null,"placement":"known","refreshSeconds":300,"endpoints":[{"region":"FRA","url":"https://fra.api.terrascale.tech","priority":1,"capabilities":["read","write"]}]}""",
+            DiscoveryBody = """{"v":1,"database":"some-other-database","branch":"main","revision":7,"updated":1,"residency":null,"placement":"known","refreshSeconds":300,"endpoints":[{"region":"FRA","url":"https://fra.terrascale.tech","priority":1,"capabilities":["read","write"]}]}""",
         };
         var client = CreateClient(transport, atlasOrigin: new Uri("https://atlas-echo.test"));
 
@@ -194,7 +194,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
         await Assert.That(transport.Requests).IsEquivalentTo([
             "GET https://atlas-echo.test/api/v1/discovery?database=orders-echo&branch=main",
             "GET https://atlas-echo.test/api/v1/regions",
-            "GET https://gru.api.terrascale.tech/api/v1/databases/orders-echo/collections/items/documents/item-1",
+            "GET https://gru.terrascale.tech/api/v1/databases/orders-echo/collections/items/documents/item-1",
         ]);
     }
 
@@ -278,10 +278,10 @@ public sealed class TerraScaleDiscoveryRoutingTests
     private sealed class ScriptedTransport : HttpMessageHandler
     {
         private const string DefaultDiscoveryBody =
-            """{"v":1,"database":"PLACEHOLDER","branch":"main","revision":7,"updated":1,"residency":null,"placement":"known","refreshSeconds":300,"endpoints":[{"region":"FRA","url":"https://fra.api.terrascale.tech","priority":1,"capabilities":["read","write","sql","reactive"]},{"region":"GRU","url":"https://gru.api.terrascale.tech","priority":2,"capabilities":["read","write","sql","reactive"]}]}""";
+            """{"v":1,"database":"PLACEHOLDER","branch":"main","revision":7,"updated":1,"residency":null,"placement":"known","refreshSeconds":300,"endpoints":[{"region":"FRA","url":"https://fra.terrascale.tech","priority":1,"capabilities":["read","write","sql","reactive"]},{"region":"GRU","url":"https://gru.terrascale.tech","priority":2,"capabilities":["read","write","sql","reactive"]}]}""";
 
         private const string CatalogBody =
-            """{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5475,"longitude":-46.6361,"available":true},{"code":"FRA","name":"Frankfurt","country":"DE","latitude":50.1109,"longitude":8.6821,"available":true}],"hosts":{"GRU":"https://gru.api.terrascale.tech","FRA":"https://fra.api.terrascale.tech"}}""";
+            """{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5475,"longitude":-46.6361,"available":true},{"code":"FRA","name":"Frankfurt","country":"DE","latitude":50.1109,"longitude":8.6821,"available":true}],"hosts":{"GRU":"gru.terrascale.tech","FRA":"fra.terrascale.tech"}}""";
 
         public HttpStatusCode DiscoveryStatus { get; set; } = HttpStatusCode.OK;
         public string DiscoveryBody { get; set; } = DefaultDiscoveryBody;
@@ -331,7 +331,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
                 return misdirected;
             }
 
-            if (FailRegionalRequests && uri.Host == "fra.api.terrascale.tech")
+            if (FailRegionalRequests && uri.Host == "fra.terrascale.tech")
             {
                 return Respond(HttpStatusCode.ServiceUnavailable, "{\"error\":{\"code\":\"unavailable\",\"message\":\"region down\"}}");
             }

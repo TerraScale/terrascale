@@ -1279,7 +1279,7 @@ public sealed class TerraScaleClient
 
     private static string? RegionFromHost(string? host)
     {
-        const string suffix = ".api.terrascale.tech";
+        const string suffix = ".terrascale.tech";
         if (host is null || !host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
         {
             return null;
