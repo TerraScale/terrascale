@@ -46,14 +46,8 @@ func validateNativeOrigin(raw string) (string, error) {
 			return "", fmt.Errorf("sdk: native data origin requires an ASCII hostname")
 		}
 	}
-	if u.Hostname() != host {
-		return "", fmt.Errorf("sdk: native data origin requires a canonical hostname")
-	}
-	if host != "api.terrascale.tech" && strings.HasSuffix(host, ".terrascale.tech") {
-		region, ok := strings.CutSuffix(host, ".api.terrascale.tech")
-		if !ok || !validNativeDiscoveryRegion(strings.ToUpper(region)) {
-			return "", fmt.Errorf("sdk: native regional origin requires <region>.api.terrascale.tech")
-		}
+	if host == "api.terrascale.tech" || strings.HasSuffix(host, ".api.terrascale.tech") {
+		return "", fmt.Errorf("sdk: the test API host family cannot be a native runtime data origin")
 	}
 	if u.Scheme != "https" {
 		ip := net.ParseIP(host)
@@ -100,84 +94,50 @@ func (c *Client) doNative(ctx context.Context, scope DocumentScope, required nat
 	requestCtx, cancel := context.WithTimeout(ctx, c.cfg.RequestTimeout)
 	defer cancel()
 	credential := c.nativeToken()
-	var response *http.Response
-	var responseBody []byte
-	attempted := make(map[string]bool)
+	base := c.cfg.DataBaseURL
 	var admission nativeDiscoveryAdmission
-	for {
-		base := c.cfg.DataBaseURL
-		if base == "" {
-			var err error
-			admission, err = c.nativeRouter.resolveHosted(requestCtx, scope, credential, required)
-			if err != nil {
-				return &RoutingError{Route: "native", Method: method, Path: path, Err: err}
-			}
-			base = admission.URL
-		}
-		if attempted[base] {
-			return &RoutingError{Route: "native", Method: method, Path: path, Err: nativeRoutingFailure("regions_unavailable", nil)}
-		}
-		attempted[base] = true
-		req, err := http.NewRequestWithContext(requestCtx, method, base+path, bytes.NewReader(data))
+	if base == "" {
+		var err error
+		admission, err = c.nativeRouter.resolve(requestCtx, scope, credential, required)
 		if err != nil {
+			return &RoutingError{Route: "native", Method: method, Path: path, Err: err}
+		}
+		base = admission.URL
+	}
+	req, err := http.NewRequestWithContext(requestCtx, method, base+path, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if credential != "" {
+		if err := setBearerAuthorization(req.Header, credential); err != nil {
 			return err
 		}
-		req.Header.Set("Accept", "application/json")
-		if body != nil {
-			req.Header.Set("Content-Type", "application/json")
+	}
+	// Native transaction identities live in the body. No ETag, placement
+	// redirect, causal session shim or automatic mutation replay is used.
+	if c.cfg.DataBaseURL == "" {
+		if err := c.nativeRouter.assertCurrent(admission); err != nil {
+			return &RoutingError{Route: "native", Method: method, Path: path, Err: err}
 		}
-		if credential != "" {
-			if err := setBearerAuthorization(req.Header, credential); err != nil {
-				return err
-			}
-		}
-		if c.cfg.DataBaseURL == "" {
-			if err := c.nativeRouter.assertCurrent(admission); err != nil {
-				return &RoutingError{Route: "native", Method: method, Path: path, Err: err}
-			}
-		}
-		response, err = c.nativeHTTP.Do(req)
-		regional := c.cfg.DataBaseURL == "" && !admission.Lease.Proxy
-		if err != nil {
-			if regional && requestCtx.Err() == nil {
-				c.nativeRouter.fail(admission)
-				if !mutation {
-					continue
-				}
-			}
-			return nativeDispatchError(mutation, true, err)
-		}
-		if regional && requestCtx.Err() == nil && (response.StatusCode == http.StatusMisdirectedRequest || response.StatusCode >= 500) {
-			c.nativeRouter.fail(admission)
-			if !mutation {
-				response.Body.Close()
-				if delay := retryAfterFromHeader(response.Header); delay != nil {
-					if err := sleepContext(requestCtx, *delay); err != nil {
-						return err
-					}
-				}
-				continue
-			}
-		}
-		if response.ContentLength > MaxNativeBodyBytes {
-			response.Body.Close()
-			return nativeDispatchError(mutation, true, fmt.Errorf("sdk: native response byte limit"))
-		}
-		responseBody, err = io.ReadAll(io.LimitReader(response.Body, MaxNativeBodyBytes+1))
-		response.Body.Close()
-		if err != nil {
-			if regional && requestCtx.Err() == nil {
-				c.nativeRouter.fail(admission)
-				if !mutation && response.StatusCode == http.StatusOK {
-					continue
-				}
-			}
-			return nativeDispatchError(mutation, true, err)
-		}
-		if len(responseBody) > MaxNativeBodyBytes {
-			return nativeDispatchError(mutation, true, fmt.Errorf("sdk: native response byte limit"))
-		}
-		break
+	}
+	response, err := c.nativeHTTP.Do(req)
+	if err != nil {
+		return nativeDispatchError(mutation, true, err)
+	}
+	defer response.Body.Close()
+	if response.ContentLength > MaxNativeBodyBytes {
+		return nativeDispatchError(mutation, true, fmt.Errorf("sdk: native response byte limit"))
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, MaxNativeBodyBytes+1))
+	if err != nil {
+		return nativeDispatchError(mutation, true, err)
+	}
+	if len(responseBody) > MaxNativeBodyBytes {
+		return nativeDispatchError(mutation, true, fmt.Errorf("sdk: native response byte limit"))
 	}
 	if response.StatusCode != http.StatusOK {
 		apiErr := errorFromResponse("native", method, path, response.StatusCode, response.Header, responseBody)

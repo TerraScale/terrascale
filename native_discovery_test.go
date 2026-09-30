@@ -31,14 +31,6 @@ func nativeDiscoveryFixture(t *testing.T) ([]byte, nativeDiscoveryDocument) {
 	if err := decodeNativeJSON(body, &document); err != nil {
 		t.Fatal(err)
 	}
-	// Derive current host conformance from the immutable archived receiver capture.
-	for i := range document.Endpoints {
-		document.Endpoints[i].URL = "https://" + strings.ToLower(document.Endpoints[i].Region) + ".api.terrascale.tech"
-	}
-	body, err = json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
 	return body, document
 }
 func nativeDiscoveryTestKey(value byte) string {
@@ -137,7 +129,7 @@ func TestNativeDiscoveryCapturesCanonicalKeyWithoutAmbientHeaders(t *testing.T) 
 			return nativeDiscoveryResponse(200, body), nil
 		}
 		dataCalls++
-		if r.URL.Host != "gru.api.terrascale.tech" || r.URL.Path != scope.path()+"/collections/"+string(nativeTestCollection)+"/documents/"+string(nativeTestDocument) {
+		if r.URL.Host != "gru.terrascale.tech" || r.URL.Path != scope.path()+"/collections/"+string(nativeTestCollection)+"/documents/"+string(nativeTestDocument) {
 			t.Errorf("wrong direct native request: %s", r.URL)
 		}
 		return nativeDiscoveryResponse(200, []byte(nativeAbsentPoint)), nil
@@ -206,10 +198,10 @@ func TestNativeDiscoveryClosedResponseValidation(t *testing.T) {
 		"residency duplicates":  func(d map[string]any) { d["residency"] = []any{"GRU", "GRU"} },
 		"residency mismatch":    func(d map[string]any) { d["residency"] = []any{"SFO"} },
 		"url alias": func(d map[string]any) {
-			d["endpoints"].([]any)[0].(map[string]any)["url"] = "https://gru.terrascale.tech"
+			d["endpoints"].([]any)[0].(map[string]any)["url"] = "https://gru.api.terrascale.tech"
 		},
 		"url query": func(d map[string]any) {
-			d["endpoints"].([]any)[0].(map[string]any)["url"] = "https://gru.api.terrascale.tech?"
+			d["endpoints"].([]any)[0].(map[string]any)["url"] = "https://gru.terrascale.tech?"
 		},
 		"url unicode": func(d map[string]any) {
 			d["endpoints"].([]any)[0].(map[string]any)["url"] = "https://gru。terrascale。tech"
@@ -259,7 +251,7 @@ func TestNativeDiscoveryClosedResponseValidation(t *testing.T) {
 				}
 				return nativeDiscoveryResponse(200, changed), nil
 			}))
-			_, err = client.nativeRouter.resolve(t.Context(), fixture.Scope.documentScope(), nativeDiscoveryTestKey(5), nativeRead)
+			_, err = client.Documents.Get(t.Context(), fixture.Scope.documentScope(), nativeTestCollection, nativeTestDocument)
 			assertNativeRoutingCode(t, err, "invalid_discovery")
 		})
 	}
@@ -271,7 +263,7 @@ func TestNativeDiscoveryClosedResponseValidation(t *testing.T) {
 	}
 	for _, changed := range malformed {
 		client := nativeDiscoveryClient(t, pinningRoundTripperFunc(func(*http.Request) (*http.Response, error) { return nativeDiscoveryResponse(200, changed), nil }))
-		_, err := client.nativeRouter.resolve(t.Context(), fixture.Scope.documentScope(), nativeDiscoveryTestKey(5), nativeRead)
+		_, err := client.Documents.Get(t.Context(), fixture.Scope.documentScope(), nativeTestCollection, nativeTestDocument)
 		assertNativeRoutingCode(t, err, "invalid_discovery")
 	}
 }
@@ -754,7 +746,7 @@ func TestNativeDiscoveryHonorsActualErrorsAndNoRedirects(t *testing.T) {
 				response.ContentLength = test.length
 				return response, nil
 			}))
-			_, err := client.nativeRouter.resolve(t.Context(), fixture.Scope.documentScope(), nativeDiscoveryTestKey(5), nativeRead)
+			_, err := client.Documents.Get(t.Context(), fixture.Scope.documentScope(), nativeTestCollection, nativeTestDocument)
 			if err == nil || calls != 1 {
 				t.Fatalf("discovery denial/redirect accepted: %v calls%d", err, calls)
 			}
@@ -779,7 +771,7 @@ func TestNativeDiscoveryOperationCapabilitiesAndSourcePriority(t *testing.T) {
 	first.Capabilities.Write = false
 	second := fixture.Endpoints[0]
 	second.Region = "XYZ-9"
-	second.URL = "https://xyz-9.api.terrascale.tech"
+	second.URL = "https://xyz-9.terrascale.tech"
 	second.Priority = 2
 	fixture.Endpoints = []nativeDiscoveryEndpoint{first, second}
 	body, _ := json.Marshal(fixture)
@@ -843,11 +835,11 @@ func TestNativeDiscoveryOperationCapabilitiesAndSourcePriority(t *testing.T) {
 	if statusRequest.EffectDigest != request.EffectDigest || statusRequest.TransactionID != request.TransactionID {
 		t.Fatal("status changed retained identity")
 	}
-	if atlasCalls != 1 || len(hosts) != 5 || hosts[0] != "gru.api.terrascale.tech" {
+	if atlasCalls != 1 || len(hosts) != 5 || hosts[0] != "gru.terrascale.tech" {
 		t.Fatalf("wrong source priority/calls: %v %d", hosts, atlasCalls)
 	}
 	for _, host := range hosts[1:] {
-		if host != "xyz-9.api.terrascale.tech" {
+		if host != "xyz-9.terrascale.tech" {
 			t.Fatalf("capability-ineligible region selected: %s", host)
 		}
 	}
@@ -947,7 +939,7 @@ func TestNativeDiscoveryCommitPreservesUncertaintyAndNeverReplays(t *testing.T) 
 	request.Writes[0].Value.Fields[0].Value = BoolValue(false)
 	request.TransactionID.Nonce[0] ^= 1
 	_, err = uncertain.Operation.Retry(t.Context())
-	if !errors.As(err, &uncertain) || dataCalls != 2 || atlasCalls != 2 {
+	if !errors.As(err, &uncertain) || dataCalls != 2 || atlasCalls != 1 {
 		t.Fatal("explicit frozen retry failed")
 	}
 	client.cfg.DataAccessToken = ""
@@ -1109,7 +1101,7 @@ func TestNativeDiscoveryGenericZeroRequestRetainsActualDenial(t *testing.T) {
 		}
 		return nativeDiscoveryResponse(403, forbidden), nil
 	}))
-	_, err = client.nativeRouter.resolve(t.Context(), scope, nativeDiscoveryTestKey(5), nativeRead)
+	_, err = client.Documents.Get(t.Context(), scope, nativeTestCollection, nativeTestDocument)
 	var actual *APIError
 	if !errors.As(err, &actual) || actual.Status != 403 || actual.Code != "discovery_forbidden" {
 		t.Fatalf("zero actual denial changed: %v", err)
@@ -1117,7 +1109,7 @@ func TestNativeDiscoveryGenericZeroRequestRetainsActualDenial(t *testing.T) {
 	fixture.Scope.Shard = 0
 	body, _ := json.Marshal(fixture)
 	client = nativeDiscoveryClient(t, pinningRoundTripperFunc(func(*http.Request) (*http.Response, error) { return nativeDiscoveryResponse(200, body), nil }))
-	_, err = client.nativeRouter.resolve(t.Context(), scope, nativeDiscoveryTestKey(5), nativeRead)
+	_, err = client.Documents.Get(t.Context(), scope, nativeTestCollection, nativeTestDocument)
 	assertNativeRoutingCode(t, err, "invalid_discovery")
 }
 
@@ -1199,7 +1191,7 @@ func TestNativeDiscoverySingleWriterStatusRequiresAdmittedFence(t *testing.T) {
 	}
 	// The explicit producer-preparation path keeps its prior server decision:
 	// the current native producer rejects SingleWriter with this actual code.
-	client.cfg.DataBaseURL = "https://gru.api.terrascale.tech"
+	client.cfg.DataBaseURL = "https://gru.terrascale.tech"
 	_, err = operation.Status(t.Context())
 	var actual *APIError
 	if !errors.As(err, &actual) || actual.Status != 503 || actual.Code != "authority_unavailable" || calls != 1 {

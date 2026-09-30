@@ -87,19 +87,16 @@ const (
 	ConsistencyWritesFollowReads Consistency = "writes-follow-reads"
 )
 
-// DefaultAPIBaseURL identifies the Atlas Worker proxy used when hosted native
-// discovery is unavailable. Product routing still requires an explicit origin.
+// DefaultAPIBaseURL identifies the historical test API origin. It is retained
+// as an explicit auth rejection boundary and is never selected automatically.
 const DefaultAPIBaseURL = "https://" + publicAPIHostname
 
 // Config configures a Client.
 type Config struct {
 	// DataBaseURL explicitly configures an HTTPS native regional origin with an
 	// ASCII hostname; HTTP is allowed only for loopback development. Empty uses
-	// authenticated UUID Atlas discovery with api.terrascale.tech proxy fallback.
+	// authenticated UUID Atlas admission and never falls back to APIBaseURL.
 	DataBaseURL string
-	// DataDiscoveryTimeout bounds native Atlas requests within RequestTimeout
-	// (default 3s, maximum 30s). Explicit DataBaseURL disables discovery.
-	DataDiscoveryTimeout time.Duration
 	// DataAccessToken and DataTokenProvider are native data credentials. They
 	// never inherit product or TSAuth management credentials.
 	DataAccessToken   string
@@ -176,13 +173,6 @@ type Client struct {
 // DataBaseURL defers authenticated native discovery until the first Documents
 // request; successful construction does not establish service readiness.
 func NewClient(cfg Config) (*Client, error) {
-	discoveryTimeout := cfg.DataDiscoveryTimeout
-	if discoveryTimeout == 0 {
-		discoveryTimeout = 3 * time.Second
-	}
-	if discoveryTimeout < time.Millisecond || discoveryTimeout > 30*time.Second {
-		return nil, fmt.Errorf("sdk: DataDiscoveryTimeout must be between 1ms and 30s")
-	}
 	dataBase, err := validateNativeOrigin(strings.TrimSpace(cfg.DataBaseURL))
 	if err != nil {
 		return nil, err
@@ -302,7 +292,6 @@ func NewClient(cfg Config) (*Client, error) {
 	c := &Client{cfg: Config{
 		APIBaseURL:            base,
 		DataBaseURL:           dataBase,
-		DataDiscoveryTimeout:  discoveryTimeout,
 		DataAccessToken:       cfg.DataAccessToken,
 		DataTokenProvider:     cfg.DataTokenProvider,
 		TSAuthBaseURL:         strings.TrimSpace(cfg.TSAuthBaseURL),
@@ -320,7 +309,6 @@ func NewClient(cfg Config) (*Client, error) {
 		RequestTimeout:        requestTimeout,
 	}, http: httpClient, nativeHTTP: &nativeHTTPClient, sessionToken: strings.TrimSpace(cfg.SessionToken)}
 	c.nativeRouter = newNativeDiscoveryRouter(c.nativeHTTP)
-	c.nativeRouter.timeout = discoveryTimeout
 	c.ProjectAPIKeys = &ProjectAPIKeysClient{c: c}
 	c.TSAuth = &TSAuthClient{c: c}
 	c.Operations = &OperationsClient{c: c}

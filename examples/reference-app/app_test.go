@@ -307,7 +307,7 @@ func TestHostedConfigurationCannotOverrideAtlasAndCatalogFieldIdsAreRequired(t *
 	if err != nil || c.dataOrigin != "" || uint64(c.scope.Shard) != ^uint64(0) {
 		t.Fatalf("hosted configuration=%v", err)
 	}
-	values["REFERENCE_DEVELOPMENT_DATA_URL"] = "https://gru.api.terrascale.tech"
+	values["REFERENCE_DEVELOPMENT_DATA_URL"] = "https://gru.terrascale.tech"
 	if _, err = loadConfiguration(getenv); err == nil {
 		t.Fatal("hosted Atlas selection bypassed")
 	}
