@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json.Nodes;
 
 namespace TerraScale.DotNet.Tests;
 
@@ -82,6 +83,66 @@ public sealed class TerraScaleDiscoveryRoutingTests
         _ = await client.Documents.GetAsync("orders-timeout", "items", "item-1");
         await Assert.That(transport.Requests.Count).IsEqualTo(4);
         await Assert.That(transport.Requests[^1]).IsEqualTo("GET https://gru.api.terrascale.tech/api/v1/databases/orders-timeout/collections/items/documents/item-1");
+    }
+
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task FailoverRefreshesAnExpiredDocumentAndExcludesFailedRegions(int failures)
+    {
+        var transport = new ScriptedTransport();
+        var document = JsonNode.Parse(transport.DiscoveryBody)!;
+        document["refreshSeconds"] = 1;
+        var next = document["endpoints"]![0]!.DeepClone();
+        next["region"] = "SFO";
+        next["url"] = "https://sfo.api.terrascale.tech";
+        next["priority"] = 3;
+        document["endpoints"]!.AsArray().Add(next);
+        transport.DiscoveryBody = document.ToJsonString();
+        string[] regions = ["fra", "gru", "sfo"];
+        for (var index = 0; index < failures; index++)
+        {
+            transport.RegionalTransportFailures.Enqueue((regions[index], index + 1 == failures ? 1100 : 0));
+        }
+
+        var client = CreateClient(transport, new Uri("https://atlas-expired-failure.test"));
+        _ = await client.Documents.GetAsync("orders-expired-failure", "items", "item-1");
+        _ = await client.Documents.GetAsync("orders-expired-failure", "items", "item-1");
+        var expected = new List<string>
+        {
+            "GET https://atlas-expired-failure.test/api/v1/discovery?database=orders-expired-failure&branch=main"
+        };
+        expected.AddRange(regions.Take(failures).Select(region =>
+            $"GET https://{region}.api.terrascale.tech/api/v1/databases/orders-expired-failure/collections/items/documents/item-1"));
+        expected.Add("GET https://atlas-expired-failure.test/api/v1/discovery?database=orders-expired-failure&branch=main&rev=7");
+        var success = $"GET https://{regions[failures]}.api.terrascale.tech/api/v1/databases/orders-expired-failure/collections/items/documents/item-1";
+        expected.Add(success);
+        expected.Add(success);
+        await Assert.That(transport.Requests.Count).IsEqualTo(expected.Count);
+        for (var index = 0; index < expected.Count; index++)
+        {
+            await Assert.That(transport.Requests[index]).IsEqualTo(expected[index]);
+        }
+    }
+
+    [Test]
+    public async Task ExpiredDiscoveryDoesNotReplayAnUnkeyedMutationAfterTransportLoss()
+    {
+        var transport = new ScriptedTransport();
+        transport.DiscoveryBody = transport.DiscoveryBody.Replace("\"refreshSeconds\":300", "\"refreshSeconds\":1");
+        transport.RegionalTransportFailures.Enqueue(("fra", 1100));
+        var client = CreateClient(transport, new Uri("https://atlas-expired-mutation.test"), options =>
+        {
+            options.MaxRetryAttempts = 3;
+            options.RetryDelay = TimeSpan.Zero;
+        });
+
+        _ = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.Documents.UpsertAsync("orders-expired-mutation", "items", "item-1", new { status = "paid" }));
+
+        await Assert.That(transport.Requests.Count).IsEqualTo(2);
+        await Assert.That(transport.Requests[0]).IsEqualTo("GET https://atlas-expired-mutation.test/api/v1/discovery?database=orders-expired-mutation&branch=main");
+        await Assert.That(transport.Requests[1]).IsEqualTo("PUT https://fra.api.terrascale.tech/api/v1/databases/orders-expired-mutation/collections/items/documents/item-1");
     }
 
     [Test]
@@ -408,6 +469,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
         public bool FailAllRegionalRequests { get; set; }
         public bool ThrowRegionalRequests { get; set; }
         public bool TimeoutRegionalRequests { get; set; }
+        public Queue<(string Region, int DelayMs)> RegionalTransportFailures { get; } = new();
         public bool ThrowDiscovery { get; set; }
         public bool OmitPlacement { get; set; }
         public HttpStatusCode RegionalFailureStatus { get; set; } = HttpStatusCode.ServiceUnavailable;
@@ -453,6 +515,13 @@ public sealed class TerraScaleDiscoveryRoutingTests
                 var misdirected = Respond(HttpStatusCode.MisdirectedRequest, "{\"error\":{\"code\":\"misdirected_request\",\"message\":\"Wrong region\"}}");
                 if (!OmitPlacement) misdirected.Headers.TryAddWithoutValidation("X-TerraScale-Placement", "GRU,SFO");
                 return misdirected;
+            }
+
+            if (RegionalTransportFailures.TryPeek(out var failure) && uri.Host == $"{failure.Region}.api.terrascale.tech")
+            {
+                RegionalTransportFailures.Dequeue();
+                await Task.Delay(failure.DelayMs, cancellationToken).ConfigureAwait(false);
+                throw new HttpRequestException("Region offline");
             }
 
             if (ThrowRegionalRequests && uri.Host == "fra.api.terrascale.tech")

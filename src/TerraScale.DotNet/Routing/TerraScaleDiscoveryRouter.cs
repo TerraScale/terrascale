@@ -72,7 +72,11 @@ public sealed class TerraScaleDiscoveryRouter
     /// null when discovery cannot answer (cache miss plus failed or timed-out
     /// request): the caller uses the Atlas API proxy for that request.
     /// </summary>
-    public async Task<TerraScaleRoutingBase?> ResolveBaseAsync(string database, bool needsWrite, CancellationToken cancellationToken)
+    public Task<TerraScaleRoutingBase?> ResolveBaseAsync(string database, bool needsWrite, CancellationToken cancellationToken) =>
+        ResolveBaseAsync(database, needsWrite, null, cancellationToken);
+
+    internal async Task<TerraScaleRoutingBase?> ResolveBaseAsync(
+        string database, bool needsWrite, IReadOnlySet<string>? failedRegions, CancellationToken cancellationToken)
     {
         if (!TerraScaleRoutingValidation.IsValidDatabaseName(database))
         {
@@ -135,7 +139,7 @@ public sealed class TerraScaleDiscoveryRouter
             }
         }
 
-        var endpoint = SelectEndpoint(scope, document, needsWrite);
+        var endpoint = SelectEndpoint(scope, document, needsWrite, failedRegions);
         return endpoint is null ? null : new TerraScaleRoutingBase(endpoint.Url, endpoint.Region);
     }
 
@@ -196,11 +200,14 @@ public sealed class TerraScaleDiscoveryRouter
         }
     }
 
-    internal bool HasAlternative(string database, string region, bool needsWrite)
+    internal bool HasAlternative(string database, IReadOnlySet<string> failedRegions, bool needsWrite)
     {
         var required = needsWrite ? TerraScaleRoutingCapability.Write : TerraScaleRoutingCapability.Read;
-        return routingCache.Get(ScopeFor(database))?.Endpoints.Any(endpoint =>
-            endpoint.Region != region && endpoint.Capabilities.Contains(required)) == true;
+        var document = routingCache.Get(ScopeFor(database));
+        // An expired document must refresh on the next safe attempt. Selection
+        // then excludes every region already failed by this request.
+        return document is null || document.Endpoints.Any(endpoint =>
+            !failedRegions.Contains(endpoint.Region) && endpoint.Capabilities.Contains(required));
     }
 
     private void InvalidateScope(TerraScaleRoutingScope scope)
@@ -218,11 +225,13 @@ public sealed class TerraScaleDiscoveryRouter
     /// the configured preference or the document's first eligible endpoint.
     /// Only a selection that actually moves rewrites the remembered region.
     /// </summary>
-    private TerraScaleRoutingEndpoint? SelectEndpoint(TerraScaleRoutingScope scope, TerraScaleRoutingDocument document, bool needsWrite)
+    private TerraScaleRoutingEndpoint? SelectEndpoint(
+        TerraScaleRoutingScope scope, TerraScaleRoutingDocument document, bool needsWrite, IReadOnlySet<string>? failedRegions)
     {
         var required = needsWrite ? TerraScaleRoutingCapability.Write : TerraScaleRoutingCapability.Read;
         var eligible = document.Endpoints
-            .Where(endpoint => endpoint.Capabilities.Contains(required))
+            .Where(endpoint => endpoint.Capabilities.Contains(required) &&
+                (failedRegions is null || !failedRegions.Contains(endpoint.Region)))
             .ToList();
         if (eligible.Count == 0)
         {

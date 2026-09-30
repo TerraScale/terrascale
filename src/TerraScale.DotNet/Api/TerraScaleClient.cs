@@ -1066,7 +1066,7 @@ public sealed class TerraScaleClient
 
         while (true)
         {
-            var routedBase = await ResolveRoutedBaseAsync(routing, requestCancellationToken).ConfigureAwait(false);
+            var routedBase = await ResolveRoutedBaseAsync(routing, failedRegions, requestCancellationToken).ConfigureAwait(false);
             using var request = await CreateRequestAsync(
                 method,
                 requestUri,
@@ -1166,6 +1166,7 @@ public sealed class TerraScaleClient
     /// </summary>
     private async Task<(Uri BaseAddress, string? Region)?> ResolveRoutedBaseAsync(
         TerraScaleRequestRouting routing,
+        IReadOnlySet<string> failedRegions,
         CancellationToken cancellationToken)
     {
         if (router is null)
@@ -1180,7 +1181,7 @@ public sealed class TerraScaleClient
             case TerraScaleRouteKind.DiscoveryOrigin:
                 return (router.DiscoveryOrigin, null);
             case TerraScaleRouteKind.Database:
-                if (await router.ResolveBaseAsync(routing.Database!, routing.NeedsWrite, cancellationToken).ConfigureAwait(false) is { } discovered)
+                if (await router.ResolveBaseAsync(routing.Database!, routing.NeedsWrite, failedRegions, cancellationToken).ConfigureAwait(false) is { } discovered)
                 {
                     return (discovered.BaseAddress, discovered.Region);
                 }
@@ -1240,7 +1241,7 @@ public sealed class TerraScaleClient
         }
 
         router.ReportRegionFailure(routing.Database, region);
-        return router.HasAlternative(routing.Database, region, routing.NeedsWrite);
+        return router.HasAlternative(routing.Database, failedRegions, routing.NeedsWrite);
     }
 
     private async ValueTask<HttpRequestMessage> CreateRequestAsync(
