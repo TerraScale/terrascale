@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { availableParallelism } from "node:os";
 
 delete process.env.NO_COLOR;
 delete process.env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS;
@@ -10,6 +11,10 @@ const edge = process.env.PLAYWRIGHT_EDGE_EXECUTABLE_PATH?.trim() || undefined;
 export default defineConfig({
   testDir: "./browser-tests",
   fullyParallel: true,
+  // Cap shared CI browser concurrency; local runs and --workers retain normal control.
+  workers: process.env.CI
+    ? Math.min(4, Math.max(1, Math.floor(availableParallelism() / 2)))
+    : undefined,
   forbidOnly: true,
   retries: 0,
   reporter: "line",
