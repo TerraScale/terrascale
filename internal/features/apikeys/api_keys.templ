@@ -65,7 +65,7 @@ templ apiKeysContent(page core.Page, d pageData) {
 				}
 			</form>
 		</div>
-		@ui.Card(ui.CardProps{ID: "credentials", Title: "Credentials", Description: "Keys and machine clients in the selected project.", Actions: createKeyAction(d.CanManage), Flush: len(d.Keys) > 0}) {
+		@ui.Card(ui.CardProps{ID: "credentials", Title: "Credentials", Description: "Keys and machine clients in the selected project.", Actions: createCredentialAction(d.CanManage, d.Kind), Flush: len(d.Keys) > 0}) {
 			if len(d.Keys) > 0 {
 				<div class="ts-table-wrap">
 					<table class="ts-table">
@@ -96,9 +96,12 @@ templ apiKeysContent(page core.Page, d pageData) {
 	</main>
 }
 
-func createKeyAction(canManage bool) templ.Component {
+func createCredentialAction(canManage bool, kind string) templ.Component {
 	if !canManage {
 		return nil
+	}
+	if kind == "m2m" {
+		return ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-m2m", Label: "Create machine credential", Icon: credentialIcon("m2m"), Variant: "primary"})
 	}
 	return ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-key", Label: "Create key", Icon: credentialIcon("key"), Variant: "primary"})
 }
