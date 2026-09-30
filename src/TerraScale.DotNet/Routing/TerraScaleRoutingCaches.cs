@@ -46,15 +46,15 @@ internal sealed class TerraScaleRoutingCache
             return null;
         }
 
-        if (!demoted.TryGetValue(scope.Key, out var demotedRegions) || demotedRegions.Count == 0)
+        if (!demoted.TryGetValue(scope.Key, out var demotedRegions))
         {
             return entry.Document;
         }
 
-        var endpoints = entry.Document.Endpoints.Where(endpoint => !demotedRegions.Contains(endpoint.Region)).ToList();
-        if (endpoints.Count == 0)
+        List<TerraScaleRoutingEndpoint> endpoints;
+        lock (demotedRegions)
         {
-            return entry.Document;
+            endpoints = entry.Document.Endpoints.Where(endpoint => !demotedRegions.Contains(endpoint.Region)).ToList();
         }
 
         return entry.Document with
@@ -124,58 +124,6 @@ internal sealed class TerraScaleRoutingCache
         finally
         {
             inflight.TryRemove(new KeyValuePair<string, Lazy<Task<TerraScaleRoutingDocument>>>(scope.Key, lazy));
-        }
-    }
-}
-
-/// <summary>
-/// The region-catalog cache (ADR 0050 §5.8): five-minute TTL per discovery
-/// origin, single-flight, refreshed on failure (a failed fetch caches
-/// nothing, so the next request retries immediately).
-/// </summary>
-internal sealed class TerraScaleRegionCatalogCache
-{
-    internal const int CacheSeconds = 300;
-
-    private sealed record Entry(TerraScaleRegionCatalog Catalog, long ExpiresAtMs);
-
-    private static readonly Func<long> DefaultClock = static () => Environment.TickCount64;
-
-    private readonly ConcurrentDictionary<string, Entry> entries = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, Lazy<Task<TerraScaleRegionCatalog>>> inflight = new(StringComparer.Ordinal);
-
-    internal Func<long> NowMs { get; set; } = DefaultClock;
-
-    internal TerraScaleRegionCatalog? Get(string origin)
-    {
-        if (!entries.TryGetValue(origin, out var entry))
-        {
-            return null;
-        }
-
-        if (entry.ExpiresAtMs <= NowMs())
-        {
-            entries.TryRemove(origin, out _);
-            return null;
-        }
-
-        return entry.Catalog;
-    }
-
-    internal void Set(string origin, TerraScaleRegionCatalog catalog) =>
-        entries[origin] = new Entry(catalog, NowMs() + CacheSeconds * 1000L);
-
-    /// <summary>Single-flight: concurrent catalog fetches for one origin share one request.</summary>
-    internal async Task<TerraScaleRegionCatalog> CoalesceAsync(string origin, Func<Task<TerraScaleRegionCatalog>> initiate)
-    {
-        var lazy = inflight.GetOrAdd(origin, _ => new Lazy<Task<TerraScaleRegionCatalog>>(initiate));
-        try
-        {
-            return await lazy.Value.ConfigureAwait(false);
-        }
-        finally
-        {
-            inflight.TryRemove(new KeyValuePair<string, Lazy<Task<TerraScaleRegionCatalog>>>(origin, lazy));
         }
     }
 }

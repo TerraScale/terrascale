@@ -18,14 +18,14 @@ public sealed record TerraScaleClientOptions
     /// <summary>
     /// Overrides the Atlas metadata origin that serves discovery and the region
     /// catalog (tests and local development). When null, Atlas routing activates
-    /// for the public product origin <c>https://api.terrascale.tech</c> with the
+    /// for the public API proxy origin <c>https://api.terrascale.tech</c> with the
     /// default <c>https://atlas.terrascale.tech</c>; custom, regional, and
-    /// loopback origins keep their existing direct routing.
+    /// loopback origins disable discovery even when this override is set.
     /// </summary>
     public Uri? DiscoveryBaseAddress { get; set; }
 
     /// <summary>
-    /// Bounded timeout for Atlas discovery and region-catalog requests. The
+    /// Bounded timeout for Atlas discovery requests. The
     /// default is 3 seconds; discovery never blocks a data request longer.
     /// </summary>
     public TimeSpan DiscoveryTimeout { get; set; } = TimeSpan.FromSeconds(3);

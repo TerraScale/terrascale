@@ -9,9 +9,6 @@ internal enum TerraScaleRouteKind
     /// <summary>The Atlas metadata origin itself (the catalog route).</summary>
     DiscoveryOrigin,
 
-    /// <summary>A database-less member route; the catalog picks the regional host.</summary>
-    CatalogSelected,
-
     /// <summary>A database-scoped member route; discovery picks the regional endpoint.</summary>
     Database
 }
@@ -20,8 +17,8 @@ internal enum TerraScaleRouteKind
 /// The fixed route classification for one request, mirroring the TS SDK's
 /// path table (ADR 0050 §2/§8): database-scoped requests discover; product
 /// routes target the configured origin; <c>api/v1/regions</c> exactly is the
-/// catalog on the discovery origin; every other database-less member route
-/// uses catalog selection. There is no proxy fallback.
+/// catalog on the discovery origin; database-less member routes use the API
+/// proxy, since discovery requires a database selector.
 /// </summary>
 internal readonly record struct TerraScaleRequestRouting(TerraScaleRouteKind Kind, string? Database, bool NeedsWrite)
 {
@@ -66,7 +63,7 @@ internal readonly record struct TerraScaleRequestRouting(TerraScaleRouteKind Kin
             }
         }
 
-        return new TerraScaleRequestRouting(TerraScaleRouteKind.CatalogSelected, null, IsMutation(method));
+        return new TerraScaleRequestRouting(TerraScaleRouteKind.ConfiguredOrigin, null, IsMutation(method));
     }
 
     private static bool IsMutation(HttpMethod method) =>

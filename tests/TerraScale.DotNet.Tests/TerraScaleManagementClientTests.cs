@@ -148,7 +148,7 @@ public sealed class TerraScaleManagementClientTests
     }
 
     private const string AtlasCatalogBody =
-        """{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5475,"longitude":-46.6361,"available":true},{"code":"FRA","name":"Frankfurt","country":"DE","latitude":50.1109,"longitude":8.6821,"available":true}],"hosts":{"GRU":"https://gru.terrascale.tech","FRA":"https://fra.terrascale.tech"}}""";
+        """{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5475,"longitude":-46.6361,"available":true},{"code":"FRA","name":"Frankfurt","country":"DE","latitude":50.1109,"longitude":8.6821,"available":true}],"hosts":{"GRU":"https://gru.api.terrascale.tech","FRA":"https://fra.api.terrascale.tech"}}""";
 
     private static T Request<T>(JsonElement operation, JsonTypeInfo<T> type) =>
         JsonSerializer.Deserialize(operation.GetProperty("request").GetProperty("body").GetProperty("value").GetRawText(), type)!;

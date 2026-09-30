@@ -8,40 +8,35 @@ terrabase; named clients implement customer operations against that contract.
 
 ## Atlas routing (ADR 0050)
 
-`api.terrascale.tech` is the dashboard-owned product API origin only; the
-per-request proxy is retired. Metadata lives on `atlas.terrascale.tech`
-(ts-atlas), and every database operation connects directly to a regional
-member:
+`https://api.terrascale.tech` is the Atlas reverse proxy. By default the SDK
+asks `https://atlas.terrascale.tech/api/v1/discovery?database=…&branch=main`
+first, validates the existing ADR 0050 document, and sends database requests
+directly to the top-ranked eligible `https://<region>.api.terrascale.tech`
+endpoint (GRU: `https://gru.api.terrascale.tech`). Atlas ranks measured
+`X-TerraScale-Region-Rtt`, then client distance, then placement order.
 
-- **Discovery** — the first database-scoped request resolves its routing scope
-  (`GET https://atlas.terrascale.tech/api/v1/discovery?database=…&branch=main`).
-  The document is strictly validated (region codes, HTTPS
-  `{region}.terrascale.tech` endpoints — loopback dev origins for local
-  workers — capabilities, priority), cached per scope for the served
-  `refreshSeconds` clamped to 60–3600 s, fetched single-flight, and pinned
-  regionally while eligible. Refreshes never re-pin a healthy route; a `421`
-  adopts the member's authoritative `X-TerraScale-Placement` (repair once,
-  safe or idempotency-keyed requests only) and schedules one corrective
-  rediscovery (`stale=1`). `404` never rediscovers.
-- **Catalog fallback** — a discovery failure degrades to the region catalog
-  (`GET https://atlas.terrascale.tech/api/v1/regions`, cached five minutes)
-  and the first available regional host. There is no proxy fallback; member
-  data never targets the bare product origin.
-- **Route table** — database-scoped requests (`/api/v1/databases/{name}/…`)
-  use discovery; product routes (`/api/v1/organizations*`,
-  `/api/v1/projects*`, `/api/v1/regions/{code}`) target the configured
-  `BaseAddress`; `/api/v1/regions` exactly is the catalog on Atlas; every
-  other database-less member route (database create/list, operations, health)
-  uses catalog selection.
-- **Reactive** — view attach targets the discovered regional endpoint, with
-  the same catalog fallback; advertised snapshot/log URL canonicalization is
-  unchanged.
+The SDK keeps its pin for the document's `refreshSeconds` lifetime, then
+refreshes and selects from the new ranking. Transport failures and 5xx demote
+the failed region and fail over to the next eligible endpoint, which becomes
+the pin for subsequent requests. A 421 repairs once using authoritative
+placement when provided, otherwise the next ranked endpoint. Corrective
+rediscovery uses the existing `rev` and `stale=1` parameters. Routing failover
+works with the default retry budget; replay still requires a safe request or
+a stable idempotency key. Caller cancellation and `Retry-After` are respected.
 
-Routing is active for the public product origin and any client configured
-with `DiscoveryBaseAddress`; custom origins, regional hosts, strict affinity,
-and the loopback emulator keep direct routing exactly as before. Set
-`DiscoveryBaseAddress` (and optionally `DiscoveryTimeout`, default 3 s) in
-`TerraScaleClientOptions` for tests and local development.
+If discovery fails or times out, database requests and reactive attach use
+`https://api.terrascale.tech` so Atlas can proxy them. Database-less member
+routes use the Atlas API proxy, since discovery requires a database selector.
+The catalog route itself targets Atlas; organization and project routes use the
+configured `BaseAddress`.
+
+A custom `BaseAddress` disables discovery, including when
+`DiscoveryBaseAddress` is supplied. `RegionAffinity = Strict` requires
+`PreferredRegion` and uses its `.api.` regional host directly;
+`RegionAffinity = Failover` keeps the preferred-region option and can move to
+another eligible region. `DiscoveryBaseAddress` and `DiscoveryTimeout`
+(default 3 seconds) configure metadata requests for the default API base.
+Discovery caches and pins belong to the client instance.
 
 ## What is here
 

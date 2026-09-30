@@ -72,11 +72,11 @@ internal sealed record TerraScaleRoutingScope(
 /// </summary>
 internal static class TerraScaleRoutingValidation
 {
-    public const int MinRefreshSeconds = 60;
+    public const int MinRefreshSeconds = 1;
     public const int MaxRefreshSeconds = 3600;
     public const int MaxEndpoints = 20;
 
-    internal const string RegionalApiDomain = "terrascale.tech";
+    internal const string RegionalApiDomain = "api.terrascale.tech";
 
     internal static string RegionalApiHostname(string region) => $"{region.ToLowerInvariant()}.{RegionalApiDomain}";
 
@@ -114,7 +114,7 @@ internal static class TerraScaleRoutingValidation
 
     /// <summary>
     /// Validates one discovered endpoint URL: HTTPS on the
-    /// <c>{region}.terrascale.tech</c> family only, or an HTTP dev origin
+    /// <c>{region}.api.terrascale.tech</c> family only, or an HTTP dev origin
     /// when the client itself targets loopback. The canonical origin is
     /// returned; anything else is rejected.
     /// </summary>

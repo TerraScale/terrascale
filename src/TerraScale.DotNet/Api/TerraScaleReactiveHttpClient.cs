@@ -76,8 +76,7 @@ public sealed class TerraScaleReactiveHttpClient
         // owner-published attach request and must never be serialized.
         var requestBody = new ReactiveAttachRequest(databaseId, statement, Convert.ToBase64String(parameters.ToArray()), checkpoint?.Token, subscription, 0);
         // ADR 0050 §5.7/§5.8: attach goes directly to the discovered regional
-        // endpoint. A discovery miss degrades to the catalog-selected regional
-        // origin — there is no proxy to fall back to.
+        // endpoint. A discovery miss uses the Atlas API proxy.
         var routedOrigin = await ResolveAttachOriginAsync(databaseId, cancellationToken).ConfigureAwait(false);
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(routedOrigin?.BaseAddress ?? AttachOrigin(), "/api/v1/reactive/views"))
         {
@@ -91,7 +90,8 @@ public sealed class TerraScaleReactiveHttpClient
         {
             response = await SendWithRetryAsync(request, cancellationToken).ConfigureAwait(false);
         }
-        catch (HttpRequestException)
+        catch (Exception exception) when (exception is HttpRequestException ||
+            exception is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             // A transport failure against a discovered regional endpoint
             // demotes that region; the next attach resolves to the next
@@ -105,6 +105,12 @@ public sealed class TerraScaleReactiveHttpClient
         }
         using (response)
         {
+            if (routedOrigin is { Region: { } region } &&
+                (response.StatusCode == HttpStatusCode.MisdirectedRequest || (int)response.StatusCode >= 500))
+            {
+                options.DiscoveryRouter?.ReportRegionFailure(databaseId, region);
+            }
+
             return await ReadAttachmentAsync(response, databaseId, subscription, statement, parameters, transport, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -308,8 +314,7 @@ public sealed class TerraScaleReactiveHttpClient
     private Uri AttachOrigin() => options.ApiBaseAddress ?? options.BaseAddress;
 
     /// <summary>
-    /// The discovered regional endpoint for one database, the catalog-selected
-    /// fallback, or null when routing is not active for this client.
+    /// The discovered regional endpoint, or null to use the configured API origin.
     /// </summary>
     private async Task<(Uri BaseAddress, string? Region)?> ResolveAttachOriginAsync(string databaseId, CancellationToken cancellationToken)
     {
@@ -323,9 +328,7 @@ public sealed class TerraScaleReactiveHttpClient
             return (discovered.BaseAddress, discovered.Region);
         }
 
-        return await router.ResolveCatalogBaseAsync(cancellationToken).ConfigureAwait(false) is { } catalogHost
-            ? (catalogHost, null)
-            : null;
+        return null;
     }
 
     private static Uri CreateWebSocketUri(Uri log, string view, ulong generation)

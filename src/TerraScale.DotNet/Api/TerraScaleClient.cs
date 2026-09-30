@@ -103,14 +103,12 @@ public sealed class TerraScaleClient
             return null;
         }
 
-        Uri? origin = snapshot.DiscoveryBaseAddress;
-        if (origin is null &&
-            !string.Equals(snapshot.BaseAddress.Host, "api.terrascale.tech", StringComparison.OrdinalIgnoreCase))
+        if (snapshot.BaseAddress != new Uri("https://api.terrascale.tech"))
         {
             return null;
         }
 
-        origin ??= new Uri(TerraScaleDiscoveryRouter.DefaultDiscoveryBaseUrl, UriKind.Absolute);
+        var origin = snapshot.DiscoveryBaseAddress ?? new Uri(TerraScaleDiscoveryRouter.DefaultDiscoveryBaseUrl, UriKind.Absolute);
         return new TerraScaleDiscoveryRouter(
             httpClient,
             origin,
@@ -1063,6 +1061,7 @@ public sealed class TerraScaleClient
         var idempotencyKey = idempotencyKeyOverride ?? CreateIdempotencyKey(method);
         var attempt = 0;
         var repairedMisdirect = false;
+        var failedRegions = new HashSet<string>(StringComparer.Ordinal);
         var routing = TerraScaleRequestRouting.Classify(method, requestUri, router);
 
         while (true)
@@ -1094,17 +1093,29 @@ public sealed class TerraScaleClient
                     router?.RecordLatency(region, Stopwatch.GetElapsedTime(attemptStartedAt).TotalMilliseconds);
                 }
 
-                if (response.StatusCode == HttpStatusCode.MisdirectedRequest &&
-                    !repairedMisdirect &&
-                    CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) &&
-                    TryAdoptPlacement(response, routing))
+                if (response.StatusCode == HttpStatusCode.MisdirectedRequest)
                 {
-                    // Repair once from the placement header: the adopted
-                    // placement becomes the next route and schedules one
-                    // corrective rediscovery (stale=1).
-                    repairedMisdirect = true;
-                    response.Dispose();
-                    continue;
+                    var adopted = !repairedMisdirect && TryAdoptPlacement(response, routing);
+                    var alternative = TryFailover(routing, routedBase, failedRegions);
+                    if (!repairedMisdirect && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) && (alternative || adopted))
+                    {
+                        repairedMisdirect = true;
+                        response.Dispose();
+                        continue;
+                    }
+                }
+
+                if ((int)response.StatusCode >= 500)
+                {
+                    var alternative = TryFailover(routing, routedBase, failedRegions);
+                    if (alternative && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) &&
+                        (GetRetryAfter(response) ?? TimeSpan.Zero) <= MaxRetryAfter)
+                    {
+                        var failoverDelay = GetRetryAfter(response) ?? TimeSpan.Zero;
+                        response.Dispose();
+                        await DelayRetryAsync(failoverDelay, requestCancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
                 }
 
                 if (!ShouldRetryResponse(response, method, idempotencyKey, attempt, allowUnkeyedPutRetry))
@@ -1123,9 +1134,20 @@ public sealed class TerraScaleClient
                 response.Dispose();
                 await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
             }
-            catch (HttpRequestException exception) when (CanRetry(method, idempotencyKey, attempt, allowUnkeyedPutRetry))
+            catch (Exception exception) when (exception is HttpRequestException ||
+                exception is OperationCanceledException && !requestCancellationToken.IsCancellationRequested)
             {
-                ReportRoutingFailure(routing, routedBase);
+                var alternative = TryFailover(routing, routedBase, failedRegions);
+                if (alternative && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry))
+                {
+                    continue;
+                }
+
+                if (!CanRetry(method, idempotencyKey, attempt, allowUnkeyedPutRetry))
+                {
+                    throw;
+                }
+
                 var delay = GetRetryDelay(response: null, attempt);
                 AddRetryEvent(activity, attempt + 1, delay, exception.GetType().Name);
                 await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
@@ -1163,13 +1185,7 @@ public sealed class TerraScaleClient
                     return (discovered.BaseAddress, discovered.Region);
                 }
 
-                return await router.ResolveCatalogBaseAsync(cancellationToken).ConfigureAwait(false) is { } discoveryFallback
-                    ? (discoveryFallback, null)
-                    : null;
-            case TerraScaleRouteKind.CatalogSelected:
-                return await router.ResolveCatalogBaseAsync(cancellationToken).ConfigureAwait(false) is { } catalogHost
-                    ? (catalogHost, null)
-                    : null;
+                return null;
             default:
                 return null;
         }
@@ -1213,6 +1229,18 @@ public sealed class TerraScaleClient
         {
             router?.ReportRegionFailure(routing.Database, region);
         }
+    }
+
+    private bool TryFailover(TerraScaleRequestRouting routing, (Uri BaseAddress, string? Region)? routedBase, HashSet<string> failedRegions)
+    {
+        if (router is null || routing.Database is null || routedBase is not ({ }, { } region) ||
+            !failedRegions.Add(region))
+        {
+            return false;
+        }
+
+        router.ReportRegionFailure(routing.Database, region);
+        return router.HasAlternative(routing.Database, region, routing.NeedsWrite);
     }
 
     private async ValueTask<HttpRequestMessage> CreateRequestAsync(
