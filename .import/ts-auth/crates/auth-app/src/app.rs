@@ -10,7 +10,7 @@ use std::{
 };
 
 use auth_contracts::AppError;
-use auth_store::{AuthStore, QueryTransport, StoreError};
+use auth_store::{AuthStore, GRU_AUTHORITY_HOST, QueryTransport, StoreError};
 use axum::{
     Json, Router,
     extract::{Request, State},
@@ -279,11 +279,11 @@ pub fn build_state_with_mode(
     }
     if !loopback
         && (storage_url.scheme() != "https"
-            || !matches!(host, "api.terrascale.tech" | "gru.terrascale.tech"))
+            || !matches!(host, "api.terrascale.tech" | GRU_AUTHORITY_HOST))
     {
-        return Err(invalid(
-            "Global auth storage requires the HTTPS TerraScale API origin or GRU authority origin",
-        )
+        return Err(invalid(format!(
+            "Global auth storage requires https://api.terrascale.tech or https://{GRU_AUTHORITY_HOST}",
+        ))
         .into());
     }
 
