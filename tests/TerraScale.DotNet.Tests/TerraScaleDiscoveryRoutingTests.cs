@@ -9,7 +9,7 @@ namespace TerraScale.DotNet.Tests;
 /// </summary>
 public sealed class TerraScaleDiscoveryRoutingTests
 {
-    private const string ProductOrigin = "https://api.terrascale.tech";
+    private const string ApiProxyOrigin = "https://api.terrascale.tech";
 
     [Test]
     public async Task DefaultOptionsDiscoverAndPinTheTopRankedRegion()
@@ -35,7 +35,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
         long now = 0;
         var cache = new TerraScaleRoutingCache { NowMs = () => now };
         var router = new TerraScaleDiscoveryRouter(httpClient, new Uri("https://atlas-ttl.test"),
-            TimeSpan.FromSeconds(3), null, null, null, cache, null);
+            TimeSpan.FromSeconds(3), null, null, null, cache);
         var first = await router.ResolveBaseAsync("orders-ttl", false, CancellationToken.None);
         transport.DiscoveryBody = transport.DiscoveryBody.Replace("\"refreshSeconds\":300", "\"refreshSeconds\":1")
             .Replace("FRA", "SFO").Replace("fra.api.", "sfo.api.");
@@ -160,11 +160,11 @@ public sealed class TerraScaleDiscoveryRoutingTests
             "GET https://atlas-fallback.test/api/v1/discovery?database=orders-fallback&branch=main",
             "GET https://api.terrascale.tech/api/v1/databases/orders-fallback/collections/items/documents/item-1",
         ]);
-        await Assert.That(transport.Requests.Any(request => request.Contains(ProductOrigin, StringComparison.Ordinal))).IsTrue();
+        await Assert.That(transport.Requests.Any(request => request.Contains(ApiProxyOrigin, StringComparison.Ordinal))).IsTrue();
     }
 
     [Test]
-    public async Task CatalogIsFetchedOnceAndReusedAcrossRequests()
+    public async Task DatabaseLessRequestsUseTheRankedAtlasProxy()
     {
         var transport = new ScriptedTransport { DiscoveryStatus = HttpStatusCode.ServiceUnavailable };
         var client = CreateClient(transport, atlasOrigin: new Uri("https://atlas-reuse.test"));
@@ -173,9 +173,8 @@ public sealed class TerraScaleDiscoveryRoutingTests
         _ = await client.Databases.ListAsync();
 
         await Assert.That(transport.Requests).IsEquivalentTo([
-            "GET https://atlas-reuse.test/api/v1/regions",
-            "GET https://gru.api.terrascale.tech/api/v1/databases",
-            "GET https://gru.api.terrascale.tech/api/v1/databases",
+            "GET https://api.terrascale.tech/api/v1/databases",
+            "GET https://api.terrascale.tech/api/v1/databases",
         ]);
     }
 
@@ -384,7 +383,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
         var httpClient = new HttpClient(transport);
         var options = new TerraScaleClientOptions
         {
-            // The default product origin: Atlas routing activates through the
+            // The default API proxy origin: Atlas routing activates through the
             // discovery override exactly as it does implicitly in production.
             DiscoveryBaseAddress = atlasOrigin,
             ApiKey = "test-key",

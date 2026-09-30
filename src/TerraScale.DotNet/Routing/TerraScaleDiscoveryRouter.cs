@@ -21,7 +21,6 @@ public sealed class TerraScaleDiscoveryRouter
     private readonly string? preferredRegion;
     private readonly TimeSpan discoveryTimeout;
     private readonly TerraScaleRoutingCache routingCache;
-    private readonly TerraScaleRegionCatalogCache catalogCache;
     private readonly TerraScaleRegionRttTracker rtt = new();
     private readonly object pinnedGate = new();
     private readonly Dictionary<string, string> pinned = new(StringComparer.Ordinal);
@@ -34,7 +33,7 @@ public sealed class TerraScaleDiscoveryRouter
         string? preferredRegion = null,
         string? projectId = null,
         string? tenantId = null)
-        : this(httpClient, discoveryOrigin, discoveryTimeout, preferredRegion, projectId, tenantId, null, null)
+        : this(httpClient, discoveryOrigin, discoveryTimeout, preferredRegion, projectId, tenantId, null)
     {
     }
 
@@ -45,8 +44,7 @@ public sealed class TerraScaleDiscoveryRouter
         string? preferredRegion,
         string? projectId,
         string? tenantId,
-        TerraScaleRoutingCache? routingCache,
-        TerraScaleRegionCatalogCache? catalogCache)
+        TerraScaleRoutingCache? routingCache)
     {
         this.httpClient = httpClient;
         this.discoveryOrigin = discoveryOrigin;
@@ -55,7 +53,6 @@ public sealed class TerraScaleDiscoveryRouter
         this.projectId = projectId;
         this.tenantId = tenantId;
         this.routingCache = routingCache ?? new TerraScaleRoutingCache();
-        this.catalogCache = catalogCache ?? new TerraScaleRegionCatalogCache();
     }
 
     /// <summary>The Atlas metadata origin serving discovery and the region catalog.</summary>
@@ -142,42 +139,6 @@ public sealed class TerraScaleDiscoveryRouter
         return endpoint is null ? null : new TerraScaleRoutingBase(endpoint.Url, endpoint.Region);
     }
 
-    /// <summary>
-    /// The catalog-selected regional origin (ADR 0050 §5.8/§8): the discovery
-    /// failure fallback and the base for database-less member routes. Returns
-    /// null when the catalog cannot answer.
-    /// </summary>
-    public async Task<Uri?> ResolveCatalogBaseAsync(CancellationToken cancellationToken)
-    {
-        var origin = discoveryOrigin.ToString();
-        var cached = catalogCache.Get(origin);
-        if (cached is not null)
-        {
-            return FirstAvailableCatalogHost(cached);
-        }
-
-        try
-        {
-            var catalog = await catalogCache
-                .CoalesceAsync(origin, () => FetchRegionCatalogAsync(cancellationToken))
-                .ConfigureAwait(false);
-            catalogCache.Set(origin, catalog);
-            return FirstAvailableCatalogHost(catalog);
-        }
-        catch (TerraScaleDiscoveryException)
-        {
-            return null;
-        }
-        catch (HttpRequestException)
-        {
-            return null;
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            return null;
-        }
-    }
-
     /// <summary>A member 421 or placement header teaches placement without a round trip.</summary>
     public void NotePlacement(string database, IReadOnlyList<string> regions)
     {
@@ -251,24 +212,6 @@ public sealed class TerraScaleDiscoveryRouter
         }
     }
 
-    private static Uri? FirstAvailableCatalogHost(TerraScaleRegionCatalog catalog)
-    {
-        foreach (var region in catalog.Regions)
-        {
-            if (!region.Available)
-            {
-                continue;
-            }
-
-            if (catalog.Hosts.TryGetValue(region.Code, out var host))
-            {
-                return host;
-            }
-        }
-
-        return null;
-    }
-
     /// <summary>
     /// Selects the endpoint for one operation: the scope's remembered region
     /// while it is still in the document and capability-eligible, otherwise
@@ -326,15 +269,6 @@ public sealed class TerraScaleDiscoveryRouter
         var loopbackClient = TerraScaleRoutingValidation.IsDevOrigin(discoveryOrigin);
         var document = TerraScaleRoutingValidation.TryParseRoutingDocument(payload, database, DefaultBranch, loopbackClient);
         return document ?? throw new TerraScaleDiscoveryException("invalid_document", "Atlas returned a malformed routing document.");
-    }
-
-    private async Task<TerraScaleRegionCatalog> FetchRegionCatalogAsync(CancellationToken cancellationToken)
-    {
-        var target = new Uri(discoveryOrigin, "/api/v1/regions");
-        var payload = await GetMetadataAsync(target, "region catalog", cancellationToken).ConfigureAwait(false);
-        var loopbackClient = TerraScaleRoutingValidation.IsDevOrigin(discoveryOrigin);
-        var catalog = TerraScaleRoutingValidation.TryParseRegionCatalog(payload, loopbackClient);
-        return catalog ?? throw new TerraScaleDiscoveryException("invalid_document", "Atlas returned a malformed region catalog.");
     }
 
     /// <summary>One bounded, unauthenticated metadata GET; never cacheable, the SDK routing cache owns caching.</summary>

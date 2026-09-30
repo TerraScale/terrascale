@@ -26,8 +26,8 @@ a stable idempotency key. Caller cancellation and `Retry-After` are respected.
 
 If discovery fails or times out, database requests and reactive attach use
 `https://api.terrascale.tech` so Atlas can proxy them. Database-less member
-routes use the region catalog, with the API proxy as their fallback. The
-catalog route itself targets Atlas; organization and project routes use the
+routes use the Atlas API proxy, since discovery requires a database selector.
+The catalog route itself targets Atlas; organization and project routes use the
 configured `BaseAddress`.
 
 A custom `BaseAddress` disables discovery, including when
@@ -36,7 +36,7 @@ A custom `BaseAddress` disables discovery, including when
 `RegionAffinity = Failover` keeps the preferred-region option and can move to
 another eligible region. `DiscoveryBaseAddress` and `DiscoveryTimeout`
 (default 3 seconds) configure metadata requests for the default API base.
-Routing caches belong to the client instance.
+Discovery caches and pins belong to the client instance.
 
 ## What is here
 

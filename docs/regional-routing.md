@@ -17,10 +17,11 @@ return the original response.
 
 Unavailable, malformed, or timed-out discovery falls back to the Atlas API
 proxy, with a short discovery failure backoff. Reactive attach uses the same
-fallback. Database-less member routes select from the region catalog.
+fallback. Database-less member routes use the Atlas API proxy, since discovery requires
+a database selector.
 
 `PreferredRegion` with `RegionAffinity = Failover` selects an eligible preferred
 region before falling back to discovery order. `RegionAffinity = Strict`
 requires a preferred region and targets its `.api.` origin directly. A custom
 `BaseAddress` disables discovery even with `DiscoveryBaseAddress` configured.
-Each client owns its discovery, pin, and catalog state.
+Each client owns its discovery and pin state.

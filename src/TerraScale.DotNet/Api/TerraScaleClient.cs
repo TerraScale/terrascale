@@ -1186,10 +1186,6 @@ public sealed class TerraScaleClient
                 }
 
                 return null;
-            case TerraScaleRouteKind.CatalogSelected:
-                return await router.ResolveCatalogBaseAsync(cancellationToken).ConfigureAwait(false) is { } catalogHost
-                    ? (catalogHost, null)
-                    : null;
             default:
                 return null;
         }

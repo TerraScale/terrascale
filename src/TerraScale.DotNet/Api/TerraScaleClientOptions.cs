@@ -25,7 +25,7 @@ public sealed record TerraScaleClientOptions
     public Uri? DiscoveryBaseAddress { get; set; }
 
     /// <summary>
-    /// Bounded timeout for Atlas discovery and region-catalog requests. The
+    /// Bounded timeout for Atlas discovery requests. The
     /// default is 3 seconds; discovery never blocks a data request longer.
     /// </summary>
     public TimeSpan DiscoveryTimeout { get; set; } = TimeSpan.FromSeconds(3);
