@@ -46,12 +46,12 @@ lint: js check-generated
 
 # Package unit tests plus the browser suites, which drive Chromium through
 # playwright-go against an in-process dashboard, or DASHBOARD_E2E_BASE_URL
-# when set.
+# when set. Keep four concurrent flows to bound browser load during onboarding.
 test-fast: js
-	$(GO) test -race -short -count=1 -parallel 8 ./internal/... ./tests/...
+	$(GO) test -race -short -count=1 -parallel 4 ./internal/... ./tests/...
 
 test-slow: js
-	$(GO) test -race -count=1 -parallel 8 ./internal/... ./tests/...
+	$(GO) test -race -count=1 -parallel 4 ./internal/... ./tests/...
 
 perf: js
 	DASHBOARD_E2E_PERF=1 $(GO) test -count=1 -run TestPerformance -v ./tests/e2e
