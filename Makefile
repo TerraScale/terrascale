@@ -48,6 +48,8 @@ lint: js check-generated
 # playwright-go against an in-process dashboard, or DASHBOARD_E2E_BASE_URL
 # when set. Browser tests initialize Monaco and exercise dialogs; running
 # several at once can starve Chromium and time out otherwise-stable actions.
+# Serial browser runs take about 6–7 minutes, within CI's 30-minute budget;
+# keep internal unit tests parallel so only the contention-prone suite slows.
 test-fast: js
 	$(GO) test -race -short -count=1 -parallel 8 ./internal/...
 	$(GO) test -race -short -count=1 -parallel 1 ./tests/...
