@@ -13,7 +13,7 @@ exits non-zero when the sandbox is unavailable. An absent sandbox is a failed
 gate, not a passing fixture run.
 
 ```bash
-TERRASCALE_SANDBOX_URL=https://<region>.terrascale.tech \
+TERRASCALE_SANDBOX_URL=https://<region>.api.terrascale.tech \
 TERRASCALE_SANDBOX_API_KEY=ts_... \
 TERRASCALE_SANDBOX_DATABASE_ID=db_... \
 npm run test:remote

@@ -97,7 +97,7 @@ Base domain terrascale.tech. Regions at launch: ${regions.map((region) => region
 - Nearest-region API router: https://api.terrascale.tech — forwards requests
   to the nearest configured regional TerraBase HTTPS API. SDKs use discovery
   to select direct regional origins.
-- Direct regional REST + WebSocket: ${regions.map((region) => `https://${region}.terrascale.tech`).join(",\n  ")} — direct
+- Direct regional REST + WebSocket: ${regions.map((region) => `https://${region}.api.terrascale.tech`).join(",\n  ")} — direct
   routing with catalog fallback; SDK data requests go straight to the region.
 - Reactive HTTP (live queries; CDN-backed long-polling, capability header):
   https://sync.api.terrascale.tech

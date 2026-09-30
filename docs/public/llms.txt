@@ -80,9 +80,9 @@ Base domain terrascale.tech. Regions at launch: GRU, SFO, FRA.
 - Nearest-region API router: https://api.terrascale.tech — forwards requests
   to the nearest configured regional TerraBase HTTPS API. SDKs use discovery
   to select direct regional origins.
-- Direct regional REST + WebSocket: https://gru.terrascale.tech,
-  https://sfo.terrascale.tech,
-  https://fra.terrascale.tech — direct
+- Direct regional REST + WebSocket: https://gru.api.terrascale.tech,
+  https://sfo.api.terrascale.tech,
+  https://fra.api.terrascale.tech — direct
   routing with catalog fallback; SDK data requests go straight to the region.
 - Reactive HTTP (live queries; CDN-backed long-polling, capability header):
   https://sync.api.terrascale.tech
