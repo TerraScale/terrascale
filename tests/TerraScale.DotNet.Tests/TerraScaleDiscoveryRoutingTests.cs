@@ -74,6 +74,17 @@ public sealed class TerraScaleDiscoveryRoutingTests
     }
 
     [Test]
+    public async Task TransportTimeoutFailsOverWithoutCancellingTheCaller()
+    {
+        var transport = new ScriptedTransport { TimeoutRegionalRequests = true };
+        var client = CreateClient(transport, new Uri("https://atlas-timeout.test"));
+        _ = await client.Documents.GetAsync("orders-timeout", "items", "item-1");
+        _ = await client.Documents.GetAsync("orders-timeout", "items", "item-1");
+        await Assert.That(transport.Requests.Count).IsEqualTo(4);
+        await Assert.That(transport.Requests[^1]).IsEqualTo("GET https://gru.api.terrascale.tech/api/v1/databases/orders-timeout/collections/items/documents/item-1");
+    }
+
+    [Test]
     public async Task MisdirectionWithoutPlacementFailsOverAndRepins()
     {
         var transport = new ScriptedTransport { MisdirectDataRequests = true, OmitPlacement = true };
@@ -397,6 +408,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
         public bool FailRegionalRequests { get; set; }
         public bool FailAllRegionalRequests { get; set; }
         public bool ThrowRegionalRequests { get; set; }
+        public bool TimeoutRegionalRequests { get; set; }
         public bool ThrowDiscovery { get; set; }
         public bool OmitPlacement { get; set; }
         public HttpStatusCode RegionalFailureStatus { get; set; } = HttpStatusCode.ServiceUnavailable;
@@ -447,6 +459,11 @@ public sealed class TerraScaleDiscoveryRoutingTests
             if (ThrowRegionalRequests && uri.Host == "fra.api.terrascale.tech")
             {
                 throw new HttpRequestException("Region offline");
+            }
+
+            if (TimeoutRegionalRequests && uri.Host == "fra.api.terrascale.tech")
+            {
+                throw new TaskCanceledException("Regional transport timed out");
             }
 
             if ((FailRegionalRequests && uri.Host == "fra.api.terrascale.tech") ||

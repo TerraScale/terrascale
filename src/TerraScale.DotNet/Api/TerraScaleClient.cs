@@ -1134,7 +1134,8 @@ public sealed class TerraScaleClient
                 response.Dispose();
                 await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
             }
-            catch (HttpRequestException exception)
+            catch (Exception exception) when (exception is HttpRequestException ||
+                exception is OperationCanceledException && !requestCancellationToken.IsCancellationRequested)
             {
                 var alternative = TryFailover(routing, routedBase, failedRegions);
                 if (alternative && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry))

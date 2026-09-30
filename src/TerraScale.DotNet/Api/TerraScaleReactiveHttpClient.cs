@@ -90,7 +90,8 @@ public sealed class TerraScaleReactiveHttpClient
         {
             response = await SendWithRetryAsync(request, cancellationToken).ConfigureAwait(false);
         }
-        catch (HttpRequestException)
+        catch (Exception exception) when (exception is HttpRequestException ||
+            exception is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             // A transport failure against a discovered regional endpoint
             // demotes that region; the next attach resolves to the next
