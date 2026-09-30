@@ -86,8 +86,8 @@ pub enum RegionAffinity {
     Strict,
 }
 
-/// Global REST entry point (GOAL D-24). Since ADR 0050 §8 this origin serves
-/// only dashboard-owned product routes; member traffic goes regional.
+/// Global REST entry point and nearest-region router (GOAL D-24).
+/// SDK data traffic uses discovered regional endpoints or strict region pinning.
 pub const GLOBAL_API_BASE_URL: &str = "https://api.terrascale.tech";
 
 /// Host of [`GLOBAL_API_BASE_URL`]; regional members live under
