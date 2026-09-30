@@ -2,6 +2,7 @@ GO ?= go
 NPM ?= npm
 PORT ?= 5481
 GOFLAGS ?= -mod=vendor
+GO_TEST_FLAGS ?= -race -count=1
 VERSION ?= $(shell git rev-parse HEAD 2>/dev/null || echo dev)
 export GOFLAGS
 
@@ -46,12 +47,18 @@ lint: js check-generated
 
 # Package unit tests plus the browser suites, which drive Chromium through
 # playwright-go against an in-process dashboard, or DASHBOARD_E2E_BASE_URL
-# when set.
+# when set. Browser tests initialize Monaco and exercise dialogs; running
+# several at once can starve Chromium and time out otherwise-stable actions.
+# Serial browser runs take about 6–7 minutes, within CI's 30-minute budget;
+# keep internal unit tests parallel and fail fast if they fail. -p 1 prevents
+# future browser test packages from running alongside each other as well.
 test-fast: js
-	$(GO) test -race -short -count=1 -parallel 8 ./internal/... ./tests/...
+	$(GO) test $(GO_TEST_FLAGS) -short -parallel 8 ./internal/...
+	$(GO) test $(GO_TEST_FLAGS) -short -p 1 -parallel 1 ./tests/...
 
 test-slow: js
-	$(GO) test -race -count=1 -parallel 8 ./internal/... ./tests/...
+	$(GO) test $(GO_TEST_FLAGS) -parallel 8 ./internal/...
+	$(GO) test $(GO_TEST_FLAGS) -p 1 -parallel 1 ./tests/...
 
 perf: js
 	DASHBOARD_E2E_PERF=1 $(GO) test -count=1 -run TestPerformance -v ./tests/e2e

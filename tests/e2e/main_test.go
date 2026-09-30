@@ -3,6 +3,8 @@
 // By default every run starts the dashboard in-process on a loopback port.
 // Set DASHBOARD_E2E_BASE_URL to exercise an already-running deployment.
 // Tests that need an in-process fixture are skipped with -short.
+// Run with -parallel 1 (or make test-fast/test-slow): concurrent Chromium
+// journeys can starve the browser and time out under the race detector.
 package e2e
 
 import (

@@ -80,9 +80,13 @@
 }
 
 .ts-auth-providers {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--ts-s2);
+}
+
+.ts-auth-providers .ts-btn {
+  flex: 1 1 calc((100% - 2 * var(--ts-s2)) / 3);
 }
 
 .ts-auth-locale .ts-select {
