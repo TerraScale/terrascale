@@ -1,3 +1,5 @@
+import { isTestApiHostname } from "./native-origin.js";
+
 /** Shared fetch signature; native database and hosted identity credentials stay distinct. */
 export type FetchLike = (
   input: RequestInfo | URL,
@@ -65,10 +67,7 @@ export function resolveTsAuthRuntimeConfig(
     return { apiBaseUrl, maxRetryAttempts, retryDelayMs, requestTimeoutMs };
   }
   const hostname = url.hostname.replace(/\.+$/u, "");
-  if (
-    hostname === "api.terrascale.tech" ||
-    hostname.endsWith(".api.terrascale.tech")
-  ) {
+  if (isTestApiHostname(hostname)) {
     throw new TypeError("The test API host is not an admitted service origin.");
   }
   for (const key of url.searchParams.keys()) {

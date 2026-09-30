@@ -43,11 +43,27 @@ describe("current database request conformance", () => {
     expect(() => createTerraBaseClient({ ...scope, endpoint: `https://${label}.terrascale.tech`, apiKey: "key" })).toThrow(/canonical regional hostname/u);
   });
 
-  test.each(["https://terrascale.tech", "https://gru.terrascale.tech.", "https://GRU.terrascale.tech", "https://nested.gru.terrascale.tech", "https://gru.terrascale.tech:8443", "https://-gru.terrascale.tech"])("rejects noncanonical TerraScale origin %s", endpoint => {
+  test.each([
+    "https://terrascale.tech", "https://gru.terrascale.tech.", "https://GRU.terrascale.tech",
+    "https://nested.gru.terrascale.tech", "https://gru.terrascale.tech:8443", "https://-gru.terrascale.tech",
+    "https://gru.terrascale.tech:443", "https://%67ru.terrascale.tech", "https://K.terrascale.tech",
+    "https://abcdefghijklmnopq.terrascale.tech", "http://gru.terrascale.tech",
+  ])("rejects noncanonical TerraScale origin %s", endpoint => {
     expect(() => createTerraBaseClient({ ...scope, endpoint, apiKey: "key" })).toThrow(/canonical regional hostname/u);
   });
 
-  test.each(["https://gru.terrascale.tech", "https://fra.terrascale.tech/", "https://native.example.test:8443", "https://CUSTOM.example.test"])("preserves direct provisioned origin %s", async endpoint => {
+  test.each(["https://native.example.test.", "https://native.example.test..:8443", "http://localhost.:9911"])("rejects trailing-dot provisioned origin %s without acquiring credentials or dispatching", endpoint => {
+    let credentials = 0, requests = 0;
+    expect(() => createTerraBaseClient({ ...scope, endpoint, apiKey: () => { credentials++; return "key"; }, fetch: async () => { requests++; return json(point); } })).toThrow(/canonical hostname/u);
+    expect(credentials).toBe(0);
+    expect(requests).toBe(0);
+  });
+
+  test.each([
+    "https://gru.terrascale.tech", "https://fra.terrascale.tech/", "https://native.example.test:8443", "https://CUSTOM.example.test",
+    "https://ams.terrascale.tech", "https://abcdefghijklmnop.terrascale.tech", "https://9-a.terrascale.tech",
+    "http://localhost:9911", "http://127.0.0.1:9911", "http://[::1]:9911", "http://native.localhost:9911",
+  ])("preserves direct provisioned origin %s", async endpoint => {
     const requests: Request[] = [];
     const client = createTerraBaseClient({ ...scope, endpoint, apiKey: "key", fetch: async input => { requests.push(input as Request); return json(point); } });
     expect((await client.read(collection, document)).ok).toBe(true);

@@ -11,9 +11,9 @@ import type {
 } from "./database-types.js";
 import type { FetchLike } from "./config.js";
 import { TerraBaseDiscoveryError, TerraBaseDiscoveryRouter, type TerraBaseRoutingCapability } from "./discovery.js";
+import { nativeServiceOrigin } from "./native-origin.js";
 
 const maximumResponseBytes = 4 * 1024 * 1024;
-const reservedRegionalNames = new Set(["api", "atlas", "auth", "sync", "status", "www", "app", "dash", "docs", "git", "cdn", "admin", "mcp", "mail"]);
 
 export type TerraBaseClientConfig = DatabaseScope & {
   /** Native service key used for authenticated Atlas discovery and the selected regional listener. */
@@ -31,29 +31,6 @@ export type DatabaseRequestOptions = { readonly signal?: AbortSignal };
 declare const preparedBrand: unique symbol;
 export type PreparedDatabaseCommit = DatabaseTransactionIdentity & { readonly [preparedBrand]: true };
 const preparedRequests = new WeakMap<PreparedDatabaseCommit, { readonly client: TerraBaseClient; readonly scope: string; readonly endpoint: string | undefined; readonly body: string; readonly capabilities: readonly TerraBaseRoutingCapability[] }>();
-
-function bareOrigin(raw: string, local: boolean): string {
-  const url = new URL(raw);
-  if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "" || url.pathname !== "/") {
-    throw new TypeError("Service origin must be bare and contain no credentials.");
-  }
-  const hostname = url.hostname.replace(/\.+$/u, "");
-  if (hostname === "api.terrascale.tech" || hostname.endsWith(".api.terrascale.tech")) {
-    throw new TypeError("The test API host is not a regional TerraBase endpoint.");
-  }
-  if (hostname === "terrascale.tech" || hostname.endsWith(".terrascale.tech")) {
-    const region = hostname.slice(0, -".terrascale.tech".length);
-    const authority = raw.slice(raw.indexOf("//") + 2).split(/[/?#]/u, 1)[0]!;
-    if (url.hostname !== hostname || authority !== hostname || !/^[a-z0-9][a-z0-9-]{0,15}$/u.test(region) || reservedRegionalNames.has(region)) {
-      throw new TypeError("TerraScale service origins must use a canonical regional hostname.");
-    }
-  }
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || url.hostname.endsWith(".localhost");
-  if (url.protocol !== "https:" && !(local && url.protocol === "http:" && loopback)) {
-    throw new TypeError("Service origins must use HTTPS, except loopback development.");
-  }
-  return url.origin;
-}
 
 function timeout(value: number | undefined, defaultValue: number, maximum: number): number {
   const resolved = value ?? defaultValue;
@@ -164,7 +141,7 @@ export class TerraBaseClient {
     this.#config = { ...config };
     this.#fetch = config.fetch ?? globalThis.fetch.bind(globalThis);
     this.#path = scopePath(this.#scope);
-    this.#endpoint = config.endpoint === undefined ? undefined : bareOrigin(config.endpoint, true);
+    this.#endpoint = config.endpoint === undefined ? undefined : nativeServiceOrigin(config.endpoint);
     this.#requestTimeoutMs = timeout(config.requestTimeoutMs, 30_000, 300_000);
     this.#discovery = this.#endpoint === undefined ? new TerraBaseDiscoveryRouter(this.#scope, this.#fetch, config.discoveryTimeoutMs) : undefined;
     if (typeof config.apiKey !== "function") this.#validateKey(config.apiKey);

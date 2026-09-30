@@ -16,6 +16,28 @@ const response = (bytes = successBytes, status = 200): Response => new Response(
 afterEach(() => vi.useRealTimers());
 
 describe("actual receiver frozen byte conformance", () => {
+  test.each(["API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH", "DOCS", "GIT", "CDN", "ADMIN", "MCP", "MAIL"])("rejects reserved %s as an endpoint or residency region", code => {
+    const value = fixture();
+    value.endpoints[0].region = code;
+    value.endpoints[0].url = `https://${code.toLowerCase()}.terrascale.tech`;
+    expect(() => parseTerraBaseRoutingDocument(value, scope, now)).toThrow(/Invalid native region/u);
+    const resident = fixture(); resident.residency = [code];
+    expect(() => parseTerraBaseRoutingDocument(resident, scope, now)).toThrow(/Invalid native region/u);
+  });
+
+  test.each([
+    ["GRU", "https://gru.terrascale.tech"],
+    ["AMS", "https://ams.terrascale.tech"],
+    ["ABCDEFGHIJKLMNOP", "https://abcdefghijklmnop.terrascale.tech"],
+    ["9-A", "https://9-a.terrascale.tech"],
+  ])("preserves canonical native endpoint and residency %s", (code, origin) => {
+    const value = fixture(); value.residency = [code];
+    value.endpoints[0].region = code; value.endpoints[0].url = origin;
+    const parsed = parseTerraBaseRoutingDocument(value, scope, now);
+    expect(parsed.residency).toEqual([code]);
+    expect(parsed.endpoints[0]).toMatchObject({ region: code, url: origin });
+  });
+
   test("pins the actual receiver success and forbidden response bytes", () => {
     expect(createHash("sha256").update(successBytes).digest("hex")).toBe("d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0");
     expect(createHash("sha256").update(forbiddenBytes).digest("hex")).toBe("3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c");
