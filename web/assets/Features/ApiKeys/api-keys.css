@@ -1,15 +1,5 @@
 /* API keys: one-time secret banner, credential type badges, and filters. */
 
-.ts-apikeys-page {
-  padding-top: var(--ts-s4);
-}
-
-@media (max-width: 47.99rem) {
-  .ts-apikeys-page {
-    padding-top: var(--ts-s3);
-  }
-}
-
 /* Keep the create action right-aligned when the card header wraps. */
 .ts-apikeys-page .ts-card-actions {
   margin-left: auto;
