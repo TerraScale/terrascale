@@ -473,9 +473,9 @@ describe("native client consumes actual Atlas admission", () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
     const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
       const request = input as Request;
-      return response(new URL(request.url).hostname === "atlas.terrascale.tech" ? successBytes : { version: 1, phase: "poll", groups: [{ sequence: "1", effects: [{ document, point: null }, { document: replica, point: null }] }], poll_cursor: "opaque" });
+      return response(new URL(request.url).hostname === "atlas.terrascale.tech" ? successBytes : { version: 1, phase: "poll", groups: [{ sequence: "1", effects: [{ document, point: null }, { document: replica, point: null }] }], poll_cursor: "b3BhcXVl" });
     } });
-    const result = await client.subscription(collection, { phase: "poll", predicate: { op: "is_missing", path: [1] }, poll_cursor: "opaque" });
+    const result = await client.subscription(collection, { phase: "poll", predicate: { op: "is_missing", path: [1] }, poll_cursor: "b3BhcXVl" });
     expect(result.ok && result.value.phase === "poll" && result.value.groups[0]?.effects).toHaveLength(2);
   });
 

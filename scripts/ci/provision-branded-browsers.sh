@@ -34,8 +34,20 @@ while IFS= read -r browser_root; do
   fi
 done < "${browser_paths}"
 test -n "${chrome}" && test -n "${edge}"
-test "$("${chrome}" --version)" = "Google Chrome 154.0.8037.57"
-test "$("${edge}" --version)" = "Microsoft Edge 154.0.4258.37"
+# The builder's /lib runtime path belongs to its bundled toolchains. Mixing
+# those libraries with a vendor browser's pinned Nix closure aborts at startup.
+# Scrub it per browser process; Node and the other builder tools still need it.
+launcher_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/terrascale-browser-launchers.XXXXXX")"
+for browser in chrome edge; do
+  vendor_executable="${!browser}"
+  printf '#!/bin/sh\nunset LD_LIBRARY_PATH LD_PRELOAD\nexec "%s" "$@"\n' \
+    "${vendor_executable}" > "${launcher_dir}/${browser}"
+  chmod 700 "${launcher_dir}/${browser}"
+done
+chrome="${launcher_dir}/chrome"
+edge="${launcher_dir}/edge"
+test "$("${chrome}" --version | xargs)" = "Google Chrome 154.0.8037.57"
+test "$("${edge}" --version | xargs)" = "Microsoft Edge 154.0.4258.37"
 printf 'PLAYWRIGHT_CHROME_EXECUTABLE_PATH=%s\nPLAYWRIGHT_EDGE_EXECUTABLE_PATH=%s\n' \
   "${chrome}" "${edge}" >> "${GITHUB_ENV}"
 "${chrome}" --version

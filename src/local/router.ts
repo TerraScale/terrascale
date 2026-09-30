@@ -424,14 +424,20 @@ export class TerraScaleLocalRouter {
 
   #cursor(payload: JsonObject): string {
     const value = Buffer.from(JSON.stringify(payload)).toString("base64url");
-    return `${value}_${createHmac("sha256", this.#secret).update(value).digest("base64url")}`;
+    const signed = `${value}_${createHmac("sha256", this.#secret).update(value).digest("base64url")}`;
+    return Buffer.from(signed).toString("base64url");
   }
   #cursorPayload(value: unknown, route: string, predicate: string): JsonObject {
     if (typeof value !== "string" || value.length > 1024)
       throw new NativeLocalError(400, "invalid_cursor");
-    const separator = value.length - 44;
-    const body = value.slice(0, separator);
-    const signature = value.slice(separator + 1);
+    const signed = Buffer.from(value, "base64url").toString("utf8");
+    if (Buffer.from(signed).toString("base64url") !== value)
+      throw new NativeLocalError(400, "invalid_cursor");
+    const separator = signed.length - 44;
+    if (separator < 1 || signed[separator] !== "_")
+      throw new NativeLocalError(400, "invalid_cursor");
+    const body = signed.slice(0, separator);
+    const signature = signed.slice(separator + 1);
     const expected = createHmac("sha256", this.#secret)
       .update(body)
       .digest("base64url");
