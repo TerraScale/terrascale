@@ -1,41 +1,37 @@
-# Real-service SDK qualification
+# Native package qualification
 
-`run.sh` consumes a coordinator-supplied immutable `.nupkg` after checking
-`TERRASCALE_SDK_NUPKG_SHA256`, restores this standalone consumer from that
-artifact, and runs one required phase. It has no
-`ProjectReference`, mock handler, or skipped mode. The caller must provide:
+`check_native_package.py` consumes one immutable `.nupkg`; it never packs or
+references the SDK project. Supply its exact version, SHA-256 and target:
 
-`TERRASCALE_API_URL`, `TERRASCALE_AUTH_URL`, `TERRASCALE_PROJECT_ID`,
-`TERRASCALE_DATABASE_ID`, `TERRASCALE_API_KEY`, and
-`TERRASCALE_JOURNEY_RUN_ID`.
+```bash
+python3 scripts/qualification/check_native_package.py \
+  --package /path/to/TerraScale.DotNet.VERSION.nupkg \
+  --sha256 LOWERCASE_SHA256 --version VERSION --framework net10.0 \
+  --receipt /owned/evidence/net10-consumer.json
+```
 
-Set `TERRASCALE_SDK_NUPKG` and its lowercase hexadecimal
-`TERRASCALE_SDK_NUPKG_SHA256` before every invocation. A coordinator may
-prepare the artifact separately with `dotnet pack`; phase execution never
-rebuilds or repacks source.
+Use a distinct receipt for `net11.0`. The runner checks package ID/version and
+all six exact native contract/provenance entries. It copies only
+`NativeConsumer.csproj`, `NativeConsumer.cs` and `NativeChecks.cs` into an
+owned temporary directory. Restore maps `TerraScale.DotNet` exclusively to the
+supplied local feed and uses NuGet.org for external dependencies, with fresh
+owned caches. Each phase has a 120-second deadline, a 1 MiB output bound and
+retained bounded output. The runner terminates a timed-out phase process group
+and removes its scratch directory.
 
-Run `./run.sh --phase seed|verify|exercise|cleanup`. Output is bounded JSON
-observations and never includes credentials or response bodies. `verify`
-expects `${runId}-{typescript,go,rust,dotnet,cli}` documents. `cleanup` deletes only
-the three dotnet-owned document IDs, attempts every deletion, and aggregates failures.
-Run IDs must match `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`. Missing inputs and any live failure are
-non-zero failures; local execution does not qualify a provider run until the
-coordinator retains its logs and package hash.
+The installed public consumer checks canonical native values and atomic
+vectors, the corrected producer create/update/delete example digests,
+transaction-ID invariance, native reads/queries/commit/status handling,
+original-identity recovery, authenticated Atlas routing boundaries, canonical
+TerraScale-zone direct origins, independent provisioned/development origins
+and installed public auth diagnostics with plain/labeled credential echoes.
+Successful receipts identify package bytes and copied inputs; they report
+`PASS_PACKAGE_PUBLIC_HANDLER_CONSUMER` and producer-native execution as
+`NOT RUN`. This is package and local handler evidence, not a real-service
+journey or publication claim.
 
-`tests/TerraScale.DotNet.Qualification/Regression.csproj` exercises the
-journey's assertions and bounded waits with local inputs. These runner
-regressions are separate from production
-qualification. Run them against the same supplied immutable package with
-`./run.sh --regression`; this mode requires only `TERRASCALE_SDK_NUPKG` and
-`TERRASCALE_SDK_NUPKG_SHA256`, and still verifies the package ID, version, and
-copied-artifact hash before restoring
-`tests/TerraScale.DotNet.Qualification/Regression.csproj`.
-
-If the provider contract supplies a deliberately out-of-scope project API key,
-set `TERRASCALE_DENY_API_KEY` (and optionally
-`TERRASCALE_DENY_DATABASE_ID`, which defaults to `TERRASCALE_DATABASE_ID`) for
-the live `exercise` phase. The journey then requires the deny key to receive
-HTTP 401 or 403 from the selected database; the check is skipped when the
-optional input is absent. The deny key must differ from the authorized key.
-All mutation calls use deterministic, phase-scoped idempotency keys so a
-replayed request can be distinguished from a new write.
+Run this under the qualification coordinator's finite grant. The outer
+coordinator must track child process groups and retain logs and receipts.
+Do not rebuild a historical candidate or label its evidence as a changed
+successor. [Package distribution](../../docs/native-package-distribution.md)
+describes CI export and exact-byte verification.

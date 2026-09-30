@@ -1,39 +1,49 @@
-# ADR 0004: terrabase-published public contract parity
+# ADR 0004: owner-published public contract parity
 
-Status: Accepted boundary; the hand-copied route binding was deleted; the pinned contract (product item P-2b) is the mechanism.
+Status: Accepted boundary.
 
-Date: 2026-08-29
+Date: 2026-09-30
 
 ## Context
 
-`terrabase` is the Rust engine and the owner and producer of TerraScale's
-public database and reactive API. Its versioned REST and reactive contracts
-are the only server contracts that the customer SDKs consume. TBEP is the
-private protobuf/gRPC control protocol for the orchestrator and CLI; it is not
-on the customer request path and is not a .NET customer SDK surface.
-
-This repository owns only the customer-facing .NET SDK. It does not own a
-server, gateway, adapter, or private control-protocol client.
+TerraBase owns the native v1 database wire contract. Atlas owns authenticated
+scoped native discovery and the separate auth discovery surface. ts-auth owns
+its instance management and OIDC contracts. This repository owns their public
+.NET clients, not server routes or private control protocols.
 
 ## Decision
 
-The .NET SDK implements only named customer operations published by
-terrabase. Each operation binds method, versioned path or frame, operation
-identity, parameters, media types, typed models, nullability, security scope,
-limits, errors, partial outcomes, idempotency, retry, pagination, checkpoints,
-and cancellation behavior.
+Native bindings consume the exact tracked inputs in `contracts/native`:
+producer OpenAPI, atomic vectors, Atlas wire identity and success/forbidden
+fixtures, with recorded provenance. `NativeContract` embeds and exposes these
+identities. Native methods bind provisioned UUID scope, unsigned shard,
+schema identity, typed values, causal state, atomic preconditions, original
+transaction identity, effect hashing, errors, pagination and cancellation to
+that contract. No generic request or inferred proxy endpoint conceals a gap.
 
-terrabase publishes `openapi.json`, the MessagePack manifest, and TBEP protos
-as a versioned contract package (D-33). The SDK pins that package and
-generates its public bindings from it; CI fails on drift. A missing or changed
-public operation blocks the affected SDK member or requires an explicit,
-versioned compatibility decision. No generic request, arbitrary path, custom
-header, private route, direct engine path, or TBEP escape hatch may hide a
-contract gap.
+Database traffic uses authenticated Atlas admission and eligible direct
+regional origins. Test API hosts are not production native origins. A direct
+constructor requires prior caller admission and does not infer eligibility.
+TerraScale-zone native origins require canonical single-level nonreserved
+regional hosts. Explicit independent HTTPS origins and explicit development
+loopback remain available. Atlas authority validation is separate.
+
+The existing ts-auth feature remains isolated in `AuthService`, including its
+own fixed safe diagnostic exception, owner-published regional token validation
+and DI registration. Unknown error codes, arbitrary producer messages and
+response bodies are omitted; options formatting never includes credentials.
+It follows the actual management and OAuth contracts, and has no dependency
+on retired database models or routing.
+
+Replaced logical-name database clients, generated v1 wrappers, database proxy
+routing, reactive clients and the obsolete EF facade are deleted with their
+obsolete tests, materialization scripts and documentation. New EF support
+would require an actual public native mapping rather than retaining the old
+logical Documents adapter. There are no compatibility aliases.
 
 ## Exit evidence
 
-Every published member needs a parity record and success plus expected-failure
-tests against the same terrabase schema revision. Breaking behavior requires
-an explicit version and migration record. The SDK must not retain clients,
-models, routes, or tests for operations that terrabase no longer publishes.
+Changed source, package layout and package-only consumers are reviewed and
+qualified against immutable identities. Contract and local handler tests do
+not establish publication or live-service readiness. Releases require
+separate approval and exact qualified package bytes.

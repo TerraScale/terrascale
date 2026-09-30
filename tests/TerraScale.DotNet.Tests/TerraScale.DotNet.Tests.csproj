@@ -16,14 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\contracts\v1\conformance\msgpack\hostile-vectors.json" Link="conformance\hostile-vectors.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\contracts\v1\conformance\reactive.json" Link="conformance\reactive.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\contracts\v1\conformance\http.json" Link="conformance\http.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\contracts\v1\openapi.json" Link="conformance\openapi.json" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\..\src\TerraScale.DotNet\TerraScale.DotNet.csproj" />
+    <Compile Include="../TerraScale.DotNet.Qualification/NativeChecks.cs" Link="Native/NativeChecks.cs" />
   </ItemGroup>
-
 </Project>

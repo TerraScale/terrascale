@@ -71,7 +71,7 @@ internal sealed class TerraScaleAuthEndpointDiscovery(HttpClient httpClient, Uri
             {
                 var region = entry.GetProperty("region").GetString();
                 var rawUrl = entry.GetProperty("url").GetString();
-                if (region is null || !TerraScaleRegionCodes.IsKnown(region) || !seen.Add(region) ||
+                if (region is null || !TerraScaleAuthRegionCodes.IsValid(region) || !seen.Add(region) ||
                     !Uri.TryCreate(rawUrl, UriKind.Absolute, out var url) ||
                     url.Scheme != Uri.UriSchemeHttps || !url.IsDefaultPort || url.UserInfo.Length != 0 ||
                     url.AbsolutePath != "/" || url.Query.Length != 0 || url.Fragment.Length != 0 ||

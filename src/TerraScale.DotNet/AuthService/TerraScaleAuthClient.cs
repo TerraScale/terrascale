@@ -41,11 +41,17 @@ public sealed class TerraScaleAuthClient
         var optionSnapshot = options with { };
         optionSnapshot.Validate();
 
-        if (httpClient.BaseAddress is not null && httpClient.BaseAddress != optionSnapshot.BaseAddress)
+        if (httpClient.BaseAddress is { } baseAddress)
         {
-            throw new ArgumentException(
-                $"HttpClient.BaseAddress '{httpClient.BaseAddress}' conflicts with TerraScaleAuthClientOptions.BaseAddress '{optionSnapshot.BaseAddress}'.",
-                nameof(options));
+            // Uri equality omits user information and fragments. Validate the
+            // caller's address as a bare auth origin before comparing it.
+            TerraScaleAuthClientOptions.ValidateEndpoint(baseAddress, nameof(httpClient));
+            if (baseAddress != optionSnapshot.BaseAddress)
+            {
+                throw new ArgumentException(
+                    "HttpClient.BaseAddress conflicts with the configured ts-auth origin.",
+                    nameof(options));
+            }
         }
 
         this.httpClient = httpClient;
@@ -337,12 +343,10 @@ public sealed class TerraScaleAuthClient
 
         if (response.StatusCode != HttpStatusCode.NoContent)
         {
-            throw new TerraScaleApiException(
+            throw new TerraScaleAuthException(
                 response.StatusCode,
                 $"ts-auth returned HTTP {(int)response.StatusCode}, but HTTP {(int)HttpStatusCode.NoContent} was required.",
                 errorCode: null,
-                requestId: null,
-                responseBody: null,
                 retryAfter: TerraScaleAuthErrors.ResolveRetryAfter(response));
         }
     }
@@ -509,22 +513,17 @@ public sealed class TerraScaleAuthClient
         {
             // Raw JsonException internals (paths, fragments of the body) never
             // escape to SDK consumers.
-            throw new TerraScaleApiException(
+            throw new TerraScaleAuthException(
                 response.StatusCode,
-                // The constant prefix keeps the redacted message non-null.
-                TerraScaleApiException.RedactDiagnostic($"ts-auth returned an invalid response body: {exception.Message}")!,
+                "ts-auth returned an invalid response body.",
                 errorCode: "invalid_response",
-                requestId: null,
-                responseBody: null,
                 retryAfter: TerraScaleAuthErrors.ResolveRetryAfter(response));
         }
 
-        return payload ?? throw new TerraScaleApiException(
+        return payload ?? throw new TerraScaleAuthException(
             response.StatusCode,
             "ts-auth returned an empty response body.",
             errorCode: null,
-            requestId: null,
-            responseBody: null,
             retryAfter: TerraScaleAuthErrors.ResolveRetryAfter(response));
     }
 
