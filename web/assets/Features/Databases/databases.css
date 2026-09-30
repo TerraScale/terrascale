@@ -1,6 +1,10 @@
 /* Databases list and detail: name cell, detail header, create dialog,
    facts grid, backup switch, and the danger zone. */
 
+.ts-databases-page {
+  padding-top: var(--ts-s4);
+}
+
 .ts-db-name {
   display: inline-flex;
   align-items: center;
@@ -142,13 +146,20 @@
 }
 
 @media (max-width: 47.99rem) {
+  .ts-databases-page {
+    padding-top: var(--ts-s3);
+  }
+
   .ts-db-create-form {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
 .ts-db-search {
+  flex: 1 1 240px;
   flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .ts-db-search > .ts-input {
