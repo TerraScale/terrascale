@@ -7,6 +7,9 @@ use serde_json::Value;
 
 use crate::{StoreError, StoreResult};
 
+/// Nearest-region public TerraScale API router.
+pub const TERRASCALE_API_HOST: &str = "api.terrascale.tech";
+
 /// Regional storage authority shared by every hosted auth replica.
 pub const GRU_AUTHORITY_HOST: &str = "gru.terrascale.tech";
 
@@ -88,12 +91,12 @@ impl QueryTransport {
         }
         if !loopback
             && (url.scheme() != "https"
-                || !matches!(host, "api.terrascale.tech" | GRU_AUTHORITY_HOST)
+                || !matches!(host, TERRASCALE_API_HOST | GRU_AUTHORITY_HOST)
                 || url.port().is_some()
                 || url.path() != "/")
         {
             return Err(StoreError::InvalidConfiguration(format!(
-                "Auth query transport requires https://api.terrascale.tech or https://{GRU_AUTHORITY_HOST}"
+                "Auth query transport requires the bare HTTPS origin https://{TERRASCALE_API_HOST} or https://{GRU_AUTHORITY_HOST}, with no non-default port or path"
             )));
         }
         let effective = if loopback {

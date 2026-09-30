@@ -1,3 +1,4 @@
+use auth_store::TERRASCALE_API_HOST;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use std::{collections::HashMap, io};
 
@@ -114,8 +115,8 @@ impl AuthOptions {
             Ok(bytes)
         };
         let public_origin = required("public-origin")?;
-        let terrascale_api_url =
-            optional("terrascale-api-url").unwrap_or_else(|| "https://api.terrascale.tech".into());
+        let terrascale_api_url = optional("terrascale-api-url")
+            .unwrap_or_else(|| format!("https://{TERRASCALE_API_HOST}"));
         let stripe_api_url =
             optional("stripe-api-url").unwrap_or_else(|| "https://api.stripe.com".into());
         for (key, raw) in [

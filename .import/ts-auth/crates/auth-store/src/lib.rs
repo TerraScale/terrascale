@@ -6,7 +6,9 @@ mod methods;
 mod query;
 mod quota;
 pub use audit_export::{AuditVerificationResult, verify_audit_events, verify_audit_export_json};
-pub use query::{GRU_AUTHORITY_HOST, Predicate, QueryPage, QueryRow, QueryTransport};
+pub use query::{
+    GRU_AUTHORITY_HOST, Predicate, QueryPage, QueryRow, QueryTransport, TERRASCALE_API_HOST,
+};
 pub use quota::QuotaCapTransition;
 
 use auth_contracts::models::*;
