@@ -24,13 +24,15 @@ templ PageHeader(title string) {
 }
 
 // CardProps describes a card. Actions render in the card header; Flush drops
-// the body padding so tables and lists run edge to edge.
+// the body padding so tables and lists run edge to edge. ShrinkActions lets
+// responsive header controls shrink below their intrinsic width.
 type CardProps struct {
-	ID          string
-	Title       string
-	Description string
-	Actions     templ.Component
-	Flush       bool
+	ID            string
+	Title         string
+	Description   string
+	Actions       templ.Component
+	Flush         bool
+	ShrinkActions bool
 }
 
 // Card is the one surface used for grouped content; children are its body.
@@ -58,7 +60,7 @@ templ Card(p CardProps) {
 					}
 				</div>
 				if p.Actions != nil {
-					<div class="ts-card-actions">
+					<div class={ "ts-card-actions", templ.KV("ts-card-actions-shrinkable", p.ShrinkActions) }>
 						@p.Actions
 					</div>
 				}

@@ -1,5 +1,17 @@
-/* Databases list and detail: name cell, detail header, create dialog,
+/* Databases list and detail: search, name cell, detail header, create dialog,
    facts grid, backup switch, and the danger zone. */
+
+/* Search shrinks as needed and takes its own full-width row on mobile. */
+.ts-db-search {
+  flex: 0 1 240px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ts-db-search > .ts-input {
+  flex-basis: 240px;
+}
 
 .ts-db-name {
   display: inline-flex;
@@ -141,20 +153,16 @@
   border-bottom: 1px solid var(--ts-line);
 }
 
+.ts-db-setting > .ts-list-main {
+  flex: 1 1 240px;
+}
+
 @media (max-width: 47.99rem) {
+  .ts-db-search {
+    flex-basis: 100%;
+  }
+
   .ts-db-create-form {
     grid-template-columns: minmax(0, 1fr);
   }
-}
-
-.ts-db-search {
-  flex-wrap: nowrap;
-}
-
-.ts-db-search > .ts-input {
-  flex-basis: 240px;
-}
-
-.ts-db-setting > .ts-list-main {
-  flex: 1 1 240px;
 }
