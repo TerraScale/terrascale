@@ -53,6 +53,10 @@
   gap: var(--ts-s2);
 }
 
+.ts-card-actions-shrinkable {
+  min-width: 0;
+}
+
 /* Opt-in header: actions share the title row; description spans below. */
 .ts-card-head-title-actions {
   display: grid;

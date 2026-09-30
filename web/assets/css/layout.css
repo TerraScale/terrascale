@@ -10,6 +10,12 @@
   padding: var(--ts-s8) var(--ts-s10) var(--ts-s12);
 }
 
+/* Pages that lead with content instead of a standalone action row use a
+   compact top inset. Keep both responsive values with the shared layout. */
+.ts-page-compact-top {
+  padding-top: var(--ts-s4);
+}
+
 .ts-eyebrow {
   color: var(--tone);
   font-size: var(--ts-fs-xs);
@@ -118,6 +124,10 @@
   .ts-page {
     gap: var(--ts-s5);
     padding: var(--ts-s5) var(--ts-s4) var(--ts-s10);
+  }
+
+  .ts-page-compact-top {
+    padding-top: var(--ts-s3);
   }
 }
 
