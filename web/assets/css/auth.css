@@ -86,7 +86,7 @@
 }
 
 .ts-auth-providers .ts-btn {
-  flex: 1;
+  flex: 1 1 calc((100% - 2 * var(--ts-s2)) / 3);
 }
 
 .ts-auth-locale .ts-select {
