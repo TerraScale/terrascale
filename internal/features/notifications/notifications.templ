@@ -10,25 +10,27 @@ import (
 )
 
 templ notificationsView(data pageData, csrfToken string) {
-	<main class="ts-page">
+	<main class="ts-page ts-notifications-page">
 		@ui.PageHeader("Notifications") {
-			<form method="post" action="/api/v1/notifications/read-all">
-				@viewFields(data, csrfToken)
-				<button class="ts-btn ts-btn-secondary" type="submit" disabled?={ data.Unread == 0 }>Mark all read</button>
-			</form>
 		}
 		<div class="ts-toolbar">
 			@ui.Tabs("Notification filter", []ui.Tab{
 				{Label: "All", URL: "/notifications", Active: data.Status == "all", Count: data.Total},
 				{Label: "Unread", URL: "/notifications?status=unread", Active: data.Status == "unread", Count: data.Unread},
 			})
-			<p class="ts-meta ts-notifications-summary">
-				{ fmt.Sprint(data.Unread) } unread
-				if data.Critical > 0 {
-					<span>· { fmt.Sprint(data.Critical) } critical</span>
-				}
-				· { fmt.Sprint(data.Total) } total
-			</p>
+			<div class="ts-notifications-actions">
+				<form method="post" action="/api/v1/notifications/read-all">
+					@viewFields(data, csrfToken)
+					<button class="ts-btn ts-btn-secondary" type="submit" disabled?={ data.Unread == 0 }>Mark all read</button>
+				</form>
+				<p class="ts-meta ts-notifications-summary">
+					{ fmt.Sprint(data.Unread) } unread
+					if data.Critical > 0 {
+						<span>· { fmt.Sprint(data.Critical) } critical</span>
+					}
+					· { fmt.Sprint(data.Total) } total
+				</p>
+			</div>
 		</div>
 		if len(data.Notifications) > 0 {
 			<ol class="ts-notification-list">
