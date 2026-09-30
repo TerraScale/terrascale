@@ -163,7 +163,7 @@ function normalizeBaseUrl(baseUrl: string): string {
 
 function strictRegionalBaseUrl(baseUrl: string, region: TerraScaleRegionCode): string {
   const url = new URL(`${baseUrl}/`);
-  const regionalHostname = `${region.toLowerCase()}.api.terrascale.tech`;
+  const regionalHostname = `${region.toLowerCase()}.terrascale.tech`;
   if (url.hostname === "api.terrascale.tech") {
     url.hostname = regionalHostname;
   } else if (url.hostname !== regionalHostname) {

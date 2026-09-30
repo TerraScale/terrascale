@@ -14,8 +14,8 @@ function discoveryPayload(database: string, overrides: Record<string, unknown> =
     placement: "known",
     refreshSeconds: 300,
     endpoints: [
-      { region: "FRA", url: "https://fra.api.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] },
-      { region: "GRU", url: "https://gru.api.terrascale.tech", priority: 2, capabilities: ["read", "write", "sql", "reactive"] },
+      { region: "FRA", url: "https://fra.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] },
+      { region: "GRU", url: "https://gru.terrascale.tech", priority: 2, capabilities: ["read", "write", "sql", "reactive"] },
     ],
     ...overrides,
   };
@@ -33,8 +33,8 @@ function catalogPayload(overrides: {
       { code: "GRU", name: "Sao Paulo", country: "BR", latitude: -23.5475, longitude: -46.6361, available: true },
     ],
     hosts: overrides.hosts ?? {
-      FRA: "https://fra.api.terrascale.tech",
-      GRU: "https://gru.api.terrascale.tech",
+      FRA: "fra.terrascale.tech",
+      GRU: "gru.terrascale.tech",
     },
   };
 }
@@ -104,8 +104,8 @@ describe("discovery-driven request routing (ADR 0050)", () => {
     const urls = transport.requests.map((request) => new URL(request.url).origin + new URL(request.url).pathname);
     assert.deepEqual(urls, [
       "https://atlas.terrascale.tech/api/v1/discovery",
-      `https://fra.api.terrascale.tech/${path}`,
-      `https://fra.api.terrascale.tech/${path}`,
+      `https://fra.terrascale.tech/${path}`,
+      `https://fra.terrascale.tech/${path}`,
     ]);
   });
 
@@ -117,7 +117,7 @@ describe("discovery-driven request routing (ADR 0050)", () => {
     const urls = transport.requests.map((request) => new URL(request.url).origin + new URL(request.url).pathname);
     assert.deepEqual(urls, [
       "https://atlas-member.test/api/v1/regions",
-      "https://fra.api.terrascale.tech/api/v1/databases",
+      "https://fra.terrascale.tech/api/v1/databases",
     ]);
   });
 
@@ -132,7 +132,7 @@ describe("discovery-driven request routing (ADR 0050)", () => {
     assert.deepEqual(urls, [
       "https://atlas-fallback.test/api/v1/discovery",
       "https://atlas-fallback.test/api/v1/regions",
-      `https://fra.api.terrascale.tech/${documentPath("orders-fallback")}`,
+      `https://fra.terrascale.tech/${documentPath("orders-fallback")}`,
     ]);
     // The retired per-request proxy: no data request ever targets the product origin.
     assert.equal(urls.some((url) => url.startsWith("https://api.terrascale.tech/")), false);
@@ -142,8 +142,8 @@ describe("discovery-driven request routing (ADR 0050)", () => {
     const transport = scriptedFetch("orders-drain", {
       discovery: () => Response.json(discoveryPayload("orders-drain", {
         endpoints: [
-          { region: "FRA", url: "https://fra.api.terrascale.tech", priority: 1, capabilities: ["read", "sql", "reactive"] },
-          { region: "GRU", url: "https://gru.api.terrascale.tech", priority: 2, capabilities: ["read", "write", "sql", "reactive"] },
+          { region: "FRA", url: "https://fra.terrascale.tech", priority: 1, capabilities: ["read", "sql", "reactive"] },
+          { region: "GRU", url: "https://gru.terrascale.tech", priority: 2, capabilities: ["read", "write", "sql", "reactive"] },
         ],
       })),
     });
@@ -156,7 +156,7 @@ describe("discovery-driven request routing (ADR 0050)", () => {
       idempotencyKey: "write-1",
     });
     assert.equal(result.ok, true);
-    assert.equal(new URL(transport.requests[1]!.url).origin, "https://gru.api.terrascale.tech");
+    assert.equal(new URL(transport.requests[1]!.url).origin, "https://gru.terrascale.tech");
   });
 
   test("a member 421 adopts placement and repairs once", async () => {
@@ -180,12 +180,12 @@ describe("discovery-driven request routing (ADR 0050)", () => {
 
     // Discovery, misdirected regional attempt, repaired replay on SFO.
     assert.equal(new URL(transport.requests[0]!.url).pathname, "/api/v1/discovery");
-    assert.equal(new URL(transport.requests[1]!.url).origin, "https://fra.api.terrascale.tech");
-    assert.equal(new URL(transport.requests[2]!.url).origin, "https://sfo.api.terrascale.tech");
+    assert.equal(new URL(transport.requests[1]!.url).origin, "https://fra.terrascale.tech");
+    assert.equal(new URL(transport.requests[2]!.url).origin, "https://sfo.terrascale.tech");
 
     // The placement header now routes follow-ups directly to SFO.
     await client.request<unknown>({ method: "GET", path, routeName: "documents.get" });
-    assert.equal(new URL(transport.requests[3]!.url).origin, "https://sfo.api.terrascale.tech");
+    assert.equal(new URL(transport.requests[3]!.url).origin, "https://sfo.terrascale.tech");
     assert.equal(transport.requests.filter((request) => request.url.includes("/api/v1/discovery")).length, 1);
   });
 
@@ -194,7 +194,7 @@ describe("discovery-driven request routing (ADR 0050)", () => {
     const transport = scriptedFetch("orders-failover", {
       data: (request) => {
         const origin = new URL(request.url).origin;
-        if (origin === "https://fra.api.terrascale.tech") {
+        if (origin === "https://fra.terrascale.tech") {
           return Response.json({ error: { code: "database_unavailable", message: "down" } }, { status: 503 });
         }
         gruCalls++;
@@ -208,8 +208,8 @@ describe("discovery-driven request routing (ADR 0050)", () => {
     const origins = transport.requests.map((request) => new URL(request.url).origin);
     assert.deepEqual(origins, [
       "https://atlas.terrascale.tech",
-      "https://fra.api.terrascale.tech",
-      "https://gru.api.terrascale.tech",
+      "https://fra.terrascale.tech",
+      "https://gru.terrascale.tech",
     ]);
   });
 
@@ -309,7 +309,7 @@ describe("discovery-driven request routing (ADR 0050)", () => {
     const next = await client.request<unknown>({ method: "GET", path: documentPath("orders-cancel"), routeName: "documents.get" });
     assert.equal(next.ok, true);
     assert.equal(transport.requests.filter((request) => request.url.includes("/api/v1/discovery")).length, 1);
-    assert.equal(new URL(transport.requests[transport.requests.length - 1]!.url).origin, "https://fra.api.terrascale.tech");
+    assert.equal(new URL(transport.requests[transport.requests.length - 1]!.url).origin, "https://fra.terrascale.tech");
   });
 
   test("an ambiguous write timeout on an unkeyed mutation is never replayed", async () => {
@@ -387,14 +387,14 @@ describe("discovery-driven request routing (ADR 0050)", () => {
     assert.deepEqual(catalogCalls, ["https://atlas-reuse.test"]);
     assert.equal(transport.requests.filter((request) => new URL(request.url).pathname === "/api/v1/regions").length, 1);
     assert.equal(
-      transport.requests.filter((request) => new URL(request.url).origin === "https://fra.api.terrascale.tech").length,
+      transport.requests.filter((request) => new URL(request.url).origin === "https://fra.terrascale.tech").length,
       3,
     );
   });
 
   test("catalog hosts are validated: an evil host is never contacted", async () => {
     const transport = scriptedFetch("orders-evil-host", {
-      catalog: () => Response.json(catalogPayload({ hosts: { FRA: "https://evil.example.com", GRU: "https://gru.api.terrascale.tech" } })),
+      catalog: () => Response.json(catalogPayload({ hosts: { FRA: "https://evil.example.com", GRU: "https://gru.terrascale.tech" } })),
     });
     const client = http({ fetch: transport.fetch, routingBaseUrl: "https://atlas-evil.test" });
     const result = await client.request<unknown>({ method: "GET", path: "api/v1/databases", routeName: "databases.list" });

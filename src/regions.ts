@@ -17,7 +17,7 @@ export const terraScaleDiscoveryBaseUrl = `https://${terraScaleDiscoveryHostname
 
 /** Return the canonical public hostname for a Region's REST member. */
 export function regionalApiHostname(region: TerraScaleRegionCode): string {
-  return `${region.toLowerCase()}.${terraScaleGlobalApiHostname}`;
+  return `${region.toLowerCase()}.terrascale.tech`;
 }
 
 /**

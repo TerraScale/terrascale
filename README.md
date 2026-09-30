@@ -232,8 +232,8 @@ product API origin. Per ADR 0050 (SDK discovery and direct regional routing),
 the SDK's first database-scoped request performs one metadata
 `GET /api/v1/discovery` call against the discovery origin and then connects
 **directly** to the ranked regional endpoint —
-`https://gru.api.terrascale.tech`, `https://sfo.api.terrascale.tech`, or
-`https://fra.api.terrascale.tech` — for every subsequent query, mutation, and
+`https://gru.terrascale.tech`, `https://sfo.terrascale.tech`, or
+`https://fra.terrascale.tech` — for every subsequent query, mutation, and
 reactive connection. Discovery never runs before every query: the routing
 document is cached per database/branch/project/tenant scope for its refresh
 policy, concurrent lookups share one request, and a healthy connection is

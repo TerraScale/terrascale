@@ -226,7 +226,7 @@ describe("current reactive client", () => {
       },
       webSocketFactory: (url, protocols) => {
         const generation = sockets.length + 1;
-        assert.equal(url, `wss://gru.api.terrascale.tech/api/v1/reactive/views/orders-${generation}/${generation}/websocket`);
+        assert.equal(url, `wss://gru.terrascale.tech/api/v1/reactive/views/orders-${generation}/${generation}/websocket`);
         assert.deepEqual(protocols, ["terrascale.sync.v1", `terrascale.cap.cap-${generation}`]);
         const socket = new FakeSocket();
         sockets.push(socket);
@@ -297,7 +297,7 @@ describe("current reactive client", () => {
       webSocketFactory: (url) => {
         const socket = new FakeSocket();
         sockets.push(socket);
-        assert.match(url, new RegExp(`wss://${sockets.length === 1 ? "gru" : "fra"}\\.api\\.terrascale\\.tech/`));
+        assert.match(url, new RegExp(`wss://${sockets.length === 1 ? "gru" : "fra"}\\.terrascale\\.tech/`));
         if (sockets.length === 1) queueMicrotask(() => socket.open());
         return socket;
       },
@@ -901,8 +901,8 @@ describe("current reactive client", () => {
 });
 
 describe("reactive discovery routing, backoff, and deduplication (ADR 0050 §5.7)", () => {
-  const fra = { region: "FRA", url: "https://fra.api.terrascale.tech" };
-  const gru = { region: "GRU", url: "https://gru.api.terrascale.tech" };
+  const fra = { region: "FRA", url: "https://fra.terrascale.tech" };
+  const gru = { region: "GRU", url: "https://gru.terrascale.tech" };
 
   function discoveryRouter(
     endpoints: readonly { region: string; url: string }[],
@@ -959,7 +959,7 @@ describe("reactive discovery routing, backoff, and deduplication (ADR 0050 §5.7
       subscription: "orders", databaseId: "db", query: "select * from orders",
       parameters: new Uint8Array(), autoStart: false,
     });
-    assert.deepEqual(attachUrls, ["https://fra.api.terrascale.tech/api/v1/reactive/views"]);
+    assert.deepEqual(attachUrls, ["https://fra.terrascale.tech/api/v1/reactive/views"]);
     // Reactive delivery (snapshot/log) still targets the sync origin.
     assert.equal(new URL(live.logUrl).origin, "https://sync.api.terrascale.tech");
     live.close();
@@ -975,7 +975,7 @@ describe("reactive discovery routing, backoff, and deduplication (ADR 0050 §5.7
           regions: [
             { code: "FRA", name: "Frankfurt", country: "DE", latitude: 50.1109, longitude: 8.6821, available: true },
           ],
-          hosts: { FRA: "https://fra.api.terrascale.tech" },
+          hosts: { FRA: "https://fra.terrascale.tech" },
         }),
       }),
       fetch: async (input, init) => {
@@ -990,7 +990,7 @@ describe("reactive discovery routing, backoff, and deduplication (ADR 0050 §5.7
       parameters: new Uint8Array(), autoStart: false,
     });
     // No proxy exists: the degraded attach still targets a regional member.
-    assert.deepEqual(attachUrls, ["https://fra.api.terrascale.tech/api/v1/reactive/views"]);
+    assert.deepEqual(attachUrls, ["https://fra.terrascale.tech/api/v1/reactive/views"]);
     live.close();
   });
 
@@ -1006,7 +1006,7 @@ describe("reactive discovery routing, backoff, and deduplication (ADR 0050 §5.7
         return Response.json(attachedViewBody(1n), { headers: { "x-terrascale-region": "GRU" } });
       },
       webSocketFactory: (url) => {
-        assert.equal(new URL(url).hostname, "gru.api.terrascale.tech");
+        assert.equal(new URL(url).hostname, "gru.terrascale.tech");
         const socket = new FakeSocket();
         queueMicrotask(() => socket.open());
         return socket;
@@ -1031,7 +1031,7 @@ describe("reactive discovery routing, backoff, and deduplication (ADR 0050 §5.7
         const request = new Request(input, init);
         if (request.method !== "POST") return new Response(null, { status: 204 });
         attachUrls.push(request.url);
-        if (request.url.startsWith("https://fra.api.terrascale.tech")) throw new TypeError("connection reset");
+        if (request.url.startsWith("https://fra.terrascale.tech")) throw new TypeError("connection reset");
         return Response.json(attachedViewBody(1n), { headers: { "x-terrascale-region": "GRU" } });
       },
     });
@@ -1046,8 +1046,8 @@ describe("reactive discovery routing, backoff, and deduplication (ADR 0050 §5.7
     assert.equal(router.cachedDocument("db")?.endpoints[0]?.region, "GRU");
     const live = await client.subscribe(options);
     assert.deepEqual(attachUrls, [
-      "https://fra.api.terrascale.tech/api/v1/reactive/views",
-      "https://gru.api.terrascale.tech/api/v1/reactive/views",
+      "https://fra.terrascale.tech/api/v1/reactive/views",
+      "https://gru.terrascale.tech/api/v1/reactive/views",
     ]);
     live.close();
   });
@@ -1061,7 +1061,7 @@ describe("reactive discovery routing, backoff, and deduplication (ADR 0050 §5.7
       // discovered endpoint itself (the capability is region-bound).
       fetch: async () => Response.json(attachedViewBody(1n)),
       webSocketFactory: (url) => {
-        assert.equal(new URL(url).hostname, "fra.api.terrascale.tech");
+        assert.equal(new URL(url).hostname, "fra.terrascale.tech");
         const socket = new FakeSocket();
         queueMicrotask(() => socket.close(1006, "network"));
         return socket;
@@ -1089,11 +1089,11 @@ describe("reactive discovery routing, backoff, and deduplication (ADR 0050 §5.7
         const request = new Request(input, init);
         if (request.method !== "POST") return new Response(null, { status: 204 });
         attachUrls.push(request.url);
-        const region = request.url.startsWith("https://fra.api.terrascale.tech") ? "FRA" : "GRU";
+        const region = request.url.startsWith("https://fra.terrascale.tech") ? "FRA" : "GRU";
         return Response.json(attachedViewBody(BigInt(attachUrls.length)), { headers: { "x-terrascale-region": region } });
       },
       webSocketFactory: (url) => {
-        assert.equal(new URL(url).hostname, sockets.length === 0 ? "fra.api.terrascale.tech" : "gru.api.terrascale.tech");
+        assert.equal(new URL(url).hostname, sockets.length === 0 ? "fra.terrascale.tech" : "gru.terrascale.tech");
         const socket = new FakeSocket();
         sockets.push(socket);
         if (sockets.length === 1) queueMicrotask(() => socket.open());
@@ -1107,8 +1107,8 @@ describe("reactive discovery routing, backoff, and deduplication (ADR 0050 §5.7
     sockets[0]!.message(serverFrame({ kind: "region_route_change", region: "GRU" }));
     await waitFor(() => sockets.length === 2, "the replacement WebSocket on the next endpoint");
     assert.deepEqual(attachUrls, [
-      "https://fra.api.terrascale.tech/api/v1/reactive/views",
-      "https://gru.api.terrascale.tech/api/v1/reactive/views",
+      "https://fra.terrascale.tech/api/v1/reactive/views",
+      "https://gru.terrascale.tech/api/v1/reactive/views",
     ]);
     sockets[1]!.open();
     await waitFor(() => client.getSnapshot().online, "the replacement handshake");
@@ -1322,9 +1322,9 @@ describe("reactive discovery routing, backoff, and deduplication (ADR 0050 §5.7
     // on GRU, and beta's own first attach — still on its healthy FRA.
     const origins = attachUrls.map(url => new URL(url).origin);
     assert.equal(origins.length, 3);
-    assert.equal(origins[0], "https://fra.api.terrascale.tech");
-    assert.equal(origins.filter(origin => origin === "https://gru.api.terrascale.tech").length, 1);
-    assert.equal(origins.filter(origin => origin === "https://fra.api.terrascale.tech").length, 2);
+    assert.equal(origins[0], "https://fra.terrascale.tech");
+    assert.equal(origins.filter(origin => origin === "https://gru.terrascale.tech").length, 1);
+    assert.equal(origins.filter(origin => origin === "https://fra.terrascale.tech").length, 2);
     client.closeSubscription("alpha");
     client.closeSubscription("beta");
   });

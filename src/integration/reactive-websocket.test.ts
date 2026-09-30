@@ -53,7 +53,7 @@ describe.skipIf(origin === undefined || accessToken === undefined)("real member 
       webSocketFactory: (raw, protocols) => {
         const url = new URL(raw);
         sockets.push(url);
-        assert.equal(url.origin, "wss://gru.api.terrascale.tech");
+        assert.equal(url.origin, "wss://gru.terrascale.tech");
         const target = new URL(url.pathname, origin!);
         target.protocol = "ws:";
         return new WebSocket(target, protocols === undefined ? undefined : [...protocols]);
