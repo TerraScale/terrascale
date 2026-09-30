@@ -21,7 +21,7 @@ internal enum TerraScaleRouteKind
 /// path table (ADR 0050 §2/§8): database-scoped requests discover; product
 /// routes target the configured origin; <c>api/v1/regions</c> exactly is the
 /// catalog on the discovery origin; every other database-less member route
-/// uses catalog selection. There is no proxy fallback.
+/// uses catalog selection. Discovery failures use the configured Atlas API proxy.
 /// </summary>
 internal readonly record struct TerraScaleRequestRouting(TerraScaleRouteKind Kind, string? Database, bool NeedsWrite)
 {

@@ -46,15 +46,15 @@ internal sealed class TerraScaleRoutingCache
             return null;
         }
 
-        if (!demoted.TryGetValue(scope.Key, out var demotedRegions) || demotedRegions.Count == 0)
+        if (!demoted.TryGetValue(scope.Key, out var demotedRegions))
         {
             return entry.Document;
         }
 
-        var endpoints = entry.Document.Endpoints.Where(endpoint => !demotedRegions.Contains(endpoint.Region)).ToList();
-        if (endpoints.Count == 0)
+        List<TerraScaleRoutingEndpoint> endpoints;
+        lock (demotedRegions)
         {
-            return entry.Document;
+            endpoints = entry.Document.Endpoints.Where(endpoint => !demotedRegions.Contains(endpoint.Region)).ToList();
         }
 
         return entry.Document with

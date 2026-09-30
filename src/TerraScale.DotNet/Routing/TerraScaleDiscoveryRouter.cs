@@ -5,19 +5,14 @@ namespace TerraScale.DotNet;
 /// <summary>
 /// SDK-driven routing discovery (ADR 0050 §5): one metadata GET per routing
 /// scope against Atlas, then direct regional connections. A healthy pinned
-/// connection is kept — refreshes update the ranking for future use, and only
-/// a routing failure or a 421 moves the client. Discovery failures degrade to
-/// region-catalog selection, never to a proxy: the per-request proxy is
-/// retired (§8).
+/// connection is kept for the document's lifetime. Routing failures move the
+/// pin to the next eligible region. Discovery failures use the Atlas API proxy.
 /// </summary>
 public sealed class TerraScaleDiscoveryRouter
 {
     internal const string DefaultDiscoveryBaseUrl = "https://atlas.terrascale.tech";
     internal const string DefaultBranch = "main";
     private const int MaxPlacementRegions = 20;
-
-    private static readonly TerraScaleRoutingCache SharedRoutingCache = new();
-    private static readonly TerraScaleRegionCatalogCache SharedCatalogCache = new();
 
     private readonly HttpClient httpClient;
     private readonly Uri discoveryOrigin;
@@ -59,8 +54,8 @@ public sealed class TerraScaleDiscoveryRouter
         this.preferredRegion = preferredRegion;
         this.projectId = projectId;
         this.tenantId = tenantId;
-        this.routingCache = routingCache ?? SharedRoutingCache;
-        this.catalogCache = catalogCache ?? SharedCatalogCache;
+        this.routingCache = routingCache ?? new TerraScaleRoutingCache();
+        this.catalogCache = catalogCache ?? new TerraScaleRegionCatalogCache();
     }
 
     /// <summary>The Atlas metadata origin serving discovery and the region catalog.</summary>
@@ -78,8 +73,7 @@ public sealed class TerraScaleDiscoveryRouter
     /// <summary>
     /// Resolves the regional base for one database-scoped operation. Returns
     /// null when discovery cannot answer (cache miss plus failed or timed-out
-    /// request): the caller degrades to catalog selection for that request
-    /// (ADR 0050 §5.8).
+    /// request): the caller uses the Atlas API proxy for that request.
     /// </summary>
     public async Task<TerraScaleRoutingBase?> ResolveBaseAsync(string database, bool needsWrite, CancellationToken cancellationToken)
     {
@@ -118,11 +112,15 @@ public sealed class TerraScaleDiscoveryRouter
                 }
 
                 routingCache.Set(scope, document);
+                lock (pinnedGate)
+                {
+                    pinned.Remove(scope.Key);
+                }
             }
             catch (TerraScaleDiscoveryException)
             {
                 // Any discovery failure — including a worker 404 — degrades
-                // the caller to catalog selection; the member's response stays
+                // the caller to the Atlas proxy; the member's response stays
                 // authoritative for existence, not the discovery cache.
                 routingCache.NoteFailure(scope);
                 return null;
@@ -235,6 +233,13 @@ public sealed class TerraScaleDiscoveryRouter
         {
             routingCache.DemoteRegion(ScopeFor(database), region);
         }
+    }
+
+    internal bool HasAlternative(string database, string region, bool needsWrite)
+    {
+        var required = needsWrite ? TerraScaleRoutingCapability.Write : TerraScaleRoutingCapability.Read;
+        return routingCache.Get(ScopeFor(database))?.Endpoints.Any(endpoint =>
+            endpoint.Region != region && endpoint.Capabilities.Contains(required)) == true;
     }
 
     private void InvalidateScope(TerraScaleRoutingScope scope)

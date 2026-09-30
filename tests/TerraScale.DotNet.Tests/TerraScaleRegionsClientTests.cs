@@ -7,14 +7,14 @@ namespace TerraScale.DotNet.Tests;
 public sealed class TerraScaleRegionsClientTests
 {
     private const string CatalogBody =
-        """{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5475,"longitude":-46.6361,"available":true},{"code":"FRA","name":"Frankfurt","country":"DE","latitude":50.1109,"longitude":8.6821,"available":false}],"hosts":{"GRU":"https://gru.terrascale.tech","FRA":"https://fra.terrascale.tech"}}""";
+        """{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5475,"longitude":-46.6361,"available":true},{"code":"FRA","name":"Frankfurt","country":"DE","latitude":50.1109,"longitude":8.6821,"available":false}],"hosts":{"GRU":"https://gru.api.terrascale.tech","FRA":"https://fra.api.terrascale.tech"}}""";
 
     [Test]
-    [Arguments("https://gru.terrascale.tech")]
-    [Arguments("gru.terrascale.tech")]
+    [Arguments("https://gru.api.terrascale.tech")]
+    [Arguments("gru.api.terrascale.tech")]
     public async Task GetAsync_DecodesTheRegionCatalogFromTheConfiguredOrigin(string gruHost)
     {
-        using var handler = new RecordingHandler(CatalogBody.Replace("https://gru.terrascale.tech", gruHost, StringComparison.Ordinal));
+        using var handler = new RecordingHandler(CatalogBody.Replace("https://gru.api.terrascale.tech", gruHost, StringComparison.Ordinal));
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
@@ -24,19 +24,19 @@ public sealed class TerraScaleRegionsClientTests
         await Assert.That(handler.Authorization).IsNull();
         await Assert.That(catalog.Regions.Select(region => region.Code)).IsEquivalentTo(["GRU", "FRA"]);
         await Assert.That(catalog.Regions[1].Available).IsFalse();
-        await Assert.That(catalog.Hosts["GRU"].ToString()).IsEqualTo("https://gru.terrascale.tech/");
+        await Assert.That(catalog.Hosts["GRU"].ToString()).IsEqualTo("https://gru.api.terrascale.tech/");
     }
 
     [Test]
     [Arguments("https://evil.example.com")]
-    [Arguments("fra.terrascale.tech")]
+    [Arguments("fra.api.terrascale.tech")]
     [Arguments("evil.example.com")]
-    [Arguments("gru.api.terrascale.tech")]
-    [Arguments("gru.terrascale.tech:443")]
+    [Arguments("gru.auth.terrascale.tech")]
+    [Arguments("gru.api.terrascale.tech:443")]
     public async Task GetAsync_RejectsHostsOutsideTheRegionalFamily(string gruHost)
     {
         using var handler = new RecordingHandler(
-            CatalogBody.Replace("https://gru.terrascale.tech", gruHost, StringComparison.Ordinal));
+            CatalogBody.Replace("https://gru.api.terrascale.tech", gruHost, StringComparison.Ordinal));
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
