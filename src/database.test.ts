@@ -39,6 +39,72 @@ describe("current database request conformance", () => {
     }
   });
 
+  test.each(["auth", "atlas", "www", "status", "sync", "app", "dash", "docs", "git", "cdn", "admin", "mcp", "mail"])("rejects reserved TerraScale %s origins before dispatch", label => {
+    expect(() => createTerraBaseClient({ ...scope, endpoint: `https://${label}.terrascale.tech`, apiKey: "key" })).toThrow(/canonical regional hostname/u);
+  });
+
+  test.each(["https://terrascale.tech", "https://gru.terrascale.tech.", "https://GRU.terrascale.tech", "https://nested.gru.terrascale.tech", "https://gru.terrascale.tech:8443", "https://-gru.terrascale.tech"])("rejects noncanonical TerraScale origin %s", endpoint => {
+    expect(() => createTerraBaseClient({ ...scope, endpoint, apiKey: "key" })).toThrow(/canonical regional hostname/u);
+  });
+
+  test.each(["https://gru.terrascale.tech", "https://fra.terrascale.tech/", "https://native.example.test:8443", "https://CUSTOM.example.test"])("preserves direct provisioned origin %s", async endpoint => {
+    const requests: Request[] = [];
+    const client = createTerraBaseClient({ ...scope, endpoint, apiKey: "key", fetch: async input => { requests.push(input as Request); return json(point); } });
+    expect((await client.read(collection, document)).ok).toBe(true);
+    expect(requests.map(request => new URL(request.url).origin)).toEqual([new URL(endpoint).origin]);
+  });
+
+  test.each(["fetch", "stream"] as const)("native %s TypeError remains a transport fault for reads and dispatched commits", async fault => {
+    const requests: Request[] = [];
+    const streams: ReadableStream<Uint8Array>[] = [];
+    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "key", fetch: async input => {
+      requests.push(input as Request);
+      if (fault === "fetch") throw new TypeError("connection reset");
+      const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.error(new TypeError("connection reset")); } });
+      streams.push(stream);
+      return new Response(stream, { headers: { "content-type": "application/json" } });
+    } });
+    const prepared = await client.prepareCommit(commit);
+    expect(await client.read(collection, document)).toMatchObject({ ok: false, error: { code: "transport_unavailable" } });
+    expect(await client.commit(prepared)).toMatchObject({ ok: false, error: { code: "transport_unavailable", mutation_outcome: "uncertain", transaction: prepared } });
+    expect(requests).toHaveLength(2);
+    expect(requests.map(request => new URL(request.url).hostname)).toEqual(["gru.terrascale.tech", "gru.terrascale.tech"]);
+    expect(streams.every(stream => !stream.locked)).toBe(true);
+  });
+
+  test.each(["json", "shape"] as const)("native %s validation remains invalid_response for reads and commits", async fault => {
+    let requests = 0;
+    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "key", fetch: async () => {
+      requests++;
+      return fault === "json" ? new Response("{", { headers: { "content-type": "application/json" } }) : json({ version: 1, invented: true });
+    } });
+    const prepared = await client.prepareCommit(commit);
+    expect(await client.read(collection, document)).toMatchObject({ ok: false, error: { code: "invalid_response", status: 200 } });
+    expect(await client.commit(prepared)).toMatchObject({ ok: false, error: { code: "invalid_response", status: 200, mutation_outcome: "uncertain", transaction: prepared } });
+    expect(requests).toBe(2);
+  });
+
+  test.each(["fetch", "stream"] as const)("native %s abort remains cancelled with one dispatch and uncertain commit", async fault => {
+    const controller = new AbortController();
+    let requests = 0, cancelled = 0;
+    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "key", fetch: async input => {
+      requests++;
+      const request = input as Request;
+      if (fault === "fetch") {
+        controller.abort(new TypeError("caller cancellation"));
+        throw request.signal.reason;
+      }
+      return new Response(new ReadableStream<Uint8Array>({
+        pull() { controller.abort(new TypeError("caller cancellation")); },
+        cancel() { cancelled++; },
+      }), { headers: { "content-type": "application/json" } });
+    } });
+    const prepared = await client.prepareCommit(commit);
+    expect(await client.commit(prepared, { signal: controller.signal })).toMatchObject({ ok: false, error: { code: "cancelled", mutation_outcome: "uncertain", transaction: prepared } });
+    expect(requests).toBe(1);
+    if (fault === "stream") expect(cancelled).toBe(1);
+  });
+
   test("caller replacement of public scope cannot change fingerprinting or point scope validation", async () => {
     const otherScope = { ...scope, database: "00000000-0000-0000-0000-000000000008", shard: 9n };
     const requests: Request[] = [];

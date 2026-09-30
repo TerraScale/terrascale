@@ -13,9 +13,10 @@ import type { FetchLike } from "./config.js";
 import { TerraBaseDiscoveryError, TerraBaseDiscoveryRouter, type TerraBaseRoutingCapability } from "./discovery.js";
 
 const maximumResponseBytes = 4 * 1024 * 1024;
+const reservedRegionalNames = new Set(["api", "atlas", "auth", "sync", "status", "www", "app", "dash", "docs", "git", "cdn", "admin", "mcp", "mail"]);
 
 export type TerraBaseClientConfig = DatabaseScope & {
-  /** TerraBase native service key, sent only to the selected regional listener. */
+  /** Native service key used for authenticated Atlas discovery and the selected regional listener. */
   readonly apiKey: string | (() => string | Promise<string>);
   /** A provisioned direct origin. Omit to use authenticated native Atlas discovery. */
   readonly endpoint?: string;
@@ -39,6 +40,13 @@ function bareOrigin(raw: string, local: boolean): string {
   const hostname = url.hostname.replace(/\.+$/u, "");
   if (hostname === "api.terrascale.tech" || hostname.endsWith(".api.terrascale.tech")) {
     throw new TypeError("The test API host is not a regional TerraBase endpoint.");
+  }
+  if (hostname === "terrascale.tech" || hostname.endsWith(".terrascale.tech")) {
+    const region = hostname.slice(0, -".terrascale.tech".length);
+    const authority = raw.slice(raw.indexOf("//") + 2).split(/[/?#]/u, 1)[0]!;
+    if (url.hostname !== hostname || authority !== hostname || !/^[a-z0-9][a-z0-9-]{0,15}$/u.test(region) || reservedRegionalNames.has(region)) {
+      throw new TypeError("TerraScale service origins must use a canonical regional hostname.");
+    }
   }
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || url.hostname.endsWith(".localhost");
   if (url.protocol !== "https:" && !(local && url.protocol === "http:" && loopback)) {
@@ -83,7 +91,12 @@ async function responseJson(response: Response, signal: AbortSignal): Promise<un
   let size = 0;
   try {
     while (true) {
-      const part = await withCancellation(reader.read(), signal);
+      let part: ReadableStreamReadResult<Uint8Array>;
+      try { part = await withCancellation(reader.read(), signal); }
+      catch (error) {
+        if (signal.aborted) throw error;
+        throw new Error("Native response transport failed.", { cause: error });
+      }
       if (part.done) break;
       size += part.value.length;
       if (size > maximumResponseBytes) throw new TypeError("Response exceeds its byte limit.");
@@ -259,9 +272,15 @@ export class TerraBaseClient {
       const request = new Request(new URL(path, origin), { method, headers, credentials: "omit", redirect: "manual", cache: "no-store", referrerPolicy: "no-referrer", signal, ...(body === undefined ? {} : { body }) });
       if (endpoint !== undefined) this.#discovery!.assertCurrent(endpoint);
       sent = true;
-      const response = await withCancellation(this.#fetch(request), signal, response => {
-        void response.body?.cancel().catch(() => undefined);
-      });
+      let response: Response;
+      try {
+        response = await withCancellation(this.#fetch(request), signal, late => {
+          void late.body?.cancel().catch(() => undefined);
+        });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        throw new Error("Native request transport failed.", { cause: error });
+      }
       responseStatus = response.status;
       if (signal.aborted) {
         void response.body?.cancel().catch(() => undefined);

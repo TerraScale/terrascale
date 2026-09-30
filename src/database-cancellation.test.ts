@@ -253,7 +253,7 @@ describe("native transport cancellation lifecycle", () => {
 
   test.each([
     { error: new Error("Transport unavailable."), code: "transport_unavailable" },
-    { error: new TypeError("Invalid transport input."), code: "invalid_response" },
+    { error: new TypeError("Network connection failed."), code: "transport_unavailable" },
   ])("uncancelled fetch rejection preserves $code without retry", async ({ error, code }) => {
     let calls = 0;
     const client = createTerraBaseClient({
