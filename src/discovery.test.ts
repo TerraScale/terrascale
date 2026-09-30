@@ -64,6 +64,7 @@ describe("parseRoutingDocument", () => {
     expect(parse(validDocumentPayload({ placement: "elsewhere" }))).toBeNull();
     expect(parse(validDocumentPayload({ revision: -1 }))).toBeNull();
     expect(parse(validDocumentPayload({ endpoints: [] }))).toBeNull();
+    expect(parse(validDocumentPayload({ endpoints: [{ region: "STATUS", url: "https://status.terrascale.tech", priority: 1, capabilities: ["read"] }] }))).toBeNull();
     expect(parse(validDocumentPayload({ endpoints: [{ region: "fra", url: "https://fra.terrascale.tech", priority: 1, capabilities: ["read"] }] }))).toBeNull();
     expect(parse(validDocumentPayload({ endpoints: [
       { region: "FRA", url: "https://fra.terrascale.tech", priority: 1, capabilities: ["read"] },

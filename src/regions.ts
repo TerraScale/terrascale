@@ -3,7 +3,7 @@ export const terraScaleRegionCodes = ["GRU", "SFO", "FRA"] as const;
 /** Region codes are admitted by the published catalog and may grow over time. */
 export type TerraScaleRegionCode = string;
 
-/** The public global REST origin. Regional hosts are derived from this name. */
+/** The public global REST router; regional APIs use <region>.terrascale.tech. */
 export const terraScaleGlobalApiHostname = "api.terrascale.tech";
 
 /**
@@ -89,8 +89,10 @@ export function findRegion(code: string | undefined): TerraScaleRegion | undefin
   return canonical === undefined ? undefined : regionsByCode.get(canonical);
 }
 
+const reservedServiceLabels = new Set(["API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH", "DOCS", "GIT", "CDN", "ADMIN", "MCP", "MAIL"]);
+
 export function isRegionCode(code: unknown): code is TerraScaleRegionCode {
-  return typeof code === "string" && /^[A-Z0-9][A-Z0-9-]{0,15}$/u.test(code);
+  return typeof code === "string" && /^[A-Z0-9][A-Z0-9-]{0,15}$/u.test(code) && !reservedServiceLabels.has(code);
 }
 
 export function parseRegionCode(code: unknown, fieldName = "regionCode"): TerraScaleRegionCode {
