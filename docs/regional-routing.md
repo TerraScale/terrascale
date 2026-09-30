@@ -12,7 +12,12 @@ header. They do not admit a region or override the receiver's ordered response.
 There is no caller-selected region affinity or synthetic regional destination.
 `atlas_base_url` defaults to canonical Atlas; a custom discovery origin fails
 before native credentials are sent. An explicit reviewed direct `api_base_url`
-remains available for producer qualification.
+remains available for caller-provisioned native servers and producer qualification.
+Inside the TerraScale zone it must be exactly `https://<region>.terrascale.tech`,
+with a valid single region label. Reserved service labels, the apex, nested labels,
+the obsolete `.api.` form, explicit ports and trailing dots are rejected before
+credentials can be dispatched. Independent HTTPS and explicit loopback/test
+origins remain caller-provisioned opt-outs from Atlas admission.
 
 Discovery transport failures, timeouts, malformed responses, denials, unavailable
 eligibility, expired publications, and clock or observation regressions return
@@ -25,3 +30,17 @@ clamped down by expiry and request time. Safe native retries refresh admission
 when needed; mutations are never automatically replayed. These client checks do
 not establish hosted availability, healthy-clock bounds, or native runtime
 qualification.
+
+Each public native call has one 30-second operation budget. Initial admission,
+same-scope resolver waits, discovery transport, native dispatch and any requested
+safe retry delays share that deadline; neither a refreshed lease nor a retry
+renews it. Direct public discovery also bounds the entire resolution. Dropping
+or timing out a refresh releases its transport and reservation while retaining
+any prior observation floor. A dispatched mutation that times out remains
+uncertain and retains the prepared operation for explicit reconciliation.
+
+Safe retries default to zero and are capped at eight when explicitly configured.
+They select the current first eligible Atlas rank without demoting a failed
+origin or pinning a different region. Discovery errors are propagated, with no
+negative-cache bypass or automatic fallback. Deadline bounds do not suppress
+separate rapidly failing calls; the SDK makes no failure-load suppression claim.

@@ -75,6 +75,57 @@ pub fn regional_host(region: RegionCode) -> String {
     format!("{}.terrascale.tech", region.as_str())
 }
 
+/// Canonical Atlas region code and direct-member DNS label policy.
+pub(crate) fn valid_region(region: &str) -> bool {
+    let bytes = region.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 16
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes[bytes.len() - 1].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'-')
+        && ![
+            "API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH", "DOCS", "GIT", "CDN",
+            "ADMIN", "MCP", "MAIL",
+        ]
+        .contains(&region)
+}
+
+/// Explicit origins inside TerraScale's zone must be canonical direct members.
+/// Independent provisioned HTTPS and local/test origins retain their own policy.
+pub(crate) fn validate_native_origin(origin: &str) -> Result<()> {
+    let url = reqwest::Url::parse(origin).map_err(|_| {
+        Error::new(
+            crate::error::ErrorKind::Validation,
+            "invalid_base_url",
+            "Invalid native origin.",
+        )
+    })?;
+    let host = url.host_str().unwrap_or_default();
+    let zone_host = host.trim_end_matches('.');
+    if zone_host == "terrascale.tech" || zone_host.ends_with(".terrascale.tech") {
+        let region = zone_host.strip_suffix(".terrascale.tech");
+        if !region.is_some_and(|region| valid_region(&region.to_ascii_uppercase()))
+            || origin != format!("https://{zone_host}")
+        {
+            return Err(Error::new(
+                crate::error::ErrorKind::Validation,
+                "invalid_native_origin",
+                "TerraScale native origins require a canonical direct regional HTTPS origin.",
+            ));
+        }
+    }
+    if url.path() != "/" {
+        return Err(Error::new(
+            crate::error::ErrorKind::Validation,
+            "invalid_base_url",
+            "Native origin must not contain a path.",
+        ));
+    }
+    Ok(())
+}
+
 /// Normalize and validate a base URL (no trailing slash).
 ///
 /// API traffic carries bearer credentials, so non-loopback endpoints must use

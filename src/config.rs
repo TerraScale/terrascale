@@ -2,7 +2,7 @@
 
 use crate::discovery::{rtt_header, RegionRtt, ATLAS_BASE_URL};
 use crate::error::{Error, ErrorKind, Result};
-use crate::regions::normalize_base_url;
+use crate::regions::{normalize_base_url, validate_native_origin};
 use crate::values::TenantId;
 
 #[derive(Clone)]
@@ -41,15 +41,16 @@ impl ClientConfig {
     pub fn builder() -> ClientConfigBuilder {
         ClientConfigBuilder::default()
     }
-    /// Reviewed direct native origin; absent requires scoped Atlas admission.
+    /// Explicit provisioned native origin; absent requires scoped Atlas admission.
+    /// TerraScale-zone origins must use the canonical direct regional form.
     #[must_use]
     pub fn api_base_url(&self) -> Option<&str> {
         self.api_base_url.as_deref()
     }
     /// Atlas origin. Native discovery admits only the canonical production origin.
     #[must_use]
-    pub fn atlas_base_url(&self) -> Option<&str> {
-        Some(&self.atlas_base_url)
+    pub fn atlas_base_url(&self) -> &str {
+        &self.atlas_base_url
     }
     #[must_use]
     pub fn auth_base_url(&self) -> Option<&str> {
@@ -122,7 +123,9 @@ impl ClientConfigBuilder {
         self.region_rtt = hints;
         self
     }
-    /// Set a reviewed direct native regional/loopback origin. No global default.
+    /// Set a caller-provisioned native origin. TerraScale-zone origins must be
+    /// canonical direct regional HTTPS; independent HTTPS/loopback/test origins
+    /// remain available for explicit provisioning. This opts out of Atlas admission.
     #[must_use]
     pub fn api_base_url(mut self, value: impl Into<String>) -> Self {
         self.api_base_url = Some(value.into());
@@ -201,26 +204,7 @@ impl ClientConfigBuilder {
             .map(normalize_base_url)
             .transpose()?;
         if let Some(origin) = &api_base_url {
-            let parsed = reqwest::Url::parse(origin).map_err(|_| {
-                Error::new(
-                    ErrorKind::Validation,
-                    "invalid_base_url",
-                    "Invalid native origin.",
-                )
-            })?;
-            if parsed.host_str().is_some_and(|host| {
-                host.trim_end_matches('.')
-                    .eq_ignore_ascii_case("api.terrascale.tech")
-            }) {
-                return Err(Error::new(ErrorKind::Validation, "invalid_native_origin", "Native traffic requires a direct regional origin; the global API test host is not a fallback."));
-            }
-            if parsed.path() != "/" {
-                return Err(Error::new(
-                    ErrorKind::Validation,
-                    "invalid_base_url",
-                    "Native origin must not contain a path.",
-                ));
-            }
+            validate_native_origin(origin)?;
         }
         let auth_base_url = self
             .auth_base_url

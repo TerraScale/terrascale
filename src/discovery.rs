@@ -16,6 +16,7 @@ use crate::{
     config::ClientConfig,
     documents::{DatabaseScope, ProtocolVersion},
     error::{Error, ErrorKind, Result},
+    regions::valid_region,
     transport::{HttpTransport, Method, Request, Response},
     values::{DatabaseId, DecimalU64, Digest, TenantId},
 };
@@ -395,20 +396,6 @@ fn validate_region_set(regions: &[String]) -> Result<()> {
     }
     Ok(())
 }
-fn valid_region(region: &str) -> bool {
-    let bytes = region.as_bytes();
-    !bytes.is_empty()
-        && bytes.len() <= 16
-        && bytes[0].is_ascii_alphanumeric()
-        && bytes
-            .iter()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'-')
-        && ![
-            "API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH", "DOCS", "GIT", "CDN",
-            "ADMIN", "MCP", "MAIL",
-        ]
-        .contains(&region)
-}
 fn valid_token(token: &str) -> bool {
     let bytes = token.as_bytes();
     !bytes.is_empty()
@@ -605,7 +592,27 @@ impl AtlasDiscovery {
         scope: &DatabaseScope,
         requirement: NativeRequirement,
     ) -> Result<ResolvedNativeOrigin> {
-        if self.0.config.atlas_base_url() != Some(ATLAS_BASE_URL) {
+        self.resolve_until(scope, requirement, crate::client::native_deadline())
+            .await
+    }
+    pub(crate) async fn resolve_until(
+        &self,
+        scope: &DatabaseScope,
+        requirement: NativeRequirement,
+        deadline: tokio::time::Instant,
+    ) -> Result<ResolvedNativeOrigin> {
+        tokio::time::timeout_at(deadline, self.resolve_inner(scope, requirement, deadline))
+            .await
+            .map_err(|_| Error::transport("Atlas request deadline exceeded."))?
+    }
+    async fn resolve_inner(
+        &self,
+        scope: &DatabaseScope,
+        requirement: NativeRequirement,
+        deadline: tokio::time::Instant,
+    ) -> Result<ResolvedNativeOrigin> {
+        crate::client::check_native_deadline(deadline)?;
+        if self.0.config.atlas_base_url() != ATLAS_BASE_URL {
             return Err(validation(
                 "invalid_native_discovery_origin",
                 "Native credentials can only be sent to canonical Atlas discovery.",
@@ -654,6 +661,7 @@ impl AtlasDiscovery {
         };
         // One refresh per scope, including atomic observation-floor publication.
         let mut state = reservation.state.lock().await;
+        crate::client::check_native_deadline(deadline)?;
         let start = self.now()?;
         if let (Some(metadata), Some(until)) = (&state.metadata, state.lease_until) {
             if start.monotonic < until && start.unix_millis / 1000 < metadata.expires_at {
@@ -686,18 +694,18 @@ impl AtlasDiscovery {
         if let Some(rtt) = rtt {
             headers.push(("x-terrascale-region-rtt".into(), rtt));
         }
-        let response = tokio::time::timeout(
-            Duration::from_secs(30),
-            self.0.transport.send(Request {
+        let response = self
+            .0
+            .transport
+            .send(Request {
                 route_name: "native.discovery".into(),
                 method: Method::Get,
                 url: url.into(),
                 headers,
                 body: None,
-            }),
-        )
-        .await
-        .map_err(|_| Error::transport("Atlas request deadline exceeded."))??;
+            })
+            .await?;
+        crate::client::check_native_deadline(deadline)?;
         let end = self.now()?;
         let metadata = decode(scope, &response, end)?;
         if let Some(old) = &state.metadata {

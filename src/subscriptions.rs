@@ -1,6 +1,6 @@
 //! Native cursor-based snapshots and ordered atomic change groups.
 
-use crate::client::SharedClient;
+use crate::client::{native_deadline, SharedClient};
 use crate::discovery::NativeRequirement;
 use crate::documents::{
     validate_cursor, validate_limit, validate_rows, DatabaseScope, Point, PointState, Predicate,
@@ -348,10 +348,11 @@ impl SubscriptionsClient {
         collection: CollectionId,
         input: &SnapshotRequest,
     ) -> Result<SnapshotPage> {
+        let deadline = native_deadline();
         input.validate()?;
         let origin = self
             .shared
-            .native_origin(scope, NativeRequirement::Subscription)
+            .native_origin(scope, NativeRequirement::Subscription, deadline)
             .await?;
         let request = Request::json(
             "native.subscription",
@@ -364,7 +365,7 @@ impl SubscriptionsClient {
         )?;
         let page: SnapshotPage = self
             .shared
-            .send_native_typed(scope, NativeRequirement::Subscription, request)
+            .send_native_typed(scope, NativeRequirement::Subscription, request, deadline)
             .await?;
         page.validate_in(scope, input.limit)
             .map_err(|e| Error::invalid_response(e.message))?;
@@ -376,11 +377,12 @@ impl SubscriptionsClient {
         collection: CollectionId,
         input: &PollRequest,
     ) -> Result<PollPage> {
+        let deadline = native_deadline();
         input.predicate.validate()?;
         validate_cursor(&input.poll_cursor)?;
         let origin = self
             .shared
-            .native_origin(scope, NativeRequirement::Subscription)
+            .native_origin(scope, NativeRequirement::Subscription, deadline)
             .await?;
         let request = Request::json(
             "native.subscription",
@@ -393,7 +395,7 @@ impl SubscriptionsClient {
         )?;
         let page: PollPage = self
             .shared
-            .send_native_typed(scope, NativeRequirement::Subscription, request)
+            .send_native_typed(scope, NativeRequirement::Subscription, request, deadline)
             .await?;
         page.validate_in(scope)
             .map_err(|e| Error::invalid_response(e.message))?;

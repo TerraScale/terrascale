@@ -12,13 +12,40 @@ use crate::transport::{
     HttpTransport, Method, Request, ReqwestTransport, Response, MAX_JSON_BYTES,
 };
 use serde::de::DeserializeOwned;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
 
 // Retained only as internal auth credential-isolation markers, never sent.
 pub(crate) const SKIP_AUTH_MARKER: &str = "x-terrascale-sdk-skip-auth";
 pub(crate) const SKIP_SESSION_MARKER: &str = "x-terrascale-sdk-skip-session";
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
+
+/// One budget created by the public native caller, shared by all of its awaits.
+pub(crate) fn native_deadline() -> tokio::time::Instant {
+    tokio::time::Instant::now() + Duration::from_secs(30)
+}
+pub(crate) fn check_native_deadline(deadline: tokio::time::Instant) -> Result<()> {
+    if tokio::time::Instant::now() >= deadline {
+        return Err(Error::transport("Native operation deadline exceeded."));
+    }
+    Ok(())
+}
+
+/// Per-call witness set only when dispatch polls the native transport future.
+/// It does not prove delivery or commit; errors after this point may be uncertain.
+#[derive(Debug, Default)]
+pub(crate) struct NativeSendPhase(AtomicBool);
+impl NativeSendPhase {
+    fn start(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+    pub(crate) fn has_started(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct Shared {
@@ -51,7 +78,9 @@ impl Shared {
         &self,
         scope: &DatabaseScope,
         requirement: NativeRequirement,
+        deadline: tokio::time::Instant,
     ) -> Result<String> {
+        check_native_deadline(deadline)?;
         if let Some(tenant) = self.config.tenant_id() {
             if tenant != scope.tenant {
                 return Err(Error::new(
@@ -65,7 +94,7 @@ impl Shared {
             Some(origin) => Ok(origin.to_owned()),
             None => Ok(self
                 .native_router
-                .resolve(scope, requirement)
+                .resolve_until(scope, requirement, deadline)
                 .await?
                 .endpoint
                 .url),
@@ -75,7 +104,8 @@ impl Shared {
     async fn dispatch(
         &self,
         mut request: Request,
-        native: Option<(&DatabaseScope, NativeRequirement)>,
+        native: Option<(&DatabaseScope, NativeRequirement, tokio::time::Instant)>,
+        send_phase: Option<&NativeSendPhase>,
     ) -> Result<Response> {
         let auth = request.route_name.starts_with("auth_idp.");
         let skip_auth = request
@@ -125,16 +155,28 @@ impl Shared {
         let mut retries = 0;
         loop {
             let mut attempt = request.clone();
-            if let Some((scope, requirement)) = native {
-                let origin = self.native_origin(scope, requirement).await?;
+            if let Some((scope, requirement, deadline)) = native {
+                let origin = self.native_origin(scope, requirement, deadline).await?;
                 rebase(&mut attempt, &origin)?;
+                check_native_deadline(deadline)?;
             }
             if let Some(endpoints) = &endpoints {
                 rebase(&mut attempt, &endpoints[endpoint_index])?;
             }
             // AuthIdpClient owns its public deadline and error code.
-            let result = if auth {
-                self.transport.send(attempt).await
+            // Native callers share the same outer deadline across preflight,
+            // resolver wait/fetch, every dispatch and retry delay.
+            let result = if auth || native.is_some() {
+                let mut send = self.transport.send(attempt);
+                if let Some(phase) = send_phase {
+                    std::future::poll_fn(|context| {
+                        phase.start();
+                        std::future::Future::poll(send.as_mut(), context)
+                    })
+                    .await
+                } else {
+                    send.await
+                }
             } else {
                 tokio::time::timeout(Duration::from_secs(30), self.transport.send(attempt))
                     .await
@@ -199,7 +241,7 @@ impl Shared {
 
     pub(crate) async fn send_typed<T: DeserializeOwned>(&self, request: Request) -> Result<T> {
         let route = request.route_name.clone();
-        self.dispatch(request, None)
+        self.dispatch(request, None, None)
             .await?
             .json_body()
             .map_err(|mut error| {
@@ -208,22 +250,39 @@ impl Shared {
             })
     }
     pub(crate) async fn send_response(&self, request: Request) -> Result<Response> {
-        self.dispatch(request, None).await
+        self.dispatch(request, None, None).await
     }
     pub(crate) async fn send_native_typed<T: DeserializeOwned>(
         &self,
         scope: &DatabaseScope,
         requirement: NativeRequirement,
         request: Request,
+        deadline: tokio::time::Instant,
     ) -> Result<T> {
+        self.send_native_typed_with_phase(scope, requirement, request, deadline, None)
+            .await
+    }
+    pub(crate) async fn send_native_typed_with_phase<T: DeserializeOwned>(
+        &self,
+        scope: &DatabaseScope,
+        requirement: NativeRequirement,
+        request: Request,
+        deadline: tokio::time::Instant,
+        send_phase: Option<&NativeSendPhase>,
+    ) -> Result<T> {
+        check_native_deadline(deadline)?;
         let route = request.route_name.clone();
-        self.dispatch(request, Some((scope, requirement)))
-            .await?
-            .json_body()
-            .map_err(|mut error| {
-                error.code = format!("{}.invalid_response", route_to_code(&route));
-                error
-            })
+        let response = tokio::time::timeout_at(
+            deadline,
+            self.dispatch(request, Some((scope, requirement, deadline)), send_phase),
+        )
+        .await
+        .map_err(|_| Error::transport("Native operation deadline exceeded."))??;
+        check_native_deadline(deadline)?;
+        response.json_body().map_err(|mut error| {
+            error.code = format!("{}.invalid_response", route_to_code(&route));
+            error
+        })
     }
 }
 
@@ -336,9 +395,8 @@ fn is_retryable(error: &Error) -> bool {
     if error.kind == ErrorKind::InvalidResponse {
         return false;
     }
-    // 520-524 are Cloudflare's origin-connectivity class (returned before the
-    // request reaches the member); they demote and fail over like a
-    // transport error (ADR 0050 §5.3).
+    // A caller may opt into bounded safe retries for transport/connectivity
+    // errors. Each retry selects the current receiver rank without demotion.
     error.kind == ErrorKind::Transport
         || matches!(error.status, Some(408 | 429 | 500..=504 | 520..=524))
 }
