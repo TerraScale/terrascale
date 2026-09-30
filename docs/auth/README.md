@@ -69,8 +69,8 @@ the service binary.
 
 ## Running
 
-The build requires the sibling `../ts-rust` SDK checkout at commit
-`TS_RUST_REV` in `.forgejo/workflows/ci.yml`, as pinned in CI. Install the
+The build requires the sibling `../ts-rust` SDK checkout at the commit
+specified by `TS_RUST_REV` in `.forgejo/workflows/ci.yml`. Install the
 Rust 1.98.1 toolchain from `.mise.toml` with `mise install`. The service itself
 needs a TerraScale API endpoint, project API key, and database:
 
