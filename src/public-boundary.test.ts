@@ -12,9 +12,9 @@ const edgeCatalogResponse = {
     { code: "FRA", name: "Frankfurt", country: "DE", latitude: 50.1109, longitude: 8.6821, available: true },
   ],
   hosts: {
-    GRU: "gru.api.terrascale.tech",
-    SFO: "sfo.api.terrascale.tech",
-    FRA: "fra.api.terrascale.tech",
+    GRU: "gru.terrascale.tech",
+    SFO: "sfo.terrascale.tech",
+    FRA: "fra.terrascale.tech",
   },
 } as const;
 

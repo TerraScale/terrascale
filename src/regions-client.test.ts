@@ -56,24 +56,24 @@ describe("RegionsClient", () => {
       { regions: [{ ...gru, code: "gru" }] },
       { regions: [{ ...gru, code: "ABC_" }] },
       { regions: [gru, { ...gru }] },
-      { regions: [{ ...gru, name: "" }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
-      { regions: [{ ...gru, name: "x".repeat(129) }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
-      { regions: [{ ...gru, country: "usa" }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
-      { regions: [{ ...gru, country: "U" }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
-      { regions: [{ ...gru, latitude: -90.001 }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
-      { regions: [{ ...gru, latitude: 90.001 }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
-      { regions: [{ ...gru, longitude: -180.001 }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
-      { regions: [{ ...gru, longitude: 180.001 }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
+      { regions: [{ ...gru, name: "" }], hosts: { GRU: "https://gru.terrascale.tech" } },
+      { regions: [{ ...gru, name: "x".repeat(129) }], hosts: { GRU: "https://gru.terrascale.tech" } },
+      { regions: [{ ...gru, country: "usa" }], hosts: { GRU: "https://gru.terrascale.tech" } },
+      { regions: [{ ...gru, country: "U" }], hosts: { GRU: "https://gru.terrascale.tech" } },
+      { regions: [{ ...gru, latitude: -90.001 }], hosts: { GRU: "https://gru.terrascale.tech" } },
+      { regions: [{ ...gru, latitude: 90.001 }], hosts: { GRU: "https://gru.terrascale.tech" } },
+      { regions: [{ ...gru, longitude: -180.001 }], hosts: { GRU: "https://gru.terrascale.tech" } },
+      { regions: [{ ...gru, longitude: 180.001 }], hosts: { GRU: "https://gru.terrascale.tech" } },
       { regions: [{ ...gru, available: "yes" }] },
       { regions: [{ ...gru, ociRegionCode: "sa-saopaulo-1" }] },
       { regions: [{ ...gru, clusterNodeTag: "A" }] },
-      { regions: [{ ...gru, extra: true }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
-      { regions: [gru], hosts: { GRU: "https://gru.api.terrascale.tech" }, extra: true },
+      { regions: [{ ...gru, extra: true }], hosts: { GRU: "https://gru.terrascale.tech" } },
+      { regions: [gru], hosts: { GRU: "https://gru.terrascale.tech" }, extra: true },
       { regions: "GRU" },
       { regions: [gru] },
       { regions: [gru], hosts: {} },
       { regions: [gru], hosts: { GRU: 42 } },
-      { regions: [gru], hosts: { gru: "https://gru.api.terrascale.tech" } },
+      { regions: [gru], hosts: { gru: "https://gru.terrascale.tech" } },
     ];
 
     for (const body of hostileBodies) {
@@ -96,12 +96,12 @@ describe("RegionsClient", () => {
     const client = createTerraScaleClient({
       fetch: async () => Response.json({
         regions: [gru],
-        hosts: { GRU: "https://gru.api.terrascale.tech" },
+        hosts: { GRU: "https://gru.terrascale.tech" },
       }),
     });
     const result = await client.regions.list();
     assert.equal(result.ok, true);
-    if (result.ok) assert.deepEqual(result.value.hosts, { GRU: "https://gru.api.terrascale.tech" });
+    if (result.ok) assert.deepEqual(result.value.hosts, { GRU: "https://gru.terrascale.tech" });
   });
 
   test("accepts the published inclusive region bounds", async () => {
@@ -115,7 +115,7 @@ describe("RegionsClient", () => {
     const client = createTerraScaleClient({
       fetch: async () => Response.json({
         regions: [boundaryRegion],
-        hosts: { GRU: "https://gru.api.terrascale.tech" },
+        hosts: { GRU: "https://gru.terrascale.tech" },
       }),
     });
 

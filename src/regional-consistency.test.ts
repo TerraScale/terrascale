@@ -44,7 +44,7 @@ describe("regional routing consistency", () => {
       regionAffinity: "strict",
       fetch: globalThis.fetch,
     });
-    assert.equal(strict.apiBaseUrl, "https://sfo.api.terrascale.tech");
+    assert.equal(strict.apiBaseUrl, "https://sfo.terrascale.tech");
     assert.equal(strict.preferredRegion, "SFO");
   });
 
@@ -89,7 +89,7 @@ describe("regional routing consistency", () => {
 
     assert.equal(new URL(requests[0]!.url).hostname, "api.terrascale.tech");
     assert.equal(requests[0]!.headers.get("x-terrascale-preferred-region"), "FRA");
-    assert.equal(new URL(requests[1]!.url).hostname, "sfo.api.terrascale.tech");
+    assert.equal(new URL(requests[1]!.url).hostname, "sfo.terrascale.tech");
     assert.equal(requests[1]!.headers.has("x-terrascale-preferred-region"), false);
   });
 
@@ -122,7 +122,7 @@ describe("regional routing consistency", () => {
     });
     assert.equal(result.ok, true);
     assert.deepEqual(requests.map(request => new URL(request.url).hostname), [
-      "gru.api.terrascale.tech", "fra.api.terrascale.tech",
+      "gru.terrascale.tech", "fra.terrascale.tech",
     ]);
     assert.deepEqual(requests.map(request => request.headers.get("x-terrascale-preferred-region")), ["GRU", "FRA"]);
     for (const request of requests) {
@@ -185,7 +185,7 @@ describe("regional routing consistency", () => {
 
     assert.equal(result.ok, true);
     assert.deepEqual(requests.map(request => new URL(request.url).hostname), [
-      "api.terrascale.tech", "fra.api.terrascale.tech",
+      "api.terrascale.tech", "fra.terrascale.tech",
     ]);
   });
 
@@ -293,7 +293,7 @@ describe("regional routing consistency", () => {
       assert.equal(requests.length, 2);
       assert.deepEqual(
         requests.map(request => new URL(request.url).hostname),
-        ["sfo.api.terrascale.tech", "sfo.api.terrascale.tech"],
+        ["sfo.terrascale.tech", "sfo.terrascale.tech"],
       );
       assert.equal(requests.some(request => new URL(request.url).hostname === "api.terrascale.tech"), false);
     }

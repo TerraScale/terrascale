@@ -115,7 +115,7 @@ describe.skipIf(Boolean(fixtureSkipReason))(
       regionAffinity: "strict",
       fetch: globalThis.fetch,
     });
-    assert.equal(new URL(resolved.apiBaseUrl).hostname, `${strictRegion!.toLowerCase()}.api.terrascale.tech`);
+    assert.equal(new URL(resolved.apiBaseUrl).hostname, `${strictRegion!.toLowerCase()}.terrascale.tech`);
 
     const client = createTerraScaleClient({
       apiBaseUrl: strictApiBaseUrl!,
@@ -149,7 +149,7 @@ describe.skipIf(Boolean(fixtureSkipReason))(
       regionAffinity: "strict",
       fetch: globalThis.fetch,
     });
-    assert.equal(new URL(resolved.apiBaseUrl).hostname, `${unavailableRegion!.toLowerCase()}.api.terrascale.tech`);
+    assert.equal(new URL(resolved.apiBaseUrl).hostname, `${unavailableRegion!.toLowerCase()}.terrascale.tech`);
 
     const client = createTerraScaleClient({
       apiBaseUrl: unavailableApiBaseUrl!,

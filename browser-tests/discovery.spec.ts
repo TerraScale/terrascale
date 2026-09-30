@@ -13,7 +13,7 @@ import { expect, test } from "@playwright/test";
 const DISCOVERY = "https://atlas.terrascale.tech/api/v1/discovery*";
 const CATALOG = "https://atlas.terrascale.tech/api/v1/regions*";
 const PRODUCT = "https://api.terrascale.tech/api/v1/**";
-const REGIONAL = /^https:\/\/(fra|gru)\.api\.terrascale\.tech\/.*/;
+const REGIONAL = /^https:\/\/(fra|gru)\.terrascale\.tech\/.*/;
 
 function catalogBody(): string {
   return JSON.stringify({
@@ -22,8 +22,8 @@ function catalogBody(): string {
       { code: "GRU", name: "Sao Paulo", country: "BR", latitude: -23.5475, longitude: -46.6361, available: true },
     ],
     hosts: {
-      FRA: "https://fra.api.terrascale.tech",
-      GRU: "https://gru.api.terrascale.tech",
+      FRA: "https://fra.terrascale.tech",
+      GRU: "https://gru.terrascale.tech",
     },
   });
 }
@@ -45,7 +45,7 @@ test("discovery routes document requests directly to the ranked regional endpoin
         placement: "known",
         refreshSeconds: 300,
         endpoints: [
-          { region: "FRA", url: "https://fra.api.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] },
+          { region: "FRA", url: "https://fra.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] },
         ],
       }),
     });
@@ -72,8 +72,8 @@ test("discovery routes document requests directly to the ranked regional endpoin
   // Two data requests, exactly one atlas discovery call, both direct to FRA.
   expect(hits.filter((hit) => hit.startsWith("discovery:"))).toEqual(["discovery:browser-db"]);
   expect(hits.filter((hit) => hit.startsWith("regional:"))).toEqual([
-    "regional:fra.api.terrascale.tech",
-    "regional:fra.api.terrascale.tech",
+    "regional:fra.terrascale.tech",
+    "regional:fra.terrascale.tech",
   ]);
 });
 
@@ -98,7 +98,7 @@ test("discovery failure degrades to catalog-selected regional routing (no proxy)
   expect(result.ok).toBe(true);
   // The retired proxy never appears: the degraded request still goes
   // directly to the catalog-selected regional member.
-  expect(hits).toEqual(["catalog", "regional:fra.api.terrascale.tech"]);
+  expect(hits).toEqual(["catalog", "regional:fra.terrascale.tech"]);
 });
 
 test("product routes target the product origin, distinct from atlas and the members", async ({ page }) => {
