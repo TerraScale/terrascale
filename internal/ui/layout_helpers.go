@@ -16,6 +16,10 @@ import (
 // navDestination gives every dashboard section its own icon and icon color so
 // users can find a section by color as well as by label. Tones are defined in
 // web/assets/css/tokens.css; page content itself uses the blue accent.
+//
+// A tone never repeats within one sidebar (the shell and admin sidebars never
+// render together, so they may share tones), and look-alike tones such as
+// blue/sky or teal/emerald stay away from each other in the list.
 type navDestination struct {
 	icon func(int) templ.Component
 	tone string
@@ -25,20 +29,20 @@ var navDestinations = map[string]navDestination{
 	"/":                    {icons.LayoutDashboard, "violet"},
 	"/notifications":       {icons.Bell, "amber"},
 	"/databases":           {icons.Database, "blue"},
-	"/api-keys":            {icons.KeyRound, "amber"},
+	"/api-keys":            {icons.KeyRound, "lime"},
 	"/access":              {icons.Users, "pink"},
 	"/auth":                {icons.Fingerprint, "emerald"},
 	"/audit":               {icons.ScrollText, "orange"},
 	"/usage":               {icons.ChartColumnBig, "sky"},
 	"/subscriptions":       {icons.RadioTower, "fuchsia"},
 	"/billing":             {icons.CreditCard, "rose"},
-	"/organization":        {icons.Building2, "indigo"},
+	"/organization":        {icons.Building2, "teal"},
 	"/settings":            {icons.Settings, "slate"},
 	"/admin/users":         {icons.Users, "pink"},
 	"/admin/organizations": {icons.Building2, "indigo"},
-	"/admin/projects":      {icons.Boxes, "cyan"},
+	"/admin/projects":      {icons.Boxes, "lime"},
 	"/admin/databases":     {icons.Database, "blue"},
-	"/admin/estate":        {icons.Globe, "teal"},
+	"/admin/estate":        {icons.Globe, "orange"},
 	"/admin/usage":         {icons.ChartColumnBig, "sky"},
 	"/admin/plans":         {icons.CreditCard, "rose"},
 }
