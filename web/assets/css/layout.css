@@ -7,13 +7,11 @@
   align-content: start;
   gap: var(--ts-s8);
   width: 100%;
-  padding: var(--ts-s8) var(--ts-s10) var(--ts-s12);
-}
-
-/* Pages that lead with content instead of a standalone action row use a
-   compact top inset. Keep both responsive values with the shared layout. */
-.ts-page-compact-top {
-  padding-top: var(--ts-s4);
+  /* A compact top inset reclaims viewport space at every breakpoint;
+     the larger grid gap separates content sections within the page. */
+  padding-top: var(--ts-s2);
+  padding-inline: var(--ts-s10);
+  padding-bottom: var(--ts-s12);
 }
 
 .ts-eyebrow {
@@ -123,11 +121,8 @@
 @media (max-width: 47.99rem) {
   .ts-page {
     gap: var(--ts-s5);
-    padding: var(--ts-s5) var(--ts-s4) var(--ts-s10);
-  }
-
-  .ts-page-compact-top {
-    padding-top: var(--ts-s3);
+    padding-inline: var(--ts-s4);
+    padding-bottom: var(--ts-s10);
   }
 }
 

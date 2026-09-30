@@ -9,7 +9,7 @@ import (
 )
 
 templ apiKeysContent(page core.Page, d pageData) {
-	<main class="ts-page ts-page-compact-top ts-apikeys-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
+	<main class="ts-page ts-apikeys-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
 		@ui.PageHeader("API keys") {}
 		// A create dialog reopened after invalid input shows its own error.
 		if d.Error != "" && d.Create == "" {
