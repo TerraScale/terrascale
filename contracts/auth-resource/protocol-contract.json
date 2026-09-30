@@ -1,0 +1,1399 @@
+{
+  "actual_public_api_freeze": {
+    "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/owner-correction2.json",
+    "sha256": "d506cfa3d06b133cc8843010130846b25de5a0142393ddb8383b25aeffab9cf1",
+    "source_identity": {
+      "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+      "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+      "changed_files": {
+        "Cargo.lock": {
+          "bytes": 99658,
+          "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+        },
+        "Cargo.toml": {
+          "bytes": 1580,
+          "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+        },
+        "crates/auth-app/examples/export_schema.rs": {
+          "bytes": 290,
+          "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+        },
+        "crates/auth-contracts/Cargo.toml": {
+          "bytes": 397,
+          "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+        },
+        "crates/auth-contracts/src/json_exact.rs": {
+          "bytes": 5700,
+          "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+        },
+        "crates/auth-contracts/src/lib.rs": {
+          "bytes": 1692,
+          "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+        },
+        "crates/auth-contracts/src/models.rs": {
+          "bytes": 21940,
+          "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+        },
+        "crates/auth-contracts/src/native_schema.rs": {
+          "bytes": 17206,
+          "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+        },
+        "crates/auth-store/Cargo.toml": {
+          "bytes": 480,
+          "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+        },
+        "crates/auth-store/src/lib.rs": {
+          "bytes": 73962,
+          "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+        },
+        "crates/auth-store/src/methods.rs": {
+          "bytes": 55769,
+          "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+        },
+        "crates/auth-store/src/oauth_resources.rs": {
+          "bytes": 20479,
+          "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+        },
+        "crates/auth-store/tests/store_semantics.rs": {
+          "bytes": 114774,
+          "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+        },
+        "docs/native-persistence.md": {
+          "bytes": 26973,
+          "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+        },
+        "schemas/auth/v1/package.json": {
+          "bytes": 130878,
+          "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+        },
+        "scripts/export-auth-schema.sh": {
+          "bytes": 3873,
+          "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+        }
+      },
+      "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+    }
+  },
+  "actual_shared_dependency_files": [
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/Cargo.lock",
+      "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/Cargo.toml",
+      "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/crates/auth-app/examples/export_schema.rs",
+      "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/crates/auth-contracts/Cargo.toml",
+      "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/crates/auth-contracts/src/json_exact.rs",
+      "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/crates/auth-contracts/src/lib.rs",
+      "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/crates/auth-contracts/src/models.rs",
+      "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/crates/auth-contracts/src/native_schema.rs",
+      "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/crates/auth-store/Cargo.toml",
+      "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/crates/auth-store/src/lib.rs",
+      "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/crates/auth-store/src/methods.rs",
+      "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/crates/auth-store/src/oauth_resources.rs",
+      "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/crates/auth-store/tests/store_semantics.rs",
+      "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/docs/native-persistence.md",
+      "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/schemas/auth/v1/package.json",
+      "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    },
+    {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/source/scripts/export-auth-schema.sh",
+      "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45",
+      "source_identity": {
+        "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+        "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+        "changed_files": {
+          "Cargo.lock": {
+            "bytes": 99658,
+            "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+          },
+          "Cargo.toml": {
+            "bytes": 1580,
+            "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+          },
+          "crates/auth-app/examples/export_schema.rs": {
+            "bytes": 290,
+            "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+          },
+          "crates/auth-contracts/Cargo.toml": {
+            "bytes": 397,
+            "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+          },
+          "crates/auth-contracts/src/json_exact.rs": {
+            "bytes": 5700,
+            "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+          },
+          "crates/auth-contracts/src/lib.rs": {
+            "bytes": 1692,
+            "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+          },
+          "crates/auth-contracts/src/models.rs": {
+            "bytes": 21940,
+            "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+          },
+          "crates/auth-contracts/src/native_schema.rs": {
+            "bytes": 17206,
+            "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+          },
+          "crates/auth-store/Cargo.toml": {
+            "bytes": 480,
+            "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+          },
+          "crates/auth-store/src/lib.rs": {
+            "bytes": 73962,
+            "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+          },
+          "crates/auth-store/src/methods.rs": {
+            "bytes": 55769,
+            "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+          },
+          "crates/auth-store/src/oauth_resources.rs": {
+            "bytes": 20479,
+            "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+          },
+          "crates/auth-store/tests/store_semantics.rs": {
+            "bytes": 114774,
+            "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+          },
+          "docs/native-persistence.md": {
+            "bytes": 26973,
+            "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+          },
+          "schemas/auth/v1/package.json": {
+            "bytes": 130878,
+            "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+          },
+          "scripts/export-auth-schema.sh": {
+            "bytes": 3873,
+            "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+          }
+        },
+        "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+      }
+    }
+  ],
+  "build_dependency": "Author-owned /tmp/terrascale-auth-protocol-v1-8r578r0o/ts-auth external harness contains exact16 frozen shared source + siblingSDK clean f8b776. After actualclean8 source gate author copies only owned8 into harness and retains exact source/dependency hashes. No peer files copied into clean contribution, no clean sharedcommit prerequisite. Heavy Rust/Turso/service lanes remain explicit; source coding now independent.",
+  "device_obligation": "Private DeviceGrant/Approval remain owned by protocol leaf; add required-nullable resource audience/resource epoch and required client epoch, preserve explicit approval user/session/user epoch. Do not invent already-shared DeviceGrant APIs.",
+  "extra_http_fixture_hunk": "http_surface.rs only removedclientKey/required policyepoch rawclient fixtures near601/1942; preserve every meaningful assertion, auth integrator read-only. Preserve existing verify_access_token signature for unowned anonymous.rs.",
+  "historical_actual_public_api_freeze": {
+    "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v30/evidence/auth-protocol/public-api-freeze.json",
+    "sha256": "8c032861fb02d2f31568ca7e4d7f13536286ac41de029dd3e1a9b4f8d7b76606"
+  },
+  "independent_shared_source_review": {
+    "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v31/evidence/handoffs/P04-native-schema/independent-review.json",
+    "sha256": "1d5ae6ba81b2b86f33b7496ac7c4792aa60595053e7bc1ed97dc5b23755e1ad8",
+    "source_identity": {
+      "base_commit": "a87e3d5c371b6d8c911cf48bb3e3474b0fd3253b",
+      "base_tree": "480a7597b27daf955a6a8246c2e2ea9fe9d3de8f",
+      "changed_files": {
+        "Cargo.lock": {
+          "bytes": 99658,
+          "sha256": "a96042bba73852a07d763fb14dcd641faa3c4ae9a6fb25490142846427181014"
+        },
+        "Cargo.toml": {
+          "bytes": 1580,
+          "sha256": "76bc56e8371b0c42d03ca34d20b0463651ee0d5fa9a28ec8ea78dd675818dc33"
+        },
+        "crates/auth-app/examples/export_schema.rs": {
+          "bytes": 290,
+          "sha256": "a17fe34188d6c001cf7b5a810ccddbdab4c17d7a992636b1218136507b4f94e1"
+        },
+        "crates/auth-contracts/Cargo.toml": {
+          "bytes": 397,
+          "sha256": "b078418b371d7bd8300dc2d40c4fc02cc379fe892bbe1b6f5db7505ec326647b"
+        },
+        "crates/auth-contracts/src/json_exact.rs": {
+          "bytes": 5700,
+          "sha256": "c00a1ec72d18eded9fd8fa0707182301260568d491dd056ac3e70f472817af17"
+        },
+        "crates/auth-contracts/src/lib.rs": {
+          "bytes": 1692,
+          "sha256": "3572f097ec0b81c2976e3f1f5a1023e5f239b79971a5de490cfbf2a11ae9b1c0"
+        },
+        "crates/auth-contracts/src/models.rs": {
+          "bytes": 21940,
+          "sha256": "df8d6498470fbfa10c8a9a264069ec437019b0a00a1e31dd9c4da0bf007dd041"
+        },
+        "crates/auth-contracts/src/native_schema.rs": {
+          "bytes": 17206,
+          "sha256": "31ed1c1fe4552bdd5713c5537a39df61c5aa3aa81da0864708c089e8cdea79b8"
+        },
+        "crates/auth-store/Cargo.toml": {
+          "bytes": 480,
+          "sha256": "8dff625ede45c70286039e0a21de9071b126734c5a53f0c3dfb0d03eaad8cf28"
+        },
+        "crates/auth-store/src/lib.rs": {
+          "bytes": 73962,
+          "sha256": "646e4169f834cfc944a7e13cf2a6e6ea6405ef1c8a09c7587c3d59a908760d93"
+        },
+        "crates/auth-store/src/methods.rs": {
+          "bytes": 55769,
+          "sha256": "c7c28ba3bc9e5aa7d55752b8ac5d2e9b10b732110b4f0edbe214fc2761b98e40"
+        },
+        "crates/auth-store/src/oauth_resources.rs": {
+          "bytes": 20479,
+          "sha256": "0d176e40134945028088dc60424a8259644416227a0069ea0f5deb9eb69507f2"
+        },
+        "crates/auth-store/tests/store_semantics.rs": {
+          "bytes": 114774,
+          "sha256": "514e6edc89ead4038c79cdb28899ab936ec184093c07f112f6d402612ec7de16"
+        },
+        "docs/native-persistence.md": {
+          "bytes": 26973,
+          "sha256": "a5f3d0d20c0aef47dc7677aaacbc0b4baa2c87c0b58dfd214b82495467e6d218"
+        },
+        "schemas/auth/v1/package.json": {
+          "bytes": 130878,
+          "sha256": "0d27ce6f80cb0968fb50c59a4ebe72c960aea33f648d03920791be85b840690f"
+        },
+        "scripts/export-auth-schema.sh": {
+          "bytes": 3873,
+          "sha256": "c1e66d94ae833e374a3fe07c13375acbd32679bd9dacd39131370821ef9ddd45"
+        }
+      },
+      "tracked_diff_sha256": "4d13568febc007b0bcbc962923f8383bd27a8cd0e81551d2b5fe8c658fdae576"
+    }
+  },
+  "invariant": "Actual registered resource audience/client/resource enabled+epochs+allowlists/currentuser/session/family authority; code/device/refresh retain exact binding, no scope/resource expansion, role-separated introspection; explicit no-resource browser mode, no fallback from denied resource. Strict Basic/form/resource/token use/error rules; unknownstorage failsclosed.",
+  "resource_admin_routes": "Implement resource admin registration/create/list/PATCH/revoke and OpenAPI within resources.rs and owned oauth/mod.rs registration. Existing management bearer/routefamily authorization infrastructure only; token authority remains registered resource Basic introspection. Never per-customer secret or serviceowner workaround.",
+  "runtime_limits": "No native schema/unique/atomicrepository/C06/C07/C08/actualOIDC/two-auth-process/security/hosted qualification. Required clientgrant schema successor pre-firstnativeactivation, old exports retained until actual protocol compiles/reseal.",
+  "schema": "terrascale.integration.auth-resource-protocol.v1",
+  "source_dependency_rebind": "Original clean protocol8 dispatch retained. Author may replace only exact read-only shared16 dependency in own external harness with admitted corrected16; own8 source remains exclusively contribution. All public signatures unchanged.",
+  "source_paths": [
+    "crates/auth-app/src/features/oauth/mod.rs",
+    "crates/auth-app/src/features/oauth/resources.rs",
+    "crates/auth-app/src/features/oauth/device.rs",
+    "crates/auth-app/tests/oauth_connections_acceptance.rs",
+    "crates/auth-app/tests/device_authorization.rs",
+    "docs/consumer-integration.md",
+    "docs/parity.md",
+    "crates/auth-app/tests/http_surface.rs"
+  ],
+  "wire_contract": {
+    "active_response": {
+      "active": true,
+      "aud": "single exact audience string",
+      "client_id": "originating client",
+      "exp": "JWT seconds",
+      "iat": "JWT seconds",
+      "iss": "canonical configured hosted issuer",
+      "principal_kind": "user|service",
+      "scope": "space separated",
+      "sid": "explicit nullable",
+      "sub": "principal subject",
+      "token_type": "Bearer"
+    },
+    "errors": "wrong/unknown/inactive token200 activefalse; invalid authentication401 invalid_client; unavailable storage500 server_error",
+    "id_token": "aud=origin client ID, token_use=id; never management access",
+    "management_authority": "user+nonempty current sid+current durable project/provisioner grant; service explicit separate grants only; no scope/sub-as-owner or per-customer client secret workaround",
+    "no_resource_oidc": "Explicit supported browser RP mode: no resource request; required-nullable stored resource_audience/resource_auth_epoch=null; access and ID aud=origin client ID; client Basic/post introspection same client; registration grants authorization_code/refresh_token, allowed OIDC scopes and allowed_resource_audiences=[]; never fallback from rejected resource",
+    "refresh": "cannot add/change/expand resource or scopes; validates current client/resource enabled/epochs/allowlists and current user/session/family; request absence inherits exact admitted binding",
+    "resource_introspection": "POST /{slug}/oauth/introspect; form token/optional hint; resource Basic only; form secret prohibited; one resource exact audience/access only",
+    "resource_request": "One exact RFC8707 resource on authorize/device_authorization; token code/refresh may omit to inherit or supply exactly stored audience; duplicate/repeated resource or arrays rejected; client_credentials management access requires explicit admitted resource",
+    "resource_token": "single actual string aud=registered resource URI; originating client_id; token_use=access; principal_kind=user|service; client_auth_epoch/resource_auth_epoch; signed grant_type checked against current allowlists; user auth_epoch/current user/current session when applicable; refresh-derived family_id must be current not revoked"
+  }
+}

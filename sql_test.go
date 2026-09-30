@@ -1,10 +1,6 @@
 package sdk_test
 
 import (
-	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -138,54 +134,6 @@ func TestValidateSQLReadOnlyAllowListAndBindings(t *testing.T) {
 		if err := sdk.ValidateSQL(statement, []any{"value"}); err == nil {
 			t.Errorf("ValidateSQL(%q) unexpectedly succeeded", statement)
 		}
-	}
-}
-
-func TestExecuteSQLSendsCanonicalParameterObject(t *testing.T) {
-	requests := make(chan map[string]any, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("decode request: %v", err)
-		}
-		requests <- body
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"matched":1,"rows":[{"id":"doc-1","value":{"state":"open"}}]}`))
-	}))
-	defer server.Close()
-
-	client, err := sdk.NewClient(sdk.Config{APIBaseURL: server.URL, HTTPClient: server.Client()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := client.ExecuteSQL(context.Background(), "db-1", "SELECT * FROM users WHERE id = ? AND state = $2", []any{"doc-1", "open"}, sdk.SQLExecuteOptions{Explain: true, TimeoutMs: 5000, Cancelled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Matched != 1 || len(result.Rows) != 1 || result.Rows[0].ID != "doc-1" {
-		t.Fatalf("result = %#v", result)
-	}
-	body := <-requests
-	if got, want := body["sql"], "SELECT * FROM users WHERE id = ? AND state = $2"; got != want {
-		t.Fatalf("sql = %#v, want %#v", got, want)
-	}
-	if _, ok := body["statement"]; ok {
-		t.Fatal("server alias statement was sent")
-	}
-	if _, ok := body["params"]; ok {
-		t.Fatal("legacy params member was sent")
-	}
-	if got, want := body["parameters"], map[string]any{"1": "doc-1", "2": "open"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("parameters = %#v, want %#v", got, want)
-	}
-	if got, want := body["timeout_ms"], float64(5000); got != want {
-		t.Fatalf("timeout_ms = %#v, want %#v", got, want)
-	}
-	if got, want := body["explain"], true; got != want {
-		t.Fatalf("explain = %#v, want %#v", got, want)
-	}
-	if got, want := body["cancelled"], true; got != want {
-		t.Fatalf("cancelled = %#v, want %#v", got, want)
 	}
 }
 

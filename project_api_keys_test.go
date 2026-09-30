@@ -92,12 +92,12 @@ func TestProjectAPIKeySecretAuthenticatesPublicClient(t *testing.T) {
 				APIKey: ProjectAPIKey{ID: "key-1", ProjectID: "project-1"},
 				Secret: "ts_created_secret",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/databases/db/collections/users/documents/ada":
+		case r.Method == http.MethodGet && r.URL.Path == nativeTestScope.path()+"/collections/"+string(nativeTestCollection)+"/documents/"+string(nativeTestDocument):
 			publicRequest = true
 			if got := r.Header.Get("Authorization"); got != "Bearer ts_created_secret" {
 				t.Errorf("public authorization = %q", got)
 			}
-			_, _ = w.Write([]byte(`{"name":"Ada"}`))
+			_, _ = w.Write([]byte(nativeAbsentPoint))
 		default:
 			http.NotFound(w, r)
 		}
@@ -116,15 +116,15 @@ func TestProjectAPIKeySecretAuthenticatesPublicClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	public, err := NewClient(Config{APIBaseURL: server.URL, AccessToken: created.Secret})
+	public, err := NewClient(Config{DataBaseURL: server.URL, DataAccessToken: created.Secret})
 	if err != nil {
 		t.Fatal(err)
 	}
-	document, err := public.Documents.Get(t.Context(), "db", "users", "ada")
+	document, err := public.Documents.Get(t.Context(), nativeTestScope, nativeTestCollection, nativeTestDocument)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(document.Body) != `{"name":"Ada"}` || !publicRequest {
-		t.Fatalf("public API-key request did not authenticate: body=%s request=%t", document.Body, publicRequest)
+	if document.State != PointAbsent || !publicRequest {
+		t.Fatalf("native API-key request did not authenticate: state=%s request=%t", document.State, publicRequest)
 	}
 }

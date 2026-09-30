@@ -259,7 +259,7 @@ func TestTSAuthErrorShapes(t *testing.T) {
 	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadRequest || apiErr.Code != "invalid_request" || apiErr.Message != "the request is invalid" {
 		t.Fatalf("nested envelope error = %+v", err)
 	}
-	_, err = instance.OIDC.ExchangeAuthorizationCode(t.Context(), "cli_1", "csek", "code_1", "https://app.example/cb", "")
+	_, err = instance.OIDC.ExchangeAuthorizationCode(t.Context(), TSAuthOAuthClientAuthentication{ClientID: "cli_1", ClientSecret: "csek", Method: TSAuthClientSecretPost}, "code_1", "https://app.example/cb", "")
 	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusUnauthorized || apiErr.Code != "invalid_client" || apiErr.Message != "client authentication failed" {
 		t.Fatalf("flat oauth error = %+v", err)
 	}
@@ -326,9 +326,9 @@ func TestTSAuthOneTimeSecretsAndCasing(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name != "web" || len(body.RedirectURIs) != 1 {
 				t.Errorf("oauth-client create body = %+v, error = %v", body, err)
 			}
-			_, _ = w.Write([]byte(`{"client":{"id":"clt_1","clientId":"cli_1","name":"web","redirectUris":["https://app.example/cb"],"tokenEndpointAuthMethod":"client_secret_post","public":false,"createdAt":1700000000},"client_secret":"csek_once"}`))
+			_, _ = w.Write([]byte(`{"client":{"id":"clt_1","client_id":"cli_1","name":"web","redirect_uris":["https://app.example/cb"],"token_endpoint_auth_method":"client_secret_post","public":false,"created_at":1700000000},"client_secret":"csek_once"}`))
 		case r.URL.Path == "/v1/acme/oauth-clients" && r.Method == http.MethodGet:
-			_, _ = w.Write([]byte(`{"clients":[{"id":"clt_1","clientId":"cli_1","name":"web","redirectUris":["https://app.example/cb"],"tokenEndpointAuthMethod":"client_secret_post","public":false,"createdAt":1700000000}]}`))
+			_, _ = w.Write([]byte(`{"clients":[{"id":"clt_1","client_id":"cli_1","name":"web","redirect_uris":["https://app.example/cb"],"token_endpoint_auth_method":"client_secret_post","public":false,"created_at":1700000000}]}`))
 		case r.URL.Path == "/v1/acme/webhooks" && r.Method == http.MethodPost:
 			_, _ = w.Write([]byte(`{"id":"wh_1","url":"https://hooks.example/cb","events":["user.created","user.*"],"enabled":true,"created_at":1,"signing_secret":"whsec_12345678901234567890123456789012"}`))
 		case r.URL.Path == "/v1/acme/webhooks" && r.Method == http.MethodGet:
@@ -350,11 +350,11 @@ func TestTSAuthOneTimeSecretsAndCasing(t *testing.T) {
 		t.Fatalf("api key list = %+v, error = %v", keys, err)
 	}
 	client, err := instance.OAuthClients.Create(t.Context(), CreateTSAuthOAuthClientRequest{Name: "web", RedirectURIs: []string{"https://app.example/cb"}})
-	if err != nil || client.Client.ID != "clt_1" || client.Client.ClientID != "cli_1" || client.Client.TokenEndpointAuthMethod != "client_secret_post" || client.ClientSecret == nil || *client.ClientSecret != "csek_once" {
+	if err != nil || client.Client.ID != "clt_1" || client.Client.ClientID != "cli_1" || client.Client.TokenEndpointAuthMethod != "client_secret_post" || client.Client.CreatedAt != 1700000000 || client.ClientSecret == nil || *client.ClientSecret != "csek_once" {
 		t.Fatalf("oauth client create = %+v, error = %v", client, err)
 	}
 	clients, err := instance.OAuthClients.List(t.Context())
-	if err != nil || len(clients) != 1 || clients[0].ClientID != "cli_1" || clients[0].RedirectURIs[0] != "https://app.example/cb" {
+	if err != nil || len(clients) != 1 || clients[0].ClientID != "cli_1" || clients[0].CreatedAt != 1700000000 || clients[0].RedirectURIs[0] != "https://app.example/cb" {
 		t.Fatalf("oauth client list = %+v, error = %v", clients, err)
 	}
 	webhook, err := instance.Webhooks.Create(t.Context(), CreateTSAuthWebhookRequest{URL: "https://hooks.example/cb", Events: []string{"user.created", "user.*"}})
@@ -462,7 +462,7 @@ func TestTSAuthPreflightValidation(t *testing.T) {
 		func() error { _, err := instance.Billing.CreateCheckout(t.Context(), " "); return err }(),
 		func() error { _, err := instance.Billing.EnforceQuota(t.Context(), -1); return err }(),
 		func() error {
-			_, err := instance.OIDC.ExchangeAuthorizationCode(t.Context(), "cli", "sec", "", "https://app.example/cb", "")
+			_, err := instance.OIDC.ExchangeAuthorizationCode(t.Context(), TSAuthOAuthClientAuthentication{ClientID: "cli", ClientSecret: "sec", Method: TSAuthClientSecretPost}, "", "https://app.example/cb", "")
 			return err
 		}(),
 		func() error { _, err := instance.OIDC.GetUserInfo(t.Context(), " "); return err }(),
@@ -485,7 +485,7 @@ func TestTSAuthOIDC(t *testing.T) {
 			if got := r.Header.Get("Authorization"); got != "" {
 				t.Errorf("discovery authorization = %q", got)
 			}
-			_, _ = w.Write([]byte(`{"issuer":"https://auth.example.com/acme","authorization_endpoint":"https://auth.example.com/acme/oauth/authorize","token_endpoint":"https://auth.example.com/acme/oauth/token","userinfo_endpoint":"https://auth.example.com/acme/oauth/userinfo","jwks_uri":"https://auth.example.com/acme/.well-known/jwks.json","revocation_endpoint":"https://auth.example.com/acme/oauth/revoke","introspection_endpoint":"https://auth.example.com/acme/oauth/introspect","end_session_endpoint":"https://auth.example.com/acme/oauth/end-session","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token","client_credentials"],"code_challenge_methods_supported":["S256"],"subject_types_supported":["public"],"id_token_signing_alg_values_supported":["ES256"],"token_endpoint_auth_methods_supported":["client_secret_post","none"],"scopes_supported":["openid","email","profile"]}`))
+			_, _ = w.Write([]byte(`{"issuer":"https://auth.example.com/acme","authorization_endpoint":"https://auth.example.com/acme/oauth/authorize","token_endpoint":"https://auth.example.com/acme/oauth/token","userinfo_endpoint":"https://auth.example.com/acme/oauth/userinfo","jwks_uri":"https://auth.example.com/acme/.well-known/jwks.json","revocation_endpoint":"https://auth.example.com/acme/oauth/revoke","introspection_endpoint":"https://auth.example.com/acme/oauth/introspect","end_session_endpoint":"https://auth.example.com/acme/oauth/logout","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token","client_credentials"],"code_challenge_methods_supported":["S256"],"subject_types_supported":["public"],"id_token_signing_alg_values_supported":["ES256"],"token_endpoint_auth_methods_supported":["client_secret_post","none"],"scopes_supported":["openid","email","profile"]}`))
 		case "/acme/.well-known/jwks.json":
 			if got := r.Header.Get("Authorization"); got != "" {
 				t.Errorf("jwks authorization = %q", got)
@@ -572,22 +572,22 @@ func TestTSAuthOIDC(t *testing.T) {
 	if err != nil || len(jwks.Keys) != 1 || jwks.Keys[0].Kid != "key-1" || jwks.Keys[0].Crv != "P-256" {
 		t.Fatalf("jwks = %+v, error = %v", jwks, err)
 	}
-	code, err := oidc.ExchangeAuthorizationCode(t.Context(), "cli_1", "csek", "code_1", "https://app.example/cb", "verifier_123")
+	code, err := oidc.ExchangeAuthorizationCode(t.Context(), TSAuthOAuthClientAuthentication{ClientID: "cli_1", ClientSecret: "csek", Method: TSAuthClientSecretPost}, "code_1", "https://app.example/cb", "verifier_123")
 	if err != nil || code.AccessToken != "at_1" || code.ExpiresIn != 3600 || code.RefreshToken == nil || *code.RefreshToken != "rt_1" || code.IDToken == nil || *code.IDToken != "id_1" {
 		t.Fatalf("code exchange = %+v, error = %v", code, err)
 	}
-	refreshed, err := oidc.RefreshToken(t.Context(), "cli_1", "csek", "rt_1")
+	refreshed, err := oidc.RefreshToken(t.Context(), TSAuthOAuthClientAuthentication{ClientID: "cli_1", ClientSecret: "csek", Method: TSAuthClientSecretPost}, "rt_1")
 	if err != nil || refreshed.AccessToken != "at_1" {
 		t.Fatalf("refresh = %+v, error = %v", refreshed, err)
 	}
-	credentials, err := oidc.RequestClientCredentialsToken(t.Context(), "cli_1", "csek", "openid profile")
+	credentials, err := oidc.RequestClientCredentialsToken(t.Context(), TSAuthOAuthClientAuthentication{ClientID: "cli_1", ClientSecret: "csek", Method: TSAuthClientSecretPost}, "openid profile")
 	if err != nil || credentials.RefreshToken != nil {
 		t.Fatalf("client credentials = %+v, error = %v", credentials, err)
 	}
-	if err := oidc.RevokeToken(t.Context(), "cli_1", "csek", "at_1"); err != nil {
+	if err := oidc.RevokeToken(t.Context(), TSAuthOAuthClientAuthentication{ClientID: "cli_1", ClientSecret: "csek", Method: TSAuthClientSecretPost}, "at_1"); err != nil {
 		t.Fatalf("revoke error = %v", err)
 	}
-	introspection, err := oidc.IntrospectToken(t.Context(), "cli_1", "csek", "at_1")
+	introspection, err := oidc.IntrospectToken(t.Context(), TSAuthOAuthClientAuthentication{ClientID: "cli_1", ClientSecret: "csek", Method: TSAuthClientSecretPost}, "at_1")
 	if err != nil || !introspection.Active || introspection.Sub == nil || *introspection.Sub != "user-1" || introspection.Exp == nil {
 		t.Fatalf("introspect = %+v, error = %v", introspection, err)
 	}
