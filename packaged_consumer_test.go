@@ -74,7 +74,7 @@ func TestPackagedGoConsumerPreservesNativeIntegers(t *testing.T) {
 	// Derive imported archives and pinned module-graph metadata instead of
 	// maintaining a second dependency inventory. Only the parent uses its proxy.
 	mirrorPackagedModuleDependencies(t, root, proxy, module, sums)
-	write(filepath.Join(consumer, "go.mod"), []byte("module consumer.test\n\ngo 1.24.0\n\nrequire terrascale.tech/sdk v0.0.0\n"))
+	write(filepath.Join(consumer, "go.mod"), []byte("module consumer.test\n\ngo 1.25.0\n\nrequire terrascale.tech/sdk v0.0.0\n"))
 	write(filepath.Join(consumer, "go.sum"), sums)
 	write(filepath.Join(consumer, "consumer_test.go"), []byte(packagedNativeConsumer))
 	command := exec.CommandContext(t.Context(), "go", "test", "-mod=mod", "-count=1", "./...")

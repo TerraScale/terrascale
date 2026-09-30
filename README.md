@@ -196,7 +196,7 @@ source consumer with synthetic publication sequences and a fixed test clock.
 Actual Atlas runtime admission, the actual provider/customer journey,
 PostgreSQL execution, and the C02/C06/C08 runtime gates remain open.
 
-The module requires Go 1.24 and has no CGO dependency. CI runs the pinned
+The module requires Go 1.25 and has no CGO dependency. CI runs the pinned
 vulnerability scanner alongside formatting, vet, build, artifact verification,
 and race tests. BLAKE3 remains a dependency of the retained product artifact
 verification.
