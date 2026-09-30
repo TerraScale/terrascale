@@ -11,6 +11,8 @@ const localChromiumLaunch = localChromium === undefined
 export default defineConfig({
   testDir: "./browser-tests",
   fullyParallel: true,
+  // Qualify every engine without booting one browser per test on the shared builder.
+  workers: 4,
   forbidOnly: true,
   retries: 0,
   reporter: "line",
