@@ -10,7 +10,7 @@ require (
 	github.com/mxschmitt/playwright-go v0.6201.1
 	github.com/starfederation/datastar-go v1.2.2
 	github.com/stripe/stripe-go/v86 v86.4.2
-	terrascale.tech/sdk v0.0.0-20260923161729-3088ef2e3bd0
+	terrascale.tech/sdk v0.0.0-20260930023159-430cb6624fa8
 )
 
 require (
