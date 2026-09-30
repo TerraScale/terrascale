@@ -187,7 +187,7 @@ pub fn is_dev_host(host: &str) -> bool {
 /// (or dev origins when the client itself runs against loopback).
 #[must_use]
 pub fn validate_endpoint_url(raw: &str, region: &str, loopback_client: bool) -> Option<String> {
-    if !is_region_code(&region.to_ascii_uppercase()) {
+    if !is_region_code(region) {
         return None;
     }
     if raw.is_empty() || raw.len() > 2_048 {
@@ -1138,6 +1138,7 @@ mod tests {
             |doc: &mut Value| doc["endpoints"] = json!([]),
             |doc: &mut Value| doc["endpoints"][0]["url"] = json!("https://evil.example"),
             |doc: &mut Value| doc["endpoints"][0]["url"] = json!("http://fra.terrascale.tech"),
+            |doc: &mut Value| doc["endpoints"][0]["url"] = json!("https://fra.api.terrascale.tech"),
             |doc: &mut Value| doc["endpoints"][0]["region"] = json!("fra"),
             |doc: &mut Value| {
                 doc["endpoints"][0]["region"] = json!("STATUS");
@@ -1166,6 +1167,8 @@ mod tests {
 
     #[test]
     fn loopback_clients_admit_dev_endpoint_urls_only() {
+        assert!(validate_endpoint_url("https://fra.terrascale.tech", "fra", false).is_none());
+        assert!(validate_endpoint_url("http://localhost:8787", "fra", true).is_none());
         let mut doc = document();
         doc["endpoints"][0]["url"] = json!("http://localhost:8787");
         assert!(parse_routing_document(&doc, "orders", "main", false).is_none());
@@ -1196,9 +1199,23 @@ mod tests {
             "https://gru.terrascale.tech"
         );
 
-        let mut reserved_host = catalog.clone();
-        reserved_host["hosts"]["STATUS"] = json!("status.terrascale.tech");
-        assert!(parse_region_catalog(&reserved_host, false).is_none());
+        for label in [
+            "API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH", "DOCS", "GIT", "CDN",
+            "ADMIN", "MCP", "MAIL",
+        ] {
+            let host = regional_host_for_code(label);
+            assert!(!is_region_code(label), "{label} must remain reserved");
+            assert!(validate_endpoint_url(&format!("https://{host}"), label, false).is_none());
+            let mut reserved_host = catalog.clone();
+            reserved_host["hosts"][label] = json!(host);
+            assert!(parse_region_catalog(&reserved_host, false).is_none());
+        }
+
+        for host in ["gru.api.terrascale.tech", "https://gru.api.terrascale.tech"] {
+            let mut legacy_host = catalog.clone();
+            legacy_host["hosts"]["GRU"] = json!(host);
+            assert!(parse_region_catalog(&legacy_host, false).is_none());
+        }
 
         let mut bad_host = catalog.clone();
         bad_host["hosts"]["GRU"] = json!("https://evil.example");
