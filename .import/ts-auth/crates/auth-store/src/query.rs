@@ -85,7 +85,7 @@ impl QueryTransport {
         }
         if !loopback
             && (url.scheme() != "https"
-                || !matches!(host, "api.terrascale.tech" | "gru.api.terrascale.tech")
+                || !matches!(host, "api.terrascale.tech" | "gru.terrascale.tech")
                 || url.port().is_some()
                 || url.path() != "/")
         {
@@ -96,7 +96,7 @@ impl QueryTransport {
         let effective = if loopback {
             base_url.to_owned()
         } else {
-            "https://gru.api.terrascale.tech".to_owned()
+            "https://gru.terrascale.tech".to_owned()
         };
         let api_key_input = api_key.into();
         let api_key = normalize_api_key(&api_key_input)?;

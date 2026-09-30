@@ -279,7 +279,7 @@ pub fn build_state_with_mode(
     }
     if !loopback
         && (storage_url.scheme() != "https"
-            || !matches!(host, "api.terrascale.tech" | "gru.api.terrascale.tech"))
+            || !matches!(host, "api.terrascale.tech" | "gru.terrascale.tech"))
     {
         return Err(invalid(
             "Global auth storage requires the HTTPS TerraScale API origin or GRU authority origin",
