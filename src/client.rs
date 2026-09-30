@@ -389,9 +389,9 @@ impl Shared {
         !matches!(
             host.as_str(),
             "api.terrascale.tech"
-                | "gru.api.terrascale.tech"
-                | "sfo.api.terrascale.tech"
-                | "fra.api.terrascale.tech"
+                | "gru.terrascale.tech"
+                | "sfo.terrascale.tech"
+                | "fra.terrascale.tech"
         )
     }
 

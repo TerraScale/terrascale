@@ -80,7 +80,7 @@ impl RoutingCapability {
 pub struct RoutingEndpoint {
     /// Uppercase region code as published by the catalog.
     pub region: String,
-    /// Validated absolute origin, e.g. `https://fra.api.terrascale.tech`.
+    /// Validated absolute origin, e.g. `https://fra.terrascale.tech`.
     pub url: String,
     /// Rank within the document (1 = first choice).
     pub priority: u32,
@@ -190,7 +190,7 @@ pub fn validate_endpoint_url(raw: &str, region: &str, loopback_client: bool) -> 
         return None;
     }
     let host = url.host_str()?.to_ascii_lowercase();
-    let expected = format!("{}.{}", region.to_ascii_lowercase(), GLOBAL_API_HOST);
+    let expected = format!("{}.terrascale.tech", region.to_ascii_lowercase());
     if url.scheme() == "https" && host == expected {
         return Some(format!("https://{expected}"));
     }
@@ -360,7 +360,15 @@ pub fn parse_region_catalog(
     let raw_hosts = doc.get("hosts")?.as_object()?;
     let mut hosts = BTreeMap::new();
     for (code, raw) in raw_hosts {
-        let url = validate_endpoint_url(raw.as_str()?, code, loopback_client)?;
+        let raw = raw.as_str()?;
+        let origin = if raw
+            .eq_ignore_ascii_case(&format!("{}.terrascale.tech", code.to_ascii_lowercase()))
+        {
+            format!("https://{raw}")
+        } else {
+            raw.to_owned()
+        };
+        let url = validate_endpoint_url(&origin, code, loopback_client)?;
         hosts.insert(code.clone(), url);
     }
     if regions
@@ -1070,9 +1078,9 @@ mod tests {
             "placement": "known",
             "refreshSeconds": 300,
             "endpoints": [
-                { "region": "FRA", "url": "https://fra.api.terrascale.tech",
+                { "region": "FRA", "url": "https://fra.terrascale.tech",
                   "priority": 1, "capabilities": ["read", "write", "sql", "reactive"] },
-                { "region": "GRU", "url": "https://gru.api.terrascale.tech",
+                { "region": "GRU", "url": "https://gru.terrascale.tech",
                   "priority": 2, "capabilities": ["read", "sql", "reactive"] },
             ],
         })
@@ -1116,7 +1124,7 @@ mod tests {
             |doc: &mut Value| doc["refreshSeconds"] = json!(0),
             |doc: &mut Value| doc["endpoints"] = json!([]),
             |doc: &mut Value| doc["endpoints"][0]["url"] = json!("https://evil.example"),
-            |doc: &mut Value| doc["endpoints"][0]["url"] = json!("http://fra.api.terrascale.tech"),
+            |doc: &mut Value| doc["endpoints"][0]["url"] = json!("http://fra.terrascale.tech"),
             |doc: &mut Value| doc["endpoints"][0]["region"] = json!("fra"),
             |doc: &mut Value| doc["endpoints"][0]["capabilities"] = json!([]),
             |doc: &mut Value| doc["endpoints"][0]["capabilities"] = json!(["admin"]),
@@ -1157,10 +1165,10 @@ mod tests {
                 {"code": "GRU", "name": "São Paulo", "country": "BR",
                  "latitude": -23.5, "longitude": -46.6, "available": true},
             ],
-            "hosts": {"GRU": "https://gru.api.terrascale.tech"},
+            "hosts": {"GRU": "https://gru.terrascale.tech"},
         });
         let parsed = parse_region_catalog(&catalog, false).expect("catalog");
-        assert_eq!(parsed.hosts["GRU"], "https://gru.api.terrascale.tech");
+        assert_eq!(parsed.hosts["GRU"], "https://gru.terrascale.tech");
 
         let mut bad_host = catalog.clone();
         bad_host["hosts"]["GRU"] = json!("https://evil.example");
@@ -1324,7 +1332,7 @@ mod tests {
             .resolve(&transport, "orders", false)
             .await
             .expect("resolved");
-        assert_eq!(origin, "https://fra.api.terrascale.tech");
+        assert_eq!(origin, "https://fra.terrascale.tech");
         assert_eq!(region, "FRA");
         let cold = recorder.take_requests();
         assert_eq!(cold.len(), 1);

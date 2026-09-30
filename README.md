@@ -30,7 +30,7 @@ discovery**.
   unauthenticated metadata GET to
   `https://atlas.terrascale.tech/api/v1/discovery?database=…&branch=main`.
   The response is strictly validated (region codes, endpoint URLs on the
-  `https://{region}.api.terrascale.tech` family — loopback dev origins are
+  `https://{region}.terrascale.tech` family — loopback dev origins are
   admitted for loopback clients — capability subsets, priority bounds) and
   cached per routing scope (origin, database, branch, project, tenant) for
   the document's `refreshSeconds` clamped to 60–3600 s. Concurrent discovery
@@ -62,7 +62,7 @@ discovery**.
   URL allowlist still apply.
 - **Affinity options**: `RegionAffinity::Failover` (default) uses
   discovery + catalog as above; `RegionAffinity::Strict` keeps the direct
-  pinned regional base (`{region}.api.terrascale.tech`) with no discovery and
+  pinned regional base (`{region}.terrascale.tech`) with no discovery and
   requires `preferred_region`. Per-request region hints stay advisory `X-TerraScale-Preferred-Region`
   headers under discovery and never steer the base URL.
 - **Configuration knobs**: `ClientConfig::builder().api_base_url(...)`

@@ -65,9 +65,9 @@ fn discovery_document(database: &str, endpoints: Value) -> Response {
 
 fn fra_gru_endpoints() -> Value {
     json!([
-        { "region": "FRA", "url": "https://fra.api.terrascale.tech",
+        { "region": "FRA", "url": "https://fra.terrascale.tech",
           "priority": 1, "capabilities": ["read", "write", "sql", "reactive"] },
-        { "region": "GRU", "url": "https://gru.api.terrascale.tech",
+        { "region": "GRU", "url": "https://gru.terrascale.tech",
           "priority": 2, "capabilities": ["read", "write", "sql", "reactive"] },
     ])
 }
@@ -83,8 +83,8 @@ fn catalog() -> Response {
                  "latitude": 37.8, "longitude": -122.4, "available": true},
             ],
             "hosts": {
-                "GRU": "https://gru.api.terrascale.tech",
-                "SFO": "https://sfo.api.terrascale.tech",
+                "GRU": "gru.terrascale.tech",
+                "SFO": "sfo.terrascale.tech",
             },
         }),
     )
@@ -140,7 +140,7 @@ async fn database_requests_discover_once_then_pin_the_first_endpoint() {
     for request in &requests[1..] {
         assert!(request
             .url
-            .starts_with("https://fra.api.terrascale.tech/api/v1/databases/orders/"));
+            .starts_with("https://fra.terrascale.tech/api/v1/databases/orders/"));
         assert!(request
             .headers
             .iter()
@@ -151,9 +151,9 @@ async fn database_requests_discover_once_then_pin_the_first_endpoint() {
 #[tokio::test]
 async fn mutations_select_a_write_capable_endpoint() {
     let endpoints = json!([
-        { "region": "FRA", "url": "https://fra.api.terrascale.tech",
+        { "region": "FRA", "url": "https://fra.terrascale.tech",
           "priority": 1, "capabilities": ["read", "sql", "reactive"] },
-        { "region": "GRU", "url": "https://gru.api.terrascale.tech",
+        { "region": "GRU", "url": "https://gru.terrascale.tech",
           "priority": 2, "capabilities": ["read", "write", "sql", "reactive"] },
     ]);
     let mock = Mock::new([
@@ -171,12 +171,8 @@ async fn mutations_select_a_write_capable_endpoint() {
         .await
         .expect("write goes to the writer");
     let requests = mock.recorded();
-    assert!(requests[1]
-        .url
-        .starts_with("https://fra.api.terrascale.tech/"));
-    assert!(requests[2]
-        .url
-        .starts_with("https://gru.api.terrascale.tech/"));
+    assert!(requests[1].url.starts_with("https://fra.terrascale.tech/"));
+    assert!(requests[2].url.starts_with("https://gru.terrascale.tech/"));
 }
 
 #[tokio::test]
@@ -203,7 +199,7 @@ async fn discovery_failure_degrades_to_the_region_catalog() {
         "https://atlas.terrascale.tech/api/v1/regions"
     );
     for request in &requests[2..] {
-        assert!(request.url.starts_with("https://gru.api.terrascale.tech/"));
+        assert!(request.url.starts_with("https://gru.terrascale.tech/"));
     }
 }
 
@@ -236,7 +232,7 @@ async fn malformed_documents_degrade_to_the_region_catalog() {
     let requests = mock.recorded();
     assert_eq!(
         requests[2].url,
-        "https://gru.api.terrascale.tech/api/v1/databases/orders/collections/users/documents/doc-1"
+        "https://gru.terrascale.tech/api/v1/databases/orders/collections/users/documents/doc-1"
     );
 }
 
@@ -263,7 +259,7 @@ async fn member_global_routes_use_the_catalog_and_the_catalog_route_hits_atlas()
     );
     assert_eq!(
         requests[1].url,
-        "https://gru.api.terrascale.tech/api/v1/databases"
+        "https://gru.terrascale.tech/api/v1/databases"
     );
     // The public catalog route also targets the discovery origin.
     assert_eq!(
@@ -302,7 +298,7 @@ async fn a_421_adopts_member_placement_for_the_retry() {
         Ok(discovery_document(
             "orders",
             json!([
-                { "region": "FRA", "url": "https://fra.api.terrascale.tech",
+                { "region": "FRA", "url": "https://fra.terrascale.tech",
                   "priority": 1, "capabilities": ["read", "write", "sql", "reactive"] },
             ]),
         )),
@@ -325,12 +321,8 @@ async fn a_421_adopts_member_placement_for_the_retry() {
         .expect("document on the advertised region");
     let requests = mock.recorded();
     assert_eq!(requests.len(), 3);
-    assert!(requests[1]
-        .url
-        .starts_with("https://fra.api.terrascale.tech/"));
-    assert!(requests[2]
-        .url
-        .starts_with("https://gru.api.terrascale.tech/"));
+    assert!(requests[1].url.starts_with("https://fra.terrascale.tech/"));
+    assert!(requests[2].url.starts_with("https://gru.terrascale.tech/"));
 }
 
 #[tokio::test]
@@ -355,12 +347,8 @@ async fn transport_failure_demotes_the_region_and_fails_over_in_document_order()
         .expect("document from the next endpoint");
     let requests = mock.recorded();
     assert_eq!(requests.len(), 3);
-    assert!(requests[1]
-        .url
-        .starts_with("https://fra.api.terrascale.tech/"));
-    assert!(requests[2]
-        .url
-        .starts_with("https://gru.api.terrascale.tech/"));
+    assert!(requests[1].url.starts_with("https://fra.terrascale.tech/"));
+    assert!(requests[2].url.starts_with("https://gru.terrascale.tech/"));
 }
 
 #[tokio::test]
@@ -421,7 +409,7 @@ async fn reactive_attach_routes_to_the_discovered_regional_endpoint() {
     assert_eq!(requests.len(), 2);
     assert_eq!(
         requests[1].url,
-        "https://fra.api.terrascale.tech/api/v1/reactive/views"
+        "https://fra.terrascale.tech/api/v1/reactive/views"
     );
 }
 
@@ -450,9 +438,7 @@ async fn successful_regional_requests_feed_measured_rtt_to_later_discovery() {
         .iter()
         .any(|(name, _)| name.eq_ignore_ascii_case("x-terrascale-region-rtt")));
     // The successful FRA round trip feeds the next discovery fetch (ADR 0050 §2).
-    assert!(requests[1]
-        .url
-        .starts_with("https://fra.api.terrascale.tech/"));
+    assert!(requests[1].url.starts_with("https://fra.terrascale.tech/"));
     let rtt = requests[2]
         .headers
         .iter()
@@ -496,9 +482,7 @@ async fn strict_affinity_never_discovers() {
         .expect("direct regional request");
     let requests = mock.recorded();
     assert_eq!(requests.len(), 1);
-    assert!(requests[0]
-        .url
-        .starts_with("https://gru.api.terrascale.tech/"));
+    assert!(requests[0].url.starts_with("https://gru.terrascale.tech/"));
 }
 
 #[tokio::test]
@@ -525,7 +509,5 @@ async fn an_atlas_override_forces_discovery_for_custom_origins() {
         requests[0].url,
         "https://atlas.test/api/v1/discovery?database=orders&branch=main"
     );
-    assert!(requests[1]
-        .url
-        .starts_with("https://fra.api.terrascale.tech/"));
+    assert!(requests[1].url.starts_with("https://fra.terrascale.tech/"));
 }

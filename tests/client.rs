@@ -634,6 +634,6 @@ async fn strict_affinity_preserves_region_after_placement_responses() {
         assert_eq!(requests.len(), 2);
         assert!(requests
             .iter()
-            .all(|request| request.url.starts_with("https://gru.api.terrascale.tech")));
+            .all(|request| request.url.starts_with("https://gru.terrascale.tech")));
     }
 }
