@@ -22,12 +22,27 @@ func createDatabase(t *testing.T, page playwright.Page, name, region string) {
 
 func selectDatabaseRegions(t *testing.T, scope playwright.Locator, regions ...string) {
 	t.Helper()
-	summary := scope.Locator(".ts-db-region-picker summary")
-	click(t, summary)
+	picker := scope.Locator(".ts-db-region-picker")
+	summary := picker.Locator("summary")
+	// Keyboard activation avoids waiting for the animated dialog to reach a
+	// stable bounding box, while exercising the native no-script controls.
+	must(t, summary.Press("Space"))
+	must(t, expect.Locator(picker).ToHaveAttribute("open", ""))
 	for _, code := range []string{"GRU", "SFO", "FRA"} {
-		must(t, scope.Locator(`#database-region input[value="`+code+`"]`).SetChecked(slices.Contains(regions, code)))
+		checkbox := scope.Locator(`#database-region input[value="` + code + `"]`)
+		checked, err := checkbox.IsChecked()
+		must(t, err)
+		if checked != slices.Contains(regions, code) {
+			must(t, checkbox.Press("Space"))
+		}
+		if slices.Contains(regions, code) {
+			must(t, expect.Locator(checkbox).ToBeChecked())
+		} else {
+			must(t, expect.Locator(checkbox).Not().ToBeChecked())
+		}
 	}
-	click(t, summary)
+	must(t, summary.Press("Space"))
+	must(t, expect.Locator(picker).Not().ToHaveAttribute("open", ""))
 }
 
 func TestCreateDatabaseRegionMapAndSelectStayInSync(t *testing.T) {
