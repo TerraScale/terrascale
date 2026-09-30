@@ -66,7 +66,7 @@ OP_KEY="smoke-operator-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
 METRICS_KEY="smoke-metrics-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
 if [[ ! -x "$SERVICE_BINARY" ]]; then
     echo "Rust service binary missing: $SERVICE_BINARY"
-    echo "Set up sibling ../ts-rust at commit 764b92808848cb74fe1cc92d41357614fa4e5e42 as documented under Running in README.md, then build from the repository root:"
+    echo "Set up sibling ../ts-rust at commit cb98c36b38813870d8e0a7443d15fc4fa13fe83c as documented under Running in README.md, then build from the repository root:"
     echo "  cargo build --release --locked -p auth-app"
     exit 2
 fi

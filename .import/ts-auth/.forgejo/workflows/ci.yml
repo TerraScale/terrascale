@@ -21,7 +21,7 @@ concurrency:
 
 env:
   FORGEJO_SHA: ${{ forgejo.sha }}
-  TS_RUST_REV: 764b92808848cb74fe1cc92d41357614fa4e5e42
+  TS_RUST_REV: cb98c36b38813870d8e0a7443d15fc4fa13fe83c
 
 jobs:
   fast:
