@@ -41,8 +41,8 @@ function directOrigin(endpoint) {
     throw new Error("Direct qualification endpoint must be a bare service origin.");
   }
   const hostname = url.hostname.replace(/\.+$/u, "");
-  if (hostname === "api.terrascale.tech" || hostname.endsWith(".api.terrascale.tech")) {
-    throw new Error("The test API host is forbidden.");
+  if (url.hostname !== hostname || hostname === "api.terrascale.tech" || (hostname.endsWith(".terrascale.tech") && !/^[a-z0-9][a-z0-9-]{0,15}\.api\.terrascale\.tech$/u.test(hostname))) {
+    throw new Error("Direct qualification requires a canonical regional service origin.");
   }
   const loopback =
     ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ||
@@ -100,7 +100,7 @@ export function journeyConfiguration(environment, target) {
       throw new Error("Expected native region must be canonical.");
     }
     required(environment, "TERRASCALE_QUALIFICATION_ALLOCATION_ID");
-    nativeOrigin = `https://${region.toLowerCase()}.terrascale.tech`;
+    nativeOrigin = `https://${region.toLowerCase()}.api.terrascale.tech`;
   }
   return Object.freeze({
     routing,

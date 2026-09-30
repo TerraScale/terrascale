@@ -53,7 +53,7 @@ describe("svelte reactive bindings", () => {
     stop();
   });
 
-  test("native store reports unavailable discovery without publishing rows", async () => {
+  test("native store reports unavailable hosted transport without publishing rows", async () => {
     const uuid = (tail: string): string => `00000000-0000-4000-8000-${tail.padStart(12, "0")}`;
     const client = createTerraBaseClient({ tenant: uuid("1"), database: uuid("2"), shard: 1n, apiKey: nativeTestKey, fetch: unavailableDiscovery });
     const query = createQuery(createDatabaseQuery(client, { collection: uuid("3"), predicate: { op: "is_missing", path: [1] } }));
@@ -62,7 +62,7 @@ describe("svelte reactive bindings", () => {
     const bound = bind(query, state => { if (state.status === "error") finish(); });
     await terminal;
     assert.equal(bound.current()?.status, "error");
-    assert.equal(bound.current()?.error?.code, "discovery_unavailable");
+    assert.equal(bound.current()?.error?.code, "transport_unavailable");
     assert.equal(bound.current()?.data, undefined);
     bound.stop();
   });

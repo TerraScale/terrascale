@@ -34,7 +34,7 @@ describe("current database request conformance", () => {
   });
 
   test("rejects test API origins and credential-bearing origins at construction", () => {
-    for (const endpoint of ["https://api.terrascale.tech", "https://gru.api.terrascale.tech", "https://api.terrascale.tech.", "https://gru.api.terrascale.tech.", "https://secret@gru.terrascale.tech", "https://gru.terrascale.tech/base", "http://public.example"]) {
+    for (const endpoint of ["https://gru.terrascale.tech", "https://api.terrascale.tech.", "https://gru.api.terrascale.tech.", "https://secret@gru.terrascale.tech", "https://gru.api.terrascale.tech/base", "http://public.example"]) {
       expect(() => createTerraBaseClient({ ...scope, endpoint, apiKey: "key" })).toThrow();
     }
   });
@@ -43,7 +43,7 @@ describe("current database request conformance", () => {
     const otherScope = { ...scope, database: "00000000-0000-0000-0000-000000000008", shard: 9n };
     const requests: Request[] = [];
     const event = { database: otherScope.database, shard: otherScope.shard.toString(), replica, incarnation: "03".repeat(16), sequence: "1" };
-    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "key", fetch: async input => {
+    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terrascale.tech", apiKey: "key", fetch: async input => {
       requests.push(input as Request);
       return json({ version: 1, state: "value", state_version: "04".repeat(32), context: [{ replica, incarnation: event.incarnation, sequence: "1" }], siblings: [{ event, schema_generation: "1", schema_digest: "02".repeat(32), kind: "live", fields: [] }] });
     } });
@@ -55,7 +55,7 @@ describe("current database request conformance", () => {
     const result = await client.read(collection, document);
     expect(!result.ok && result.error.code).toBe("invalid_response");
     expect(requests[0]!.url).toContain(`/databases/${scope.database}/shards/${scope.shard}`);
-    const originalClient = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "key" });
+    const originalClient = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terrascale.tech", apiKey: "key" });
     expect((await client.prepareCommit(commit)).effect_digest).toBe((await originalClient.prepareCommit(commit)).effect_digest);
   });
 
@@ -116,7 +116,7 @@ describe("current database request conformance", () => {
   });
 
   test("a followed native redirect cannot resolve a sent mutation", async () => {
-    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "key", fetch: async () => {
+    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terrascale.tech", apiKey: "key", fetch: async () => {
       const response = json(point); Object.defineProperty(response, "redirected", { value: true }); return response;
     } });
     const result = await client.commit(await client.prepareCommit(commit));
@@ -124,7 +124,7 @@ describe("current database request conformance", () => {
   });
 
   test.each([201, 202, 204, 206])("HTTP %s cannot satisfy any native HTTP 200 operation", async status => {
-    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "key", fetch: async input => {
+    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terrascale.tech", apiKey: "key", fetch: async input => {
       const request = input as Request;
       if (status === 204) return new Response(null, { status, headers: { "content-type": "application/json" } });
       if (request.method === "GET") return json(point, status);
@@ -197,9 +197,9 @@ describe("current database request conformance", () => {
   test("prepared single-writer commits stay bound to their preparing client and authority endpoint", async () => {
     let requests = 0;
     const fetch = async (): Promise<Response> => { requests++; return json({ error: { code: "authority_unavailable" } }, 503); };
-    const authorityClient = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "key", fetch });
+    const authorityClient = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terrascale.tech", apiKey: "key", fetch });
     const prepared = await authorityClient.prepareCommit({ ...commit, authority: { mode: "single_writer", generation: 1n, writer: { replica, incarnation: "03".repeat(16) } } });
-    for (const endpoint of [undefined, "https://fra.terrascale.tech", "https://gru.terrascale.tech"]) {
+    for (const endpoint of [undefined, "https://fra.api.terrascale.tech", "https://gru.api.terrascale.tech"]) {
       const otherClient = createTerraBaseClient({ ...scope, ...(endpoint === undefined ? {} : { endpoint }), apiKey: "key", fetch });
       expect(() => otherClient.commit(prepared)).toThrow(/another client/u);
     }
@@ -215,7 +215,7 @@ describe("current database request conformance", () => {
     let release!: (response: Response) => void;
     const pending = new Promise<Response>(resolve => { release = resolve; });
     let wire!: Record<string, unknown>;
-    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "key", fetch: async input => { wire = JSON.parse(await (input as Request).text()); sent(); return pending; } });
+    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terrascale.tech", apiKey: "key", fetch: async input => { wire = JSON.parse(await (input as Request).text()); sent(); return pending; } });
     const identity = { transaction_id: { ...commit.transaction_id }, authority: { mode: "single_writer" as const, generation: 1n, writer: { replica, incarnation: "03".repeat(16) } }, effect_digest: "04".repeat(32) };
     const result = client.transactionStatus(identity);
     await started;
