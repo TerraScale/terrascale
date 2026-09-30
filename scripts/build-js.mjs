@@ -140,6 +140,14 @@ function hash(contents) {
 }
 
 async function build() {
+  const datastar = await readFile(resolve(source, 'vendor/datastar.js'));
+  const helpers = await readFile(resolve(repository, 'internal/ui/layout_helpers.go'), 'utf8');
+  const pinned = helpers.match(/\bconst datastarIntegrity = "(sha384-[A-Za-z0-9+/=]+)"/)?.[1];
+  const integrity = `sha384-${createHash('sha384').update(datastar).digest('base64')}`;
+  if (integrity !== pinned) {
+    throw new Error(`vendor/datastar.js hashes to ${integrity}, but datastarIntegrity in internal/ui/layout_helpers.go is ${pinned ?? 'missing'}`);
+  }
+  const datastarFile = { path: resolve(outdir, 'datastar.js'), contents: datastar };
   const codicon = await extractCodicon();
   const workerResult = await esbuild.build({
     ...shared,
@@ -164,7 +172,11 @@ async function build() {
     splitting: true,
     plugins: [patchPlugin(monacoPatches(workerFiles, codicon.name))],
   });
-  assertSelfHosted([...workerResult.outputFiles, ...mainResult.outputFiles]);
+  assertSelfHosted([
+    ...workerResult.outputFiles,
+    ...mainResult.outputFiles,
+    { ...datastarFile, text: datastar.toString('utf8') },
+  ]);
 
   const files = [
     ...workerResult.outputFiles,
@@ -172,7 +184,8 @@ async function build() {
     { path: resolve(outdir, codicon.name), contents: codicon.contents },
     // Keep the pinned Datastar bundle intact so the layout's SRI hash applies.
     // Serving it here avoids a CDN request on every document navigation.
-    { path: resolve(outdir, 'datastar.js'), contents: await readFile(resolve(source, 'vendor/datastar.js')) },
+    datastarFile,
+    { path: resolve(outdir, 'datastar.js.map'), contents: await readFile(resolve(source, 'vendor/datastar.js.map')) },
     { path: resolve(outdir, 'LICENSE.datastar.md'), contents: await readFile(resolve(source, 'vendor/LICENSE.datastar.md')) },
   ];
   // Write the new build before pruning the old one, so a page loading during a
