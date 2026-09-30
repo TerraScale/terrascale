@@ -11,7 +11,7 @@
 }
 
 .ts-audit-filters {
-  padding: 0 var(--ts-s6) var(--ts-s4);
+  padding-bottom: var(--ts-s4);
   border-bottom: 1px solid var(--ts-line);
 }
 
@@ -19,24 +19,8 @@
   flex: 1 1 260px;
 }
 
-#recent-activity > .ts-card-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 2px var(--ts-s3);
-}
-
-#recent-activity .ts-card-heading {
-  display: contents;
-}
-
-#recent-activity .ts-card-description {
-  grid-column: 1 / -1;
-}
-
-#recent-activity .ts-card-actions {
-  grid-column: 2;
-  grid-row: 1;
+.ts-audit-apply {
+  margin-left: auto;
 }
 
 .ts-audit-table td:first-child {

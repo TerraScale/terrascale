@@ -250,7 +250,7 @@ func auditView(data pageData) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, ">Last 90 days</option></select></label> <button class=\"ts-btn ts-btn-primary ts-btn-sm\" type=\"submit\">Apply filters</button></form>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, ">Last 90 days</option></select></label> <button class=\"ts-btn ts-btn-primary ts-btn-sm ts-audit-apply\" type=\"submit\">Apply filters</button></form>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -491,7 +491,7 @@ func auditView(data pageData) templ.Component {
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "recent-activity", Title: "Recent activity", Description: fmt.Sprintf("Security events matching the current filters · retention is %d days", data.Retention), Actions: exportMenu(data), Flush: true}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var3), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.Card(ui.CardProps{ID: "recent-activity", Title: "Recent activity", Description: fmt.Sprintf("Security events matching the current filters · retention is %d days", data.Retention), Actions: exportMenu(data), ActionsAlongsideTitle: true, Flush: true}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var3), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

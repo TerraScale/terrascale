@@ -31,6 +31,8 @@ type CardProps struct {
 	Description string
 	Actions     templ.Component
 	Flush       bool
+	// ActionsAlongsideTitle keeps actions on the title row and puts the description below.
+	ActionsAlongsideTitle bool
 }
 
 // Card is the one surface used for grouped content; children are its body.
@@ -45,7 +47,7 @@ templ Card(p CardProps) {
 		}
 	>
 		if p.Title != "" {
-			<header class="ts-card-head">
+			<header class={ "ts-card-head", templ.KV("ts-card-head-title-actions", p.ActionsAlongsideTitle) }>
 				<div class="ts-card-heading">
 					<h2
 						class="ts-card-title"
@@ -53,7 +55,7 @@ templ Card(p CardProps) {
 							id={ p.ID + "-title" }
 						}
 					>{ p.Title }</h2>
-					if p.Description != "" {
+					if p.Description != "" && !p.ActionsAlongsideTitle {
 						<p class="ts-card-description">{ p.Description }</p>
 					}
 				</div>
@@ -61,6 +63,9 @@ templ Card(p CardProps) {
 					<div class="ts-card-actions">
 						@p.Actions
 					</div>
+				}
+				if p.Description != "" && p.ActionsAlongsideTitle {
+					<p class="ts-card-description">{ p.Description }</p>
 				}
 			</header>
 		}
