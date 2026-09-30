@@ -96,8 +96,8 @@ Base domain terrascale.tech. Regions at launch: GRU, SFO, FRA.
 - Product API origin: https://api.terrascale.tech — dashboard-owned product
   routes only: /api/v1/organizations, /api/v1/projects,
   /api/v1/regions/{code}.
-- Direct regional REST + WebSocket: https://gru.api.terrascale.tech,
-  https://sfo.api.terrascale.tech, https://fra.api.terrascale.tech — direct
+- Direct regional REST + WebSocket: https://gru.terrascale.tech,
+  https://sfo.terrascale.tech, https://fra.terrascale.tech — direct
   routing with catalog fallback; there is no proxy.
 - Reactive HTTP (live queries; CDN-backed long-polling, capability header):
   https://sync.api.terrascale.tech
