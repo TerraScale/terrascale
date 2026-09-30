@@ -14,8 +14,6 @@ test("native CI preserves event identity, exact source gates and actual framewor
     workflow,
     /pull_request_target|CONTRACT_ARCHIVE|EDGE_CONTRACT_SOURCE|contracts\/v1|TERRASCALE_DEPLOY|NPM_TOKEN/u,
   );
-  assert.match(workflow, /TERRASCALE_CURRENT_OPENAPI:/u);
-  assert.match(workflow, /TERRASCALE_ATOMIC_VECTORS:/u);
   for (const job of ["static", "node", "browser"]) {
     const definition = jobDefinition(workflow, job);
     assert.match(definition, /runs-on: terrascale-builder/u);
@@ -28,6 +26,15 @@ test("native CI preserves event identity, exact source gates and actual framewor
   }
   for (const job of ["static", "node"]) {
     const definition = jobDefinition(workflow, job);
+    assert.match(
+      definition,
+      /bash scripts\/ci\/provision-current-contract-inputs\.sh/u,
+    );
+    assert.ok(
+      definition.indexOf("bash scripts/ci/provision-current-contract-inputs.sh") <
+        definition.indexOf("npm run check:current-contract-inputs"),
+      "Producer inputs must be provisioned before the unchanged digest guard.",
+    );
     assert.match(definition, /npm run check:current-contract-inputs/u);
     assert.match(definition, /npm run check:current-contract/u);
   }
@@ -37,6 +44,10 @@ test("native CI preserves event identity, exact source gates and actual framewor
   assert.match(jobDefinition(workflow, "node"), /node: "22\.23\.2"/u);
   assert.match(jobDefinition(workflow, "node"), /node: "24\.21\.0"/u);
   assert.match(jobDefinition(workflow, "browser"), /npm run test:browser/u);
+  assert.match(
+    jobDefinition(workflow, "browser"),
+    /bash scripts\/ci\/provision-branded-browsers\.sh/u,
+  );
 });
 
 function jobDefinition(workflow: string, job: string): string {

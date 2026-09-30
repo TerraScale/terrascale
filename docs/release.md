@@ -11,9 +11,14 @@ The native Forgejo workflow verifies the event revision on Node 22.23.2 and
 uses the locked dependency tree, and runs source parity, typecheck, build,
 regression, actual framework lifecycle, SBOM, and vulnerability checks. Exact
 producer OpenAPI and canonical vector bytes are mandatory inputs checked against
-`sdk-current-contract.json`. The final accepted producer revision or immutable
-artifact must be provisioned before source gates can complete in CI; historical
-contract archives cannot satisfy this requirement.
+`sdk-current-contract.json`. CI verifies and extracts the immutable
+`scripts/ci/producer-contract-inputs.tar.gz` archive (SHA-256
+`8169fab845e3130b54378ff9a064ff212d1ff59fe15eb82c857718ad919db7e7`).
+Its `producer-inputs-v1.json` and original frozen manifests bind independently
+consumed actual producer files. They are an uncommitted overlay on producer base
+`470d1f898897d4a0cefc7d638ce8eb72f0ca73b8`; the base alone does not reproduce
+them. These inputs establish source parity, with producer runtime qualification
+still pending.
 
 ```sh
 npm ci
@@ -35,8 +40,11 @@ npm run qualify:release-e2e
 ```
 
 The Linux browser matrix uses actual stable Chrome and Edge channels and
-Playwright Firefox and WebKit. Set `PLAYWRIGHT_CHROME_EXECUTABLE_PATH` and
-`PLAYWRIGHT_EDGE_EXECUTABLE_PATH` for verified runner-provisioned binaries.
+Playwright Firefox and WebKit. CI provisions SHA-bound Nix vendor packages from
+revision `b4fd65b198c599cbe814fcb9f42d25d021595ec9` (Chrome 154.0.8037.57 and
+Edge 154.0.4258.37) and exports their actual executable paths. Local runs can set
+`PLAYWRIGHT_CHROME_EXECUTABLE_PATH` and `PLAYWRIGHT_EDGE_EXECUTABLE_PATH` for
+verified runner-provisioned binaries. Refresh these pins as stable releases move.
 WebKit results are engine compatibility evidence; actual Safari qualification
 requires a macOS runner.
 
