@@ -7,7 +7,7 @@
   align-content: start;
   gap: var(--ts-s8);
   width: 100%;
-  padding: var(--ts-s8) var(--ts-s10) var(--ts-s12);
+  padding: var(--ts-s4) var(--ts-s10) var(--ts-s12);
 }
 
 .ts-eyebrow {
@@ -117,7 +117,7 @@
 @media (max-width: 47.99rem) {
   .ts-page {
     gap: var(--ts-s5);
-    padding: var(--ts-s5) var(--ts-s4) var(--ts-s10);
+    padding: var(--ts-s3) var(--ts-s4) var(--ts-s10);
   }
 }
 
