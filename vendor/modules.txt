@@ -209,6 +209,6 @@ golang.org/x/tools/internal/stdlib
 golang.org/x/tools/internal/typeparams
 golang.org/x/tools/internal/typesinternal
 golang.org/x/tools/internal/versions
-# terrascale.tech/sdk v0.0.0-20260923161729-3088ef2e3bd0
+# terrascale.tech/sdk v0.0.0-20260930023159-430cb6624fa8
 ## explicit; go 1.24.0
 terrascale.tech/sdk
