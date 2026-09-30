@@ -40,31 +40,36 @@ with the exact tuple and the same captured native key used for the data request.
 `DiscoveryBaseURL`, region preferences, and product selectors do not alter native
 admission. Native discovery and data never send cookies or follow redirects.
 
-An explicit `DataBaseURL` bypasses discovery for source preparation or a separately
-authorized deployment. It requires HTTPS and an ASCII hostname; credentials,
-paths, queries, fragments, and the `api.terrascale.tech` host family are rejected.
-Explicit loopback development origins may use HTTP. Direct-origin fixtures do
-not qualify public runtime routing.
+An explicit `DataBaseURL` disables discovery and automatic failover. It accepts
+a custom HTTPS origin, a canonical `https://<region>.api.terrascale.tech` origin,
+or the Atlas proxy. Credentials, paths, queries, fragments, non-ASCII hostnames
+and obsolete single-level regional hosts are rejected. Explicit loopback
+origins may use HTTP for development.
 
-`DataTokenProvider` takes precedence over `DataAccessToken`. An empty provider
-result fails discovery locally and sends no credential to an explicit origin.
-Native requests never consult `AccessToken` or
-`TokenProvider`, which belong to the product and TSAuth management surfaces.
+`DataTokenProvider` takes precedence over `DataAccessToken`. Native requests
+never consult product/TSAuth `AccessToken` or `TokenProvider` credentials.
+`DataDiscoveryTimeout` defaults to three seconds and accepts 1 ms–30 s within
+`RequestTimeout` and the caller's deadline.
 
-With `DataBaseURL` empty, discovery requires a canonical bare `tbk1` key and a
-strict current Atlas response. The SDK selects the first source-ranked endpoint
-that supports the requested operation. Metadata leases are bound to the tuple
-and private key fingerprint, last at most ten seconds, and subtract discovery
-latency. Future publications and publication intervals longer than ten seconds
-are rejected. Observed deployment, cell, publisher generation, and revision floors
-survive expiry and key rotation. Up to 256 tuple floors are retained for the
-client lifetime; capacity fails closed rather than forgetting a floor.
+With `DataBaseURL` empty, the SDK pins the top-priority operation-eligible native8
+endpoint until the earlier of `refreshSeconds` and `expires_at`. Discovery
+latency consumes the lease. Scope/key fingerprints and observation floors
+remain enforced across expiry and credential rotation. The bounded cache retains
+up to 256 scope floors for the client lifetime.
 
-Discovery failure returns `*sdk.RoutingError` before native dispatch. Local
-failures wrap `*sdk.NativeRoutingError`, whose `Code` includes
-`capability_unavailable`; actual Atlas errors retain `*sdk.APIError` and the
-server status/code. There is no global API, static catalog, or stale lease
-fallback and no automatic native operation replay.
+Regional transport errors, 421 and 5xx exclude the failed region and re-resolve
+Atlas. Safe operations fail over and pin the next priority; commits are never
+replayed automatically. `Retry-After` and the original deadline are respected.
+When discovery has a network error, 404/5xx or a non-native8 success response,
+requests use `https://api.terrascale.tech`, the Atlas Worker proxy to the nearest
+healthy region. Discovery retries on its normal refresh cadence (eight seconds
+before the first native document), then pins as soon as native8 is available.
+The hosted native producer is still pending orchestrator directory work.
+
+Authentication/authorization denial, redirects, capability denial and regressed
+observations remain `*sdk.RoutingError` failures before data dispatch. Local
+failures wrap `*sdk.NativeRoutingError`; actual Atlas errors retain `*sdk.APIError`.
+See [hosted routing](docs/hosted-routing.md).
 
 Point reads require READ; queries also require QUERY; snapshot/poll also require
 SUBSCRIPTIONS. Leaderless Transaction Status requires WRITE, including reconciliation of a
