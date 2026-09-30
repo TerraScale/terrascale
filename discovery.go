@@ -157,6 +157,9 @@ func originIsLoopback(origin string) bool {
 // the metadata origin itself is loopback. The returned URL is canonical, so a
 // hostile document cannot steer traffic outside the family.
 func validateEndpointURL(raw, region string, allowDevHTTP bool) (string, bool) {
+	if _, err := parseCatalogRegionCode(strings.ToUpper(region)); err != nil {
+		return "", false
+	}
 	if raw == "" || len(raw) > 2048 {
 		return "", false
 	}
