@@ -19,7 +19,7 @@ templ auditView(data pageData) {
 			@ui.Stat("Warnings", fmt.Sprint(data.Warn), "Warning events in this view")
 			@ui.Stat("Informational", fmt.Sprint(data.Info), "Informational events in this view")
 		}
-		@ui.Card(ui.CardProps{ID: "recent-activity", Title: "Recent activity", Description: fmt.Sprintf("Security events matching the current filters · retention is %d days", data.Retention), Flush: true}) {
+		@ui.Card(ui.CardProps{ID: "recent-activity", Title: "Recent activity", Description: fmt.Sprintf("Security events matching the current filters · retention is %d days", data.Retention), Actions: exportMenu(data), Flush: true}) {
 			<form method="get" action="/audit" class="ts-filters ts-audit-filters" role="search" aria-label="Filter audit events">
 				<label class="ts-filter-field ts-audit-search-field" for="audit-search">
 					Search
@@ -57,13 +57,7 @@ templ auditView(data pageData) {
 						<option value="90d" selected?={ data.Range == "90d" }>Last 90 days</option>
 					</select>
 				</label>
-				<div class="ts-audit-filter-actions">
-					<button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Apply filters</button>
-					@ui.Dropdown(ui.DropdownProps{End: true, Label: "Export audit events", Trigger: exportTrigger(), TriggerClass: "ts-btn ts-btn-secondary ts-btn-sm", PanelLabel: "Export formats"}) {
-						@ui.MenuItem(ui.MenuItemProps{Href: auditExportHref(data, "csv"), Icon: icons.FileText(15), Label: "Export CSV"})
-						@ui.MenuItem(ui.MenuItemProps{Href: auditExportHref(data, "json"), Icon: icons.FileJson(15), Label: "Export JSON"})
-					}
-				</div>
+				<button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Apply filters</button>
 			</form>
 			if len(data.Rows) > 0 {
 				<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Audit events table. Scroll horizontally to see all columns.">
@@ -156,6 +150,13 @@ func auditOutcomeTone(outcome string) string {
 		return "danger"
 	}
 	return "success"
+}
+
+templ exportMenu(data pageData) {
+	@ui.Dropdown(ui.DropdownProps{End: true, Label: "Export audit events", Trigger: exportTrigger(), TriggerClass: "ts-btn ts-btn-secondary ts-btn-sm", PanelLabel: "Export formats"}) {
+		@ui.MenuItem(ui.MenuItemProps{Href: auditExportHref(data, "csv"), Icon: icons.FileText(15), Label: "Export CSV"})
+		@ui.MenuItem(ui.MenuItemProps{Href: auditExportHref(data, "json"), Icon: icons.FileJson(15), Label: "Export JSON"})
+	}
 }
 
 templ exportTrigger() {

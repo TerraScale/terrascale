@@ -19,10 +19,24 @@
   flex: 1 1 260px;
 }
 
-.ts-audit-filter-actions {
-  display: flex;
+#recent-activity > .ts-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--ts-s3);
+  gap: 2px var(--ts-s3);
+}
+
+#recent-activity .ts-card-heading {
+  display: contents;
+}
+
+#recent-activity .ts-card-description {
+  grid-column: 1 / -1;
+}
+
+#recent-activity .ts-card-actions {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .ts-audit-table td:first-child {
