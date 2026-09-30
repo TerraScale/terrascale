@@ -110,7 +110,7 @@ library or script.
 ## Performance
 
 Responses are compressed (brotli, zstd, gzip) by `httpcompression`. Datastar
-comes from the jsDelivr CDN (immutable, pinned by SRI). Every static file is
+loads from the dashboard with a pinned SRI hash. Every static file is
 linked with its content hash (`static.URL` in templates; the CSS build hashes
 the stylesheet's `url()`s) and cached as immutable. Release builds precompress
 the stylesheet and scripts with brotli at maximum quality. Speculation rules

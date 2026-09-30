@@ -139,15 +139,26 @@ function hash(contents) {
   return createHash('sha256').update(contents).digest('hex').slice(0, 8).toUpperCase();
 }
 
+async function readVendor(name) {
+  try {
+    return await readFile(resolve(source, 'vendor', name));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    throw new Error(`Missing web/assets/js/vendor/${name}; restore it from the official Datastar v1.0.4 release`, { cause: error });
+  }
+}
+
 async function build() {
-  const datastar = await readFile(resolve(source, 'vendor/datastar.js'));
+  const datastar = await readVendor('datastar.js');
+  const datastarMap = await readVendor('datastar.js.map');
+  const datastarLicense = await readVendor('LICENSE.datastar.md');
   const helpers = await readFile(resolve(repository, 'internal/ui/layout_helpers.go'), 'utf8');
-  const pinned = helpers.match(/\bconst datastarIntegrity = "(sha384-[A-Za-z0-9+/=]+)"/)?.[1];
+  const pinned = helpers.match(/\bconst\s+datastarIntegrity\s*=\s*"(sha384-[A-Za-z0-9+/=]+)"/)?.[1];
   const integrity = `sha384-${createHash('sha384').update(datastar).digest('base64')}`;
   if (integrity !== pinned) {
     throw new Error(`vendor/datastar.js hashes to ${integrity}, but datastarIntegrity in internal/ui/layout_helpers.go is ${pinned ?? 'missing'}`);
   }
-  const datastarFile = { path: resolve(outdir, 'datastar.js'), contents: datastar };
+  const datastarFile = { path: resolve(outdir, 'datastar.js'), contents: datastar, text: datastar.toString('utf8') };
   const codicon = await extractCodicon();
   const workerResult = await esbuild.build({
     ...shared,
@@ -175,7 +186,7 @@ async function build() {
   assertSelfHosted([
     ...workerResult.outputFiles,
     ...mainResult.outputFiles,
-    { ...datastarFile, text: datastar.toString('utf8') },
+    datastarFile,
   ]);
 
   const files = [
@@ -185,8 +196,10 @@ async function build() {
     // Keep the pinned Datastar bundle intact so the layout's SRI hash applies.
     // Serving it here avoids a CDN request on every document navigation.
     datastarFile,
-    { path: resolve(outdir, 'datastar.js.map'), contents: await readFile(resolve(source, 'vendor/datastar.js.map')) },
-    { path: resolve(outdir, 'LICENSE.datastar.md'), contents: await readFile(resolve(source, 'vendor/LICENSE.datastar.md')) },
+    // The official bundle references this map. Keep it for production DevTools;
+    // normal navigation does not request it.
+    { path: resolve(outdir, 'datastar.js.map'), contents: datastarMap },
+    { path: resolve(outdir, 'LICENSE.datastar.md'), contents: datastarLicense },
   ];
   // Write the new build before pruning the old one, so a page loading during a
   // development rebuild never finds its chunks missing.

@@ -6,6 +6,7 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
 COPY scripts/build-css.mjs scripts/build-js.mjs ./scripts/
 COPY web/assets ./web/assets
+# The JS build checks Datastar against the SRI hash declared here.
 COPY internal/ui/layout_helpers.go ./internal/ui/layout_helpers.go
 # The stylesheet links the fonts by content hash.
 COPY web/static/fonts ./web/static/fonts
