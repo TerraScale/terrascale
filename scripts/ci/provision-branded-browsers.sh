@@ -41,8 +41,8 @@ browser_launchers="$(mktemp -d "${RUNNER_TEMP:-/tmp}/terrascale-branded-browser-
 create_vendor_launcher() {
   local executable="$1"
   local launcher="$2"
-  printf '#!/bin/bash\nunset LD_LIBRARY_PATH\nexec %q "$@"\n' \
-    "${executable}" > "${launcher}"
+  printf '#!%s\nunset LD_LIBRARY_PATH LD_PRELOAD\nexec %q "$@"\n' \
+    "${BASH}" "${executable}" > "${launcher}"
   chmod 0700 "${launcher}"
 }
 create_vendor_launcher "${chrome}" "${browser_launchers}/google-chrome-stable"
@@ -52,8 +52,14 @@ edge="${browser_launchers}/microsoft-edge"
 
 chrome_version="$("${chrome}" --version)"
 edge_version="$("${edge}" --version)"
-[[ "${chrome_version}" =~ ^Google\ Chrome\ 154\.0\.8037\.57[[:space:]]*$ ]]
-[[ "${edge_version}" =~ ^Microsoft\ Edge\ 154\.0\.4258\.37[[:space:]]*$ ]]
+if [[ ! "${chrome_version}" =~ ^Google\ Chrome\ 154\.0\.8037\.57[[:space:]]*$ ]]; then
+  printf 'Unexpected Chrome version: %s\n' "${chrome_version}" >&2
+  exit 1
+fi
+if [[ ! "${edge_version}" =~ ^Microsoft\ Edge\ 154\.0\.4258\.37[[:space:]]*$ ]]; then
+  printf 'Unexpected Edge version: %s\n' "${edge_version}" >&2
+  exit 1
+fi
 printf 'PLAYWRIGHT_CHROME_EXECUTABLE_PATH=%s\nPLAYWRIGHT_EDGE_EXECUTABLE_PATH=%s\n' \
   "${chrome}" "${edge}" >> "${GITHUB_ENV}"
 printf '%s\n%s\n' "${chrome_version}" "${edge_version}"

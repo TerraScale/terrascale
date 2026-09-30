@@ -45,9 +45,9 @@ The Linux browser matrix uses actual stable Chrome and Edge channels and
 Playwright Firefox and WebKit. CI provisions SHA-bound Nix vendor packages from
 revision `b4fd65b198c599cbe814fcb9f42d25d021595ec9` (Chrome 154.0.8037.57 and
 Edge 154.0.4258.37) and exports launchers for those executables. The launchers
-clear the inherited `LD_LIBRARY_PATH` only for vendor browser processes, so their
-Nix runtime libraries stay coherent while other tools and engines retain the
-builder environment. Local runs can set
+clear inherited `LD_LIBRARY_PATH` and `LD_PRELOAD` only for vendor browser
+processes, so their Nix runtime libraries stay coherent while other tools and
+engines retain the builder environment. Local runs can set
 `PLAYWRIGHT_CHROME_EXECUTABLE_PATH` and `PLAYWRIGHT_EDGE_EXECUTABLE_PATH` for
 verified runner-provisioned binaries. Refresh these pins as stable releases move.
 WebKit results are engine compatibility evidence; actual Safari qualification
