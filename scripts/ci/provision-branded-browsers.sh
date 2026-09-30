@@ -50,16 +50,20 @@ create_vendor_launcher "${edge}" "${browser_launchers}/microsoft-edge"
 chrome="${browser_launchers}/google-chrome-stable"
 edge="${browser_launchers}/microsoft-edge"
 
+require_version() {
+  local browser="$1"
+  local observed="$2"
+  local expected="$3"
+  if [[ ! "${observed}" =~ ^"${expected}"[[:space:]]*$ ]]; then
+    printf 'Unexpected %s version: expected "%s", observed "%s"\n' \
+      "${browser}" "${expected}" "${observed}" >&2
+    return 1
+  fi
+}
 chrome_version="$("${chrome}" --version)"
 edge_version="$("${edge}" --version)"
-if [[ ! "${chrome_version}" =~ ^Google\ Chrome\ 154\.0\.8037\.57[[:space:]]*$ ]]; then
-  printf 'Unexpected Chrome version: %s\n' "${chrome_version}" >&2
-  exit 1
-fi
-if [[ ! "${edge_version}" =~ ^Microsoft\ Edge\ 154\.0\.4258\.37[[:space:]]*$ ]]; then
-  printf 'Unexpected Edge version: %s\n' "${edge_version}" >&2
-  exit 1
-fi
+require_version Chrome "${chrome_version}" "Google Chrome 154.0.8037.57"
+require_version Edge "${edge_version}" "Microsoft Edge 154.0.4258.37"
 printf 'PLAYWRIGHT_CHROME_EXECUTABLE_PATH=%s\nPLAYWRIGHT_EDGE_EXECUTABLE_PATH=%s\n' \
   "${chrome}" "${edge}" >> "${GITHUB_ENV}"
 printf '%s\n%s\n' "${chrome_version}" "${edge_version}"
