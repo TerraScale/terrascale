@@ -115,9 +115,10 @@ type nativeDiscoveryDocument struct {
 }
 
 var (
-	nativeDiscoveryIdentity = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
-	nativeDiscoveryToken    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-	nativeDiscoveryRegion   = regexp.MustCompile(`^[A-Z0-9][A-Z0-9-]{0,15}$`)
+	nativeDiscoveryIdentity  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	nativeDiscoveryToken     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	nativeDiscoveryRegion    = regexp.MustCompile(`^[A-Z0-9][A-Z0-9-]{0,15}$`)
+	nativeDiscoveryRequestID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 )
 
 func validNativeDiscoveryRegion(region string) bool {
@@ -309,6 +310,8 @@ func (r *nativeDiscoveryRouter) resolve(ctx context.Context, scope DocumentScope
 		call := &nativeDiscoveryCall{Done: make(chan struct{})}
 		r.calls[key] = call
 		r.mu.Unlock()
+		// Discovery consumes the initiating operation's original request budget.
+		// A separate fetch timeout would shorten it; native dispatch cannot renew it.
 		lease, err := r.fetch(ctx, scope, credential, floor)
 		r.mu.Lock()
 		if err == nil {
@@ -369,6 +372,19 @@ func (r *nativeDiscoveryRouter) fetch(ctx context.Context, scope DocumentScope, 
 		return nativeDiscoveryLease{}, nativeRoutingFailure("discovery_unavailable", err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		// The observed HTTP status remains authoritative even when diagnostics
+		// cannot be read safely. Never decode a partial or oversized error body,
+		// or expose a reader error that could contain credentials.
+		var body []byte
+		if response.ContentLength <= nativeDiscoveryBodyLimit {
+			value, readErr := io.ReadAll(io.LimitReader(response.Body, nativeDiscoveryBodyLimit+1))
+			if readErr == nil && len(value) <= nativeDiscoveryBodyLimit {
+				body = value
+			}
+		}
+		return nativeDiscoveryLease{}, nativeDiscoveryResponseError(response.StatusCode, response.Header, body)
+	}
 	if response.ContentLength > nativeDiscoveryBodyLimit {
 		return nativeDiscoveryLease{}, nativeRoutingFailure("invalid_discovery", fmt.Errorf("discovery response byte limit"))
 	}
@@ -378,9 +394,6 @@ func (r *nativeDiscoveryRouter) fetch(ctx context.Context, scope DocumentScope, 
 	}
 	if len(body) > nativeDiscoveryBodyLimit {
 		return nativeDiscoveryLease{}, nativeRoutingFailure("invalid_discovery", fmt.Errorf("discovery response byte limit"))
-	}
-	if response.StatusCode != http.StatusOK {
-		return nativeDiscoveryLease{}, errorFromResponse("native.discovery", http.MethodGet, "/api/v1/discovery", response.StatusCode, response.Header, body)
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
@@ -406,4 +419,39 @@ func (r *nativeDiscoveryRouter) fetch(ctx context.Context, scope DocumentScope, 
 		return nativeDiscoveryLease{}, nativeRoutingFailure("discovery_expired", nil)
 	}
 	return lease, nil
+}
+
+// nativeDiscoveryResponseError retains status and recognized Atlas metadata,
+// never arbitrary producer text. Native credentials are canonical tbk1 values;
+// the bounded correlation identifier grammar excludes their periods and spaces.
+func nativeDiscoveryResponseError(status int, headers http.Header, body []byte) *APIError {
+	safeHeaders := make(http.Header)
+	requestID := headers.Get("X-Request-ID")
+	if len(requestID) <= 128 && nativeDiscoveryRequestID.MatchString(requestID) && !strings.Contains(strings.ToLower(requestID), "tbk1") {
+		safeHeaders.Set("X-Request-ID", requestID)
+	}
+	if retryAfter := headers.Get("Retry-After"); len(retryAfter) <= 128 {
+		safeHeaders.Set("Retry-After", retryAfter)
+	}
+	apiError := errorFromResponse("native.discovery", http.MethodGet, "/api/v1/discovery", status, safeHeaders, nil)
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) != nil {
+		return apiError
+	}
+	// Only these source-recognized status/code pairs refine the safe default.
+	// Message, fix, raw body, JSON correlation fields and placement are discarded
+	// instead of redacted, so encoded producer text cannot survive diagnostics.
+	switch {
+	case status == http.StatusForbidden && envelope.Error.Code == "discovery_forbidden":
+		apiError.Code = "discovery_forbidden"
+	case (status == http.StatusNotFound || status == http.StatusServiceUnavailable) && envelope.Error.Code == "discovery_unavailable":
+		apiError.Code = "discovery_unavailable"
+	case status == http.StatusServiceUnavailable && envelope.Error.Code == "no_eligible_region":
+		apiError.Code = "no_eligible_region"
+	}
+	return apiError
 }

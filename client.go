@@ -141,7 +141,9 @@ type Config struct {
 	// RetryDelay is the base retry backoff (default 250ms, max 30s).
 	RetryDelay time.Duration
 	// RequestTimeout bounds the complete request, including retries (default
-	// 30s, maximum 30s). A shorter context deadline still wins.
+	// 30s, maximum 30s). Native discovery and the single native dispatch share
+	// this original budget; discovery has no separate timeout and dispatch does
+	// not reset the deadline. A shorter context deadline still wins.
 	RequestTimeout time.Duration
 }
 
