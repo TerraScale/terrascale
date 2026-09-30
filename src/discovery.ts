@@ -1,6 +1,7 @@
 import type { FetchLike } from "./config.js";
 import {
   isRegionCode,
+  regionalApiHostname,
   terraScaleDiscoveryHostname,
   terraScaleGlobalApiHostname,
   type TerraScaleRegionCode,
@@ -109,7 +110,7 @@ function validateEndpointUrl(raw: unknown, region: TerraScaleRegionCode, loopbac
   }
   if (url.username !== "" || url.password !== "") return null;
   if (url.hash !== "" || url.search !== "") return null;
-  const expectedHostname = `${region.toLowerCase()}.terrascale.tech`;
+  const expectedHostname = regionalApiHostname(region);
   if (url.protocol === "https:" && url.hostname.toLowerCase() === expectedHostname) {
     return `${url.protocol}//${expectedHostname}`;
   }
@@ -224,7 +225,7 @@ export function routingDocumentFromPlacement(
   if (unique.length === 0) return null;
   const endpoints = unique.slice(0, maxEndpoints).map((region, index) => ({
     region,
-    url: `https://${region.toLowerCase()}.terrascale.tech`,
+    url: `https://${regionalApiHostname(region)}`,
     priority: index + 1,
     capabilities: [...routingCapabilities],
   }));
@@ -572,7 +573,8 @@ export function parseRegionCatalog(payload: unknown, loopbackClient = false): Te
   for (const [code, raw] of Object.entries(rawHosts)) {
     const region = byCode.get(code);
     if (region === undefined) return null;
-    const origin = typeof raw === "string" && raw.toLowerCase() === `${region.code.toLowerCase()}.terrascale.tech`
+    // Atlas catalogs contain hostnames; discovery endpoints require absolute URLs.
+    const origin = typeof raw === "string" && raw.toLowerCase() === regionalApiHostname(region.code)
       ? `https://${raw}` : raw;
     const host = validateEndpointUrl(origin, region.code, loopbackClient);
     if (host === null) return null;

@@ -1,7 +1,7 @@
 import type { ProjectId } from "./models.js";
 import { defaultDiscoveryTimeoutMs, defaultRequestTimeoutMs, type TerraScaleRoutingOptions } from "./discovery.js";
 import { isRegisteredLocalRuntimeFetch } from "./local-runtime-capability.js";
-import { parseRegionCode, type TerraScaleRegionCode } from "./regions.js";
+import { parseRegionCode, regionalApiHostname, terraScaleGlobalApiHostname, type TerraScaleRegionCode } from "./regions.js";
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -163,8 +163,8 @@ function normalizeBaseUrl(baseUrl: string): string {
 
 function strictRegionalBaseUrl(baseUrl: string, region: TerraScaleRegionCode): string {
   const url = new URL(`${baseUrl}/`);
-  const regionalHostname = `${region.toLowerCase()}.terrascale.tech`;
-  if (url.hostname === "api.terrascale.tech") {
+  const regionalHostname = regionalApiHostname(region);
+  if (url.hostname === terraScaleGlobalApiHostname) {
     url.hostname = regionalHostname;
   } else if (url.hostname !== regionalHostname) {
     throw new TypeError(

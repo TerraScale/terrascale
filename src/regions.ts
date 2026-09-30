@@ -3,21 +3,23 @@ export const terraScaleRegionCodes = ["GRU", "SFO", "FRA"] as const;
 /** Region codes are admitted by the published catalog and may grow over time. */
 export type TerraScaleRegionCode = string;
 
+const terraScaleApexDomain = "terrascale.tech";
+
 /** The public global REST router; regional APIs use <region>.terrascale.tech. */
-export const terraScaleGlobalApiHostname = "api.terrascale.tech";
+export const terraScaleGlobalApiHostname = `api.${terraScaleApexDomain}`;
 
 /**
  * The metadata origin (ADR 0050 §8): `ts-atlas` serves discovery and the
  * region catalog on `atlas.terrascale.tech` and forwards nothing.
  */
-export const terraScaleDiscoveryHostname = "atlas.terrascale.tech";
+export const terraScaleDiscoveryHostname = `atlas.${terraScaleApexDomain}`;
 
 /** The default discovery/catalog origin, independent of `apiBaseUrl`. */
 export const terraScaleDiscoveryBaseUrl = `https://${terraScaleDiscoveryHostname}`;
 
 /** Return the canonical public hostname for a Region's REST member. */
 export function regionalApiHostname(region: TerraScaleRegionCode): string {
-  return `${region.toLowerCase()}.terrascale.tech`;
+  return `${region.toLowerCase()}.${terraScaleApexDomain}`;
 }
 
 /**
@@ -89,6 +91,7 @@ export function findRegion(code: string | undefined): TerraScaleRegion | undefin
   return canonical === undefined ? undefined : regionsByCode.get(canonical);
 }
 
+/** Service labels share the regional API domain and must not become region codes. */
 const reservedServiceLabels = new Set(["API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH", "DOCS", "GIT", "CDN", "ADMIN", "MCP", "MAIL"]);
 
 export function isRegionCode(code: unknown): code is TerraScaleRegionCode {
@@ -97,7 +100,7 @@ export function isRegionCode(code: unknown): code is TerraScaleRegionCode {
 
 export function parseRegionCode(code: unknown, fieldName = "regionCode"): TerraScaleRegionCode {
   if (!isRegionCode(code)) {
-    throw new TypeError(`${fieldName} must be an uppercase Region code of 1 to 16 letters, digits, or hyphens.`);
+    throw new TypeError(`${fieldName} must be an uppercase Region code of 1 to 16 letters, digits, or hyphens, and must not be a reserved service label.`);
   }
 
   return code;
