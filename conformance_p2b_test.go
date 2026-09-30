@@ -10,7 +10,7 @@ import (
 
 func TestP2BConformanceCoreSurfaceHasNoSyntheticTransport(t *testing.T) {
 	t.Parallel()
-	if sdk.DefaultAPIBaseURL == "" || sdk.DefaultSyncBaseURL == "" {
+	if sdk.DefaultDiscoveryBaseURL == "" {
 		t.Fatal("SDK contract endpoints must be explicit")
 	}
 	if _, err := sdk.NewClient(sdk.Config{APIBaseURL: "https://tbep.terrascale.tech"}); err == nil {

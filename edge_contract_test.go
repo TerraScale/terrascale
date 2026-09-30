@@ -62,24 +62,3 @@ func TestEdgeContractPinAndRouteManifest(t *testing.T) {
 		t.Fatalf("edge routes = %+v", EdgeContractRoutes)
 	}
 }
-
-func TestMemberAndEdgeRegionsUseDistinctContracts(t *testing.T) {
-	var memberResponse string
-	for _, operation := range ContractOperations {
-		if operation.OperationID == "regions" {
-			memberResponse = operation.ResponseModel
-		}
-	}
-	if memberResponse != "HealthResponse" {
-		t.Fatalf("member regions response model = %q, want HealthResponse", memberResponse)
-	}
-	for _, route := range EdgeContractRoutes {
-		if route.OperationID == "regions.list" {
-			if route.ResponseModel != "RegionCatalogResponse" {
-				t.Fatalf("edge regions response model = %q, want RegionCatalogResponse", route.ResponseModel)
-			}
-			return
-		}
-	}
-	t.Fatal("edge regions route missing")
-}

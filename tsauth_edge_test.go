@@ -410,12 +410,12 @@ func TestTSAuthEdgeStatusMapping(t *testing.T) {
 	tsAuthEdgeRequireAPIError(t, err, "tsauth.billing.get", http.StatusServiceUnavailable, "billing_not_configured", "billing not configured")
 
 	// B18: flat OAuth error with WWW-Authenticate maps without crashing.
-	_, err = instance.OIDC.ExchangeAuthorizationCode(ctx, "cli_1", "csek", "code_1", "https://app.example/cb", "")
+	_, err = instance.OIDC.ExchangeAuthorizationCode(ctx, TSAuthOAuthClientAuthentication{ClientID: "cli_1", ClientSecret: "csek", Method: TSAuthClientSecretPost}, "code_1", "https://app.example/cb", "")
 	tsAuthEdgeRequireAPIError(t, err, "tsauth.oidc.token.code", http.StatusUnauthorized, "invalid_client", "client authentication failed")
 
 	// B19: flat OAuth error without a description keeps the code; the message
 	// falls back to the error code itself. pins current behavior.
-	_, err = instance.OIDC.RefreshToken(ctx, "cli_1", "csek", "rt_1")
+	_, err = instance.OIDC.RefreshToken(ctx, TSAuthOAuthClientAuthentication{ClientID: "cli_1", ClientSecret: "csek", Method: TSAuthClientSecretPost}, "rt_1")
 	tsAuthEdgeRequireAPIError(t, err, "tsauth.oidc.token.refresh", http.StatusBadRequest, "invalid_grant", "invalid_grant")
 
 	// B20: null error fields fall back to the status-derived message.
@@ -539,7 +539,7 @@ func TestTSAuthEdgeWireEncoding(t *testing.T) {
 	}
 
 	// C33: form-encoded OIDC secret with reserved characters round-trips.
-	if _, err := instance.OIDC.ExchangeAuthorizationCode(ctx, "cli_1", formSecret, "code_1", "https://app.example/cb", ""); err != nil {
+	if _, err := instance.OIDC.ExchangeAuthorizationCode(ctx, TSAuthOAuthClientAuthentication{ClientID: "cli_1", ClientSecret: formSecret, Method: TSAuthClientSecretPost}, "code_1", "https://app.example/cb", ""); err != nil {
 		t.Fatal(err)
 	}
 

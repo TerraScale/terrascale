@@ -1,327 +1,401 @@
-// Document CRUD client (GOAL D-13).
-//
-// Documents are served by the public TerraBase API as canonical JSON bytes.
-// A point read is the JSON value itself (not an envelope), and PUT/PATCH
-// requests carry the value itself (not {"body": ...}).
 package sdk
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
 )
+
+type PointState string
 
 const (
-	// MaxDocumentBytes is the public maximum encoded size of one document.
-	MaxDocumentBytes = 1 << 20
-	// MaxBatchOperations is the maximum number of operations in one atomic
-	// document batch.
-	MaxBatchOperations = 1000
-	// DefaultDocumentPageSize is the server's default list page size.
-	DefaultDocumentPageSize = 100
-	// MaxDocumentPageSize is the largest list page accepted by the API.
-	MaxDocumentPageSize = 1000
+	PointAbsent   PointState = "absent"
+	PointDeleted  PointState = "deleted"
+	PointValue    PointState = "value"
+	PointConflict PointState = "conflict"
 )
 
-// Document is a point-read document. Point reads return Body as the raw
-// canonical JSON value; metadata is supplied by response headers and write
-// responses. Collection and ID are populated for SDK-created values and
-// reactive snapshots.
-type Document struct {
-	ID         string `json:"id,omitempty"`
-	Collection string `json:"collection,omitempty"`
-	// body remains part of the reactive compatibility envelope; point reads
-	// decode directly into this field without an envelope.
-	Body     json.RawMessage `json:"body,omitempty"`
-	Revision string          `json:"revision,omitempty"`
-	ETag     string          `json:"-"`
-	Session  string          `json:"-"`
+type DocumentSibling struct {
+	Event            DocumentEvent   `json:"event"`
+	SchemaGeneration DecimalU64      `json:"schema_generation"`
+	SchemaDigest     Hex32           `json:"schema_digest"`
+	Kind             string          `json:"kind"`
+	Fields           []DocumentField `json:"fields,omitempty"`
 }
 
-// DocumentRow is one row returned by the collection list endpoint. The wire
-// shape is exactly {"id", "version", "value"}; value remains opaque JSON.
-type DocumentRow struct {
-	ID      string          `json:"id"`
-	Version int64           `json:"version"`
-	Value   json.RawMessage `json:"value"`
-}
-
-// DocumentWriteResponse is the response to PUT, PATCH, and batch writes.
-// The response body contains only the new revision. ETag and session metadata
-// are carried by response headers and handled by the shared client.
-type DocumentWriteResponse struct {
-	Revision string `json:"revision"`
-	ETag     string `json:"-"`
-	Session  string `json:"-"`
-}
-
-// BatchResponse reports one atomically committed document batch.
-type BatchResponse struct {
-	Committed uint64 `json:"committed"`
-	Count     int    `json:"count"`
-	Session   string `json:"-"`
-}
-
-// BatchOperation is one operation in an atomic document batch. Put and patch
-// operations require Value; delete operations omit it.
-type BatchOperation struct {
-	Op    string `json:"op"`
-	ID    string `json:"id"`
-	Value any    `json:"value,omitempty"`
-}
-
-// HistoryEntry is one retained document revision. The public history
-// contract exposes revision and deletion state.
-type HistoryEntry struct {
-	Revision string `json:"revision"`
-	Deleted  bool   `json:"deleted"`
-}
-
-// ListDocumentsResult is one bounded page. The API has no opaque cursor: use
-// the last returned ID as after for the next request.
-type ListDocumentsResult struct {
-	Documents []DocumentRow `json:"documents"`
-}
-
-// DocumentsResponse is the generated contract name for ListDocumentsResult.
-type DocumentsResponse = ListDocumentsResult
-
-// DocumentsClient performs document CRUD. Reach it via Client.Documents.
-type DocumentsClient struct {
-	c *Client
-}
-
-func documentBase(databaseID, collection string) (string, error) {
-	if strings.TrimSpace(databaseID) == "" {
-		return "", fmt.Errorf("sdk: database id cannot be empty")
-	}
-	if strings.TrimSpace(collection) == "" {
-		return "", fmt.Errorf("sdk: collection cannot be empty")
-	}
-	return "/api/v1/databases/" + url.PathEscape(databaseID) +
-		"/collections/" + url.PathEscape(collection) + "/documents", nil
-}
-
-func documentPath(databaseID, collection, docID string) (string, error) {
-	base, err := documentBase(databaseID, collection)
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(docID) == "" {
-		return "", fmt.Errorf("sdk: document id cannot be empty")
-	}
-	return base + "/" + url.PathEscape(docID), nil
-}
-
-// rawJSON validates and bounds a document value, then keeps its encoded bytes
-// intact so Client.do sends the value itself rather than introducing a body
-// wrapper. json.Marshal sorts map keys and therefore gives structured Go
-// values deterministic JSON; json.RawMessage callers retain their bytes.
-func rawJSON(value any, label string) (json.RawMessage, error) {
-	if value == nil {
-		return nil, fmt.Errorf("sdk: %s cannot be nil", label)
-	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("sdk: marshal %s: %w", label, err)
-	}
-	if len(encoded) > MaxDocumentBytes {
-		return nil, fmt.Errorf("sdk: %s exceeds the 1 MiB document limit", label)
-	}
-	return json.RawMessage(encoded), nil
-}
-
-// Create stores a document at a caller-owned ID only when it does not exist.
-// The producer enforces If-None-Match: * atomically at the storage commit.
-func (d *DocumentsClient) Create(ctx context.Context, databaseID, collection, docID string, value any, opts ...RequestOption) (*DocumentWriteResponse, error) {
-	return d.Put(ctx, databaseID, collection, docID, value, append(opts, WithCreateOnly())...)
-}
-
-// Put creates or replaces a document (the public upsert operation).
-func (d *DocumentsClient) Put(ctx context.Context, databaseID, collection, docID string, value any, opts ...RequestOption) (*DocumentWriteResponse, error) {
-	path, err := documentPath(databaseID, collection, docID)
-	if err != nil {
+func (s DocumentSibling) MarshalJSON() ([]byte, error) {
+	if err := (WriteValue{Kind: s.Kind, Fields: s.Fields}).validate(); err != nil {
 		return nil, err
 	}
-	payload, err := rawJSON(value, "document value")
-	if err != nil {
-		return nil, err
+	type wire DocumentSibling
+	if s.Kind == "tombstone" {
+		return json.Marshal(wire(s))
 	}
-	var out DocumentWriteResponse
-	var headers http.Header
-	opts = append(opts, func(rc *requestConfig) { rc.responseHeaders = &headers })
-	if err := d.c.do(ctx, "PUT", path, nil, payload, &out, "documents.put", opts...); err != nil {
-		return nil, err
-	}
-	out.ETag = headers.Get("ETag")
-	out.Session = headers.Get("X-TerraScale-Session")
-	return &out, nil
+	return json.Marshal(struct {
+		Event            DocumentEvent   `json:"event"`
+		SchemaGeneration DecimalU64      `json:"schema_generation"`
+		SchemaDigest     Hex32           `json:"schema_digest"`
+		Kind             string          `json:"kind"`
+		Fields           []DocumentField `json:"fields"`
+	}{s.Event, s.SchemaGeneration, s.SchemaDigest, s.Kind, nonnil(s.Fields)})
 }
 
-// Upsert is an explicit alias for Put, matching the operation's create-or-
-// replace semantics without inventing a second wire route.
-func (d *DocumentsClient) Upsert(ctx context.Context, databaseID, collection, docID string, value any, opts ...RequestOption) (*DocumentWriteResponse, error) {
-	return d.Put(ctx, databaseID, collection, docID, value, opts...)
-}
-
-// Get fetches one document. The successful response body is raw canonical
-// JSON, so it is decoded into Body directly rather than into a wrapper.
-// WithReadAt returns the document as of epoch milliseconds instead of the
-// latest revision; the list endpoint does not accept a point in time.
-func (d *DocumentsClient) Get(ctx context.Context, databaseID, collection, docID string, opts ...RequestOption) (*Document, error) {
-	path, err := documentPath(databaseID, collection, docID)
-	if err != nil {
-		return nil, err
-	}
-	var body json.RawMessage
-	var headers http.Header
-	opts = append(opts, func(rc *requestConfig) { rc.responseHeaders = &headers })
-	if err := d.c.do(ctx, "GET", path, nil, nil, &body, "documents.get", opts...); err != nil {
-		return nil, err
-	}
-	return &Document{ID: docID, Collection: collection, Body: body, ETag: headers.Get("ETag"), Session: headers.Get("X-TerraScale-Session")}, nil
-}
-
-// List pages documents in canonical key order. after is the last ID from the
-// preceding page; limit is bounded to the public 1..=1000 range. A zero limit
-// omits the query and lets the server use its default.
-func (d *DocumentsClient) List(ctx context.Context, databaseID, collection string, limit int, after string, opts ...RequestOption) (*ListDocumentsResult, error) {
-	base, err := documentBase(databaseID, collection)
-	if err != nil {
-		return nil, err
-	}
-	if limit < 0 || limit > MaxDocumentPageSize {
-		return nil, fmt.Errorf("sdk: document list limit must be between 0 and %d", MaxDocumentPageSize)
-	}
-	query := url.Values{}
-	if limit > 0 {
-		query.Set("limit", strconv.Itoa(limit))
-	}
-	if strings.TrimSpace(after) != "" {
-		query.Set("after", after)
-	}
-	var out ListDocumentsResult
-	if err := d.c.do(ctx, "GET", base, query, nil, &out, "documents.list", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// Patch applies an RFC 7386 JSON merge patch to a document.
-func (d *DocumentsClient) Patch(ctx context.Context, databaseID, collection, docID string, patch any, opts ...RequestOption) (*DocumentWriteResponse, error) {
-	path, err := documentPath(databaseID, collection, docID)
-	if err != nil {
-		return nil, err
-	}
-	payload, err := rawJSON(patch, "patch")
-	if err != nil {
-		return nil, err
-	}
-	var out DocumentWriteResponse
-	var headers http.Header
-	opts = append(opts, func(rc *requestConfig) { rc.responseHeaders = &headers })
-	if err := d.c.do(ctx, "PATCH", path, nil, payload, &out, "documents.patch", opts...); err != nil {
-		return nil, err
-	}
-	out.ETag = headers.Get("ETag")
-	out.Session = headers.Get("X-TerraScale-Session")
-	return &out, nil
-}
-
-// batchOperationValue keeps each operation's value in its validated encoded
-// form so the request body is assembled once instead of re-marshaling every
-// value a second time.
-type batchOperationValue struct {
-	Op    string          `json:"op"`
-	ID    string          `json:"id"`
-	Value json.RawMessage `json:"value,omitempty"`
-}
-
-// Batch sends one atomic batch of put, patch, and delete operations.
-func (d *DocumentsClient) Batch(ctx context.Context, databaseID, collection string, operations []BatchOperation, opts ...RequestOption) (*BatchResponse, error) {
-	base, err := documentBase(databaseID, collection)
-	if err != nil {
-		return nil, err
-	}
-	if len(operations) == 0 || len(operations) > MaxBatchOperations {
-		return nil, fmt.Errorf("sdk: document batch must contain between 1 and %d operations", MaxBatchOperations)
-	}
-	wire := make([]batchOperationValue, len(operations))
-	for index, operation := range operations {
-		if strings.TrimSpace(operation.ID) == "" {
-			return nil, fmt.Errorf("sdk: document batch operation %d id cannot be empty", index)
-		}
-		switch operation.Op {
-		case "put", "patch":
-			if operation.Value == nil {
-				return nil, fmt.Errorf("sdk: document batch operation %d %s value cannot be nil", index, operation.Op)
-			}
-			value, err := rawJSON(operation.Value, fmt.Sprintf("document batch operation %d value", index))
-			if err != nil {
-				return nil, err
-			}
-			wire[index] = batchOperationValue{Op: operation.Op, ID: operation.ID, Value: value}
-		case "delete":
-			wire[index] = batchOperationValue{Op: operation.Op, ID: operation.ID}
-		default:
-			return nil, fmt.Errorf("sdk: document batch operation %d op must be put, patch, or delete", index)
-		}
-	}
-	payload, err := json.Marshal(struct {
-		Operations []batchOperationValue `json:"operations"`
-	}{Operations: wire})
-	if err != nil {
-		return nil, err
-	}
-	var out BatchResponse
-	if err := d.c.do(ctx, "POST", base+"/batch", nil, json.RawMessage(payload), &out, "documents.batch", opts...); err != nil {
-		return nil, err
-	}
-	out.Session = d.c.SessionToken()
-	return &out, nil
-}
-
-// Delete removes one document (the server writes a tombstone).
-func (d *DocumentsClient) Delete(ctx context.Context, databaseID, collection, docID string, opts ...RequestOption) error {
-	path, err := documentPath(databaseID, collection, docID)
+func (s *DocumentSibling) UnmarshalJSON(data []byte) error {
+	object, err := nativeObject(data, []string{"event", "schema_generation", "schema_digest", "kind"}, []string{"fields"})
 	if err != nil {
 		return err
 	}
-	return d.c.do(ctx, "DELETE", path, nil, nil, nil, "documents.delete", opts...)
+	var kind string
+	if err := json.Unmarshal(object["kind"], &kind); err != nil {
+		return err
+	}
+	required := []string{"event", "schema_generation", "schema_digest", "kind"}
+	if kind == "live" {
+		required = append(required, "fields")
+	}
+	if _, err := nativeObject(data, required, nil); err != nil {
+		return err
+	}
+	type wire DocumentSibling
+	var value wire
+	if err := decodeNativeJSON(data, &value); err != nil {
+		return err
+	}
+	if kind != "live" && kind != "tombstone" {
+		return fmt.Errorf("sdk: invalid document sibling kind")
+	}
+	*s = DocumentSibling(value)
+	return nil
 }
 
-// History returns retained versions of a document.
-func (d *DocumentsClient) History(ctx context.Context, databaseID, collection, docID string, opts ...RequestOption) ([]HistoryEntry, error) {
-	return d.HistoryPage(ctx, databaseID, collection, docID, 0, "", opts...)
+type DocumentPoint struct {
+	Version      uint8             `json:"version"`
+	State        PointState        `json:"state"`
+	StateVersion *Hex32            `json:"state_version"`
+	Context      []Observed        `json:"context"`
+	Siblings     []DocumentSibling `json:"siblings"`
 }
 
-// HistoryPage returns a bounded page of retained document versions. after is
-// the opaque revision identity from the preceding page; zero limit preserves
-// the server default.
-func (d *DocumentsClient) HistoryPage(ctx context.Context, databaseID, collection, docID string, limit int, after string, opts ...RequestOption) ([]HistoryEntry, error) {
-	path, err := documentPath(databaseID, collection, docID)
+func (p DocumentPoint) validate(scope DocumentScope) error {
+	if p.Version != 1 {
+		return fmt.Errorf("sdk: native point version must be 1")
+	}
+	if err := validateObserved(p.Context); err != nil {
+		return err
+	}
+	if len(p.Siblings) > 1024 {
+		return fmt.Errorf("sdk: native sibling limit")
+	}
+	switch p.State {
+	case PointAbsent:
+		if p.StateVersion != nil || len(p.Context) != 0 || len(p.Siblings) != 0 {
+			return fmt.Errorf("sdk: absent point contains retained state")
+		}
+	case PointDeleted, PointValue:
+		if p.StateVersion == nil || len(p.Siblings) != 1 {
+			return fmt.Errorf("sdk: single point requires one sibling and state version")
+		}
+		kind := "live"
+		if p.State == PointDeleted {
+			kind = "tombstone"
+		}
+		if p.Siblings[0].Kind != kind {
+			return fmt.Errorf("sdk: point state and sibling disagree")
+		}
+	case PointConflict:
+		if p.StateVersion != nil || len(p.Siblings) < 2 {
+			return fmt.Errorf("sdk: conflict must preserve multiple siblings without a CAS version")
+		}
+	default:
+		return fmt.Errorf("sdk: invalid native point state")
+	}
+	seenOrigins := make(map[WriterIdentity]bool, len(p.Siblings))
+	for _, sibling := range p.Siblings {
+		if err := sibling.Event.validate(scope); err != nil {
+			return err
+		}
+		if sibling.SchemaGeneration == 0 {
+			return fmt.Errorf("sdk: sibling requires positive schema generation")
+		}
+		origin := WriterIdentity{Replica: sibling.Event.Replica, Incarnation: sibling.Event.Incarnation}
+		if seenOrigins[origin] {
+			return fmt.Errorf("sdk: duplicate sibling origin")
+		}
+		seenOrigins[origin] = true
+		if err := (WriteValue{Kind: sibling.Kind, Fields: sibling.Fields}).validate(); err != nil {
+			return err
+		}
+		found := false
+		for _, dot := range p.Context {
+			if dot.Replica == sibling.Event.Replica && dot.Incarnation == sibling.Event.Incarnation && dot.Sequence >= sibling.Event.Sequence {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("sdk: sibling event is missing from causal context")
+		}
+	}
+	return nil
+}
+
+type QueryOperation string
+
+const (
+	QueryEqual              QueryOperation = "equal"
+	QueryLessThan           QueryOperation = "less_than"
+	QueryLessThanOrEqual    QueryOperation = "less_than_or_equal"
+	QueryGreaterThan        QueryOperation = "greater_than"
+	QueryGreaterThanOrEqual QueryOperation = "greater_than_or_equal"
+	QueryIsNull             QueryOperation = "is_null"
+	QueryIsMissing          QueryOperation = "is_missing"
+)
+
+type QueryPredicate struct {
+	Operation QueryOperation `json:"op"`
+	Path      []uint32       `json:"path"`
+	Value     *Value         `json:"value,omitempty"`
+}
+
+func (p QueryPredicate) validate() error {
+	if len(p.Path) == 0 || len(p.Path) > 16 {
+		return fmt.Errorf("sdk: query field path requires 1..16 IDs")
+	}
+	for _, id := range p.Path {
+		if id == 0 {
+			return fmt.Errorf("sdk: query path IDs must be positive")
+		}
+	}
+	switch p.Operation {
+	case QueryIsNull, QueryIsMissing:
+		if p.Value != nil {
+			return fmt.Errorf("sdk: null/missing predicate cannot contain a value")
+		}
+	case QueryEqual, QueryLessThan, QueryLessThanOrEqual, QueryGreaterThan, QueryGreaterThanOrEqual:
+		if p.Value == nil {
+			return fmt.Errorf("sdk: comparison predicate requires a value")
+		}
+		switch p.Value.Kind() {
+		case ValueBool, ValueI64, ValueUTF8, ValueBytes:
+		default:
+			return fmt.Errorf("sdk: query comparison requires a native scalar")
+		}
+		nodes := 0
+		_, data, err := p.Value.encode(1, &nodes)
+		if err != nil {
+			return err
+		}
+		if len(data) > 1<<20 {
+			return fmt.Errorf("sdk: query value byte limit")
+		}
+	default:
+		return fmt.Errorf("sdk: invalid native query operation")
+	}
+	return nil
+}
+func (p QueryPredicate) MarshalJSON() ([]byte, error) {
+	if err := p.validate(); err != nil {
+		return nil, err
+	}
+	type wire QueryPredicate
+	return json.Marshal(wire(p))
+}
+func (p *QueryPredicate) UnmarshalJSON(data []byte) error {
+	object, err := nativeObject(data, []string{"op", "path"}, []string{"value"})
+	if err != nil {
+		return err
+	}
+	var op QueryOperation
+	if err := json.Unmarshal(object["op"], &op); err != nil {
+		return err
+	}
+	required := []string{"op", "path"}
+	if op != QueryIsNull && op != QueryIsMissing {
+		required = append(required, "value")
+	}
+	if _, err := nativeObject(data, required, nil); err != nil {
+		return err
+	}
+	type wire QueryPredicate
+	var value wire
+	if err := decodeNativeJSON(data, &value); err != nil {
+		return err
+	}
+	if err := QueryPredicate(value).validate(); err != nil {
+		return err
+	}
+	*p = QueryPredicate(value)
+	return nil
+}
+
+type QueryRequest struct {
+	Version   uint8          `json:"version"`
+	Predicate QueryPredicate `json:"predicate"`
+	Limit     uint16         `json:"limit"`
+	Cursor    string         `json:"cursor,omitempty"`
+}
+
+func validCursor(cursor string) bool {
+	if len(cursor) == 0 || len(cursor) > 1024 {
+		return false
+	}
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(cursor)
+	return err == nil && base64.RawURLEncoding.EncodeToString(decoded) == cursor
+}
+func (r QueryRequest) validate() error {
+	if r.Version != 1 || r.Limit < 1 || r.Limit > 128 {
+		return fmt.Errorf("sdk: native query version or limit")
+	}
+	if r.Cursor != "" && !validCursor(r.Cursor) {
+		return fmt.Errorf("sdk: invalid opaque query cursor")
+	}
+	return r.Predicate.validate()
+}
+
+type DocumentRow struct {
+	Document UUID          `json:"document"`
+	Point    DocumentPoint `json:"point"`
+}
+type QueryResponse struct {
+	Version    uint8         `json:"version"`
+	Rows       []DocumentRow `json:"rows"`
+	NextCursor string        `json:"next_cursor,omitempty"`
+}
+
+func (r *QueryResponse) UnmarshalJSON(data []byte) error {
+	object, err := nativeObject(data, []string{"version", "rows"}, []string{"next_cursor"})
+	if err != nil {
+		return err
+	}
+	if raw, ok := object["next_cursor"]; ok {
+		cursor, err := nativeString(raw)
+		if err != nil || !validCursor(cursor) {
+			return fmt.Errorf("sdk: invalid next query cursor")
+		}
+	}
+	type wire QueryResponse
+	var value wire
+	if err := decodeNativeJSON(data, &value); err != nil {
+		return err
+	}
+	*r = QueryResponse(value)
+	return nil
+}
+func validateRows(scope DocumentScope, rows []DocumentRow) error {
+	if len(rows) > 128 {
+		return fmt.Errorf("sdk: native query row limit")
+	}
+	var previous UUID
+	for _, row := range rows {
+		if _, err := ParseUUID(string(row.Document)); err != nil {
+			return err
+		}
+		if row.Document <= previous {
+			return fmt.Errorf("sdk: native query documents must increase")
+		}
+		previous = row.Document
+		if row.Point.State != PointValue && row.Point.State != PointConflict {
+			return fmt.Errorf("sdk: native query rows must be live or conflict")
+		}
+		if err := row.Point.validate(scope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DocumentsClient uses only the native UUID scoped /v1 data contract.
+type DocumentsClient struct{ c *Client }
+
+func nativeCollectionPath(scope DocumentScope, collection UUID) (string, error) {
+	if err := scope.validate(); err != nil {
+		return "", err
+	}
+	if _, err := ParseUUID(string(collection)); err != nil {
+		return "", err
+	}
+	return scope.path() + "/collections/" + string(collection) + "/documents", nil
+}
+func (d *DocumentsClient) Get(ctx context.Context, scope DocumentScope, collection, document UUID) (*DocumentPoint, error) {
+	path, err := nativeCollectionPath(scope, collection)
 	if err != nil {
 		return nil, err
 	}
-	if limit < 0 || limit > MaxDocumentPageSize {
-		return nil, fmt.Errorf("sdk: document history limit must be between 0 and %d", MaxDocumentPageSize)
-	}
-	query := url.Values{}
-	if limit > 0 {
-		query.Set("limit", strconv.Itoa(limit))
-	}
-	if strings.TrimSpace(after) != "" {
-		query.Set("after", after)
-	}
-	var out struct {
-		History []HistoryEntry `json:"history"`
-	}
-	if err := d.c.do(ctx, "GET", path+"/history", query, nil, &out, "documents.history", opts...); err != nil {
+	if _, err := ParseUUID(string(document)); err != nil {
 		return nil, err
 	}
-	return out.History, nil
+	var point DocumentPoint
+	if err := d.c.doNative(ctx, scope, nativeRead, http.MethodGet, path+"/"+string(document), nil, &point, false); err != nil {
+		return nil, err
+	}
+	if err := point.validate(scope); err != nil {
+		return nil, err
+	}
+	return &point, nil
+}
+func (d *DocumentsClient) Query(ctx context.Context, scope DocumentScope, collection UUID, request QueryRequest) (*QueryResponse, error) {
+	path, err := nativeCollectionPath(scope, collection)
+	if err != nil {
+		return nil, err
+	}
+	if err := request.validate(); err != nil {
+		return nil, err
+	}
+	request, err = freezeNative(request)
+	if err != nil {
+		return nil, err
+	}
+	var result QueryResponse
+	if err := d.c.doNative(ctx, scope, nativeRead|nativeQuery, http.MethodPost, path+"/query", request, &result, false); err != nil {
+		return nil, err
+	}
+	if result.Version != 1 || result.NextCursor != "" && !validCursor(result.NextCursor) {
+		return nil, fmt.Errorf("sdk: invalid native query response version or cursor")
+	}
+	if err := validateRows(scope, result.Rows); err != nil {
+		return nil, err
+	}
+	if len(result.Rows) > int(request.Limit) {
+		return nil, fmt.Errorf("sdk: query response exceeds requested limit")
+	}
+	return &result, nil
+}
+func (d *DocumentsClient) Commit(ctx context.Context, scope DocumentScope, request CommitRequest) (*CommitResponse, error) {
+	operation, err := d.PrepareTransaction(scope, request)
+	if err != nil {
+		return nil, err
+	}
+	return operation.Commit(ctx)
+}
+func (d *DocumentsClient) TransactionStatus(ctx context.Context, scope DocumentScope, request TransactionStatusRequest) (*TransactionStatusResponse, error) {
+	if err := scope.validate(); err != nil {
+		return nil, err
+	}
+	if request.Version != 1 {
+		return nil, fmt.Errorf("sdk: native status version must be 1")
+	}
+	if err := request.Authority.validate(); err != nil {
+		return nil, err
+	}
+	var err error
+	request, err = freezeNative(request)
+	if err != nil {
+		return nil, err
+	}
+	if request.Authority.Mode == AuthoritySingleWriter && d.c.cfg.DataBaseURL == "" {
+		return nil, &RoutingError{
+			Route: "native.status", Method: http.MethodPost, Path: scope.path() + "/transactions/status",
+			Err: nativeRoutingFailure("capability_unavailable", fmt.Errorf("authenticated single writer status admission and fence are unavailable")),
+		}
+	}
+	var result TransactionStatusResponse
+	if err := d.c.doNative(ctx, scope, nativeWrite, http.MethodPost, scope.path()+"/transactions/status", request, &result, false); err != nil {
+		return nil, err
+	}
+	if err := result.validate(scope, request); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }

@@ -17,7 +17,6 @@ jobs:
     runs-on: terrascale-builder
     timeout-minutes: 30
     env:
-      CONTRACT_URL: ${{ vars.CONTRACT_URL }}
       GOTOOLCHAIN: local
     steps:
       - name: Check out the source revision
@@ -28,14 +27,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Verify the immutable producer contract
-        run: dotnet run scripts/verify-producer.cs
-
-      - name: Verify the committed contract bundle
-        run: dotnet run scripts/verify-contracts.cs
-
-      - name: Run the contract boundary tests
-        run: dotnet run scripts/contracts.tests.cs -- --minimum-expected-tests 9
+      - name: Verify the native producer artifacts and metadata
+        run: python3 scripts/native_contracts.py --check
 
       # Go and govulncheck are baked into the ts-builder job image.
       - name: Verify Go formatting

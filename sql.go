@@ -1,87 +1,15 @@
-// Typed SQL builder plus raw parameterized SQL (GOAL D-78/D-54).
-//
-// The query endpoint is POST /api/v1/databases/{id}/sql: read-only SQL over
-// extracted columns, `body` as JSON, and `_` metadata columns. Statements are
-// limited to select/with/explain; values always travel as parameters, never
-// interpolated into the statement text. The request and response shapes are
-// the published SqlRequest/SqlResult contract.
+// Pure parameterized SQL validation and typed query construction.
+// Native PostgreSQL execution requires its producer-owned contract.
 package sdk
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 )
 
-// SQLResult is the result of a read-only SQL execution.
-type SQLResult struct {
-	Matched int64    `json:"matched"`
-	Rows    []SQLRow `json:"rows"`
-	// Explain is set when the server returns the SqlExplainResponse variant
-	// of the generated SqlResultResponse oneOf model.
-	Explain *SQLExplainResponse `json:"-"`
-}
-
-// SQLExplainResponse is the generated read-only query-plan response.
-type SQLExplainResponse struct {
-	Dialect    string     `json:"dialect"`
-	Collection *string    `json:"collection"`
-	Order      []SQLOrder `json:"order"`
-	Access     string     `json:"access"`
-}
-
-// SQLOrder is one generated explain ORDER BY descriptor.
-type SQLOrder struct {
-	Field     string `json:"field"`
-	Direction string `json:"direction"`
-}
-
-// SQLResultResponse is the generated oneOf response model. SQLResult keeps
-// the original row-result API while exposing Explain for the second variant.
-type SQLResultResponse = SQLResult
-
-// UnmarshalJSON decodes both branches of SqlResultResponse without silently
-// turning an explain response into an empty row result.
-func (r *SQLResult) UnmarshalJSON(data []byte) error {
-	var marker struct {
-		Dialect *string `json:"dialect"`
-	}
-	if err := json.Unmarshal(data, &marker); err != nil {
-		return err
-	}
-	if marker.Dialect != nil {
-		var explain SQLExplainResponse
-		if err := json.Unmarshal(data, &explain); err != nil {
-			return err
-		}
-		r.Matched, r.Rows, r.Explain = 0, nil, &explain
-		return nil
-	}
-	type rowsResult SQLResult
-	var rows rowsResult
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&rows); err != nil {
-		return err
-	}
-	*r = SQLResult(rows)
-	return nil
-}
-
-// SQLRow is one SQL result row. Value is the projected JSON object returned
-// by the server and id is its stable result identity. Numeric values decode
-// as json.Number to preserve 64-bit integers without float64 rounding.
-type SQLRow struct {
-	ID    string `json:"id"`
-	Value any    `json:"value"`
-}
-
-// SQLParameters is the canonical named/ordinal binding object sent to the
-// SQL endpoint. Ordinal keys are decimal strings such as "1" and named keys
+// SQLParameters is the named/ordinal binding object used for pure SQL validation.
+// Ordinal keys are decimal strings such as "1" and named keys
 // are plain SQL identifiers.
 type SQLParameters = map[string]any
 
@@ -120,116 +48,8 @@ func MetadataFieldsForQuery() ([]FieldDef, error) {
 // MetadataFields returns descriptors for all immutable metadata columns.
 func MetadataFields() ([]FieldDef, error) { return MetadataFieldsForQuery() }
 
-// Len returns the number of result rows.
-func (r *SQLResult) Len() int {
-	if r == nil {
-		return 0
-	}
-	return len(r.Rows)
-}
-
-// SQLExecuteOptions controls optional SQL request fields. Zero values omit
-// the corresponding optional wire member.
-type SQLExecuteOptions struct {
-	Explain    bool
-	TimeoutMs  int
-	Cancelled  bool
-	timeoutSet bool
-}
-
-// SQLRequestOption customizes optional SQL request controls.
-type SQLRequestOption func(*SQLExecuteOptions)
-
-// WithSQLExplain requests an explain response.
-func WithSQLExplain() SQLRequestOption {
-	return func(options *SQLExecuteOptions) { options.Explain = true }
-}
-
-// WithSQLTimeout sets the server SQL timeout in milliseconds.
-func WithSQLTimeout(timeoutMs int) SQLRequestOption {
-	return func(options *SQLExecuteOptions) { options.TimeoutMs, options.timeoutSet = timeoutMs, true }
-}
-
-// WithSQLCancelled marks the SQL request as cancelled before execution.
-func WithSQLCancelled() SQLRequestOption {
-	return func(options *SQLExecuteOptions) { options.Cancelled = true }
-}
-
-// ExecuteSQL runs a raw parameterized statement. Only one read-only
-// SELECT/WITH/EXPLAIN statement is accepted. The server applies the complete
-// SQL AST allow-list as well, but rejecting malformed or unsafe input here
-// avoids sending it over the network. Optional SQLExecuteOptions values or
-// SQLRequestOption functions may follow params; ordinary RequestOptions
-// continue to control routing and authentication headers.
-func (c *Client) ExecuteSQL(ctx context.Context, databaseID, statement string, params any, opts ...any) (*SQLResult, error) {
-	if strings.TrimSpace(databaseID) == "" {
-		return nil, fmt.Errorf("sdk: database id cannot be empty")
-	}
-	bindings, err := canonicalSQLParameters(params)
-	if err != nil {
-		return nil, err
-	}
-	if err := ValidateSQL(statement, bindings); err != nil {
-		return nil, err
-	}
-	sqlOptions, requestOpts, err := resolveSQLOptions(opts)
-	if err != nil {
-		return nil, err
-	}
-	var out SQLResult
-	path := "/api/v1/databases/" + url.PathEscape(databaseID) + "/sql"
-	body := map[string]any{"sql": statement}
-	if len(bindings) > 0 {
-		body["parameters"] = bindings
-	}
-	if sqlOptions.Explain {
-		body["explain"] = true
-	}
-	if sqlOptions.TimeoutMs != 0 {
-		body["timeout_ms"] = sqlOptions.TimeoutMs
-	}
-	if sqlOptions.Cancelled {
-		body["cancelled"] = true
-	}
-	if err := c.do(ctx, "POST", path, nil, body, &out, "sql.execute", requestOpts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-func resolveSQLOptions(opts []any) (SQLExecuteOptions, []RequestOption, error) {
-	var sqlOptions SQLExecuteOptions
-	var requestOpts []RequestOption
-	for _, option := range opts {
-		switch value := option.(type) {
-		case nil:
-			continue
-		case RequestOption:
-			requestOpts = append(requestOpts, value)
-		case SQLRequestOption:
-			value(&sqlOptions)
-		case SQLExecuteOptions:
-			sqlOptions = value
-		case *SQLExecuteOptions:
-			if value == nil {
-				continue
-			}
-			sqlOptions = *value
-		default:
-			return SQLExecuteOptions{}, nil, fmt.Errorf("sdk: invalid SQL request option %T", option)
-		}
-	}
-	if sqlOptions.TimeoutMs < 0 || sqlOptions.TimeoutMs > 30000 ||
-		(sqlOptions.timeoutSet && sqlOptions.TimeoutMs < 1) {
-		return SQLExecuteOptions{}, nil, fmt.Errorf("sdk: SQL timeout_ms must be between 1 and 30000")
-	}
-	return sqlOptions, requestOpts, nil
-}
-
-// ValidateSQL checks raw SQL before it is sent to the query endpoint. It
-// accepts positional (?/$n/?n) and named (:name/@name/$name) bindings and
-// requires the supplied object keys to match the statement. Values are never
-// parsed as SQL.
+// ValidateSQL checks a read-only statement and its positional or named bindings.
+// Values are validated as parameters and are never parsed as SQL.
 func ValidateSQL(statement string, params any) error {
 	tokens, err := tokenizeSQL(statement)
 	if err != nil {
@@ -436,9 +256,8 @@ func isSQLIdentStartByte(value byte) bool {
 	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value == '_'
 }
 
-// canonicalSQLParameters is the wire representation accepted by the public
-// SQL endpoint. A positional slice remains source-compatible for the typed
-// query builder, but is converted to the canonical ordinal object shape.
+// canonicalSQLParameters normalizes positional and named inputs for SQL
+// validation. Positional slices are converted to decimal ordinal keys.
 func canonicalSQLParameters(params any) (map[string]any, error) {
 	bindings := make(map[string]any)
 	switch values := params.(type) {
@@ -1100,54 +919,6 @@ func (q *QueryBuilder) Build() (string, []any, error) {
 		params = append(params, q.offset)
 	}
 	return sb.String(), params, nil
-}
-
-// ExecuteQuery executes a built query through the read-only SQL endpoint.
-func (c *Client) ExecuteQuery(ctx context.Context, databaseID string, qb *QueryBuilder, opts ...RequestOption) (*SQLResult, error) {
-	if qb == nil {
-		return nil, fmt.Errorf("sdk: query builder cannot be nil")
-	}
-	statement, params, err := qb.Build()
-	if err != nil {
-		return nil, err
-	}
-	requestOpts := make([]any, len(opts))
-	for i, option := range opts {
-		requestOpts[i] = option
-	}
-	return c.ExecuteSQL(ctx, databaseID, statement, params, requestOpts...)
-}
-
-// Execute attaches the query once and returns its initial snapshot. Keeping
-// this method on QueryBuilder makes the typed builder and reactive surface a
-// single linked API while preserving Client.Execute for raw SQL callers.
-func (q *QueryBuilder) Execute(ctx context.Context, c *Client, databaseID string, opts ...RequestOption) (*Snapshot, error) {
-	if q == nil {
-		return nil, fmt.Errorf("sdk: query builder cannot be nil")
-	}
-	statement, params, err := q.Build()
-	if err != nil {
-		return nil, err
-	}
-	if c == nil {
-		return nil, fmt.Errorf("sdk: client cannot be nil")
-	}
-	return c.Execute(ctx, databaseID, statement, params, opts...)
-}
-
-// Subscribe links a typed query to the live reactive transport.
-func (q *QueryBuilder) Subscribe(ctx context.Context, c *Client, databaseID string, sub SubscriptionOptions, opts ...RequestOption) (*Subscription, error) {
-	if q == nil {
-		return nil, fmt.Errorf("sdk: query builder cannot be nil")
-	}
-	statement, params, err := q.Build()
-	if err != nil {
-		return nil, err
-	}
-	if c == nil {
-		return nil, fmt.Errorf("sdk: client cannot be nil")
-	}
-	return c.Subscribe(ctx, databaseID, statement, params, sub, opts...)
 }
 
 func validSQLIdentifier(value string) bool {

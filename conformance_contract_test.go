@@ -1,186 +1,101 @@
 package sdk
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
-
-	"github.com/zeebo/blake3"
 )
 
-type pinnedCorpus struct {
-	Protocol       string `json:"protocol"`
-	Version        string `json:"version"`
-	ManifestSHA256 string `json:"manifestSha256"`
-	Vectors        []struct {
-		Name string `json:"name"`
-		Hex  string `json:"hex"`
-	} `json:"vectors"`
+func assertProducerJSON(t *testing.T, actual, expected []byte) {
+	t.Helper()
+	var a, b any
+	decode := func(raw []byte, value *any) {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		if err := decoder.Decode(value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	decode(actual, &a)
+	decode(expected, &b)
+	if !reflect.DeepEqual(a, b) {
+		t.Fatalf("JSON differs from producer: got %s, want %s", actual, expected)
+	}
 }
 
-type hostileVector struct {
-	Name   string `json:"name"`
-	Code   string `json:"code"`
-	Hex    string `json:"hex"`
-	Repeat *struct {
-		Byte  byte `json:"byte"`
-		Count int  `json:"count"`
-	} `json:"repeat"`
-}
-
-func pinnedContractRoot(t testing.TB) string {
+func pinnedNativeContractRoot(t testing.TB) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Join(filepath.Dir(file), "contracts", pinnedContractVersion)
+	return filepath.Join(filepath.Dir(file), "contracts", "native")
 }
 
-func readPinnedJSON(t testing.TB, relative string, dst any) []byte {
+func readPinnedNativeJSON(t testing.TB, relative string, dst any) []byte {
 	t.Helper()
-	path := filepath.Join(pinnedContractRoot(t), relative)
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(filepath.Join(pinnedNativeContractRoot(t), relative))
 	if err != nil {
-		t.Fatalf("read pinned contract %s: %v", relative, err)
+		t.Fatalf("read native producer artifact %s: %v", relative, err)
 	}
 	if err := json.Unmarshal(raw, dst); err != nil {
-		t.Fatalf("parse pinned contract %s: %v", relative, err)
+		t.Fatalf("parse native producer artifact %s: %v", relative, err)
 	}
 	return raw
 }
 
-func TestGeneratedContractProvenance(t *testing.T) {
+func TestNativeProducerArtifactProvenance(t *testing.T) {
 	var manifest struct {
-		SchemaVersion   int    `json:"schemaVersion"`
-		ContractVersion string `json:"contractVersion"`
+		SchemaVersion   int    `json:"schema_version"`
+		ContractVersion string `json:"contract_version"`
+		Producer        string `json:"producer"`
+		Qualification   string `json:"qualification"`
 		Artifacts       []struct {
-			Path   string `json:"path"`
-			BLAKE3 string `json:"blake3"`
+			Path         string `json:"path"`
+			ProducerPath string `json:"producer_path"`
+			SHA256       string `json:"sha256"`
 		} `json:"artifacts"`
 	}
-	readPinnedJSON(t, "manifest.json", &manifest)
-	if manifest.SchemaVersion != 1 || manifest.ContractVersion != pinnedContractVersion {
-		t.Fatalf("manifest identity = schema %d, version %q", manifest.SchemaVersion, manifest.ContractVersion)
+	readPinnedNativeJSON(t, "manifest.json", &manifest)
+	if manifest.SchemaVersion != 1 || manifest.ContractVersion != pinnedContractVersion || ContractVersion != pinnedContractVersion || manifest.Producer != "terrabase" || manifest.Qualification != "source-artifacts-only" {
+		t.Fatalf("unexpected native producer source identity: %+v", manifest)
 	}
-	seen := map[string]string{}
+	expected := map[string]struct{ source, digest string }{
+		"client-openapi.json": {"crates/tb-server/assets/client-openapi.json", pinnedOpenAPISHA256},
+		"atomic_vectors.json": {"crates/tb-server/tests/support/document/atomic_vectors.json", pinnedAtomicVectorsSHA256},
+	}
+	if len(manifest.Artifacts) != len(expected) {
+		t.Fatal("native producer manifest artifact set changed")
+	}
 	for _, artifact := range manifest.Artifacts {
-		seen[artifact.Path] = artifact.BLAKE3
-		if _, err := os.Stat(filepath.Join(pinnedContractRoot(t), artifact.Path)); err != nil {
-			t.Fatalf("manifest artifact %s is unavailable: %v", artifact.Path, err)
+		want, ok := expected[artifact.Path]
+		if !ok || artifact.ProducerPath != want.source || artifact.SHA256 != want.digest {
+			t.Fatalf("unexpected native producer artifact: %+v", artifact)
 		}
+		raw := readPinnedNativeJSON(t, artifact.Path, &struct{}{})
+		sum := sha256.Sum256(raw)
+		if hex.EncodeToString(sum[:]) != want.digest {
+			t.Fatalf("native producer artifact digest changed: %s", artifact.Path)
+		}
+		delete(expected, artifact.Path)
 	}
-	if seen["openapi.json"] != pinnedOpenAPIBLAKE3 {
-		t.Fatal("generated OpenAPI provenance does not match the pinned manifest")
-	}
-	if seen["msgpack/terrascale.sync.v1.msgpack.json"] != pinnedMessagePackBLAKE3 {
-		t.Fatal("generated MessagePack provenance does not match the pinned manifest")
-	}
-	if ContractVersion != pinnedContractVersion {
-		t.Fatalf("generated metadata version = %q, want %q", ContractVersion, pinnedContractVersion)
+	if len(expected) != 0 || ContractOpenAPISHA256 != pinnedOpenAPISHA256 || ContractAtomicVectorsSHA256 != pinnedAtomicVectorsSHA256 {
+		t.Fatal("native metadata pins differ from producer artifacts")
 	}
 }
 
-func TestGeneratedContractDigests(t *testing.T) {
-	var manifest struct {
-		ContractVersion string `json:"contractVersion"`
-		Artifacts       []struct {
-			Path   string `json:"path"`
-			BLAKE3 string `json:"blake3"`
-		} `json:"artifacts"`
-	}
-	readPinnedJSON(t, "manifest.json", &manifest)
-	if manifest.ContractVersion != ContractVersion {
-		t.Fatalf("pinned contract version = %q, generated version = %q", manifest.ContractVersion, ContractVersion)
-	}
-
-	for _, artifact := range manifest.Artifacts {
-		path := filepath.Join(pinnedContractRoot(t), artifact.Path)
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read pinned artifact %s: %v", artifact.Path, err)
-		}
-		digest := blake3.Sum256(raw)
-		got := hex.EncodeToString(digest[:])
-		if got != artifact.BLAKE3 {
-			t.Errorf("artifact %s BLAKE3 = %s, manifest = %s", artifact.Path, got, artifact.BLAKE3)
-		}
-		switch artifact.Path {
-		case "openapi.json":
-			if got != ContractOpenAPIBLAKE3 {
-				t.Errorf("generated OpenAPI pin = %s, artifact = %s", ContractOpenAPIBLAKE3, got)
-			}
-		case "msgpack/terrascale.sync.v1.msgpack.json":
-			if got != ContractMessagePackBLAKE3 {
-				t.Errorf("generated MessagePack pin = %s, artifact = %s", ContractMessagePackBLAKE3, got)
-			}
-		}
-	}
-}
-
-func TestGeneratedContractMetadata(t *testing.T) {
-	if len(ContractOperations) == 0 || len(ContractRoutes) == 0 {
-		t.Fatal("generated contract operation and route metadata is empty")
-	}
-	if len(ContractOperations) != len(ContractRoutes) {
-		t.Fatalf("generated operation count = %d, route count = %d", len(ContractOperations), len(ContractRoutes))
-	}
-	if len(ContractModels) == 0 {
-		t.Fatal("generated OpenAPI model metadata is empty")
-	}
-	if len(ContractFrames) < 11 {
-		t.Fatalf("generated MessagePack frame metadata has %d messages", len(ContractFrames))
-	}
-	for _, operation := range ContractOperations {
-		if operation.OperationID == "" || operation.Method == "" || operation.Path == "" {
-			t.Fatalf("generated operation is incomplete: %+v", operation)
-		}
-	}
-	for _, frame := range ContractFrames {
-		if frame.Name == "" || frame.Tag == 0 {
-			t.Fatalf("generated frame is not tagged: %+v", frame)
-		}
-	}
-}
-
-func TestP2BConformancePinnedOpenAPI(t *testing.T) {
+func TestNativeProducerRoutesAndSchemas(t *testing.T) {
 	var spec struct {
-		OpenAPI string                                `json:"openapi"`
-		Paths   map[string]map[string]json.RawMessage `json:"paths"`
-	}
-	readPinnedJSON(t, "openapi.json", &spec)
-	if spec.OpenAPI != "3.1.0" {
-		t.Fatalf("OpenAPI version = %q, want 3.1.0", spec.OpenAPI)
-	}
-	for _, path := range []string{
-		"/api/v1/databases/{name}/collections/{collection}/documents",
-		"/api/v1/databases/{name}/sql",
-		"/api/v1/reactive/views/{view}/{generation}/log",
-		"/api/v1/regions",
-	} {
-		if len(spec.Paths[path]) == 0 {
-			t.Errorf("pinned OpenAPI is missing %s", path)
-		}
-	}
-}
-
-func TestP2BConformanceCanonicalHTTPParity(t *testing.T) {
-	var spec struct {
-		Paths map[string]map[string]json.RawMessage `json:"paths"`
-	}
-	readPinnedJSON(t, "openapi.json", &spec)
-	assertOperation := func(path, method, operationID, requestType, responseType, responseMedia, responseStatus string) {
-		t.Helper()
-		raw, ok := spec.Paths[path][method]
-		if !ok {
-			t.Fatalf("canonical %s %s operation is missing", method, path)
-		}
-		var operation struct {
+		OpenAPI string `json:"openapi"`
+		Paths   map[string]map[string]struct {
 			OperationID string `json:"operationId"`
 			RequestBody struct {
 				Content map[string]struct {
@@ -196,127 +111,65 @@ func TestP2BConformanceCanonicalHTTPParity(t *testing.T) {
 					} `json:"schema"`
 				} `json:"content"`
 			} `json:"responses"`
+		} `json:"paths"`
+		Components struct {
+			Schemas map[string]struct {
+				Required []string `json:"required"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	readPinnedNativeJSON(t, "client-openapi.json", &spec)
+	if spec.OpenAPI != "3.1.0" {
+		t.Fatalf("native OpenAPI version = %q", spec.OpenAPI)
+	}
+	const prefix = "/v1/tenants/{tenant}/databases/{database}/shards/{shard}"
+	const collection = prefix + "/collections/{collection}/documents"
+	for _, want := range []ContractOperation{
+		{"readDocument", "GET", collection + "/{document}", "", "PointResponse"},
+		{"queryDocuments", "POST", collection + "/query", "QueryRequest", "QueryResponse"},
+		{"subscribeDocuments", "POST", collection + "/subscriptions", "SubscriptionRequest", "SubscriptionResponse"},
+		{"commitDocuments", "POST", prefix + "/transactions", "CommitRequest", "CommitResponse"},
+		{"transactionStatus", "POST", prefix + "/transactions/status", "TransactionStatusRequest", "TransactionStatusResponse"},
+	} {
+		method := "get"
+		if want.Method == "POST" {
+			method = "post"
 		}
-		if err := json.Unmarshal(raw, &operation); err != nil {
-			t.Fatalf("parse %s %s operation: %v", method, path, err)
+		operation, ok := spec.Paths[want.Path][method]
+		if !ok || operation.OperationID != want.OperationID {
+			t.Fatalf("native producer route mismatch: %+v", want)
 		}
-		if operation.OperationID != operationID {
-			t.Fatalf("%s %s operationId = %q, want %q", method, path, operation.OperationID, operationID)
-		}
-		if operation.RequestBody.Content["application/json"].Schema.Ref != requestType {
-			t.Fatalf("%s %s request schema mismatch", method, path)
-		}
-		if responseStatus == "" {
-			if _, ok := operation.Responses["200"]; ok {
-				t.Fatalf("%s %s unexpectedly advertises a successful response", method, path)
+		ref := func(name string) string {
+			if name == "" {
+				return ""
 			}
-			return
+			return "#/components/schemas/" + name
 		}
-		if operation.Responses[responseStatus].Content[responseMedia].Schema.Ref != responseType {
-			t.Fatalf("%s %s response schema mismatch", method, path)
+		if operation.RequestBody.Content["application/json"].Schema.Ref != ref(want.RequestModel) || operation.Responses["200"].Content["application/json"].Schema.Ref != ref(want.ResponseModel) {
+			t.Fatalf("native producer request/response schema mismatch: %s", want.OperationID)
 		}
-	}
-	assertOperation(
-		"/api/v1/databases/{name}/sql", "post", "execute_sql",
-		"#/components/schemas/SqlRequest", "#/components/schemas/SqlResultResponse", "application/json", "200",
-	)
-	assertOperation(
-		"/api/v1/databases/{name}/collections/{collection}/documents/batch", "post", "batch_documents",
-		"#/components/schemas/BatchRequest", "#/components/schemas/BatchResponse", "application/json", "200",
-	)
-	assertOperation(
-		"/api/v1/reactive/views/{view}/{generation}/log", "get", "view_log",
-		"", "#/components/schemas/ReactiveEnvelope", "application/msgpack", "200",
-	)
-}
-
-func TestP2BConformanceMessagePackCorpus(t *testing.T) {
-	manifestRaw := readPinnedJSON(t, "msgpack/terrascale.sync.v1.msgpack.json", &struct{}{})
-	manifestDigest := sha256.Sum256(manifestRaw)
-	var corpus pinnedCorpus
-	corpusRaw := readPinnedJSON(t, "msgpack/message-vectors.json", &corpus)
-	if corpus.Protocol != "terrascale.sync.v1.msgpack" || corpus.Version != "1.0" {
-		t.Fatalf("corpus identity = %s %s", corpus.Protocol, corpus.Version)
-	}
-	if corpus.ManifestSHA256 != hex.EncodeToString(manifestDigest[:]) {
-		t.Fatalf("corpus pins manifest %s, got %x", corpus.ManifestSHA256, manifestDigest)
-	}
-	if got := sha256.Sum256(corpusRaw); hex.EncodeToString(got[:]) != pinnedMessageVectorSHA256 {
-		t.Fatalf("message corpus digest changed")
-	}
-	if len(corpus.Vectors) < 11 {
-		t.Fatalf("corpus has %d vectors; expected every published message tag", len(corpus.Vectors))
-	}
-	for _, vector := range corpus.Vectors {
-		wire, err := hex.DecodeString(vector.Hex)
-		if err != nil {
-			t.Fatalf("vector %q is not hex: %v", vector.Name, err)
-		}
-		// Client-originating messages are valid corpus entries but cannot be
-		// accepted as HTTP server responses by the response decoder.
-		if vector.Name == "subscribe" || vector.Name == "unsubscribe" || vector.Name == "checkpoint_ack" {
-			continue
-		}
-		if err := scanReactiveMessagePack(wire); err != nil {
-			t.Fatalf("vector %q rejected by scanner: %v", vector.Name, err)
-		}
-		// The corpus deliberately contains independent view generations; zero
-		// means decode the wire value without imposing an attached-view value.
-		if _, _, _, _, err := decodeReactiveMessagePack(wire, "fixture", 0); err != nil {
-			t.Fatalf("vector %q rejected by SDK decoder: %v", vector.Name, err)
+		if !slices.Contains(ContractOperations, want) || !slices.Contains(ContractRoutes, ContractRoute{want.Method, want.Path, want.OperationID}) {
+			t.Fatalf("native metadata omits producer route: %+v", want)
 		}
 	}
-}
-
-func TestP2BConformanceHostileMessagePackCorpus(t *testing.T) {
-	var corpus struct {
-		Vectors []hostileVector `json:"vectors"`
-	}
-	raw := readPinnedJSON(t, "msgpack/hostile-vectors.json", &corpus)
-	if got := sha256.Sum256(raw); hex.EncodeToString(got[:]) != pinnedHostileVectorSHA256 {
-		t.Fatalf("hostile corpus digest changed")
-	}
-	if len(corpus.Vectors) < 10 {
-		t.Fatalf("hostile corpus has only %d vectors", len(corpus.Vectors))
-	}
-	for _, vector := range corpus.Vectors {
-		var wire []byte
-		if vector.Repeat != nil {
-			wire = make([]byte, vector.Repeat.Count)
-			for i := range wire {
-				wire[i] = vector.Repeat.Byte
-			}
-		} else {
-			var err error
-			wire, err = hex.DecodeString(vector.Hex)
-			if err != nil {
-				t.Fatalf("hostile vector %q is not hex: %v", vector.Name, err)
+	for name, required := range map[string][]string{
+		"PointResponse":             {"version", "state", "state_version", "context", "siblings"},
+		"CommitRequest":             {"version", "transaction_id", "writes", "authority", "effect_digest"},
+		"CommitResponse":            {"version", "transaction_id", "event", "commit_sequence", "durability", "authority", "effect_digest"},
+		"TransactionStatusResponse": {"version", "state", "transaction_id", "authority", "effect_digest", "outcome"},
+	} {
+		for _, field := range required {
+			if !slices.Contains(spec.Components.Schemas[name].Required, field) {
+				t.Fatalf("producer schema %s omits required field %s", name, field)
 			}
 		}
-		if _, _, _, _, err := decodeReactiveMessagePack(wire, "fixture", 1); err == nil {
-			t.Errorf("hostile vector %q (%s) was accepted", vector.Name, vector.Code)
-		} else if !hostileErrorMatches(vector.Code, err.Error()) {
-			t.Errorf("hostile vector %q (%s) produced unexpected error: %v", vector.Name, vector.Code, err)
+	}
+	if len(ContractOperations) != 8 || len(ContractRoutes) != 8 || len(ContractModels) == 0 {
+		t.Fatal("native producer metadata is incomplete")
+	}
+	for _, operation := range ContractOperations {
+		if operation.OperationID == "" || operation.Method == "" || operation.Path == "" || strings.HasPrefix(operation.Path, "/api/") {
+			t.Fatalf("obsolete or incomplete native metadata: %+v", operation)
 		}
 	}
-}
-
-func hostileErrorMatches(code, message string) bool {
-	needles := map[string]string{
-		"limit_message":       "exceeds",
-		"limit_string":        "exceeds",
-		"limit_binary":        "binary exceeds",
-		"limit_array":         "array exceeds",
-		"map_forbidden":       "maps are forbidden",
-		"extension_forbidden": "extensions are forbidden",
-		"float32_forbidden":   "floats are forbidden",
-		"depth_exceeded":      "nesting exceeds",
-		"truncated":           "truncated",
-		"trailing_bytes":      "trailing bytes",
-		"invalid_type":        "invalid",
-	}
-	if needle, ok := needles[code]; ok {
-		return strings.Contains(message, needle)
-	}
-	return true
 }
