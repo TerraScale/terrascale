@@ -168,7 +168,15 @@ impl Shared {
             let mut attempt = request.clone();
             let mut native_origin = None;
             if let Some((scope, requirement)) = native {
-                let origin = self.native_origin(scope, requirement).await?;
+                let mut origin = self.native_origin(scope, requirement).await?;
+                // A refresh can restore the failed region to the top rank.
+                // Exclude failures from this request before sending again.
+                while origin != DEFAULT_API_BASE_URL && failed_origins.contains(&origin) {
+                    self.native_router
+                        .failover(scope, &origin, requirement)
+                        .await;
+                    origin = self.native_origin(scope, requirement).await?;
+                }
                 rebase(&mut attempt, &origin)?;
                 native_origin = Some(origin);
             }

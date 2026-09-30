@@ -107,6 +107,8 @@ impl HttpTransport for Mock {
             .expect("unexpected transport call");
         if let Some(clock) = &self.clock {
             clock.advance(advance);
+        } else if advance > 0 {
+            tokio::time::sleep(Duration::from_millis(advance)).await;
         }
         response
     }
@@ -1207,6 +1209,56 @@ async fn transport_5xx_and_421_fail_over_then_repin_with_default_options() {
 }
 
 #[tokio::test]
+async fn failover_excludes_failed_regions_after_the_discovery_lease_expires() {
+    for failures in [1, 2] {
+        let mock = Arc::new(Mock::default());
+        let client = TerraScaleClient::with_transport(config(), mock.clone());
+        let mut first = ranked_fixture();
+        first["refreshSeconds"] = json!(1);
+        let mut next = first["endpoints"][0].clone();
+        next["region"] = json!("SFO");
+        next["url"] = json!("https://sfo.api.terrascale.tech");
+        next["priority"] = json!(3);
+        first["endpoints"].as_array_mut().unwrap().push(next);
+        mock.response(200, &first);
+        for index in 0..failures {
+            mock.replies.lock().unwrap().push_back((
+                Err(Error::transport("region offline")),
+                if index + 1 == failures { 1100 } else { 0 },
+            ));
+        }
+        let mut refreshed = first;
+        refreshed["refreshSeconds"] = json!(8);
+        mock.response(200, &refreshed);
+        mock.response(200, &absent());
+        mock.response(200, &absent());
+        point(&client).await.unwrap();
+        point(&client).await.unwrap();
+        let requests = mock.requests.lock().unwrap();
+        let regions = ["gru", "fra", "sfo"];
+        let expected: Vec<_> = std::iter::once("atlas")
+            .chain(regions[..failures].iter().copied())
+            .chain(["atlas", regions[failures], regions[failures]])
+            .collect();
+        let actual: Vec<_> = requests
+            .iter()
+            .map(|request| {
+                let url = reqwest::Url::parse(&request.url).unwrap();
+                url.host_str()
+                    .unwrap()
+                    .split('.')
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(actual, expected, "failed regions: {failures}");
+        assert!(requests[failures + 1].url.contains("/api/v1/discovery?"));
+        assert_eq!(requests[failures + 2].url, requests[failures + 3].url);
+    }
+}
+
+#[tokio::test]
 async fn discovery_transport_and_5xx_failures_fall_back_to_atlas_api_proxy() {
     for failure in [None, Some(200), Some(400), Some(404), Some(503)] {
         let mock = Arc::new(Mock::default());
@@ -1412,7 +1464,9 @@ async fn default_point_routes_discovery_then_native_and_transport_loss_never_rep
             .unwrap(),
         mock.clone(),
     );
-    mock.response(200, &current_fixture());
+    let mut discovery = ranked_fixture();
+    discovery["refreshSeconds"] = json!(1);
+    mock.response(200, &discovery);
     mock.response(
         200,
         &json!({"version":1,"state":"absent","context":[],"siblings":[],"state_version":null}),
@@ -1446,7 +1500,7 @@ async fn default_point_routes_discovery_then_native_and_transport_loss_never_rep
     mock.replies
         .lock()
         .unwrap()
-        .push_back((Err(Error::transport("after body send")), 0));
+        .push_back((Err(Error::transport("after body send")), 1100));
     assert!(matches!(
         client.transactions().commit(&operation).await.unwrap(),
         CommitOutcome::Uncertain(_)
