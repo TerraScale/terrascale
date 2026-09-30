@@ -57,16 +57,22 @@
   min-width: 0;
 }
 
-/* Opt-in header: actions share the title row; description spans below. */
+/* Opt-in header: compact actions share the title row; wider actions wrap. */
 .ts-card-head-title-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 2px var(--ts-s3);
 }
 
+.ts-card-head-title-actions > .ts-card-heading {
+  flex-basis: max-content;
+}
+
+.ts-card-head-title-actions > .ts-card-actions {
+  margin-left: auto;
+}
+
 .ts-card-head-title-actions > .ts-card-description {
-  grid-column: 1 / -1;
+  flex: 0 0 100%;
 }
 
 .ts-card-body {

@@ -213,6 +213,7 @@ func speculationScript(nonce string) templ.Component {
 	return templ.Raw(`<script type="speculationrules"` + attr + `>` + speculationRules + `</script>`)
 }
 
-// Datastar v1.0.4 is vendored in web/assets/js/vendor/datastar.js from the
-// official bundle. This integrity hash pins its bytes; update both together.
+// Datastar v1.0.4 is vendored in web/assets/js/vendor/datastar.js. This SRI
+// came from https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.4/bundles/datastar.js
+// before local vendoring; update it from the upstream release when upgrading.
 const datastarIntegrity = "sha384-twbOvafhSBQ0rJDNPzJdUw6DRvthVgAVfSIG1BQVmCiNO7Qh2zeVn7T5qstgjJ9q"

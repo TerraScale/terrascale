@@ -47,6 +47,17 @@ func TestPageLayoutsFitContentColumn(t *testing.T) {
 						problems.push('.ts-main is not the named page container');
 					if (document.documentElement.scrollWidth > innerWidth + 1)
 						problems.push('horizontal page scroll: ' + document.documentElement.scrollWidth + ' > ' + innerWidth);
+					if (location.pathname === '/audit' && innerWidth === 360) {
+						const header = document.querySelector('#recent-activity .ts-card-head');
+						const title = header?.querySelector('.ts-card-title');
+						const actions = header?.querySelector('.ts-card-actions');
+						const description = header?.querySelector('.ts-card-description');
+						if (!title || !actions || !description ||
+							box(title).bottom <= box(actions).top || box(actions).bottom <= box(title).top ||
+							box(actions).right < box(header).right - 1 ||
+							box(description).top < Math.max(box(title).bottom, box(actions).bottom))
+							problems.push('audit export must share the title row, with description below');
+					}
 					for (const [selector, breakpoint] of [['.ts-grid-2', 768], ['.ts-grid-3', 960], ['.ts-split', 960]]) {
 						for (const grid of document.querySelectorAll(selector)) {
 							if (!visible(grid)) continue;

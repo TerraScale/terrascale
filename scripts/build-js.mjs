@@ -158,6 +158,12 @@ async function build() {
   if (integrity !== pinned) {
     throw new Error(`vendor/datastar.js hashes to ${integrity}, but datastarIntegrity in internal/ui/layout_helpers.go is ${pinned ?? 'missing'}`);
   }
+  // Pinned from the official v1.0.4 release alongside the bundle. A bundle
+  // upgrade must refresh its source map too.
+  const pinnedMap = 'sha384-pt2bLYQEhQctXw5tJaokvLV96hxW/GSwz2K8L+3xltbjrLNwyWS8PG/2NprOqeIS';
+  if (`sha384-${createHash('sha384').update(datastarMap).digest('base64')}` !== pinnedMap) {
+    throw new Error('vendor/datastar.js.map differs from the pinned official Datastar v1.0.4 source map');
+  }
   const datastarFile = { path: resolve(outdir, 'datastar.js'), contents: datastar, text: datastar.toString('utf8') };
   const codicon = await extractCodicon();
   const workerResult = await esbuild.build({
