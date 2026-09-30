@@ -172,10 +172,20 @@ pub struct ResolvedNativeOrigin {
     pub metadata: DiscoveryMetadata,
 }
 impl DiscoveryMetadata {
-    fn select(&self, requirement: NativeRequirement) -> Result<ResolvedNativeOrigin> {
+    fn select(
+        &self,
+        requirement: NativeRequirement,
+        preferred: Option<&str>,
+        failed: &HashSet<String>,
+    ) -> Result<ResolvedNativeOrigin> {
+        let eligible = |endpoint: &&NativeEndpoint| {
+            endpoint.capabilities.supports(requirement) && !failed.contains(&endpoint.region)
+        };
         self.endpoints
             .iter()
-            .find(|endpoint| endpoint.capabilities.supports(requirement))
+            .filter(eligible)
+            .find(|endpoint| Some(endpoint.region.as_str()) == preferred)
+            .or_else(|| self.endpoints.iter().find(eligible))
             .map(|endpoint| ResolvedNativeOrigin {
                 endpoint: endpoint.clone(),
                 metadata: self.clone(),
@@ -315,7 +325,7 @@ fn decode(
             || !regions.insert(endpoint.region.clone())
             || endpoint.url
                 != format!(
-                    "https://{}.terrascale.tech",
+                    "https://{}.api.terrascale.tech",
                     endpoint.region.to_ascii_lowercase()
                 )
             || endpoint.priority != index + 1
@@ -395,7 +405,7 @@ fn validate_region_set(regions: &[String]) -> Result<()> {
     }
     Ok(())
 }
-fn valid_region(region: &str) -> bool {
+pub(crate) fn valid_region(region: &str) -> bool {
     let bytes = region.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= 16
@@ -504,11 +514,41 @@ fn discovery_error(response: &Response) -> Error {
     error
 }
 
-type ScopeKey = (TenantId, DatabaseId, DecimalU64);
+pub(crate) type ScopeKey = (TenantId, DatabaseId, DecimalU64);
 #[derive(Debug, Default)]
 struct Entry {
     metadata: Option<DiscoveryMetadata>,
     lease_until: Option<Duration>,
+    pinned: Option<String>,
+    failed: HashSet<String>,
+}
+impl Entry {
+    fn select(
+        &mut self,
+        requirement: NativeRequirement,
+        preferred: Option<&str>,
+    ) -> Result<ResolvedNativeOrigin> {
+        let preferred = self
+            .pinned
+            .as_deref()
+            .filter(|region| {
+                self.metadata.as_ref().is_some_and(|metadata| {
+                    metadata.endpoints.iter().any(|endpoint| {
+                        endpoint.region == *region
+                            && endpoint.capabilities.supports(requirement)
+                            && !self.failed.contains(*region)
+                    })
+                })
+            })
+            .or(preferred);
+        let resolved = self
+            .metadata
+            .as_ref()
+            .ok_or_else(|| Error::invalid_response("Missing discovery metadata."))?
+            .select(requirement, preferred, &self.failed)?;
+        self.pinned = Some(resolved.endpoint.region.clone());
+        Ok(resolved)
+    }
 }
 #[derive(Debug, Default)]
 struct ScopeEntry {
@@ -605,7 +645,7 @@ impl AtlasDiscovery {
         scope: &DatabaseScope,
         requirement: NativeRequirement,
     ) -> Result<ResolvedNativeOrigin> {
-        if self.0.config.atlas_base_url() != Some(ATLAS_BASE_URL) {
+        if self.0.config.discovery_base_url() != Some(ATLAS_BASE_URL) {
             return Err(validation(
                 "invalid_native_discovery_origin",
                 "Native credentials can only be sent to canonical Atlas discovery.",
@@ -657,7 +697,7 @@ impl AtlasDiscovery {
         let start = self.now()?;
         if let (Some(metadata), Some(until)) = (&state.metadata, state.lease_until) {
             if start.monotonic < until && start.unix_millis / 1000 < metadata.expires_at {
-                return metadata.select(requirement);
+                return state.select(requirement, self.0.config.preferred_region());
             }
         }
         let mut url = reqwest::Url::parse(&format!("{ATLAS_BASE_URL}/api/v1/discovery"))
@@ -687,7 +727,7 @@ impl AtlasDiscovery {
             headers.push(("x-terrascale-region-rtt".into(), rtt));
         }
         let response = tokio::time::timeout(
-            Duration::from_secs(30),
+            self.0.config.discovery_timeout(),
             self.0.transport.send(Request {
                 route_name: "native.discovery".into(),
                 method: Method::Get,
@@ -725,6 +765,8 @@ impl AtlasDiscovery {
         reservation.retain_observation()?;
         state.metadata = Some(metadata.clone());
         state.lease_until = Some(until);
+        state.pinned = None;
+        state.failed.clear();
         if end.monotonic >= until {
             return Err(Error::new(
                 ErrorKind::Unavailable,
@@ -732,6 +774,39 @@ impl AtlasDiscovery {
                 "Atlas request consumed its conservative lease.",
             ));
         }
-        metadata.select(requirement)
+        state.select(requirement, self.0.config.preferred_region())
+    }
+
+    /// Demote a failed endpoint for the remaining document lifetime and re-pin.
+    pub(crate) async fn failover(
+        &self,
+        scope: &DatabaseScope,
+        origin: &str,
+        requirement: NativeRequirement,
+    ) -> bool {
+        let entry = self.0.scopes.lock().ok().and_then(|scopes| {
+            scopes
+                .get(&(scope.tenant, scope.database, scope.shard))
+                .map(|entry| entry.state.clone())
+        });
+        let Some(entry) = entry else {
+            return false;
+        };
+        let mut state = entry.lock().await;
+        let region = state.metadata.as_ref().and_then(|metadata| {
+            metadata
+                .endpoints
+                .iter()
+                .find(|endpoint| endpoint.url == origin)
+                .map(|endpoint| endpoint.region.clone())
+        });
+        let Some(region) = region else {
+            return false;
+        };
+        state.failed.insert(region);
+        state.pinned = None;
+        state
+            .select(requirement, self.0.config.preferred_region())
+            .is_ok()
     }
 }
