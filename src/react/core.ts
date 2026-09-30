@@ -1,15 +1,19 @@
 import type { TerraScaleError, TerraScaleResult } from "../result.js";
-import type {
-  SyncV1ResultItem,
-  SyncV1SubscribeOptions,
-  TerraScaleSyncV1Client,
-} from "../sync/v1/client.js";
-import {
-  syncV1StoredViewStateMatches,
-  syncV1StoredViewToSnapshot,
-  syncV1ViewStoreKey,
-  type SyncV1ViewStore,
-} from "../sync/v1/store/index.js";
+import type { DatabaseResult } from "../database-types.js";
+
+export {
+  createDatabaseQuery,
+  DatabaseSubscriptionError,
+  DatabaseSubscriptionView,
+  type DatabaseQueryCallbacks,
+  type DatabaseQueryOptions,
+  type DatabaseQuerySource,
+  type DatabaseViewBinding,
+  type DatabaseViewPosition,
+  type DatabaseViewSnapshot,
+} from "../database-view.js";
+
+type DatabaseError = Extract<DatabaseResult<never>, { readonly ok: false }>["error"];
 
 /** A subscription cleanup returned by a typed reactive transport. */
 export type ReactiveDisposer = (() => void) | { readonly dispose: () => void } | { readonly unsubscribe: () => void };
@@ -65,6 +69,7 @@ export type ReactiveError = {
   readonly message: string;
   readonly cause?: unknown;
   readonly terraScale?: TerraScaleError;
+  readonly database?: DatabaseError;
 };
 
 export type ReactiveQueryStatus = "pending" | "success" | "error" | "reset";
@@ -144,9 +149,10 @@ export class ReactiveQueryObserver<TValue> {
   };
 
   public start(): void {
-    if (this.#started) return;
+    if (this.#started || !this.#enabled) return;
     this.#started = true;
-    this.#abort = new AbortController();
+    const abort = new AbortController();
+    this.#abort = abort;
     const generation = ++this.#generation;
     this.#setState({
       ...this.#state,
@@ -154,23 +160,23 @@ export class ReactiveQueryObserver<TValue> {
       isLoading: this.#state.data === undefined,
       ...(this.#state.data === undefined ? { status: "pending" as const } : {}),
     });
+    // State listeners may synchronously refetch or disable this generation.
+    if (generation !== this.#generation || abort.signal.aborted) return;
     let result: ReactiveDisposer | void | Promise<ReactiveDisposer | void>;
     try {
-      result = this.#source.subscribe(this.#observer(generation), { signal: this.#abort.signal });
+      result = this.#source.subscribe(this.#observer(generation), { signal: abort.signal });
     } catch (error) {
       this.#onError(generation, error);
       return;
     }
+    const retainCleanup = (cleanup: ReactiveDisposer | void): void => {
+      if (generation !== this.#generation || abort.signal.aborted) disposeSubscription(cleanup);
+      else this.#cleanup = toCleanup(cleanup);
+    };
     if (result instanceof Promise) {
-      void result.then(cleanup => {
-        if (generation !== this.#generation || this.#abort?.signal.aborted) {
-          disposeSubscription(cleanup);
-        } else {
-          this.#cleanup = toCleanup(cleanup);
-        }
-      }, error => this.#onError(generation, error));
+      void result.then(retainCleanup, error => this.#onError(generation, error));
     } else {
-      this.#cleanup = toCleanup(result);
+      retainCleanup(result);
     }
   }
 
@@ -178,18 +184,27 @@ export class ReactiveQueryObserver<TValue> {
   public dispose(): void {
     if (!this.#started) return;
     ++this.#generation;
-    this.#abort?.abort();
+    const abort = this.#abort;
     this.#abort = undefined;
     const cleanup = this.#cleanup;
     this.#cleanup = undefined;
-    cleanup?.();
     this.#started = false;
+    abort?.abort();
+    cleanup?.();
+  }
+
+  /** Restart only while an enabled query has live observers. */
+  public refetch(): void {
+    if (!this.#enabled || this.#listeners.size === 0) return;
+    this.dispose();
+    this.start();
   }
 
   #observer(generation: number): ReactiveQueryCallbacks<TValue> {
     return {
       next: value => {
         if (generation !== this.#generation) return;
+        if (this.#state.status === "success" && this.#state.data === value && this.#state.isFetching && !this.#state.isStale) return;
         this.#setState({
           status: "success",
           data: value,
@@ -219,16 +234,21 @@ export class ReactiveQueryObserver<TValue> {
   #onError(generation: number, cause: unknown): void {
     if (generation !== this.#generation || this.#abort?.signal.aborted) return;
     const error = normalizeReactiveError(cause, "subscription");
+    if (generation !== this.#generation || this.#abort?.signal.aborted) return;
     // A subscription error is terminal for this delivery generation. Fence
     // late stream events before aborting and disposing the transport so an
     // already reported error cannot be replaced by a subsequent value.
-    ++this.#generation;
-    this.#abort?.abort();
+    const terminalGeneration = ++this.#generation;
+    const abort = this.#abort;
     this.#abort = undefined;
     const cleanup = this.#cleanup;
     this.#cleanup = undefined;
     this.#started = false;
+    // Abort listeners and transport cleanup may synchronously refetch. Detach
+    // the failed generation first, then leave any replacement ownership intact.
+    abort?.abort();
     cleanup?.();
+    if (terminalGeneration !== this.#generation) return;
     this.#setState({
       ...this.#state,
       status: "error",
@@ -290,63 +310,6 @@ export function createReactiveHttpQuery<TRequest, TValue>(
   });
 }
 
-/**
- * Adapts the public Sync v1 client to useQuery. The client owns attach,
- * checkpoint resume, HTTP polling, and capability headers; this adapter only
- * observes the authorized result view and closes it with React disposal.
- */
-export function createSyncV1Query(
-  client: Pick<TerraScaleSyncV1Client, "subscribe">,
-  options: Omit<SyncV1SubscribeOptions, "signal" | "autoStart">,
-): ReactiveQuerySource<readonly SyncV1ResultItem[]> {
-  return Object.freeze({
-    key: ["sync-v1", options.databaseId ?? options.database, options.subscription, options.query, options.parameters],
-    subscribe: async (observer: ReactiveQueryCallbacks<readonly SyncV1ResultItem[]>, context: ReactiveSubscriptionContext) => {
-      // Free local read: publish the durable cached rows before the network
-      // attach starts, so consumers render instantly and offline.
-      if (options.store !== undefined) {
-        const cached = await cachedViewItems(options.store, options);
-        if (cached !== undefined) observer.next(cached);
-      }
-      const live = await client.subscribe({ ...options, signal: context.signal, autoStart: true });
-      const publish = () => observer.next(live.view.getVisibleItems());
-      const unsubscribe = live.view.subscribe(publish);
-      publish();
-      if (live.reset !== undefined) {
-        observer.reset({
-          reason: live.reset.reason,
-          ...(live.reset.message === undefined ? {} : { message: live.reset.message }),
-        });
-      }
-      if (context.signal.aborted) {
-        unsubscribe();
-        live.close();
-        return;
-      }
-      return () => {
-        unsubscribe();
-        live.close();
-      };
-    },
-  });
-}
-
-/** Loads the durable cached rows for one view; undefined when absent or stale. */
-async function cachedViewItems(
-  store: SyncV1ViewStore,
-  options: Pick<SyncV1SubscribeOptions, "subscription" | "query" | "parameters">,
-): Promise<readonly SyncV1ResultItem[] | undefined> {
-  try {
-    const state = await store.load(syncV1ViewStoreKey(options));
-    if (state === undefined || !syncV1StoredViewStateMatches(state, options.query, options.parameters)) {
-      return undefined;
-    }
-    return syncV1StoredViewToSnapshot(state)?.items;
-  } catch {
-    return undefined;
-  }
-}
-
 export type ReactiveMutationContext = {
   readonly signal: AbortSignal;
   readonly idempotencyKey: string;
@@ -358,7 +321,7 @@ export type ReactiveMutationOptions<TValue, TVariables> = {
   readonly mutationFn: (
     variables: TVariables,
     context: ReactiveMutationContext,
-  ) => Promise<TValue | TerraScaleResult<TValue>>;
+  ) => Promise<TValue | TerraScaleResult<TValue> | DatabaseResult<TValue>>;
   readonly idempotencyKey?: string | ((variables: TVariables) => string);
   readonly onMutate?: (variables: TVariables, context: ReactiveMutationContext) => OptimisticRollback | Promise<OptimisticRollback>;
 };
@@ -382,6 +345,7 @@ export class ReactiveMutationObserver<TValue, TVariables> {
   #activeKey: string | undefined;
   #run = 0;
   #activeRun = 0;
+  #cancelledRun: number | undefined;
   #disposed = false;
 
   public constructor(options: ReactiveMutationOptions<TValue, TVariables>) {
@@ -416,8 +380,8 @@ export class ReactiveMutationObserver<TValue, TVariables> {
     const context = Object.freeze({ signal: abort.signal, idempotencyKey });
     this.#abort = abort;
     this.#activeRun = run;
+    this.#cancelledRun = undefined;
     this.#activeKey = idempotencyKey;
-    this.#setState({ status: "pending", data: this.#state.data, error: undefined, idempotencyKey, isPending: true });
     let rollback: (() => void) | undefined;
     const rollbackNow = (): void => {
       const pending = rollback;
@@ -426,11 +390,13 @@ export class ReactiveMutationObserver<TValue, TVariables> {
     };
     this.#rollback = rollbackNow;
     try {
+      this.#setState({ status: "pending", data: this.#state.data, error: undefined, idempotencyKey, isPending: true });
+      if (abort.signal.aborted || run !== this.#activeRun) throw cancelledError();
       rollback = toRollback(await options.onMutate?.(variables, context));
       if (abort.signal.aborted || run !== this.#activeRun) throw cancelledError();
       const result = await options.mutationFn(variables, context);
-      if (abort.signal.aborted) throw cancelledError();
       const value = unwrapMutationResult(result);
+      if (abort.signal.aborted) throw cancelledError();
       rollback = undefined;
       if (run === this.#activeRun) this.#setState({ status: "success", data: value, error: undefined, idempotencyKey, isPending: false });
       return value;
@@ -438,6 +404,11 @@ export class ReactiveMutationObserver<TValue, TVariables> {
       rollbackNow();
       const error = normalizeReactiveError(cause, abort.signal.aborted ? "cancelled" : "mutation");
       if (run === this.#activeRun) this.#setState({ status: error.kind === "cancelled" ? "cancelled" : "error", data: this.#state.data, error, idempotencyKey, isPending: false });
+      else if (run === this.#cancelledRun && this.#state.status === "cancelled" && error.database !== undefined) {
+        // Cancellation stops presentation immediately. A later native result
+        // may still establish uncertainty for this same server operation.
+        this.#setState({ ...this.#state, error });
+      }
       throw cause instanceof Error ? cause : new ReactiveMutationError(error.code, error.message, cause);
     } finally {
       if (run === this.#activeRun) {
@@ -455,16 +426,27 @@ export class ReactiveMutationObserver<TValue, TVariables> {
   /** Cancels the durable request and immediately rolls back its presentation. */
   public cancel(): void {
     if (!this.#state.isPending) return;
-    this.#abort?.abort();
-    this.#activeRun = ++this.#run;
-    this.#rollbackNow();
+    const abort = this.#abort;
+    const rollback = this.#rollback;
     const key = this.#activeKey;
+    this.#abort = undefined;
+    this.#rollback = undefined;
+    this.#activeKey = undefined;
+    this.#cancelledRun = this.#activeRun;
+    const cancelledGeneration = this.#activeRun = ++this.#run;
     const error = normalizeReactiveError(cancelledError(), "cancelled");
-    this.#setState({ status: "cancelled", data: this.#state.data, error, idempotencyKey: key, isPending: false });
+    // Publish the detached ownership before invoking abort/rollback callbacks,
+    // then notify only if those callbacks did not start a replacement run.
+    this.#state = freezeMutationState({ status: "cancelled", data: this.#state.data, error, idempotencyKey: key, isPending: false });
+    abort?.abort();
+    rollback?.();
+    if (cancelledGeneration === this.#activeRun) this.#notify();
   }
 
   public reset(): void {
+    const resetGeneration = this.#run + (this.#state.isPending ? 1 : 0);
     this.cancel();
+    if (resetGeneration !== this.#run) return;
     this.#setState({ status: "idle", data: undefined, error: undefined, idempotencyKey: undefined, isPending: false });
   }
 
@@ -474,14 +456,12 @@ export class ReactiveMutationObserver<TValue, TVariables> {
     this.#listeners.clear();
   }
 
-  #rollbackNow(): void {
-    const rollback = this.#rollback;
-    this.#rollback = undefined;
-    rollback?.();
-  }
-
   #setState(state: ReactiveMutationState<TValue>): void {
     this.#state = freezeMutationState(state);
+    this.#notify();
+  }
+
+  #notify(): void {
     for (const listener of this.#listeners) listener();
   }
 }
@@ -493,25 +473,30 @@ export class ReactiveMutationError extends Error {
   }
 }
 
-function unwrapMutationResult<TValue>(result: TValue | TerraScaleResult<TValue>): TValue {
+function unwrapMutationResult<TValue>(result: TValue | TerraScaleResult<TValue> | DatabaseResult<TValue>): TValue {
   if (isTerraScaleResult(result)) {
-    if (!result.ok) throw new ReactiveMutationError(result.error.code, result.error.message, result.error);
+    if (!result.ok) throw new ReactiveMutationError(result.error.code, "message" in result.error ? result.error.message : `TerraBase request failed: ${result.error.code}`, result.error);
     return result.value;
   }
   return result;
 }
 
-function isTerraScaleResult<TValue>(value: TValue | TerraScaleResult<TValue>): value is TerraScaleResult<TValue> {
+function isTerraScaleResult<TValue>(value: TValue | TerraScaleResult<TValue> | DatabaseResult<TValue>): value is TerraScaleResult<TValue> | DatabaseResult<TValue> {
   return typeof value === "object" && value !== null && "ok" in value && typeof (value as { readonly ok?: unknown }).ok === "boolean";
 }
 
 function normalizeReactiveError(cause: unknown, fallback: ReactiveErrorKind): ReactiveError {
+  if (cause instanceof ReactiveMutationError) return Object.freeze({ kind: fallback, code: cause.code, message: cause.message, cause: cause.cause, ...(isDatabaseError(cause.cause) ? { database: cause.cause } : {}) });
   if (isTerraScaleError(cause)) {
-    return Object.freeze({ kind: fallback, code: cause.code, message: cause.message, cause, terraScale: cause });
+    return Object.freeze({ kind: fallback, code: cause.code, message: cause.message, cause, terraScale: cause, ...(cause instanceof Error && isDatabaseError(cause.cause) ? { database: cause.cause } : {}) });
   }
-  if (cause instanceof ReactiveMutationError) return Object.freeze({ kind: fallback, code: cause.code, message: cause.message, cause: cause.cause });
+  if (isDatabaseError(cause)) return Object.freeze({ kind: fallback, code: cause.code, message: `TerraBase request failed: ${cause.code}`, cause, database: cause });
   if (cause instanceof Error) return Object.freeze({ kind: fallback, code: fallback, message: cause.message, cause });
   return Object.freeze({ kind: fallback, code: fallback, message: String(cause), cause });
+}
+
+function isDatabaseError(value: unknown): value is DatabaseError {
+  return typeof value === "object" && value !== null && "code" in value && typeof value.code === "string" && !("message" in value);
 }
 
 function isTerraScaleError(value: unknown): value is TerraScaleError {

@@ -1,57 +1,43 @@
-# Packaged SDK customer journey
+# Installed current producer journey
 
-`packaged-consumer.ts` qualifies one supplied immutable TypeScript SDK artifact
-as an external consumer. It verifies the artifact digest, installs that exact
-tarball into a fresh temporary npm project, and runs the selected phase without
-importing checkout source or using a mock transport. Every phase must use the
-same artifact path and digest.
+`current-producer-consumer.mjs` verifies a supplied immutable npm tarball digest,
+installs it in a fresh temporary consumer and imports only the installed package.
+It requires a real isolated allocation and never substitutes an in-process server.
+The packaged-consumer wrapper delegates to this same journey.
 
-The generated consumer reads the API URL, project/database IDs, journey run
-ID, and API keys from its inherited environment at execution time. Secret
-values are never interpolated into generated TypeScript or JavaScript source.
+Required inputs include `TERRASCALE_SDK_TARBALL` (absolute regular tarball path),
+`TERRASCALE_SDK_TARBALL_SHA256`, `TERRABASE_TENANT`, `TERRABASE_DATABASE`,
+`TERRABASE_SHARD`, `TERRABASE_COLLECTION`, `TERRABASE_SCHEMA_GENERATION`,
+`TERRABASE_SCHEMA_DIGEST`, `TERRABASE_API_KEY`, `TERRABASE_DENY_API_KEY`,
+`TERRABASE_TEST_FIELD_ID` and `TERRABASE_TEST_FIELD_TYPE` (`utf8` or `i64`).
+The default `TERRABASE_ROUTING_MODE=atlas` uses actual authenticated discovery.
+Omit `TERRABASE_ENDPOINT` and supply independently allocated
+`TERRABASE_EXPECTED_REGION` and `TERRASCALE_QUALIFICATION_ALLOCATION_ID`. Both
+routes require actual native keys and isolated write scope.
+For provisioned development/native exclusion/CAS qualification, explicitly set
+`TERRABASE_ROUTING_MODE=direct` and `TERRABASE_ENDPOINT` to the allocated bare
+HTTPS origin or loopback HTTP origin. The test API host is always rejected.
 
-Set all of these values before every invocation:
+The Node suite and browser journey share this routing admission. Completely
+absent configuration remains an honest skip; partial or invalid configuration
+fails. The browser journey additionally requires `TERRABASE_BROWSER_DOCUMENT`
+and real browser CORS admission. Atlas mode traces actual authenticated discovery
+and regional requests, asserts the closest eligible endpoint against the
+allocation's expected region, and verifies construction makes no request.
 
-```text
-TERRASCALE_API_URL       public API origin
-TERRASCALE_AUTH_URL      Dashboard/Better Auth origin (validated and retained for coordination)
-TERRASCALE_PROJECT_ID    onboarded project
-TERRASCALE_DATABASE_ID   disposable database
-TERRASCALE_API_KEY       one-time-issued scoped tsauth credential
-TERRASCALE_JOURNEY_RUN_ID unique run identifier
-TERRASCALE_SDK_TARBALL   absolute path to the packed SDK artifact
-TERRASCALE_SDK_TARBALL_SHA256  SHA-256 of that artifact
-TERRASCALE_DENY_API_KEY  one-time-issued key without access to the database
+```sh
+npm run qualify:current-producer
 ```
 
-`TERRASCALE_SYNC_URL` optionally sets the reactive delivery origin.
+The journey covers exact retry, changed-effect conflict, point-version update
+and deletion, rejected/unknown/committed transaction status, query, finite
+subscription, cancellation and credential/scope denial. Missing configuration
+fails; it is never a green skip. The Atlas mode verifies actual receiver routing,
+unconditional mutation/status/query/snapshot/poll/cancellation and discovery
+denial; it also verifies that unavailable conditional/group/security operations
+never reach the native service. Output is bounded and redacted. Document cleanup
+is verified; retained tombstones still require allocation-owner cleanup.
 
-Set TERRASCALE_DENY_API_KEY to a second key issued for a non-authorized scope.
-The exercise phase uses it against the same document and requires a 401/403
-denial. All five consumers must use the same
-TERRASCALE_API_KEY for the shared journey.
-
-Run one phase at a time:
-
-```bash
-node scripts/qualification/packaged-consumer.ts --phase seed
-node scripts/qualification/packaged-consumer.ts --phase verify
-node scripts/qualification/packaged-consumer.ts --phase exercise
-node scripts/qualification/packaged-consumer.ts --phase cleanup
-```
-
-`seed` writes only `${RUN_ID}-typescript` in `sdk_journey`. `verify` reads the
-five cross-SDK IDs (`typescript`, `go`, `rust`, `dotnet`, `cli`) and requires
-each peer's body exactly. `exercise` covers CRUD, stale `If-Match` denial,
-idempotent replay (including stable revision and ETag receipts), parameterized
-SQL, reactive attach/write/poll/reconnect/checkpoint progression/close,
-pre-aborted request cancellation, a typed missing-document error, and
-denied-scope behavior. The denied key must differ
-from the authorized key and the response must preserve the
-producer's `unauthorized` (401) or `forbidden` (403) error code. `cleanup`
-deletes only the TypeScript run ID.
-
-Output is bounded JSON observations containing only labels, status, and typed
-error codes; credentials and request headers are never printed. Missing
-configuration or a failed required action exits nonzero. Live provider
-credentials are required; there is no skip or fake-service mode.
+The PostgreSQL listener and deployed authenticated account/browser flows have
+separate actual runtime gates. Native package results do not qualify management,
+production Better Auth security or all deployed application behavior.

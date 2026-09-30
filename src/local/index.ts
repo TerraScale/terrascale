@@ -1,262 +1,181 @@
 import { isAbsolute } from "node:path";
-
-import { createTerraScaleAdminClient, type AdminClient } from "../admin.js";
-import type {
-  FetchLike,
-  TerraScaleRuntimeConfig,
-  TerraScaleSqliteRuntimeConfig,
-} from "../config.js";
-import { createTerraScaleClient, type TerraScaleClient } from "../factory.js";
-import { registerLocalRuntimeFetch } from "../local-runtime-capability.js";
-import type {
-  DatabaseId,
-  OrganizationId,
-  OrganizationPlan,
-  ProjectId,
-} from "../models.js";
+import { randomUUID } from "node:crypto";
+import {
+  createTerraBaseClient,
+  type TerraBaseClient,
+  type TerraBaseClientConfig,
+} from "../database.js";
+import type { CollectionBinding, DatabaseScope } from "../database-types.js";
 import { normalizeLocalBearerToken } from "./authentication.js";
+import type { LocalBetterAuthAdapterFactory } from "./better-auth.js";
 import { assertLocalSqliteEnvironment } from "./environment.js";
-import { parseOrganizationPlan } from "./plans.js";
-import { clearLocalAdminState } from "./handlers/admin.js";
-import { clearLocalPlatformState } from "./handlers/platform.js";
-import { TerraScaleLocalRouter, type LocalAuthenticationMode } from "./router.js";
+import { TerraScaleLocalRouter } from "./router.js";
 import {
   TerraScaleLocalHttpServer,
   type LocalServerAddress,
 } from "./server.js";
 import { TerraScaleSqliteStore } from "./store.js";
-
-const inProcessOrigin = "http://127.0.0.1";
-
-export type TerraScaleSqliteRuntimeOptions = {
-  readonly sqlite: TerraScaleSqliteRuntimeConfig;
-  readonly allowRemote?: boolean;
-  readonly authentication?: LocalAuthenticationMode;
-  readonly bearerToken?: string;
+import type { LocalAuthenticationMode } from "./context.js";
+export type {
+  LocalAuthenticationMode,
+  LocalServerAddress,
+  LocalBetterAuthAdapterFactory,
 };
 
+export type TerraScaleSqliteRuntimeOptions = {
+  readonly sqlite: { readonly enabled: true; readonly databasePath: string };
+  readonly scope?: DatabaseScope;
+  readonly authentication?: LocalAuthenticationMode;
+  readonly bearerToken?: string;
+  readonly allowRemote?: boolean;
+};
 export type TerraScaleLocalListenOptions = {
   readonly host?: string;
   readonly port?: number;
 };
 
-export type TerraScaleLocalClientOptions = Omit<
-  TerraScaleRuntimeConfig,
-  "apiBaseUrl" | "fetch" | "sqlite"
->;
-
-export type TerraScaleLocalPlan = OrganizationPlan;
-
-export type TerraScaleLocalSeed = {
-  readonly databaseId: DatabaseId;
-  readonly organizationId: OrganizationId;
-  readonly projectId: ProjectId;
-  readonly plan: TerraScaleLocalPlan;
-};
-
-export type TerraScaleLocalResetOptions = {
-  readonly seed?: boolean;
-  readonly plan?: TerraScaleLocalPlan;
-};
-
-export { type LocalAuthenticationMode, type LocalServerAddress };
-export { SyncV1NodeFileViewStore } from "./view-store.js";
-
-/**
- * Opt-in Node development emulator for the public TerraScale SDK contracts.
- *
- * The normal package entrypoints never import this module. Consumers must
- * explicitly import `@terrascale/sdk/local`.
- */
+/** Explicit Node development backend. Never load this entrypoint in deployment or qualification. */
 export class TerraScaleSqliteRuntime {
-  readonly #router: TerraScaleLocalRouter;
-  readonly #server: TerraScaleLocalHttpServer;
-  readonly #sqlite: TerraScaleSqliteRuntimeConfig;
   readonly #store: TerraScaleSqliteStore;
-  readonly #bearerToken: string | undefined;
+  #router: TerraScaleLocalRouter;
+  readonly #server: TerraScaleLocalHttpServer;
+  readonly #token: string;
+  readonly scope: DatabaseScope;
   #closed = false;
+  #closePromise: Promise<void> | undefined;
   constructor(options: TerraScaleSqliteRuntimeOptions) {
-    if (options === null || typeof options !== "object") throw new TypeError("SQLite runtime options are required.");
-    if (options.sqlite === undefined || options.sqlite.enabled !== true) throw new TypeError("SQLite runtime requires sqlite: { enabled: true }.");
     assertLocalSqliteEnvironment();
-    if (typeof options.sqlite.databasePath !== "string" || !isAbsolute(options.sqlite.databasePath)) {
-      throw new TypeError("SQLite runtime databasePath must be an absolute path.");
-    }
+    if (options?.sqlite?.enabled !== true)
+      throw new TypeError("SQLite runtime requires sqlite: { enabled: true }.");
+    if (!isAbsolute(options.sqlite.databasePath))
+      throw new TypeError(
+        "SQLite runtime databasePath must be an absolute path.",
+      );
     const authentication = options.authentication ?? "permissive";
-    if (authentication !== "permissive" && authentication !== "required") {
-      throw new TypeError('authentication must be either "permissive" or "required".');
-    }
-    const bearerToken = authentication === "required"
-      ? normalizeLocalBearerToken(options.bearerToken)
-      : undefined;
-    if (authentication === "permissive" && options.bearerToken !== undefined) {
-      throw new TypeError('bearerToken can only be set when authentication is "required".');
-    }
-    const allowRemote = options.allowRemote ?? false;
-    if (typeof allowRemote !== "boolean") {
-      throw new TypeError("allowRemote must be a boolean.");
-    }
-    if (allowRemote && authentication !== "required") {
-      throw new TypeError('allowRemote requires authentication: "required" and a strong bearerToken.');
-    }
-    this.#sqlite = options.sqlite;
-    this.#bearerToken = bearerToken;
+    if (authentication !== "permissive" && authentication !== "required")
+      throw new TypeError("Invalid local authentication mode.");
+    if (
+      options.allowRemote !== undefined &&
+      typeof options.allowRemote !== "boolean"
+    )
+      throw new TypeError("allowRemote must be boolean.");
+    if (options.allowRemote === true && authentication !== "required")
+      throw new TypeError(
+        "Remote local listeners require explicit authentication.",
+      );
+    if (authentication === "permissive" && options.bearerToken !== undefined)
+      throw new TypeError("bearerToken requires authentication: required.");
+    this.#token =
+      authentication === "required"
+        ? normalizeLocalBearerToken(options.bearerToken)
+        : "local-development-only";
     this.#store = new TerraScaleSqliteStore(options.sqlite.databasePath);
-    this.#router = new TerraScaleLocalRouter(this.#store, {
-      authentication,
-      ...(bearerToken === undefined ? {} : { bearerToken }),
-    });
-    this.#server = new TerraScaleLocalHttpServer(
-      (request) => this.#router.handle(request),
-      { allowRemote },
-    );
-    registerLocalRuntimeFetch(this.#fetch);
+    try {
+      const stored = this.#store.getMeta<{
+        tenant: string;
+        database: string;
+        shard: string;
+      }>("local-native-scope");
+      const scope =
+        options.scope ??
+        (stored === undefined
+          ? { tenant: randomUUID(), database: randomUUID(), shard: 0n }
+          : { ...stored, shard: BigInt(stored.shard) });
+      this.#router = new TerraScaleLocalRouter(this.#store, scope, {
+        authentication,
+        ...(authentication === "required" ? { bearerToken: this.#token } : {}),
+      });
+      this.scope = Object.freeze({ ...scope });
+      this.#store.setMeta("local-native-scope", {
+        ...scope,
+        shard: scope.shard.toString(),
+      });
+      this.#server = new TerraScaleLocalHttpServer(
+        (request) => this.#router.handle(request),
+        { allowRemote: options.allowRemote ?? false },
+      );
+    } catch (error) {
+      this.#store.close();
+      throw error;
+    }
   }
-
   get databasePath(): string {
     return this.#store.databasePath;
   }
-
   get address(): LocalServerAddress | undefined {
     return this.#server.address;
   }
-
-  readonly #fetch: FetchLike = async (input, init) => {
+  get authority() {
     this.#assertOpen();
-    return this.#router.fetch(input, init);
-  };
-
-  createClient(options: TerraScaleLocalClientOptions = {}): TerraScaleClient {
+    return this.#router.authority;
+  }
+  async bindCollection(binding: CollectionBinding): Promise<void> {
     this.#assertOpen();
-    return createTerraScaleClient({
-      ...options,
-      ...(this.#bearerToken === undefined || options.accessToken !== undefined
-        ? {}
-        : { accessToken: this.#bearerToken }),
-      apiBaseUrl: inProcessOrigin,
-      sqlite: this.#sqlite,
-      fetch: this.#fetch,
+    await this.#store.exclusive(() => {
+      this.#assertOpen();
+      this.#store.transaction(() => this.#router.bindCollection(binding));
     });
   }
-
-  createAdminClient(options: TerraScaleLocalClientOptions = {}): AdminClient {
+  createClient(
+    options: Pick<TerraBaseClientConfig, "requestTimeoutMs"> = {},
+  ): TerraBaseClient {
     this.#assertOpen();
-    return createTerraScaleAdminClient({
+    return createTerraBaseClient({
+      ...this.scope,
       ...options,
-      ...(this.#bearerToken === undefined || options.accessToken !== undefined
-        ? {}
-        : { accessToken: this.#bearerToken }),
-      apiBaseUrl: inProcessOrigin,
-      sqlite: this.#sqlite,
-      fetch: this.#fetch,
+      endpoint: "http://127.0.0.1",
+      apiKey: this.#token,
+      fetch: async (input, init) => {
+        this.#assertOpen();
+        return this.#router.fetch(input, init);
+      },
     });
   }
-
-  start(options: TerraScaleLocalListenOptions = {}): Promise<LocalServerAddress> {
+  async createBetterAuthAdapter(): Promise<LocalBetterAuthAdapterFactory> {
+    this.#assertOpen();
+    const { createLocalBetterAuthAdapter } = await import("./better-auth.js");
+    this.#assertOpen();
+    return createLocalBetterAuthAdapter(this.#store);
+  }
+  start(
+    options: TerraScaleLocalListenOptions = {},
+  ): Promise<LocalServerAddress> {
     this.#assertOpen();
     return this.#server.start(options);
   }
-
   stop(): Promise<void> {
     return this.#server.close();
   }
-
-  async reset(options: TerraScaleLocalResetOptions = {}): Promise<TerraScaleLocalSeed | undefined> {
+  async reset(): Promise<void> {
     this.#assertOpen();
-    this.#clearTransientState();
-    this.#store.reset();
-    return options.seed === true ? this.seed(options.plan ?? "free") : undefined;
-  }
-
-  async seed(plan: TerraScaleLocalPlan = "free"): Promise<TerraScaleLocalSeed> {
-    this.#assertOpen();
-    const selectedPlan = assertLocalPlan(plan);
-    const client = this.createClient({
-      idempotencyKeyFactory: () => `local-seed-${this.#store.nextUlid()}`,
+    await this.#store.exclusive(() => {
+      this.#assertOpen();
+      this.#store.reset();
+      this.#router = new TerraScaleLocalRouter(this.#store, this.scope, {
+        authentication: "required",
+        bearerToken: this.#token,
+      });
+      this.#store.setMeta("local-native-scope", {
+        ...this.scope,
+        shard: this.scope.shard.toString(),
+      });
     });
-    const organization = requireValue(
-      await client.organizations.create({
-        name: `Local development (${selectedPlan})`,
-        plan: selectedPlan,
-      }),
-    );
-    const project = requireValue(
-      await client.organizations.createProject(organization.organizationId, {
-        name: `Local project (${selectedPlan})`,
-        regions: ["GRU"],
-        backupRegion: "GRU",
-      }),
-    );
-    const scoped = this.createClient({
-      projectId: project.projectId,
-      idempotencyKeyFactory: () => `local-seed-${this.#store.nextUlid()}`,
-    });
-    const database = requireValue(
-      await scoped.databases.create({ name: `Local database (${selectedPlan})` }),
-    );
-    return {
-      organizationId: organization.organizationId,
-      projectId: project.projectId,
-      databaseId: database.databaseId,
-      plan: selectedPlan,
-    };
   }
-
-  seedStarter(): Promise<TerraScaleLocalSeed> {
-    return this.seed("starter");
-  }
-
-  seedPro(): Promise<TerraScaleLocalSeed> {
-    return this.seed("pro");
-  }
-
-  seedBusiness(): Promise<TerraScaleLocalSeed> {
-    return this.seed("business");
-  }
-
-  async close(): Promise<void> {
-    if (this.#closed) {
-      return;
-    }
-    await this.#server.close();
-    this.#clearTransientState();
-    this.#store.close();
+  close(): Promise<void> {
+    if (this.#closePromise !== undefined) return this.#closePromise;
     this.#closed = true;
+    this.#closePromise = (async () => {
+      await this.#server.close();
+      await this.#store.exclusive(() => this.#store.close());
+    })();
+    return this.#closePromise;
   }
-
   #assertOpen(): void {
-    if (this.#closed) {
-      throw new Error("The TerraScale SQLite runtime is closed.");
-    }
-  }
-
-  #clearTransientState(): void {
-    clearLocalAdminState(this.#store);
-    clearLocalPlatformState(this.#store);
+    if (this.#closed) throw new Error("The SQLite runtime is closed.");
   }
 }
-
 export function createTerraScaleSqliteRuntime(
   options: TerraScaleSqliteRuntimeOptions,
 ): TerraScaleSqliteRuntime {
   return new TerraScaleSqliteRuntime(options);
-}
-
-function requireValue<T>(result: {
-  readonly ok: boolean;
-  readonly value?: T;
-  readonly error?: { readonly message: string };
-}): T {
-  if (result.ok && result.value !== undefined) {
-    return result.value;
-  }
-  throw new Error(result.error?.message ?? "The local seed request failed.");
-}
-
-function assertLocalPlan(value: unknown): TerraScaleLocalPlan {
-  const plan = parseOrganizationPlan(value);
-  if (plan !== undefined) {
-    return plan;
-  }
-  throw new TypeError("plan must be one of: free, starter, pro, scale, business, enterprise.");
 }

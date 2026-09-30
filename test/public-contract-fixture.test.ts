@@ -1,32 +1,31 @@
-// The old Dashboard saved-query fixture was a second, hand-copied contract
-// authority. The producer bundle now supplies the complete public fixture.
-import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { describe, test } from "vitest";
-
-import { contractOpenApiPath, pinnedContractVersion, resolveContractBundle } from "../scripts/openapi-contract-paths.ts";
-
-describe("pinned terrabase public contract", () => {
-  test("contains the document, SQL, and reactive routes in v1", async () => {
-    const bundle = await resolveContractBundle();
-    try {
-      const spec = JSON.parse(await readFile(await contractOpenApiPath(bundle), "utf8")) as {
-        readonly openapi?: string;
-        readonly paths?: Record<string, Record<string, { readonly operationId?: string }>>;
-      };
-      assert.equal(bundle.manifest.contractVersion, pinnedContractVersion);
-      assert.equal(spec.openapi, "3.1.0");
-      for (const [route, method, operationId] of [
-        ["/api/v1/databases/{name}/collections/{collection}/documents", "get", "list_documents"],
-        ["/api/v1/databases/{name}/sql", "post", "execute_sql"],
-        ["/api/v1/reactive/views", "post", "attach_view"],
-        ["/api/v1/reactive/views/{view}/{generation}/log", "get", "view_log"],
-      ] as const) {
-        assert.equal(spec.paths?.[route]?.[method]?.operationId, operationId);
-      }
-      assert.equal(spec.paths?.["/api/v1/projects/{projectId}/saved-queries"], undefined);
-    } finally {
-      await bundle.cleanup();
-    }
-  });
+import { expect, test } from "vitest";
+test("public native route set retains all five operations and excludes obsolete HTTP SQL/reactive/product routes", async () => {
+  const pin = JSON.parse(
+    await readFile(
+      new URL("../sdk-current-contract.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const manifest = JSON.parse(
+    await readFile(
+      new URL("../sdk-route-manifest.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  expect(manifest.routeCount).toBe(5);
+  expect(
+    manifest.routes.map((route) => ({
+      method: route.method,
+      path: route.pathTemplate,
+    })),
+  ).toEqual(pin.routes.map(({ method, path }) => ({ method, path })));
+  expect(
+    manifest.routes.every(
+      (route) => route.base === "native" && route.producer === "terrabase",
+    ),
+  ).toBe(true);
+  expect(JSON.stringify(manifest)).not.toMatch(
+    /\/api\/v1|execute_sql|websocket/u,
+  );
 });

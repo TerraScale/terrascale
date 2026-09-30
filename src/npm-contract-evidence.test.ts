@@ -6,9 +6,14 @@ import path from "node:path";
 import { test } from "vitest";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 const loader = import(
-  pathToFileURL(path.join(repositoryRoot, "scripts", "npm-contract-evidence.ts")).href
+  pathToFileURL(
+    path.join(repositoryRoot, "scripts", "npm-contract-evidence.ts"),
+  ).href
 ) as Promise<{
   loadNpmContractEvidence(
     root: string,
@@ -17,19 +22,27 @@ const loader = import(
 }>;
 
 test("npm contract evidence binds the reviewed descriptor and packed route bytes", async () => {
-  const evidence = await (await loader).loadNpmContractEvidence(
+  const evidence = await (
+    await loader
+  ).loadNpmContractEvidence(
     repositoryRoot,
     path.join(repositoryRoot, "sdk-route-manifest.json"),
   );
   const descriptor = JSON.parse(
-    await readFile(path.join(repositoryRoot, "sdk-openapi-contract-descriptor.json"), "utf8"),
+    await readFile(
+      path.join(repositoryRoot, "sdk-openapi-contract-descriptor.json"),
+      "utf8",
+    ),
   ) as {
     readonly descriptorVersion: number;
     readonly routeCount: number;
     readonly sources: { readonly openApiSha256: string };
   };
   const routeManifest = JSON.parse(
-    await readFile(path.join(repositoryRoot, "sdk-route-manifest.json"), "utf8"),
+    await readFile(
+      path.join(repositoryRoot, "sdk-route-manifest.json"),
+      "utf8",
+    ),
   ) as { readonly routeCount: number };
 
   assert.deepEqual(evidence, {
@@ -38,18 +51,25 @@ test("npm contract evidence binds the reviewed descriptor and packed route bytes
       path.join(repositoryRoot, "sdk-openapi-contract-descriptor.json"),
     ),
     openApiSha256: descriptor.sources.openApiSha256,
-    routeManifestSha256: await fileSha256(path.join(repositoryRoot, "sdk-route-manifest.json")),
+    routeManifestSha256: await fileSha256(
+      path.join(repositoryRoot, "sdk-route-manifest.json"),
+    ),
     routeCount: descriptor.routeCount,
   });
   assert.equal(descriptor.routeCount, routeManifest.routeCount);
 });
 
 test("npm contract evidence refuses stale, malformed, or substituted inputs", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "terrascale-npm-contract-evidence-"));
+  const directory = await mkdtemp(
+    path.join(tmpdir(), "terrascale-npm-contract-evidence-"),
+  );
   const manifestPath = path.join(directory, "sdk-route-manifest.json");
-  const descriptorPath = path.join(directory, "sdk-openapi-contract-descriptor.json");
+  const descriptorPath = path.join(
+    directory,
+    "sdk-openapi-contract-descriptor.json",
+  );
   const packedPath = path.join(directory, "packed-route-manifest.json");
-  const manifest = `${JSON.stringify({ routeCount: 1, routes: [{}] })}\n`;
+  const manifest = `${JSON.stringify({ routeCount: 1, routes: [{ method: "GET", pathTemplate: "/v1/items" }] })}\n`;
   const manifestSha256 = sha256(Buffer.from(manifest));
   const validDescriptor = {
     descriptorVersion: 2,
@@ -62,6 +82,16 @@ test("npm contract evidence refuses stale, malformed, or substituted inputs", as
   };
 
   try {
+    await writeFile(
+      path.join(directory, "sdk-current-contract.json"),
+      JSON.stringify({
+        version: 1,
+        producer: "terrabase",
+        sourceOpenApiSha256: "a".repeat(64),
+        sourceAtomicVectorsSha256: "c".repeat(64),
+        routes: [{ method: "GET", path: "/v1/items" }],
+      }),
+    );
     await writeFile(manifestPath, manifest);
     await writeFile(packedPath, manifest);
     await writeFile(descriptorPath, JSON.stringify(validDescriptor));
@@ -71,11 +101,30 @@ test("npm contract evidence refuses stale, malformed, or substituted inputs", as
       [{ descriptorVersion: 1 }, /version 2/u],
       [{ routeCount: 2, routes: [{}, {}] }, /routeCount values disagree/u],
       [{ routes: [] }, /descriptor routes must match/u],
-      [{ excludedContracts: ["database", "database"] }, /must not contain duplicates/u],
-      [{ sources: { ...validDescriptor.sources, openApiSha256: "A".repeat(64) } }, /lowercase/u],
-      [{ sources: { ...validDescriptor.sources, routeManifestSha256: "b".repeat(64) } }, /does not bind/u],
+      [{ excludedContracts: ["database"] }, /cannot exclude/u],
+      [
+        {
+          sources: {
+            ...validDescriptor.sources,
+            openApiSha256: "A".repeat(64),
+          },
+        },
+        /lowercase/u,
+      ],
+      [
+        {
+          sources: {
+            ...validDescriptor.sources,
+            routeManifestSha256: "b".repeat(64),
+          },
+        },
+        /does not bind/u,
+      ],
     ] as const) {
-      await writeFile(descriptorPath, JSON.stringify({ ...validDescriptor, ...mutation }));
+      await writeFile(
+        descriptorPath,
+        JSON.stringify({ ...validDescriptor, ...mutation }),
+      );
       await assert.rejects(
         (await loader).loadNpmContractEvidence(directory, packedPath),
         message,

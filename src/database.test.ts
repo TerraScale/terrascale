@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createTerraBaseClient } from "./database.js";
-import { resolveRuntimeConfig } from "./config.js";
 import type { DatabaseCommit } from "./database-types.js";
 
 // Deterministic request/decoder conformance only. Real service acceptance has a separate runner.
@@ -37,10 +36,6 @@ describe("current database request conformance", () => {
   test("rejects test API origins and credential-bearing origins at construction", () => {
     for (const endpoint of ["https://api.terrascale.tech", "https://gru.api.terrascale.tech", "https://api.terrascale.tech.", "https://gru.api.terrascale.tech.", "https://secret@gru.terrascale.tech", "https://gru.terrascale.tech/base", "http://public.example"]) {
       expect(() => createTerraBaseClient({ ...scope, endpoint, apiKey: "key" })).toThrow();
-    }
-    expect(() => resolveRuntimeConfig({})).toThrow(/actual apiBaseUrl/u);
-    for (const apiBaseUrl of ["https://api.terrascale.tech", "https://api.terrascale.tech.", "https://gru.api.terrascale.tech."]) {
-      expect(() => resolveRuntimeConfig({ apiBaseUrl })).toThrow(/test API host/u);
     }
   });
 
@@ -120,6 +115,14 @@ describe("current database request conformance", () => {
     expect(!result.ok && result.error.mutation_outcome).toBe("uncertain");
   });
 
+  test("a followed native redirect cannot resolve a sent mutation", async () => {
+    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "key", fetch: async () => {
+      const response = json(point); Object.defineProperty(response, "redirected", { value: true }); return response;
+    } });
+    const result = await client.commit(await client.prepareCommit(commit));
+    expect(result).toMatchObject({ ok: false, error: { code: "invalid_response", status: 200, mutation_outcome: "uncertain" } });
+  });
+
   test.each([201, 202, 204, 206])("HTTP %s cannot satisfy any native HTTP 200 operation", async status => {
     const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "key", fetch: async input => {
       const request = input as Request;
@@ -128,7 +131,7 @@ describe("current database request conformance", () => {
       const wire = JSON.parse(await request.text());
       if (request.url.endsWith("/status")) return json({ ...wire, state: "unknown", outcome: null }, status);
       if (request.url.endsWith("/query")) return json({ version: 1, rows: [] }, status);
-      if (request.url.endsWith("/subscriptions")) return json({ version: 1, phase: "snapshot", rows: [], poll_cursor: "opaque" }, status);
+      if (request.url.endsWith("/subscriptions")) return json({ version: 1, phase: "snapshot", rows: [], poll_cursor: "b3BhcXVl" }, status);
       return json({ version: 1, transaction_id: wire.transaction_id, authority: wire.authority, effect_digest: wire.effect_digest, durability: "local_durable", event: { database, shard: scope.shard.toString(), replica, incarnation: "03".repeat(16), sequence: "1" }, commit_sequence: "1" }, status);
     } });
     const prepared = await client.prepareCommit(commit);
@@ -152,10 +155,10 @@ describe("current database request conformance", () => {
     expect(calls).toBe(0);
   });
 
-  test("native requests without a provisioned endpoint fail before historical discovery or credentials", async () => {
+  test("native requests reject nonnative discovery credentials before metadata or data dispatch", async () => {
     let requests = 0;
     let credentials = 0;
-    const client = createTerraBaseClient({ ...scope, apiKey: () => { credentials++; return "key"; }, fetch: async () => { requests++; return json({ v: 1, database, branch: "main", placement: "known", revision: 1, residency: null, updated: Math.floor(Date.now() / 1000), refreshSeconds: 5, endpoints: [{ region: "GRU", url: "https://gru.terrascale.tech", priority: 1, capabilities: ["read", "write", "reactive"] }] }); } });
+    const client = createTerraBaseClient({ ...scope, apiKey: () => { credentials++; return "key"; }, fetch: async () => { requests++; return json(point); } });
     const prepared = await client.prepareCommit(commit);
     const results = await Promise.all([
       client.read(collection, document),
@@ -164,9 +167,9 @@ describe("current database request conformance", () => {
       client.commit(prepared),
       client.transactionStatus(prepared),
     ]);
-    for (const result of results) expect(!result.ok && result.error.code).toBe("discovery_contract_unavailable");
+    for (const result of results) expect(!result.ok && result.error.code).toBe("invalid_discovery_credential");
     expect(!results[3]!.ok && results[3]!.error.mutation_outcome).toBe("unknown");
-    expect(credentials).toBe(0);
+    expect(credentials).toBe(5);
     expect(requests).toBe(0);
   });
 
@@ -184,9 +187,11 @@ describe("current database request conformance", () => {
     expect(new URL(requests[0]!.url).pathname).toBe(`/v1/tenants/${tenant}/databases/${database}/shards/18446744073709551615/transactions/status`);
   });
 
-  test("single-writer scope cannot discover a nearest substitute for its provisioned authority", async () => {
+  test("preparing a single-writer operation is immutable and sends no discovery or data request", async () => {
     const client = createTerraBaseClient({ ...scope, apiKey: "key", fetch: async () => { throw new Error("must not discover"); } });
-    await expect(client.prepareCommit({ ...commit, authority: { mode: "single_writer", generation: 1n, writer: { replica, incarnation: "03".repeat(16) } } })).rejects.toThrow(/authority endpoint/u);
+    const prepared = await client.prepareCommit({ ...commit, authority: { mode: "single_writer", generation: 1n, writer: { replica, incarnation: "03".repeat(16) } } });
+    expect(prepared.authority.mode).toBe("single_writer");
+    expect(Object.isFrozen(prepared.authority)).toBe(true);
   });
 
   test("prepared single-writer commits stay bound to their preparing client and authority endpoint", async () => {
@@ -228,18 +233,18 @@ describe("current database request conformance", () => {
   });
 
   test("subscription responses must match the requested phase", async () => {
-    let response: unknown = { version: 1, phase: "poll", groups: [], poll_cursor: "opaque" };
+    let response: unknown = { version: 1, phase: "poll", groups: [], poll_cursor: "b3BhcXVl" };
     const client = createTerraBaseClient({ ...scope, endpoint: "http://127.0.0.1:9911", apiKey: "key", fetch: async () => json(response) });
     const snapshot = await client.subscription(collection, { phase: "snapshot", predicate: { op: "is_missing", path: [1] }, limit: 1 });
     expect(!snapshot.ok && snapshot.error.code).toBe("invalid_response");
-    response = { version: 1, phase: "snapshot", rows: [], poll_cursor: "opaque" };
-    const poll = await client.subscription(collection, { phase: "poll", predicate: { op: "is_missing", path: [1] }, poll_cursor: "opaque" });
+    response = { version: 1, phase: "snapshot", rows: [], poll_cursor: "b3BhcXVl" };
+    const poll = await client.subscription(collection, { phase: "poll", predicate: { op: "is_missing", path: [1] }, poll_cursor: "b3BhcXVl" });
     expect(!poll.ok && poll.error.code).toBe("invalid_response");
   });
 
   test("query and subscription snapshot pages cannot exceed the sent limit", async () => {
     const rows = [{ document, point }, { document: replica, point }];
-    const client = createTerraBaseClient({ ...scope, endpoint: "http://127.0.0.1:9911", apiKey: "key", fetch: async input => json((input as Request).url.endsWith("/query") ? { version: 1, rows } : { version: 1, phase: "snapshot", rows, poll_cursor: "opaque" }) });
+    const client = createTerraBaseClient({ ...scope, endpoint: "http://127.0.0.1:9911", apiKey: "key", fetch: async input => json((input as Request).url.endsWith("/query") ? { version: 1, rows } : { version: 1, phase: "snapshot", rows, poll_cursor: "b3BhcXVl" }) });
     const query = { predicate: { op: "is_missing" as const, path: [1] }, limit: 1 };
     const snapshot = { phase: "snapshot" as const, ...query };
     const queryResult = client.query(collection, query);

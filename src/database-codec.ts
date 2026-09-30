@@ -255,7 +255,11 @@ export function decodeDatabasePoint(raw: unknown): DatabasePoint {
 }
 
 function cursor(value: unknown): string {
-  if (typeof value !== "string" || value.length > 1024 || !/^[A-Za-z0-9_-]+$/u.test(value)) throw new TypeError("Cursor must be bounded opaque base64url.");
+  const message = "Cursor must be bounded opaque canonical base64url.";
+  if (typeof value !== "string" || value.length > 1024 || !/^[A-Za-z0-9_-]+$/u.test(value)) throw new TypeError(message);
+  // Validate only the encoding; the producer-owned cursor contents remain opaque.
+  try { parseBytes(value); }
+  catch { throw new TypeError(message); }
   return value;
 }
 

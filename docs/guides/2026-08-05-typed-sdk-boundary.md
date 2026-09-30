@@ -1,31 +1,17 @@
 # Typed SDK boundary
 
-`@terrascale/sdk` now exposes TerraScale operations only through typed clients
-created with `createTerraScaleClient`. The root package no longer exports
-`TerraScaleHttp` or request option types, and `TerraScaleClient.request` has
-been removed.
+Use `createTerraBaseClient` for native documents and the separate `ts-auth`
+entrypoint for hosted identity. Native operations accept canonical scoped UUIDs,
+bigint quantities and discriminated values. Keep complete conflicts and causal
+context. Prepare a mutation once and resolve uncertain outcomes through status.
 
-This guide records the boundary decision in [ADR 0002](../adr/0002-typed-public-sdk-boundary.md).
-The workspace [GOAL.md](../../../GOAL.md) owns cross-repository route and
-OpenAPI work.
+Schema declarations and parameterized SQL descriptors are pure local builders.
+They neither provision server schemas nor imply listener capabilities. Management,
+administration and production Better Auth remain explicit blocked capabilities
+until their owning service contracts are admitted. The local SQLite entrypoint
+is Node development only and refuses deployment and CI environments.
 
-## Migration
-
-Replace arbitrary `client.request({ method, path, ... })` calls with the
-matching typed SDK operation, such as `client.regions.list()` or
-`client.databases.create(...)`. If no typed public operation exists, do not
-construct a raw request; request that public REST and SDK capability.
-
-Internal SDK modules continue to use the private HTTP transport. Package
-consumers cannot import it through the package export map.
-
-## Runtime transport privacy
-
-An independent review found that TypeScript constructor parameter properties
-left a discoverable runtime `http` field on every returned subclient, allowing
-JavaScript consumers to reach the transport's generic `request` method.
-Subclients and `AdminClient` now retain their transport in ECMAScript `#http`
-fields, which are not discoverable from package consumers. The built-package
-boundary test verifies every public subclient and `AdminClient` has no `http`
-field or reachable `request`, while `client.regions.list()` still performs its
-typed public request.
+Consumers can import only declared package entrypoints. Private HTTP, native
+codec implementation files, direct engine and internal control transports are
+not public escape hatches. See [the boundary decision](../adr/0002-typed-public-sdk-boundary.md)
+and [release requirements](../release.md).

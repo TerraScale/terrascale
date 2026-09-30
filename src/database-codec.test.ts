@@ -137,12 +137,63 @@ describe("current database exact codec", () => {
 
   test("query/subscription cursors stay opaque and phases remain distinct", () => {
     const predicate = { op: "is_missing", path: [1, 7] } as const;
-    expect(JSON.parse(encodeDatabaseQuery({ predicate, limit: 128, cursor: "opaque_A-1" }))).toEqual({ version: 1, predicate, limit: 128, cursor: "opaque_A-1" });
+    const opaque = "b3BhcXVl";
+    expect(JSON.parse(encodeDatabaseQuery({ predicate, limit: 128, cursor: opaque }))).toEqual({ version: 1, predicate, limit: 128, cursor: opaque });
     expect(() => encodeDatabaseQuery({ predicate, limit: 129 })).toThrow(TypeError);
     expect(() => decodeDatabaseQueryPage({ version: 1, rows: [{ document, point: wirePoint() }, { document, point: wirePoint() }] })).toThrow(TypeError);
-    expect(JSON.parse(encodeDatabaseSubscription({ phase: "poll", predicate, poll_cursor: "opaque" }))).toEqual({ version: 1, phase: "poll", predicate, poll_cursor: "opaque" });
-    expect(decodeDatabaseSubscription({ version: 1, phase: "poll", groups: [{ sequence: maxU64.toString(), effects: [{ document, point: null }] }], poll_cursor: "opaque" })).toEqual({ version: 1, phase: "poll", groups: [{ sequence: maxU64, effects: [{ document, point: null }] }], poll_cursor: "opaque" });
-    expect(() => decodeDatabaseSubscription({ version: 1, phase: "snapshot", rows: [], next_snapshot_cursor: "a", poll_cursor: "b" })).toThrow(TypeError);
+    expect(JSON.parse(encodeDatabaseSubscription({ phase: "poll", predicate, poll_cursor: opaque }))).toEqual({ version: 1, phase: "poll", predicate, poll_cursor: opaque });
+    expect(decodeDatabaseSubscription({ version: 1, phase: "poll", groups: [{ sequence: maxU64.toString(), effects: [{ document, point: null }] }], poll_cursor: opaque })).toEqual({ version: 1, phase: "poll", groups: [{ sequence: maxU64, effects: [{ document, point: null }] }], poll_cursor: opaque });
+    expect(() => decodeDatabaseSubscription({ version: 1, phase: "snapshot", rows: [], next_snapshot_cursor: "AQ", poll_cursor: "AA" })).toThrow(TypeError);
+  });
+
+  test.each([
+    { name: "one byte", cursor: "AQ" },
+    { name: "two bytes", cursor: "AAA" },
+    { name: "three bytes", cursor: "AAAA" },
+    { name: "URL-safe alphabet", cursor: "-_8" },
+    { name: "maximum length", cursor: "A".repeat(1024) },
+  ])("preserves canonical opaque cursors in requests and responses: $name", ({ cursor }) => {
+    const predicate = { op: "is_missing", path: [1] } as const;
+    expect(JSON.parse(encodeDatabaseQuery({ predicate, limit: 1, cursor }))).toEqual({ version: 1, predicate, limit: 1, cursor });
+    expect(decodeDatabaseQueryPage({ version: 1, rows: [], next_cursor: cursor })).toEqual({ version: 1, rows: [], next_cursor: cursor });
+    expect(JSON.parse(encodeDatabaseSubscription({ phase: "snapshot", predicate, limit: 1, snapshot_cursor: cursor }))).toEqual({ version: 1, phase: "snapshot", predicate, limit: 1, snapshot_cursor: cursor });
+    expect(JSON.parse(encodeDatabaseSubscription({ phase: "poll", predicate, poll_cursor: cursor }))).toEqual({ version: 1, phase: "poll", predicate, poll_cursor: cursor });
+    expect(decodeDatabaseSubscription({ version: 1, phase: "snapshot", rows: [], next_snapshot_cursor: cursor })).toEqual({ version: 1, phase: "snapshot", rows: [], next_snapshot_cursor: cursor });
+    expect(decodeDatabaseSubscription({ version: 1, phase: "snapshot", rows: [], poll_cursor: cursor })).toEqual({ version: 1, phase: "snapshot", rows: [], poll_cursor: cursor });
+    expect(decodeDatabaseSubscription({ version: 1, phase: "poll", groups: [], poll_cursor: cursor })).toEqual({ version: 1, phase: "poll", groups: [], poll_cursor: cursor });
+  });
+
+  test.each([
+    { name: "empty", cursor: "" },
+    { name: "impossible length", cursor: "A" },
+    { name: "nonzero four padding bits", cursor: "AB" },
+    { name: "nonzero two padding bits", cursor: "AAB" },
+    { name: "single padding character", cursor: "AQ=" },
+    { name: "double padding characters", cursor: "AQ==" },
+    { name: "leading whitespace", cursor: " AQ" },
+    { name: "trailing whitespace", cursor: "AQ " },
+    { name: "trailing newline", cursor: "AQ\n" },
+    { name: "standard base64 plus", cursor: "AQ+" },
+    { name: "standard base64 slash", cursor: "AQ/" },
+    { name: "oversized", cursor: "A".repeat(1025) },
+  ])("rejects noncanonical or oversized cursors in requests and responses: $name", ({ cursor }) => {
+    const predicate = { op: "is_missing", path: [1] } as const;
+    expect(() => encodeDatabaseQuery({ predicate, limit: 1, cursor })).toThrow(TypeError);
+    expect(() => decodeDatabaseQueryPage({ version: 1, rows: [], next_cursor: cursor })).toThrow(TypeError);
+    expect(() => encodeDatabaseSubscription({ phase: "snapshot", predicate, limit: 1, snapshot_cursor: cursor })).toThrow(TypeError);
+    expect(() => encodeDatabaseSubscription({ phase: "poll", predicate, poll_cursor: cursor })).toThrow(TypeError);
+    expect(() => decodeDatabaseSubscription({ version: 1, phase: "snapshot", rows: [], next_snapshot_cursor: cursor })).toThrow(TypeError);
+    expect(() => decodeDatabaseSubscription({ version: 1, phase: "snapshot", rows: [], poll_cursor: cursor })).toThrow(TypeError);
+    expect(() => decodeDatabaseSubscription({ version: 1, phase: "poll", groups: [], poll_cursor: cursor })).toThrow(TypeError);
+  });
+
+  test("initial requests and terminal query pages omit optional cursors", () => {
+    const predicate = { op: "is_missing", path: [1] } as const;
+    expect(JSON.parse(encodeDatabaseQuery({ predicate, limit: 1 }))).toEqual({ version: 1, predicate, limit: 1 });
+    expect(JSON.parse(encodeDatabaseSubscription({ phase: "snapshot", predicate, limit: 1 }))).toEqual({ version: 1, phase: "snapshot", predicate, limit: 1 });
+    expect(decodeDatabaseQueryPage({ version: 1, rows: [] })).toEqual({ version: 1, rows: [] });
+    expect(() => decodeDatabaseQueryPage({ version: 1, rows: [], next_cursor: null })).toThrow(TypeError);
+    expect(() => decodeDatabaseSubscription({ version: 1, phase: "snapshot", rows: [] })).toThrow(TypeError);
   });
 
   test("fingerprints exact logical effects independently of transaction identity", async () => {

@@ -2,33 +2,18 @@
 
 Status: Accepted.
 
-Date: 2026-08-29
+Keep SQLite behind explicit `@terrascale/sdk/local` Node conditions and require
+`sqlite: { enabled: true, databasePath: "/absolute/path/local.sqlite" }`. Reject
+production, CI, qualification, staging and deployment indicators before opening
+storage. Test helpers preserve these indicators and skip prohibited local suites.
 
-## Context
+The local runtime binds explicit native collection schemas, retains complete
+points, atomic transactions and durable local status, and uses frozen snapshot
+cursors and finite subscription poll groups. Its local state tokens and writer
+authority do not prove producer compatibility or regional durability.
 
-The SDK needs a fast local runtime for Dashboard and customer contract
-development while TerraScale.Database is being qualified. SQLite
-cannot represent the production durability, multi-Region, authorization,
-reactive, usage, backup, provider, or performance contract.
-
-## Decision
-
-Keep SQLite behind the explicit `@terrascale/sdk/local` entrypoint and require
-`sqlite: { enabled: true, databasePath: "/absolute/path/local.sqlite" }`. The runtime rejects
-relative paths, in-memory paths, and production, CI, qualification, staging,
-or deployment environment indicators before it opens SQLite. Root, `admin`,
-and `better-auth` clients reject SQLite configuration.
-
-The HTTP server binds to loopback by default. A non-loopback bind requires
-`allowRemote: true`, `authentication: "required"`, and an explicit bearer token
-of at least 32 characters. The CLI reads that token only from
-`TERRASCALE_LOCAL_BEARER_TOKEN`; it does not print it. Protected routes compare
-the supplied Bearer credential with the configured token and do not accept an
-arbitrary cookie or nonempty authorization header.
-
-## Consequences
-
-Local semantic tests are useful for route and lifecycle behavior, but they do
-not prove TerraScale.Database replication, RF=2 durability, failover, authorization,
-usage, billing, external providers, reactive cross-language parity, or
-performance. They cannot substitute for live service qualification.
+The listener defaults to loopback. Remote binding requires `allowRemote: true`,
+required authentication and an explicit bearer token of at least 32 characters.
+The CLI reads that token from `TERRASCALE_LOCAL_BEARER_TOKEN` without printing it.
+Local Better Auth uses actual SQLite transactions and official maintained tests;
+it cannot replace production security or deployed customer qualification.

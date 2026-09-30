@@ -4,26 +4,18 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
-
-function required(name) {
-  const value = process.env[name];
-  if (typeof value !== "string" || value.length === 0) throw new Error(`Missing ${name}; real producer qualification is incomplete.`);
-  return value;
-}
+import { journeyConfiguration } from "./journey-configuration.mjs";
 
 export function qualificationConfiguration() {
-  const tarball = path.resolve(required("TERRASCALE_SDK_TARBALL"));
-  const digest = required("TERRASCALE_SDK_TARBALL_SHA256");
-  if (!/^[0-9a-f]{64}$/u.test(digest)) throw new Error("Artifact SHA-256 is not canonical.");
-  for (const name of ["TERRABASE_ENDPOINT", "TERRABASE_TENANT", "TERRABASE_DATABASE", "TERRABASE_COLLECTION", "TERRABASE_SHARD", "TERRABASE_SCHEMA_GENERATION", "TERRABASE_SCHEMA_DIGEST", "TERRABASE_API_KEY", "TERRABASE_DENY_API_KEY", "TERRABASE_TEST_FIELD_ID", "TERRABASE_TEST_FIELD_TYPE"]) required(name);
-  if (process.env.TERRABASE_API_KEY === process.env.TERRABASE_DENY_API_KEY) throw new Error("Denied-scope credential must differ from the allowed credential.");
-  if (!["utf8", "i64"].includes(process.env.TERRABASE_TEST_FIELD_TYPE)) throw new Error("Qualification schema must admit an exact utf8 or i64 field.");
-  if (process.env.TERRABASE_ENDPOINT !== undefined) {
-    const endpoint = new URL(process.env.TERRABASE_ENDPOINT);
-    const hostname = endpoint.hostname.replace(/\.+$/u, "");
-    if (hostname === "api.terrascale.tech" || hostname.endsWith(".api.terrascale.tech")) throw new Error("The test API host is forbidden.");
+  const configuration = journeyConfiguration(process.env, "native");
+  if (configuration === undefined) {
+    throw new Error("Missing real allocation and artifact; real producer qualification is incomplete.");
   }
-  return { tarball, digest };
+  return {
+    tarball: path.resolve(configuration.inputs.TERRASCALE_SDK_TARBALL),
+    digest: configuration.inputs.TERRASCALE_SDK_TARBALL_SHA256,
+    routing: configuration.routing,
+  };
 }
 
 const consumerSource = String.raw`
@@ -125,6 +117,132 @@ try {
 }
 `;
 
+
+const atlasConsumerSource = String.raw`
+import assert from "node:assert/strict";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createTerraBaseClient } from "@terrascale/sdk";
+
+const env = process.env;
+const scope = { tenant: env.TERRABASE_TENANT, database: env.TERRABASE_DATABASE, shard: BigInt(env.TERRABASE_SHARD) };
+const nativeOrigin = "https://" + env.TERRABASE_EXPECTED_REGION.toLowerCase() + ".terrascale.tech";
+let atlasCalls = 0, nativeCalls = 0;
+const trace = async (input, init) => {
+  assert.ok(input instanceof Request, "the public SDK owns each typed request");
+  const origin = new URL(input.url).origin;
+  assert.ok(origin === "https://atlas.terrascale.tech" || origin === nativeOrigin, "actual receiver-ranked native origin");
+  assert.equal(input.redirect, "manual");
+  assert.equal(input.credentials, "omit");
+  if (origin === nativeOrigin && nativeCalls === 0) {
+    assert.equal(input.method, "GET", "first regional operation is a document read");
+    assert.equal(new URL(input.url).pathname, "/v1/tenants/" + scope.tenant + "/databases/" + scope.database + "/shards/" + scope.shard + "/collections/" + collection + "/documents/" + document);
+  }
+  if (origin === "https://atlas.terrascale.tech") atlasCalls++; else nativeCalls++;
+  const result = await fetch(input, init);
+  if (origin === "https://atlas.terrascale.tech" && result.status === 200) {
+    const bytes = Buffer.from(await result.clone().arrayBuffer());
+    const routing = JSON.parse(bytes.toString("utf8"));
+    assert.deepEqual(routing.scope, { tenant_id: scope.tenant, database_id: scope.database, shard_id: scope.shard.toString() });
+    assert.equal(routing.schema_version, 1);
+    const selected = [...routing.endpoints].sort((a, b) => a.priority - b.priority).find(endpoint => endpoint.capabilities.client_v1 && endpoint.capabilities.read && endpoint.capabilities.write && endpoint.capabilities.query && endpoint.capabilities.subscriptions);
+    assert.ok(selected, "admitted HTTP read/write/query/subscription endpoint");
+    assert.equal(selected.url, nativeOrigin, "closest eligible region independently supplied by allocation");
+    assert.equal(selected.capabilities.conditional_mutation, false);
+    assert.equal(selected.capabilities.atomic_groups, false);
+    assert.equal(selected.capabilities.security_state, false);
+    assert.equal(selected.security_writer, null);
+    process.stdout.write(JSON.stringify({ label: "atlas-readback", status: result.status, response_sha256: createHash("sha256").update(bytes).digest("hex"), authority: routing.authority, revision: routing.revision, published_at: routing.published_at, expires_at: routing.expires_at, refreshSeconds: routing.refreshSeconds, selected_origin: selected.url }) + "\n");
+  }
+  return result;
+};
+const config = { ...scope, apiKey: env.TERRABASE_API_KEY, fetch: trace };
+const client = createTerraBaseClient(config);
+assert.equal(atlasCalls + nativeCalls, 0, "construction does not dispatch or prove readiness");
+const collection = env.TERRABASE_COLLECTION, document = randomUUID();
+const fieldId = Number(env.TERRABASE_TEST_FIELD_ID);
+assert.ok(Number.isInteger(fieldId) && fieldId > 0);
+const value = env.TERRABASE_TEST_FIELD_TYPE === "i64" ? { type: "i64", value: -9223372036854775808n } : { type: "utf8", value: "atlas-package-" + document };
+const binding = { collection, document, schema_generation: BigInt(env.TERRABASE_SCHEMA_GENERATION), schema_digest: env.TERRABASE_SCHEMA_DIGEST };
+const authority = { mode: "leaderless" };
+const identity = () => ({ expires_at_unix_ms: BigInt(Date.now() + 10 * 60 * 1000), nonce: randomBytes(16).toString("hex") });
+const mutation = (condition, observed, value) => ({ transaction_id: identity(), authority, writes: [{ ...binding, condition, observed, value }] });
+const observe = (label, result) => {
+  process.stdout.write(JSON.stringify({ label, ok: result.ok, ...(result.ok ? { status: result.status } : { code: result.error.code, status: result.error.status, mutation_outcome: result.error.mutation_outcome }) }) + "\n");
+  return result;
+};
+const success = (label, result) => { observe(label, result); assert.equal(result.ok, true, label); return result.value; };
+let pending;
+const reportPending = () => {
+  if (pending !== undefined) process.stdout.write(JSON.stringify({ label: "unresolved-operation", document, transaction_id: { expires_at_unix_ms: pending.transaction_id.expires_at_unix_ms.toString(), nonce: pending.transaction_id.nonce }, effect_digest: pending.effect_digest, allocation: env.TERRASCALE_QUALIFICATION_ALLOCATION_ID }) + "\n");
+};
+const commit = async (label, request) => {
+  const prepared = await client.prepareCommit(request);
+  pending = prepared;
+  const result = await client.commit(prepared);
+  if (!result.ok) {
+    observe(label, result);
+    let resolved;
+    try { resolved = success(label + "-resolution", await client.transactionStatus(prepared)); }
+    catch (error) { reportPending(); throw error; }
+    if (resolved.state === "committed") { pending = undefined; return { prepared, receipt: resolved.outcome.receipt }; }
+    if (resolved.state === "rejected") pending = undefined;
+    reportPending();
+    throw new Error("Native mutation failed or remains unresolved; retain the allocation and operation identity.");
+  }
+  pending = undefined;
+  return { prepared, receipt: success(label, result) };
+};
+try {
+  assert.equal(success("initial-read", await client.read(collection, document)).state, "absent");
+  const created = await commit("unconditional-create", mutation({ kind: "none" }, [], { kind: "live", fields: [{ id: fieldId, value }] }));
+  assert.deepEqual(success("exact-retry", await client.commit(created.prepared)), created.receipt);
+  const retained = success("committed-status", await client.transactionStatus(created.prepared));
+  assert.equal(retained.state, "committed"); assert.deepEqual(retained.outcome.receipt, created.receipt);
+  const point = success("read-value", await client.read(collection, document));
+  assert.equal(point.state, "value"); assert.deepEqual(point.siblings[0].fields, [{ id: fieldId, value }]);
+  const predicate = { op: "equal", path: [fieldId], value };
+  assert.ok(success("query", await client.query(collection, { predicate, limit: 128 })).rows.some(row => row.document === document));
+  let snapshot = success("subscription-snapshot", await client.subscription(collection, { phase: "snapshot", predicate, limit: 128 }));
+  let pages = 0;
+  while ("next_snapshot_cursor" in snapshot) {
+    assert.ok(++pages < 20);
+    snapshot = success("subscription-page", await client.subscription(collection, { phase: "snapshot", predicate, limit: 128, snapshot_cursor: snapshot.next_snapshot_cursor }));
+  }
+  const beforeAdvanced = nativeCalls;
+  const conditional = await client.prepareCommit(mutation({ kind: "version", version: point.state_version }, point.context, { kind: "tombstone" }));
+  const deniedConditional = observe("conditional-capability-closed", await client.commit(conditional));
+  assert.equal(deniedConditional.ok, false); assert.equal(deniedConditional.error.code, "capability_unavailable"); assert.equal(deniedConditional.error.mutation_outcome, "unknown");
+  const groupRequest = mutation({ kind: "none" }, point.context, { kind: "tombstone" });
+  const groupWrites = [...groupRequest.writes, { ...groupRequest.writes[0], document: randomUUID() }].sort((a, b) => a.document < b.document ? -1 : 1);
+  const group = await client.prepareCommit({ ...groupRequest, writes: groupWrites });
+  const deniedGroup = observe("atomic-group-capability-closed", await client.commit(group));
+  assert.equal(deniedGroup.ok, false); assert.equal(deniedGroup.error.code, "capability_unavailable");
+  assert.equal(nativeCalls, beforeAdvanced, "unsupported capabilities do no native dispatch");
+  const denied = observe("denied-scope", await createTerraBaseClient({ ...config, apiKey: env.TERRABASE_DENY_API_KEY }).read(collection, document));
+  assert.equal(denied.ok, false); assert.ok(["discovery_forbidden", "invalid_key", "forbidden_scope"].includes(denied.error.code));
+  await commit("unconditional-delete", mutation({ kind: "none" }, point.context, { kind: "tombstone" }));
+  const poll = success("subscription-poll", await client.subscription(collection, { phase: "poll", predicate, poll_cursor: snapshot.poll_cursor }));
+  assert.equal(poll.phase, "poll");
+  assert.ok(poll.groups.some(group => group.effects.some(effect => effect.document === document && effect.point === null)));
+  const unknown = success("unknown-status", await client.transactionStatus({ transaction_id: identity(), authority, effect_digest: created.prepared.effect_digest }));
+  assert.equal(unknown.state, "unknown"); assert.equal(unknown.outcome, null);
+} finally {
+  if (pending !== undefined) {
+    reportPending();
+    throw new Error("Pending native effect prevents cleanup; reconcile the retained operation before releasing this allocation.");
+  }
+  let final = success("cleanup-read", await client.read(collection, document));
+  if (final.state === "value" || final.state === "conflict") {
+    await commit("failure-cleanup", mutation({ kind: "none" }, final.context, { kind: "tombstone" }));
+    final = success("cleanup-readback", await client.read(collection, document));
+  }
+  assert.ok(final.state === "deleted" || final.state === "absent");
+  process.stdout.write(JSON.stringify({ label: "cleanup", document, outcome: final.state, retained_tombstone: final.state === "deleted", allocation: env.TERRASCALE_QUALIFICATION_ALLOCATION_ID }) + "\n");
+}
+assert.ok(atlasCalls > 0 && nativeCalls > 0);
+process.stdout.write(JSON.stringify({ label: "hosted-native-atlas", atlas_calls: atlasCalls, native_calls: nativeCalls, native_origin: nativeOrigin, receiver_contract_sha256: "7cd7d037772cd79d662e1117912673e8fd6fe684286099e5b7f3271358526547", advanced_capabilities: "withheld" }) + "\n");
+`;
+
 export async function qualifyCurrentProducer() {
   const config = qualificationConfiguration();
   const artifact = await readFile(config.tarball);
@@ -133,13 +251,13 @@ export async function qualifyCurrentProducer() {
   const consumer = await mkdtemp(path.join(tmpdir(), "terrascale-typescript-current-consumer-"));
   try {
     await writeFile(path.join(consumer, "package.json"), JSON.stringify({ private: true, type: "module", dependencies: { "@terrascale/sdk": `file:${config.tarball}` } }));
-    await writeFile(path.join(consumer, "journey.mjs"), consumerSource);
+    await writeFile(path.join(consumer, "journey.mjs"), config.routing === "atlas" ? atlasConsumerSource : consumerSource);
     const installation = spawnSync("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--cache", path.join(consumer, ".npm-cache")], { cwd: consumer, encoding: "utf8", timeout: 120000 });
     if (installation.status !== 0) throw new Error("Independent package installation failed.");
     const run = spawnSync(process.execPath, ["journey.mjs"], { cwd: consumer, encoding: "utf8", timeout: 120000, env: process.env });
     process.stdout.write(run.stdout ?? "");
     if (run.status !== 0) throw new Error("Real packaged consumer journey failed; retain the redacted observations and producer allocation for reconciliation.");
-    process.stdout.write(JSON.stringify({ label: "artifact", sha256: digest, package_consumer: "independent-install", producer: "configured-real-service" }) + "\n");
+    process.stdout.write(JSON.stringify({ label: "artifact", sha256: digest, package_consumer: "independent-install", producer: "configured-real-service", routing: config.routing, scope: config.routing === "atlas" ? "admitted-http-discovery-operations-only" : "provisioned-local-native-exclusion-atomic-conformance" }) + "\n");
   } finally { await rm(consumer, { recursive: true, force: true }); }
 }
 

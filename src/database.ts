@@ -10,14 +10,17 @@ import type {
   DatabaseTransactionStatus,
 } from "./database-types.js";
 import type { FetchLike } from "./config.js";
+import { TerraBaseDiscoveryError, TerraBaseDiscoveryRouter, type TerraBaseRoutingCapability } from "./discovery.js";
 
 const maximumResponseBytes = 4 * 1024 * 1024;
 
 export type TerraBaseClientConfig = DatabaseScope & {
   /** TerraBase native service key, sent only to the selected regional listener. */
   readonly apiKey: string | (() => string | Promise<string>);
-  /** A provisioned direct origin; required until scoped Atlas discovery is admitted. */
+  /** A provisioned direct origin. Omit to use authenticated native Atlas discovery. */
   readonly endpoint?: string;
+  /** Bounds the canonical Atlas request within the complete operation deadline. */
+  readonly discoveryTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
   readonly fetch?: FetchLike;
 };
@@ -26,7 +29,7 @@ export type DatabaseRequestOptions = { readonly signal?: AbortSignal };
 
 declare const preparedBrand: unique symbol;
 export type PreparedDatabaseCommit = DatabaseTransactionIdentity & { readonly [preparedBrand]: true };
-const preparedRequests = new WeakMap<PreparedDatabaseCommit, { readonly client: TerraBaseClient; readonly scope: string; readonly endpoint: string | undefined; readonly body: string }>();
+const preparedRequests = new WeakMap<PreparedDatabaseCommit, { readonly client: TerraBaseClient; readonly scope: string; readonly endpoint: string | undefined; readonly body: string; readonly capabilities: readonly TerraBaseRoutingCapability[] }>();
 
 function bareOrigin(raw: string, local: boolean): string {
   const url = new URL(raw);
@@ -70,7 +73,10 @@ function routeError(raw: unknown): string {
 
 async function responseJson(response: Response, signal: AbortSignal): Promise<unknown> {
   const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-  if (mediaType !== "application/json") throw new TypeError("Expected application/json.");
+  if (mediaType !== "application/json") {
+    void response.body?.cancel().catch(() => undefined);
+    throw new TypeError("Expected application/json.");
+  }
   const reader = response.body?.getReader();
   if (reader === undefined) throw new TypeError("Response has no JSON body.");
   const parts: Uint8Array[] = [];
@@ -93,12 +99,38 @@ async function responseJson(response: Response, signal: AbortSignal): Promise<un
   return parseDatabaseJson(bytes);
 }
 
-async function withCancellation<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  signal.throwIfAborted();
+function withCancellation<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+  disposeLateValue?: (value: T) => void,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const abort = (): void => reject(signal.reason);
-    signal.addEventListener("abort", abort, { once: true });
-    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    const cleanup = (): void => signal.removeEventListener("abort", abort);
+    const abort = (): void => {
+      cleanup();
+      reject(signal.reason);
+    };
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    // Observe the started operation even if it aborted synchronously before
+    // this wrapper ran; a late fetch result still owns a response body.
+    void promise.then(
+      value => {
+        cleanup();
+        if (signal.aborted) {
+          try {
+            disposeLateValue?.(value);
+          } catch {
+            // Cleanup cannot replace the terminal cancellation.
+          }
+          reject(signal.reason);
+        } else resolve(value);
+      },
+      error => {
+        cleanup();
+        reject(signal.aborted ? signal.reason : error);
+      },
+    );
   });
 }
 
@@ -109,6 +141,7 @@ export class TerraBaseClient {
   readonly #fetch: FetchLike;
   readonly #path: string;
   readonly #endpoint: string | undefined;
+  readonly #discovery: TerraBaseDiscoveryRouter | undefined;
   readonly #requestTimeoutMs: number;
 
   get scope(): DatabaseScope { return this.#scope; }
@@ -120,12 +153,13 @@ export class TerraBaseClient {
     this.#path = scopePath(this.#scope);
     this.#endpoint = config.endpoint === undefined ? undefined : bareOrigin(config.endpoint, true);
     this.#requestTimeoutMs = timeout(config.requestTimeoutMs, 30_000, 300_000);
+    this.#discovery = this.#endpoint === undefined ? new TerraBaseDiscoveryRouter(this.#scope, this.#fetch, config.discoveryTimeoutMs) : undefined;
     if (typeof config.apiKey !== "function") this.#validateKey(config.apiKey);
   }
 
   read(collection: string, document: string, options: DatabaseRequestOptions = {}): Promise<DatabaseResult<DatabasePoint>> {
     const path = `${this.#collectionPath(collection)}/documents/${requireDatabaseUuid(document, "document")}`;
-    return this.#request(path, "GET", undefined, raw => this.#scopedPoint(decodeDatabasePoint(raw)), options);
+    return this.#request(path, "GET", undefined, raw => this.#scopedPoint(decodeDatabasePoint(raw)), options, ["client_v1", "read"]);
   }
 
   query(collection: string, query: DatabaseQuery, options: DatabaseRequestOptions = {}): Promise<DatabaseResult<DatabaseQueryPage>> {
@@ -136,7 +170,7 @@ export class TerraBaseClient {
       if (page.rows.length > limit) throw new TypeError("Query page exceeds the requested limit.");
       page.rows.forEach(row => this.#scopedPoint(row.point));
       return page;
-    }, options);
+    }, options, ["client_v1", "read", "query"]);
   }
 
   subscription(collection: string, request: DatabaseSubscriptionRequest, options: DatabaseRequestOptions = {}): Promise<DatabaseResult<DatabaseSubscriptionResponse>> {
@@ -150,26 +184,27 @@ export class TerraBaseClient {
       if (result.phase === "snapshot") result.rows.forEach(row => this.#scopedPoint(row.point));
       else result.groups.forEach(group => group.effects.forEach(effect => { if (effect.point !== null) this.#scopedPoint(effect.point); }));
       return result;
-    }, options);
+    }, options, ["client_v1", "read", "subscriptions"]);
   }
 
   /** Prepare once and retain this identity for exact retry and durable status resolution. */
   async prepareCommit(commit: DatabaseCommit): Promise<PreparedDatabaseCommit> {
-    if (commit.authority.mode === "single_writer" && this.#endpoint === undefined) {
-      throw new TypeError("Single-writer commits require their provisioned authority endpoint until scoped Atlas authority discovery is admitted.");
-    }
     const transaction_id = Object.freeze({ ...commit.transaction_id });
     const authority = identityAuthority(commit.authority);
+    const capabilities: TerraBaseRoutingCapability[] = ["client_v1", "write"];
+    if (commit.writes.some(write => write.condition.kind !== "none")) capabilities.push("conditional_mutation");
+    if (commit.writes.length > 1) capabilities.push("atomic_groups");
+    if (authority.mode === "single_writer") capabilities.push("security_state");
     const encoded = await encodeDatabaseCommit(this.#scope, commit);
     const prepared = Object.freeze({ transaction_id, authority, effect_digest: encoded.effect_digest }) as PreparedDatabaseCommit;
-    preparedRequests.set(prepared, { client: this, scope: this.#path, endpoint: this.#endpoint, body: encoded.body });
+    preparedRequests.set(prepared, { client: this, scope: this.#path, endpoint: this.#endpoint, body: encoded.body, capabilities: Object.freeze(capabilities) });
     return prepared;
   }
 
   commit(prepared: PreparedDatabaseCommit, options: DatabaseRequestOptions = {}): Promise<DatabaseResult<DatabaseCommitReceipt>> {
     const request = preparedRequests.get(prepared);
     if (request === undefined || request.client !== this || request.scope !== this.#path) throw new TypeError("Prepared commit belongs to another client or scope, or was not prepared by this SDK.");
-    if (prepared.authority.mode === "single_writer" && (this.#endpoint === undefined || request.endpoint !== this.#endpoint)) throw new TypeError("Single-writer commits require their preparing client's provisioned authority endpoint.");
+    if (request.endpoint !== this.#endpoint) throw new TypeError("Prepared commit belongs to another endpoint.");
     return this.#request(`${this.#path}/transactions`, "POST", request.body, raw => {
       const receipt = decodeDatabaseCommitReceipt(raw);
       if (receipt.event.database !== this.#scope.database || receipt.event.shard !== this.#scope.shard ||
@@ -178,14 +213,13 @@ export class TerraBaseClient {
         throw new TypeError("Receipt belongs to another operation or database scope.");
       }
       return receipt;
-    }, options, prepared);
+    }, options, request.capabilities, prepared);
   }
 
   /** Unknown, pending and expired outcomes remain unresolved; an absent document proves no abort. */
   transactionStatus(identity: DatabaseTransactionIdentity, options: DatabaseRequestOptions = {}): Promise<DatabaseResult<DatabaseTransactionStatus>> {
     const snapshot = Object.freeze({ ...identity, transaction_id: Object.freeze({ ...identity.transaction_id }), authority: identityAuthority(identity.authority) });
     const body = encodeDatabaseStatus(snapshot);
-    if (snapshot.authority.mode === "single_writer" && this.#endpoint === undefined) throw new TypeError("Single-writer status requires its provisioned authority endpoint.");
     return this.#request(`${this.#path}/transactions/status`, "POST", body, raw => {
       const status = decodeDatabaseStatus(raw);
       if (status.effect_digest !== snapshot.effect_digest || status.transaction_id.nonce !== snapshot.transaction_id.nonce || status.transaction_id.expires_at_unix_ms !== snapshot.transaction_id.expires_at_unix_ms || JSON.stringify(encodeDatabaseAuthority(status.authority)) !== JSON.stringify(encodeDatabaseAuthority(snapshot.authority))) {
@@ -193,7 +227,7 @@ export class TerraBaseClient {
       }
       if (status.state === "committed" && (status.outcome.receipt.event.database !== this.#scope.database || status.outcome.receipt.event.shard !== this.#scope.shard)) throw new TypeError("Status receipt belongs to another database scope.");
       return status;
-    }, options);
+    }, options, snapshot.authority.mode === "single_writer" ? ["client_v1", "write", "security_state"] : ["client_v1", "write"]);
   }
 
   #collectionPath(collection: string): string { return `${this.#path}/collections/${requireDatabaseUuid(collection, "collection")}`; }
@@ -210,31 +244,39 @@ export class TerraBaseClient {
     return key;
   }
 
-  #origin(): string {
-    if (this.#endpoint === undefined) throw new Error("discovery_contract_unavailable");
-    return this.#endpoint;
-  }
-
-  async #request<T>(path: string, method: "GET" | "POST", body: string | undefined, decode: (raw: unknown) => T, options: DatabaseRequestOptions, transaction?: DatabaseTransactionIdentity): Promise<DatabaseResult<T>> {
+  async #request<T>(path: string, method: "GET" | "POST", body: string | undefined, decode: (raw: unknown) => T, options: DatabaseRequestOptions, capabilities: readonly TerraBaseRoutingCapability[], transaction?: DatabaseTransactionIdentity): Promise<DatabaseResult<T>> {
     let sent = false;
     let responseStatus: number | undefined;
     const signal = AbortSignal.any([AbortSignal.timeout(this.#requestTimeoutMs), ...(options.signal === undefined ? [] : [options.signal])]);
     try {
       signal.throwIfAborted();
-      const origin = this.#origin();
       const apiKey = this.#validateKey(typeof this.#config.apiKey === "function" ? await withCancellation(Promise.resolve(this.#config.apiKey()), signal) : this.#config.apiKey);
+      const endpoint = this.#endpoint === undefined ? await this.#discovery!.resolve(apiKey, capabilities, signal) : undefined;
+      const origin = this.#endpoint ?? endpoint!.url;
       signal.throwIfAborted();
       const headers = new Headers({ accept: "application/json", authorization: `Bearer ${apiKey}` });
       if (body !== undefined) headers.set("content-type", "application/json");
-      const request = new Request(new URL(path, origin), { method, headers, redirect: "manual", signal, ...(body === undefined ? {} : { body }) });
+      const request = new Request(new URL(path, origin), { method, headers, credentials: "omit", redirect: "manual", cache: "no-store", referrerPolicy: "no-referrer", signal, ...(body === undefined ? {} : { body }) });
+      if (endpoint !== undefined) this.#discovery!.assertCurrent(endpoint);
       sent = true;
-      const response = await withCancellation(this.#fetch(request), signal);
+      const response = await withCancellation(this.#fetch(request), signal, response => {
+        void response.body?.cancel().catch(() => undefined);
+      });
       responseStatus = response.status;
+      if (signal.aborted) {
+        void response.body?.cancel().catch(() => undefined);
+        signal.throwIfAborted();
+      }
+      if (response.redirected) {
+        void response.body?.cancel().catch(() => undefined);
+        throw new TypeError("Native redirects are not admitted.");
+      }
       if (response.ok && response.status !== 200) {
         void response.body?.cancel().catch(() => undefined);
         throw new TypeError("The native protocol admits only HTTP 200 success.");
       }
       const raw = await responseJson(response, signal);
+      signal.throwIfAborted();
       if (!response.ok) {
         const code = routeError(raw);
         // Authentication, cancellation and changed-effect errors do not resolve an earlier attempt.
@@ -243,8 +285,9 @@ export class TerraBaseClient {
       }
       return { ok: true, status: response.status, value: decode(raw) };
     } catch (error) {
-      const code = signal.aborted ? "cancelled" : error instanceof TypeError || error instanceof SyntaxError ? "invalid_response" : error instanceof Error && ["discovery_contract_unavailable"].includes(error.message) ? error.message : "transport_unavailable";
-      return { ok: false, error: { code, ...(responseStatus === undefined ? {} : { status: responseStatus }), ...(transaction === undefined ? {} : { transaction, mutation_outcome: sent ? "uncertain" : "unknown" }) } };
+      const code = signal.aborted ? "cancelled" : error instanceof TerraBaseDiscoveryError ? error.code : error instanceof TypeError || error instanceof SyntaxError ? "invalid_response" : "transport_unavailable";
+      const status = responseStatus ?? (error instanceof TerraBaseDiscoveryError ? error.status : undefined);
+      return { ok: false, error: { code, ...(status === undefined ? {} : { status }), ...(transaction === undefined ? {} : { transaction, mutation_outcome: sent ? "uncertain" : "unknown" }) } };
     }
   }
 }

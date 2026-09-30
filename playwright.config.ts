@@ -3,10 +3,9 @@ import { defineConfig, devices } from "@playwright/test";
 delete process.env.NO_COLOR;
 delete process.env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS;
 
-const localChromium = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
-const localChromiumLaunch = localChromium === undefined
-  ? {}
-  : { launchOptions: { executablePath: localChromium } };
+const chrome =
+  process.env.PLAYWRIGHT_CHROME_EXECUTABLE_PATH?.trim() || undefined;
+const edge = process.env.PLAYWRIGHT_EDGE_EXECUTABLE_PATH?.trim() || undefined;
 
 export default defineConfig({
   testDir: "./browser-tests",
@@ -26,13 +25,25 @@ export default defineConfig({
   projects: [
     {
       name: "chrome-current",
-      use: { ...devices["Desktop Chrome"], ...localChromiumLaunch },
+      use: {
+        ...devices["Desktop Chrome"],
+        channel: "chrome",
+        ...(chrome === undefined
+          ? {}
+          : { launchOptions: { executablePath: chrome } }),
+      },
     },
     { name: "firefox-current", use: { ...devices["Desktop Firefox"] } },
-    { name: "safari-current", use: { ...devices["Desktop Safari"] } },
+    { name: "webkit-current", use: { ...devices["Desktop Safari"] } },
     {
       name: "edge-current",
-      use: { ...devices["Desktop Edge"], ...localChromiumLaunch },
+      use: {
+        ...devices["Desktop Edge"],
+        channel: "msedge",
+        ...(edge === undefined
+          ? {}
+          : { launchOptions: { executablePath: edge } }),
+      },
     },
   ],
 });

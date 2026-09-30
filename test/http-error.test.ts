@@ -1,145 +1,160 @@
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
+import { createTsAuthClient } from "../src/ts-auth.js";
 
-import { TerraScaleHttp } from "../src/http.js";
-import type { TerraScaleError } from "../src/result.js";
-
-function httpWith(body: unknown, status = 422, headers?: HeadersInit): TerraScaleHttp {
-  return new TerraScaleHttp({
-    apiBaseUrl: "https://api.terrascale.test",
-    fetch: async () => Response.json(body, { status, headers }),
+test("named OIDC errors preserve RFC6749 codes and safe response diagnostics", async () => {
+  const client = createTsAuthClient({
+    apiBaseUrl: "https://auth.example.test",
+    instanceSlug: "example",
+    fetch: async () =>
+      Response.json(
+        {
+          error: "invalid_client",
+          error_description: "Client authentication failed.",
+          category: "Authentication",
+          traceId: "safe-trace",
+          access_token: "oidc-diagnostic-canary",
+        },
+        { status: 401, headers: { "x-request-id": "safe-request" } },
+      ),
   });
-}
-
-async function requestError(http: TerraScaleHttp): Promise<TerraScaleError> {
-  const result = await http.request({
-    method: "GET",
-    path: "/api/v1/databases/demo/sql",
-    routeName: "sql.execute",
+  const result = await client.oidc.token("id", "secret", {
+    grant_type: "client_credentials",
+    resource: "https://api.example.test/management",
+    scope: "management:read",
   });
-  assert.equal(result.ok, false);
-  if (result.ok) throw new Error("expected a typed HTTP error");
-  return result.error;
-}
-
-test("preserves the published nested error fix as a typed public field", async () => {
-  const error = await requestError(httpWith({
-    error: {
-      code: "invalid_query",
-      message: "The query is not subscribable.",
-      fix: "Use execute() for joins.",
-    },
-  }));
-
-  assert.equal(error.code, "invalid_query");
-  assert.equal(error.message, "The query is not subscribable.");
-  assert.equal(error.fix, "Use execute() for joins.");
-});
-
-test("keeps flat legacy errors and producer fix compatible", async () => {
-  const error = await requestError(httpWith({
-    error: "A valid projectId is required.",
-    code: "validation_error",
-    fix: "Provide a projectId.",
-  }, 400));
-
-  assert.equal(error.code, "validation_error");
-  assert.equal(error.message, "A valid projectId is required.");
-  assert.equal(error.fix, "Provide a projectId.");
-});
-
-test("does not treat non-string fixes as public producer metadata", async () => {
-  const error = await requestError(httpWith({
-    error: { code: "invalid_query", message: "bad query", fix: { url: "https://secret.test" } },
-  }));
-
-  assert.equal(error.fix, undefined);
-});
-
-test("retains only published request and routing observations alongside a fix", async () => {
-  const http = httpWith(
-    {
-      error: {
-        code: "misdirected_request",
-        message: "This Region does not host the database.",
-        fix: "Retry against the advertised placement.",
-      },
-    },
-    421,
-    {
-      "x-request-id": "request-123",
-      "x-terrascale-placement": "SFO",
-      "x-terrascale-operator-host": "node.internal",
-    },
-  );
-
-  const result = await http.request({
-    method: "GET",
-    path: "/api/v1/databases/demo",
-    routeName: "databases.get",
-  });
-
-  assert.equal(result.ok, false);
-  if (result.ok) throw new Error("expected a typed HTTP error");
-  assert.equal(result.error.fix, "Retry against the advertised placement.");
-  assert.equal(result.error.requestId, "request-123");
-  assert.equal(result.routing, undefined);
-  assert.equal("operatorHost" in result, false);
-  assert.equal("url" in result.error, false);
-});
-
-test("redacts secret-bearing fields, query values, and URLs from hostile error bodies", async () => {
-  const apiKey = "ts_api_key_canary_123";
-  const session = "session_canary_456";
-  const querySecret = "query_secret_canary_789";
-  const body = {
-    error: {
-      code: "invalid_query",
-      message: `authorization: Bearer ${apiKey}; see https://logs.example.test/failure?access_token=${apiKey}`,
-      apiKey,
-      authorization: `Bearer ${apiKey}`,
-      sessionToken: session,
-      token: "bare_token_canary",
-      query: querySecret,
-      nested: {
-        callbackUrl: `https://example.test/callback?token=${session}`,
-        opaqueUrl: "https://example.test/failure?value=opaque_url_secret",
-      },
-    },
-    diagnostics: [`query=${querySecret}`, { password: "password_canary" }],
-  };
-  const result = await new TerraScaleHttp({
-    apiBaseUrl: "https://api.terrascale.test",
-    fetch: async () => Response.json(body, { status: 400 }),
-  }).request({ method: "GET", path: "/api/v1/regions", routeName: "regions.list" });
-
-  assert.equal(result.ok, false);
-  const serialized = JSON.stringify(result);
-  for (const secret of [apiKey, session, querySecret, "password_canary", "bare_token_canary", "opaque_url_secret"]) {
-    assert.equal(serialized.includes(secret), false, `result leaked ${secret}`);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error.code).toBe("invalid_client");
+    expect(result.error.kind).toBe("authentication");
+    expect(result.status).toBe(401);
+    expect(result.error.status).toBe(401);
+    expect(result.error.category).toBe("Authentication");
+    expect(result.error.traceId).toBe("safe-trace");
+    expect(result.error.requestId).toBe("safe-request");
+    expect(result.headers?.get("x-request-id")).toBe("safe-request");
+    expect(result.body).toMatchObject({ access_token: "[redacted]" });
+    expect(JSON.stringify(result)).not.toContain("oidc-diagnostic-canary");
   }
-  assert.match(serialized, /\[redacted\]/u);
-  assert.equal(result.ok ? undefined : result.error.code, "invalid_query");
 });
 
-test("redacts secrets from rejecting fetch errors and preserves a typed transport failure", async () => {
-  const apiKey = "fetch_api_key_canary";
-  const session = "fetch_session_canary";
-  const http = new TerraScaleHttp({
-    apiBaseUrl: "https://api.terrascale.test",
-    fetch: async () => {
-      throw new Error(`request failed: https://proxy.example.test/?api_key=${apiKey} authorization=Bearer ${session}; opaque=https://proxy.example.test/?value=transport_url_secret`);
+test("malformed and non-JSON webhook responses omit secret-bearing diagnostics", async () => {
+  const secret = "whsec_quoted_response_canary";
+  for (const scenario of [
+    {
+      status: 201,
+      contentType: "application/json",
+      body: `{"signing_secret":"${secret}",`,
     },
-  });
+    { status: 201, contentType: "application/json", body: secret },
+    {
+      status: 401,
+      contentType: "application/json",
+      body: `{"signing_secret":"${secret}",`,
+    },
+    {
+      status: 200,
+      contentType: "text/html",
+      body: `{"signing_secret":"${secret}"}`,
+    },
+    {
+      status: 503,
+      contentType: "text/html",
+      body: `{"signing_secret":"${secret}"}`,
+    },
+  ]) {
+    const client = createTsAuthClient({
+      apiBaseUrl: "https://auth.example.test",
+      instanceSlug: "example",
+      fetch: async () =>
+        new Response(scenario.body, {
+          status: scenario.status,
+          headers: {
+            "content-type": scenario.contentType,
+            "x-request-id": "webhook-safe-request",
+          },
+        }),
+    });
+    const result = await client.webhooks.create({
+      url: "https://hooks.example.test/events",
+      events: ["user.*"],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.routeName).toBe("tsauth.webhooks.create");
+      expect(result.status).toBe(scenario.status);
+      expect(result.error.status).toBe(scenario.status);
+      expect(result.error.requestId).toBe("webhook-safe-request");
+      expect(result.headers?.get("x-request-id")).toBe("webhook-safe-request");
+      expect(result.error.kind).toBe(
+        scenario.status < 400
+          ? "invalid-response"
+          : scenario.status === 401
+            ? "authentication"
+            : "server",
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.error.details).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain(secret);
+      if (scenario.status < 400)
+        expect(result.error.message).toBe(
+          scenario.contentType === "application/json"
+            ? "ts-auth returned an invalid JSON response body."
+            : "ts-auth returned a non-JSON response body.",
+        );
+    }
+  }
+});
 
-  const result = await http.request({ method: "GET", path: "/api/v1/regions", routeName: "regions.list" });
-  assert.equal(result.ok, false);
-  if (result.ok) throw new Error("expected a transport failure");
-  const serialized = JSON.stringify(result);
-  assert.equal(serialized.includes(apiKey), false);
-  assert.equal(serialized.includes(session), false);
-  assert.equal(serialized.includes("transport_url_secret"), false);
-  assert.equal(result.error.kind, "transport");
-  assert.ok(result.error.details);
-  assert.match(result.error.message, /\[redacted URL\]/u);
+test("OAuth schema failures preserve HTTP metadata without retaining secret payloads", async () => {
+  const secret = "oauth_schema_response_canary";
+  for (const headerName of ["x-request-id", "traceparent"]) {
+    const client = createTsAuthClient({
+      apiBaseUrl: "https://auth.example.test",
+      instanceSlug: "example",
+      fetch: async () =>
+        Response.json(
+          { client: {}, client_secret: secret },
+          { status: 200, headers: { [headerName]: "oauth-safe-request" } },
+        ),
+    });
+    const operations = [
+      {
+        routeName: "tsauth.oauthClients.create",
+        invoke: () => client.oauthClients.create({}),
+      },
+      {
+        routeName: "tsauth.oauthClients.update",
+        invoke: () => client.oauthClients.update("id", { rotate_secret: true }),
+      },
+      {
+        routeName: "tsauth.oauthResources.update",
+        invoke: () =>
+          client.oauthResources.update("id", { expected_auth_epoch: 1 }),
+      },
+      {
+        routeName: "tsauth.oidc.token",
+        invoke: () =>
+          client.oidc.token("id", "secret", {
+            grant_type: "client_credentials",
+            resource: "https://api.example.test/management",
+            scope: "management:read",
+          }),
+      },
+    ];
+    for (const operation of operations) {
+      const result = await operation.invoke();
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.routeName).toBe(operation.routeName);
+        expect(result.status).toBe(200);
+        expect(result.error.status).toBe(200);
+        expect(result.error.kind).toBe("invalid-response");
+        expect(result.error.code).toBe("invalid_response");
+        expect(result.error.requestId).toBe("oauth-safe-request");
+        expect(result.headers?.get(headerName)).toBe("oauth-safe-request");
+        expect(result.body).toBeUndefined();
+        expect(JSON.stringify(result)).not.toContain(secret);
+      }
+    }
+  }
 });

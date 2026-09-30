@@ -7,447 +7,314 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { test } from "vitest";
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 const run = promisify(execFile);
-const forbiddenRoutePattern = /(?:\/api\/v\d+\/(?:auth|account|billing|pricing|onboarding\/payment)(?:[\/"'`: ]|$)|\/api\/v\d+\/projects\/\{[^}]+\}\/(?:auth|security)(?:[\/"'`: ]|$)|\b(?:auth|apiKeys|m2m|billing|pricing|payment|security)\.[a-z])/iu;
-const forbiddenSymbolPattern = /\b(?:AuthClient|ProjectAuth\w*|authBaseUrl|ApiKey\w*|M2M\w*|OnboardingPayment\w*|CreateOnboardingPayment\w*|ValidateOnboardingPayment\w*|RegisterOnboardingPayment\w*|PaymentMethod|Billing\w*|Pricing\w*|Security(?:Client|Settings\w*))\b/u;
 
-type PackedRouteManifest = {
-  readonly routes?: readonly {
-    readonly client?: string;
-    readonly operation?: string;
-    readonly routeName?: string;
-    readonly pathTemplate?: string;
-  }[];
-};
-
-test("trunk pushes and pull requests run native SDK checks while npm publication stays gated", async () => {
-  const [deploymentJson, workflow, packageJson, packageLock, nodeVersion] = await Promise.all([
-    readFile(path.join(repositoryRoot, ".terrascale", "deploy.json"), "utf8"),
-    readFile(path.join(repositoryRoot, ".forgejo", "workflows", "ci.yml"), "utf8"),
-    readFile(path.join(repositoryRoot, "package.json"), "utf8"),
-    readFile(path.join(repositoryRoot, "package-lock.json"), "utf8"),
-    readFile(path.join(repositoryRoot, ".node-version"), "utf8"),
-  ]);
-  const deployment = JSON.parse(deploymentJson) as DeployConfiguration;
-  const packageMetadata = JSON.parse(packageJson) as { readonly packageManager?: string };
-  const lock = JSON.parse(packageLock) as {
-    readonly lockfileVersion?: number;
-    readonly packages?: { readonly "": { readonly name?: string; readonly version?: string } };
-  };
-
-  assert.equal(deployment.repository, "ts-typescript");
-  assert.deepEqual(deployment.dependencies, [{
-    source: "src/",
-    target: "ts-dashboard",
-    reason: "SDK changes require the dashboard build and browser E2E",
-  }]);
-  assert.deepEqual(deployment.prProfiles.map((profile) => profile.name), ["static", "tests", "browser"]);
-  assert.deepEqual(profileDescriptions(deployment, "static"), [
-    "Clean install",
-    "Typecheck",
-    "Build SDK",
-    "Public contract fixture",
-    "OpenAPI contract descriptor",
-    "Route drift",
-    "Forbidden SDK surface",
-  ]);
-  assert.deepEqual(deployment.prProfiles.find((profile) => profile.name === "static")?.commands.at(-1), {
-    description: "Forbidden SDK surface",
-    command: "npm",
-    arguments: ["run", "check:forbidden-surface"],
-  });
-  assert.deepEqual(profileDescriptions(deployment, "tests"), ["Clean install", "Build SDK", "Complete SDK tests"]);
-  assert.deepEqual(profileDescriptions(deployment, "browser"), ["Clean install", "Build SDK", "Browser transports"]);
-  assert.deepEqual(
-    deployment.prProfiles.find((profile) => profile.name === "tests")?.commands.at(-1),
-    { description: "Complete SDK tests", command: "npm", arguments: ["test"] },
+test("deploy profiles retain mandatory current-source, framework and deployed release gates", async () => {
+  const deployment = JSON.parse(
+    await readFile(
+      path.join(repositoryRoot, ".terrascale/deploy.json"),
+      "utf8",
+    ),
   );
-  assert.deepEqual(
-    deployment.prProfiles.find((profile) => profile.name === "browser")?.commands.at(-1),
-    { description: "Browser transports", command: "npm", arguments: ["run", "test:browser"] },
-  );
-  for (const commands of [...deployment.releaseProfiles, ...deployment.buildTargets].map((profile) => profile.commands)) {
-    assert.deepEqual(commands.slice(0, 2).map((command) => command.description), ["Clean install", "Build SDK"]);
-  }
-  assert.deepEqual(
-    deployment.buildTargets[0]?.commands.map((command) => command.description),
-    ["Clean install", "Build SDK", "Forbidden SDK surface", "Unit and contract regression", "Qualify npm release candidate"],
-  );
-  assert.equal(deployment.buildTargets[0]?.outputPath, "artifacts/candidate");
-  assert.deepEqual(deployment.buildTargets[0]?.commands.at(-1), {
-    description: "Qualify npm release candidate",
-    command: "node",
-    arguments: ["scripts/qualify-npm-artifact.ts", "--release", "--output", "artifacts/candidate"],
-  });
-  assert.doesNotMatch(deploymentJson, /"command": "npm", "arguments": \["pack"/u);
-  assert.equal(packageMetadata.packageManager, "npm@11.18.0");
-  assert.equal(lock.lockfileVersion, 3);
-  assert.equal(lock.packages?.[""]?.name, "@terrascale/sdk");
-  assert.equal(lock.packages?.[""]?.version, "0.3.0");
-  assert.equal(deployment.releaseProfiles.every((profile) => profile.required), true);
-  assert.match(workflow, /^on:\n  push:\n    branches: \[develop, main\]$/mu);
-  assert.match(workflow, /^  pull_request:\n    branches: \[main\]$/mu);
-  assert.match(workflow, /^  workflow_dispatch:\n$/mu);
-  assert.match(workflow, /^permissions:\n  contents: read$/mu);
-  assert.doesNotMatch(workflow, /pull_request_target|schedule|workflow_call/u);
-  assert.doesNotMatch(workflow, /(?:ts-deploy|TERRASCALE_DEPLOY|NPM_TOKEN|TERRASCALE_E2E_)/u);
-
-  const jobs = ["static", "node", "browser"];
-  for (const job of jobs) {
-    const definition = jobDefinition(workflow, job);
-    assert.match(definition, /runs-on: terrascale-builder/u);
-    assert.match(definition, /timeout-minutes: (?:45|60)/u);
-    assert.doesNotMatch(definition, /container:\s*\n\s+image:/u);
-    assert.match(definition, /actions\/checkout@[0-9a-f]{40} # v6\.1\.0/u);
-    assert.match(definition, /ref: \$\{\{ forgejo\.sha \}\}/u);
-    assert.match(definition, /token: "\$\{\{ secrets\.REGISTRY_TOKEN \}\}"/u);
-    assert.match(definition, /persist-credentials: false/u);
-  }
-
-  const staticJob = jobDefinition(workflow, "static");
-  for (const command of [
-    "npm run typecheck",
-    "npm run build",
-    "npm run check:public-contract-fixture",
-    "npm run check:openapi-contract-descriptor",
-    "npm run check:route-manifest",
-    "npm run check:forbidden-surface",
+  for (const profile of [
+    ...deployment.prProfiles,
+    ...deployment.releaseProfiles,
+    ...deployment.buildTargets,
   ]) {
-    assert.match(staticJob, new RegExp(escapeRegExp(command), "u"));
+    assert.deepEqual(
+      profile.commands
+        .slice(0, 2)
+        .map((command: { description: string }) => command.description),
+      ["Clean install", profile.name === "static" ? "Typecheck" : "Build SDK"],
+    );
+    if (profile.name !== "browser")
+      assert.ok(
+        profile.commands.some((command: { arguments: string[] }) =>
+          command.arguments.includes("check:current-contract-inputs"),
+        ),
+      );
   }
-  for (const job of [staticJob, jobDefinition(workflow, "node")]) {
-    assert.match(job, /repository: TerraScale\/ts-rust/u);
-    assert.match(job, /repository: TerraScale\/ts-atlas/u);
-  }
-
-  const nodeJob = jobDefinition(workflow, "node");
-  assert.match(nodeJob, /strategy:\r?\n      fail-fast: false\r?\n      matrix:/u);
-  assert.match(nodeJob, /- node: "22\.23\.2"\n            sha256: [0-9a-f]{64}$/mu);
-  assert.match(nodeJob, new RegExp(`- node: "${escapeRegExp(nodeVersion.trim())}"$`, "mu"));
-  assert.match(nodeJob, /Install Node\.js \$\{\{ matrix\.node \}\}/u);
-  assert.match(nodeJob, /if: \$\{\{ matrix\.sha256 \}\}/u);
-  assert.match(nodeJob, /sha256sum --check --strict/u);
-  assert.match(nodeJob, /test "\$\(node --version\)" = "v\$\{NODE_VERSION\}"/u);
-  assert.match(nodeJob, /"\$\{NODE_VERSION\}" != "\$\(cat \.node-version\)"/u);
-  assert.match(nodeJob, /npm test/u);
-
-  const browserJob = jobDefinition(workflow, "browser");
-  assert.match(browserJob, /Confirm the repository Node\.js version/u);
-  assert.match(browserJob, /test "\$\(node --version\)" = "v\$\(cat \.node-version\)"/u);
-  assert.match(browserJob, /npx playwright install chromium firefox webkit/u);
-  assert.match(browserJob, /npm run test:browser/u);
-
-  assert.doesNotMatch(workflow, /(?:candidate|admit|publish|promote-npm-candidate)/iu);
-});
-test("release E2E configuration guard fails closed before skip-capable tests", async () => {
-  const guard = path.join(repositoryRoot, "scripts", "require-release-e2e-config.ts");
-  const environment = {
-    PATH: process.env.PATH ?? "",
-    TERRASCALE_API_BASE_URL: "https://api.example.test",
-    TERRASCALE_E2E_ACCESS_TOKEN: "test-token",
-    TERRASCALE_E2E_PROJECT_ID: "01J00000000000000000000000",
-    TERRASCALE_E2E_ORGANIZATION_ID: "01J00000000000000000000001",
-    TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID: "01J00000000000000000000002",
-  };
-
-  await assert.rejects(run(process.execPath, [guard], { env: { PATH: environment.PATH } }), /Release E2E configuration is missing/u);
-  await assert.rejects(
-    run(process.execPath, [guard], { env: { ...environment, TERRASCALE_API_BASE_URL: "not-a-url", TERRASCALE_E2E_PROJECT_ID: "not-a-ulid" } }),
-    /Release E2E configuration is invalid: TERRASCALE_API_BASE_URL, TERRASCALE_E2E_PROJECT_ID/u,
+  const release = deployment.releaseProfiles.find(
+    (profile: { name: string }) => profile.name === "release-e2e",
   );
-  await run(process.execPath, [guard], { env: environment });
+  assert.equal(release.required, true);
+  assert.ok(
+    release.commands.some((command: { arguments: string[] }) =>
+      command.arguments.includes("qualify:release-e2e"),
+    ),
+  );
+  for (const profile of [
+    deployment.prProfiles.find(
+      (item: { name: string }) => item.name === "tests",
+    ),
+    deployment.buildTargets[0],
+  ]) {
+    assert.ok(
+      profile.commands.some((command: { arguments: string[] }) =>
+        command.arguments.includes("check:frameworks"),
+      ),
+    );
+  }
 });
 
-test("a clean SDK-only checkout runs fixture tests and installs a usable npm pack", async () => {
-  const workspace = await mkdtemp(path.join(tmpdir(), "terrascale-sdk-release-package-"));
+test("required release E2E refuses unavailable production capabilities even with credentials configured", async () => {
+  const guard = path.join(
+    repositoryRoot,
+    "scripts/require-release-e2e-config.ts",
+  );
+  for (const env of [
+    { PATH: process.env.PATH ?? "" },
+    {
+      ...process.env,
+      TERRABASE_API_KEY: "test-config-only",
+      TERRABASE_ENDPOINT: "https://gru.terrascale.tech",
+    },
+  ]) {
+    await assert.rejects(
+      run(process.execPath, [guard], { env }),
+      /(?:unavailable|blocked|admission)/iu,
+    );
+  }
+});
+
+test("clean SDK-only build packs and independently installs the current typed package", async () => {
+  const workspace = await mkdtemp(
+    path.join(tmpdir(), "terrascale-sdk-release-package-"),
+  );
   const checkout = path.join(workspace, "sdk");
-  const producerContracts = path.join(workspace, "terrabase", "contracts");
-  const edgeContracts = path.join(workspace, "edge", "contracts");
   const packages = path.join(workspace, "packages");
   const consumer = path.join(workspace, "consumer");
-
   try {
     await cp(repositoryRoot, checkout, {
       recursive: true,
-      filter: (source) => ![".git", "node_modules", "dist"].includes(path.basename(source)),
+      filter: (source) =>
+        ![
+          ".git",
+          "node_modules",
+          "dist",
+          "artifacts",
+          "test-results",
+          "playwright-report",
+        ].includes(path.basename(source)),
     });
-    await mkdir(path.dirname(producerContracts), { recursive: true });
-    const { resolveContractBundle, resolveEdgeContractBundle } = await import(pathToFileURL(path.join(repositoryRoot, "scripts", "openapi-contract-paths.ts")).href);
-    const bundle = await resolveContractBundle();
-    try {
-      await cp(bundle.root, producerContracts, { recursive: true });
-    } finally {
-      await bundle.cleanup();
-    }
-    const configuredEdgeSource = process.env.EDGE_CONTRACT_SOURCE ?? process.env.TERRASCALE_EDGE_CONTRACT_SOURCE;
-    const configuredEdgeUrl = process.env.EDGE_CONTRACT_URL ?? process.env.TERRASCALE_EDGE_CONTRACT_URL;
-    if (configuredEdgeSource !== undefined || configuredEdgeUrl !== undefined) {
-      const edgeBundle = await resolveEdgeContractBundle();
-      try {
-        await cp(edgeBundle.root, edgeContracts, { recursive: true });
-      } finally {
-        await edgeBundle.cleanup();
-      }
-    } else {
-      await cp(path.join(repositoryRoot, "..", "ts-atlas", "contracts", "v1"), edgeContracts, { recursive: true });
-    }
-    await mkdir(packages);
-    await mkdir(consumer);
-    const checkoutEnvironment = { ...process.env };
-    for (const key of Object.keys(checkoutEnvironment)) {
-      if (/^(?:TERRASCALE_)?CONTRACT_(?:SOURCE|URL|REGISTRY(?:_URL)?)$/u.test(key)) delete checkoutEnvironment[key];
-    }
-    checkoutEnvironment.CONTRACT_SOURCE = producerContracts;
-    checkoutEnvironment.EDGE_CONTRACT_SOURCE = edgeContracts;
-    await run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: checkout });
-    await run("npm", ["run", "build"], { cwd: checkout });
-    await run("npx", ["vitest", "run", "src/public-schema-parity.test.ts"], { cwd: checkout, env: checkoutEnvironment });
-    await run(process.execPath, ["scripts/generate-client-route-manifest.ts", "--check"], { cwd: checkout, env: checkoutEnvironment });
-    const packed = await run("npm", ["pack", "--pack-destination", packages], { cwd: checkout });
-    const tarball = path.join(packages, packed.stdout.trim().split("\n").at(-1)!);
-    const listing = await run("tar", ["-tf", tarball]);
-
-    assert.match(listing.stdout, /^package\/dist\/index\.js$/mu);
-    assert.match(listing.stdout, /^package\/dist\/index\.d\.ts$/mu);
-    assert.match(listing.stdout, /^package\/sdk-route-manifest\.json$/mu);
-    assert.doesNotMatch(
-      listing.stdout,
-      /^package\/(?:Documentation\/|node_modules\/|test\/|dist\/.*(?:\.map$|\.test\.|capture|internal))/mu,
+    await Promise.all([mkdir(packages), mkdir(consumer)]);
+    // Use the reviewed CLI entrypoint for every subprocess, not an ambient npm.
+    const { inspectNpmCli } = await import(
+      pathToFileURL(path.join(repositoryRoot, "scripts/npm-cli-evidence.ts"))
+        .href
     );
-
-    const packedManifest = JSON.parse(
-      await readPackedEntry(tarball, "package/sdk-route-manifest.json"),
-    ) as PackedRouteManifest;
-    assert.ok(Array.isArray(packedManifest.routes));
-    for (const route of packedManifest.routes) {
-      const routeDescription = [route.client, route.operation, route.routeName, route.pathTemplate]
-        .filter((value): value is string => value !== undefined)
-        .join(" ");
-      assert.doesNotMatch(routeDescription, forbiddenRoutePattern);
-    }
-
-    const packedSources = await Promise.all([
-      ["dist/index.d.ts", "package/dist/index.d.ts"] as const,
-      ["dist/index.js", "package/dist/index.js"] as const,
-      ["dist/client.d.ts", "package/dist/client.d.ts"] as const,
-      ["dist/client.js", "package/dist/client.js"] as const,
-    ].map(async ([name, entry]) => [name, await readPackedEntry(tarball, entry)] as const));
-    for (const [name, source] of packedSources) {
-      assert.doesNotMatch(source, forbiddenSymbolPattern, `${name} contains a removed SDK symbol`);
-      assert.doesNotMatch(source, forbiddenRoutePattern, `${name} contains a removed SDK route`);
-    }
-    assert.doesNotMatch(packedSources.find(([name]) => name === "dist/client.d.ts")?.[1] ?? "", /readonly (?:auth|apiKeys|m2m|billing|pricing|security)\??:/u);
-    assert.doesNotMatch(packedSources.find(([name]) => name === "dist/client.js")?.[1] ?? "", /this\.(?:auth|apiKeys|m2m|billing|pricing|security)\s*=/u);
-    for (const method of [
-      "updateAccountInformation",
-      "createPaymentSession",
-      "validatePaymentMethod",
-      "registerOnboardingPaymentMethod",
-      "updateMfaDecision",
-    ]) {
-      assert.doesNotMatch(
-        packedSources.find(([name]) => name === "dist/client.d.ts")?.[1] ?? "",
-        new RegExp(`\\b${method}\\b`, "u"),
+    const npm = await inspectNpmCli();
+    assert.equal(npm.evidence.version, "11.18.0");
+    const npmRun = (args: string[], cwd: string) =>
+      run(process.execPath, [npm.entrypoint, ...args], {
+        cwd,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+    await npmRun(
+      ["ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+      checkout,
+    );
+    await npmRun(["run", "build"], checkout);
+    const packed = await npmRun(
+      ["pack", "--json", "--pack-destination", packages],
+      checkout,
+    );
+    const metadata = JSON.parse(packed.stdout);
+    const filename = metadata[0]?.filename;
+    assert.equal(typeof filename, "string");
+    assert.equal(path.basename(filename), filename);
+    const tarball = path.join(packages, filename);
+    const listing = (await run("tar", ["-tf", tarball])).stdout;
+    for (const entry of [
+      "dist/index.js",
+      "dist/index.d.ts",
+      "dist/database.js",
+      "sdk-current-contract.json",
+      "sdk-route-manifest.json",
+    ])
+      assert.match(
+        listing,
+        new RegExp(`^package/${entry.replaceAll(".", "\\.")}$`, "mu"),
       );
-      assert.doesNotMatch(
-        packedSources.find(([name]) => name === "dist/client.js")?.[1] ?? "",
-        new RegExp(`\\b${method}\\b`, "u"),
-      );
-    }
-    // The generated journeys are native ESM TypeScript files. Give the
-    // temporary consumer the same package boundary a real ESM consumer has;
-    // otherwise Node 24 interprets the fixture as CommonJS before the packed
-    // SDK can be exercised.
-    await writeFile(path.join(consumer, "package.json"), JSON.stringify({ type: "module" }));
-    await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball, "@better-auth/core@1.7.2", "react@18.3.1"], { cwd: consumer });
-    const journey = path.join(consumer, "packed-journey.ts");
-    await writeFile(journey, packedConsumerJourney);
-    await run(process.execPath, [journey], { cwd: consumer });
-    const adapterJourney = path.join(consumer, "packed-adapters.ts");
-    await writeFile(adapterJourney, packedAdapterJourney);
-    await run(process.execPath, [adapterJourney], { cwd: consumer });
-    await run(process.execPath, ["--conditions=workerd", "--conditions=browser", "--input-type=module", "--eval",
-      "import { createTerraScaleBetterAuthAdapter } from '@terrascale/sdk/better-auth'; if (typeof createTerraScaleBetterAuthAdapter !== 'function') throw new Error('Workerd server adapter is missing');",
-    ], { cwd: consumer });
-    await run(process.execPath, ["--conditions=browser", "--input-type=module", "--eval",
-      "import assert from 'node:assert/strict'; await assert.rejects(import('@terrascale/sdk/better-auth'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });",
-    ], { cwd: consumer });
-    await run(
-      "node",
+    assert.doesNotMatch(
+      listing,
+      /^package\/(?:node_modules|test|src)\/|^package\/dist\/.*(?:\.test\.|\.map$|msgpack|sync\/v1|client\.js)/mu,
+    );
+    await writeFile(
+      path.join(consumer, "package.json"),
+      JSON.stringify({ type: "module" }),
+    );
+    await npmRun(
       [
+        "install",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        tarball,
+        "@tanstack/db@0.9.2",
+        "svelte@5.55.1",
+        "react@19.2.8",
+        "react-test-renderer@19.2.8",
+        "@types/react@19.2.14",
+        "@types/react-test-renderer@19.1.0",
+        "typescript@5.9.3",
+        "pg@8.23.0",
+        "@types/pg@8.23.1",
+        "@types/node@26.0.0",
+      ],
+      consumer,
+    );
+    const journey = path.join(consumer, "boundary.mjs");
+    await writeFile(journey, installedBoundary);
+    await run(process.execPath, [journey], { cwd: consumer });
+    await run(
+      process.execPath,
+      [
+        "--conditions=browser",
         "--input-type=module",
         "--eval",
-        "import { createTerraScaleClient } from '@terrascale/sdk'; import { createTerraScaleAdminClient } from '@terrascale/sdk/admin'; const client = createTerraScaleClient({ apiBaseUrl: 'https://api.example.test' }); if (typeof client.databases.list !== 'function') throw new Error('Typed project databases are missing'); for (const name of ['auth', 'apiKeys', 'm2m', 'billing', 'pricing', 'security']) { if (name in client) throw new Error(`Removed root client property remains: ${name}`); } for (const name of ['updateAccountInformation', 'createPaymentSession', 'validatePaymentMethod', 'registerOnboardingPaymentMethod', 'updateMfaDecision']) { if (name in client.onboarding) throw new Error(`Removed onboarding method remains: ${name}`); } createTerraScaleAdminClient({ apiBaseUrl: 'https://api.example.test' });",
+        "import assert from 'node:assert/strict'; for (const entry of ['local','better-auth','postgres']) await assert.rejects(import('@terrascale/sdk/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });",
       ],
       { cwd: consumer },
     );
-    for (const declaration of ["dist/index.d.ts", "dist/admin.d.ts"]) {
-      const source = await readFile(path.join(checkout, declaration), "utf8");
-      assert.doesNotMatch(source, /(?:node:sqlite|\.\/local\/)/u);
-    }
+    await run(
+      process.execPath,
+      [
+        "--conditions=workerd",
+        "--input-type=module",
+        "--eval",
+        "import assert from 'node:assert/strict'; for (const entry of ['local','postgres']) await assert.rejects(import('@terrascale/sdk/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });",
+      ],
+      { cwd: consumer },
+    );
+    const frameworkCaller = path.join(consumer, "framework-caller.ts");
+    await writeFile(frameworkCaller, installedFrameworkCaller);
+    await npmRun(
+      [
+        "exec",
+        "--",
+        "tsc",
+        "--noEmit",
+        "--strict",
+        "--skipLibCheck",
+        "--target",
+        "ES2023",
+        "--module",
+        "NodeNext",
+        "--moduleResolution",
+        "NodeNext",
+        frameworkCaller,
+      ],
+      consumer,
+    );
+    await run(process.execPath, [frameworkCaller], { cwd: consumer });
+    const declarations = await readFile(
+      path.join(checkout, "dist/index.d.ts"),
+      "utf8",
+    );
+    assert.doesNotMatch(declarations, /node:sqlite|local\//u);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
 });
 
-const packedConsumerJourney = String.raw`import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
-import { open, unlink } from "node:fs/promises";
-import { hostname } from "node:os";
-import path from "node:path";
-import { createTerraScaleClient } from "@terrascale/sdk";
-
-const required = [
-  "TERRASCALE_API_BASE_URL",
-  "TERRASCALE_E2E_ACCESS_TOKEN",
-  "TERRASCALE_E2E_TENANT_ID",
-  "TERRASCALE_E2E_PROJECT_ID",
-  "TERRASCALE_E2E_DATABASE_ID",
-  "TERRASCALE_E2E_DATABASE_WRITE_LEASE",
-];
-const missing = required.filter(name => (process.env[name] ?? "").trim().length === 0);
-if (missing.length > 0) {
-  console.log("Packed live journey skipped: " + missing.join(", ") + " is not configured.");
-  process.exit(0);
-}
-
-const tenantId = process.env.TERRASCALE_E2E_TENANT_ID;
-const projectId = process.env.TERRASCALE_E2E_PROJECT_ID;
-const databaseId = process.env.TERRASCALE_E2E_DATABASE_ID;
-const leasePath = process.env.TERRASCALE_E2E_DATABASE_WRITE_LEASE.trim();
-if (!path.isAbsolute(leasePath) || path.dirname(leasePath) === leasePath) {
-  throw new TypeError("TERRASCALE_E2E_DATABASE_WRITE_LEASE must be an absolute file path.");
-}
-const client = createTerraScaleClient({
-  apiBaseUrl: process.env.TERRASCALE_API_BASE_URL,
-  accessToken: process.env.TERRASCALE_E2E_ACCESS_TOKEN,
-  projectId,
-});
-const leaseScope = {
-  tenantId,
-  projectId,
-  databaseId,
-  apiBaseUrl: process.env.TERRASCALE_API_BASE_URL,
-  credentialFingerprint: createHash("sha256").update(process.env.TERRASCALE_E2E_ACCESS_TOKEN).digest("hex"),
-};
-
-let lease;
-try {
-  lease = await open(leasePath, "wx");
-} catch (error) {
-  if (error instanceof Error && "code" in error && error.code === "EEXIST") {
-    throw new Error("TERRASCALE_E2E_DATABASE_WRITE_LEASE is already held by another process.");
-  }
-  throw error;
-}
-
-try {
-  await lease.writeFile(JSON.stringify({
-    version: 1,
-    owner: hostname() + ":" + process.pid + ":" + randomUUID(),
-    acquiredAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    scope: leaseScope,
-  }));
-  await lease.sync();
-
-  const read = await client.databases.get(databaseId);
-  assert.equal(read.ok, true, read.ok ? undefined : read.error.message);
-  assert.equal(read.value.databaseId, databaseId);
-  console.log("Packed live journey completed for the /api/v1 database read.");
-} finally {
-  await lease.close();
-  await unlink(leasePath).catch(error => {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-  });
-}
+const installedBoundary = `import assert from "node:assert/strict";
+import * as sdk from "@terrascale/sdk";
+import { requireTerraScaleManagement } from "@terrascale/sdk/management";
+import { requireTerraScaleAdministration } from "@terrascale/sdk/admin";
+import { requireTerraScaleBetterAuth } from "@terrascale/sdk/better-auth";
+import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
+const client = sdk.createTerraBaseClient({ tenant: "00000000-0000-0000-0000-000000000001", database: "00000000-0000-0000-0000-000000000002", shard: 1n, endpoint: "https://gru.terrascale.tech", apiKey: "constructor-only" });
+for (const name of ["read", "query", "subscription", "prepareCommit", "commit", "transactionStatus"]) assert.equal(typeof client[name], "function");
+for (const name of ["createTerraScaleClient", "TerraScaleSyncV1Client", "TerraScaleHttp", "toUlid"]) assert.equal(name in sdk, false);
+for (const gate of [requireTerraScaleManagement, requireTerraScaleAdministration, requireTerraScaleBetterAuth]) assert.throws(gate, sdk.TerraScaleCapabilityUnavailableError);
+assert.equal(typeof createTsAuthClient, "function");
+assert.equal(typeof sdk.collection, "function");
+assert.equal(typeof sdk.raw, "function");
+await assert.rejects(import("@terrascale/sdk/database-codec"), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
 `;
 
-const packedAdapterJourney = String.raw`import assert from "node:assert/strict";
-import { ReactiveQueryObserver } from "@terrascale/sdk/react";
-import { TerraScaleSyncV1Client } from "@terrascale/sdk";
+const installedFrameworkCaller = String.raw`import assert from "node:assert/strict";
+import React from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { get } from "svelte/store";
+import { createCollection } from "@tanstack/db";
+import { createTerraBaseClient, createDatabaseQuery, raw, type DatabasePoint } from "@terrascale/sdk";
+import { PostgresClient, PostgresError, postgresQuery, type PostgresConfig, type PostgresResult } from "@terrascale/sdk/postgres";
+import { createTsAuthClient, type TsAuthOidcResourceIntrospection, type TsAuthOidcTokenRequest, type TsAuthUpdateOauthResourceRequest } from "@terrascale/sdk/ts-auth";
+import { useQuery, type ReactiveQuerySource } from "@terrascale/sdk/react";
+import { createQuery } from "@terrascale/sdk/svelte";
 import { terrascaleCollectionOptions } from "@terrascale/sdk/tanstack";
 
-let aborted = false;
-const query = new ReactiveQueryObserver({
-  subscribe: (_observer, context) => {
-    context.signal.addEventListener("abort", () => { aborted = true; }, { once: true });
-  },
-});
-const stopQuery = query.subscribe(() => undefined);
-assert.equal(query.getSnapshot().isFetching, true);
-stopQuery();
-assert.equal(aborted, true);
+// Hosted identity calls use only named operations. This installed caller
+// captures requests and fails transport; it claims no successful provider run.
+const oauthRequests: Request[] = [];
+const identity = createTsAuthClient({ apiBaseUrl: "https://auth.example.test", instanceSlug: "example", accessToken: "sk_installed_request_only", fetch: async input => { oauthRequests.push(new Request(input)); throw new Error("No hosted provider configured for this installed caller."); } });
+const resourceAudience = "https://api.example.test/management?tenant=a%2Fb";
+const refreshGrant: TsAuthOidcTokenRequest = { grant_type: "refresh_token", refresh_token: "opaque-refresh", resource: resourceAudience, scope: "management:read" };
+assert.equal((await identity.oidc.token("client", "secret", refreshGrant)).ok, false);
+assert.equal((await identity.oidc.deviceAuthorization("client", "secret", { resource: resourceAudience, scope: "management:read" })).ok, false);
+assert.equal((await identity.oidc.introspectResource({ issuer: "https://issuer.example.test/example", audience: resourceAudience, introspection_client_id: "resource:identity", introspection_secret: "secret +%" }, "opaque", "access_token")).ok, false);
+const resourcePatch: TsAuthUpdateOauthResourceRequest = { expected_auth_epoch: 1, enabled: false, rotate_secret: true };
+assert.equal((await identity.oauthResources.update("resource-id", resourcePatch)).ok, false);
+assert.equal((await identity.oauthClients.update("client-id", { expected_auth_epoch: 1, allowed_resource_audiences: [resourceAudience], allowed_scopes: ["management:read"], allowed_grant_types: ["client_credentials"] })).ok, false);
+assert.equal(identity.oidc.authorizationUrl({ client_id: "client", redirect_uri: "https://app.example.test/callback", response_type: "code", resource: resourceAudience }).searchParams.get("resource"), resourceAudience);
+assert.equal(new URLSearchParams(await oauthRequests[0]!.text()).get("resource"), resourceAudience);
+assert.equal(oauthRequests[2]!.headers.get("authorization"), "Basic " + btoa("resource%3Aidentity:secret+%2B%25"));
+assert.equal(new URLSearchParams(await oauthRequests[2]!.text()).has("client_secret"), false);
+const resourceShape = (value: TsAuthOidcResourceIntrospection): string | null | undefined => value.active ? value.sid : undefined;
+assert.equal(typeof resourceShape, "function");
 
-const client = new TerraScaleSyncV1Client();
-const frames = [];
-const collection = terrascaleCollectionOptions({
-  client,
-  subscription: "packaged-consumer",
-  query: "from todos",
-  getKey: row => String(row.id),
-  transport: { send: frame => { frames.push(frame); } },
-  mutate: async request => {
-    assert.equal(request.operation, "insert");
-    assert.equal(typeof request.idempotencyKey, "string");
-    assert.equal(request.signal.aborted, false);
-    return { status: "rejected", error: new Error("controlled producer rejection") };
-  },
-});
-const cleanup = collection.adapter.options.sync.sync({
-  collection: {}, begin: () => undefined, write: () => undefined,
-  commit: () => true, markReady: () => undefined, markError: error => { throw error; }, truncate: () => undefined,
-});
-await new Promise(resolve => setTimeout(resolve, 0));
-assert.equal(frames.length, 1);
-await assert.rejects(
-  collection.onInsert({ transaction: {
-    id: "tx-packaged",
-    mutations: [{ type: "insert", mutationId: "m-1", key: "todo-1", modified: { id: "todo-1", done: true } }],
-  } }),
-  /controlled producer rejection/u,
-);
-cleanup?.();
-await new Promise(resolve => setTimeout(resolve, 0));
-assert.equal(frames.length, 2);
-collection.adapter.dispose();
-console.log("Packaged React/TanStack adapter consumer qualification passed.");
+// The installed Node entrypoint accepts immutable builder descriptors and keeps
+// signed INT8 values exact. Actual TLS listener execution has a separate gate.
+const parameters: (bigint | string)[] = [-(1n << 63n), "installed PostgreSQL boundary"];
+const descriptor = raw("SELECT key, value FROM points WHERE key = $1 AND value = $2", parameters).toDescriptor();
+const bound = postgresQuery(descriptor.statement, descriptor.parameters);
+parameters[0] = 0n;
+assert.equal(bound.parameters[0], -(1n << 63n));
+for (const value of [Number.MAX_SAFE_INTEGER + 1, true, new Uint8Array([1]), null]) assert.throws(() => postgresQuery("SELECT $1", [value]), PostgresError);
+const keyId = "A".repeat(22);
+const invalidCertificate: PostgresConfig = { host: "127.0.0.1", port: 5432, tlsServerName: "database.example", caCertificatePem: "invalid certificate", database: "00000000-0000-0000-0000-000000000002", keyId, password: "tbk1." + keyId + "." + "A".repeat(43) };
+await assert.rejects(PostgresClient.connect(invalidCertificate), error => error instanceof PostgresError && error.kind === "configuration");
+const executeDescriptor = (client: PostgresClient): Promise<PostgresResult> => client.query(descriptor);
+assert.equal(typeof executeDescriptor, "function");
+
+// This installed caller proves public assignability and framework lifecycle;
+// the deliberately failing transport supplies no simulated producer responses.
+const client = createTerraBaseClient({ tenant: "00000000-0000-0000-0000-000000000001", database: "00000000-0000-0000-0000-000000000002", shard: 1n, endpoint: "https://gru.terrascale.tech", apiKey: "installed-caller-only", fetch: async () => { throw new Error("No producer is configured for this package boundary caller."); } });
+const collectionId = "00000000-0000-0000-0000-000000000003";
+const predicate = { op: "is_missing" as const, path: [1] };
+const native = createDatabaseQuery(client, { collection: collectionId, predicate });
+const nativeStore = createQuery(native);
+assert.equal(get(nativeStore).status, "pending");
+
+type Row = { id: string; point: DatabasePoint };
+const options = terrascaleCollectionOptions({ client, collection: collectionId, predicate, retryLimit: 0, mapRow: row => ({ id: row.document, point: row.point }), getKey: (row: Row) => row.id });
+const collection = createCollection(options);
+try {
+  await assert.rejects(collection.preload(), /transport_unavailable/u);
+  await collection.cleanup();
+  assert.doesNotThrow(() => collection.startSyncImmediate());
+  await assert.rejects(collection.preload(), /transport_unavailable/u);
+} finally { await collection.cleanup(); options.adapter.dispose(); }
+assert.throws(() => collection.startSyncImmediate(), /disposed/u);
+
+let starts = 0;
+let stops = 0;
+const source: ReactiveQuerySource<string> = { subscribe: observer => { starts += 1; observer.error(new Error("controlled terminal callback")); return () => { stops += 1; }; } };
+const svelte = createQuery(source);
+assert.equal(get(svelte).status, "error");
+assert.equal(stops, starts);
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+const View = () => React.createElement("span", null, useQuery(source).status);
+let renderer: ReactTestRenderer | undefined;
+try {
+  await act(async () => { renderer = create(React.createElement(React.StrictMode, null, React.createElement(View))); });
+  assert.equal(stops, starts);
+} finally { await act(async () => renderer?.unmount()); }
+assert.equal(stops, starts);
 `;
-
-function profileDescriptions(configuration: DeployConfiguration, name: string): string[] {
-  const profile = configuration.prProfiles.find((candidate) => candidate.name === name);
-  if (profile === undefined) assert.fail(`Deploy profile ${name} is missing.`);
-  return profile.commands.map((command) => command.description);
-}
-
-function jobDefinition(workflow: string, job: string): string {
-  const start = workflow.indexOf(`  ${job}:\n`);
-  assert.notEqual(start, -1, `Workflow job ${job} is missing.`);
-  const remaining = workflow.slice(start);
-  const next = remaining.slice(1).search(/\n  [a-z][a-z0-9-]+:\n/u);
-  return next === -1 ? remaining : remaining.slice(0, next + 1);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
-async function readPackedEntry(tarball: string, entry: string): Promise<string> {
-  const result = await run("tar", ["-xOf", tarball, entry]);
-  return result.stdout;
-}
-
-type DeployCommand = {
-  readonly description: string;
-  readonly command: string;
-  readonly arguments: readonly string[];
-};
-
-type DeployConfiguration = {
-  readonly repository: string;
-  readonly dependencies: readonly { readonly source: string; readonly target: string; readonly reason: string }[];
-  readonly prProfiles: readonly { readonly name: string; readonly commands: readonly DeployCommand[] }[];
-  readonly releaseProfiles: readonly { readonly name: string; readonly required: boolean; readonly commands: readonly DeployCommand[] }[];
-  readonly buildTargets: readonly { readonly outputPath?: string; readonly commands: readonly DeployCommand[] }[];
-};

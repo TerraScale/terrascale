@@ -1,67 +1,153 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { test } from "vitest";
-import { createLocalBetterAuthHttpOperations, createTerraScaleBetterAuthAdapter } from "./better-auth.js";
-import { createLocalBetterAuthDatabaseOperations } from "./local/better-auth.js";
-import { TerraScaleSqliteStore } from "./local/store.js";
-
-test("local Better Auth records survive a SQLite runtime restart", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "terrascale-auth-sqlite-"));
-  const databasePath = join(directory, "auth.sqlite");
-  try {
-    const firstStore = new TerraScaleSqliteStore(databasePath);
-    const first = createTerraScaleBetterAuthAdapter(createLocalBetterAuthDatabaseOperations(firstStore));
-    const created = await first.create<{ id: string; email: string }>({
-      model: "user",
-      data: { email: "persistent@example.test" },
-    });
-    const account = await first.create<{ id: string; userId: string; providerId: string }>({
-      model: "account",
-      data: { userId: created.id, providerId: "credential" },
-    });
-    firstStore.close();
-
-    const secondStore = new TerraScaleSqliteStore(databasePath);
-    const second = createTerraScaleBetterAuthAdapter(createLocalBetterAuthDatabaseOperations(secondStore));
-    assert.deepEqual(await second.findOne<{ account: unknown[] }>({
-      model: "user",
-      where: [{ field: "email", value: "persistent@example.test" }],
-      join: { account: true },
-    }), { ...created, account: [account] });
-    secondStore.close();
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+import type { DBAdapter } from "@better-auth/core/db/adapter";
+import type { BetterAuthOptions } from "@better-auth/core";
+import {
+  localSqliteUnitTestsAllowed,
+  localFixture,
+} from "./local/test-environment.js";
+const options = {
+  appName: "local-native-auth",
+  secret: "test-secret-test-secret-test-secret",
+};
+const user = (email: string) => ({
+  name: email,
+  email,
+  emailVerified: false,
+  createdAt: new Date(),
+  updatedAt: new Date(),
 });
 
+test.skipIf(!localSqliteUnitTestsAllowed)(
+  "pinned local factory converts dates, supports custom names and enforces unique writes",
+  async () => {
+    const fixture = await localFixture();
+    try {
+      const adapter = (await fixture.runtime.createBetterAuthAdapter())({
+        ...options,
+        user: { modelName: "members", fields: { email: "email_address" } },
+      });
+      const created = await adapter.create({
+        model: "user",
+        data: user("user@example.test"),
+      });
+      assert.ok(created.createdAt instanceof Date);
+      assert.equal(typeof (created as { id?: string }).id, "string");
+      const found = await adapter.findOne<{ email: string }>({
+        model: "user",
+        where: [{ field: "email", value: "user@example.test" }],
+      });
+      assert.equal(found?.email, "user@example.test");
+      const competing = await Promise.allSettled(
+        Array.from({ length: 8 }, () =>
+          adapter.create({ model: "user", data: user("unique@example.test") }),
+        ),
+      );
+      assert.equal(
+        competing.filter((result) => result.status === "fulfilled").length,
+        1,
+      );
+      assert.equal(await adapter.count({ model: "user" }), 2);
+      const page = await adapter.findMany<{ email: string }>({
+        model: "user",
+        sortBy: { field: "email", direction: "asc" },
+        limit: 1,
+        offset: 1,
+      });
+      assert.equal(page.length, 1);
+    } finally {
+      await fixture.close();
+    }
+  },
+);
 
-test("local auth transactions run as a development-only non-atomic passthrough", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "terrascale-auth-transaction-"));
-  const store = new TerraScaleSqliteStore(join(directory, "auth.sqlite"));
-  const oldCi = process.env.CI;
-  delete process.env.CI;
-  try {
-    const local = createLocalBetterAuthDatabaseOperations(store);
-    const adapter = createTerraScaleBetterAuthAdapter(local);
-    let entered = false;
-    const result = await adapter.transaction(async transaction => {
-      entered = true;
-      await transaction.create({ model: "user", data: { email: "passthrough@example.test" } });
-      return "committed";
-    });
-    assert.equal(result, "committed");
-    assert.equal(entered, true);
-    assert.equal(await adapter.count({ model: "user", where: [] }), 1);
+test.skipIf(!localSqliteUnitTestsAllowed)(
+  "local one-time consume is atomic and an async callback rolls back after an awaited failure",
+  async () => {
+    const fixture = await localFixture();
+    try {
+      const adapter = (await fixture.runtime.createBetterAuthAdapter())(
+        options,
+      );
+      const record = await adapter.create({
+        model: "verification",
+        data: {
+          identifier: "one-time",
+          value: "secret",
+          expiresAt: new Date(Date.now() + 60_000),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+      const competing = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          adapter.consumeOne({
+            model: "verification",
+            where: [{ field: "id", value: (record as { id: string }).id }],
+          }),
+        ),
+      );
+      assert.equal(competing.filter((value) => value !== null).length, 1);
+      let escaped:
+        | Omit<DBAdapter<BetterAuthOptions>, "transaction">
+        | undefined;
+      await assert.rejects(
+        adapter.transaction(async (transaction) => {
+          escaped = transaction;
+          await transaction.create({
+            model: "user",
+            data: user("rolled-back@example.test"),
+          });
+          await Promise.resolve();
+          throw new Error("rollback requested");
+        }),
+        /rollback requested/u,
+      );
+      assert.equal(await adapter.count({ model: "user" }), 0);
+      await assert.rejects(escaped!.count({ model: "user" }), /settled/u);
+    } finally {
+      await fixture.close();
+    }
+  },
+);
 
-    const http = createLocalBetterAuthHttpOperations({ baseUrl: "http://127.0.0.1:18445" });
-    const httpAdapter = createTerraScaleBetterAuthAdapter(http);
-    assert.equal(await httpAdapter.transaction(async () => "ok"), "ok");
-  } finally {
-    if (oldCi === undefined) delete process.env.CI;
-    else process.env.CI = oldCi;
-    store.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+test.skipIf(!localSqliteUnitTestsAllowed)(
+  "caught auth failures poison the transaction and later operations cannot commit",
+  async () => {
+    const fixture = await localFixture();
+    try {
+      const adapter = (await fixture.runtime.createBetterAuthAdapter())(
+        options,
+      );
+      await adapter.create({
+        model: "user",
+        data: user("existing@example.test"),
+      });
+      await assert.rejects(
+        adapter.transaction(async (transaction) => {
+          await transaction.create({
+            model: "user",
+            data: user("must-rollback@example.test"),
+          });
+          await transaction
+            .create({ model: "user", data: user("existing@example.test") })
+            .catch(() => undefined);
+          return "caught";
+        }),
+        /unique/u,
+      );
+      assert.equal(await adapter.count({ model: "user" }), 1);
+      const updated = await adapter.update<{ name: string }>({
+        model: "user",
+        where: [
+          { field: "email", value: "existing@example.test" },
+          { field: "name", value: "wrong" },
+        ],
+        update: { name: "bad" },
+      });
+      assert.equal(updated, null);
+    } finally {
+      await fixture.close();
+    }
+  },
+);
