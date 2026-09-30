@@ -7,6 +7,12 @@ use serde_json::Value;
 
 use crate::{StoreError, StoreResult};
 
+/// Nearest-region public TerraScale API router.
+pub const TERRASCALE_API_HOST: &str = "api.terrascale.tech";
+
+/// Regional storage authority shared by every hosted auth replica.
+pub const GRU_AUTHORITY_HOST: &str = "gru.terrascale.tech";
+
 #[derive(Clone)]
 pub struct QueryTransport {
     client: reqwest::Client,
@@ -85,18 +91,18 @@ impl QueryTransport {
         }
         if !loopback
             && (url.scheme() != "https"
-                || !matches!(host, "api.terrascale.tech" | "gru.api.terrascale.tech")
+                || !matches!(host, TERRASCALE_API_HOST | GRU_AUTHORITY_HOST)
                 || url.port().is_some()
                 || url.path() != "/")
         {
-            return Err(StoreError::InvalidConfiguration(
-                "Auth query transport requires HTTPS TerraScale GRU authority".into(),
-            ));
+            return Err(StoreError::InvalidConfiguration(format!(
+                "Auth query transport requires the bare HTTPS origin https://{TERRASCALE_API_HOST} or https://{GRU_AUTHORITY_HOST}, with no non-default port or path"
+            )));
         }
         let effective = if loopback {
             base_url.to_owned()
         } else {
-            "https://gru.api.terrascale.tech".to_owned()
+            format!("https://{GRU_AUTHORITY_HOST}")
         };
         let api_key_input = api_key.into();
         let api_key = normalize_api_key(&api_key_input)?;

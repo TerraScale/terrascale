@@ -6,7 +6,7 @@
 # Requires curl and jq.
 set -euo pipefail
 
-api=https://gru.api.terrascale.tech
+api=https://gru.terrascale.tech
 database=ts-auth
 regions='["GRU","SFO","FRA"]'
 residency=GRU,SFO,FRA

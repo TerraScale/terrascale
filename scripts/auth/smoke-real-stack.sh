@@ -66,7 +66,7 @@ OP_KEY="smoke-operator-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
 METRICS_KEY="smoke-metrics-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
 if [[ ! -x "$SERVICE_BINARY" ]]; then
     echo "Rust service binary missing: $SERVICE_BINARY"
-    echo "Set up sibling ../ts-rust at commit c590cd41eabf05bbd5982a1580c1bb01880c346a as documented under Running in README.md, then build from the repository root:"
+    echo "Set up sibling ../ts-rust at TS_RUST_REV from .forgejo/workflows/ci.yml as documented under Running in README.md, then build from the repository root:"
     echo "  cargo build --release --locked -p auth-app"
     exit 2
 fi
