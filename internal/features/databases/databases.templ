@@ -12,19 +12,15 @@ import (
 )
 
 templ databasesContent(page core.Page, d pageData) {
-	<main class="ts-page" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
-		@ui.PageHeader("Databases") {
-			if d.CanProvision {
-				@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-database", Label: "New database", Icon: icons.Plus(16), Variant: "primary"})
-			}
-		}
+	<main class="ts-page ts-page-compact-top" data-project-id={ d.ProjectID } data-organization-id={ page.Principal.OrganizationID }>
+		@ui.PageHeader("Databases")
 		if d.Error != "" && !d.OpenCreate {
 			@ui.Alert("danger", "", d.Error)
 		}
 		if d.Summary.Total > 0 {
 			@databaseStats(d.Summary)
 		}
-		@ui.Card(ui.CardProps{ID: "project-databases", Title: "Project databases", Description: databaseCount(d), Actions: databaseSearch(d), Flush: true}) {
+		@ui.Card(ui.CardProps{ID: "project-databases", Title: "Project databases", Description: databaseCount(d), Actions: databaseActions(d), Flush: true, ShrinkActions: true}) {
 			if len(d.Databases) > 0 {
 				<div class="ts-table-wrap">
 					<table class="ts-table">
@@ -124,6 +120,13 @@ var databaseRegionChoices = []databaseRegionChoice{
 	{"GRU", "São Paulo", "br"},
 	{"SFO", "San Francisco", "us"},
 	{"FRA", "Frankfurt", "de"},
+}
+
+templ databaseActions(d pageData) {
+	if d.CanProvision {
+		@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-database", Label: "New database", Icon: icons.Plus(16), Variant: "primary", Small: true})
+	}
+	@databaseSearch(d)
 }
 
 templ databaseSearch(d pageData) {
