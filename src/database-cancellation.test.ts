@@ -8,7 +8,7 @@ const config = {
   tenant: "00000000-0000-0000-0000-000000000001",
   database: "00000000-0000-0000-0000-000000000002",
   shard: 1n,
-  endpoint: "https://gru.terrascale.tech",
+  endpoint: "https://gru.api.terrascale.tech",
   apiKey: "fault-control-only",
 };
 const collection = "00000000-0000-0000-0000-000000000003";
@@ -253,7 +253,7 @@ describe("native transport cancellation lifecycle", () => {
 
   test.each([
     { error: new Error("Transport unavailable."), code: "transport_unavailable" },
-    { error: new TypeError("Invalid transport input."), code: "invalid_response" },
+    { error: new TypeError("Transport connection failed."), code: "transport_unavailable" },
   ])("uncancelled fetch rejection preserves $code without retry", async ({ error, code }) => {
     let calls = 0;
     const client = createTerraBaseClient({

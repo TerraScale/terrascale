@@ -186,12 +186,12 @@ describe("native TanStack adapter admission", () => {
     const options = terrascaleCollectionOptions({ client, collection, predicate, mapRow, getKey: value => value.id });
     const value = createCollection(options);
     try {
-      await assert.rejects(value.preload(), /discovery_unavailable/u);
+      await assert.rejects(value.preload(), /transport_unavailable/u);
       await value.cleanup();
       assert.equal(value.status, "cleaned-up");
       assert.doesNotThrow(() => value.startSyncImmediate());
-      await assert.rejects(value.preload(), /discovery_unavailable/u);
-      assert.equal(value.status, "error", "missing discovery must still fail closed after restart");
+      await assert.rejects(value.preload(), /transport_unavailable/u);
+      assert.equal(value.status, "error", "hosted transport failure must still be reported after restart");
       assert.equal(options.adapter.getCheckpoint(), undefined);
     } finally {
       await value.cleanup();
@@ -200,7 +200,7 @@ describe("native TanStack adapter admission", () => {
     assert.throws(() => value.startSyncImmediate(), /disposed/u);
   });
 
-  test("requires a native snapshot before mutation and fails closed on discovery transport failure", async () => {
+  test("requires a native snapshot before mutation and reports hosted transport failure", async () => {
     const errors: unknown[] = [];
     let prepared = 0;
     const client = createTerraBaseClient({ ...scope, apiKey: nativeTestKey, fetch: unavailableDiscovery });
@@ -210,7 +210,7 @@ describe("native TanStack adapter admission", () => {
     const stop = options.sync.sync({ ...output.params, markError: error => { errors.push(error); terminal.resolve(); } });
     await terminal.promise;
     assert.equal(errors.length, 1);
-    assert.match(String(errors[0]), /discovery_unavailable/u);
+    assert.match(String(errors[0]), /transport_unavailable/u);
     await assert.rejects(options.onInsert({ transaction: { id: "never-queued", mutations: [{ key: uuid(10), type: "insert", modified: mapRow(row(10)) }] } }), /current native subscription/u);
     const frameworkTransaction = {
       id: "real-shape-not-cloneable", mutationFn: () => undefined,

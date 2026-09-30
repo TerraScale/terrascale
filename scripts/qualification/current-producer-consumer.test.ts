@@ -4,7 +4,7 @@ import { qualificationConfiguration } from "./current-producer-consumer.mjs";
 function allocation(mode: "direct" | "atlas" = "atlas"): void {
   const values: Record<string, string> = {
     TERRASCALE_SDK_TARBALL: "/tmp/qualified-sdk.tgz", TERRASCALE_SDK_TARBALL_SHA256: "aa".repeat(32),
-    TERRABASE_ROUTING_MODE: mode, TERRABASE_ENDPOINT: mode === "direct" ? "https://gru.terrascale.tech" : "",
+    TERRABASE_ROUTING_MODE: mode, TERRABASE_ENDPOINT: mode === "direct" ? "https://gru.api.terrascale.tech" : "",
     TERRABASE_TENANT: "10000000-0000-0000-0000-000000000001", TERRABASE_DATABASE: "20000000-0000-0000-0000-000000000001",
     TERRABASE_COLLECTION: "30000000-0000-0000-0000-000000000001", TERRABASE_SHARD: "18446744073709551615",
     TERRABASE_SCHEMA_GENERATION: "1", TERRABASE_SCHEMA_DIGEST: "cc".repeat(32), TERRABASE_API_KEY: "allowed-scoped-credential",
@@ -25,7 +25,7 @@ describe("real packaged consumer admission", () => {
   test("Atlas mode requires an actual allocation and expected native region without an endpoint bypass", () => {
     allocation();
     expect(qualificationConfiguration()).toMatchObject({ routing: "atlas" });
-    vi.stubEnv("TERRABASE_ENDPOINT", "https://gru.terrascale.tech");
+    vi.stubEnv("TERRABASE_ENDPOINT", "https://gru.api.terrascale.tech");
     expect(() => qualificationConfiguration()).toThrow(/omit/u);
     vi.stubEnv("TERRABASE_ENDPOINT", "");
     vi.stubEnv("TERRASCALE_QUALIFICATION_ALLOCATION_ID", "");
@@ -50,11 +50,11 @@ describe("real packaged consumer admission", () => {
     expect(() => qualificationConfiguration()).toThrow(/omit/u);
   });
 
-  test("direct producer qualification remains explicit and cannot target the test API host", () => {
+  test("direct producer qualification remains explicit and requires a canonical regional host", () => {
     allocation("direct");
     expect(qualificationConfiguration()).toMatchObject({ routing: "direct" });
     vi.stubEnv("TERRABASE_ENDPOINT", "https://gru.api.terrascale.tech.");
-    expect(() => qualificationConfiguration()).toThrow(/forbidden/u);
+    expect(() => qualificationConfiguration()).toThrow(/canonical/u);
     vi.stubEnv("TERRABASE_ENDPOINT", "");
     expect(() => qualificationConfiguration()).toThrow(/incomplete/u);
   });

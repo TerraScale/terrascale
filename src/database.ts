@@ -10,14 +10,14 @@ import type {
   DatabaseTransactionStatus,
 } from "./database-types.js";
 import type { FetchLike } from "./config.js";
-import { TerraBaseDiscoveryError, TerraBaseDiscoveryRouter, type TerraBaseRoutingCapability } from "./discovery.js";
+import { TerraBaseDiscoveryError, TerraBaseDiscoveryRouter, terraBaseRegionalOrigin, type TerraBaseRoutingCapability, type TerraBaseRoute } from "./discovery.js";
 
 const maximumResponseBytes = 4 * 1024 * 1024;
 
 export type TerraBaseClientConfig = DatabaseScope & {
-  /** TerraBase native service key, sent only to the selected regional listener. */
+  /** Native service key used for authenticated Atlas discovery and native data routing. */
   readonly apiKey: string | (() => string | Promise<string>);
-  /** A provisioned direct origin. Omit to use authenticated native Atlas discovery. */
+  /** A provisioned direct origin. Omit for Atlas discovery with hosted proxy fallback. */
   readonly endpoint?: string;
   /** Bounds the canonical Atlas request within the complete operation deadline. */
   readonly discoveryTimeoutMs?: number;
@@ -36,9 +36,16 @@ function bareOrigin(raw: string, local: boolean): string {
   if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "" || url.pathname !== "/") {
     throw new TypeError("Service origin must be bare and contain no credentials.");
   }
+  const authority = raw.slice(raw.indexOf("//") + 2).split(/[/?#]/u, 1)[0]!;
+  const rawHostname = authority.startsWith("[") ? authority.slice(0, authority.indexOf("]") + 1) : authority.split(":", 1)[0];
+  if (rawHostname !== url.hostname) throw new TypeError("Service origins must use a canonical ASCII hostname.");
   const hostname = url.hostname.replace(/\.+$/u, "");
-  if (hostname === "api.terrascale.tech" || hostname.endsWith(".api.terrascale.tech")) {
-    throw new TypeError("The test API host is not a regional TerraBase endpoint.");
+  if (url.hostname !== hostname) {
+    throw new TypeError("Service origins must use a canonical hostname.");
+  }
+  if (hostname !== "api.terrascale.tech" && hostname.endsWith(".terrascale.tech")) {
+    const code = hostname.slice(0, -".api.terrascale.tech".length).toUpperCase();
+    if (url.hostname !== new URL(terraBaseRegionalOrigin(code)).hostname) throw new TypeError("Native regional origins must use <region>.api.terrascale.tech.");
   }
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || url.hostname.endsWith(".localhost");
   if (url.protocol !== "https:" && !(local && url.protocol === "http:" && loopback)) {
@@ -83,7 +90,12 @@ async function responseJson(response: Response, signal: AbortSignal): Promise<un
   let size = 0;
   try {
     while (true) {
-      const part = await withCancellation(reader.read(), signal);
+      let part: ReadableStreamReadResult<Uint8Array>;
+      try { part = await withCancellation(reader.read(), signal); }
+      catch (error) {
+        if (signal.aborted) throw error;
+        throw new Error("Native response transport failed.", { cause: error });
+      }
       if (part.done) break;
       size += part.value.length;
       if (size > maximumResponseBytes) throw new TypeError("Response exceeds its byte limit.");
@@ -131,6 +143,19 @@ function withCancellation<T>(
         reject(signal.aborted ? signal.reason : error);
       },
     );
+  });
+}
+
+async function waitForRetry(response: Response, signal: AbortSignal): Promise<void> {
+  const value = response.headers.get("retry-after")?.trim();
+  if (value === undefined) return;
+  const delay = /^[0-9]+$/u.test(value) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+  if (!(delay > 0)) return;
+  await new Promise<void>((resolve, reject) => {
+    const abort = (): void => { clearTimeout(timer); reject(signal.reason); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, Math.min(delay, 2_147_483_647));
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
   });
 }
 
@@ -247,35 +272,66 @@ export class TerraBaseClient {
   async #request<T>(path: string, method: "GET" | "POST", body: string | undefined, decode: (raw: unknown) => T, options: DatabaseRequestOptions, capabilities: readonly TerraBaseRoutingCapability[], transaction?: DatabaseTransactionIdentity): Promise<DatabaseResult<T>> {
     let sent = false;
     let responseStatus: number | undefined;
+    let route: TerraBaseRoute | undefined;
     const signal = AbortSignal.any([AbortSignal.timeout(this.#requestTimeoutMs), ...(options.signal === undefined ? [] : [options.signal])]);
     try {
       signal.throwIfAborted();
       const apiKey = this.#validateKey(typeof this.#config.apiKey === "function" ? await withCancellation(Promise.resolve(this.#config.apiKey()), signal) : this.#config.apiKey);
-      const endpoint = this.#endpoint === undefined ? await this.#discovery!.resolve(apiKey, capabilities, signal) : undefined;
-      const origin = this.#endpoint ?? endpoint!.url;
-      signal.throwIfAborted();
-      const headers = new Headers({ accept: "application/json", authorization: `Bearer ${apiKey}` });
-      if (body !== undefined) headers.set("content-type", "application/json");
-      const request = new Request(new URL(path, origin), { method, headers, credentials: "omit", redirect: "manual", cache: "no-store", referrerPolicy: "no-referrer", signal, ...(body === undefined ? {} : { body }) });
-      if (endpoint !== undefined) this.#discovery!.assertCurrent(endpoint);
-      sent = true;
-      const response = await withCancellation(this.#fetch(request), signal, response => {
-        void response.body?.cancel().catch(() => undefined);
-      });
-      responseStatus = response.status;
-      if (signal.aborted) {
-        void response.body?.cancel().catch(() => undefined);
+      const attempted = new Set<string>();
+      let response: Response;
+      let raw: unknown;
+      while (true) {
+        route = this.#endpoint === undefined ? await this.#discovery!.resolveHosted(apiKey, capabilities, signal) : { url: this.#endpoint };
+        if (attempted.has(route.url)) throw new TerraBaseDiscoveryError("regions_unavailable");
+        attempted.add(route.url);
+        responseStatus = undefined;
         signal.throwIfAborted();
+        const headers = new Headers({ accept: "application/json", authorization: `Bearer ${apiKey}` });
+        if (body !== undefined) headers.set("content-type", "application/json");
+        const request = new Request(new URL(path, route.url), { method, headers, credentials: "omit", redirect: "manual", cache: "no-store", referrerPolicy: "no-referrer", signal, ...(body === undefined ? {} : { body }) });
+        if (route.endpoint !== undefined) this.#discovery!.assertCurrent(route.endpoint);
+        sent = true;
+        try {
+          response = await withCancellation(this.#fetch(request), signal, late => { void late.body?.cancel().catch(() => undefined); });
+        } catch (error) {
+          if (!signal.aborted && route.endpoint !== undefined) {
+            this.#discovery!.fail(route.endpoint);
+            if (transaction === undefined) continue;
+          }
+          if (!signal.aborted) throw new Error("Native request transport failed.", { cause: error });
+          throw error;
+        }
+        if (!signal.aborted && route.endpoint !== undefined && (response.status === 421 || response.status >= 500)) {
+          this.#discovery!.fail(route.endpoint);
+          if (transaction === undefined) {
+            void response.body?.cancel().catch(() => undefined);
+            await waitForRetry(response, signal);
+            continue;
+          }
+        }
+        responseStatus = response.status;
+        if (signal.aborted) {
+          void response.body?.cancel().catch(() => undefined);
+          signal.throwIfAborted();
+        }
+        if (response.redirected) {
+          void response.body?.cancel().catch(() => undefined);
+          throw new TypeError("Native redirects are not admitted.");
+        }
+        if (response.ok && response.status !== 200) {
+          void response.body?.cancel().catch(() => undefined);
+          throw new TypeError("The native protocol admits only HTTP 200 success.");
+        }
+        try { raw = await responseJson(response, signal); }
+        catch (error) {
+          if (!signal.aborted && route.endpoint !== undefined && !(error instanceof TypeError || error instanceof SyntaxError)) {
+            this.#discovery!.fail(route.endpoint);
+            if (transaction === undefined && response.status === 200) continue;
+          }
+          throw error;
+        }
+        break;
       }
-      if (response.redirected) {
-        void response.body?.cancel().catch(() => undefined);
-        throw new TypeError("Native redirects are not admitted.");
-      }
-      if (response.ok && response.status !== 200) {
-        void response.body?.cancel().catch(() => undefined);
-        throw new TypeError("The native protocol admits only HTTP 200 success.");
-      }
-      const raw = await responseJson(response, signal);
       signal.throwIfAborted();
       if (!response.ok) {
         const code = routeError(raw);
