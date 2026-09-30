@@ -208,7 +208,7 @@ public sealed class TerraScaleDiscoveryRouter
             RefreshSeconds: TerraScaleRoutingValidation.MinRefreshSeconds,
             Endpoints: unique.Select((region, index) => new TerraScaleRoutingEndpoint(
                 region,
-                new Uri($"https://{region.ToLowerInvariant()}.terrascale.tech/", UriKind.Absolute),
+                new Uri($"https://{TerraScaleRoutingValidation.RegionalApiHostname(region)}/", UriKind.Absolute),
                 index + 1,
                 new[] { TerraScaleRoutingCapability.Read, TerraScaleRoutingCapability.Write, TerraScaleRoutingCapability.Sql, TerraScaleRoutingCapability.Reactive }))
                 .ToList());

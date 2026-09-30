@@ -76,6 +76,10 @@ internal static class TerraScaleRoutingValidation
     public const int MaxRefreshSeconds = 3600;
     public const int MaxEndpoints = 20;
 
+    internal const string RegionalApiDomain = "terrascale.tech";
+
+    internal static string RegionalApiHostname(string region) => $"{region.ToLowerInvariant()}.{RegionalApiDomain}";
+
     /// <summary>Loopback and <c>*.localhost</c> origins: the dev worker publishes these from its DEV_ORIGINS.</summary>
     internal static bool IsDevOrigin(Uri uri) =>
         uri.Host is "localhost" or "127.0.0.1" or "[::1]" ||
@@ -130,7 +134,7 @@ internal static class TerraScaleRoutingValidation
             return false;
         }
 
-        var expectedHostname = $"{region.ToLowerInvariant()}.terrascale.tech";
+        var expectedHostname = RegionalApiHostname(region);
         if (parsed.Scheme == Uri.UriSchemeHttps &&
             string.Equals(parsed.Host, expectedHostname, StringComparison.OrdinalIgnoreCase))
         {
@@ -436,8 +440,9 @@ internal static class TerraScaleRoutingValidation
                     return null;
                 }
 
+                // Atlas catalogs publish bare hostnames; discovery endpoints require absolute URLs.
                 var rawHost = host.Value.GetString()!;
-                var origin = string.Equals(rawHost, $"{host.Name.ToLowerInvariant()}.terrascale.tech", StringComparison.OrdinalIgnoreCase)
+                var origin = string.Equals(rawHost, RegionalApiHostname(host.Name), StringComparison.OrdinalIgnoreCase)
                     ? $"https://{rawHost}" : rawHost;
                 if (!TryValidateEndpointUrl(origin, host.Name, loopbackClient, out var url))
                 {

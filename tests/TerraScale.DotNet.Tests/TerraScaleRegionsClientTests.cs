@@ -10,9 +10,11 @@ public sealed class TerraScaleRegionsClientTests
         """{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5475,"longitude":-46.6361,"available":true},{"code":"FRA","name":"Frankfurt","country":"DE","latitude":50.1109,"longitude":8.6821,"available":false}],"hosts":{"GRU":"https://gru.terrascale.tech","FRA":"https://fra.terrascale.tech"}}""";
 
     [Test]
-    public async Task GetAsync_DecodesTheRegionCatalogFromTheConfiguredOrigin()
+    [Arguments("https://gru.terrascale.tech")]
+    [Arguments("gru.terrascale.tech")]
+    public async Task GetAsync_DecodesTheRegionCatalogFromTheConfiguredOrigin(string gruHost)
     {
-        using var handler = new RecordingHandler(CatalogBody);
+        using var handler = new RecordingHandler(CatalogBody.Replace("https://gru.terrascale.tech", gruHost, StringComparison.Ordinal));
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
@@ -26,16 +28,22 @@ public sealed class TerraScaleRegionsClientTests
     }
 
     [Test]
-    public async Task GetAsync_RejectsHostsOutsideTheRegionalFamily()
+    [Arguments("https://evil.example.com")]
+    [Arguments("fra.terrascale.tech")]
+    [Arguments("evil.example.com")]
+    [Arguments("gru.api.terrascale.tech")]
+    [Arguments("gru.terrascale.tech:443")]
+    public async Task GetAsync_RejectsHostsOutsideTheRegionalFamily(string gruHost)
     {
         using var handler = new RecordingHandler(
-            """{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5475,"longitude":-46.6361,"available":true}],"hosts":{"GRU":"https://evil.example.com"}}""");
+            CatalogBody.Replace("https://gru.terrascale.tech", gruHost, StringComparison.Ordinal));
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
         var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Regions.GetAsync());
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(handler.Request).IsEqualTo("https://api.example.invalid/api/v1/regions");
     }
 
     [Test]
