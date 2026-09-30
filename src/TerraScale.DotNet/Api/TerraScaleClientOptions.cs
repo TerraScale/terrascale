@@ -233,11 +233,12 @@ public sealed record TerraScaleClientOptions
     private static Uri ResolveStrictRegionalBaseAddress(Uri baseAddress, string region)
     {
         var builder = new UriBuilder(baseAddress);
+        var regionalHost = TerraScaleRoutingValidation.RegionalApiHostname(region);
         if (string.Equals(builder.Host, "api.terrascale.tech", StringComparison.OrdinalIgnoreCase))
         {
-            builder.Host = $"{region}.terrascale.tech";
+            builder.Host = regionalHost;
         }
-        else if (!string.Equals(builder.Host, $"{region}.terrascale.tech", StringComparison.OrdinalIgnoreCase))
+        else if (!string.Equals(builder.Host, regionalHost, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException(
                 "Strict regional affinity requires the global TerraScale API URL or the selected regional URL.",
