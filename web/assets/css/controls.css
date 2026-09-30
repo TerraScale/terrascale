@@ -435,7 +435,7 @@ legend {
   border-color: var(--ts-control-line-hover);
 }
 
-.ts-filter-inline:has(.ts-select:focus-visible) {
+.ts-filter-inline:focus-within {
   border-color: var(--ts-accent);
   outline: 1px solid var(--ts-accent);
   outline-offset: 0;
