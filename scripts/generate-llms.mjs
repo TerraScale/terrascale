@@ -10,6 +10,7 @@ const outPath = join(root, "docs", "public", "llms.txt");
 const check = process.argv.includes("--check");
 
 const base = "https://docs.terrascale.tech";
+const regions = ["gru", "sfo", "fra"];
 const routes = [
   ["/", "TerraScale docs home: what TerraScale is, quickstart with an unqualified five-minute target."],
   ["/getting-started", "Quickstart: create-terrascale-app to development write and live query; sign-in journey unqualified."],
@@ -82,7 +83,7 @@ ${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
 
 ## API entry points
 
-Base domain terrascale.tech. Regions at launch: GRU, SFO, FRA.
+Base domain terrascale.tech. Regions at launch: ${regions.map((region) => region.toUpperCase()).join(", ")}.
 
 - Discovery: GET https://atlas.terrascale.tech/api/v1/discovery?database=…
   (optional branch, rev, stale) — served by ts-atlas, a metadata-only Worker:
@@ -93,12 +94,11 @@ Base domain terrascale.tech. Regions at launch: GRU, SFO, FRA.
 - Region catalog: GET https://atlas.terrascale.tech/api/v1/regions — also
   ts-atlas; the catalog-selection fallback when discovery fails and the
   selector for database-less member routes.
-- Product API origin: https://api.terrascale.tech — dashboard-owned product
-  routes only: /api/v1/organizations, /api/v1/projects,
-  /api/v1/regions/{code}.
-- Direct regional REST + WebSocket: https://gru.terrascale.tech,
-  https://sfo.terrascale.tech, https://fra.terrascale.tech — direct
-  routing with catalog fallback; there is no proxy.
+- Nearest-region API router: https://api.terrascale.tech — forwards requests
+  to the nearest configured regional TerraBase HTTPS API. SDKs use discovery
+  to select direct regional origins.
+- Direct regional REST + WebSocket: ${regions.map((region) => `https://${region}.terrascale.tech`).join(",\n  ")} — direct
+  routing with catalog fallback; SDK data requests go straight to the region.
 - Reactive HTTP (live queries; CDN-backed long-polling, capability header):
   https://sync.api.terrascale.tech
 - SQL (read-only; JSON or MessagePack):
