@@ -153,7 +153,6 @@ When implementing OAuth or OpenID Connect:
 ### Builds
 
 - Use existing repository scripts and Makefile targets when available.
-- Run compilation at low CPU scheduling priority so it yields to other workloads.
 - Keep formatting, build, Clippy, and dependency-security checks passing.
 - Do not suppress warnings or security findings without a documented justification.
 - Keep development credentials, signing keys, and data separate from production.
