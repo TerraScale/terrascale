@@ -34,21 +34,26 @@ while IFS= read -r browser_root; do
   fi
 done < "${browser_paths}"
 test -n "${chrome}" && test -n "${edge}"
-# The builder's /lib runtime path belongs to its bundled toolchains. Mixing
-# those libraries with a vendor browser's pinned Nix closure aborts at startup.
-# Scrub it per browser process; Node and the other builder tools still need it.
-launcher_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/terrascale-browser-launchers.XXXXXX")"
-for browser in chrome edge; do
-  vendor_executable="${!browser}"
-  printf '#!/bin/sh\nunset LD_LIBRARY_PATH LD_PRELOAD\nexec "%s" "$@"\n' \
-    "${vendor_executable}" > "${launcher_dir}/${browser}"
-  chmod 700 "${launcher_dir}/${browser}"
-done
-chrome="${launcher_dir}/chrome"
-edge="${launcher_dir}/edge"
-test "$("${chrome}" --version | xargs)" = "Google Chrome 154.0.8037.57"
-test "$("${edge}" --version | xargs)" = "Microsoft Edge 154.0.4258.37"
+
+# Image tools require /lib, while vendor closures need their own libraries.
+# Keep this adjustment on vendor children for both probes and Playwright.
+browser_launchers="$(mktemp -d "${RUNNER_TEMP:-/tmp}/terrascale-branded-browser-launchers.XXXXXX")"
+create_vendor_launcher() {
+  local executable="$1"
+  local launcher="$2"
+  printf '#!/bin/bash\nunset LD_LIBRARY_PATH\nexec %q "$@"\n' \
+    "${executable}" > "${launcher}"
+  chmod 0700 "${launcher}"
+}
+create_vendor_launcher "${chrome}" "${browser_launchers}/google-chrome-stable"
+create_vendor_launcher "${edge}" "${browser_launchers}/microsoft-edge"
+chrome="${browser_launchers}/google-chrome-stable"
+edge="${browser_launchers}/microsoft-edge"
+
+chrome_version="$("${chrome}" --version)"
+edge_version="$("${edge}" --version)"
+[[ "${chrome_version}" =~ ^Google\ Chrome\ 154\.0\.8037\.57[[:space:]]*$ ]]
+[[ "${edge_version}" =~ ^Microsoft\ Edge\ 154\.0\.4258\.37[[:space:]]*$ ]]
 printf 'PLAYWRIGHT_CHROME_EXECUTABLE_PATH=%s\nPLAYWRIGHT_EDGE_EXECUTABLE_PATH=%s\n' \
   "${chrome}" "${edge}" >> "${GITHUB_ENV}"
-"${chrome}" --version
-"${edge}" --version
+printf '%s\n%s\n' "${chrome_version}" "${edge_version}"

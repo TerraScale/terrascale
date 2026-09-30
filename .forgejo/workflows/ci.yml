@@ -21,6 +21,8 @@ jobs:
   static:
     name: verify/static-contracts
     runs-on: terrascale-builder
+    container:
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:265dd0079910888f668752f27341065df6228eaa2306fd467b424cd042fe1f60
     timeout-minutes: 45
     steps:
       - name: Check out the exact event revision
@@ -85,6 +87,8 @@ jobs:
           # The job image's Node.js (.node-version); nothing to download.
           - node: "24.21.0"
     runs-on: terrascale-builder
+    container:
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:265dd0079910888f668752f27341065df6228eaa2306fd467b424cd042fe1f60
     timeout-minutes: 45
     steps:
       - name: Check out the exact event revision
@@ -159,6 +163,8 @@ jobs:
   browser:
     name: verify/browser-current-engines
     runs-on: terrascale-builder
+    container:
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:265dd0079910888f668752f27341065df6228eaa2306fd467b424cd042fe1f60
     timeout-minutes: 60
     steps:
       - name: Check out the exact event revision

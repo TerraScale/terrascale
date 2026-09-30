@@ -7,8 +7,10 @@ admission, native single-writer security persistence, and installed real-produce
 and deployed authenticated account/browser journeys.
 
 The native Forgejo workflow verifies the event revision on Node 22.23.2 and
-24.21.0 and current browser engines. It provisions the reviewed npm 11.18.0 CLI,
-uses the locked dependency tree, and runs source parity, typecheck, build,
+24.21.0 and current browser engines. All jobs pin the existing builder image to
+`sha256:265dd0079910888f668752f27341065df6228eaa2306fd467b424cd042fe1f60`,
+with the runner label selecting capacity. It provisions the reviewed npm 11.18.0
+CLI, uses the locked dependency tree, and runs source parity, typecheck, build,
 regression, actual framework lifecycle, SBOM, and vulnerability checks. Exact
 producer OpenAPI and canonical vector bytes are mandatory inputs checked against
 `sdk-current-contract.json`. CI verifies and extracts the immutable
@@ -42,7 +44,10 @@ npm run qualify:release-e2e
 The Linux browser matrix uses actual stable Chrome and Edge channels and
 Playwright Firefox and WebKit. CI provisions SHA-bound Nix vendor packages from
 revision `b4fd65b198c599cbe814fcb9f42d25d021595ec9` (Chrome 154.0.8037.57 and
-Edge 154.0.4258.37) and exports their actual executable paths. Local runs can set
+Edge 154.0.4258.37) and exports launchers for those executables. The launchers
+clear the inherited `LD_LIBRARY_PATH` only for vendor browser processes, so their
+Nix runtime libraries stay coherent while other tools and engines retain the
+builder environment. Local runs can set
 `PLAYWRIGHT_CHROME_EXECUTABLE_PATH` and `PLAYWRIGHT_EDGE_EXECUTABLE_PATH` for
 verified runner-provisioned binaries. Refresh these pins as stable releases move.
 WebKit results are engine compatibility evidence; actual Safari qualification
