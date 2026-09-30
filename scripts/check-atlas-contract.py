@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify frozen Atlas contracts and raw actual receiver codec bytes."""
+"""Verify frozen Atlas contracts and migrated fixed-clock codec fixture bytes."""
 import hashlib
 import json
 import re
@@ -30,6 +30,6 @@ require(discovery["observed_query_all_or_none"] == ["observed_deployment_id", "o
 consumer = json.loads((CONTRACT / "RUST_ATLAS_CONSUMER_V1.json").read_bytes())
 require(consumer["operation_requirements"]["transaction_status"] == ["client_v1", "write"], "Atlas status reconciliation drift")
 for name in ["native-discovery-success.json", "native-discovery-forbidden.json"]:
-    require(manifest["artifacts"][name] == consumer["actual_fixtures"][name]["sha256"], f"Actual receiver fixture drift: {name}")
+    require(manifest["artifacts"][name] == consumer["codec_fixtures"][name]["sha256"], f"Codec fixture drift: {name}")
 require(manifest["fixture_unix_millis"] == 1790769600000 and manifest["fixture_consumer_bound_millis"] == 100, "Fixed-clock codec provenance drift")
 print(json.dumps({"contract": manifest["version"], "manifest_sha256": digest, "evidence": "codec_only", "result": "passed"}, sort_keys=True))

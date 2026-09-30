@@ -72,7 +72,7 @@ impl fmt::Display for RegionCode {
 /// Public direct regional native member hostname.
 #[must_use]
 pub fn regional_host(region: RegionCode) -> String {
-    format!("{}.terrascale.tech", region.as_str())
+    format!("{}.api.terrascale.tech", region.as_str())
 }
 
 /// Normalize and validate a base URL (no trailing slash).
