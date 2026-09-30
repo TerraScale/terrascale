@@ -94,8 +94,10 @@ using the `playwright-core` driver pinned in `package.json`; no driver is
 downloaded at test time. When the driver's own Chromium revision is not installed, the suite
 falls back to the newest headless shell under `PLAYWRIGHT_BROWSERS_PATH`
 (the CI image ships one). Each test uses its own browser context and account,
-so tests run in parallel. The accessibility tests inject axe-core, pinned in
-`package.json`, into the signed-out, onboarding, member and admin pages and
+but Chromium journeys run serially to avoid timeouts under the race detector.
+Use `-parallel 1` when running `go test ./tests/e2e` directly. The accessibility
+tests inject axe-core, pinned in `package.json`, into the signed-out,
+onboarding, member and admin pages and
 their dialogs and menus, and fail on any WCAG 2.2 level A or AA violation.
 Set `DASHBOARD_E2E_SCREENSHOTS=<dir>` to capture desktop and mobile
 screenshots.

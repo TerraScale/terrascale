@@ -1,7 +1,23 @@
 /* Notification inbox. */
 
+/* The inbox leads with its tabs, so the shared page padding leaves too much
+   dead space above them. */
+.ts-notifications-page {
+  padding-top: var(--ts-s5);
+}
+
+/* Read-all sits with the summary instead of the page header; keep the pair
+   together as one right-aligned group. */
+.ts-notifications-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding-bottom: var(--ts-s2);
+}
+
 .ts-notifications-summary {
-  padding-bottom: var(--ts-s3);
+  padding-bottom: 0;
 }
 
 .ts-notification-list {

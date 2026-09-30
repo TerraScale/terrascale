@@ -2,7 +2,7 @@
 
 .ts-login {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(24rem, 1fr);
+  grid-template-columns: minmax(0, 3fr) minmax(19rem, 1fr);
   min-height: 100dvh;
 }
 
@@ -55,9 +55,9 @@
   display: grid;
   align-content: center;
   gap: var(--ts-s5);
-  width: min(20rem, 100%);
+  width: min(22rem, 100%);
   margin-inline: auto;
-  padding: var(--ts-s10) 0;
+  padding: var(--ts-s10) var(--ts-s4);
 }
 
 .ts-login-logo {
@@ -84,10 +84,6 @@
 
   .ts-login-column {
     border-left: 0;
-  }
-
-  .ts-login-panel {
-    width: min(22rem, calc(100% - 2 * var(--ts-s4)));
   }
 
   .ts-login-logo {
