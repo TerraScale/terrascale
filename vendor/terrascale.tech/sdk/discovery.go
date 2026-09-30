@@ -27,7 +27,7 @@ import (
 const DefaultDiscoveryBaseURL = "https://atlas.terrascale.tech"
 
 // publicAPIHostname is the product API origin family; discovered endpoints
-// must stay inside https://{region}.<publicAPIHostname>.
+// use https://{region}.terrascale.tech.
 const publicAPIHostname = "api.terrascale.tech"
 
 const (
@@ -157,6 +157,9 @@ func originIsLoopback(origin string) bool {
 // the metadata origin itself is loopback. The returned URL is canonical, so a
 // hostile document cannot steer traffic outside the family.
 func validateEndpointURL(raw, region string, allowDevHTTP bool) (string, bool) {
+	if _, err := parseCatalogRegionCode(strings.ToUpper(region)); err != nil {
+		return "", false
+	}
 	if raw == "" || len(raw) > 2048 {
 		return "", false
 	}
@@ -167,7 +170,7 @@ func validateEndpointURL(raw, region string, allowDevHTTP bool) (string, bool) {
 	if u.User != nil || u.Fragment != "" || u.RawQuery != "" {
 		return "", false
 	}
-	expected := strings.ToLower(region) + "." + publicAPIHostname
+	expected := strings.ToLower(region) + ".terrascale.tech"
 	if u.Scheme == "https" && strings.EqualFold(u.Hostname(), expected) {
 		return "https://" + expected, true
 	}
@@ -811,7 +814,11 @@ func (r *discoveryRouter) fetchCatalog(ctx context.Context) (RegionCatalogRespon
 	}
 	// Hosts obey the same endpoint trust rules as routing documents.
 	for _, region := range catalog.Regions {
-		host, ok := validateEndpointURL(catalog.Hosts[string(region.Code)], string(region.Code), r.allowDevHTTP)
+		rawHost := catalog.Hosts[string(region.Code)]
+		if strings.EqualFold(rawHost, strings.ToLower(string(region.Code))+".terrascale.tech") {
+			rawHost = "https://" + rawHost
+		}
+		host, ok := validateEndpointURL(rawHost, string(region.Code), r.allowDevHTTP)
 		if !ok {
 			return RegionCatalogResponse{}, fmt.Errorf("the region catalog has an untrusted host for %s", region.Code)
 		}
