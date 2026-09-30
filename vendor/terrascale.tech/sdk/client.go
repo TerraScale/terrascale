@@ -548,10 +548,10 @@ func regionalizeHost(base string, region RegionCode) string {
 	if err != nil {
 		return base
 	}
-	if !strings.EqualFold(u.Hostname(), "api.terrascale.tech") {
+	if !strings.EqualFold(u.Hostname(), publicAPIHostname) {
 		return base
 	}
-	host := strings.ToLower(string(region)) + ".terrascale.tech"
+	host := strings.ToLower(string(region)) + regionalHostSuffix
 	if port := u.Port(); port != "" {
 		host += ":" + port
 	}
