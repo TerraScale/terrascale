@@ -170,6 +170,10 @@ async function build() {
     ...workerResult.outputFiles,
     ...mainResult.outputFiles,
     { path: resolve(outdir, codicon.name), contents: codicon.contents },
+    // Keep the pinned Datastar bundle intact so the layout's SRI hash applies.
+    // Serving it here avoids a CDN request on every document navigation.
+    { path: resolve(outdir, 'datastar.js'), contents: await readFile(resolve(source, 'vendor/datastar.js')) },
+    { path: resolve(outdir, 'LICENSE.datastar.md'), contents: await readFile(resolve(source, 'vendor/LICENSE.datastar.md')) },
   ];
   // Write the new build before pruning the old one, so a page loading during a
   // development rebuild never finds its chunks missing.

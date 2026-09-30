@@ -39,6 +39,9 @@ func TestStaticAssetsAreCachedAsImmutable(t *testing.T) {
 	}
 	page := watchedPage(t, context)
 	load(page, "/login", 200)
+	// Every navigation must load Datastar from the dashboard, independent of
+	// CDN availability, with the same immutable caching as the other assets.
+	must(t, expect.Locator(page.Locator(`script[type="module"][integrity]`)).ToHaveAttribute("src", assetURL("/js/datastar.js")))
 	load(page, "/onboarding", 200)
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
 	for _, path := range []string{"/", "/databases", "/organization"} {
@@ -60,7 +63,7 @@ func TestStaticAssetsAreCachedAsImmutable(t *testing.T) {
 		must(t, err)
 		kinds[path.Ext(parsed.Path)] = true
 	}
-	for _, kind := range []string{".css", ".woff2", ".svg", ".webp"} {
+	for _, kind := range []string{".css", ".js", ".woff2", ".svg", ".webp"} {
 		if !kinds[kind] {
 			t.Errorf("no %s file was loaded; the pages no longer exercise it", kind)
 		}
