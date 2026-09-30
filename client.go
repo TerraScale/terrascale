@@ -70,7 +70,7 @@ const (
 	// a preferred-region hint and follows one 421 Misdirected Request with
 	// X-TerraScale-Placement to repair pinning.
 	AffinityFailover RegionAffinity = "failover"
-	// AffinityStrict pins REST to <region>.api.terrascale.tech and never
+	// AffinityStrict pins REST to <region>.terrascale.tech and never
 	// discovers.
 	AffinityStrict RegionAffinity = "strict"
 )
@@ -537,7 +537,7 @@ func (c *Client) resolveAttemptBase(ctx context.Context, method, path, route str
 	}
 }
 
-// regionalizeHost rewrites api.terrascale.tech to <region>.api.terrascale.tech.
+// regionalizeHost rewrites api.terrascale.tech to <region>.terrascale.tech.
 // Custom hosts (tests, proxies) are returned unchanged; the region travels in
 // the X-TerraScale-Preferred-Region header instead.
 func regionalizeHost(base string, region RegionCode) string {
@@ -551,7 +551,7 @@ func regionalizeHost(base string, region RegionCode) string {
 	if !strings.EqualFold(u.Hostname(), "api.terrascale.tech") {
 		return base
 	}
-	host := strings.ToLower(string(region)) + ".api.terrascale.tech"
+	host := strings.ToLower(string(region)) + ".terrascale.tech"
 	if port := u.Port(); port != "" {
 		host += ":" + port
 	}

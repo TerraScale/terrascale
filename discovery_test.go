@@ -101,7 +101,7 @@ func (a *atlasServer) server(t *testing.T) *httptest.Server {
 		case edgeRegionsPath:
 			a.catalogCalls.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5,"longitude":-46.6,"available":true}],"hosts":{"GRU":"https://gru.api.terrascale.tech"}}`))
+			_, _ = w.Write([]byte(`{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5,"longitude":-46.6,"available":true}],"hosts":{"GRU":"gru.terrascale.tech"}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -111,7 +111,7 @@ func (a *atlasServer) server(t *testing.T) *httptest.Server {
 }
 
 func TestParseRoutingDocumentValidatesStrictly(t *testing.T) {
-	valid := discoveryBody("orders", 300, "FRA|https://fra.api.terrascale.tech|read,write,sql,reactive")
+	valid := discoveryBody("orders", 300, "FRA|https://fra.terrascale.tech|read,write,sql,reactive")
 	if _, err := parseRoutingDocument(valid, "orders", "main", false); err != nil {
 		t.Fatalf("valid document rejected: %v", err)
 	}
@@ -119,8 +119,8 @@ func TestParseRoutingDocumentValidatesStrictly(t *testing.T) {
 		"version":         {`"v":1`, `"v":2`},
 		"identity":        {`"orders"`, `"other"`},
 		"unknown-field":   {`{`, `{"extra":1,`},
-		"hostile-url":     {`"https://fra.api.terrascale.tech"`, `"https://evil.example"`},
-		"query-steer":     {`"https://fra.api.terrascale.tech"`, `"https://fra.api.terrascale.tech/?x=1"`},
+		"hostile-url":     {`"https://fra.terrascale.tech"`, `"https://evil.example"`},
+		"query-steer":     {`"https://fra.terrascale.tech"`, `"https://fra.terrascale.tech/?x=1"`},
 		"bad-capability":  {`"read","write","sql","reactive"`, `"read","admin"`},
 		"no-capability":   {`["read","write","sql","reactive"]`, `[]`},
 		"priority":        {`"priority":1`, `"priority":0`},
@@ -141,8 +141,8 @@ func TestParseRoutingDocumentValidatesStrictly(t *testing.T) {
 	for name, body := range map[string]string{
 		"trailing-data": string(valid) + `{}`,
 		"duplicate": string(discoveryBody("orders", 300,
-			"FRA|https://fra.api.terrascale.tech|read",
-			"FRA|https://fra.api.terrascale.tech|read")),
+			"FRA|https://fra.terrascale.tech|read",
+			"FRA|https://fra.terrascale.tech|read")),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := parseRoutingDocument([]byte(body), "orders", "main", false); err == nil {
@@ -418,18 +418,19 @@ func TestValidateEndpointURLTrustBoundary(t *testing.T) {
 		allowDev bool
 		want     string
 	}{
-		{raw: "https://fra.api.terrascale.tech", region: "FRA", want: "https://fra.api.terrascale.tech"},
-		{raw: "https://FRA.api.terrascale.tech", region: "fra", want: "https://fra.api.terrascale.tech"},
+		{raw: "https://fra.terrascale.tech", region: "FRA", want: "https://fra.terrascale.tech"},
+		{raw: "https://FRA.terrascale.tech", region: "fra", want: "https://fra.terrascale.tech"},
 		// A port is canonicalized away, mirroring the reference SDK: the
 		// regional family hostname is the trust boundary, not the port.
-		{raw: "https://fra.api.terrascale.tech:8443", region: "FRA", want: "https://fra.api.terrascale.tech"},
+		{raw: "https://fra.terrascale.tech:8443", region: "FRA", want: "https://fra.terrascale.tech"},
 		{raw: "http://127.0.0.1:9911", region: "FRA", allowDev: true, want: "http://127.0.0.1:9911"},
 		{raw: "http://localhost:9911", region: "FRA", allowDev: true, want: "http://localhost:9911"},
-		{raw: "https://gru.api.terrascale.tech", region: "FRA"},
-		{raw: "http://fra.api.terrascale.tech", region: "FRA"},
+		{raw: "https://gru.terrascale.tech", region: "FRA"},
+		{raw: "http://fra.terrascale.tech", region: "FRA"},
+		{raw: "https://fra.api.terrascale.tech", region: "FRA"},
 		{raw: "http://127.0.0.1:9911", region: "FRA"},
-		{raw: "https://user@fra.api.terrascale.tech", region: "FRA"},
-		{raw: "https://fra.api.terrascale.tech/x#y", region: "FRA"},
+		{raw: "https://user@fra.terrascale.tech", region: "FRA"},
+		{raw: "https://fra.terrascale.tech/x#y", region: "FRA"},
 		{raw: "https://evil.example", region: "FRA", allowDev: true},
 		{raw: "", region: "FRA", allowDev: true},
 		{raw: strings.Repeat("h", 2049), region: "FRA", allowDev: true},
@@ -514,10 +515,10 @@ func TestClient421AdoptsPlacementAndSchedulesCorrectiveRediscovery(t *testing.T)
 			if r.URL.Path == discoveryPath {
 				queries.Store(r.URL.RawQuery, true)
 				return respond(http.StatusOK, jsonHeader, string(discoveryBody("orders", minRefreshSeconds,
-					"GRU|https://gru.api.terrascale.tech|read,write")))
+					"GRU|https://gru.terrascale.tech|read,write")))
 			}
 			return respond(http.StatusNotFound, nil, "")
-		case "gru.api.terrascale.tech":
+		case "gru.terrascale.tech":
 			if gruCalls.Add(1) == 1 {
 				return respond(http.StatusMisdirectedRequest,
 					http.Header{"X-TerraScale-Placement": {"SFO"}}, "")
@@ -550,7 +551,7 @@ func TestClient421AdoptsPlacementAndSchedulesCorrectiveRediscovery(t *testing.T)
 		t.Fatalf("SFO replay calls = %d, want 1", got)
 	}
 	doc, ok := c.router.cachedDocument(scopeKey(c.router.scopeFor("orders")))
-	if !ok || len(doc.Endpoints) != 1 || doc.Endpoints[0].Region != "SFO" || doc.Endpoints[0].URL != "https://sfo.api.terrascale.tech" {
+	if !ok || len(doc.Endpoints) != 1 || doc.Endpoints[0].Region != "SFO" || doc.Endpoints[0].URL != "https://sfo.terrascale.tech" {
 		t.Fatalf("placement not adopted: %+v", doc)
 	}
 	// The synthesized document is provisional: once it expires, the next
@@ -596,7 +597,7 @@ func TestReactiveAttachUsesDiscoveredEndpoint(t *testing.T) {
 	if got := attachCalls.Load(); got != 1 {
 		t.Fatalf("attach calls = %d, want 1 on the regional endpoint", got)
 	}
-	if got := memberOriginForAttach("https://api.terrascale.tech", http.Header{"X-TerraScale-Region": {" sfo "}}, ""); got != "https://sfo.api.terrascale.tech" {
+	if got := memberOriginForAttach("https://api.terrascale.tech", http.Header{"X-TerraScale-Region": {" sfo "}}, ""); got != "https://sfo.terrascale.tech" {
 		t.Fatalf("member origin = %q", got)
 	}
 	if got := memberOriginForAttach("http://127.0.0.1:9", nil, ""); got != "http://127.0.0.1:9" {

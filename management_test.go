@@ -125,7 +125,7 @@ func TestRegionsListDecodesEdgeCatalogAndRejectsMemberHealth(t *testing.T) {
 				t.Fatalf("request = %s %s", r.Method, r.URL)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.43,"longitude":-46.47,"available":true},{"code":"IAD","name":"Ashburn","country":"US","latitude":39.04,"longitude":-77.49,"available":false}],"hosts":{"GRU":"gru.api.terrascale.tech","IAD":"iad.api.terrascale.tech"}}`))
+			_, _ = w.Write([]byte(`{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.43,"longitude":-46.47,"available":true},{"code":"IAD","name":"Ashburn","country":"US","latitude":39.04,"longitude":-77.49,"available":false}],"hosts":{"GRU":"gru.terrascale.tech","IAD":"iad.terrascale.tech"}}`))
 		}))
 		defer server.Close()
 		client, err := NewClient(Config{APIBaseURL: server.URL})
@@ -139,7 +139,7 @@ func TestRegionsListDecodesEdgeCatalogAndRejectsMemberHealth(t *testing.T) {
 		if len(regions.Regions) != 2 || regions.Regions[0].Code != RegionGRU || regions.Regions[0].Name != "Sao Paulo" || regions.Regions[0].Country != "BR" || !regions.Regions[0].Available || regions.Regions[1].Code != "IAD" || regions.Regions[1].Available {
 			t.Fatalf("regions = %+v", regions)
 		}
-		if regions.Hosts["GRU"] != "gru.api.terrascale.tech" || regions.Hosts["IAD"] != "iad.api.terrascale.tech" {
+		if regions.Hosts["GRU"] != "gru.terrascale.tech" || regions.Hosts["IAD"] != "iad.terrascale.tech" {
 			t.Fatalf("hosts = %+v", regions.Hosts)
 		}
 	})
