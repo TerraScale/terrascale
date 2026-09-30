@@ -26,9 +26,12 @@ import (
 // APIBaseURL.
 const DefaultDiscoveryBaseURL = "https://atlas.terrascale.tech"
 
-// publicAPIHostname is the product API origin family; discovered endpoints
-// use https://{region}.terrascale.tech.
+// publicAPIHostname is the global product API origin and nearest-region router.
+// Discovered regional APIs use the separate regionalHostSuffix family.
 const publicAPIHostname = "api.terrascale.tech"
+
+// regionalHostSuffix is the public regional API hostname contract.
+const regionalHostSuffix = ".terrascale.tech"
 
 const (
 	discoveryPath       = "/api/v1/discovery"
@@ -170,7 +173,7 @@ func validateEndpointURL(raw, region string, allowDevHTTP bool) (string, bool) {
 	if u.User != nil || u.Fragment != "" || u.RawQuery != "" {
 		return "", false
 	}
-	expected := strings.ToLower(region) + ".terrascale.tech"
+	expected := strings.ToLower(region) + regionalHostSuffix
 	if u.Scheme == "https" && strings.EqualFold(u.Hostname(), expected) {
 		return "https://" + expected, true
 	}
@@ -812,10 +815,11 @@ func (r *discoveryRouter) fetchCatalog(ctx context.Context) (RegionCatalogRespon
 	if err := json.Unmarshal(body, &catalog); err != nil {
 		return RegionCatalogResponse{}, err
 	}
-	// Hosts obey the same endpoint trust rules as routing documents.
+	// Atlas catalogs contain bare hostnames; discovery endpoints require URLs.
+	// Normalize only the exact regional hostname before the shared trust check.
 	for _, region := range catalog.Regions {
 		rawHost := catalog.Hosts[string(region.Code)]
-		if strings.EqualFold(rawHost, strings.ToLower(string(region.Code))+".terrascale.tech") {
+		if strings.EqualFold(rawHost, strings.ToLower(string(region.Code))+regionalHostSuffix) {
 			rawHost = "https://" + rawHost
 		}
 		host, ok := validateEndpointURL(rawHost, string(region.Code), r.allowDevHTTP)
