@@ -12,12 +12,7 @@ import (
 
 templ auditView(data pageData) {
 	<main class="ts-page ts-audit-page">
-		@ui.PageHeader("Audit") {
-			@ui.Dropdown(ui.DropdownProps{End: true, Label: "Export audit events", Trigger: exportTrigger(), PanelLabel: "Export formats"}) {
-				@ui.MenuItem(ui.MenuItemProps{Href: auditExportHref(data, "csv"), Icon: icons.FileText(15), Label: "Export CSV"})
-				@ui.MenuItem(ui.MenuItemProps{Href: auditExportHref(data, "json"), Icon: icons.FileJson(15), Label: "Export JSON"})
-			}
-		}
+		@ui.PageHeader("Audit") {}
 		@ui.Stats("Audit totals") {
 			@ui.Stat("Matching events", fmt.Sprint(data.Filtered), "Current filtered view")
 			@ui.Stat("High risk", fmt.Sprint(data.Critical), "Critical events in this view")
@@ -62,7 +57,13 @@ templ auditView(data pageData) {
 						<option value="90d" selected?={ data.Range == "90d" }>Last 90 days</option>
 					</select>
 				</label>
-				<button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Apply filters</button>
+				<div class="ts-audit-filter-actions">
+					<button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Apply filters</button>
+					@ui.Dropdown(ui.DropdownProps{End: true, Label: "Export audit events", Trigger: exportTrigger(), TriggerClass: "ts-btn ts-btn-secondary ts-btn-sm", PanelLabel: "Export formats"}) {
+						@ui.MenuItem(ui.MenuItemProps{Href: auditExportHref(data, "csv"), Icon: icons.FileText(15), Label: "Export CSV"})
+						@ui.MenuItem(ui.MenuItemProps{Href: auditExportHref(data, "json"), Icon: icons.FileJson(15), Label: "Export JSON"})
+					}
+				</div>
 			</form>
 			if len(data.Rows) > 0 {
 				<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Audit events table. Scroll horizontally to see all columns.">
