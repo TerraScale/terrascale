@@ -151,16 +151,16 @@ describe("native database view reducer", () => {
     assert.equal(state.getSnapshot(), undefined);
   });
 
-  test("reports hosted transport failure and fences pre-cancelled delivery", async () => {
+  test("fails closed when discovery transport fails and fences pre-cancelled delivery", async () => {
     const client = createTerraBaseClient({ ...scope, apiKey: nativeTestKey, fetch: unavailableDiscovery });
     const source = createDatabaseQuery(client, { collection, predicate });
     const errors: unknown[] = [];
     let finish!: () => void;
     const terminal = new Promise<void>(resolve => { finish = resolve; });
-    const stop = source.subscribe({ next: () => assert.fail("unavailable hosted transport cannot publish data"), reset: () => assert.fail("no reset was admitted"), error: error => { errors.push(error); finish(); } }, { signal: new AbortController().signal });
+    const stop = source.subscribe({ next: () => assert.fail("unavailable discovery cannot publish data"), reset: () => assert.fail("no reset was admitted"), error: error => { errors.push(error); finish(); } }, { signal: new AbortController().signal });
     await terminal;
     assert.equal(errors.length, 1);
-    assert.match(String(errors[0]), /transport_unavailable/u);
+    assert.match(String(errors[0]), /discovery_unavailable/u);
     stop();
     const abort = new AbortController();
     abort.abort();

@@ -3,10 +3,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { parseDatabaseJson } from "./database-codec.js";
 import { parseTerraBaseRoutingDocument, TerraBaseDiscoveryRouter } from "./discovery.js";
 
-// Archived Worker + SQLite DO output. Fixed clock and synthetic R3 17/41 are codec evidence.
-const capturedBytes = "{\"schema_version\":1,\"scope\":{\"tenant_id\":\"10000000-0000-0000-0000-000000000001\",\"database_id\":\"20000000-0000-0000-0000-000000000001\",\"shard_id\":\"18446744073709551615\"},\"authority\":{\"deployment_id\":\"fixture-deployment\",\"cell\":\"gru\",\"publisher_id\":\"publisher-a\",\"publisher_generation\":\"18446744073709551615\"},\"revision\":\"41\",\"published_at\":1790769600,\"expires_at\":1790769609,\"refreshSeconds\":8,\"residency\":null,\"endpoints\":[{\"region\":\"GRU\",\"url\":\"https://gru.terrascale.tech\",\"catalog\":{\"digest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},\"capabilities\":{\"atomic_groups\":false,\"client_v1\":true,\"conditional_mutation\":false,\"query\":true,\"read\":true,\"security_state\":false,\"subscriptions\":true,\"write\":true},\"security_writer\":null,\"priority\":1}]}";
-// Host migration fixture; the archived capture and its digest remain untouched.
-const successBytes = capturedBytes.replace("https://gru.terrascale.tech", "https://gru.api.terrascale.tech");
+// Exact actual Worker + SQLite DO output. Fixed clock and synthetic R3 17/41 are codec evidence.
+const successBytes = "{\"schema_version\":1,\"scope\":{\"tenant_id\":\"10000000-0000-0000-0000-000000000001\",\"database_id\":\"20000000-0000-0000-0000-000000000001\",\"shard_id\":\"18446744073709551615\"},\"authority\":{\"deployment_id\":\"fixture-deployment\",\"cell\":\"gru\",\"publisher_id\":\"publisher-a\",\"publisher_generation\":\"18446744073709551615\"},\"revision\":\"41\",\"published_at\":1790769600,\"expires_at\":1790769609,\"refreshSeconds\":8,\"residency\":null,\"endpoints\":[{\"region\":\"GRU\",\"url\":\"https://gru.terrascale.tech\",\"catalog\":{\"digest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},\"capabilities\":{\"atomic_groups\":false,\"client_v1\":true,\"conditional_mutation\":false,\"query\":true,\"read\":true,\"security_state\":false,\"subscriptions\":true,\"write\":true},\"security_writer\":null,\"priority\":1}]}";
 const forbiddenBytes = "{\"error\":{\"code\":\"discovery_forbidden\",\"message\":\"native discovery admission is unavailable\",\"fix\":\"retry with current authorized native scope metadata\"}}";
 const now = 1790769600000;
 const scope = { tenant: "10000000-0000-0000-0000-000000000001", database: "20000000-0000-0000-0000-000000000001", shard: 18446744073709551615n };
@@ -19,14 +17,14 @@ afterEach(() => vi.useRealTimers());
 
 describe("actual receiver frozen byte conformance", () => {
   test("pins the actual receiver success and forbidden response bytes", () => {
-    expect(createHash("sha256").update(capturedBytes).digest("hex")).toBe("d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0");
+    expect(createHash("sha256").update(successBytes).digest("hex")).toBe("d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0");
     expect(createHash("sha256").update(forbiddenBytes).digest("hex")).toBe("3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c");
     const doc = parseTerraBaseRoutingDocument(parseDatabaseJson(new TextEncoder().encode(successBytes)), scope, now);
     expect(doc.scope).toEqual(scope);
     expect(doc.authority.publisher_generation).toBe(18446744073709551615n);
     expect(doc.revision).toBe(41n);
     expect(doc.refreshSeconds).toBe(8);
-    expect(doc.endpoints[0]).toMatchObject({ region: "GRU", url: "https://gru.api.terrascale.tech", security_writer: null, capabilities: { conditional_mutation: false, atomic_groups: false, security_state: false } });
+    expect(doc.endpoints[0]).toMatchObject({ region: "GRU", url: "https://gru.terrascale.tech", security_writer: null, capabilities: { conditional_mutation: false, atomic_groups: false, security_state: false } });
     expect(Object.isFrozen(doc.endpoints[0]?.capabilities)).toBe(true);
   });
 
@@ -34,7 +32,7 @@ describe("actual receiver frozen byte conformance", () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
     let request!: Request;
     const router = new TerraBaseDiscoveryRouter(scope, async input => { request = input as Request; return response(); });
-    expect((await router.resolve(key, ["client_v1", "read"])).url).toBe("https://gru.api.terrascale.tech");
+    expect((await router.resolve(key, ["client_v1", "read"])).url).toBe("https://gru.terrascale.tech");
     expect(request.url).toBe("https://atlas.terrascale.tech/api/v1/discovery?tenant_id=10000000-0000-0000-0000-000000000001&database_id=20000000-0000-0000-0000-000000000001&shard_id=18446744073709551615");
     expect([...request.headers]).toEqual([["accept", "application/json"], ["authorization", "Bearer " + key]]);
     expect(request.credentials).toBe("omit"); expect(request.redirect).toBe("manual"); expect(request.cache).toBe("no-store");
@@ -69,10 +67,10 @@ describe("actual receiver frozen byte conformance", () => {
     ["sparse residency", (doc: any) => { doc.residency = new Array(1); }],
     ["excluded region", (doc: any) => { doc.residency = ["FRA"]; }],
     ["duplicate residency", (doc: any) => { doc.residency = ["GRU", "GRU"]; }],
-    ["obsolete single-level origin", (doc: any) => { doc.endpoints[0].url = "https://gru.terrascale.tech"; }],
+    ["API alias", (doc: any) => { doc.endpoints[0].url = "https://gru.api.terrascale.tech"; }],
     ["API host", (doc: any) => { doc.endpoints[0].region = "API"; doc.endpoints[0].url = "https://api.terrascale.tech"; }],
     ["nonbare origin", (doc: any) => { doc.endpoints[0].url += "/"; }],
-    ["noncanonical hostname", (doc: any) => { doc.endpoints[0].url = "https://GRU.api.terrascale.tech"; }],
+    ["noncanonical hostname", (doc: any) => { doc.endpoints[0].url = "https://GRU.terrascale.tech"; }],
     ["port", (doc: any) => { doc.endpoints[0].url += ":443"; }],
     ["ineligible native protocol", (doc: any) => { doc.endpoints[0].capabilities.client_v1 = false; }],
     ["no read or write", (doc: any) => { doc.endpoints[0].capabilities.read = false; doc.endpoints[0].capabilities.write = false; }],

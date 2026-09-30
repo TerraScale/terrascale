@@ -11,7 +11,7 @@ test("packed browser entrypoint preserves exact native values and preparation id
       tenant: "00000000-0000-0000-0000-000000000001",
       database: "00000000-0000-0000-0000-000000000002",
       shard: 1n,
-      endpoint: "https://gru.api.terrascale.tech",
+      endpoint: "https://gru.terrascale.tech",
       apiKey: "browser-unit-only",
       fetch: async () => {
         dispatches += 1;

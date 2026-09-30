@@ -49,7 +49,7 @@ import { requireTerraScaleAdministration } from "@terrascale/sdk/admin";
 import { requireTerraScaleBetterAuth } from "@terrascale/sdk/better-auth";
 import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
 const scope = { tenant: "00000000-0000-0000-0000-000000000001", database: "00000000-0000-0000-0000-000000000002", shard: 1n };
-const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terrascale.tech", apiKey: "qualification-constructor-only" });
+const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.terrascale.tech", apiKey: "qualification-constructor-only" });
 assert.equal(typeof client.read, "function");
 assert.equal(typeof client.prepareCommit, "function");
 for (const name of ["request", "documents", "executeSql", "sync", "http"]) assert.equal(name in client, false);

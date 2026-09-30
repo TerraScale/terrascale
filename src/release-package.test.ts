@@ -71,7 +71,7 @@ test("required release E2E refuses unavailable production capabilities even with
     {
       ...process.env,
       TERRABASE_API_KEY: "test-config-only",
-      TERRABASE_ENDPOINT: "https://gru.api.terrascale.tech",
+      TERRABASE_ENDPOINT: "https://gru.terrascale.tech",
     },
   ]) {
     await assert.rejects(
@@ -228,7 +228,7 @@ import { requireTerraScaleManagement } from "@terrascale/sdk/management";
 import { requireTerraScaleAdministration } from "@terrascale/sdk/admin";
 import { requireTerraScaleBetterAuth } from "@terrascale/sdk/better-auth";
 import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
-const client = sdk.createTerraBaseClient({ tenant: "00000000-0000-0000-0000-000000000001", database: "00000000-0000-0000-0000-000000000002", shard: 1n, endpoint: "https://gru.api.terrascale.tech", apiKey: "constructor-only" });
+const client = sdk.createTerraBaseClient({ tenant: "00000000-0000-0000-0000-000000000001", database: "00000000-0000-0000-0000-000000000002", shard: 1n, endpoint: "https://gru.terrascale.tech", apiKey: "constructor-only" });
 for (const name of ["read", "query", "subscription", "prepareCommit", "commit", "transactionStatus"]) assert.equal(typeof client[name], "function");
 for (const name of ["createTerraScaleClient", "TerraScaleSyncV1Client", "TerraScaleHttp", "toUlid"]) assert.equal(name in sdk, false);
 for (const gate of [requireTerraScaleManagement, requireTerraScaleAdministration, requireTerraScaleBetterAuth]) assert.throws(gate, sdk.TerraScaleCapabilityUnavailableError);
@@ -285,7 +285,7 @@ assert.equal(typeof executeDescriptor, "function");
 
 // This installed caller proves public assignability and framework lifecycle;
 // the deliberately failing transport supplies no simulated producer responses.
-const client = createTerraBaseClient({ tenant: "00000000-0000-0000-0000-000000000001", database: "00000000-0000-0000-0000-000000000002", shard: 1n, endpoint: "https://gru.api.terrascale.tech", apiKey: "installed-caller-only", fetch: async () => { throw new Error("No producer is configured for this package boundary caller."); } });
+const client = createTerraBaseClient({ tenant: "00000000-0000-0000-0000-000000000001", database: "00000000-0000-0000-0000-000000000002", shard: 1n, endpoint: "https://gru.terrascale.tech", apiKey: "installed-caller-only", fetch: async () => { throw new Error("No producer is configured for this package boundary caller."); } });
 const collectionId = "00000000-0000-0000-0000-000000000003";
 const predicate = { op: "is_missing" as const, path: [1] };
 const native = createDatabaseQuery(client, { collection: collectionId, predicate });

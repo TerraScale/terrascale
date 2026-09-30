@@ -13,9 +13,10 @@ test("packed browser direct endpoint validation and pre-abort dispatch boundary"
     };
     const rejected = [];
     for (const endpoint of [
+      "https://api.terrascale.tech",
       "https://api.terrascale.tech.",
       "http://remote.example.test",
-      "https://gru.api.terrascale.tech/path",
+      "https://gru.terrascale.tech/path",
     ]) {
       try {
         sdk.createTerraBaseClient({ ...scope, endpoint, apiKey: "unused" });
@@ -27,7 +28,7 @@ test("packed browser direct endpoint validation and pre-abort dispatch boundary"
     let dispatches = 0;
     const client = sdk.createTerraBaseClient({
       ...scope,
-      endpoint: "https://gru.api.terrascale.tech",
+      endpoint: "https://gru.terrascale.tech",
       apiKey: () => {
         credentials += 1;
         return "unused";
@@ -53,7 +54,7 @@ test("packed browser direct endpoint validation and pre-abort dispatch boundary"
     };
   });
   expect(observation).toEqual({
-    rejected: 3,
+    rejected: 4,
     credentials: 0,
     dispatches: 0,
     ok: false,
@@ -61,7 +62,7 @@ test("packed browser direct endpoint validation and pre-abort dispatch boundary"
   });
 });
 
-test("packed browser default Atlas routing uses the authenticated receiver and falls back on discovery transport failure", async ({
+test("packed browser default Atlas routing uses the authenticated receiver and reports transport failure", async ({
   page,
 }) => {
   await page.goto("/browser-tests/fixture.html");
@@ -104,11 +105,11 @@ test("packed browser default Atlas routing uses the authenticated receiver and f
     };
   });
   expect(observation).toEqual({
-    requests: 2,
-    origin: "https://api.terrascale.tech",
+    requests: 1,
+    origin: "https://atlas.terrascale.tech",
     authenticated: true,
     receiver: "https://atlas.terrascale.tech",
     ok: false,
-    code: "transport_unavailable",
+    code: "discovery_unavailable",
   });
 });

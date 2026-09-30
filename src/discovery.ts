@@ -4,11 +4,6 @@ import type { DatabaseScope } from "./database-types.js";
 
 /** Frozen authenticated native receiver; no alternate metadata origin is admitted. */
 export const terraBaseDiscoveryOrigin = "https://atlas.terrascale.tech";
-const hostedProxyOrigin = "https://api.terrascale.tech";
-const defaultRefreshSeconds = 8;
-
-export type TerraBaseRoute = { readonly url: string; readonly endpoint?: TerraBaseRoutingEndpoint };
-
 const maximumResponseBytes = 256 * 1024;
 const maximumEndpoints = 20;
 const nilUuid = "00000000-0000-0000-0000-000000000000";
@@ -81,11 +76,6 @@ function region(value: unknown): string {
   return value;
 }
 
-/** Canonical native region origin; shares the native8 region grammar. */
-export function terraBaseRegionalOrigin(code: string): string {
-  return `https://${region(code).toLowerCase()}.api.terrascale.tech`;
-}
-
 function unix(value: unknown): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > 253402300799) throw new TypeError("Invalid discovery timestamp.");
   return value;
@@ -121,7 +111,7 @@ export function parseTerraBaseRoutingDocument(payload: unknown, expected: Databa
     const code = region(endpoint.region), priority = endpoint.priority;
     if (regions.has(code) || typeof priority !== "number" || !Number.isInteger(priority) || priority < 1 || priority > count || priorities.has(priority)) throw new TypeError("Invalid or duplicate endpoint rank.");
     regions.add(code); priorities.add(priority);
-    if (endpoint.url !== terraBaseRegionalOrigin(code) || (residency !== null && !residency.includes(code))) throw new TypeError("Endpoint is not an eligible canonical native origin.");
+    if (endpoint.url !== `https://${code.toLowerCase()}.terrascale.tech` || (residency !== null && !residency.includes(code))) throw new TypeError("Endpoint is not an eligible canonical native origin.");
     const catalog = closed(endpoint.catalog, ["digest"]);
     if (typeof catalog.digest !== "string" || !/^[0-9a-f]{64}$/u.test(catalog.digest)) throw new TypeError("Invalid catalog digest.");
     const caps = closed(endpoint.capabilities, capabilityNames);
@@ -192,8 +182,7 @@ export class TerraBaseDiscoveryRouter {
   readonly #fetch: FetchLike;
   readonly #timeoutMs: number;
   #observation: TerraBaseRoutingDocument | undefined;
-  #cache: { readonly fingerprint: string; readonly document: TerraBaseRoutingDocument; readonly wallDeadline: number; readonly monotonicDeadline: number; readonly failed: Set<string>; invalidated: boolean } | undefined;
-  #fallback: { readonly apiKey: string; readonly wallDeadline: number; readonly monotonicDeadline: number } | undefined;
+  #cache: { readonly fingerprint: string; readonly document: TerraBaseRoutingDocument; readonly wallDeadline: number; readonly monotonicDeadline: number } | undefined;
   readonly #leases = new WeakMap<TerraBaseRoutingEndpoint, { readonly document: TerraBaseRoutingDocument; readonly wallDeadline: number; readonly monotonicDeadline: number }>();
 
   constructor(scope: DatabaseScope, fetch: FetchLike = globalThis.fetch.bind(globalThis), timeoutMs = 3000) {
@@ -209,7 +198,7 @@ export class TerraBaseDiscoveryRouter {
     const hash = await cancellable(crypto.subtle.digest("SHA-256", new TextEncoder().encode(apiKey)), signal);
     const fingerprint = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
     const cached = this.#cache, wallNow = Date.now(), monotonicNow = performance.now();
-    let doc = cached?.fingerprint === fingerprint && !cached.invalidated && cached.document.published_at * 1000 <= wallNow && wallNow < cached.wallDeadline && monotonicNow < cached.monotonicDeadline ? cached.document : undefined;
+    let doc = cached?.fingerprint === fingerprint && cached.document.published_at * 1000 <= wallNow && wallNow < cached.wallDeadline && monotonicNow < cached.monotonicDeadline ? cached.document : undefined;
     if (doc === undefined) {
       this.#cache = undefined;
       const startedWall = Date.now(), startedMonotonic = performance.now();
@@ -239,7 +228,7 @@ export class TerraBaseDiscoveryRouter {
         const monotonicDeadline = Math.min(startedMonotonic + doc.refreshSeconds * 1000, performance.now() + doc.expires_at * 1000 - Date.now());
         if (Date.now() >= wallDeadline || performance.now() >= monotonicDeadline) throw new TerraBaseDiscoveryError("routing_expired");
         this.#observation = doc;
-        this.#cache = { fingerprint, document: doc, wallDeadline, monotonicDeadline, failed: cached?.fingerprint === fingerprint && cached.invalidated ? new Set(cached.failed) : new Set(), invalidated: false };
+        this.#cache = { fingerprint, document: doc, wallDeadline, monotonicDeadline };
       } catch (error) {
         const discard = (unread: Response): void => {
           try {
@@ -261,39 +250,10 @@ export class TerraBaseDiscoveryRouter {
       }
     }
     signal.throwIfAborted();
-    const endpoint = [...doc.endpoints].sort((a, b) => a.priority - b.priority).find(candidate => !this.#cache!.failed.has(candidate.url) && required.every(name => candidate.capabilities[name]));
-    if (endpoint === undefined) throw new TerraBaseDiscoveryError(doc.endpoints.some(candidate => required.every(name => candidate.capabilities[name])) ? "regions_unavailable" : "capability_unavailable");
+    const endpoint = [...doc.endpoints].sort((a, b) => a.priority - b.priority).find(candidate => required.every(name => candidate.capabilities[name]));
+    if (endpoint === undefined) throw new TerraBaseDiscoveryError("capability_unavailable");
     this.#leases.set(endpoint, { document: doc, wallDeadline: this.#cache!.wallDeadline, monotonicDeadline: this.#cache!.monotonicDeadline });
     return endpoint;
-  }
-
-  /** Hosted routing can use the Atlas proxy while the native producer is unavailable. */
-  async resolveHosted(apiKey: string, required: readonly TerraBaseRoutingCapability[], signal: AbortSignal): Promise<TerraBaseRoute> {
-    signal.throwIfAborted(); credential(apiKey);
-    const fallback = this.#fallback;
-    if (fallback?.apiKey === apiKey && Date.now() < fallback.wallDeadline && performance.now() < fallback.monotonicDeadline) return { url: hostedProxyOrigin };
-    try {
-      const endpoint = await this.resolve(apiKey, required, signal);
-      this.#fallback = undefined;
-      return { url: endpoint.url, endpoint };
-    } catch (error) {
-      signal.throwIfAborted();
-      if (!(error instanceof TerraBaseDiscoveryError) || !(error.status === 404 || (error.status !== undefined && error.status >= 500) ||
-        error.code === "discovery_unavailable" || error.code === "regions_unavailable" || error.code === "routing_expired" || (error.code === "invalid_response" && error.status === 200))) throw error;
-      const refreshMs = (this.#observation?.refreshSeconds ?? defaultRefreshSeconds) * 1000;
-      this.#fallback = { apiKey, wallDeadline: Date.now() + refreshMs, monotonicDeadline: performance.now() + refreshMs };
-      return { url: hostedProxyOrigin };
-    }
-  }
-
-  /** A failed region is excluded until the refreshed lease ends. Never replay a commit here. */
-  fail(endpoint: TerraBaseRoutingEndpoint): void {
-    const cache = this.#cache;
-    if (cache !== undefined && this.#leases.get(endpoint)?.document === cache.document) {
-      cache.failed.add(endpoint.url);
-      cache.invalidated = true;
-      this.#fallback = undefined;
-    }
   }
 
   /** Recheck immediately before native dispatch, including concurrently advanced floors. */

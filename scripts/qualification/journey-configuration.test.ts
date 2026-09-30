@@ -24,7 +24,7 @@ function allocation(): Record<string, string> {
 describe("pure Node/browser journey configuration admission", () => {
   test.each(["native", "browser"])("%s defaults to Atlas and enables a complete allocation without an endpoint", target => {
     const configuration = journeyConfiguration(allocation(), target);
-    expect(configuration).toMatchObject({ routing: "atlas", nativeOrigin: "https://gru.api.terrascale.tech" });
+    expect(configuration).toMatchObject({ routing: "atlas", nativeOrigin: "https://gru.terrascale.tech" });
     expect(configuration).not.toHaveProperty("endpoint");
   });
 
@@ -53,10 +53,9 @@ describe("pure Node/browser journey configuration admission", () => {
 
   test.each([
     "https://api.terrascale.tech",
-    "https://gru.terrascale.tech",
     "https://gru.api.terrascale.tech.",
     "http://remote.example.test",
-    "https://gru.api.terrascale.tech/path",
+    "https://gru.terrascale.tech/path",
     "https://credential@gru.terrascale.tech",
   ])("rejects unadmitted direct origin %s", endpoint => {
     expect(() => journeyConfiguration({ ...allocation(), TERRABASE_ROUTING_MODE: "direct", TERRABASE_ENDPOINT: endpoint }, "browser")).toThrow();
