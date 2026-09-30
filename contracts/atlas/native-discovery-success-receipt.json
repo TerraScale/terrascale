@@ -1,0 +1,24 @@
+{
+  "schema": "terrascale.atlas.native-discovery.codec-fixture.v1",
+  "result": "success",
+  "evaluated_at_unix_ms": 1790769600000,
+  "consumer_skew_ms": 100,
+  "request": {
+    "method": "GET",
+    "url": "https://atlas.terrascale.tech/api/v1/discovery?tenant_id=10000000-0000-0000-0000-000000000001&database_id=20000000-0000-0000-0000-000000000001&shard_id=18446744073709551615",
+    "authorization": "redacted deterministic TBK1 test credential; id16 byte5 and secret32 byte6"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-origin": "*",
+      "access-control-expose-headers": "etag, retry-after, x-request-id, traceparent, x-terrascale-session, x-terrascale-region, x-terrascale-serving-region, x-terrascale-placement, x-terrascale-residency, x-terrascale-route-mode, x-terrascale-artifact-length, x-terrascale-artifact-checksum",
+      "cache-control": "private, no-store",
+      "content-type": "application/json",
+      "x-content-type-options": "nosniff",
+      "x-terrascale-route-mode": "discovery"
+    },
+    "raw_body": "{\"schema_version\":1,\"scope\":{\"tenant_id\":\"10000000-0000-0000-0000-000000000001\",\"database_id\":\"20000000-0000-0000-0000-000000000001\",\"shard_id\":\"18446744073709551615\"},\"authority\":{\"deployment_id\":\"fixture-deployment\",\"cell\":\"gru\",\"publisher_id\":\"publisher-a\",\"publisher_generation\":\"18446744073709551615\"},\"revision\":\"41\",\"published_at\":1790769600,\"expires_at\":1790769609,\"refreshSeconds\":8,\"residency\":null,\"endpoints\":[{\"region\":\"GRU\",\"url\":\"https://gru.terrascale.tech\",\"catalog\":{\"digest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},\"capabilities\":{\"atomic_groups\":false,\"client_v1\":true,\"conditional_mutation\":false,\"query\":true,\"read\":true,\"security_state\":false,\"subscriptions\":true,\"write\":true},\"security_writer\":null,\"priority\":1}]}"
+  },
+  "qualification": "Actual Worker plus actual SQLite DO using retained real-signature Control A codec bytes; synthetic R3 sequences17/41 and fixed clock, not runtime qualification"
+}

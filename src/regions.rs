@@ -1,10 +1,4 @@
-//! Region codes, affinity, and URL pinning.
-//!
-//! Failover-affinity clients on the public origin discover eligible regional
-//! endpoints through Atlas (`crate::discovery`, ADR 0050) and connect
-//! directly; strict-affinity clients pin REST (and optional WebSocket)
-//! traffic to their configured region (`<region>.terrascale.tech`). A
-//! `421` with `X-TerraScale-Placement` repairs a stale route.
+//! Region names and reviewed origin validation.
 
 use std::fmt;
 use std::net::IpAddr;
@@ -75,65 +69,10 @@ impl fmt::Display for RegionCode {
     }
 }
 
-/// How strictly the client sticks to its preferred region.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RegionAffinity {
-    /// Pin to the preferred region, fail over once on 421/unreachable.
-    #[default]
-    Failover,
-    /// Never leave the preferred region; fail closed instead.
-    Strict,
-}
-
-/// Global REST entry point and nearest-region router (GOAL D-24).
-/// SDK data traffic uses discovered regional endpoints or strict region pinning.
-pub const GLOBAL_API_BASE_URL: &str = "https://api.terrascale.tech";
-
-/// Host of [`GLOBAL_API_BASE_URL`]; regional members live under
-/// `{region}.terrascale.tech`.
-pub const GLOBAL_API_HOST: &str = "api.terrascale.tech";
-
-/// Default reactive delivery origin.
-pub const GLOBAL_SYNC_BASE_URL: &str = "https://sync.api.terrascale.tech";
-
-/// Regional hostname for pinned REST traffic.
+/// Public direct regional native member hostname.
 #[must_use]
 pub fn regional_host(region: RegionCode) -> String {
-    regional_host_for_code(region.as_str())
-}
-
-/// The regional hostname contract also applies to newly admitted catalog codes.
-pub(crate) fn regional_host_for_code(region: &str) -> String {
-    format!("{}.terrascale.tech", region.to_ascii_lowercase())
-}
-
-/// Resolve the base URL for pinned traffic.
-///
-/// A per-request `hint` wins over the configured preferred region. Strict
-/// affinity requires one of the two to be set.
-pub fn pin_base_url(
-    global_base_url: &str,
-    preferred: Option<RegionCode>,
-    hint: Option<RegionCode>,
-    affinity: RegionAffinity,
-) -> Result<String> {
-    let region = hint.or(preferred);
-    match (affinity, region) {
-        (_, None) if affinity == RegionAffinity::Strict => Err(Error::new(
-            crate::error::ErrorKind::Validation,
-            "region_required",
-            "Strict regional affinity requires a preferredRegion or per-request regionHint.",
-        )),
-        (_, None) => Ok(normalize_base_url(global_base_url)?),
-        (RegionAffinity::Failover, Some(_)) if hint.is_none() => {
-            Ok(normalize_base_url(global_base_url)?)
-        }
-        (_, Some(region)) => {
-            let base = normalize_base_url(global_base_url)?;
-            apply_region_pin(&base, region)
-        }
-    }
+    format!("{}.terrascale.tech", region.as_str())
 }
 
 /// Normalize and validate a base URL (no trailing slash).
@@ -215,41 +154,4 @@ fn has_private_component(value: &str) -> bool {
     value
         .split(|character: char| !character.is_ascii_alphanumeric())
         .any(|component| matches!(component, "tbep" | "terrabase"))
-}
-
-fn apply_region_pin(base: &str, region: RegionCode) -> Result<String> {
-    let mut url = reqwest::Url::parse(base).map_err(|error| {
-        Error::new(
-            crate::error::ErrorKind::Validation,
-            "invalid_base_url",
-            format!("API base URL must be an absolute HTTP(S) URL: {error}."),
-        )
-    })?;
-    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
-    if host == "api.terrascale.tech" {
-        url.set_host(Some(&regional_host(region))).map_err(|_| {
-            Error::new(
-                crate::error::ErrorKind::Validation,
-                "invalid_base_url",
-                "Unable to construct the regional TerraScale API URL.",
-            )
-        })?;
-        return Ok(url.to_string().trim_end_matches('/').to_owned());
-    }
-    if let Some(selected) = [RegionCode::Gru, RegionCode::Sfo, RegionCode::Fra]
-        .into_iter()
-        .find(|candidate| host == regional_host(*candidate))
-    {
-        if selected == region {
-            return Ok(base.to_owned());
-        }
-        return Err(Error::new(
-            crate::error::ErrorKind::Validation,
-            "region_pin_mismatch",
-            "The API base URL is pinned to a different TerraScale region.",
-        ));
-    }
-    // Custom origins (proxies and local test servers) remain unchanged; the
-    // selected region is carried by X-TerraScale-Preferred-Region.
-    Ok(base.to_owned())
 }

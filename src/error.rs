@@ -11,6 +11,7 @@ pub enum ErrorKind {
     Authorization,
     NotFound,
     Conflict,
+    Precondition,
     Validation,
     RateLimit,
     Server,
@@ -18,10 +19,6 @@ pub enum ErrorKind {
     InvalidResponse,
     Unavailable,
     Domain,
-    /// The request landed in a region that does not host the database
-    /// (HTTP 421 + `X-TerraScale-Placement`). The SDK repairs its pin from
-    /// [`Error::placement`] and the caller may retry.
-    RegionRedirect,
 }
 
 /// The single error type for the whole SDK surface.
@@ -40,8 +37,6 @@ pub struct Error {
     pub status: Option<u16>,
     /// Server request id for support correlation.
     pub request_id: Option<String>,
-    /// Placement hint from a 421 response (`X-TerraScale-Placement`).
-    pub placement: Option<String>,
     /// `Retry-After` delay requested by the response, seconds form only (the
     /// HTTP-date form is not parsed), stored uncapped.
     pub retry_after: Option<Duration>,
@@ -57,7 +52,6 @@ impl Error {
             fix: None,
             status: None,
             request_id: None,
-            placement: None,
             retry_after: None,
         }
     }
@@ -80,7 +74,8 @@ impl Error {
             403 => ErrorKind::Authorization,
             404 => ErrorKind::NotFound,
             409 => ErrorKind::Conflict,
-            421 => ErrorKind::RegionRedirect,
+            412 => ErrorKind::Precondition,
+            421 => ErrorKind::Unavailable,
             429 => ErrorKind::RateLimit,
             502..=504 => ErrorKind::Unavailable,
             500..=599 => ErrorKind::Server,
@@ -93,7 +88,6 @@ impl Error {
             fix: None,
             status: Some(status),
             request_id: None,
-            placement: None,
             retry_after: None,
         }
     }

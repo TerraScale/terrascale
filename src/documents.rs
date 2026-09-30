@@ -1,359 +1,439 @@
-//! Document CRUD over the public REST API.
-//!
-//! Document bodies are raw canonical JSON values on the wire (D-30). The
-//! collection list and mutation receipts are envelopes defined by the public
-//! contract, while a point read is the value itself.
+//! Scoped native document reads, lossless sibling state, and scalar queries.
 
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::client::SharedClient;
+use crate::discovery::NativeRequirement;
 use crate::error::{Error, ErrorKind, Result};
-use crate::regions::RegionCode;
-use crate::transport::{Method, Request, Response};
+use crate::transport::{Method, Request};
+use crate::values::{
+    invalid, CollectionId, DatabaseId, DecimalU64, Digest, DocumentId, Fields, Incarnation,
+    ReplicaId, TenantId, Value,
+};
 
-/// Maximum encoded size of one document value (D-25).
-pub const MAX_DOCUMENT_BYTES: usize = 1 << 20;
+pub const MAX_CONTEXT_ENTRIES: usize = 1024;
+pub const MAX_QUERY_ROWS: usize = 128;
+pub const MAX_CURSOR_CHARS: usize = 1024;
 
-/// Maximum number of operations in one atomic document batch.
-pub const MAX_BATCH_OPERATIONS: usize = 1_000;
-
-/// Largest collection page accepted by the public API.
-pub const MAX_DOCUMENT_PAGE_SIZE: u32 = 1_000;
-
-const MAX_DOCUMENT_AT: u64 = i64::MAX as u64;
-
-/// Acknowledgement class requested for a document mutation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Durability {
-    Regional,
-    Global,
-}
-
-impl Durability {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Regional => "regional",
-            Self::Global => "global",
-        }
-    }
-}
-
-/// Read consistency requested for one REST operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Consistency {
-    Eventual,
-    WritesFollowReads,
-}
-
-/// Per-request controls for document mutations and batch writes.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DocumentOperationOptions {
-    pub idempotency_key: Option<String>,
-    pub durability: Option<Durability>,
-    pub if_match: Option<String>,
-    /// Admit a PUT only when the document does not exist.
-    pub create_only: bool,
-    pub session: Option<String>,
-    pub consistency: Option<Consistency>,
-    pub region_hint: Option<RegionCode>,
-}
-
-impl DocumentOperationOptions {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-    #[must_use]
-    pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
-        self.idempotency_key = Some(key.into());
-        self
-    }
-    #[must_use]
-    pub fn with_durability(mut self, durability: Durability) -> Self {
-        self.durability = Some(durability);
-        self
-    }
-    #[must_use]
-    pub fn with_create_only(mut self) -> Self {
-        self.create_only = true;
-        self
-    }
-    #[must_use]
-    pub fn with_if_match(mut self, etag: impl Into<String>) -> Self {
-        self.if_match = Some(etag.into());
-        self
-    }
-    #[must_use]
-    pub fn with_session(mut self, session: impl Into<String>) -> Self {
-        self.session = Some(session.into());
-        self
-    }
-    #[must_use]
-    pub fn with_consistency(mut self, consistency: Consistency) -> Self {
-        self.consistency = Some(consistency);
-        self
-    }
-    #[must_use]
-    pub fn with_region_hint(mut self, region: RegionCode) -> Self {
-        self.region_hint = Some(region);
-        self
-    }
-}
-
-/// Per-request controls for a point read.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DocumentReadOptions {
-    pub at: Option<u64>,
-    pub if_none_match: Option<String>,
-    pub session: Option<String>,
-    pub consistency: Option<Consistency>,
-    pub region_hint: Option<RegionCode>,
-}
-
-impl DocumentReadOptions {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-    #[must_use]
-    pub fn with_at(mut self, at: u64) -> Self {
-        self.at = Some(at);
-        self
-    }
-    #[must_use]
-    pub fn with_if_none_match(mut self, etag: impl Into<String>) -> Self {
-        self.if_none_match = Some(etag.into());
-        self
-    }
-    #[must_use]
-    pub fn with_session(mut self, session: impl Into<String>) -> Self {
-        self.session = Some(session.into());
-        self
-    }
-    #[must_use]
-    pub fn with_consistency(mut self, consistency: Consistency) -> Self {
-        self.consistency = Some(consistency);
-        self
-    }
-    #[must_use]
-    pub fn with_region_hint(mut self, region: RegionCode) -> Self {
-        self.region_hint = Some(region);
-        self
-    }
-}
-
-/// Database scope for a document operation.
-#[derive(Debug, Clone)]
+/// All native operations are scoped to one tenant, database and shard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DatabaseScope {
-    /// Database id (branded string, e.g. `db_...`).
-    pub database_id: String,
-    /// Retained for source compatibility with the project-scoped draft.
-    /// Current public database routes are direct and do not include a project.
-    pub project_id: Option<String>,
+    pub tenant: TenantId,
+    pub database: DatabaseId,
+    pub shard: DecimalU64,
 }
 
 impl DatabaseScope {
-    /// Scope to one database.
     #[must_use]
-    pub fn new(database_id: impl Into<String>) -> Self {
+    pub const fn new(tenant: TenantId, database: DatabaseId, shard: u64) -> Self {
         Self {
-            database_id: database_id.into(),
-            project_id: None,
+            tenant,
+            database,
+            shard: DecimalU64(shard),
         }
     }
 
-    /// Scope to one database, retaining an optional legacy project value.
-    #[must_use]
-    pub fn in_project(database_id: impl Into<String>, project_id: impl Into<String>) -> Self {
-        Self {
-            database_id: database_id.into(),
-            project_id: Some(project_id.into()),
-        }
+    pub(crate) fn path(&self) -> String {
+        format!(
+            "/v1/tenants/{}/databases/{}/shards/{}",
+            self.tenant, self.database, self.shard
+        )
+    }
+
+    pub(crate) fn collection_path(&self, collection: CollectionId) -> String {
+        format!("{}/collections/{collection}/documents", self.path())
     }
 }
 
-/// A point-read document. The successful point-read body is the raw JSON
-/// value; the SDK supplies the requested identity because it is not repeated
-/// in that response body.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Document {
-    /// Branded document id.
-    pub id: String,
-    /// Collection the document lives in.
-    pub collection: String,
-    /// Opaque revision, when one is supplied by a write response.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub revision: String,
-    /// Canonical JSON body.
-    pub body: serde_json::Value,
-    /// Creation timestamp, if a future contract response supplies one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<String>,
-    /// Last-write timestamp, if a future contract response supplies one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<String>,
-    /// Strong ETag returned by the HTTP response, when available.
-    #[serde(default, skip_serializing, skip_deserializing)]
-    pub etag: Option<String>,
-    /// Causal session frontier observed after this request.
-    #[serde(default, skip_serializing, skip_deserializing)]
-    pub session: Option<String>,
-}
+/// The wire protocol discriminator. This is separate from a state token.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProtocolVersion;
 
-/// The response to a PUT or PATCH document write.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DocumentWriteResponse {
-    /// New document revision. The strong ETag is carried by the HTTP header.
-    pub revision: String,
-    /// Strong ETag associated with the revision, when supplied by the
-    /// transport. The contract carries this value in an HTTP header.
-    #[serde(default, skip_serializing, skip_deserializing)]
-    pub etag: Option<String>,
-    /// Causal session frontier observed after this write.
-    #[serde(default, skip_serializing, skip_deserializing)]
-    pub session: Option<String>,
-}
-
-/// One row returned by the collection list endpoint.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DocumentRow {
-    /// Document identifier.
-    pub id: String,
-    /// Server document version.
-    pub version: i64,
-    /// Opaque canonical JSON value.
-    pub value: serde_json::Value,
-}
-
-/// One retained historical document version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DocumentVersion {
-    /// Revision of this historical version.
-    pub revision: String,
-    /// Whether this version is a deletion tombstone.
-    #[serde(default)]
-    pub deleted: bool,
-}
-
-/// Pagination for [`DocumentsClient::list`].
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ListOptions {
-    /// Last document identifier from the preceding page.
-    pub after: Option<String>,
-    /// Requested page size. Zero omits the query and uses the server default.
-    pub limit: Option<u32>,
-    /// Optional causal session frontier for this read.
-    pub session: Option<String>,
-    /// Optional read consistency override.
-    pub consistency: Option<Consistency>,
-    /// Optional serving-region hint.
-    pub region_hint: Option<RegionCode>,
-}
-
-impl ListOptions {
-    /// Creates empty options, allowing the server default page size.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Sets the continuation identifier.
-    #[must_use]
-    pub fn with_after(mut self, after: impl Into<String>) -> Self {
-        self.after = Some(after.into());
-        self
-    }
-
-    /// Sets the page-size hint.
-    #[must_use]
-    pub fn with_limit(mut self, limit: u32) -> Self {
-        self.limit = Some(limit);
-        self
-    }
-
-    #[must_use]
-    pub fn with_session(mut self, session: impl Into<String>) -> Self {
-        self.session = Some(session.into());
-        self
-    }
-
-    #[must_use]
-    pub fn with_consistency(mut self, consistency: Consistency) -> Self {
-        self.consistency = Some(consistency);
-        self
-    }
-
-    #[must_use]
-    pub fn with_region_hint(mut self, region: RegionCode) -> Self {
-        self.region_hint = Some(region);
-        self
+impl Serialize for ProtocolVersion {
+    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_u8(1)
     }
 }
 
-/// One page of documents. The wire field is exactly `documents`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DocumentPage {
-    /// Rows in canonical document-key order.
-    pub documents: Vec<DocumentRow>,
-}
-
-/// One operation in an atomic document batch.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BatchOperation {
-    /// Operation name: `put`, `patch`, or `delete`.
-    pub op: String,
-    /// Document identifier.
-    pub id: String,
-    /// Raw JSON value for `put` and `patch`; omitted for `delete`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<serde_json::Value>,
-}
-
-impl BatchOperation {
-    /// Creates a replacement operation.
-    #[must_use]
-    pub fn put(id: impl Into<String>, value: serde_json::Value) -> Self {
-        Self {
-            op: "put".to_owned(),
-            id: id.into(),
-            value: Some(value),
-        }
-    }
-
-    /// Creates an RFC 7386 merge-patch operation.
-    #[must_use]
-    pub fn patch(id: impl Into<String>, value: serde_json::Value) -> Self {
-        Self {
-            op: "patch".to_owned(),
-            id: id.into(),
-            value: Some(value),
-        }
-    }
-
-    /// Creates a tombstone operation.
-    #[must_use]
-    pub fn delete(id: impl Into<String>) -> Self {
-        Self {
-            op: "delete".to_owned(),
-            id: id.into(),
-            value: None,
+impl<'de> Deserialize<'de> for ProtocolVersion {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        match u64::deserialize(d)? {
+            1 => Ok(Self),
+            _ => Err(de::Error::custom("Unsupported native protocol version.")),
         }
     }
 }
 
-/// Receipt for an atomically committed document batch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BatchResponse {
-    /// Commit sequence or operation number assigned by the server.
-    pub committed: u64,
-    /// Number of operations committed.
-    pub count: u32,
-    /// Causal session frontier observed after this batch.
-    #[serde(default, skip_serializing, skip_deserializing)]
-    pub session: Option<String>,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Observed {
+    pub replica: ReplicaId,
+    pub incarnation: Incarnation,
+    pub sequence: DecimalU64,
 }
 
-/// Document CRUD client. Obtain from [`crate::TerraScaleClient::documents`].
+pub(crate) fn validate_context(context: &[Observed]) -> Result<()> {
+    if context.len() > MAX_CONTEXT_ENTRIES {
+        return Err(invalid("Too many context entries."));
+    }
+    let mut previous = None;
+    for entry in context {
+        let key = (entry.replica, entry.incarnation);
+        if entry.sequence.0 == 0 || previous.is_some_and(|p| p >= key) {
+            return Err(invalid(
+                "Context must have positive sequences and strictly ordered unique origins.",
+            ));
+        }
+        previous = Some(key);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Event {
+    pub database: DatabaseId,
+    pub shard: DecimalU64,
+    pub replica: ReplicaId,
+    pub incarnation: Incarnation,
+    pub sequence: DecimalU64,
+}
+
+impl Event {
+    pub(crate) fn validate_in(&self, scope: &DatabaseScope) -> Result<()> {
+        if self.database != scope.database
+            || self.shard != scope.shard
+            || self.sequence.0 == 0
+            || self.incarnation.bytes().iter().all(|byte| *byte == 0)
+        {
+            return Err(invalid(
+                "Event scope must match and committed incarnation/sequence must be nonzero.",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PointState {
+    Absent,
+    Deleted,
+    Value,
+    Conflict,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SiblingValue {
+    Live(Fields),
+    Tombstone,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sibling {
+    pub event: Event,
+    pub schema_generation: DecimalU64,
+    pub schema_digest: Digest,
+    pub value: SiblingValue,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireSibling {
+    event: Event,
+    schema_generation: DecimalU64,
+    schema_digest: Digest,
+    kind: SiblingKind,
+    #[serde(
+        default,
+        deserialize_with = "present_fields",
+        skip_serializing_if = "Option::is_none"
+    )]
+    fields: Option<Fields>,
+}
+
+fn present_fields<'de, D: Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<Fields>, D::Error> {
+    Fields::deserialize(d).map(Some)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SiblingKind {
+    Live,
+    Tombstone,
+}
+
+impl Serialize for Sibling {
+    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        WireSibling {
+            event: self.event.clone(),
+            schema_generation: self.schema_generation,
+            schema_digest: self.schema_digest,
+            kind: if matches!(self.value, SiblingValue::Live(_)) {
+                SiblingKind::Live
+            } else {
+                SiblingKind::Tombstone
+            },
+            fields: match &self.value {
+                SiblingValue::Live(fields) => Some(fields.clone()),
+                SiblingValue::Tombstone => None,
+            },
+        }
+        .serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Sibling {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let wire = WireSibling::deserialize(d)?;
+        let value = match (wire.kind, wire.fields) {
+            (SiblingKind::Live, Some(fields)) => SiblingValue::Live(fields),
+            (SiblingKind::Tombstone, None) => SiblingValue::Tombstone,
+            _ => {
+                return Err(de::Error::custom(
+                    "Only live siblings carry fields, and their fields are required.",
+                ))
+            }
+        };
+        if wire.schema_generation.0 == 0
+            || wire.event.sequence.0 == 0
+            || wire.event.incarnation.bytes().iter().all(|byte| *byte == 0)
+        {
+            return Err(de::Error::custom(
+                "Schema generation and event sequence must be positive; incarnation must be nonzero.",
+            ));
+        }
+        Ok(Self {
+            event: wire.event,
+            schema_generation: wire.schema_generation,
+            schema_digest: wire.schema_digest,
+            value,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Point {
+    pub version: ProtocolVersion,
+    pub state: PointState,
+    pub context: Vec<Observed>,
+    pub siblings: Vec<Sibling>,
+    /// Nullable, but always present. Only a unique live/deleted state has a token.
+    #[serde(deserialize_with = "required_option")]
+    pub state_version: Option<Digest>,
+}
+
+fn required_option<'de, D: Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<Digest>, D::Error> {
+    Option::<Digest>::deserialize(d)
+}
+
+impl Point {
+    pub fn validate_in(&self, scope: &DatabaseScope) -> Result<()> {
+        validate_context(&self.context)?;
+        if self.siblings.len() > MAX_CONTEXT_ENTRIES {
+            return Err(invalid("Too many siblings."));
+        }
+        let valid_shape = match self.state {
+            PointState::Absent => {
+                self.siblings.is_empty() && self.context.is_empty() && self.state_version.is_none()
+            }
+            PointState::Deleted => {
+                self.siblings.len() == 1
+                    && matches!(self.siblings[0].value, SiblingValue::Tombstone)
+                    && self.state_version.is_some()
+            }
+            PointState::Value => {
+                self.siblings.len() == 1
+                    && matches!(self.siblings[0].value, SiblingValue::Live(_))
+                    && self.state_version.is_some()
+            }
+            PointState::Conflict => self.siblings.len() >= 2 && self.state_version.is_none(),
+        };
+        if !valid_shape {
+            return Err(invalid("Point state, siblings and state token disagree."));
+        }
+        let mut origins = std::collections::BTreeSet::new();
+        for sibling in &self.siblings {
+            sibling.event.validate_in(scope)?;
+            if sibling.schema_generation.0 == 0 {
+                return Err(invalid("Schema generation must be positive."));
+            }
+            let event = &sibling.event;
+            if !origins.insert((event.replica, event.incarnation))
+                || !self.context.iter().any(|o| {
+                    o.replica == event.replica
+                        && o.incarnation == event.incarnation
+                        && o.sequence >= event.sequence
+                })
+            {
+                return Err(invalid(
+                    "Sibling origins must be unique and covered by the returned context.",
+                ));
+            }
+            if let SiblingValue::Live(fields) = &sibling.value {
+                fields.validate()?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Preserve conflicts explicitly instead of selecting an arbitrary sibling.
+    pub fn live_fields(&self) -> Result<Option<&Fields>> {
+        match self.state {
+            PointState::Conflict => Err(Error::new(
+                ErrorKind::Conflict,
+                "document_conflict",
+                "Document has concurrent siblings; resolve using its complete context.",
+            )),
+            PointState::Value => match self.siblings.first().map(|s| &s.value) {
+                Some(SiblingValue::Live(fields)) => Ok(Some(fields)),
+                _ => Err(Error::invalid_response("Value point has no live sibling.")),
+            },
+            _ => Ok(None),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Predicate {
+    Equal { path: Vec<u32>, value: Value },
+    LessThan { path: Vec<u32>, value: Value },
+    LessThanOrEqual { path: Vec<u32>, value: Value },
+    GreaterThan { path: Vec<u32>, value: Value },
+    GreaterThanOrEqual { path: Vec<u32>, value: Value },
+    IsNull { path: Vec<u32> },
+    IsMissing { path: Vec<u32> },
+}
+
+impl Predicate {
+    pub fn validate(&self) -> Result<()> {
+        let (path, value) = match self {
+            Self::Equal { path, value }
+            | Self::LessThan { path, value }
+            | Self::LessThanOrEqual { path, value }
+            | Self::GreaterThan { path, value }
+            | Self::GreaterThanOrEqual { path, value } => (path, Some(value)),
+            Self::IsNull { path } | Self::IsMissing { path } => (path, None),
+        };
+        if path.is_empty() || path.len() > 16 || path.contains(&0) {
+            return Err(invalid(
+                "Query path needs 1..16 positive numeric field IDs.",
+            ));
+        }
+        if let Some(value) = value {
+            if matches!(value, Value::Null | Value::Map(_) | Value::Array(_)) {
+                return Err(invalid(
+                    "Comparisons require bool, i64, utf8 or bytes; use is_null for null.",
+                ));
+            }
+            value.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Query {
+    pub version: ProtocolVersion,
+    pub predicate: Predicate,
+    pub limit: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+impl Query {
+    pub fn new(predicate: Predicate, limit: u16) -> Result<Self> {
+        let query = Self {
+            version: ProtocolVersion,
+            predicate,
+            limit,
+            cursor: None,
+        };
+        query.validate()?;
+        Ok(query)
+    }
+    pub fn validate(&self) -> Result<()> {
+        self.predicate.validate()?;
+        validate_limit(self.limit)?;
+        if let Some(cursor) = &self.cursor {
+            validate_cursor(cursor)?;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn validate_limit(limit: u16) -> Result<()> {
+    if !(1..=128).contains(&limit) {
+        return Err(invalid("Query limit must be 1..128."));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_cursor(cursor: &str) -> Result<()> {
+    if cursor.is_empty()
+        || cursor.len() > MAX_CURSOR_CHARS
+        || !cursor
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err(invalid("Cursor must be bounded opaque base64url text."));
+    }
+    Ok(())
+}
+
+fn present_cursor<'de, D: Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<String>, D::Error> {
+    String::deserialize(d).map(Some)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryRow {
+    pub document: DocumentId,
+    pub point: Point,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryPage {
+    pub version: ProtocolVersion,
+    pub rows: Vec<QueryRow>,
+    #[serde(
+        default,
+        deserialize_with = "present_cursor",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_cursor: Option<String>,
+}
+
+pub(crate) fn validate_rows(rows: &[QueryRow], scope: &DatabaseScope, limit: usize) -> Result<()> {
+    if rows.len() > limit {
+        return Err(invalid("Query response exceeds requested limit."));
+    }
+    let mut previous = None;
+    for row in rows {
+        if previous.is_some_and(|p| p >= row.document) {
+            return Err(invalid("Query rows must be ordered and unique."));
+        }
+        previous = Some(row.document);
+        row.point.validate_in(scope)?;
+        if !matches!(row.point.state, PointState::Value | PointState::Conflict) {
+            return Err(invalid(
+                "Query row must preserve a live or conflicted point.",
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct DocumentsClient {
     shared: SharedClient,
@@ -364,732 +444,59 @@ impl DocumentsClient {
         Self { shared }
     }
 
-    fn collection_root_in(
+    pub async fn get(
         &self,
         scope: &DatabaseScope,
-        collection: &str,
-        region_hint: Option<RegionCode>,
-    ) -> Result<String> {
-        let name = self.shared.require_collection(collection)?;
-        Ok(format!(
-            "{}/collections/{}/documents",
-            self.shared.database_root_in(scope, region_hint)?,
-            encode_segment(&name)?
-        ))
-    }
-
-    fn document_url_in(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        region_hint: Option<RegionCode>,
-    ) -> Result<String> {
-        Ok(format!(
-            "{}/{}",
-            self.collection_root_in(scope, collection, region_hint)?,
-            encode_segment(id)?
-        ))
-    }
-
-    /// The public contract has no server-assigned-id document operation.
-    ///
-    /// This compatibility method therefore fails closed. Call
-    /// [`Self::put`] (or [`Self::create_with_id`]) when the application owns
-    /// the document id. In particular, do not silently turn this method into
-    /// a POST to an un-published route.
-    pub async fn create(
-        &self,
-        _scope: &DatabaseScope,
-        _collection: &str,
-        _body: serde_json::Value,
-    ) -> Result<DocumentWriteResponse> {
-        Err(contract_gap(
-            "documents.create",
-            "the public contract only publishes caller-id PUT; use put with a document id",
-        ))
-    }
-
-    /// Create a document at an application-owned id.
-    ///
-    /// TerraBase models create-or-replace as `PUT`; this named helper makes
-    /// that fact explicit while retaining [`Self::create`] for callers of the
-    /// original draft API.
-    pub async fn create_with_id(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        body: serde_json::Value,
-    ) -> Result<DocumentWriteResponse> {
-        self.put(scope, collection, id, body).await
-    }
-
-    /// Create at an application-owned id with per-request mutation controls.
-    pub async fn create_with_id_with_options(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        body: serde_json::Value,
-        options: DocumentOperationOptions,
-    ) -> Result<DocumentWriteResponse> {
-        self.put_with_options(scope, collection, id, body, options)
-            .await
-    }
-
-    /// Read one document. The response body is the bare canonical JSON value.
-    pub async fn get(&self, scope: &DatabaseScope, collection: &str, id: &str) -> Result<Document> {
-        self.get_with_options(scope, collection, id, DocumentReadOptions::default())
-            .await
-    }
-
-    /// Read one document with conditional, causal, consistency, and routing controls.
-    pub async fn get_with_options(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        options: DocumentReadOptions,
-    ) -> Result<Document> {
-        validate_read_options(&options)?;
-        let mut url = self.document_url_in(scope, collection, id, options.region_hint)?;
-        if let Some(at) = options.at {
-            url.push_str(&format!("?at={at}"));
-        }
-        let request = Request {
-            route_name: "documents.get".to_owned(),
-            method: Method::Get,
-            url,
-            headers: Vec::new(),
-            body: None,
-        };
-        let request = apply_read_headers(request, &options);
-        let response = self.shared.send_response(request).await?;
-        require_json_response(&response)?;
-        let body: serde_json::Value = response.json_body()?;
-        Ok(Document {
-            id: id.to_owned(),
-            collection: collection.to_owned(),
-            revision: String::new(),
-            body,
-            created_at: None,
-            updated_at: None,
-            etag: response.header("etag").map(str::to_owned),
-            session: self.shared.session_token(),
-        })
-    }
-
-    /// Replace a document body wholesale. The response is `{ "revision" }`.
-    pub async fn put(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        body: serde_json::Value,
-    ) -> Result<DocumentWriteResponse> {
-        self.put_with_options(
-            scope,
-            collection,
-            id,
-            body,
-            DocumentOperationOptions::default(),
-        )
-        .await
-    }
-
-    /// Replace a document with per-request mutation controls.
-    pub async fn put_with_options(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        body: serde_json::Value,
-        options: DocumentOperationOptions,
-    ) -> Result<DocumentWriteResponse> {
-        self.write(
-            "documents.put",
-            Method::Put,
-            scope,
-            collection,
-            id,
-            body,
-            &options,
-        )
-        .await
-    }
-
-    /// Explicit alias for [`Self::put`], whose operation is an upsert.
-    pub async fn upsert(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        body: serde_json::Value,
-    ) -> Result<DocumentWriteResponse> {
-        self.put(scope, collection, id, body).await
-    }
-
-    /// Explicit upsert alias with per-request mutation controls.
-    pub async fn upsert_with_options(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        body: serde_json::Value,
-        options: DocumentOperationOptions,
-    ) -> Result<DocumentWriteResponse> {
-        self.put_with_options(scope, collection, id, body, options)
-            .await
-    }
-
-    /// Compatibility alias for [`Self::put`].
-    pub async fn update(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        body: serde_json::Value,
-    ) -> Result<DocumentWriteResponse> {
-        self.put(scope, collection, id, body).await
-    }
-
-    /// Compatibility update alias with per-request mutation controls.
-    pub async fn update_with_options(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        body: serde_json::Value,
-        options: DocumentOperationOptions,
-    ) -> Result<DocumentWriteResponse> {
-        self.put_with_options(scope, collection, id, body, options)
-            .await
-    }
-
-    /// Merge `patch` into a document using RFC 7386 semantics.
-    pub async fn patch(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        patch: serde_json::Value,
-    ) -> Result<DocumentWriteResponse> {
-        self.patch_with_options(
-            scope,
-            collection,
-            id,
-            patch,
-            DocumentOperationOptions::default(),
-        )
-        .await
-    }
-
-    /// Merge a patch with per-request mutation controls.
-    pub async fn patch_with_options(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        patch: serde_json::Value,
-        options: DocumentOperationOptions,
-    ) -> Result<DocumentWriteResponse> {
-        self.write(
-            "documents.patch",
-            Method::Patch,
-            scope,
-            collection,
-            id,
-            patch,
-            &options,
-        )
-        .await
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn write(
-        &self,
-        route_name: &str,
-        method: Method,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        value: serde_json::Value,
-        options: &DocumentOperationOptions,
-    ) -> Result<DocumentWriteResponse> {
-        validate_operation_options(options, method)?;
-        let url = self.document_url_in(scope, collection, id, options.region_hint)?;
-        let encoded = encode_document(&value)?;
-        let request = Request {
-            route_name: route_name.to_owned(),
-            method,
-            url,
-            headers: vec![("content-type".to_owned(), "application/json".to_owned())],
-            body: Some(encoded),
-        };
-        let request = apply_operation_headers(request, options);
-        let response = self.shared.send_response(request).await?;
-        require_json_response(&response)?;
-        let mut result: DocumentWriteResponse = response.json_body()?;
-        result.etag = response.header("etag").map(str::to_owned);
-        result.session = self.shared.session_token();
-        Ok(result)
-    }
-
-    /// Delete one document (the server writes a tombstone).
-    pub async fn delete(&self, scope: &DatabaseScope, collection: &str, id: &str) -> Result<()> {
-        self.delete_with_options(scope, collection, id, DocumentOperationOptions::default())
-            .await
-    }
-
-    /// Delete a document with per-request mutation controls.
-    pub async fn delete_with_options(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        options: DocumentOperationOptions,
-    ) -> Result<()> {
-        validate_operation_options(&options, Method::Delete)?;
-        let request = Request {
-            route_name: "documents.delete".to_owned(),
-            method: Method::Delete,
-            url: self.document_url_in(scope, collection, id, options.region_hint)?,
-            headers: Vec::new(),
-            body: None,
-        };
-        self.shared
-            .send_empty(apply_operation_headers(request, &options))
-            .await
-    }
-
-    /// List documents in canonical identifier order.
-    pub async fn list(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        options: ListOptions,
-    ) -> Result<DocumentPage> {
-        validate_list_options(&options)?;
-        let mut url = self.collection_root_in(scope, collection, options.region_hint)?;
-        append_list_query(&mut url, &options)?;
-        let request = Request {
-            route_name: "documents.list".to_owned(),
-            method: Method::Get,
-            url,
-            headers: Vec::new(),
-            body: None,
-        };
-        self.shared
-            .send_typed(apply_list_headers(request, &options))
-            .await
-    }
-
-    /// Execute one atomic batch of put, patch, and delete operations.
-    pub async fn batch(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        operations: Vec<BatchOperation>,
-    ) -> Result<BatchResponse> {
-        self.batch_with_options(
-            scope,
-            collection,
-            operations,
-            DocumentOperationOptions::default(),
-        )
-        .await
-    }
-
-    /// Execute an atomic batch with per-request mutation controls.
-    pub async fn batch_with_options(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        operations: Vec<BatchOperation>,
-        options: DocumentOperationOptions,
-    ) -> Result<BatchResponse> {
-        validate_operation_options(&options, Method::Post)?;
-        if operations.is_empty() || operations.len() > MAX_BATCH_OPERATIONS {
-            return Err(Error::new(
-                ErrorKind::Validation,
-                "invalid_batch",
-                format!(
-                    "A document batch must contain between 1 and {MAX_BATCH_OPERATIONS} operations."
-                ),
-            ));
-        }
-        for operation in &operations {
-            if operation.id.trim().is_empty() {
-                return Err(Error::new(
-                    ErrorKind::Validation,
-                    "invalid_batch",
-                    "Document batch operation ids cannot be blank.",
-                ));
-            }
-            match operation.op.as_str() {
-                "put" | "patch" => {
-                    let Some(value) = operation.value.as_ref() else {
-                        return Err(Error::new(
-                            ErrorKind::Validation,
-                            "invalid_batch",
-                            "Put and patch operations require a value.",
-                        ));
-                    };
-                    encode_document(value)?;
-                }
-                "delete" if operation.value.is_none() => {}
-                "delete" => {
-                    return Err(Error::new(
-                        ErrorKind::Validation,
-                        "invalid_batch",
-                        "Delete operations must omit value.",
-                    ));
-                }
-                _ => {
-                    return Err(Error::new(
-                        ErrorKind::Validation,
-                        "invalid_batch",
-                        "Document batch operations must be put, patch, or delete.",
-                    ));
-                }
-            }
-        }
-        #[derive(Serialize)]
-        struct BatchRequest {
-            operations: Vec<BatchOperation>,
-        }
-        let request = Request::json(
-            "documents.batch",
-            Method::Post,
-            format!(
-                "{}/batch",
-                self.collection_root_in(scope, collection, options.region_hint)?
-            ),
-            &BatchRequest { operations },
-        )?;
-        let mut response: BatchResponse = self
+        collection: CollectionId,
+        document: DocumentId,
+    ) -> Result<Point> {
+        let origin = self
             .shared
-            .send_typed(apply_operation_headers(request, &options))
+            .native_origin(scope, NativeRequirement::Point)
             .await?;
-        response.session = self.shared.session_token();
-        Ok(response)
-    }
-
-    /// Per-document history, newest first. The response is wrapped as
-    /// `{ "history": [...] }` by the public API.
-    pub async fn history(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-    ) -> Result<Vec<DocumentVersion>> {
-        self.history_with_options(scope, collection, id, ListOptions::default())
-            .await
-    }
-
-    /// Return retained versions with bounded pagination and read controls.
-    pub async fn history_with_options(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-        options: ListOptions,
-    ) -> Result<Vec<DocumentVersion>> {
-        validate_list_options(&options)?;
-        #[derive(Deserialize)]
-        struct HistoryResponse {
-            history: Vec<DocumentVersion>,
-        }
-        let mut url = format!(
-            "{}/history",
-            self.document_url_in(scope, collection, id, options.region_hint)?
-        );
-        append_list_query(&mut url, &options)?;
         let request = Request {
-            route_name: "documents.history".to_owned(),
+            route_name: "native.point".into(),
             method: Method::Get,
-            url,
-            headers: Vec::new(),
+            url: format!("{origin}{}/{document}", scope.collection_path(collection)),
+            headers: vec![],
             body: None,
         };
-        let request = apply_list_headers(request, &options);
-        Ok(self
+        let point: Point = self
             .shared
-            .send_typed::<HistoryResponse>(request)
-            .await?
-            .history)
+            .send_native_typed(scope, NativeRequirement::Point, request)
+            .await?;
+        point
+            .validate_in(scope)
+            .map_err(|e| Error::invalid_response(e.message))?;
+        Ok(point)
     }
-}
 
-fn encode_document(value: &serde_json::Value) -> Result<Vec<u8>> {
-    let encoded = serde_json::to_vec(value).map_err(|error| {
-        Error::new(
-            ErrorKind::Validation,
-            "invalid_document",
-            format!("Document value is not valid JSON: {error}"),
-        )
-    })?;
-    if encoded.len() > MAX_DOCUMENT_BYTES {
-        return Err(Error::new(
-            ErrorKind::Validation,
-            "document_too_large",
-            "Document values must not exceed 1 MiB of canonical JSON.",
-        ));
-    }
-    Ok(encoded)
-}
-
-fn require_json_response(response: &Response) -> Result<()> {
-    let media_type = response
-        .header("content-type")
-        .and_then(|value| value.split(';').next())
-        .map(str::trim);
-    if media_type != Some("application/json") {
-        return Err(Error::invalid_response(
-            "document responses require application/json",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_header_value(value: &str, field: &str, max: usize) -> Result<()> {
-    if value.trim().is_empty() || value.len() > max || value.chars().any(char::is_control) {
-        return Err(Error::new(
-            ErrorKind::Validation,
-            format!("invalid_{field}"),
-            format!("{field} must be nonblank, at most {max} characters, and contain no control characters."),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_session(value: &str) -> Result<()> {
-    if value != value.trim() || normalize_session_token(value).is_none() {
-        return Err(Error::new(
-            ErrorKind::Validation,
-            "invalid_session",
-            "session must be a canonical unpadded base64url token of at most 16384 characters.",
-        ));
-    }
-    Ok(())
-}
-
-fn normalize_session_token(value: &str) -> Option<&str> {
-    if value.is_empty()
-        || value.len() > 16_384
-        || value.len() % 4 == 1
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    {
-        return None;
-    }
-    Some(value)
-}
-
-fn validate_operation_options(options: &DocumentOperationOptions, method: Method) -> Result<()> {
-    if options.create_only && (method != Method::Put || options.if_match.is_some()) {
-        return Err(Error::new(
-            ErrorKind::Validation,
-            "invalid_create_only",
-            "create_only requires PUT and cannot be combined with if_match.",
-        ));
-    }
-    if let Some(key) = options.idempotency_key.as_deref() {
-        validate_header_value(
-            key,
-            "idempotency_key",
-            crate::client::MAX_IDEMPOTENCY_KEY_LENGTH,
+    pub async fn query(
+        &self,
+        scope: &DatabaseScope,
+        collection: CollectionId,
+        query: &Query,
+    ) -> Result<QueryPage> {
+        query.validate()?;
+        let origin = self
+            .shared
+            .native_origin(scope, NativeRequirement::Query)
+            .await?;
+        let request = Request::json(
+            "native.query",
+            Method::Post,
+            format!("{origin}{}/query", scope.collection_path(collection)),
+            query,
         )?;
-    }
-    if let Some(etag) = options.if_match.as_deref() {
-        validate_header_value(etag, "if_match", 1_024)?;
-    }
-    if let Some(session) = options.session.as_deref() {
-        validate_session(session)?;
-    }
-    Ok(())
-}
-
-fn validate_read_options(options: &DocumentReadOptions) -> Result<()> {
-    if options.at.is_some_and(|at| at > MAX_DOCUMENT_AT) {
-        return Err(Error::new(
-            ErrorKind::Validation,
-            "invalid_at",
-            "Point-in-time read positions must fit a signed 64-bit integer.",
-        ));
-    }
-    if let Some(etag) = options.if_none_match.as_deref() {
-        validate_header_value(etag, "if_none_match", 1_024)?;
-    }
-    if let Some(session) = options.session.as_deref() {
-        validate_session(session)?;
-    }
-    Ok(())
-}
-
-fn validate_list_options(options: &ListOptions) -> Result<()> {
-    if options
-        .limit
-        .is_some_and(|limit| !(1..=MAX_DOCUMENT_PAGE_SIZE).contains(&limit))
-    {
-        return Err(Error::new(
-            ErrorKind::Validation,
-            "invalid_limit",
-            format!("Document list limit must be between 1 and {MAX_DOCUMENT_PAGE_SIZE}."),
-        ));
-    }
-    if let Some(session) = options.session.as_deref() {
-        validate_session(session)?;
-    }
-    Ok(())
-}
-
-fn append_list_query(url: &mut String, options: &ListOptions) -> Result<()> {
-    if let Some(limit) = options.limit {
-        url.push_str(&format!("?limit={limit}"));
-    }
-    if let Some(after) = options
-        .after
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        let separator = if url.contains('?') { '&' } else { '?' };
-        url.push(separator);
-        url.push_str("after=");
-        url.push_str(&encode_segment(after.trim())?);
-    }
-    Ok(())
-}
-
-fn apply_operation_headers(mut request: Request, options: &DocumentOperationOptions) -> Request {
-    if let Some(region) = options.region_hint {
-        request.headers.push((
-            "x-terrascale-preferred-region".to_owned(),
-            region.as_header_str().to_owned(),
-        ));
-    }
-    if let Some(key) = options.idempotency_key.as_deref() {
-        request
-            .headers
-            .push(("idempotency-key".to_owned(), key.trim().to_owned()));
-    }
-    if options.create_only {
-        request
-            .headers
-            .push(("if-none-match".to_owned(), "*".to_owned()));
-    }
-    if let Some(etag) = options.if_match.as_deref() {
-        request
-            .headers
-            .push(("if-match".to_owned(), etag.trim().to_owned()));
-    }
-    if let Some(durability) = options.durability {
-        request.headers.push((
-            "x-terrascale-durability".to_owned(),
-            durability.as_str().to_owned(),
-        ));
-    }
-    if let Some(session) = options.session.as_deref() {
-        request
-            .headers
-            .push(("x-terrascale-session".to_owned(), session.trim().to_owned()));
-    }
-    if options.consistency == Some(Consistency::Eventual) && options.session.is_none() {
-        request
-            .headers
-            .push((crate::client::SKIP_SESSION_MARKER.to_owned(), String::new()));
-    }
-    request
-}
-
-fn apply_read_headers(mut request: Request, options: &DocumentReadOptions) -> Request {
-    if let Some(region) = options.region_hint {
-        request.headers.push((
-            "x-terrascale-preferred-region".to_owned(),
-            region.as_header_str().to_owned(),
-        ));
-    }
-    if let Some(etag) = options.if_none_match.as_deref() {
-        request
-            .headers
-            .push(("if-none-match".to_owned(), etag.trim().to_owned()));
-    }
-    if let Some(session) = options.session.as_deref() {
-        request
-            .headers
-            .push(("x-terrascale-session".to_owned(), session.trim().to_owned()));
-    }
-    if options.consistency == Some(Consistency::Eventual) && options.session.is_none() {
-        request
-            .headers
-            .push((crate::client::SKIP_SESSION_MARKER.to_owned(), String::new()));
-    }
-    request
-}
-
-fn apply_list_headers(mut request: Request, options: &ListOptions) -> Request {
-    if let Some(region) = options.region_hint {
-        request.headers.push((
-            "x-terrascale-preferred-region".to_owned(),
-            region.as_header_str().to_owned(),
-        ));
-    }
-    if let Some(session) = options.session.as_deref() {
-        request
-            .headers
-            .push(("x-terrascale-session".to_owned(), session.trim().to_owned()));
-    }
-    if options.consistency == Some(Consistency::Eventual) && options.session.is_none() {
-        request
-            .headers
-            .push((crate::client::SKIP_SESSION_MARKER.to_owned(), String::new()));
-    }
-    request
-}
-
-fn contract_gap(operation: &str, fix: &str) -> Error {
-    Error::new(
-        ErrorKind::Domain,
-        "contract_gap",
-        format!(
-            "The TerraBase contract does not publish the {operation} operation; no HTTP request was sent. Fix: {fix}."
-        ),
-    )
-}
-
-/// Percent-encode a URL path/query component over UTF-8 bytes. Encoding
-/// Unicode scalar values as `%{code point}` produces invalid URLs for any
-/// non-ASCII identifier; the contract requires conventional UTF-8 escaping.
-fn encode_segment(segment: &str) -> Result<String> {
-    if segment.trim().is_empty() {
-        return Err(Error::new(
-            ErrorKind::Validation,
-            "invalid_id",
-            "Resource ids cannot be empty.",
-        ));
-    }
-    let mut encoded = String::with_capacity(segment.len());
-    for byte in segment.as_bytes() {
-        if byte.is_ascii_alphanumeric() || b"-_.~".contains(byte) {
-            encoded.push(char::from(*byte));
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
+        let page: QueryPage = self
+            .shared
+            .send_native_typed(scope, NativeRequirement::Query, request)
+            .await?;
+        validate_rows(&page.rows, scope, usize::from(query.limit))
+            .map_err(|e| Error::invalid_response(e.message))?;
+        if let Some(cursor) = &page.next_cursor {
+            validate_cursor(cursor).map_err(|e| Error::invalid_response(e.message))?;
         }
-    }
-    Ok(encoded)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::encode_segment;
-
-    #[test]
-    fn path_encoding_uses_utf8_bytes_for_unicode() {
-        assert_eq!(
-            encode_segment("✓/名").expect("valid segment"),
-            "%E2%9C%93%2F%E5%90%8D"
-        );
+        Ok(page)
     }
 }

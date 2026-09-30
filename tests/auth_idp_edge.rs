@@ -11,7 +11,8 @@ use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use terrascale::auth_idp::{
     verify_auth_idp_webhook, verify_auth_idp_webhook_with_tolerance, AuthIdpUser, AuthIdpUserPatch,
-    CreateAuthIdpUser,
+    CreateAuthIdpUser, OidcClientAuthentication, OidcResourceCredentials,
+    OidcResourceIntrospection, PatchAuthIdpOauthClient, PatchAuthIdpOauthResource,
 };
 use terrascale::{
     ClientConfig, ClientConfigBuilder, Error, ErrorKind, HttpTransport, Method, Request, Response,
@@ -217,15 +218,9 @@ fn body_json(request: &Request) -> Value {
 
 #[tokio::test]
 async fn a1_missing_or_null_id_is_invalid_response() {
-    for (body, expected_fragment) in [
-        (
-            json!({ "banned": false, "created_at": 1_758_000_000_i64 }),
-            "missing field `id`",
-        ),
-        (
-            json!({ "id": null, "banned": false, "created_at": 1_758_000_000_i64 }),
-            "invalid type: null, expected a string",
-        ),
+    for body in [
+        json!({ "banned": false, "created_at": 1_758_000_000_i64 }),
+        json!({ "id": null, "banned": false, "created_at": 1_758_000_000_i64 }),
     ] {
         let mock = Mock::new();
         mock.push(Response::json(200, &body));
@@ -234,12 +229,11 @@ async fn a1_missing_or_null_id_is_invalid_response() {
         let error = err_of(auth.users().get("user_1").await);
         assert_eq!(error.kind, ErrorKind::InvalidResponse);
         assert_eq!(error.code, "auth_idp_users_get.invalid_response");
-        assert!(error.status.is_none());
+        assert_eq!(error.status, Some(200));
         assert!(
             error
                 .message
-                .starts_with("response body does not match the contract:")
-                && error.message.contains(expected_fragment),
+                .starts_with("response body does not match the contract: data error at line "),
             "unexpected message: {}",
             error.message
         );
@@ -298,12 +292,13 @@ async fn a4_wrong_typed_created_at_is_invalid_response() {
     assert_eq!(error.kind, ErrorKind::InvalidResponse);
     assert_eq!(error.code, "auth_idp_users_get.invalid_response");
     assert!(
-        error.message.starts_with(
-            "response body does not match the contract: invalid type: string \"not-a-number\""
-        ),
+        error
+            .message
+            .starts_with("response body does not match the contract: data error at line "),
         "unexpected message: {}",
         error.message
     );
+    assert!(!error.message.contains("not-a-number"));
 }
 
 #[tokio::test]
@@ -337,10 +332,7 @@ async fn a6_empty_body_on_a_json_route_is_invalid_response() {
     let error = err_of(auth.users().get("user_1").await);
     assert_eq!(error.kind, ErrorKind::InvalidResponse);
     assert_eq!(error.code, "auth_idp_users_get.invalid_response");
-    assert_eq!(
-        error.message,
-        "empty response does not match the contract: invalid type: null, expected struct AuthIdpUser"
-    );
+    assert_eq!(error.message, "empty response does not match the contract.");
 }
 
 #[tokio::test]
@@ -377,9 +369,9 @@ async fn a8_envelope_mixups_are_invalid_response_both_directions() {
     // serde accepts a struct from a sequence positionally, so the bare array
     // fails inside the `data` field: element 0 is a map where Vec is expected.
     assert!(
-        error.message.starts_with(
-            "response body does not match the contract: invalid type: map, expected a sequence"
-        ),
+        error
+            .message
+            .starts_with("response body does not match the contract: data error at line "),
         "unexpected message: {}",
         error.message
     );
@@ -393,9 +385,9 @@ async fn a8_envelope_mixups_are_invalid_response_both_directions() {
     assert_eq!(error.kind, ErrorKind::InvalidResponse);
     assert_eq!(error.code, "auth_idp_organizations_list.invalid_response");
     assert!(
-        error.message.starts_with(
-            "response body does not match the contract: invalid type: map, expected a sequence"
-        ),
+        error
+            .message
+            .starts_with("response body does not match the contract: data error at line "),
         "unexpected message: {}",
         error.message
     );
@@ -412,12 +404,269 @@ async fn a9_null_data_array_is_invalid_response() {
     assert_eq!(error.kind, ErrorKind::InvalidResponse);
     assert_eq!(error.code, "auth_idp_users_list.invalid_response");
     assert!(
-        error.message.starts_with(
-            "response body does not match the contract: invalid type: null, expected a sequence"
-        ),
+        error
+            .message
+            .starts_with("response body does not match the contract: data error at line "),
         "unexpected message: {}",
         error.message
     );
+}
+
+#[tokio::test]
+async fn http_error_secret_reply_diagnostics_are_sanitized() {
+    const CANARY: &str = "one-time-secret-canary";
+    for (route, body) in [
+        (
+            "auth_idp.users.mfa.regenerate_recovery",
+            json!({"data": CANARY}),
+        ),
+        (
+            "auth_idp.users.impersonate",
+            json!({"token": CANARY, "expires_at": CANARY}),
+        ),
+        (
+            "auth_idp.api_keys.create",
+            json!({"id": "key_1", "name": "key", "api_key": CANARY, "scopes": CANARY}),
+        ),
+        ("auth_idp.directories.create", json!(CANARY)),
+        ("auth_idp.directories.rotate", json!(CANARY)),
+        ("auth_idp.jwt_templates.tokens.create", json!(CANARY)),
+        (
+            "auth_idp.webhooks.create",
+            json!({
+                "id": "hook_1",
+                "url": "https://example.test/hook",
+                "events": CANARY,
+                "signing_secret": CANARY,
+            }),
+        ),
+    ] {
+        let mock = Mock::new();
+        let mut response = Response::json(200, &body);
+        response
+            .headers
+            .push(("X-Request-ID".into(), "secret-reply-request".into()));
+        mock.push(response);
+        let auth = client(Arc::clone(&mock)).auth_idp(SLUG).expect("client");
+        let result = match route {
+            "auth_idp.users.mfa.regenerate_recovery" => auth
+                .users()
+                .regenerate_recovery_codes("user_1", "factor_1")
+                .await
+                .map(|_| ()),
+            "auth_idp.users.impersonate" => auth.users().impersonate("user_1").await.map(|_| ()),
+            "auth_idp.api_keys.create" => auth.api_keys().create("key", None).await.map(|_| ()),
+            "auth_idp.directories.create" => auth.directories().create(None).await.map(|_| ()),
+            "auth_idp.directories.rotate" => {
+                auth.directories().rotate("directory_1").await.map(|_| ())
+            }
+            "auth_idp.jwt_templates.tokens.create" => auth
+                .jwt_templates()
+                .create_token("template", "user_1")
+                .await
+                .map(|_| ()),
+            "auth_idp.webhooks.create" => auth
+                .webhooks()
+                .create("https://example.test/hook", &["user.created"])
+                .await
+                .map(|_| ()),
+            _ => unreachable!("test route"),
+        };
+        let error = err_of(result);
+        assert_eq!(error.kind, ErrorKind::InvalidResponse, "{route}");
+        assert_eq!(
+            error.code,
+            format!("{}.invalid_response", route.replace('.', "_"))
+        );
+        assert_eq!(error.status, Some(200), "{route}");
+        assert_eq!(error.request_id.as_deref(), Some("secret-reply-request"));
+        assert!(!error.message.contains(CANARY), "{route}");
+        assert!(!format!("{error}").contains(CANARY), "{route}");
+        assert!(!format!("{error:?}").contains(CANARY), "{route}");
+        assert_eq!(mock.count(), 1, "{route}");
+    }
+}
+
+#[tokio::test]
+async fn http_error_malformed_replies_retain_response_context() {
+    for body in [
+        b"{\"data\": [".as_slice(),
+        b"<html>bad upstream response</html>".as_slice(),
+        b"".as_slice(),
+    ] {
+        let mock = Mock::new();
+        mock.push(raw(200, &[("X-Request-ID", "malformed-request")], body));
+        let auth = client(Arc::clone(&mock)).auth_idp(SLUG).expect("client");
+        let error = err_of(auth.users().get("user_1").await);
+        assert_eq!(error.kind, ErrorKind::InvalidResponse);
+        assert_eq!(error.code, "auth_idp_users_get.invalid_response");
+        assert_eq!(error.status, Some(200));
+        assert_eq!(error.request_id.as_deref(), Some("malformed-request"));
+        assert_eq!(mock.count(), 1);
+    }
+
+    let mock = Mock::new();
+    mock.push(raw(200, &[("X-Request-ID", "delete-request")], b""));
+    let auth = client(Arc::clone(&mock)).auth_idp(SLUG).expect("client");
+    let error = err_of(auth.users().delete("user_1").await);
+    assert_eq!(error.kind, ErrorKind::InvalidResponse);
+    assert_eq!(error.code, "expected_http_204");
+    assert_eq!(error.message, "expected HTTP 204, got 200");
+    assert_eq!(error.status, Some(200));
+    assert_eq!(error.request_id.as_deref(), Some("delete-request"));
+}
+
+#[tokio::test]
+async fn http_error_native_decode_and_status_failures_retain_response_context() {
+    for status in [200, 201] {
+        let mock = Mock::new();
+        mock.push(raw(
+            status,
+            &[("X-Request-ID", "native-request")],
+            br#""native-payload-canary""#,
+        ));
+        let sdk = client(Arc::clone(&mock));
+        let scope = terrascale::DatabaseScope::new(
+            "00000000-0000-0000-0000-000000000001"
+                .parse()
+                .expect("tenant"),
+            "00000000-0000-0000-0000-000000000002"
+                .parse()
+                .expect("database"),
+            0,
+        );
+        let error = err_of(
+            sdk.documents()
+                .get(
+                    &scope,
+                    "00000000-0000-0000-0000-000000000003"
+                        .parse()
+                        .expect("collection"),
+                    "00000000-0000-0000-0000-000000000004"
+                        .parse()
+                        .expect("document"),
+                )
+                .await,
+        );
+        assert_eq!(error.kind, ErrorKind::InvalidResponse);
+        assert_eq!(
+            error.code,
+            if status == 200 {
+                "native_point.invalid_response"
+            } else {
+                "invalid_response"
+            }
+        );
+        assert_eq!(error.status, Some(status));
+        assert_eq!(error.request_id.as_deref(), Some("native-request"));
+        assert!(!format!("{error:?}").contains("native-payload-canary"));
+        assert_eq!(mock.count(), 1);
+    }
+}
+
+#[tokio::test]
+async fn http_error_oversized_reply_retains_response_context() {
+    let mock = Mock::new();
+    mock.push(Response {
+        status: 200,
+        headers: vec![("X-Request-ID".into(), "capacity-request".into())],
+        body: vec![b'x'; terrascale::transport::MAX_JSON_BYTES + 1].into(),
+    });
+    let auth = client(Arc::clone(&mock)).auth_idp(SLUG).expect("client");
+    let error = err_of(auth.users().get("user_1").await);
+    assert_eq!(error.kind, ErrorKind::InvalidResponse);
+    assert_eq!(error.code, "invalid_response");
+    assert_eq!(error.message, "JSON response exceeds 4 MiB.");
+    assert_eq!(error.status, Some(200));
+    assert_eq!(error.request_id.as_deref(), Some("capacity-request"));
+    assert_eq!(mock.count(), 1);
+}
+
+#[tokio::test]
+async fn http_error_oversized_status_replies_are_not_retried() {
+    for status in [429, 503] {
+        let mock = Mock::new();
+        let request_id = format!("oversized-{status}-request");
+        mock.push(Response {
+            status,
+            headers: vec![
+                ("X-Request-ID".into(), request_id.clone()),
+                ("Retry-After".into(), "0".into()),
+            ],
+            body: vec![b'x'; terrascale::transport::MAX_JSON_BYTES + 1].into(),
+        });
+        mock.push(Response::json(200, &user_json("user_1")));
+        let auth = retrying(Arc::clone(&mock), 1)
+            .auth_idp(SLUG)
+            .expect("client");
+        let error = err_of(auth.users().get("user_1").await);
+        assert_eq!(error.kind, ErrorKind::InvalidResponse, "HTTP {status}");
+        assert_eq!(error.code, "invalid_response");
+        assert_eq!(error.message, "JSON response exceeds 4 MiB.");
+        assert_eq!(error.status, Some(status));
+        assert_eq!(error.request_id.as_deref(), Some(request_id.as_str()));
+        assert_eq!(mock.count(), 1, "HTTP {status} must remain terminal");
+    }
+}
+
+#[tokio::test]
+async fn http_error_ordinary_unavailable_reply_still_retries() {
+    let mock = Mock::new();
+    mock.push(raw(
+        503,
+        &[
+            ("Retry-After", "0"),
+            ("X-Request-ID", "unavailable-request"),
+        ],
+        br#"{"error":{"code":"temporarily_unavailable","message":"Try again."}}"#,
+    ));
+    mock.push(Response::json(200, &user_json("user_1")));
+    let auth = retrying(Arc::clone(&mock), 1)
+        .auth_idp(SLUG)
+        .expect("client");
+    let user = auth.users().get("user_1").await.expect("retried user");
+    assert_eq!(user.id, "user_1");
+    assert_eq!(mock.count(), 2, "ordinary HTTP 503 remains retryable");
+}
+
+#[tokio::test]
+async fn http_error_oauth_diagnostic_keeps_response_context() {
+    let mock = Mock::new();
+    let mut response = Response::json(
+        200,
+        &json!({
+            "access_token": "minted-secret",
+            "token_type": "Bearer",
+            "expires_in": "minted-secret",
+            "scope": "documents:read",
+        }),
+    );
+    response
+        .headers
+        .push(("X-Request-ID".into(), "oauth-request".into()));
+    mock.push(response);
+    let auth = client(Arc::clone(&mock)).auth_idp(SLUG).expect("client");
+    let error = err_of(
+        auth.oidc()
+            .token_client_credentials(
+                OidcClientAuthentication::Form {
+                    client_id: "client_1",
+                    client_secret: "request-secret",
+                },
+                "https://api.test/documents",
+                "documents:read",
+            )
+            .await,
+    );
+    assert_eq!(error.kind, ErrorKind::InvalidResponse);
+    assert_eq!(
+        error.message,
+        "OAuth response does not match the provider contract."
+    );
+    assert_eq!(error.status, Some(200));
+    assert_eq!(error.request_id.as_deref(), Some("oauth-request"));
+    assert!(!format!("{error:?}").contains("minted-secret"));
+    assert!(!format!("{error:?}").contains("request-secret"));
 }
 
 #[tokio::test]
@@ -604,7 +853,14 @@ async fn b18_flat_oauth_error_maps_despite_extra_headers() {
 
     let error = err_of(
         auth.oidc()
-            .token_client_credentials("oc_1", "wrong-secret", None)
+            .token_client_credentials(
+                OidcClientAuthentication::Form {
+                    client_id: "oc_1",
+                    client_secret: "wrong-secret",
+                },
+                "https://api.test/documents",
+                "documents:read",
+            )
             .await,
     );
     assert_eq!(error.kind, ErrorKind::Authentication);
@@ -619,7 +875,19 @@ async fn b19_flat_oauth_error_without_description_falls_back_to_the_code() {
     mock.push(raw(401, &[], br#"{"error":"invalid_grant"}"#));
     let auth = client(Arc::clone(&mock)).auth_idp(SLUG).expect("client");
 
-    let error = err_of(auth.oidc().token_refresh("oc_1", "sec_1", "rt_stale").await);
+    let error = err_of(
+        auth.oidc()
+            .token_refresh(
+                OidcClientAuthentication::Form {
+                    client_id: "oc_1",
+                    client_secret: "sec_1",
+                },
+                "rt_stale",
+                None,
+                None,
+            )
+            .await,
+    );
     assert_eq!(error.kind, ErrorKind::Authentication);
     assert_eq!(error.code, "invalid_grant");
     // Error.message is a plain String; an absent description falls back to
@@ -923,12 +1191,19 @@ async fn c33_form_encoding_escapes_reserved_characters_exactly_once() {
     let mock = Mock::new();
     mock.push(Response::json(
         200,
-        &json!({ "access_token": "at_1", "token_type": "Bearer", "expires_in": 3600 }),
+        &json!({ "access_token": "at_1", "token_type": "Bearer", "expires_in": 3600, "scope": "documents:read" }),
     ));
     let auth = client(Arc::clone(&mock)).auth_idp(SLUG).expect("client");
 
     auth.oidc()
-        .token_client_credentials("oc_1", "s&=+% #", None)
+        .token_client_credentials(
+            OidcClientAuthentication::Form {
+                client_id: "oc_1",
+                client_secret: "s&=+% #",
+            },
+            "https://api.test/documents",
+            "documents:read",
+        )
         .await
         .expect("token");
     let request = mock.request(0);
@@ -936,7 +1211,7 @@ async fn c33_form_encoding_escapes_reserved_characters_exactly_once() {
     assert_eq!(
         request.body.as_deref(),
         Some(
-            b"grant_type=client_credentials&client_id=oc_1&client_secret=s%26%3D%2B%25%20%23"
+            b"grant_type=client_credentials&resource=https%3A%2F%2Fapi.test%2Fdocuments&scope=documents%3Aread&client_id=oc_1&client_secret=s%26%3D%2B%25%20%23"
                 .as_slice()
         )
     );
@@ -1565,6 +1840,240 @@ async fn g58_trailing_slashes_normalize_to_the_same_urls() {
             mock.request(0).url,
             "https://auth.test/v1/acme/users/user_1",
             "base_url {base_url:?}"
+        );
+    }
+}
+
+fn resource_claims() -> Value {
+    json!({"active":true, "token_type":"Bearer", "iss":"https://auth.test/acme", "sub":"user-1", "aud":"https://api.test/documents?x=%2f", "client_id":"originating-client", "scope":"documents:read", "exp":2000, "iat":1000, "sid":"session-1", "principal_kind":"user"})
+}
+
+#[test]
+fn resource_introspection_rejects_missing_duplicate_extra_and_malformed_claims() {
+    let valid = resource_claims();
+    assert!(serde_json::from_value::<OidcResourceIntrospection>(valid.clone()).is_ok());
+    for field in [
+        "active",
+        "token_type",
+        "iss",
+        "sub",
+        "aud",
+        "client_id",
+        "scope",
+        "exp",
+        "iat",
+        "sid",
+        "principal_kind",
+    ] {
+        let mut candidate = valid.clone();
+        candidate.as_object_mut().expect("object").remove(field);
+        assert!(
+            serde_json::from_value::<OidcResourceIntrospection>(candidate).is_err(),
+            "missing {field}"
+        );
+    }
+    for (field, value) in [
+        ("aud", json!(["https://api.test/documents?x=%2f"])),
+        ("aud", Value::Null),
+        ("sid", Value::Null),
+        ("sid", json!("")),
+        ("principal_kind", json!("admin")),
+        ("principal_kind", json!("service")),
+        ("token_type", json!("refresh_token")),
+        ("exp", json!(1000)),
+        ("iat", json!(-1)),
+        ("scope", json!("duplicate duplicate")),
+        ("scope", json!("has\\slash")),
+        ("client_id", json!("")),
+        ("sub", json!("")),
+    ] {
+        let mut candidate = valid.clone();
+        candidate[field] = value;
+        assert!(
+            serde_json::from_value::<OidcResourceIntrospection>(candidate).is_err(),
+            "malformed {field}"
+        );
+    }
+    for field in [
+        "family_id",
+        "token_use",
+        "client_auth_epoch",
+        "resource_auth_epoch",
+        "unexpected",
+    ] {
+        let mut candidate = valid.clone();
+        candidate[field] = json!("secret-value");
+        assert!(
+            serde_json::from_value::<OidcResourceIntrospection>(candidate).is_err(),
+            "extra {field}"
+        );
+    }
+    assert!(
+        serde_json::from_str::<OidcResourceIntrospection>(r#"{"active":false,"sid":null}"#)
+            .is_err()
+    );
+    assert!(serde_json::from_str::<OidcResourceIntrospection>(
+        r#"{"active":false,"active":false}"#
+    )
+    .is_err());
+    let raw = serde_json::to_string(&valid).expect("json");
+    let duplicate = raw.replacen("{", r#"{"sid":"injected","#, 1);
+    assert!(serde_json::from_str::<OidcResourceIntrospection>(&duplicate).is_err());
+    let mut service = valid;
+    service["principal_kind"] = json!("service");
+    service["sub"] = service["client_id"].clone();
+    service["sid"] = Value::Null;
+    assert!(serde_json::from_value::<OidcResourceIntrospection>(service).is_ok());
+}
+
+#[test]
+fn resource_binding_checks_exact_registered_identity_and_current_time() {
+    let OidcResourceIntrospection::Active(claims) =
+        serde_json::from_value::<OidcResourceIntrospection>(resource_claims()).expect("claims")
+    else {
+        panic!("active")
+    };
+    let issuer = "https://auth.test/acme";
+    let audience = "https://api.test/documents?x=%2f";
+    assert!(claims
+        .check_binding_at(issuer, audience, UNIX_EPOCH + Duration::from_secs(1500))
+        .is_ok());
+    for (expected_issuer, expected_audience, now) in [
+        ("https://other.test/acme", audience, 1500),
+        (issuer, "https://api.test/documents?x=%2F", 1500),
+        (issuer, audience, 2000),
+        (issuer, audience, 999),
+    ] {
+        assert_eq!(
+            claims
+                .check_binding_at(
+                    expected_issuer,
+                    expected_audience,
+                    UNIX_EPOCH + Duration::from_secs(now)
+                )
+                .expect_err("deny")
+                .kind,
+            ErrorKind::Authorization
+        );
+    }
+    assert_eq!(
+        claims
+            .check_binding_at(
+                "https://AUTH.test/acme",
+                audience,
+                UNIX_EPOCH + Duration::from_secs(1500)
+            )
+            .expect_err("noncanonical issuer")
+            .kind,
+        ErrorKind::Validation
+    );
+    assert!(claims
+        .check_binding_at(issuer, audience, UNIX_EPOCH - Duration::from_secs(1))
+        .is_err());
+}
+
+#[tokio::test]
+async fn resource_validation_denies_before_dispatch_and_preserves_u64_epochs() {
+    let mock = Mock::new();
+    let auth = client(mock.clone()).auth_idp(SLUG).expect("auth");
+    let oidc = auth.oidc();
+    let public = OidcClientAuthentication::None {
+        client_id: "public",
+    };
+    let form = OidcClientAuthentication::Form {
+        client_id: "client",
+        client_secret: "secret",
+    };
+    for resource in [
+        "",
+        " https://api.test/docs",
+        "https://api.test/docs ",
+        "http://api.test/docs",
+        "https://user@api.test/docs",
+        "https://api.test/docs#fragment",
+        "https://api.test/docs?x=%xx",
+        "https://api.test/docs?x=ä",
+    ] {
+        assert_eq!(
+            oidc.token_refresh(form, "refresh", Some(resource), None)
+                .await
+                .expect_err("invalid resource")
+                .kind,
+            ErrorKind::Validation
+        );
+    }
+    assert_eq!(
+        oidc.token_client_credentials(public, "https://api.test/docs", "docs:read")
+            .await
+            .expect_err("public service")
+            .kind,
+        ErrorKind::Validation
+    );
+    assert_eq!(
+        oidc.token_client_credentials(form, "https://api.test/docs", "")
+            .await
+            .expect_err("scope required")
+            .kind,
+        ErrorKind::Validation
+    );
+    assert_eq!(
+        oidc.token_refresh(form, "refresh", None, Some("dup dup"))
+            .await
+            .expect_err("duplicate scope")
+            .kind,
+        ErrorKind::Validation
+    );
+    assert!(auth
+        .oauth_clients()
+        .patch("client", PatchAuthIdpOauthClient::new(0))
+        .await
+        .is_err());
+    assert!(auth.oauth_resources().disable("resource", 0).await.is_err());
+    assert_eq!(mock.count(), 0);
+    let epoch = serde_json::to_value(PatchAuthIdpOauthResource::new(u64::MAX)).expect("epoch");
+    assert_eq!(epoch["expected_auth_epoch"].as_u64(), Some(u64::MAX));
+}
+
+#[tokio::test]
+async fn resource_introspection_denials_are_not_cached_and_keep_server_status() {
+    let mock = Mock::new();
+    mock.push(Response::json(
+        401,
+        &json!({"error":"invalid_client","error_description":"Invalid resource credentials."}),
+    ));
+    mock.push(Response::json(
+        500,
+        &json!({"error":"server_error","error_description":"Resource store unavailable."}),
+    ));
+    mock.push(Response::json(200, &json!({"active":false})));
+    let oidc = client(mock.clone()).auth_idp(SLUG).expect("auth").oidc();
+    let credentials =
+        OidcResourceCredentials::new("resource-client", "resource-secret").expect("credentials");
+    let denied = oidc
+        .introspect_resource(&credentials, "token")
+        .await
+        .expect_err("401");
+    assert_eq!(denied.status, Some(401));
+    let unavailable = oidc
+        .introspect_resource(&credentials, "token")
+        .await
+        .expect_err("500");
+    assert_eq!(unavailable.status, Some(500));
+    assert_eq!(unavailable.kind, ErrorKind::Server);
+    assert_eq!(
+        oidc.introspect_resource(&credentials, "token")
+            .await
+            .expect("fresh result"),
+        OidcResourceIntrospection::Inactive
+    );
+    assert_eq!(mock.count(), 3);
+    for index in 0..mock.count() {
+        assert!(
+            mock.request(index)
+                .headers
+                .iter()
+                .any(|(name, value)| name.eq_ignore_ascii_case("cache-control")
+                    && value == "no-store")
         );
     }
 }

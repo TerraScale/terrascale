@@ -7,14 +7,16 @@
 //!
 //! Wire shapes follow the ts-auth contract: management routes under
 //! `/v1/{slug}` with `Authorization: Bearer <sk_ key>`, public OIDC routes
-//! under `/{slug}` with client credentials in the form body, per-family list
+//! under `/{slug}` with explicit public, Basic, or form client authentication, per-family list
 //! envelopes and casings, tri-state user patches, and one-time secrets
 //! returned only by the creating or rotating call.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use base64::Engine;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -185,6 +187,14 @@ impl AuthIdpClient {
         }
     }
 
+    /// Exact resource audiences and their separate introspection credentials.
+    #[must_use]
+    pub fn oauth_resources(&self) -> AuthIdpOauthResources {
+        AuthIdpOauthResources {
+            client: self.clone(),
+        }
+    }
+
     /// Public OIDC protocol routes (discovery, JWKS, token, revoke,
     /// introspect, userinfo). No instance key is sent.
     #[must_use]
@@ -242,7 +252,19 @@ impl AuthIdpClient {
     /// The single send choke point for every ts-auth family: bounds the whole
     /// pipeline (retries included) to [`REQUEST_DEADLINE`].
     async fn send_typed<T: DeserializeOwned>(&self, request: Request) -> Result<T> {
-        bounded(self.shared.send_typed(request)).await
+        let sensitive = request.route_name.starts_with("auth_idp.oidc.")
+            || request.route_name.starts_with("auth_idp.oauth_clients.")
+            || request.route_name.starts_with("auth_idp.oauth_resources.");
+        bounded(self.shared.send_typed(request))
+            .await
+            .map_err(|mut error| {
+                // Keep the established OAuth diagnostic while the shared decoder
+                // suppresses response values for every route.
+                if sensitive && error.kind == ErrorKind::InvalidResponse {
+                    error.message = "OAuth response does not match the provider contract.".into();
+                }
+                error
+            })
     }
 
     /// Deadline-bounded send for empty-body routes. DELETE routes answer 204
@@ -251,11 +273,10 @@ impl AuthIdpClient {
         let method = request.method;
         let response = bounded(self.shared.send_response(request)).await?;
         if method == Method::Delete && response.status != 204 {
-            return Err(Error::new(
-                ErrorKind::InvalidResponse,
-                "expected_http_204",
-                format!("expected HTTP 204, got {}", response.status),
-            ));
+            let mut error =
+                response.invalid_response(format!("expected HTTP 204, got {}", response.status));
+            error.code = "expected_http_204".into();
+            return Err(error);
         }
         Ok(())
     }
@@ -1390,6 +1411,24 @@ pub struct CreateAuthIdpOauthClient {
     /// ones).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_endpoint_auth_method: Option<String>,
+    /// Exact registered post-logout redirects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_logout_redirect_uris: Option<Vec<String>>,
+    /// Explicit browser origins.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    /// Whether anonymous browser sessions are allowed.
+    #[serde(default)]
+    pub allow_anonymous: bool,
+    /// Exact HTTPS resource audiences; no normalization is performed.
+    #[serde(default)]
+    pub allowed_resource_audiences: Vec<String>,
+    /// Allowed scope tokens, or the provider defaults when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_scopes: Option<Vec<String>>,
+    /// Allowed grants, or the provider defaults when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_grant_types: Option<Vec<String>>,
 }
 
 impl CreateAuthIdpOauthClient {
@@ -1400,6 +1439,12 @@ impl CreateAuthIdpOauthClient {
             redirect_uris,
             public: false,
             token_endpoint_auth_method: None,
+            post_logout_redirect_uris: None,
+            allowed_origins: Vec::new(),
+            allow_anonymous: false,
+            allowed_resource_audiences: Vec::new(),
+            allowed_scopes: None,
+            allowed_grant_types: None,
         }
     }
 
@@ -1414,13 +1459,40 @@ impl CreateAuthIdpOauthClient {
         for uri in &self.redirect_uris {
             validate_non_empty(uri, "redirect_uri")?;
         }
+        validate_oauth_policy(
+            Some(&self.allowed_resource_audiences),
+            self.allowed_grant_types.as_deref(),
+            self.allowed_scopes.as_deref(),
+        )?;
+        if self.public
+            && self
+                .allowed_grant_types
+                .as_ref()
+                .is_some_and(|grants| grants.iter().any(|grant| grant == "client_credentials"))
+        {
+            return Err(validation(
+                "invalid_grant_type",
+                "Public clients cannot use client_credentials.",
+            ));
+        }
+        if let Some(method) = self.token_endpoint_auth_method.as_deref() {
+            if !matches!(
+                method,
+                "none" | "client_secret_basic" | "client_secret_post"
+            ) || (self.public && method != "none")
+            {
+                return Err(validation(
+                    "invalid_client_authentication",
+                    "Invalid originating-client authentication method.",
+                ));
+            }
+        }
         Ok(())
     }
 }
 
-/// An OAuth client record (camelCase wire; secrets are never included).
+/// An OAuth client record (snake_case wire; secrets are never included).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AuthIdpOauthClient {
     /// Client record id (`clt_...`).
     pub id: String,
@@ -1436,6 +1508,104 @@ pub struct AuthIdpOauthClient {
     pub public: bool,
     /// Creation time (unix seconds).
     pub created_at: i64,
+    /// Registered post-logout redirects.
+    pub post_logout_redirect_uris: Vec<String>,
+    /// Allowed browser origins.
+    pub allowed_origins: Vec<String>,
+    /// Whether anonymous sessions are allowed.
+    pub allow_anonymous: bool,
+    /// Exact registered resource audiences.
+    pub allowed_resource_audiences: Vec<String>,
+    /// Allowed scope tokens.
+    pub allowed_scopes: Vec<String>,
+    /// Allowed OAuth grant types.
+    pub allowed_grant_types: Vec<String>,
+    /// Current credential/policy epoch, preserved as an exact u64.
+    pub auth_epoch: u64,
+    /// Whether the client is enabled.
+    pub enabled: bool,
+}
+
+/// Checked client policy update. Empty lists clear a policy; absence preserves it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PatchAuthIdpOauthClient {
+    /// Epoch from the last current client view.
+    pub expected_auth_epoch: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redirect_uris: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_logout_redirect_uris: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_origins: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_anonymous: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_resource_audiences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_scopes: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_grant_types: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Return a new one-time secret when true.
+    pub rotate_secret: bool,
+}
+
+impl PatchAuthIdpOauthClient {
+    #[must_use]
+    pub fn new(expected_auth_epoch: u64) -> Self {
+        Self {
+            expected_auth_epoch,
+            name: None,
+            redirect_uris: None,
+            post_logout_redirect_uris: None,
+            allowed_origins: None,
+            allow_anonymous: None,
+            allowed_resource_audiences: None,
+            allowed_scopes: None,
+            allowed_grant_types: None,
+            enabled: None,
+            rotate_secret: false,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_auth_epoch(self.expected_auth_epoch)?;
+        if let Some(name) = &self.name {
+            validate_non_empty(name, "name")?;
+        }
+        validate_oauth_policy(
+            self.allowed_resource_audiences.as_deref(),
+            self.allowed_grant_types.as_deref(),
+            self.allowed_scopes.as_deref(),
+        )
+    }
+}
+
+/// Rotation response; its secret is returned once.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthIdpOauthClientRotated {
+    pub client: AuthIdpOauthClient,
+    pub client_secret: String,
+}
+
+impl std::fmt::Debug for AuthIdpOauthClientRotated {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthIdpOauthClientRotated")
+            .field("client", &self.client)
+            .field("client_secret", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Actual PATCH union: a bare view without rotation, an envelope with rotation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AuthIdpOauthClientPatched {
+    Updated(AuthIdpOauthClient),
+    Rotated(AuthIdpOauthClientRotated),
 }
 
 /// A freshly created OAuth client with its one-time secret (Debug redacted;
@@ -1490,6 +1660,30 @@ impl AuthIdpOauthClients {
         Ok(page.clients)
     }
 
+    /// Apply a policy update only at the supplied current epoch.
+    pub async fn patch(
+        &self,
+        client_id: &str,
+        patch: PatchAuthIdpOauthClient,
+    ) -> Result<AuthIdpOauthClientPatched> {
+        patch.validate()?;
+        let result = self
+            .client
+            .management_json(
+                "auth_idp.oauth_clients.patch",
+                Method::Patch,
+                &format!("/oauth-clients/{}", path_id(client_id, "client_id")?),
+                &patch,
+            )
+            .await?;
+        if matches!(&result, AuthIdpOauthClientPatched::Rotated(_)) != patch.rotate_secret {
+            return Err(Error::invalid_response(
+                "Client PATCH response does not match the requested rotation.",
+            ));
+        }
+        Ok(result)
+    }
+
     /// Delete an OAuth client by record id (`clt_...`).
     pub async fn delete(&self, client_id: &str) -> Result<()> {
         self.client
@@ -1497,6 +1691,181 @@ impl AuthIdpOauthClients {
                 "auth_idp.oauth_clients.delete",
                 Method::Delete,
                 &format!("/oauth-clients/{}", path_id(client_id, "client_id")?),
+            )
+            .await
+    }
+}
+
+/// Resource creation policy. The audience is retained byte-for-byte.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreateAuthIdpOauthResource {
+    pub audience: String,
+    pub allowed_client_ids: Vec<String>,
+    pub allowed_grant_types: Vec<String>,
+    pub allowed_scopes: Vec<String>,
+}
+
+impl CreateAuthIdpOauthResource {
+    fn validate(&self) -> Result<()> {
+        validate_resource(&self.audience)?;
+        validate_oauth_list(&self.allowed_client_ids, |id| {
+            !id.is_empty() && id.len() <= 256 && !id.chars().any(char::is_control)
+        })?;
+        validate_oauth_policy(
+            None,
+            Some(&self.allowed_grant_types),
+            Some(&self.allowed_scopes),
+        )
+    }
+}
+
+/// Checked resource update; audience and introspection identity are immutable.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PatchAuthIdpOauthResource {
+    pub expected_auth_epoch: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_client_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_grant_types: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_scopes: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    pub rotate_secret: bool,
+}
+
+impl PatchAuthIdpOauthResource {
+    #[must_use]
+    pub fn new(expected_auth_epoch: u64) -> Self {
+        Self {
+            expected_auth_epoch,
+            allowed_client_ids: None,
+            allowed_grant_types: None,
+            allowed_scopes: None,
+            enabled: None,
+            rotate_secret: false,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_auth_epoch(self.expected_auth_epoch)?;
+        if let Some(ids) = &self.allowed_client_ids {
+            validate_oauth_list(ids, |id| {
+                !id.is_empty() && id.len() <= 256 && !id.chars().any(char::is_control)
+            })?;
+        }
+        validate_oauth_policy(
+            None,
+            self.allowed_grant_types.as_deref(),
+            self.allowed_scopes.as_deref(),
+        )
+    }
+}
+
+/// Current resource policy; it contains no introspection secret.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthIdpOauthResource {
+    pub id: String,
+    pub audience: String,
+    pub allowed_client_ids: Vec<String>,
+    pub allowed_grant_types: Vec<String>,
+    pub allowed_scopes: Vec<String>,
+    pub introspection_client_id: String,
+    pub token_endpoint_auth_method: String,
+    pub auth_epoch: u64,
+    pub enabled: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Resource creation/PATCH envelope. A secret is returned only when minted.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthIdpOauthResourceResponse {
+    pub resource: AuthIdpOauthResource,
+    pub introspection_secret: Option<String>,
+}
+
+impl std::fmt::Debug for AuthIdpOauthResourceResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthIdpOauthResourceResponse")
+            .field("resource", &self.resource)
+            .field("introspection_secret", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Infrastructure management of resource policies.
+#[derive(Debug, Clone)]
+pub struct AuthIdpOauthResources {
+    client: AuthIdpClient,
+}
+
+impl AuthIdpOauthResources {
+    pub async fn create(
+        &self,
+        request: CreateAuthIdpOauthResource,
+    ) -> Result<AuthIdpOauthResourceResponse> {
+        request.validate()?;
+        self.client
+            .management_json(
+                "auth_idp.oauth_resources.create",
+                Method::Post,
+                "/oauth-resources",
+                &request,
+            )
+            .await
+    }
+
+    pub async fn list(&self) -> Result<Vec<AuthIdpOauthResource>> {
+        #[derive(Deserialize)]
+        struct Page {
+            resources: Vec<AuthIdpOauthResource>,
+        }
+        let page: Page = self
+            .client
+            .management_no_body(
+                "auth_idp.oauth_resources.list",
+                Method::Get,
+                "/oauth-resources",
+            )
+            .await?;
+        Ok(page.resources)
+    }
+
+    pub async fn patch(
+        &self,
+        resource_id: &str,
+        patch: PatchAuthIdpOauthResource,
+    ) -> Result<AuthIdpOauthResourceResponse> {
+        patch.validate()?;
+        self.client
+            .management_json(
+                "auth_idp.oauth_resources.patch",
+                Method::Patch,
+                &format!("/oauth-resources/{}", path_id(resource_id, "resource_id")?),
+                &patch,
+            )
+            .await
+    }
+
+    /// Disable at a caller-observed epoch; the audience remains reserved.
+    pub async fn disable(
+        &self,
+        resource_id: &str,
+        expected_auth_epoch: u64,
+    ) -> Result<AuthIdpOauthResourceResponse> {
+        let mut patch = PatchAuthIdpOauthResource::new(expected_auth_epoch);
+        patch.enabled = Some(false);
+        self.patch(resource_id, patch).await
+    }
+
+    /// Provider DELETE disables the current resource rather than removing its identity.
+    pub async fn delete(&self, resource_id: &str) -> Result<()> {
+        self.client
+            .management_empty(
+                "auth_idp.oauth_resources.delete",
+                Method::Delete,
+                &format!("/oauth-resources/{}", path_id(resource_id, "resource_id")?),
             )
             .await
     }
@@ -2616,9 +2985,8 @@ pub struct OidcTokenResponse {
     pub token_type: String,
     /// Lifetime (seconds).
     pub expires_in: i64,
-    /// Granted scope, when different from the request.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
+    /// Granted scope; an empty string is a valid narrowed grant.
+    pub scope: String,
     /// Refresh token (never for the client credentials grant).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
@@ -2655,9 +3023,9 @@ pub struct OidcIntrospection {
     /// Subject, for active tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sub: Option<String>,
-    /// Audience (string or array), for active tokens.
+    /// Single exact audience, for active tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aud: Option<Value>,
+    pub aud: Option<String>,
     /// Client id, for active tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
@@ -2670,6 +3038,308 @@ pub struct OidcIntrospection {
     /// Issued-at (unix seconds), for active tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iat: Option<i64>,
+    /// Session id for user grants; this generic client response is not resource admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sid: Option<String>,
+    /// Access-token principal kind, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub principal_kind: Option<OidcPrincipalKind>,
+    /// Refresh family, available only to originating-client introspection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family_id: Option<String>,
+}
+
+/// Originating OAuth client authentication. Resource credentials have a separate type.
+#[derive(Clone, Copy)]
+pub enum OidcClientAuthentication<'a> {
+    None {
+        client_id: &'a str,
+    },
+    Basic {
+        client_id: &'a str,
+        client_secret: &'a str,
+    },
+    Form {
+        client_id: &'a str,
+        client_secret: &'a str,
+    },
+}
+
+impl std::fmt::Debug for OidcClientAuthentication<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (method, id) = match self {
+            Self::None { client_id } => ("none", client_id),
+            Self::Basic { client_id, .. } => ("client_secret_basic", client_id),
+            Self::Form { client_id, .. } => ("client_secret_post", client_id),
+        };
+        f.debug_struct("OidcClientAuthentication")
+            .field("method", &method)
+            .field("client_id", id)
+            .field("client_secret", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl<'a> OidcClientAuthentication<'a> {
+    fn apply(self, pairs: &mut Vec<(&'a str, &'a str)>) -> Result<Option<String>> {
+        let (id, secret) = match self {
+            Self::None { client_id } => (client_id, None),
+            Self::Basic {
+                client_id,
+                client_secret,
+            }
+            | Self::Form {
+                client_id,
+                client_secret,
+            } => (client_id, Some(client_secret)),
+        };
+        validate_non_empty(id, "client_id")?;
+        if let Some(secret) = secret {
+            validate_non_empty(secret, "client_secret")?;
+        }
+        match self {
+            Self::None { client_id } => {
+                pairs.push(("client_id", client_id));
+                Ok(None)
+            }
+            Self::Form {
+                client_id,
+                client_secret,
+            } => {
+                pairs.extend([("client_id", client_id), ("client_secret", client_secret)]);
+                Ok(None)
+            }
+            Self::Basic {
+                client_id,
+                client_secret,
+            } => Ok(Some(basic_authorization(client_id, client_secret))),
+        }
+    }
+}
+
+/// A separate resource identity accepted only by resource introspection.
+#[derive(Clone)]
+pub struct OidcResourceCredentials {
+    client_id: String,
+    secret: String,
+}
+
+impl OidcResourceCredentials {
+    pub fn new(client_id: impl Into<String>, secret: impl Into<String>) -> Result<Self> {
+        let credentials = Self {
+            client_id: client_id.into(),
+            secret: secret.into(),
+        };
+        validate_non_empty(&credentials.client_id, "introspection_client_id")?;
+        validate_non_empty(&credentials.secret, "introspection_secret")?;
+        Ok(credentials)
+    }
+}
+
+impl std::fmt::Debug for OidcResourceCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OidcResourceCredentials")
+            .field("client_id", &self.client_id)
+            .field("secret", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OidcPrincipalKind {
+    User,
+    Service,
+}
+
+/// Strict resource claims from the provider. Decoding alone grants no application authority.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OidcResourceActive {
+    pub token_type: String,
+    pub iss: String,
+    pub sub: String,
+    pub aud: String,
+    pub client_id: String,
+    pub scope: String,
+    pub exp: i64,
+    pub iat: i64,
+    pub sid: Option<String>,
+    pub principal_kind: OidcPrincipalKind,
+}
+
+/// Exact resource wire union, including a required nullable sid on active replies.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OidcResourceIntrospection {
+    Inactive,
+    Active(Box<OidcResourceActive>),
+}
+
+impl<'de> Deserialize<'de> for OidcResourceIntrospection {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        fn required_sid<'de, D: serde::Deserializer<'de>>(
+            deserializer: D,
+        ) -> std::result::Result<Option<String>, D::Error> {
+            Option::<String>::deserialize(deserializer)
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Active {
+            active: bool,
+            token_type: String,
+            iss: String,
+            sub: String,
+            aud: String,
+            client_id: String,
+            scope: String,
+            exp: i64,
+            iat: i64,
+            #[serde(deserialize_with = "required_sid")]
+            sid: Option<String>,
+            principal_kind: OidcPrincipalKind,
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Inactive {
+            active: bool,
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Active(Box<Active>),
+            Inactive(Inactive),
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        match wire {
+            Wire::Inactive(Inactive { active: false }) => Ok(Self::Inactive),
+            Wire::Active(value) if value.active => {
+                let active = OidcResourceActive {
+                    token_type: value.token_type,
+                    iss: value.iss,
+                    sub: value.sub,
+                    aud: value.aud,
+                    client_id: value.client_id,
+                    scope: value.scope,
+                    exp: value.exp,
+                    iat: value.iat,
+                    sid: value.sid,
+                    principal_kind: value.principal_kind,
+                };
+                active.validate_shape().map_err(serde::de::Error::custom)?;
+                Ok(Self::Active(Box::new(active)))
+            }
+            _ => Err(serde::de::Error::custom(
+                "invalid resource introspection union",
+            )),
+        }
+    }
+}
+
+impl OidcResourceActive {
+    fn validate_shape(&self) -> Result<()> {
+        let session_valid = match self.principal_kind {
+            OidcPrincipalKind::User => self
+                .sid
+                .as_deref()
+                .is_some_and(|sid| !sid.trim().is_empty()),
+            OidcPrincipalKind::Service => self.sid.is_none() && self.sub == self.client_id,
+        };
+        if self.token_type != "Bearer"
+            || self.iss.is_empty()
+            || self.sub.trim().is_empty()
+            || self.client_id.trim().is_empty()
+            || !session_valid
+            || self.exp <= self.iat
+            || self.iat < 0
+            || !valid_scope_string(&self.scope)
+            || !valid_resource(&self.aud)
+        {
+            return Err(Error::invalid_response(
+                "Invalid active resource introspection claims.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Check exact issuer/audience and current times on these raw claims.
+    /// The caller must supply a healthy current clock and a fresh authenticated
+    /// provider response, then check current durable application grants. This
+    /// method does not establish transport provenance or ownership.
+    pub fn check_binding_at(
+        &self,
+        expected_issuer: &str,
+        expected_audience: &str,
+        now: SystemTime,
+    ) -> Result<()> {
+        self.validate_shape()?;
+        validate_resource(expected_audience)?;
+        let issuer = reqwest::Url::parse(expected_issuer).map_err(|_| {
+            validation(
+                "invalid_expected_issuer",
+                "Expected issuer must be canonical HTTPS.",
+            )
+        })?;
+        if issuer.scheme() != "https"
+            || issuer.host_str().is_none()
+            || !issuer.username().is_empty()
+            || issuer.password().is_some()
+            || issuer.fragment().is_some()
+            || issuer.query().is_some()
+            || issuer.as_str() != expected_issuer
+        {
+            return Err(validation(
+                "invalid_expected_issuer",
+                "Expected issuer must be canonical HTTPS.",
+            ));
+        }
+        let now = now
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|time| i64::try_from(time.as_secs()).ok())
+            .ok_or_else(|| {
+                validation(
+                    "invalid_verification_time",
+                    "Current verification time is unavailable.",
+                )
+            })?;
+        if self.iss != expected_issuer
+            || self.aud != expected_audience
+            || self.exp <= now
+            || self.iat > now
+        {
+            return Err(Error::new(
+                ErrorKind::Authorization,
+                "resource_binding_denied",
+                "Resource issuer, audience or current token time does not match.",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Device authorization response. The device code is a redeemable secret.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct OidcDeviceAuthorization {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub verification_uri_complete: String,
+    pub expires_in: i64,
+    pub interval: i64,
+}
+
+impl std::fmt::Debug for OidcDeviceAuthorization {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OidcDeviceAuthorization")
+            .field("device_code", &"[REDACTED]")
+            .field("user_code", &"[REDACTED]")
+            .field("verification_uri", &self.verification_uri)
+            .field("verification_uri_complete", &"[REDACTED]")
+            .field("expires_in", &self.expires_in)
+            .field("interval", &self.interval)
+            .finish()
+    }
 }
 
 /// OpenID Connect userinfo claims.
@@ -2688,15 +3358,14 @@ pub struct OidcUserInfo {
     pub name: Option<String>,
 }
 
-/// Public OIDC protocol routes under `/{slug}`. No instance key is sent;
-/// the token endpoint authenticates with `client_secret_post` form fields.
+/// OIDC routes with explicit originating-client authentication and separate
+/// Basic-only resource introspection. No instance or native key is sent.
 #[derive(Debug, Clone)]
 pub struct AuthIdpOidc {
     client: AuthIdpClient,
 }
 
 impl AuthIdpOidc {
-    /// Fetch the discovery document.
     pub async fn discovery(&self) -> Result<OidcDiscovery> {
         self.client
             .oidc_get(
@@ -2706,125 +3375,165 @@ impl AuthIdpOidc {
             .await
     }
 
-    /// Fetch the ES256 signing keys.
     pub async fn jwks(&self) -> Result<OidcJwks> {
         self.client
             .oidc_get("auth_idp.oidc.jwks", "/.well-known/jwks.json")
             .await
     }
 
-    /// Exchange an authorization code (PKCE `code_verifier` optional).
+    /// Redeem a code. Omit resource to inherit, or repeat its exact stored value.
     pub async fn token_authorization_code(
         &self,
-        client_id: &str,
-        client_secret: &str,
+        authentication: OidcClientAuthentication<'_>,
         code: &str,
         redirect_uri: &str,
         code_verifier: Option<&str>,
+        resource: Option<&str>,
     ) -> Result<OidcTokenResponse> {
-        validate_non_empty(client_id, "client_id")?;
-        validate_non_empty(client_secret, "client_secret")?;
         validate_non_empty(code, "code")?;
         validate_non_empty(redirect_uri, "redirect_uri")?;
-        if let Some(verifier) = code_verifier {
-            validate_non_empty(verifier, "code_verifier")?;
-        }
         let mut pairs = vec![
             ("grant_type", "authorization_code"),
-            ("client_id", client_id.trim()),
-            ("client_secret", client_secret.trim()),
-            ("code", code.trim()),
-            ("redirect_uri", redirect_uri.trim()),
+            ("code", code),
+            ("redirect_uri", redirect_uri),
         ];
         if let Some(verifier) = code_verifier {
-            pairs.push(("code_verifier", verifier.trim()));
+            validate_non_empty(verifier, "code_verifier")?;
+            pairs.push(("code_verifier", verifier));
         }
-        self.send_token(pairs).await
+        append_resource(&mut pairs, resource)?;
+        self.send_token(authentication, pairs).await
     }
 
-    /// Refresh a token.
+    /// Absence of scope inherits; an explicit subset (including empty) narrows.
     pub async fn token_refresh(
         &self,
-        client_id: &str,
-        client_secret: &str,
+        authentication: OidcClientAuthentication<'_>,
         refresh_token: &str,
-    ) -> Result<OidcTokenResponse> {
-        validate_non_empty(client_id, "client_id")?;
-        validate_non_empty(client_secret, "client_secret")?;
-        validate_non_empty(refresh_token, "refresh_token")?;
-        self.send_token(vec![
-            ("grant_type", "refresh_token"),
-            ("client_id", client_id.trim()),
-            ("client_secret", client_secret.trim()),
-            ("refresh_token", refresh_token.trim()),
-        ])
-        .await
-    }
-
-    /// Mint a client credentials token.
-    pub async fn token_client_credentials(
-        &self,
-        client_id: &str,
-        client_secret: &str,
+        resource: Option<&str>,
         scope: Option<&str>,
     ) -> Result<OidcTokenResponse> {
-        validate_non_empty(client_id, "client_id")?;
-        validate_non_empty(client_secret, "client_secret")?;
+        validate_non_empty(refresh_token, "refresh_token")?;
         let mut pairs = vec![
-            ("grant_type", "client_credentials"),
-            ("client_id", client_id.trim()),
-            ("client_secret", client_secret.trim()),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
         ];
-        if let Some(scope) = scope {
-            validate_non_empty(scope, "scope")?;
-            pairs.push(("scope", scope.trim()));
-        }
-        self.send_token(pairs).await
+        append_resource(&mut pairs, resource)?;
+        append_scope(&mut pairs, scope)?;
+        self.send_token(authentication, pairs).await
     }
 
-    /// Revoke a token. The endpoint authenticates the OAuth client with
-    /// `client_secret_post` form fields (RFC 7009 §2.1); unknown tokens also
-    /// succeed with 200 and an empty body.
-    pub async fn revoke(&self, client_id: &str, client_secret: &str, token: &str) -> Result<()> {
-        validate_non_empty(client_id, "client_id")?;
-        validate_non_empty(client_secret, "client_secret")?;
-        validate_non_empty(token, "token")?;
-        let request = self.client.oidc_form(
-            "auth_idp.oidc.revoke",
-            "/oauth/revoke",
-            &[
-                ("client_id", client_id.trim()),
-                ("client_secret", client_secret.trim()),
-                ("token", token.trim()),
-            ],
-        );
-        self.client.send_empty(request).await
-    }
-
-    /// Introspect a token (RFC 7662). The endpoint authenticates the OAuth
-    /// client with `client_secret_post` form fields.
-    pub async fn introspect(
+    /// Confidential originating clients require explicit resource and scopes.
+    pub async fn token_client_credentials(
         &self,
-        client_id: &str,
-        client_secret: &str,
-        token: &str,
-    ) -> Result<OidcIntrospection> {
-        validate_non_empty(client_id, "client_id")?;
-        validate_non_empty(client_secret, "client_secret")?;
-        validate_non_empty(token, "token")?;
-        let request = self.client.oidc_form(
-            "auth_idp.oidc.introspect",
-            "/oauth/introspect",
-            &[
-                ("client_id", client_id.trim()),
-                ("client_secret", client_secret.trim()),
-                ("token", token.trim()),
-            ],
-        );
+        authentication: OidcClientAuthentication<'_>,
+        resource: &str,
+        scope: &str,
+    ) -> Result<OidcTokenResponse> {
+        if matches!(authentication, OidcClientAuthentication::None { .. }) {
+            return Err(validation(
+                "confidential_client_required",
+                "Client credentials requires a confidential originating client.",
+            ));
+        }
+        validate_non_empty(scope, "scope")?;
+        let mut pairs = vec![("grant_type", "client_credentials")];
+        append_resource(&mut pairs, Some(resource))?;
+        append_scope(&mut pairs, Some(scope))?;
+        self.send_token(authentication, pairs).await
+    }
+
+    /// Begin the device grant; no polling or automatic redemption is performed.
+    pub async fn device_authorization(
+        &self,
+        authentication: OidcClientAuthentication<'_>,
+        resource: Option<&str>,
+        scope: Option<&str>,
+    ) -> Result<OidcDeviceAuthorization> {
+        let mut pairs = Vec::new();
+        append_resource(&mut pairs, resource)?;
+        append_scope(&mut pairs, scope)?;
+        let request = self.originating_form(
+            "auth_idp.oidc.device_authorization",
+            "/oauth/device_authorization",
+            authentication,
+            pairs,
+        )?;
         self.client.send_typed(request).await
     }
 
-    /// Read userinfo with an OAuth access token (not the instance key).
+    /// Redeem a device code once. The provider enforces its polling interval.
+    pub async fn token_device_code(
+        &self,
+        authentication: OidcClientAuthentication<'_>,
+        device_code: &str,
+        resource: Option<&str>,
+    ) -> Result<OidcTokenResponse> {
+        validate_non_empty(device_code, "device_code")?;
+        let mut pairs = vec![
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("device_code", device_code),
+        ];
+        append_resource(&mut pairs, resource)?;
+        self.send_token(authentication, pairs).await
+    }
+
+    /// Revoke using originating-client credentials. Resource credentials cannot be supplied.
+    pub async fn revoke(
+        &self,
+        authentication: OidcClientAuthentication<'_>,
+        token: &str,
+    ) -> Result<()> {
+        validate_non_empty(token, "token")?;
+        let request = self.originating_form(
+            "auth_idp.oidc.revoke",
+            "/oauth/revoke",
+            authentication,
+            vec![("token", token)],
+        )?;
+        self.client.send_empty(request).await
+    }
+
+    /// Originating-client introspection does not establish resource admission.
+    pub async fn introspect(
+        &self,
+        authentication: OidcClientAuthentication<'_>,
+        token: &str,
+    ) -> Result<OidcIntrospection> {
+        validate_non_empty(token, "token")?;
+        let request = self.originating_form(
+            "auth_idp.oidc.introspect",
+            "/oauth/introspect",
+            authentication,
+            vec![("token", token)],
+        )?;
+        self.client.send_typed(request).await
+    }
+
+    /// Fresh Basic-only resource introspection, with the exact strict wire union.
+    /// No response is cached. The provider denies refresh and ID token admission.
+    pub async fn introspect_resource(
+        &self,
+        credentials: &OidcResourceCredentials,
+        token: &str,
+    ) -> Result<OidcResourceIntrospection> {
+        validate_non_empty(token, "token")?;
+        let mut request = self.client.oidc_form(
+            "auth_idp.oidc.resource_introspect",
+            "/oauth/introspect",
+            &[("token", token)],
+        );
+        request.headers.push((
+            "authorization".into(),
+            basic_authorization(&credentials.client_id, &credentials.secret),
+        ));
+        request
+            .headers
+            .push(("cache-control".into(), "no-store".into()));
+        self.client.send_typed(request).await
+    }
+
+    /// Read userinfo with an OAuth access token, never an instance key.
     pub async fn userinfo(&self, access_token: &str) -> Result<OidcUserInfo> {
         validate_non_empty(access_token, "access_token")?;
         let mut request = AuthIdpClient::public(Request {
@@ -2834,17 +3543,36 @@ impl AuthIdpOidc {
             headers: Vec::new(),
             body: None,
         });
-        request.headers.push((
-            "authorization".to_owned(),
-            format!("Bearer {}", access_token.trim()),
-        ));
+        request
+            .headers
+            .push(("authorization".to_owned(), format!("Bearer {access_token}")));
         self.client.send_typed(request).await
     }
 
-    async fn send_token(&self, pairs: Vec<(&str, &str)>) -> Result<OidcTokenResponse> {
-        let request = self
-            .client
-            .oidc_form("auth_idp.oidc.token", "/oauth/token", &pairs);
+    fn originating_form<'a>(
+        &self,
+        route: &str,
+        path: &str,
+        authentication: OidcClientAuthentication<'a>,
+        mut pairs: Vec<(&'a str, &'a str)>,
+    ) -> Result<Request> {
+        let authorization = authentication.apply(&mut pairs)?;
+        let mut request = self.client.oidc_form(route, path, &pairs);
+        if let Some(authorization) = authorization {
+            request
+                .headers
+                .push(("authorization".into(), authorization));
+        }
+        Ok(request)
+    }
+
+    async fn send_token<'a>(
+        &self,
+        authentication: OidcClientAuthentication<'a>,
+        pairs: Vec<(&'a str, &'a str)>,
+    ) -> Result<OidcTokenResponse> {
+        let request =
+            self.originating_form("auth_idp.oidc.token", "/oauth/token", authentication, pairs)?;
         self.client.send_typed(request).await
     }
 }
@@ -3013,6 +3741,171 @@ struct EmptyObject {}
 
 fn validation(code: &str, message: &str) -> Error {
     Error::new(ErrorKind::Validation, code, message)
+}
+
+fn basic_authorization(client_id: &str, secret: &str) -> String {
+    let components = format!("{}:{}", percent_encode(client_id), percent_encode(secret));
+    format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(components)
+    )
+}
+
+fn validate_auth_epoch(epoch: u64) -> Result<()> {
+    if epoch == 0 {
+        return Err(validation(
+            "invalid_auth_epoch",
+            "Expected authentication epoch must be positive.",
+        ));
+    }
+    Ok(())
+}
+
+fn valid_scope_token(scope: &str) -> bool {
+    !scope.is_empty()
+        && scope.len() <= 256
+        && scope
+            .bytes()
+            .all(|byte| matches!(byte, 0x21 | 0x23..=0x5b | 0x5d..=0x7e))
+}
+
+fn valid_scope_string(scope: &str) -> bool {
+    if scope.is_empty() {
+        return true;
+    }
+    let scopes: Vec<&str> = scope.split(' ').collect();
+    scopes.len() <= 100
+        && scopes.iter().all(|scope| valid_scope_token(scope))
+        && scopes.iter().collect::<HashSet<_>>().len() == scopes.len()
+}
+
+fn validate_oauth_list(values: &[String], valid: impl Fn(&str) -> bool) -> Result<()> {
+    if values.len() > 100
+        || values.iter().any(|value| !valid(value))
+        || values.iter().collect::<HashSet<_>>().len() != values.len()
+        || serde_json::to_vec(values).map_or(true, |bytes| bytes.len() > 32768)
+    {
+        return Err(validation(
+            "invalid_oauth_policy",
+            "OAuth allowlist contains invalid, duplicate or excessive values.",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_oauth_policy(
+    audiences: Option<&[String]>,
+    grants: Option<&[String]>,
+    scopes: Option<&[String]>,
+) -> Result<()> {
+    if let Some(audiences) = audiences {
+        validate_oauth_list(audiences, valid_resource)?;
+    }
+    if let Some(grants) = grants {
+        validate_oauth_list(grants, |grant| {
+            matches!(
+                grant,
+                "authorization_code"
+                    | "refresh_token"
+                    | "client_credentials"
+                    | "urn:ietf:params:oauth:grant-type:device_code"
+            )
+        })?;
+    }
+    if let Some(scopes) = scopes {
+        validate_oauth_list(scopes, valid_scope_token)?;
+    }
+    Ok(())
+}
+
+/// Match the provider's exact ASCII HTTPS resource grammar without rewriting it.
+fn valid_resource(value: &str) -> bool {
+    let Some(remainder) = value.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
+    if value.len() > 2048
+        || authority.is_empty()
+        || authority.contains('@')
+        || remainder[authority.len()..].contains(['[', ']'])
+        || value.bytes().any(|byte| {
+            !byte.is_ascii_alphanumeric()
+                && !matches!(
+                    byte,
+                    b'-' | b'.'
+                        | b'_'
+                        | b'~'
+                        | b':'
+                        | b'/'
+                        | b'?'
+                        | b'['
+                        | b']'
+                        | b'@'
+                        | b'!'
+                        | b'$'
+                        | b'&'
+                        | b'\''
+                        | b'('
+                        | b')'
+                        | b'*'
+                        | b'+'
+                        | b','
+                        | b';'
+                        | b'='
+                        | b'%'
+                )
+        })
+        || value.as_bytes().iter().enumerate().any(|(index, byte)| {
+            *byte == b'%'
+                && !value
+                    .as_bytes()
+                    .get(index + 1..index + 3)
+                    .is_some_and(|digits| digits.iter().all(u8::is_ascii_hexdigit))
+        })
+    {
+        return false;
+    }
+    reqwest::Url::parse(value).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.fragment().is_none()
+    })
+}
+
+fn validate_resource(resource: &str) -> Result<()> {
+    if !valid_resource(resource) {
+        return Err(validation(
+            "invalid_resource",
+            "Resource must be one exact absolute HTTPS URI without credentials or a fragment.",
+        ));
+    }
+    Ok(())
+}
+
+fn append_resource<'a>(
+    pairs: &mut Vec<(&'a str, &'a str)>,
+    resource: Option<&'a str>,
+) -> Result<()> {
+    if let Some(resource) = resource {
+        validate_resource(resource)?;
+        pairs.push(("resource", resource));
+    }
+    Ok(())
+}
+
+fn append_scope<'a>(pairs: &mut Vec<(&'a str, &'a str)>, scope: Option<&'a str>) -> Result<()> {
+    if let Some(scope) = scope {
+        if !valid_scope_string(scope) {
+            return Err(validation(
+                "invalid_scope",
+                "Scope must contain unique bounded scope tokens.",
+            ));
+        }
+        pairs.push(("scope", scope));
+    }
+    Ok(())
 }
 
 fn validate_non_empty(value: &str, field: &str) -> Result<()> {

@@ -1,0 +1,306 @@
+{
+  "anchors": {
+    "control_contract": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v11/contracts/ATLAS_FENCED_PUBLISHER_V1.json",
+      "sha256": "aedb2903b1d3db2be71dda2276bcdbcc0ee7b0f7dac519dbb72b4515f30e6ca5"
+    },
+    "native_credential_verifier": "terrabase/crates/tb-server/src/client_auth.rs and signed CredentialState domain",
+    "native_serving_contract_sha256": "3d10c80fd6f265e3fdb997a66a0481a5291f8b337e5d447afa365640036c95c6",
+    "publisher_struct": "ts-orchestrator/internal/atlas/contract.go:Placement and Projection",
+    "root_decision": "Native data health/eligibility comes from current authenticated signed serving publication. Independently admitted regional coordinates rank only admitted serving endpoints. REGIONS remains display/auth metadata and cannot widen native eligibility.",
+    "trust_signature": "ts-orchestrator/internal/trust/envelope.go:signingMaterial, compactPayload, EncodeEnvelope"
+  },
+  "base_commit": "7193b28929117b82e434eefe35a76c2775e43c9c",
+  "base_tree": "3b874ba5fac44d655bb3864dfc10547de452ce44",
+  "cleanup": "Delete obsolete name/branch placement, shared-secret ingest, per-isolate KV write repair and PLACEMENT binding. Rename health-only reader to region-catalog.ts and remove obsolete placement tests after their meaningful health cases move. Remove old discovery analytics assumptions; retain unrelated canonical browser auth and test API router behavior.",
+  "discovery": {
+    "authorization": "Verify exact same-target, current signed CredentialState and durable credential generation/digest floor. Known nonrevoked key with native read and/or write permission plus bounded collection/table grant permits placement-only discovery; operational endpoint capabilities do not grant user permissions. Unknown/malformed/revoked/foreign credentials return identical403 envelope.",
+    "credential": "One Authorization: Bearer tbk1.<canonical base64url16-byte id>.<canonical base64url32-byte secret>, header <=128 bytes. No cookie/ambient credential or redirects/custom discovery hosts in SDK transport.",
+    "credential_material": "SHA256 UTF8 TB-APIKEY-V1 + NUL + decoded16-byte id + decoded32-byte secret; constant-time fixed-byte digest comparison. Registry <=128 keys, raw<=256KiB, cumulative collection/table grants bounded4096 each.",
+    "credential_signature_material": "UTF8 TS-CLIENT-CREDENTIALS-AUTHORITY-V1 + NUL + generationdecimal + NUL + independently pinned initial receipt lowercaseSHA256 + NUL + exact raw native registry bytes; Ed25519 base64url64 under independently anchored native authority public key.",
+    "eligibility": "Current authenticated serving publication and credential floor; registered region+exact direct URL; current explicit ClientV1/read-or-write capabilities; residency filter. No REGIONS/static/config fallback can create serving eligibility.",
+    "errors": {
+      "400": "invalid_request or invalid_scope or invalid_cursor",
+      "403": "discovery_forbidden (identical credential denial)",
+      "503": "discovery_unconfigured or no_eligible_region or routing_observation_regressed"
+    },
+    "method": "GET",
+    "no_store": "Responses/errors private,no-store. Never return raw CredentialState, key IDs/verifiers/registry, signing material or private grants. Never log raw Authorization.",
+    "observed_query_all_or_none": [
+      "observed_deployment_id",
+      "observed_cell",
+      "observed_publisher_generation",
+      "rev"
+    ],
+    "path": "/api/v1/discovery",
+    "query_rules": "Exact canonical native IDs; each name once; unknown names and legacy database/branch/stale aliases rejected. Observed cursor cell/deployment must match unique configured owner, never compare epochs across cells. rev is actual R3 publication sequence in that cell. Same-cell stored epoch/revision below observed cursor fails closed.",
+    "ranking": "Measured RTT, then independently admitted region coordinates/client distance, then signed placement order among eligible endpoints only.",
+    "required_query": [
+      "tenant_id",
+      "database_id",
+      "shard_id"
+    ],
+    "response": {
+      "authority": {
+        "cell": "Unique configured owner",
+        "deployment_id": "Unique configured owner",
+        "publisher_generation": "Canonical epoch string",
+        "publisher_id": "Admitted publisher"
+      },
+      "endpoints": [
+        {
+          "capabilities": {
+            "atomic_groups": false,
+            "client_v1": "explicit boolean",
+            "conditional_mutation": false,
+            "query": "explicit boolean",
+            "read": "explicit boolean",
+            "security_state": false,
+            "subscriptions": "explicit boolean",
+            "write": "explicit boolean"
+          },
+          "catalog": {
+            "digest": "Lowercase SHA256 exact native catalog"
+          },
+          "priority": "1-based ranked integer",
+          "region": "Admitted configured region",
+          "security_writer": null,
+          "url": "EXACT https://<lowercase region>.terrascale.tech"
+        }
+      ],
+      "expires_at": "Conservative accepted expiry Unix seconds",
+      "published_at": "Signed snapshot Unix seconds",
+      "refreshSeconds": "Positive whole seconds <= all remaining publication/operator/root/controller/policy/clock validity, computed against upperNow; no increase in SDKs. Signed CredentialState has no standalone time fields.",
+      "residency": "null or explicit region array",
+      "revision": "Actual root R3 publication sequence canonical u64 string",
+      "schema_version": 1,
+      "scope": "Exact native scope"
+    }
+  },
+  "durable_floors": {
+    "comparison": "Reject lower policy generation; equal generation different policy bytes. Reject lower epoch, same-epoch owner flip, lower registration/publication sequence; equal sequence different snapshot or registration digest. Publisher/key replacement requires strictly newer independently signed registration sequence/digest under same current epoch+owner. Epoch replacement requires genuine current controller/operator readmission, preserves scope credential/routing floors. Equal credential generation different registrySHA and lower generations reject.",
+    "cross_cell": "Moving a scope to another controlling cell is forbidden in this v1; requires separately frozen global scope-owner revision/floor transfer protocol.",
+    "object_identity": "Fixed installed namespace and fixed object name atlas-native-authority-v1, never derived from policy/body/publication/owner/cell/mutable deployment/environment. First independently installed accepted policy atomically durably pins deployment/environment; any later identity change rejects. One persistent policy-authority SQLite DO centralizes all immutable scope mappings/permanent tombstones and separate per-cell epoch/owner/sequence floors, never comparing epochs across cells.",
+    "retry": "Exact same durable sequence+snapshot digest can return duplicate ACK only after current operator/controller/context/policy/expiry revalidation. Receipt renewal cannot authorize a different same-sequence snapshot.",
+    "revocation": "New policy removals or credential generation/tombstone floors deny previous cached snapshots. Stale Env cannot lower a recorded policy floor. Old still-valid receipts before a newly observed floor may remain usable only to conservative <=10s expiry; lifecycle stays pending until required Atlas+native ACKs or expiry. No immediate source-revocation claim.",
+    "state": "Persist policy generation/digest/anchored mapping, publisher epoch/owner, current registration sequence/digest/key, publication sequence/snapshot digest, per-scope native credential generation/registry SHA and latest accepted snapshot. Floors survive expiry, restart and publisher replacement."
+  },
+  "freeze_review": {
+    "atlas_publisher": "Nested scope/catalog/native8caps/null writer/current projection context omitted until A fills real context; no revision invention; exact namespaced header/signature domain match. HTTP-only, SQL proof absent.",
+    "authority_review": "Conditional source-development freeze approved for exact shape/direct roots; explicit all-authenticated-publisher-ids slot policy chosen. Runtime bootstrap/time evidence and final actual DO/caller/source review remain open.",
+    "control_contracts": "No wire mismatch with actual A envelope/root snapshot/hash/context/sequence/ACK; deterministic real-signature producer fixture pending for interoperability."
+  },
+  "held_mutations": [
+    "No source edits before successful initial clean dispatch.",
+    "No commit/push/PR/deploy/external mutation, AGENTS/CLAUDE edits or unrelated worktree changes."
+  ],
+  "ingest": {
+    "ack_semantics": "Respond only after durable serialized floor+snapshot transaction commits. C07 applied status also requires both native/member ACKs; an Atlas ACK alone is insufficient.",
+    "admission_validation": "Exact independently configured deployment/cell/environment and scoped issuer roles and slot==authenticated Publisher-ID; both signed envelopes current; root body expiry <= operator/pinned-root/controller admission expiry; controller binds snapshot, actual root sequence, actual registration sequence/digest, scope and native initial/authority/credential-generation/registry-SHA pins.",
+    "body": {
+      "admission": "Exact existing trust.Envelope for current controller publisher admission",
+      "expires_at": "safe integer Unix seconds",
+      "placements": [
+        {
+          "authorized_context": "Required real signed current CredentialState; no null positive admission",
+          "endpoints": "0..20 explicit native Endpoint objects; empty is accepted for a signed no-serving/invalidation update",
+          "residency": "null for unconstrained, or explicit nonempty unique uppercase region-code array; malformed/empty explicit arrays never mean unconstrained",
+          "scope": {
+            "database_id": "canonical lowercase nonnil UUID",
+            "shard_id": "canonical decimal string 0..18446744073709551615",
+            "tenant_id": "canonical lowercase nonnil UUID"
+          }
+        }
+      ],
+      "published_at": "safe integer Unix seconds",
+      "publisher_generation": "canonical full-u64 decimal string, current controlling-cell epoch >=1",
+      "publisher_id": "Exact registration/admission slot and Publisher-ID header",
+      "registration": "Exact existing trust.Envelope for current operator intent; temporal grant valid for EVERY publication",
+      "schema_version": 1,
+      "sequence": "Actual R3 publication subject CAS PubAck.Sequence/readback as canonical u64 string >=1"
+    },
+    "content_type": "application/json",
+    "headers": [
+      "X-TerraScale-Publisher-ID",
+      "X-TerraScale-Publisher-Key-ID",
+      "X-TerraScale-Publisher-Signature"
+    ],
+    "key_id": "sha256:<lowercase SHA256 raw Ed25519 public key>",
+    "managed_scope_admission": "Exact current ControlA/managed initial producer admits shard1..MAX only. Generic canonical full-u64 parsing includes0, but zero is not an admitted installed policy/positive routing target in this packet.",
+    "maximum_body_bytes": 1048576,
+    "method": "POST",
+    "path": "/api/v1/ingest",
+    "registration_sequence": "Actual independently attested R3 registration CAS PubAck.Sequence/readback, never expected_registration_sequence+1",
+    "registration_sha256": "SHA256 exact trust.EncodeEnvelope(original operator intent envelope), matching Registration.IntentSHA256; not durable registration record bytes. Final producer Embed preserves those bytes.",
+    "signature": "Canonical unpadded base64url encoding of 64 Ed25519 signature bytes",
+    "signature_material_utf8": "TERRA-SCALE-ATLAS-PUBLICATION-V1\u0000POST\u0000/api/v1/ingest\u0000 followed by exact raw UTF8 request-body bytes",
+    "snapshot_sha256": "SHA256 root object with ONLY sequence/admission removed; root members emitted lexicographically, original compact nested producer values preserved.",
+    "strict_json": "Valid UTF8, no duplicate names at any depth, closed schema, bounded containers. Preserve original compact nested JSON bytes for envelope payload hashes and root snapshot digest; do not JSON.parse/stringify signed nested values.",
+    "success_ack": {
+      "authority": {
+        "cell": "Unique configured controlling cell",
+        "controller_owner_id": "Exact owner_id from current signed controller admission",
+        "deployment_id": "Configured deployment",
+        "publisher_generation": "Canonical epoch string",
+        "publisher_id": "Admitted publisher"
+      },
+      "authority_public_key": "Configured canonical base64url32 native authority key",
+      "credential_generation": "Canonical current native generation",
+      "expires_at": "Accepted conservative snapshot expiry Unix seconds",
+      "initial_receipt_sha256": "Configured initial receipt SHA256",
+      "registration_sequence": "Canonical actual registration sequence",
+      "registry_sha256": "Lowercase exact native registry SHA256",
+      "result": "accepted or duplicate",
+      "schema_version": 1,
+      "scope": "Exact native scope",
+      "sequence": "Canonical actual publication sequence",
+      "snapshot_sha256": "Lowercase SHA256"
+    }
+  },
+  "issue": "https://ku.mariogk.com/terrascale/issue/TS-274",
+  "owner": "/root/atlas",
+  "proposal_evidence": {
+    "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v18/evidence/proposals/atlas-native-receiver.proposal.json",
+    "sha256": "4d1c4572927240e6c05e7b2b291b47b4f32d92fbc49318e0da5febc0c7afce8c"
+  },
+  "receiver_policy": {
+    "class_name": "DiscoveryAuthority",
+    "clock": "Compare all conservative expiry against upperNow=Date.now()+independently admitted consumer bound; no grace or assumed zero/default measured bound. Producer conservative expiry also subtracts source uncertainty and consumer bound; remote healthy-clock/skew evidence remains separate runtime gate.",
+    "clock_provenance": "clock.admission_sha256 is an independently installed provenance pin, not a runtime measurement. Require clock evidence issued/expiry intervals and explicit bound at the actual caller and DO expiry decision. Actual measured healthy consumer/source clocks, skew bounds and evidence bytes are independently qualified before runtime release.",
+    "env_binding": "ATLAS_TRUST_POLICY",
+    "limits": "Strict UTF8/duplicate-free/closed fields; policy <=256KiB, cells1..20, regions1..20, roots1..16 per role/cell, scopes1..256 total. Unique key IDs within each role/cell root list; reuse across separately and explicitly authorized role/cell contexts is permitted. Region codes and cell names unique; native tuples globally unique across all cells. Exact original compact policy bytes SHA256 pinned durably with generation; any changed bytes require increased generation. Cell publisher_slots must be exactly all-authenticated-publisher-ids; unknown values rejected.",
+    "migration": "One new_sqlite_classes migration for DiscoveryAuthority, top-level and dev bindings; no automatic deployment",
+    "namespace_binding": "DISCOVERY_AUTHORITY",
+    "policy": "Independently installed closed policy, never request/publication selected. Exact serialized_shape and direct-only resolver below govern; actual deployment bootstrap/root provenance and measured clock evidence remain separate release gates.",
+    "removal": "On accepted higher policy generation, revalidate cached publication against new tuple/issuer/interval constraints, erase serving snapshots for removed/revoked scope or root, preserve policy/credential/sequence tombstone floors, reject stale Env generations. Scope owner mapping/physical initial/native-authority pins cannot change or be reintroduced through a different cell in v1; a new scope can only be independently installed as initial assignment. Dynamic management-created assignments require signed directory successor, not manual edits presented as autonomous onboarding.",
+    "resolver": "Direct independently installed operator/controller roots ONLY. Delegated signers, publisher-supplied delegation documents, arbitrary issuer/root URLs and body-selected signer keys are rejected. Each configured cell root is independently authorized for all canonical authenticated publisher slots within that cell's exact pinned scope mappings; signed Envelope.scope.slot must equal authenticated Publisher-ID/body publisher_id. No separate per-publisher slot allowlist is claimed. Exact deployment/cell/environment/domain/role and current root interval remain independently constrained. Actual deployment bootstrap/root provenance remains a release gate.",
+    "root_key_separation": "Reject operator/controller key overlap across active installed policy; reject publisher collisions with applicable operator/controller/native authority roots. Allow explicitly installed same-role cross-cell root reuse. Root key IDs unique within each role/cell list; exact deployment/cell/role/scope intervals remain constrained.",
+    "serialized_shape": {
+      "cells": [
+        {
+          "cell": "Existing trust.Scope cell grammar",
+          "controller_roots": [
+            {
+              "expires_at": "safe integer Unix seconds",
+              "issued_at": "safe integer Unix seconds",
+              "key_id": "sha256:<lowerhexSHA256 raw Ed25519 public key>",
+              "public_key": "canonical base64url32"
+            }
+          ],
+          "operator_roots": [
+            {
+              "expires_at": "safe integer Unix seconds",
+              "issued_at": "safe integer Unix seconds",
+              "key_id": "sha256:<lowerhexSHA256 raw Ed25519 public key>",
+              "public_key": "canonical base64url32"
+            }
+          ],
+          "publisher_slots": "all-authenticated-publisher-ids",
+          "scopes": [
+            {
+              "authority_public_key": "canonical base64url32 independent native CredentialState authority pin",
+              "initial_receipt_sha256": "lowercase SHA256 independent initial receipt pin",
+              "minimum_credential_generation": "canonical u64 decimal string >=1",
+              "partition_id": "Exact lower NATS token from initial managed placement",
+              "placement_database_id": "Exact lower NATS token from initial managed placement",
+              "scope": {
+                "database_id": "canonical lowercase nonnil UUID",
+                "shard_id": "Canonical decimal string 1..18446744073709551615 for admitted managed scope; generic transport parser separately accepts0..MAX, with no positive managed0 claim.",
+                "tenant_id": "canonical lowercase nonnil UUID"
+              }
+            }
+          ]
+        }
+      ],
+      "clock": {
+        "admission_sha256": "lowercase SHA256 of independently admitted clock-bound evidence",
+        "consumer_skew_ms": "explicit nonnegative safe integer <10000; no omitted/default value or inferred zero",
+        "expires_at": "safe integer Unix seconds",
+        "issued_at": "safe integer Unix seconds"
+      },
+      "deployment_id": "Existing trust.Scope identity grammar",
+      "environment": "Existing trust.Scope token grammar",
+      "expires_at": "safe integer Unix seconds",
+      "generation": "canonical u64 decimal string >=1",
+      "issued_at": "safe integer Unix seconds",
+      "regions": [
+        {
+          "code": "unique valid uppercase region code",
+          "country": "uppercase ISO2",
+          "lat": "finite -90..90",
+          "lon": "finite -180..180",
+          "name": "1..128 characters"
+        }
+      ],
+      "schema_version": 1
+    },
+    "temporal": "Require current policy, clock evidence and signer intervals using upperNow=Date.now()+consumer_skew_ms. Unknown/expired/future beyond admitted bound rejects. Conservative routing/ACK expiry is minimum of signed body, operator intent, controller receipt, pinned signer intervals, installed policy and clock evidence; controller receipt lifetime<=10s. CredentialState has no own expiry field; its freshness derives this exact current admitted context."
+  },
+  "schema": "terrascale.integration.atlas-native-receiver.proposal.v1",
+  "source_paths": [
+    "src/discovery.ts",
+    "src/ingest.ts",
+    "src/placement.ts",
+    "src/region-catalog.ts",
+    "src/route.ts",
+    "src/env.ts",
+    "src/index.ts",
+    "src/cors.ts",
+    "src/analytics.ts",
+    "src/regions.ts",
+    "src/regional-proxy.ts",
+    "src/native-scope.ts",
+    "src/signed-json.ts",
+    "src/atlas-policy.ts",
+    "src/authority-envelope.ts",
+    "src/native-publication.ts",
+    "src/discovery-credentials.ts",
+    "src/discovery-authority.ts",
+    "test/discovery.test.ts",
+    "test/ingest.test.ts",
+    "test/placement.test.ts",
+    "test/region-catalog.test.ts",
+    "test/prod.test.ts",
+    "test/analytics.test.ts",
+    "test/regions-method.test.ts",
+    "test/regional-proxy.test.ts",
+    "test/setup.ts",
+    "test/native-fixtures.ts",
+    "test/native-scope.test.ts",
+    "test/signed-json.test.ts",
+    "test/atlas-policy.test.ts",
+    "test/authority-envelope.test.ts",
+    "test/native-publication.test.ts",
+    "test/discovery-credentials.test.ts",
+    "test/discovery-authority.test.ts",
+    "vitest.config.ts",
+    "vitest.prod.config.ts",
+    "wrangler.toml",
+    "scripts/validate-production-config.mjs",
+    "scripts/validate-production-config.test.mjs",
+    "bench/worker/bench.mjs",
+    "contracts/v1/openapi.json",
+    "contracts/v1/manifest.json",
+    "README.md",
+    "docs/design.md"
+  ],
+  "status": "Frozen bounded native receiver source-development contract; runtime/root/bootstrap/clock/provenance/customer qualification remains open.",
+  "successor_gates": {
+    "bootstrap_recovery": "Namespace replacement/reset is independent bootstrap/recovery release gate; cannot be presented as transferable owner protocol or floor preservation.",
+    "cross_cell": "No cross-cell move in bounded receiver v1; separate assignment-owner revision/floor transfer required.",
+    "dynamic_onboarding": "Management-created native tuples must become discoverable autonomously through an independently signed scope-owner assignment and durable global directory floor/initial-assignment CAS, coordinated C06/ControlA; static Env updates alone do not complete customer create.",
+    "management_discovery": "Data client_v1 endpoints do not attest management leader/grant/clock readiness. Separate closest eligible management origin protocol required with C06/shared management service; no data alias or test API fallback.",
+    "runtime": "Actual independent root/bootstrap pin provenance, measured healthy source/consumer clocks and skew bounds, real native producer/C0 proofs, end-to-end customer/DO/SDK calls and deployed DNS/TLS/failure readbacks remain mandatory release gates.",
+    "sql_discovery": "HTTP serving/capabilities never imply SQL. Subsequent descriptor must carry actual PG transport/address/configured port/TLS and independently attested optional native listener readiness; coordinate postgres_integration and publisher, no invented public port or HTTPS SQL alias."
+  },
+  "tests": [
+    "Actual Worker and actual persistent DO routes with real Ed25519 operator/controller/native-context/publisher signatures and tbk1 verifier, positive exact private tuple and nearest direct regional URL.",
+    "Wrong scope, nil/noncanonical UUID, generic transport shard0/MAX and real admitted managedMAX (shard0 denied); full-u64 no Number conversion; duplicate/unknown JSON/query fields, header/body identity mismatch and byte-level signature alteration.",
+    "Expired/future/out-of-bounds policy, operator/root/admission/body/policy; missing time-bound provenance; no readiness/capability/catalog widening.",
+    "Concurrent/restarted DO same-sequence conflicts, higher publisher/key registration replacement, wrong owner/epoch/cell, stale Env policy, lower credential generation/same-generation digest fork, revoked/foreign/malformed callers.",
+    "Exact durable ACK/retry semantics and pending old-lease convergence; actual source ControlA producer bytes fixture interoperability.",
+    "Closest ranking/residency and preserved auth canonical origin/test router; configuration/typecheck/existing relevant suites; successful bounded native fixture benchmark with heartbeat expiry respected.",
+    "Actual persistent DO cross-cell mapping move/identitychange/retained tombstone rejection under fixed immutable objectidentity; independent namespace bootstrap/reset remains unqualified."
+  ],
+  "worktree": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v3/worktrees/ts-atlas"
+}
