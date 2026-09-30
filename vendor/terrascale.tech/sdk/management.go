@@ -535,6 +535,10 @@ func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) (*Regio
 }
 
 func parseCatalogRegionCode(value string) (RegionCode, error) {
+	switch value {
+	case "API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH", "DOCS", "GIT", "CDN", "ADMIN", "MCP", "MAIL":
+		return "", fmt.Errorf("sdk: catalog region code %q is reserved for a TerraScale service", value)
+	}
 	if len(value) < 1 || len(value) > 16 {
 		return "", fmt.Errorf("sdk: catalog region code must contain 1 to 16 uppercase letters, digits, or hyphens, got %q", value)
 	}
