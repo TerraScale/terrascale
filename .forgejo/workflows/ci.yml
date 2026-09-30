@@ -13,11 +13,10 @@ concurrency:
 
 jobs:
   ci:
-    name: Run ts-rust checks
+    name: Native SDK checks
     runs-on: terrascale-builder
-    timeout-minutes: 30
+    timeout-minutes: 20
     env:
-      # Incremental build state survives across jobs on the shared cache.
       CARGO_TARGET_DIR: /cache/cargo-target/ts-rust
     steps:
       - name: Check out the source revision
@@ -27,23 +26,17 @@ jobs:
           ref: ${{ forgejo.sha }}
           fetch-depth: 1
           persist-credentials: false
-
-      - name: Verify the pinned contract bundle
+      - name: Verify native producer contract
         run: |
-          set -eu
-          dotnet run scripts/contracts.cs --version v1 --source contracts/v1
-          git diff --exit-code -- contracts/v1 src/generated_contract.rs
-
-      # The toolchain (rust-toolchain.toml) and cargo-audit are baked into
-      # the ts-builder job image.
+          python3 scripts/check-native-contract.py
+          python3 scripts/check-atlas-contract.py
       - name: Audit Rust dependencies
         run: cargo audit
-
-      - name: Check Rust formatting
+      - name: Check formatting
         run: cargo fmt --all --check
-
-      - name: Build and lint all workspace targets and features
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-
-      - name: Run the locked workspace test suite
-        run: cargo test --locked --workspace --all-features
+      - name: Build and lint all targets
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Run locked tests
+        run: cargo test --locked --all-features
+      - name: Verify distributable package
+        run: cargo package --locked

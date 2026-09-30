@@ -1,0 +1,103 @@
+{
+  "actual_fixtures": {
+    "native-discovery-forbidden-receipt.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-discovery-forbidden-receipt.json",
+      "sha256": "2b63d132df8b304286ebb0e9b4ab967a317544e8128f9105c7d71a138721528f"
+    },
+    "native-discovery-forbidden.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-discovery-forbidden.json",
+      "sha256": "3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c"
+    },
+    "native-discovery-success-receipt.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-discovery-success-receipt.json",
+      "sha256": "c34ed011a4f10065b3fba4168b0a940eb7f3ef945a70414ae8210908ad8080ba"
+    },
+    "native-discovery-success.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-discovery-success.json",
+      "sha256": "d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0"
+    },
+    "native-wire-export.log": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-wire-export.log",
+      "sha256": "7f6538d64923b3a9bd994c606d034e590333075b24f82631b2cbab1ba05b1dc4"
+    },
+    "native-wire-identity.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-wire-identity.json",
+      "sha256": "b789d6fb7782e34ece3b516139856f2b6d2dea0543436820eefa50ff31355538"
+    }
+  },
+  "base_commit": "2c7f60a8d3b3a931b9485e022443e05e4e4634e9",
+  "invariant": [
+    "Dedicated native router uses only canonical https://atlas.terrascale.tech/api/v1/discovery and one validated native TBK1 bearer; reject custom discovery origins before transport; authentication discovery/credentials remain separate.",
+    "Closed duplicate-rejecting typed response validates exact native UUID/full-u64 scope, canonical authority and positive epoch/revision strings, required nullable residency/writer, all eight explicit capabilities, catalog SHA256, distinct dynamic uppercase region codes/direct origins, and contiguous ranked priorities.",
+    "Use receiver-ranked order only among endpoints supporting requested operation/residency; no static region/health/test API widening. Optional bounded unique measured RTT hints use only the admitted header.",
+    "Keep bounded per-scope observations through lease expiry; reject controlling deployment/cell changes and lower epoch/revision; preserve all-or-none observed query fields and atomic cache publication. No eviction that erases retained observation floors.",
+    "Use current checked Unix time and a conservative monotonic lease from request start, clamped DOWN by returned refreshSeconds<=10 and received whole remaining expiry. Reject expired/future/backward/failed clock state; never upward clamp. Actual measured healthy clock/provenance remains runtime qualification gate.",
+    "Advanced write capabilities and security-writer authority stay closed under current v1; direct admitted native origin behavior remains supported. Mutation uncertainty and no automatic mutation replay remain unchanged.",
+    "Extend packaged qualification with an explicit Atlas resolution plus native point phase using canonical receiver/direct destinations; retain the accepted native ELF/crate untouched and build a separately identified successor caller."
+  ],
+  "operation_requirements": {
+    "commit_conditional": [
+      "client_v1",
+      "write",
+      "conditional_mutation"
+    ],
+    "commit_multiple": [
+      "client_v1",
+      "write",
+      "atomic_groups"
+    ],
+    "commit_single_unconditional": [
+      "client_v1",
+      "write"
+    ],
+    "point": [
+      "client_v1",
+      "read"
+    ],
+    "query": [
+      "client_v1",
+      "read",
+      "query"
+    ],
+    "single_writer": "still unadmitted; no inference from discovery or direct fixture",
+    "snapshot/poll": [
+      "client_v1",
+      "read",
+      "subscriptions"
+    ],
+    "transaction_status": [
+      "client_v1",
+      "write"
+    ]
+  },
+  "proposal": {
+    "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/rust-atlas/proposal.json",
+    "sha256": "bda5ff0ecab596ef890d5f41c1b27554823d6f67f5d2dea22e8e7828f26b1360"
+  },
+  "runtime_limits": [
+    "Actual canonical credential-bearing HTTPS receiver caller plus direct native operation under real CA/hostname/root/catalog/key facts.",
+    "Measured healthy consumer/source clocks and conservative bounds/provenance, actual deployment DNS/TLS and expiry/failure readbacks.",
+    "Dynamic management scope-owner onboarding, PG descriptor/caller, schema/unique and C08 security authority remain separate gates."
+  ],
+  "schema": "terrascale.integration.rust-atlas-consumer.v1",
+  "shared_seams": "No manifest/lock/PG/auth production changes under this packet. Accepted native2c7f crate/ELF remain immutable; successor package/caller separate identity.",
+  "source_paths": [
+    "src/discovery.rs",
+    "src/client.rs",
+    "src/config.rs",
+    "src/lib.rs",
+    "src/documents.rs",
+    "src/subscriptions.rs",
+    "src/transactions.rs",
+    "src/generated_contract.rs",
+    "tests/native_discovery.rs",
+    "tests/typed_routing.rs",
+    "README.md",
+    "contracts/atlas/",
+    "scripts/check-atlas-contract.py",
+    ".forgejo/workflows/ci.yml",
+    "scripts/qualification/README.md",
+    "scripts/qualification/run.sh",
+    "scripts/qualification/src/main.rs"
+  ]
+}

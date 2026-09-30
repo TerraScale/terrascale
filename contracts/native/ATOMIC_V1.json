@@ -1,0 +1,43 @@
+{
+  "commit": {
+    "authority": "leaderless OR single_writer positive generation + UUID replica + Hex16 incarnation",
+    "condition": [
+      "none leaderless only",
+      "absent no retained state; deleted requires version",
+      "version Hex32 bound to scope/schema/authority/full primary state"
+    ],
+    "effect_digest": "Hex32 producer recomputed canonical normalized scope/authority/conditions/schema/observed/value; excludes transaction id",
+    "transaction_id": "expires_at_unix_ms DecimalU64 + nonce Hex16",
+    "writes": "sorted; condition+atomic group evaluated under native storage commit exclusion, not application mutex"
+  },
+  "errors": {
+    "409": "idempotency_conflict or authority_changed",
+    "412": "precondition_failed all writes absent",
+    "503": "authority_unavailable or commit_uncertain"
+  },
+  "forbidden": [
+    "/api wire shim",
+    "ETag shim",
+    "observed treated as CAS",
+    "weakened storage exclusion",
+    "security leaderless writes"
+  ],
+  "point": "Existing version:1 protocol discriminator retained; state_version:Hex32|null CAS token only for single live/deleted state, absent/conflict null; all state/context/conflict siblings preserved.",
+  "retry": "Compare durable effect fingerprint BEFORE re-evaluating conditions; original committed and rejected receipts retained until expiry; unknown/pending never definitive abort",
+  "scope": "UUID tenant/database/collection/document; shard canonical full-u64 decimal; same shard only",
+  "security_release_blockers": [
+    "P02 signed durable single-writer assignment/admission+commit fence",
+    "unique/schema producer extensions",
+    "real packaged SDK conformance"
+  ],
+  "source": "root accepted producer handoff",
+  "status": [
+    "committed",
+    "rejected",
+    "pending",
+    "unknown",
+    "expired"
+  ],
+  "status_route": "POST scoped /transactions/status with version,transaction_id,effect_digest,authority; authorize original scoped operation",
+  "version": 1
+}

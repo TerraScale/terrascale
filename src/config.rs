@@ -1,306 +1,190 @@
-//! Client configuration: credentials, project scope, region pinning, retry.
+//! Explicit native scope guard, isolated credentials, and bounded read retries.
 
-use crate::discovery::ATLAS_BASE_URL;
+use crate::discovery::{rtt_header, RegionRtt, ATLAS_BASE_URL};
 use crate::error::{Error, ErrorKind, Result};
-use crate::regions::{
-    normalize_base_url, RegionAffinity, RegionCode, GLOBAL_API_BASE_URL, GLOBAL_API_HOST,
-};
+use crate::regions::normalize_base_url;
+use crate::values::TenantId;
 
-/// Runtime configuration for [`crate::TerraScaleClient`].
 #[derive(Clone)]
 pub struct ClientConfig {
-    api_base_url: String,
-    sync_base_url: String,
-    /// Effective discovery/catalog origin; `Some` means discovery is active.
-    atlas_base_url: Option<String>,
+    api_base_url: Option<String>,
+    atlas_base_url: String,
     api_key: Option<String>,
-    /// ts-auth (hosted IdP) deployment origin; `None` disables the ts-auth client.
     auth_base_url: Option<String>,
     auth_reverse_proxy: bool,
-    /// ts-auth instance management key (`sk_...`), separate from the TerraBase key.
     auth_api_key: Option<String>,
-    project_id: Option<String>,
-    tenant_id: Option<String>,
-    preferred_region: Option<RegionCode>,
-    region_affinity: RegionAffinity,
+    tenant_id: Option<TenantId>,
     max_retry_attempts: u8,
     retry_delay_ms: u32,
+    region_rtt: Vec<RegionRtt>,
 }
 
 impl std::fmt::Debug for ClientConfig {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ClientConfig")
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientConfig")
             .field("api_base_url", &self.api_base_url)
-            .field("sync_base_url", &self.sync_base_url)
             .field("atlas_base_url", &self.atlas_base_url)
             .field("api_key", &"[REDACTED]")
             .field("auth_base_url", &self.auth_base_url)
             .field("auth_reverse_proxy", &self.auth_reverse_proxy)
             .field("auth_api_key", &"[REDACTED]")
-            .field("project_id", &self.project_id)
             .field("tenant_id", &self.tenant_id)
-            .field("preferred_region", &self.preferred_region)
-            .field("region_affinity", &self.region_affinity)
             .field("max_retry_attempts", &self.max_retry_attempts)
             .field("retry_delay_ms", &self.retry_delay_ms)
+            .field("region_rtt", &self.region_rtt)
             .finish()
     }
 }
 
 impl ClientConfig {
-    /// Start building a config.
     #[must_use]
     pub fn builder() -> ClientConfigBuilder {
         ClientConfigBuilder::default()
     }
-
-    /// Product API base URL (default `https://api.terrascale.tech`).
+    /// Reviewed direct native origin; absent requires scoped Atlas admission.
     #[must_use]
-    pub fn api_base_url(&self) -> &str {
-        &self.api_base_url
+    pub fn api_base_url(&self) -> Option<&str> {
+        self.api_base_url.as_deref()
     }
-
-    /// Origin of the reactive view delivery (log/snapshot) endpoints.
-    #[must_use]
-    pub fn sync_base_url(&self) -> &str {
-        &self.sync_base_url
-    }
-
-    /// Effective discovery/catalog origin. `Some` means Atlas discovery is
-    /// active for this client (ADR 0050 §5).
+    /// Atlas origin. Native discovery admits only the canonical production origin.
     #[must_use]
     pub fn atlas_base_url(&self) -> Option<&str> {
-        self.atlas_base_url.as_deref()
+        Some(&self.atlas_base_url)
     }
-
-    /// Configured project scope, if any.
-    #[must_use]
-    pub fn project_id(&self) -> Option<&str> {
-        self.project_id.as_deref()
-    }
-
-    /// ts-auth (hosted IdP) deployment origin, when the ts-auth client is used.
     #[must_use]
     pub fn auth_base_url(&self) -> Option<&str> {
         self.auth_base_url.as_deref()
     }
-
-    /// Whether public ts-auth calls use the reverse proxy instead of direct regional routing.
     #[must_use]
     pub fn auth_reverse_proxy(&self) -> bool {
         self.auth_reverse_proxy
     }
-
-    /// Tenant selector checked against the authenticated server authority.
+    /// Optional native tenant guard, compared to every request's typed scope.
     #[must_use]
-    pub fn tenant_id(&self) -> Option<&str> {
-        self.tenant_id.as_deref()
+    pub fn tenant_id(&self) -> Option<TenantId> {
+        self.tenant_id
     }
-
-    /// Preferred region for pinned REST traffic.
-    #[must_use]
-    pub fn preferred_region(&self) -> Option<RegionCode> {
-        self.preferred_region
-    }
-
-    /// Failover or strict regional affinity.
-    #[must_use]
-    pub fn region_affinity(&self) -> RegionAffinity {
-        self.region_affinity
-    }
-
-    /// Maximum automatic retries for safe transient failures (0-8).
     #[must_use]
     pub fn max_retry_attempts(&self) -> u8 {
         self.max_retry_attempts
     }
-
-    /// Base delay between retries in milliseconds.
     #[must_use]
     pub fn retry_delay_ms(&self) -> u32 {
         self.retry_delay_ms
     }
-
+    #[must_use]
+    pub fn region_rtt(&self) -> &[RegionRtt] {
+        &self.region_rtt
+    }
     pub(crate) fn api_key(&self) -> Option<&str> {
         self.api_key.as_deref()
     }
-
     pub(crate) fn auth_api_key(&self) -> Option<&str> {
         self.auth_api_key.as_deref()
     }
 }
 
-/// Builder for [`ClientConfig`].
 #[derive(Default)]
 pub struct ClientConfigBuilder {
     api_base_url: Option<String>,
-    sync_base_url: Option<String>,
     atlas_base_url: Option<String>,
     api_key: Option<String>,
     auth_base_url: Option<String>,
     auth_reverse_proxy: bool,
     auth_api_key: Option<String>,
-    project_id: Option<String>,
     tenant_id: Option<String>,
-    preferred_region: Option<RegionCode>,
-    region_affinity: RegionAffinity,
     max_retry_attempts: u8,
     retry_delay_ms: Option<u32>,
+    region_rtt: Vec<RegionRtt>,
 }
 
-// The builder holds the raw keys before normalization; Debug redacts them
-// like ClientConfig so a dbg! mid-construction cannot leak a credential.
 impl std::fmt::Debug for ClientConfigBuilder {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ClientConfigBuilder")
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientConfigBuilder")
             .field("api_base_url", &self.api_base_url)
-            .field("sync_base_url", &self.sync_base_url)
             .field("atlas_base_url", &self.atlas_base_url)
             .field("api_key", &"[REDACTED]")
             .field("auth_base_url", &self.auth_base_url)
             .field("auth_reverse_proxy", &self.auth_reverse_proxy)
             .field("auth_api_key", &"[REDACTED]")
-            .field("project_id", &self.project_id)
             .field("tenant_id", &self.tenant_id)
-            .field("preferred_region", &self.preferred_region)
-            .field("region_affinity", &self.region_affinity)
             .field("max_retry_attempts", &self.max_retry_attempts)
             .field("retry_delay_ms", &self.retry_delay_ms)
+            .field("region_rtt", &self.region_rtt)
             .finish()
     }
 }
 
 impl ClientConfigBuilder {
-    /// Override the global entry point (default `https://api.terrascale.tech`).
+    /// Supply up to 20 distinct measured RTTs for receiver ranking.
     #[must_use]
-    pub fn api_base_url(mut self, base_url: impl Into<String>) -> Self {
-        self.api_base_url = Some(base_url.into());
+    pub fn region_rtt(mut self, hints: Vec<RegionRtt>) -> Self {
+        self.region_rtt = hints;
+        self
+    }
+    /// Set a reviewed direct native regional/loopback origin. No global default.
+    #[must_use]
+    pub fn api_base_url(mut self, value: impl Into<String>) -> Self {
+        self.api_base_url = Some(value.into());
+        self
+    }
+    #[must_use]
+    pub fn atlas_base_url(mut self, value: impl Into<String>) -> Self {
+        self.atlas_base_url = Some(value.into());
+        self
+    }
+    #[must_use]
+    pub fn api_key(mut self, value: impl Into<String>) -> Self {
+        self.api_key = Some(value.into());
+        self
+    }
+    #[must_use]
+    pub fn auth_base_url(mut self, value: impl Into<String>) -> Self {
+        self.auth_base_url = Some(value.into());
+        self
+    }
+    #[must_use]
+    pub fn auth_reverse_proxy(mut self, value: bool) -> Self {
+        self.auth_reverse_proxy = value;
+        self
+    }
+    #[must_use]
+    pub fn auth_api_key(mut self, value: impl Into<String>) -> Self {
+        self.auth_api_key = Some(value.into());
+        self
+    }
+    /// Require all native requests to use this canonical UUID tenant.
+    #[must_use]
+    pub fn tenant_id(mut self, value: impl Into<String>) -> Self {
+        self.tenant_id = Some(value.into());
+        self
+    }
+    /// Retry only safe read/query/poll/status traffic, never commits or auth mutations.
+    #[must_use]
+    pub fn max_retry_attempts(mut self, value: u8) -> Self {
+        self.max_retry_attempts = value;
+        self
+    }
+    #[must_use]
+    pub fn retry_delay_ms(mut self, value: u32) -> Self {
+        self.retry_delay_ms = Some(value);
         self
     }
 
-    /// Override the Atlas discovery/catalog origin (default
-    /// `https://atlas.terrascale.tech` for the public API origin) and force
-    /// discovery on for a custom API origin. Tests and local development use
-    /// this; strict regional affinity never discovers (ADR 0050 §5.1) and
-    /// ignores the override.
-    #[must_use]
-    pub fn atlas_base_url(mut self, base_url: impl Into<String>) -> Self {
-        self.atlas_base_url = Some(base_url.into());
-        self
-    }
-
-    /// Override the reactive delivery origin (default
-    /// `https://sync.api.terrascale.tech`).
-    #[must_use]
-    pub fn sync_base_url(mut self, base_url: impl Into<String>) -> Self {
-        self.sync_base_url = Some(base_url.into());
-        self
-    }
-
-    /// API key sent as `Authorization: Bearer`.
-    #[must_use]
-    pub fn api_key(mut self, api_key: impl Into<String>) -> Self {
-        self.api_key = Some(api_key.into());
-        self
-    }
-
-    /// ts-auth (hosted IdP) deployment origin (required for the ts-auth
-    /// client; same origin rules as the product base URL).
-    #[must_use]
-    pub fn auth_base_url(mut self, base_url: impl Into<String>) -> Self {
-        self.auth_base_url = Some(base_url.into());
-        self
-    }
-
-    /// Keep calls on `auth.terrascale.tech` instead of using regional auth discovery.
-    #[must_use]
-    pub fn auth_reverse_proxy(mut self, enabled: bool) -> Self {
-        self.auth_reverse_proxy = enabled;
-        self
-    }
-
-    /// ts-auth instance management key (`sk_...`). Sent as
-    /// `Authorization: Bearer` on ts-auth management routes only; a
-    /// `Bearer `-prefixed value is normalized like [`Self::api_key`].
-    #[must_use]
-    pub fn auth_api_key(mut self, api_key: impl Into<String>) -> Self {
-        self.auth_api_key = Some(api_key.into());
-        self
-    }
-
-    /// Project selector checked against the authenticated server authority.
-    #[must_use]
-    pub fn project_id(mut self, project_id: impl Into<String>) -> Self {
-        self.project_id = Some(project_id.into());
-        self
-    }
-
-    /// Tenant selector checked against the authenticated server authority.
-    #[must_use]
-    pub fn tenant_id(mut self, tenant_id: impl Into<String>) -> Self {
-        self.tenant_id = Some(tenant_id.into());
-        self
-    }
-
-    /// Preferred region for pinned REST traffic.
-    #[must_use]
-    pub fn preferred_region(mut self, region: RegionCode) -> Self {
-        self.preferred_region = Some(region);
-        self
-    }
-
-    /// Failover (default) or strict regional affinity.
-    #[must_use]
-    pub fn region_affinity(mut self, affinity: RegionAffinity) -> Self {
-        self.region_affinity = affinity;
-        self
-    }
-
-    /// Maximum automatic retries for safe transient failures (0-8).
-    #[must_use]
-    pub fn max_retry_attempts(mut self, attempts: u8) -> Self {
-        self.max_retry_attempts = attempts;
-        self
-    }
-
-    /// Base delay between retries in milliseconds (0-30_000).
-    #[must_use]
-    pub fn retry_delay_ms(mut self, delay_ms: u32) -> Self {
-        self.retry_delay_ms = Some(delay_ms);
-        self
-    }
-
-    /// Validate and build the config.
     pub fn build(self) -> Result<ClientConfig> {
-        let api_key = self
-            .api_key
-            .map(|api_key| normalize_api_key(&api_key))
-            .transpose()?;
+        rtt_header(&self.region_rtt)?;
+        let api_key = self.api_key.as_deref().map(normalize_api_key).transpose()?;
         let auth_api_key = self
             .auth_api_key
-            .map(|api_key| normalize_api_key(&api_key))
+            .as_deref()
+            .map(normalize_api_key)
             .transpose()?;
-        for (name, value) in [
-            ("tenant_id", &self.tenant_id),
-            ("project_id", &self.project_id),
-        ] {
-            if value.as_ref().is_some_and(|value| {
-                value.is_empty() || !value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
-            }) {
-                return Err(Error::new(
-                    ErrorKind::Validation,
-                    "invalid_scope_selector",
-                    format!("{name} must be a non-empty ASCII header value."),
-                ));
-            }
-        }
+        let tenant_id = self.tenant_id.as_deref().map(str::parse).transpose()?;
         if self.max_retry_attempts > 8 {
             return Err(Error::new(
                 ErrorKind::Validation,
                 "invalid_retry",
-                "maxRetryAttempts must be an integer between 0 and 8.",
+                "Retry attempts must be 0..8.",
             ));
         }
         let retry_delay_ms = self.retry_delay_ms.unwrap_or(250);
@@ -308,61 +192,58 @@ impl ClientConfigBuilder {
             return Err(Error::new(
                 ErrorKind::Validation,
                 "invalid_retry",
-                "retryDelayMs must be between 0 and 30000.",
+                "Retry delay must be 0..30000 ms.",
             ));
         }
-        if self.region_affinity == RegionAffinity::Strict && self.preferred_region.is_none() {
-            return Err(Error::new(
-                ErrorKind::Validation,
-                "region_required",
-                "Strict regional affinity requires a preferredRegion.",
-            ));
+        let api_base_url = self
+            .api_base_url
+            .as_deref()
+            .map(normalize_base_url)
+            .transpose()?;
+        if let Some(origin) = &api_base_url {
+            let parsed = reqwest::Url::parse(origin).map_err(|_| {
+                Error::new(
+                    ErrorKind::Validation,
+                    "invalid_base_url",
+                    "Invalid native origin.",
+                )
+            })?;
+            if parsed.host_str().is_some_and(|host| {
+                host.trim_end_matches('.')
+                    .eq_ignore_ascii_case("api.terrascale.tech")
+            }) {
+                return Err(Error::new(ErrorKind::Validation, "invalid_native_origin", "Native traffic requires a direct regional origin; the global API test host is not a fallback."));
+            }
+            if parsed.path() != "/" {
+                return Err(Error::new(
+                    ErrorKind::Validation,
+                    "invalid_base_url",
+                    "Native origin must not contain a path.",
+                ));
+            }
         }
-        let api_base_url =
-            normalize_base_url(self.api_base_url.as_deref().unwrap_or(GLOBAL_API_BASE_URL))?;
-        let sync_base_url = normalize_base_url(
-            self.sync_base_url
-                .as_deref()
-                .unwrap_or(crate::regions::GLOBAL_SYNC_BASE_URL),
-        )?;
         let auth_base_url = self
             .auth_base_url
             .as_deref()
             .map(normalize_base_url)
             .transpose()?;
-        // Discovery is the default only for failover-affinity clients on the
-        // public global origin; an explicit Atlas override forces it on for
-        // any origin (ADR 0050 §5.1).
-        let atlas_override = self
+        let atlas_base_url = self
             .atlas_base_url
             .as_deref()
             .map(normalize_base_url)
-            .transpose()?;
-        let atlas_base_url = if self.region_affinity == RegionAffinity::Strict {
-            None
-        } else {
-            atlas_override.or_else(|| {
-                let public_origin = reqwest::Url::parse(&api_base_url)
-                    .ok()
-                    .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
-                    .is_some_and(|host| host == GLOBAL_API_HOST);
-                public_origin.then(|| ATLAS_BASE_URL.to_owned())
-            })
-        };
+            .transpose()?
+            .unwrap_or_else(|| ATLAS_BASE_URL.to_owned());
         Ok(ClientConfig {
             api_base_url,
-            sync_base_url,
             atlas_base_url,
             api_key,
             auth_base_url,
             auth_reverse_proxy: self.auth_reverse_proxy,
             auth_api_key,
-            project_id: self.project_id,
-            tenant_id: self.tenant_id,
-            preferred_region: self.preferred_region,
-            region_affinity: self.region_affinity,
+            tenant_id,
             max_retry_attempts: self.max_retry_attempts,
             retry_delay_ms,
+            region_rtt: self.region_rtt,
         })
     }
 }

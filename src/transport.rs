@@ -3,6 +3,29 @@
 //! inject a mock.
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
+
+pub const MAX_JSON_BYTES: usize = 4 * 1024 * 1024;
+
+#[derive(Default)]
+struct BoundedJson {
+    bytes: Vec<u8>,
+    exceeded: bool,
+}
+
+impl std::io::Write for BoundedJson {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if self.bytes.len().saturating_add(buffer.len()) > MAX_JSON_BYTES {
+            self.exceeded = true;
+            return Err(std::io::Error::other("JSON capacity exceeded"));
+        }
+        self.bytes.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 use serde::de::DeserializeOwned;
 
 use crate::error::{Error, Result};
@@ -68,15 +91,28 @@ impl Request {
         url: String,
         body: &impl serde::Serialize,
     ) -> Result<Self> {
-        let bytes = serde_json::to_vec(body).map_err(|e| {
-            Error::invalid_response(format!("request body is not serializable: {e}"))
+        let mut output = BoundedJson::default();
+        serde_json::to_writer(&mut output, body).map_err(|error| {
+            if output.exceeded {
+                Error::new(
+                    crate::ErrorKind::Validation,
+                    "request_capacity",
+                    "JSON request exceeds 4 MiB.",
+                )
+            } else {
+                Error::new(
+                    crate::ErrorKind::Validation,
+                    "invalid_request",
+                    format!("Request body is not serializable: {error}"),
+                )
+            }
         })?;
         Ok(Self {
             route_name: route_name.into(),
             method,
             url,
             headers: vec![("content-type".to_owned(), "application/json".to_owned())],
-            body: Some(bytes),
+            body: Some(output.bytes),
         })
     }
 }
@@ -125,28 +161,38 @@ impl Response {
             .map(|(_, v)| v.as_str())
     }
 
-    /// Decode a JSON body against the pinned contract.
+    /// Decode a JSON body against the pinned contract. Failures retain HTTP
+    /// context without echoing response values in their diagnostics.
     pub fn json_body<T: DeserializeOwned>(&self) -> Result<T> {
-        if self.header("content-type").is_some_and(|value| {
-            value
-                .split(';')
-                .next()
-                .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/msgpack"))
-        }) {
-            return crate::reactive::decode_reactive_msgpack(&self.body);
+        if self.body.len() > MAX_JSON_BYTES {
+            return Err(self.invalid_response("JSON response exceeds 4 MiB."));
         }
-
-        // A 204/304 long-poll response (and a successful empty timeout body)
-        // is the contract's empty response. Decode it as JSON null so the
-        // reactive response's custom deserializer can turn it into `default`.
         if self.body.is_empty() {
-            return serde_json::from_value(serde_json::Value::Null).map_err(|e| {
-                Error::invalid_response(format!("empty response does not match the contract: {e}"))
-            });
+            return serde_json::from_value(serde_json::Value::Null)
+                .map_err(|_| self.invalid_response("empty response does not match the contract."));
         }
-        serde_json::from_slice(&self.body).map_err(|e| {
-            Error::invalid_response(format!("response body does not match the contract: {e}"))
+        serde_json::from_slice(&self.body).map_err(|error| {
+            // Serde's Display can echo arbitrary response strings, including
+            // minted credentials. Only its category and position are safe.
+            let category = match error.classify() {
+                serde_json::error::Category::Io => "I/O",
+                serde_json::error::Category::Syntax => "syntax",
+                serde_json::error::Category::Data => "data",
+                serde_json::error::Category::Eof => "end-of-input",
+            };
+            self.invalid_response(format!(
+                "response body does not match the contract: {category} error at line {}, column {}.",
+                error.line(),
+                error.column()
+            ))
         })
+    }
+
+    pub(crate) fn invalid_response(&self, message: impl Into<String>) -> Error {
+        let mut error = Error::invalid_response(message);
+        error.status = Some(self.status);
+        error.request_id = self.header("x-request-id").map(str::to_owned);
+        error
     }
 }
 
@@ -170,9 +216,36 @@ impl ReqwestTransport {
         Self {
             inner: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(std::time::Duration::from_secs(5))
                 .build()
                 .expect("HTTP client initialization"),
         }
+    }
+
+    /// Build an HTTPS transport with additional PEM root certificates.
+    /// Certificate chains and hostnames remain verified; redirects are disabled.
+    pub fn with_root_certificates(pem: &[u8]) -> Result<Self> {
+        let invalid_certificate = || {
+            Error::new(
+                crate::ErrorKind::Validation,
+                "invalid_root_certificate",
+                "Invalid PEM root certificate bundle.",
+            )
+        };
+        let certificates =
+            reqwest::Certificate::from_pem_bundle(pem).map_err(|_| invalid_certificate())?;
+        if certificates.is_empty() {
+            return Err(invalid_certificate());
+        }
+        let mut builder = reqwest::Client::builder()
+            .https_only(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(std::time::Duration::from_secs(5));
+        for certificate in certificates {
+            builder = builder.add_root_certificate(certificate);
+        }
+        let inner = builder.build().map_err(|_| invalid_certificate())?;
+        Ok(Self { inner })
     }
 }
 
@@ -214,10 +287,22 @@ impl HttpTransport for ReqwestTransport {
                 )
             })
             .collect();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|e| Error::transport(format!("reading the response failed: {e}")))?;
+        let mut stream = response.bytes_stream();
+        let mut body = bytes::BytesMut::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk =
+                chunk.map_err(|e| Error::transport(format!("reading the response failed: {e}")))?;
+            if body.len().saturating_add(chunk.len()) > MAX_JSON_BYTES {
+                return Err(Response {
+                    status,
+                    headers,
+                    body: body.freeze(),
+                }
+                .invalid_response("JSON response exceeds 4 MiB."));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let body = body.freeze();
         Ok(Response {
             status,
             headers,

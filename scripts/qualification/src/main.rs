@@ -1,442 +1,576 @@
-use serde_json::{json, Value};
-use std::{env, process::ExitCode};
-use terrascale::{
-    CancellationToken, ClientConfig, DatabaseScope, DocumentOperationOptions, Query, Result,
-    SubscribeOptions, TerraScaleClient, ViewOperation,
+use serde_json::json;
+use std::{
+    env,
+    process::ExitCode,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
+use terrascale::*;
 
-struct Config {
-    api: String,
-    _auth: String,
-    project: String,
-    database: String,
+struct Fixture {
+    origin: String,
     key: String,
     deny_key: Option<String>,
-    run: String,
+    ca_pem: Option<Vec<u8>>,
+    scope: DatabaseScope,
+    collection: CollectionId,
+    document: DocumentId,
+    schema_generation: DecimalU64,
+    schema_digest: Digest,
+    field: u32,
+    kind: String,
 }
 
-fn required(name: &str) -> std::result::Result<String, String> {
+fn required(name: &str) -> Result<String> {
     env::var(name)
-        .map_err(|_| format!("missing required environment variable {name}"))
-        .and_then(|v| {
-            if v.trim().is_empty() {
-                Err(format!("{name} is empty"))
-            } else {
-                Ok(v)
-            }
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .ok_or_else(|| {
+            Error::new(
+                ErrorKind::Validation,
+                "missing_fixture",
+                format!("Missing {name}."),
+            )
         })
 }
-
-fn valid_run_id(value: &str) -> bool {
-    let mut chars = value.chars();
-    matches!(chars.next(), Some(c) if c.is_ascii_alphanumeric())
-        && value.len() <= 64
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+fn parse<T: std::str::FromStr<Err = Error>>(name: &str) -> Result<T> {
+    required(name)?.parse()
 }
-
-fn config() -> std::result::Result<Config, String> {
-    let run = required("TERRASCALE_JOURNEY_RUN_ID")?;
-    if !valid_run_id(&run) {
-        return Err("TERRASCALE_JOURNEY_RUN_ID must match [A-Za-z0-9][A-Za-z0-9_-]{0,63}".into());
+impl Fixture {
+    fn load() -> Result<Self> {
+        let field = required("TS_NATIVE_FIELD_ID")?
+            .parse::<u32>()
+            .map_err(|_| {
+                Error::new(
+                    ErrorKind::Validation,
+                    "invalid_fixture",
+                    "Invalid field ID.",
+                )
+            })?;
+        let kind = required("TS_NATIVE_FIELD_TYPE")?;
+        if field == 0 || !matches!(kind.as_str(), "i64" | "utf8") {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_fixture",
+                "Fixture field requires positive ID and i64 or utf8 type.",
+            ));
+        }
+        Ok(Self {
+            origin: required("TS_NATIVE_ORIGIN")?,
+            key: required("TS_NATIVE_API_KEY")?,
+            deny_key: env::var("TS_NATIVE_DENY_API_KEY").ok(),
+            ca_pem: env::var_os("TS_NATIVE_CA_PEM")
+                .map(|path| {
+                    std::fs::read(path).map_err(|_| {
+                        Error::new(
+                            ErrorKind::Validation,
+                            "invalid_fixture_ca",
+                            "Cannot read fixture CA PEM.",
+                        )
+                    })
+                })
+                .transpose()?,
+            scope: DatabaseScope {
+                tenant: parse("TS_NATIVE_TENANT")?,
+                database: parse("TS_NATIVE_DATABASE")?,
+                shard: parse("TS_NATIVE_SHARD")?,
+            },
+            collection: parse("TS_NATIVE_COLLECTION")?,
+            document: parse("TS_NATIVE_DOCUMENT")?,
+            schema_generation: parse("TS_NATIVE_SCHEMA_GENERATION")?,
+            schema_digest: parse("TS_NATIVE_SCHEMA_DIGEST")?,
+            field,
+            kind,
+        })
     }
-    let key = required("TERRASCALE_API_KEY")?;
-    let deny_key = env::var("TERRASCALE_DENY_API_KEY")
-        .ok()
-        .map(|v| v.trim().to_owned())
-        .filter(|v| !v.is_empty());
-    if deny_key.as_deref() == Some(key.as_str()) {
-        return Err("TERRASCALE_DENY_API_KEY must differ from TERRASCALE_API_KEY".into());
-    }
-    Ok(Config {
-        api: required("TERRASCALE_API_URL")?,
-        _auth: required("TERRASCALE_AUTH_URL")?,
-        project: required("TERRASCALE_PROJECT_ID")?,
-        database: required("TERRASCALE_DATABASE_ID")?,
-        key,
-        deny_key,
-        run,
-    })
-}
-
-fn client(c: &Config) -> Result<TerraScaleClient> {
-    let mut builder = ClientConfig::builder()
-        .api_base_url(c.api.clone())
-        .api_key(c.key.clone())
-        .project_id(c.project.clone());
-    if let Ok(sync) = std::env::var("TERRASCALE_SYNC_URL") {
-        if !sync.trim().is_empty() {
-            builder = builder.sync_base_url(sync.trim());
+    fn client(&self, key: &str) -> Result<TerraScaleClient> {
+        let config = ClientConfig::builder()
+            .api_base_url(&self.origin)
+            .api_key(key)
+            .max_retry_attempts(0)
+            .build()?;
+        match &self.ca_pem {
+            Some(pem) => Ok(TerraScaleClient::with_transport(
+                config,
+                Arc::new(ReqwestTransport::with_root_certificates(pem)?),
+            )),
+            None => Ok(TerraScaleClient::new(config)),
         }
     }
-    Ok(TerraScaleClient::new(builder.build()?))
+    fn atlas_client(&self) -> Result<TerraScaleClient> {
+        let config = ClientConfig::builder()
+            .api_key(&self.key)
+            .max_retry_attempts(0)
+            .build()?;
+        match &self.ca_pem {
+            Some(pem) => Ok(TerraScaleClient::with_transport(
+                config,
+                Arc::new(ReqwestTransport::with_root_certificates(pem)?),
+            )),
+            None => Ok(TerraScaleClient::new(config)),
+        }
+    }
+    fn value(&self, number: i64) -> Value {
+        if self.kind == "i64" {
+            Value::I64(number)
+        } else {
+            Value::Utf8(format!("rust-native-{number}"))
+        }
+    }
+    fn fields(&self, number: i64) -> Result<Fields> {
+        Fields::new(vec![Field {
+            id: self.field,
+            value: self.value(number),
+        }])
+    }
+    fn write(
+        &self,
+        document: DocumentId,
+        condition: Condition,
+        observed: Vec<Observed>,
+        value: WriteValue,
+    ) -> Write {
+        Write {
+            collection: self.collection,
+            document,
+            schema_generation: self.schema_generation,
+            schema_digest: self.schema_digest,
+            observed,
+            condition,
+            value,
+        }
+    }
+    fn prepared(&self, writes: Vec<Write>) -> Result<PreparedTransaction> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| {
+                Error::new(
+                    ErrorKind::Validation,
+                    "invalid_clock",
+                    "System clock precedes Unix epoch.",
+                )
+            })?
+            .as_millis();
+        let expiry = u64::try_from(now)
+            .map_err(|_| {
+                Error::new(
+                    ErrorKind::Validation,
+                    "invalid_clock",
+                    "System clock overflow.",
+                )
+            })?
+            .checked_add(60_000)
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::Validation,
+                    "invalid_clock",
+                    "System clock overflow.",
+                )
+            })?;
+        PreparedTransaction::new(
+            self.scope,
+            TransactionId::new(expiry),
+            Authority::Leaderless {},
+            writes,
+        )
+    }
+    fn predicate(&self, number: i64) -> Predicate {
+        Predicate::Equal {
+            path: vec![self.field],
+            value: self.value(number),
+        }
+    }
 }
 
-fn body(c: &Config, sdk: &str) -> Value {
-    json!({"sdk": sdk, "runId": c.run})
+fn check(condition: bool, message: &str) -> Result<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(Error::invalid_response(message))
+    }
 }
-
-fn own_id(c: &Config) -> String {
-    format!("{}-rust", c.run)
-}
-fn peer_id(c: &Config, sdk: &str) -> String {
-    format!("{}-{sdk}", c.run)
-}
-
-const JOURNEY_PEERS: [&str; 5] = ["typescript", "go", "rust", "dotnet", "cli"];
-
-fn observation(phase: &str, outcome: &str, detail: &str) {
-    let bounded: String = detail.chars().take(240).collect();
+fn observation(check: &str) {
     println!(
         "{}",
-        json!({"phase": phase, "outcome": outcome, "detail": bounded})
+        json!({"check":check,"result":"passed","evidence":"packaged_sdk_real_native_producer"})
     );
 }
-
-fn redacted(detail: String, key: &str) -> String {
-    let mut result = detail
-        .replace(key, "[REDACTED]")
-        .replace("Bearer ", "Bearer [REDACTED]");
-    while result.contains("[REDACTED][REDACTED]") {
-        result = result.replace("[REDACTED][REDACTED]", "[REDACTED]");
+async fn commit(client: &TerraScaleClient, operation: &PreparedTransaction) -> Result<Receipt> {
+    match client.transactions().commit(operation).await? {
+        CommitOutcome::Committed(receipt) => Ok(receipt),
+        CommitOutcome::Uncertain(_) => Err(Error::new(
+            ErrorKind::Unavailable,
+            "qualification_uncertain",
+            "Qualification cannot claim success for an uncertain commit.",
+        )),
     }
-    result
+}
+async fn point(client: &TerraScaleClient, fixture: &Fixture) -> Result<Point> {
+    client
+        .documents()
+        .get(&fixture.scope, fixture.collection, fixture.document)
+        .await
+}
+fn version(point: &Point) -> Result<Digest> {
+    point
+        .state_version
+        .ok_or_else(|| Error::invalid_response("Expected unique live/deleted state token."))
 }
 
-fn projected_update(value: &std::collections::BTreeMap<String, Vec<u8>>, run: &str) -> bool {
-    let field = |name: &str| {
-        value
-            .get(name)
-            .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok())
-    };
-    field("sdk") == Some(json!("rust"))
-        && field("runId") == Some(json!(run))
-        && field("reactive") == Some(json!(true))
+async fn seed(client: &TerraScaleClient, fixture: &Fixture) -> Result<PreparedTransaction> {
+    check(
+        point(client, fixture).await?.state == PointState::Absent,
+        "Qualification document must be fresh and have no retained state.",
+    )?;
+    let operation = fixture.prepared(vec![fixture.write(
+        fixture.document,
+        Condition::Absent {},
+        vec![],
+        WriteValue::Live {
+            fields: fixture.fields(1)?,
+        },
+    )])?;
+    commit(client, &operation).await?;
+    observation("native_seed");
+    Ok(operation)
 }
 
-async fn seed(c: &Config) -> Result<()> {
-    let sdk = client(c)?;
-    sdk.documents()
-        .put_with_options(
-            &DatabaseScope::in_project(c.database.clone(), c.project.clone()),
-            "sdk_journey",
-            &own_id(c),
-            body(c, "rust"),
-            DocumentOperationOptions::default()
-                .with_idempotency_key(format!("{}-rust-seed", c.run)),
-        )
-        .await?;
-    observation("seed", "passed", "put sdk_journey/<run>-rust");
+async fn verify(client: &TerraScaleClient, fixture: &Fixture) -> Result<()> {
+    let got = point(client, fixture).await?;
+    check(
+        got.live_fields()? == Some(&fixture.fields(1)?),
+        "Native typed fields differ.",
+    )?;
+    observation("native_point_values");
     Ok(())
 }
 
-async fn verify(c: &Config) -> Result<()> {
-    let sdk = client(c)?;
-    let scope = DatabaseScope::in_project(c.database.clone(), c.project.clone());
-    for peer in JOURNEY_PEERS {
-        let got = sdk
-            .documents()
-            .get(&scope, "sdk_journey", &peer_id(c, peer))
-            .await?;
-        let expected = body(c, peer);
-        if got.body != expected {
-            return Err(terrascale::Error::invalid_response(format!(
-                "sdk_journey/{peer} body mismatch"
-            )));
-        }
+async fn cleanup(client: &TerraScaleClient, fixture: &Fixture) -> Result<()> {
+    let got = point(client, fixture).await?;
+    if got.state == PointState::Absent || got.state == PointState::Deleted {
+        observation("native_cleanup");
+        return Ok(());
     }
-    observation("verify", "passed", "all five consumer bodies matched exactly");
+    let operation = fixture.prepared(vec![fixture.write(
+        fixture.document,
+        Condition::Version {
+            version: version(&got)?,
+        },
+        got.context,
+        WriteValue::Tombstone {},
+    )])?;
+    commit(client, &operation).await?;
+    check(
+        point(client, fixture).await?.state == PointState::Deleted,
+        "Tombstone must remain deleted, not absent.",
+    )?;
+    observation("native_cleanup");
     Ok(())
 }
 
-async fn exercise(c: &Config) -> Result<()> {
-    let sdk = client(c)?;
-    let scope = DatabaseScope::in_project(c.database.clone(), c.project.clone());
-    let id = own_id(c);
-    match sdk
-        .documents()
-        .get(&scope, "sdk_journey", &format!("{id}-missing"))
-        .await
-    {
-        Ok(_) => {
-            return Err(terrascale::Error::invalid_response(
-                "missing document unexpectedly succeeded",
-            ))
-        }
-        Err(error) if error.status == Some(404) => {
-            observation("exercise", "passed", "missing document returned 404");
-        }
-        Err(error) => {
-            return Err(terrascale::Error::invalid_response(format!(
-                "missing document returned unexpected status {:?}",
-                error.status
-            )))
-        }
-    }
-    let first = sdk
-        .documents()
-        .put_with_options(
-            &scope,
-            "sdk_journey",
-            &id,
-            body(c, "rust"),
-            DocumentOperationOptions::default()
-                .with_idempotency_key(format!("{}-rust-create", c.run)),
-        )
-        .await?;
-    if first.etag.is_none() {
-        return Err(terrascale::Error::invalid_response("write omitted ETag"));
-    }
-    let stale = DocumentOperationOptions::default().with_if_match("stale-etag");
-    match sdk
-        .documents()
-        .put_with_options(
-            &scope,
-            "sdk_journey",
-            &id,
-            json!({"sdk":"rust","runId":c.run,"stale":true}),
-            stale.with_idempotency_key(format!("{}-rust-stale", c.run)),
-        )
-        .await
-    {
-        Ok(_) => {
-            return Err(terrascale::Error::invalid_response(
-                "stale ETag was accepted",
-            ))
-        }
-        Err(e) if e.status == Some(412) && e.code == "precondition_failed" => {
-            let unchanged = sdk.documents().get(&scope, "sdk_journey", &id).await?;
-            if unchanged.body != body(c, "rust") {
-                return Err(terrascale::Error::invalid_response(
-                    "stale ETag mutated document",
-                ));
-            }
-            observation(
-                "exercise",
-                "passed",
-                "stale ETag returned 412 precondition_failed without mutation",
-            );
-        }
-        Err(e) => {
-            return Err(terrascale::Error::invalid_response(format!(
-                "unexpected stale ETag result: status={:?} code={}",
-                e.status, e.code
-            )))
-        }
-    }
-    let idem =
-        DocumentOperationOptions::default().with_idempotency_key(format!("{}-rust-idem", c.run));
-    let a = sdk
-        .documents()
-        .put_with_options(&scope, "sdk_journey", &id, body(c, "rust"), idem.clone())
-        .await?;
-    let b = sdk
-        .documents()
-        .put_with_options(&scope, "sdk_journey", &id, body(c, "rust"), idem)
-        .await?;
-    if a.revision != b.revision || a.etag != b.etag {
-        return Err(terrascale::Error::invalid_response(
-            "idempotency replay receipt changed",
-        ));
-    }
-    let query = Query::raw(
-        "SELECT _id, sdk, runId FROM sdk_journey WHERE _id = :id",
-        json!({"id": id}),
-    );
-    let rows = sdk.sql().execute(&scope, &query).await?;
-    if !rows.rows.iter().any(|row| {
-        row.id == id
-            && row.value.get("sdk") == Some(&json!("rust"))
-            && row.value.get("runId") == Some(&json!(c.run))
-    }) {
-        return Err(terrascale::Error::invalid_response(
-            "parameterized SQL did not return the owned document",
-        ));
-    }
-    let sub = SubscribeOptions::new().with_subscription(format!("{}-rust", c.run));
-    let reactive_query = Query::raw("SELECT * FROM sdk_journey", json!({}));
-    let view = sdk
-        .reactive()
-        .subscribe(&scope, &reactive_query, sub)
-        .await?;
-    let update = json!({"sdk":"rust","runId":c.run,"reactive":true});
-    sdk.documents()
-        .put_with_options(
-            &scope,
-            "sdk_journey",
-            &id,
-            update.clone(),
-            DocumentOperationOptions::default()
-                .with_idempotency_key(format!("{}-rust-update", c.run)),
-        )
-        .await?;
-    let cancel = CancellationToken::new();
-    let mut observed = false;
-    for _ in 0..6 {
-        let response = sdk
-            .reactive()
-            .poll_with_cancellation(
-                &view,
-                view.snapshot.revision.as_str(),
-                terrascale::PollOptions::new(1),
-                &cancel,
+async fn exercise(client: &TerraScaleClient, fixture: &Fixture) -> Result<()> {
+    // Admit all local prerequisites before any producer request or mutation.
+    let denied_key = fixture
+        .deny_key
+        .as_deref()
+        .filter(|key| !key.is_empty() && *key != fixture.key)
+        .ok_or_else(|| {
+            Error::new(
+                ErrorKind::Validation,
+                "missing_deny_fixture",
+                "Exercise requires a distinct deny API key.",
             )
-            .await?;
-        let deltas = response.deltas;
-        observed |= deltas.iter().any(|d| d.to_revision != view.snapshot.revision)
-            && deltas.iter().flat_map(|d| d.operations.iter()).any(|op| matches!(op, ViewOperation::Update { identity, value } if identity == &id && projected_update(value, &c.run)));
-        if observed {
-            break;
-        }
-    }
-    if !observed {
-        return Err(terrascale::Error::invalid_response(
-            "reactive update was not observed after mutation",
-        ));
-    }
-    cancel.cancel();
-    let cancelled = sdk
-        .reactive()
-        .poll_with_cancellation(
-            &view,
-            view.snapshot.revision.as_str(),
-            terrascale::PollOptions::new(1),
-            &cancel,
-        )
-        .await;
-    if !matches!(cancelled, Err(ref e) if e.code == "cancelled") {
-        return Err(terrascale::Error::invalid_response(
-            "reactive cancellation was not enforced",
-        ));
-    }
-    if let Some(deny_key) = &c.deny_key {
-        let denied = TerraScaleClient::new(
-            ClientConfig::builder()
-                .api_base_url(c.api.clone())
-                .api_key(deny_key.clone())
-                .project_id(c.project.clone())
-                .build()?,
-        );
-        match denied.documents().get(&scope, "sdk_journey", &id).await {
-            Ok(_) => {
-                return Err(terrascale::Error::invalid_response(
-                    "denied API key unexpectedly read document",
-                ))
-            }
-            Err(error) if matches!(error.status, Some(401 | 403)) => {
-                observation("exercise", "passed", "denied scope returned 401/403");
-            }
-            Err(error) => {
-                return Err(terrascale::Error::invalid_response(format!(
-                    "denied scope returned unexpected status {:?}",
-                    error.status
-                )))
-            }
-        }
-    }
-    observation(
-        "exercise",
-        "passed",
-        "conditional write, SQL, idempotency, reactive cancellation",
-    );
-    Ok(())
-}
+        })?;
+    let denied = fixture.client(denied_key)?;
+    // Get a producer snapshot cursor before the initial write; poll then proves the actual log path.
+    let snapshot_input = SnapshotRequest::new(fixture.predicate(1), 128)?;
+    let snapshot = client
+        .subscriptions()
+        .snapshot(&fixture.scope, fixture.collection, &snapshot_input)
+        .await?;
+    let mut view = SubscriptionView::default();
+    view.apply_snapshot(
+        &fixture.scope,
+        fixture.collection,
+        &snapshot_input,
+        &snapshot,
+    )?;
+    let cursor = snapshot.poll_cursor.ok_or_else(|| {
+        Error::invalid_response("Qualification fixture needs a bounded completed snapshot.")
+    })?;
+    let operation = seed(client, fixture).await?;
+    verify(client, fixture).await?;
+    let status = client.transactions().status(&operation).await?;
+    check(
+        status.state == TransactionState::Committed,
+        "Original commit status is not committed.",
+    )?;
+    let retry = commit(client, &operation).await?;
+    let Some(StatusOutcome::Committed(original)) = status.outcome else {
+        return Err(Error::invalid_response("Status omitted original receipt."));
+    };
+    check(
+        retry == original.receipt,
+        "Exact retry changed original durable receipt.",
+    )?;
+    observation("native_exact_retry_and_status");
 
-async fn cleanup(c: &Config) -> Result<()> {
-    let sdk = client(c)?;
-    let scope = DatabaseScope::in_project(c.database.clone(), c.project.clone());
-    sdk.documents()
-        .delete_with_options(
-            &scope,
-            "sdk_journey",
-            &own_id(c),
-            DocumentOperationOptions::default()
-                .with_idempotency_key(format!("{}-rust-cleanup", c.run)),
+    let changed = PreparedTransaction::new(
+        fixture.scope,
+        operation.transaction_id().clone(),
+        Authority::Leaderless {},
+        vec![fixture.write(
+            fixture.document,
+            Condition::Absent {},
+            vec![],
+            WriteValue::Live {
+                fields: fixture.fields(2)?,
+            },
+        )],
+    )?;
+    let error = client
+        .transactions()
+        .commit(&changed)
+        .await
+        .expect_err("changed effect identity must be rejected");
+    check(
+        error.status == Some(409) && error.code == "idempotency_conflict",
+        "Changed effect reused identity without idempotency conflict.",
+    )?;
+    observation("native_changed_effect_rejected");
+
+    let current = point(client, fixture).await?;
+    let other_document = DocumentId::new();
+    let atomic = fixture.prepared(vec![
+        fixture.write(
+            fixture.document,
+            Condition::Version {
+                version: Digest::from_bytes([255; 32]),
+            },
+            current.context.clone(),
+            WriteValue::Live {
+                fields: fixture.fields(2)?,
+            },
+        ),
+        fixture.write(
+            other_document,
+            Condition::Absent {},
+            vec![],
+            WriteValue::Live {
+                fields: fixture.fields(2)?,
+            },
+        ),
+    ])?;
+    let error = client
+        .transactions()
+        .commit(&atomic)
+        .await
+        .expect_err("stale group must be rejected");
+    check(
+        error.status == Some(412) && error.code == "precondition_failed",
+        "Stale condition did not reject atomically.",
+    )?;
+    check(
+        client
+            .documents()
+            .get(&fixture.scope, fixture.collection, other_document)
+            .await?
+            .state
+            == PointState::Absent,
+        "Failed atomic group published its peer write.",
+    )?;
+    check(
+        client
+            .transactions()
+            .status(&atomic)
+            .await?
+            .definitively_rejected(),
+        "Rejected group did not retain definitive status.",
+    )?;
+    observation("native_atomic_stale_group_and_rejected_status");
+
+    let poll_input = PollRequest::new(fixture.predicate(1), cursor)?;
+    let poll = client
+        .subscriptions()
+        .poll(&fixture.scope, fixture.collection, &poll_input)
+        .await?;
+    check(
+        poll.groups
+            .iter()
+            .flat_map(|group| &group.effects)
+            .any(|effect| effect.document == fixture.document && effect.point.is_some()),
+        "Native subscription omitted committed matching effect.",
+    )?;
+    view.apply_poll(&fixture.scope, fixture.collection, &poll_input, &poll)?;
+    check(
+        view.rows().contains_key(&fixture.document),
+        "Native subscription view did not apply complete group.",
+    )?;
+    observation("native_subscription_poll_groups");
+
+    let query = Query::new(fixture.predicate(1), 1)?;
+    let page = client
+        .documents()
+        .query(&fixture.scope, fixture.collection, &query)
+        .await?;
+    check(
+        page.rows.iter().any(|row| row.document == fixture.document),
+        "Actual native scalar query omitted document.",
+    )?;
+    observation("native_query");
+
+    let update = fixture.prepared(vec![fixture.write(
+        fixture.document,
+        Condition::Version {
+            version: version(&current)?,
+        },
+        current.context,
+        WriteValue::Live {
+            fields: fixture.fields(2)?,
+        },
+    )])?;
+    commit(client, &update).await?;
+    let removed = client
+        .subscriptions()
+        .poll(
+            &fixture.scope,
+            fixture.collection,
+            &PollRequest::new(fixture.predicate(1), poll.poll_cursor)?,
         )
         .await?;
-    observation("cleanup", "passed", "deleted only sdk_journey/<run>-rust");
-    Ok(())
+    check(
+        removed
+            .groups
+            .iter()
+            .flat_map(|group| &group.effects)
+            .any(|effect| effect.document == fixture.document && effect.point.is_none()),
+        "Subscription did not remove a document that stopped matching.",
+    )?;
+    observation("native_subscription_removal");
+
+    let error = denied
+        .documents()
+        .get(&fixture.scope, fixture.collection, fixture.document)
+        .await
+        .expect_err("denied credentials must fail");
+    check(
+        matches!(error.status, Some(401 | 403)),
+        "Denied native credential did not fail authorization.",
+    )?;
+    let mut other_scope = fixture.scope;
+    other_scope.tenant = TenantId::new();
+    let error = client
+        .documents()
+        .get(&other_scope, fixture.collection, fixture.document)
+        .await
+        .expect_err("cross tenant must fail");
+    check(
+        matches!(error.status, Some(401 | 403 | 404)),
+        "Cross-tenant scope was accepted.",
+    )?;
+    observation("native_scope_and_credential_isolation");
+    cleanup(client, fixture).await
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let phase = env::args().nth(1).unwrap_or_default();
-    let c = match config() {
-        Ok(c) => c,
-        Err(e) => {
-            observation(&phase, "blocked", &e);
-            return ExitCode::from(2);
+    let phase = env::args().nth(1).unwrap_or_else(|| "exercise".into());
+    let mut fixture_identity = None;
+    let result = async {
+        let fixture = Fixture::load()?;
+        fixture_identity = Some(json!({"tenant":fixture.scope.tenant,"database":fixture.scope.database,"shard":fixture.scope.shard,"collection":fixture.collection,"document":fixture.document}));
+        let client = fixture.client(&fixture.key)?;
+        match phase.as_str() {
+            "atlas-point" => {
+                let client = fixture.atlas_client()?;
+                let monotonic_start = std::time::Instant::now();
+                let invalid_clock = || {
+                    Error::new(ErrorKind::Unavailable, "invalid_clock", "Invalid qualification clock.")
+                };
+                let start = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| invalid_clock())?;
+                let resolved = client.discovery()
+                    .resolve(&fixture.scope, NativeRequirement::Point).await?;
+                check(
+                    resolved.endpoint.url == fixture.origin,
+                    "Atlas selected a different origin from the actual independently admitted fixture.",
+                )?;
+                let result = point(&client, &fixture).await?;
+                let end = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| invalid_clock())?;
+                check(
+                    monotonic_start.elapsed() < std::time::Duration::from_secs(resolved.metadata.refresh_seconds)
+                        && end.as_millis() < u128::from(resolved.metadata.expires_at) * 1000,
+                    "Atlas point phase exceeded the observed conservative lease.",
+                )?;
+                println!("{}", json!({
+                    "check": "atlas_authenticated_resolution_native_point",
+                    "result": "passed",
+                    "evidence": "separate_successor_packaged_sdk_actual_receiver_and_native",
+                    "receiver": ATLAS_BASE_URL,
+                    "scope": {
+                        "tenant_id": fixture.scope.tenant,
+                        "database_id": fixture.scope.database,
+                        "shard_id": fixture.scope.shard,
+                    },
+                    "authority": {
+                        "deployment_id": resolved.metadata.authority.deployment_id,
+                        "cell": resolved.metadata.authority.cell,
+                        "publisher_id": resolved.metadata.authority.publisher_id,
+                        "publisher_generation": resolved.metadata.authority.publisher_generation,
+                    },
+                    "revision": resolved.metadata.revision,
+                    "published_at": resolved.metadata.published_at,
+                    "expires_at": resolved.metadata.expires_at,
+                    "refresh_seconds": resolved.metadata.refresh_seconds,
+                    "region": resolved.endpoint.region,
+                    "origin": resolved.endpoint.url,
+                    "catalog_digest": resolved.endpoint.catalog_digest,
+                    "point_state": result.state,
+                    "request_start_unix_millis": start.as_millis().to_string(),
+                    "point_end_unix_millis": end.as_millis().to_string(),
+                    "clock_health_qualification": "requires_independent_measured_bounds_and_provenance",
+                }));
+                Ok(())
+            }
+            "tls-check" => {
+                if !client
+                    .config()
+                    .api_base_url()
+                    .is_some_and(|origin| origin.starts_with("https://"))
+                {
+                    return Err(Error::new(
+                        ErrorKind::Validation,
+                        "invalid_fixture_origin",
+                        "TLS qualification requires HTTPS.",
+                    ));
+                }
+                point(&client, &fixture).await?;
+                observation("native_tls_verified");
+                Ok(())
+            }
+            "seed" => seed(&client, &fixture).await.map(|_| ()),
+            "verify" => verify(&client, &fixture).await,
+            "exercise" => exercise(&client, &fixture).await,
+            "cleanup" => cleanup(&client, &fixture).await,
+            _ => Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_phase",
+                "Expected atlas-point, tls-check, seed, verify, exercise or cleanup.",
+            )),
         }
-    };
-    let result = match phase.as_str() {
-        "seed" => seed(&c).await,
-        "verify" => verify(&c).await,
-        "exercise" => exercise(&c).await,
-        "cleanup" => cleanup(&c).await,
-        _ => {
-            observation(
-                &phase,
-                "blocked",
-                "usage: qualification <seed|verify|exercise|cleanup>",
-            );
-            return ExitCode::from(2);
-        }
-    };
+    }
+    .await;
     match result {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            let detail = redacted(format!("{}", e), &c.key);
-            let detail = c
-                .deny_key
-                .as_deref()
-                .map_or(detail.clone(), |key| redacted(detail, key));
-            observation(&phase, "failed", &detail);
-            ExitCode::from(1)
+        Err(error) => {
+            eprintln!(
+                "{}",
+                json!({"phase":phase,"result":"failed","code":error.code,"status":error.status,"fixture":fixture_identity})
+            );
+            ExitCode::FAILURE
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{projected_update, redacted, valid_run_id};
-    use serde_json::json;
-    use std::collections::BTreeMap;
-
-    fn fields(run: &str, reactive: bool) -> BTreeMap<String, Vec<u8>> {
-        [
-            ("sdk", json!("rust")),
-            ("runId", json!(run)),
-            ("reactive", json!(reactive)),
-        ]
-        .into_iter()
-        .map(|(k, v)| (k.to_owned(), serde_json::to_vec(&v).unwrap()))
-        .collect()
-    }
-
-    #[test]
-    fn producer_shaped_projection_accepts_exact_fields() {
-        assert!(projected_update(&fields("r", true), "r"));
-        assert!(!projected_update(&fields("wrong", true), "r"));
-        assert!(!projected_update(&fields("r", false), "r"));
-    }
-
-    #[test]
-    fn journey_run_id_uses_shared_safe_format() {
-        assert!(valid_run_id("run-2026_09"));
-        assert!(!valid_run_id("../escape"));
-        assert!(!valid_run_id("-leading"));
-        assert!(!valid_run_id(&"a".repeat(65)));
-    }
-
-    #[test]
-    fn error_observations_redact_all_supplied_credentials() {
-        let detail = redacted(
-            "Bearer primary-secret; key=secondary-secret".to_owned(),
-            "primary-secret",
-        );
-        let detail = redacted(detail, "secondary-secret");
-        assert!(!detail.contains("primary-secret"));
-        assert!(!detail.contains("secondary-secret"));
-        assert!(detail.contains("Bearer [REDACTED]"));
-        assert_eq!(detail, "Bearer [REDACTED]; key=[REDACTED]");
     }
 }

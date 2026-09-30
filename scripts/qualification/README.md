@@ -1,28 +1,22 @@
-# Rust SDK real-service qualification
+# Native packaged Rust qualification
 
-`run.sh` verifies the caller-supplied immutable SDK crate archive, extracts it
-into a clean temporary consumer, and runs the public API against a real
-TerraScale service. It never repackages checkout sources or uses mock
-transport. Run one phase at a time:
+Package the SDK with `cargo package --locked --allow-dirty`. Run `run.sh exercise` with `TERRASCALE_SDK_CRATE` pointing to the resulting regular `.crate` file and `TERRASCALE_SDK_CRATE_SHA256` set to its SHA-256. The runner verifies and safely unpacks that single artifact into an isolated temporary consumer before using Cargo with its own lockfile. No derive package, source tree replacement, mock producer or skipped-green path is used.
 
-```text
-./scripts/qualification/run.sh seed|verify|exercise|cleanup
-```
+The real producer fixture must supply these variables:
 
-The required environment is `TERRASCALE_API_URL`, `TERRASCALE_AUTH_URL`,
-`TERRASCALE_PROJECT_ID`, `TERRASCALE_DATABASE_ID`, `TERRASCALE_API_KEY`, and
-`TERRASCALE_JOURNEY_RUN_ID`, plus the independently supplied
-`TERRASCALE_SDK_CRATE`/`TERRASCALE_SDK_CRATE_SHA256` and
-`TERRASCALE_SDK_DERIVE_CRATE`/`TERRASCALE_SDK_DERIVE_CRATE_SHA256` pairs.
-Optionally set `TERRASCALE_SYNC_URL` to override the reactive delivery origin.
-Both regular files and hashes, archive roots, package manifests, and the exact
-derive dependency are validated before extraction, Cargo, or provider access.
-The derive package is extracted to an explicit temporary path and bound by
-path; registry, checkout, and archive-discovery fallbacks are not allowed.
-Output is bounded JSON observations and the artifact SHA-256; credentials are
-never printed. Mutating journey calls use explicit, phase-scoped idempotency
-keys and `exercise` asserts that an absent document returns HTTP 404. Optionally
-set `TERRASCALE_DENY_API_KEY` to a key issued without access to the journey
-database; `exercise` then requires a 401/403 denial. All five consumers use the
-same issued `TERRASCALE_API_KEY`. Missing config, an archive hash mismatch,
-unsupported calls, and zero skips fail the phase before build or network access.
+- `TS_NATIVE_ORIGIN`: reviewed direct regional or loopback native producer origin.
+- `TS_NATIVE_API_KEY` and `TS_NATIVE_DENY_API_KEY`: distinct native grant and denied credential; secrets are never printed.
+- Optional `TS_NATIVE_CA_PEM`: path to explicitly trusted PEM root certificates for a private HTTPS producer. The exported production `ReqwestTransport` verifies the certificate chain and hostname, accepts only HTTPS and disables redirects. Invalid CA input fails before dispatch.
+- `TS_NATIVE_TENANT`, `TS_NATIVE_DATABASE`, `TS_NATIVE_COLLECTION`, `TS_NATIVE_DOCUMENT`: canonical UUIDs. The document must be fresh with no retained state.
+- `TS_NATIVE_SHARD`: canonical full-range unsigned decimal string.
+- `TS_NATIVE_SCHEMA_GENERATION` and `TS_NATIVE_SCHEMA_DIGEST`: positive generation and lowercase Hex32 matching the producer active schema.
+- `TS_NATIVE_FIELD_ID` and `TS_NATIVE_FIELD_TYPE`: positive numeric field ID and `i64` or `utf8`, matching that actual producer schema.
+- Optional `TS_QUALIFICATION_CARGO_TARGET_DIR`: caller-owned target root. The runner uses an exact crate SHA-256 child directory to prevent cached SDK artifacts from another package being reused; otherwise compilation uses the isolated temporary directory.
+
+The `exercise` phase checks actual point/value transport, conditional atomic commit, retained status, exact retry, changed-effect conflict, all-or-nothing stale group rejection, native query, snapshot/poll groups, view removal, credential/tenant isolation and tombstone retention. `tls-check` performs one authenticated point read without mutating the fixture; use it against the actual producer to verify the supplied CA and separately require transport failures for an untrusted CA and a hostname absent from the certificate SANs. `seed`, `verify` and `cleanup` are available as separate phases. Missing fixture configuration fails nonzero. Exercise checks the distinct denied credential before sending any producer request; failures include only scoped fixture IDs and stable error code/status, so cleanup can target the owned fixture without printing keys. `seed` and `exercise` require a fresh UUID; tombstone cleanup deliberately does not convert deleted state to absent.
+
+Receipt/status checks bind the original identity, authority and effect digest. This leaderless fixture does not qualify security single-writer admission, unique/schema extensions, SQL/PostgreSQL consumers, actual authenticated Atlas/native runtime interoperability, a multi-region deployment or serving durability. Those remain independent release blockers. The artifact hash and real producer process/source identity must be attached by the packet coordinator before this output is accepted as integration evidence.
+
+`atlas-point` is a separate successor caller phase. It sends the native TBK1 grant to the canonical authenticated Atlas receiver, checks the selected point-capable direct origin against the independently supplied `TS_NATIVE_ORIGIN`, then performs a native point read through default routing. It prints scope, authority, full-u64 generation/revision, catalog digest, conservative lease and point state without credentials. The transport uses normal certificate chain/hostname verification and disabled redirects; optional fixture roots apply to both TLS connections. Loopback/custom discovery destinations cannot substitute for the canonical receiver. A caller-owned DNS/TLS setup must therefore reach actual canonical Atlas and regional native hosts. Start/end wall timestamps are observations; independent measured healthy consumer/source clock bounds and provenance are still required for acceptance.
+
+The accepted native crate and ELF must remain immutable. Build this successor under its own crate SHA target and record its runner, library, package and executable identities. The raw receiver fixtures in `contracts/atlas` came from Worker plus SQLite DO tests at a fixed clock with synthetic R3 sequences; they test codecs and are not actual canonical HTTPS qualification. `atlas-point` does not qualify conditional/grouped Atlas writes, security authority, PostgreSQL or deployment activation.

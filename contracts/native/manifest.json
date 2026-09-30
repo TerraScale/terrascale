@@ -1,0 +1,11 @@
+{
+  "artifacts": {
+    "ATOMIC_V1.json": "f016ea7b0851a7f286a28a95c3d2186a1be57216105f1f13429160230e843e29",
+    "atomic_vectors.json": "4ce4286b6e2eeae4ee15dec83f788f33cffdba7606a49021ec81afe0a4a9e816",
+    "openapi.json": "2c8fc075bb2714de6f0ba10756f903e09e4d2a43ecaa63b2135ccb2042545a52"
+  },
+  "source_base": "470d1f898897d4a0cefc7d638ce8eb72f0ca73b8",
+  "source_repository": "terrabase",
+  "source_state": "producer DTO overlay; runtime qualification pending",
+  "version": "native-v1"
+}
