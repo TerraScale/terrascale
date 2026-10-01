@@ -51,17 +51,25 @@
   background: var(--ts-canvas);
 }
 
-/* The panel centers its whole stack — header, form, providers, account link —
-   in the space above the locale footer. The 384px measure is a px literal on
-   purpose: the design system's rem steps off a 14px root, so 24rem would land
-   48px short of it. */
+/* The panel fills the column above the locale footer: the credential stack
+   centers in the space it leaves, and the account link takes the floor row
+   just above the locale separator.
+   The 384px measure is a px literal on purpose: the design system's rem steps
+   off a 14px root, so 24rem would land 48px short of it. */
 .ts-login-panel {
   display: grid;
-  align-content: center;
+  grid-template-rows: 1fr auto;
   gap: var(--ts-s5);
   width: min(384px, calc(100% - 2 * var(--ts-s5)));
   margin-inline: auto;
   padding: var(--ts-s10) 0;
+}
+
+.ts-login-stack {
+  display: grid;
+  align-content: center;
+  gap: var(--ts-s5);
+  min-height: 0;
 }
 
 .ts-login-logo {
