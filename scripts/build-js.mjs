@@ -139,30 +139,43 @@ function hash(contents) {
   return createHash('sha256').update(contents).digest('hex').slice(0, 8).toUpperCase();
 }
 
-async function readVendor(name) {
+function sri(contents) {
+  return `sha384-${createHash('sha384').update(contents).digest('base64')}`;
+}
+
+async function readRequired(file, missing) {
   try {
-    return await readFile(resolve(source, 'vendor', name));
+    return await readFile(file);
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
-    throw new Error(`Missing web/assets/js/vendor/${name}; restore it from the official Datastar v1.0.4 release`, { cause: error });
+    throw new Error(missing, { cause: error });
   }
 }
+
+const readVendor = name => readRequired(
+  resolve(source, 'vendor', name),
+  `Missing web/assets/js/vendor/${name}; restore it from the official Datastar v1.0.4 release`,
+);
 
 async function build() {
   const datastar = await readVendor('datastar.js');
   const datastarMap = await readVendor('datastar.js.map');
   const datastarLicense = await readVendor('LICENSE.datastar.md');
-  const helpers = await readFile(resolve(repository, 'internal/ui/layout_helpers.go'), 'utf8');
-  const pinned = helpers.match(/\bconst\s+datastarIntegrity\s*=\s*"(sha384-[A-Za-z0-9+/=]+)"/)?.[1];
-  const integrity = `sha384-${createHash('sha384').update(datastar).digest('base64')}`;
+  const helpers = (await readRequired(
+    resolve(repository, 'internal/ui/layout_helpers.go'),
+    'Missing internal/ui/layout_helpers.go; the JS build reads its Datastar SRI pin',
+  )).toString('utf8');
+  const pinned = helpers.match(/^\s*(?:const\s+)?datastarIntegrity\s*=\s*"([^"]+)"/m)?.[1];
+  const integrity = sri(datastar);
   if (integrity !== pinned) {
     throw new Error(`vendor/datastar.js hashes to ${integrity}, but datastarIntegrity in internal/ui/layout_helpers.go is ${pinned ?? 'missing'}`);
   }
   // Pinned from the official v1.0.4 release alongside the bundle. A bundle
   // upgrade must refresh its source map too.
   const pinnedMap = 'sha384-pt2bLYQEhQctXw5tJaokvLV96hxW/GSwz2K8L+3xltbjrLNwyWS8PG/2NprOqeIS';
-  if (`sha384-${createHash('sha384').update(datastarMap).digest('base64')}` !== pinnedMap) {
-    throw new Error('vendor/datastar.js.map differs from the pinned official Datastar v1.0.4 source map');
+  const mapIntegrity = sri(datastarMap);
+  if (mapIntegrity !== pinnedMap) {
+    throw new Error(`vendor/datastar.js.map hashes to ${mapIntegrity}, but the pinned official Datastar v1.0.4 source map is ${pinnedMap}`);
   }
   const datastarFile = { path: resolve(outdir, 'datastar.js'), contents: datastar, text: datastar.toString('utf8') };
   const codicon = await extractCodicon();
