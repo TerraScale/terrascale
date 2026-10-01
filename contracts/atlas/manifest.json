@@ -1,11 +1,11 @@
 {
   "artifacts": {
-    "ATLAS_NATIVE_RECEIVER_V1.json": "7cd7d037772cd79d662e1117912673e8fd6fe684286099e5b7f3271358526547",
-    "RUST_ATLAS_CONSUMER_V1.json": "b1313f754383034662c8256359e5891fc41ac29981e5542fbc7b06dce1332239",
+    "ATLAS_NATIVE_RECEIVER_V1.json": "2b245492045335b65c564f08ae6f3af1777d160ca4893aa727e32e7998b85c3c",
+    "RUST_ATLAS_CONSUMER_V1.json": "a98a1eb45d2f4568676c0cb42545e7673bb7b5ea69eb80f44efcf247ee4f2184",
     "native-discovery-forbidden-receipt.json": "2b63d132df8b304286ebb0e9b4ab967a317544e8128f9105c7d71a138721528f",
     "native-discovery-forbidden.json": "3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c",
-    "native-discovery-success-receipt.json": "c34ed011a4f10065b3fba4168b0a940eb7f3ef945a70414ae8210908ad8080ba",
-    "native-discovery-success.json": "d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0",
+    "native-discovery-success-receipt.json": "d56ccaaef70693c5df168a7ae1c8c854f0c504c331d551d4273000fdac6c246d",
+    "native-discovery-success.json": "82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec",
     "native-wire-identity.json": "b789d6fb7782e34ece3b516139856f2b6d2dea0543436820eefa50ff31355538"
   },
   "fixture_consumer_bound_millis": 100,

@@ -16,7 +16,7 @@ use crate::{
     config::ClientConfig,
     documents::{DatabaseScope, ProtocolVersion},
     error::{Error, ErrorKind, Result},
-    regions::valid_region,
+    regions::{regional_origin, valid_region},
     transport::{HttpTransport, Method, Request, Response},
     values::{DatabaseId, DecimalU64, Digest, TenantId},
 };
@@ -314,11 +314,7 @@ fn decode(
     for (index, endpoint) in wire.endpoints.into_iter().enumerate() {
         if !valid_region(&endpoint.region)
             || !regions.insert(endpoint.region.clone())
-            || endpoint.url
-                != format!(
-                    "https://{}.terrascale.tech",
-                    endpoint.region.to_ascii_lowercase()
-                )
+            || endpoint.url != regional_origin(&endpoint.region)
             || endpoint.priority != index + 1
             || endpoint.security_writer.is_some()
             || !endpoint.capabilities.client_v1

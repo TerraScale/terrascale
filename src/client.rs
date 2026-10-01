@@ -278,7 +278,6 @@ impl Shared {
         )
         .await
         .map_err(|_| Error::transport("Native operation deadline exceeded."))??;
-        check_native_deadline(deadline)?;
         response.json_body().map_err(|mut error| {
             error.code = format!("{}.invalid_response", route_to_code(&route));
             error

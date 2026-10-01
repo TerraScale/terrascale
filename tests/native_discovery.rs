@@ -200,9 +200,13 @@ impl HttpTransport for LifecycleTransport {
                 // Exhaust the real runtime's current cooperative budget without
                 // assuming its size. Returning this valid admission then makes
                 // the next resolver mutex acquisition yield to its caller.
-                while tokio::task::coop::has_budget_remaining() {
-                    tokio::task::consume_budget().await;
-                }
+                std::future::poll_fn(|context| loop {
+                    let consume = std::pin::pin!(tokio::task::consume_budget());
+                    if std::future::Future::poll(consume, context).is_pending() {
+                        return std::task::Poll::Ready(());
+                    }
+                })
+                .await;
                 Ok(response)
             }
         }
@@ -254,14 +258,14 @@ async fn lifecycle_queue<F: std::future::Future>(
 }
 
 #[tokio::test]
-async fn actual_worker_sqlite_bytes_preserve_full_u64_and_fixed_clock_provenance() {
+async fn derived_receiver_codec_bytes_preserve_full_u64_and_fixed_clock_provenance() {
     let (router, mock, _) = fixture_router();
     mock.raw(200, SUCCESS, 100);
     let resolved = router
         .resolve(&scope(), NativeRequirement::Point)
         .await
         .unwrap();
-    assert_eq!(resolved.endpoint.url, "https://gru.terrascale.tech");
+    assert_eq!(resolved.endpoint.url, "https://gru.api.terrascale.tech");
     assert_eq!(
         resolved.endpoint.catalog_digest,
         Digest::from_bytes([0xcc; 32])
@@ -429,7 +433,7 @@ async fn receiver_ranking_dynamic_regions_residency_and_operation_capabilities_a
     let mut body = fixture();
     let mut first = body["endpoints"][0].clone();
     first["region"] = json!("Z9-NEW");
-    first["url"] = json!("https://z9-new.terrascale.tech");
+    first["url"] = json!("https://z9-new.api.terrascale.tech");
     first["capabilities"]["query"] = json!(false);
     first["capabilities"]["subscriptions"] = json!(false);
     first["capabilities"]["write"] = json!(false);
@@ -574,15 +578,15 @@ async fn closed_schema_nullable_fields_duplicates_and_invalid_native_metadata_fa
     }
     for url in [
         "https://api.terrascale.tech",
-        "https://gru.api.terrascale.tech",
+        "https://gru.terrascale.tech",
         "https://evil.invalid",
-        "https://gru.terrascale.tech/",
-        "https://gru.terrascale.tech:443",
-        "https://GRU.terrascale.tech",
-        "http://gru.terrascale.tech",
-        "https://gru.terrascale.tech?x=1",
-        "https://key@gru.terrascale.tech",
-        "https://gru.terrascale.tech.",
+        "https://gru.api.terrascale.tech/",
+        "https://gru.api.terrascale.tech:443",
+        "https://GRU.api.terrascale.tech",
+        "http://gru.api.terrascale.tech",
+        "https://gru.api.terrascale.tech?x=1",
+        "https://key@gru.api.terrascale.tech",
+        "https://gru.api.terrascale.tech.",
     ] {
         let mut body = fixture();
         body["endpoints"][0]["url"] = json!(url);
@@ -1209,7 +1213,7 @@ async fn default_point(client: &TerraScaleClient) -> Result<Point> {
 #[tokio::test]
 async fn default_client_discovery_failures_never_dispatch_native_or_cache_a_bypass() {
     let mut wrong_origin = current_fixture();
-    wrong_origin["endpoints"][0]["url"] = json!("https://gru.api.terrascale.tech");
+    wrong_origin["endpoints"][0]["url"] = json!("https://gru.terrascale.tech");
     let failures = [
         (
             Ok(raw(403, FORBIDDEN)),
@@ -1421,7 +1425,7 @@ async fn dropping_public_preflight_or_native_dispatch_releases_work_for_a_new_op
         } else {
             ClientConfig::builder()
                 .api_key(native_key())
-                .api_base_url("https://gru.terrascale.tech")
+                .api_base_url("https://gru.api.terrascale.tech")
                 .build()
                 .unwrap()
         };
@@ -1455,8 +1459,8 @@ async fn dropping_public_preflight_or_native_dispatch_releases_work_for_a_new_op
 #[tokio::test]
 async fn explicit_provisioned_origins_skip_even_custom_atlas_without_leaking_auth_credentials() {
     for origin in [
-        "https://gru.terrascale.tech",
-        "https://iad-2.terrascale.tech",
+        "https://gru.api.terrascale.tech",
+        "https://iad-2.api.terrascale.tech",
         "https://native.customer.example",
         "http://127.0.0.1:8123",
         "http://localhost:8123",
@@ -1642,7 +1646,7 @@ async fn every_public_native_call_shares_discovery_and_dispatch_budget_with_comm
         assert_eq!(requests[0].route_name, "native.discovery");
         assert!(requests[1]
             .url
-            .starts_with("https://gru.terrascale.tech/v1/"));
+            .starts_with("https://gru.api.terrascale.tech/v1/"));
         if route == "commit" {
             assert_eq!(requests[1].route_name, "native.commit");
             assert_eq!(requests[1].body.as_deref(), Some(operation.body()));
@@ -1657,7 +1661,7 @@ async fn safe_retry_delay_and_dispatch_never_renew_the_public_budget() {
     let transport = Arc::new(LifecycleTransport::default());
     let client = TerraScaleClient::with_transport(
         ClientConfig::builder()
-            .api_base_url("https://gru.terrascale.tech")
+            .api_base_url("https://gru.api.terrascale.tech")
             .api_key(native_key())
             .max_retry_attempts(2)
             .retry_delay_ms(5_000)
@@ -1684,7 +1688,9 @@ async fn safe_retry_delay_and_dispatch_never_renew_the_public_budget() {
     assert!(requests
         .iter()
         .all(|request| request.route_name == "native.point"
-            && request.url.starts_with("https://gru.terrascale.tech/v1/")));
+            && request
+                .url
+                .starts_with("https://gru.api.terrascale.tech/v1/")));
     assert_eq!(transport.active.load(Ordering::SeqCst), 0);
     assert_eq!(transport.released.load(Ordering::SeqCst), 2);
 }
@@ -1761,7 +1767,7 @@ async fn fresh_lease_native_retry_classes_are_terminal_by_default_and_bounded_wh
             let mut body = current_fixture();
             let mut second = body["endpoints"][0].clone();
             second["region"] = json!("IAD");
-            second["url"] = json!("https://iad.terrascale.tech");
+            second["url"] = json!("https://iad.api.terrascale.tech");
             second["priority"] = json!(2);
             body["endpoints"].as_array_mut().unwrap().push(second);
             mock.response(200, &body);
@@ -1780,7 +1786,9 @@ async fn fresh_lease_native_retry_classes_are_terminal_by_default_and_bounded_wh
             assert!(requests[1..]
                 .iter()
                 .all(|request| request.route_name == "native.point"
-                    && request.url.starts_with("https://gru.terrascale.tech/v1/")));
+                    && request
+                        .url
+                        .starts_with("https://gru.api.terrascale.tech/v1/")));
             assert!(mock.replies.lock().unwrap().is_empty());
         }
     }
@@ -1810,7 +1818,7 @@ async fn fresh_lease_native_retry_classes_are_terminal_by_default_and_bounded_wh
         assert_eq!(requests.len(), 2);
         assert!(requests[1]
             .url
-            .starts_with("https://gru.terrascale.tech/v1/"));
+            .starts_with("https://gru.api.terrascale.tech/v1/"));
     }
 }
 
@@ -1849,7 +1857,7 @@ async fn default_client_selects_authenticated_native_origin_and_status_after_dow
     let requests = mock.requests.lock().unwrap();
     assert!(requests[1]
         .url
-        .starts_with("https://gru.terrascale.tech/v1/"));
+        .starts_with("https://gru.api.terrascale.tech/v1/"));
     assert!(requests[1].url.ends_with("/transactions/status"));
     assert_eq!(
         requests[1]
@@ -1919,7 +1927,7 @@ async fn default_point_routes_discovery_then_native_and_transport_loss_never_rep
     assert!(requests[0].url.starts_with(ATLAS_BASE_URL));
     assert!(requests[1]
         .url
-        .starts_with("https://gru.terrascale.tech/v1/"));
+        .starts_with("https://gru.api.terrascale.tech/v1/"));
     assert_eq!(requests[2].body.as_deref(), Some(operation.body()));
 }
 
@@ -1946,7 +1954,7 @@ async fn safe_native_retry_refreshes_expired_routing_before_second_dispatch() {
     let mut refreshed = current_fixture();
     refreshed["revision"] = json!("42");
     refreshed["endpoints"][0]["region"] = json!("IAD");
-    refreshed["endpoints"][0]["url"] = json!("https://iad.terrascale.tech");
+    refreshed["endpoints"][0]["url"] = json!("https://iad.api.terrascale.tech");
     mock.response(200, &refreshed);
     mock.response(
         200,
@@ -1965,14 +1973,14 @@ async fn safe_native_retry_refreshes_expired_routing_before_second_dispatch() {
     assert_eq!(requests.len(), 4);
     assert!(requests[1]
         .url
-        .starts_with("https://gru.terrascale.tech/v1/"));
+        .starts_with("https://gru.api.terrascale.tech/v1/"));
     assert!(requests[2]
         .url
         .starts_with("https://atlas.terrascale.tech/api/v1/discovery?"));
     assert!(requests[2].url.ends_with("&observed_deployment_id=fixture-deployment&observed_cell=gru&observed_publisher_generation=18446744073709551615&rev=41"));
     assert!(requests[3]
         .url
-        .starts_with("https://iad.terrascale.tech/v1/"));
+        .starts_with("https://iad.api.terrascale.tech/v1/"));
 }
 
 #[derive(Debug)]

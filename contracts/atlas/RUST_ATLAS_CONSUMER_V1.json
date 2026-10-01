@@ -99,5 +99,31 @@
     "scripts/qualification/README.md",
     "scripts/qualification/run.sh",
     "scripts/qualification/src/main.rs"
-  ]
+  ],
+  "codec_fixtures": {
+    "native-discovery-forbidden-receipt.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-discovery-forbidden-receipt.json",
+      "sha256": "2b63d132df8b304286ebb0e9b4ab967a317544e8128f9105c7d71a138721528f"
+    },
+    "native-discovery-forbidden.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-discovery-forbidden.json",
+      "sha256": "3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c"
+    },
+    "native-discovery-success-receipt.json": {
+      "path": "contracts/atlas/native-discovery-success-receipt.json",
+      "sha256": "d56ccaaef70693c5df168a7ae1c8c854f0c504c331d551d4273000fdac6c246d"
+    },
+    "native-discovery-success.json": {
+      "path": "contracts/atlas/native-discovery-success.json",
+      "sha256": "82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec"
+    },
+    "native-wire-export.log": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-wire-export.log",
+      "sha256": "7f6538d64923b3a9bd994c606d034e590333075b24f82631b2cbab1ba05b1dc4"
+    },
+    "native-wire-identity.json": {
+      "path": "/home/mariogk/Projects/TerraScale/.qualification/integration-20260930/revisions/local-packets-v24/evidence/atlas-consumer-fixtures/native-wire-identity.json",
+      "sha256": "b789d6fb7782e34ece3b516139856f2b6d2dea0543436820eefa50ff31355538"
+    }
+  }
 }

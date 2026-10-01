@@ -34,7 +34,7 @@ fn scope() -> DatabaseScope {
 fn sdk(mock: Arc<Mock>) -> TerraScaleClient {
     TerraScaleClient::with_transport(
         ClientConfig::builder()
-            .api_base_url("https://gru.terrascale.tech")
+            .api_base_url("https://gru.api.terrascale.tech")
             .api_key("native-secret")
             .auth_api_key("auth-secret")
             .max_retry_attempts(2)
@@ -118,7 +118,7 @@ async fn malformed_native_discovery_credentials_fail_before_transport() {
         "invalid_discovery_credential"
     );
     assert!(mock.requests.lock().unwrap().is_empty());
-    assert_eq!(regional_host(RegionCode::Gru), "gru.terrascale.tech");
+    assert_eq!(regional_host(RegionCode::Gru), "gru.api.terrascale.tech");
     assert_eq!(
         ClientConfig::builder()
             .api_base_url("https://api.terrascale.tech")
@@ -131,7 +131,7 @@ async fn malformed_native_discovery_credentials_fail_before_transport() {
         "https://api.terrascale.tech.",
         "https://API.terrascale.tech:443",
         "https://API.terrascale.tech.:443",
-        "https://gru.api.terrascale.tech",
+        "https://gru.terrascale.tech",
         "https://gru.auth.terrascale.tech",
         "https://atlas.terrascale.tech",
         "https://auth.terrascale.tech",
@@ -148,15 +148,15 @@ async fn malformed_native_discovery_credentials_fail_before_transport() {
         "https://mail.terrascale.tech",
         "https://terrascale.tech",
         "https://terrascale.tech.",
-        "https://gru.terrascale.tech.",
-        "https://GRU.terrascale.tech",
-        "https://gru.terrascale.tech:443",
-        "https://gru.terrascale.tech:8443",
+        "https://gru.api.terrascale.tech.",
+        "https://GRU.api.terrascale.tech",
+        "https://gru.api.terrascale.tech:443",
+        "https://gru.api.terrascale.tech:8443",
         "https://nested.gru.terrascale.tech",
-        "https://-gru.terrascale.tech",
-        "https://gru-.terrascale.tech",
-        "https://gr_u.terrascale.tech",
-        "https://abcdefghijklmnopq.terrascale.tech",
+        "https://-gru.api.terrascale.tech",
+        "https://gru-.api.terrascale.tech",
+        "https://gr_u.api.terrascale.tech",
+        "https://abcdefghijklmnopq.api.terrascale.tech",
     ] {
         assert_eq!(
             ClientConfig::builder()
@@ -175,7 +175,7 @@ async fn malformed_native_discovery_credentials_fail_before_transport() {
         .is_err());
     let guarded = TerraScaleClient::with_transport(
         ClientConfig::builder()
-            .api_base_url("https://gru.terrascale.tech")
+            .api_base_url("https://gru.api.terrascale.tech")
             .tenant_id("00000000-0000-0000-0000-000000000009")
             .build()
             .unwrap(),
@@ -207,7 +207,7 @@ async fn full_u64_uuid_path_and_native_credentials_are_exact() {
         .unwrap();
     let requests = mock.requests.lock().unwrap();
     let request = &requests[0];
-    assert_eq!(request.url, "https://gru.terrascale.tech/v1/tenants/00000000-0000-0000-0000-000000000001/databases/00000000-0000-0000-0000-000000000002/shards/18446744073709551615/collections/00000000-0000-0000-0000-000000000003/documents/00000000-0000-0000-0000-000000000004");
+    assert_eq!(request.url, "https://gru.api.terrascale.tech/v1/tenants/00000000-0000-0000-0000-000000000001/databases/00000000-0000-0000-0000-000000000002/shards/18446744073709551615/collections/00000000-0000-0000-0000-000000000003/documents/00000000-0000-0000-0000-000000000004");
     assert!(request
         .headers
         .contains(&("authorization".into(), "Bearer native-secret".into())));
