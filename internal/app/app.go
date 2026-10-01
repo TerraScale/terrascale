@@ -84,6 +84,8 @@ func New(cfg config.Config) (*Application, error) {
 	}
 	status.Mount(mux, deps)
 	auth.Mount(mux, deps)
+	deviceAuthorization := auth.NewDeviceAuthorization(deps, cfg.SecureCookies)
+	deviceAuthorization.MountBrowser(mux)
 	admin.Mount(mux, deps)
 	authentication.Mount(mux, deps)
 	onboarding.Mount(mux, deps, billing)
@@ -115,6 +117,7 @@ func New(cfg config.Config) (*Application, error) {
 	// token instead of cookies, so it sits outside the CSRF guard.
 	root := http.NewServeMux()
 	root.Handle(core.MCPPath, mcpserver.New(store, deps.Tools))
+	root.Handle("/api/v1/dashboard/cli/", deviceAuthorization.PublicHandler())
 	root.Handle("/", invalidatePrefetch(dropForeignMessages(guard.Protect(mux))))
 	return &Application{Handler: compress(securityHeaders(cfg.SecureCookies, root))}, nil
 }
