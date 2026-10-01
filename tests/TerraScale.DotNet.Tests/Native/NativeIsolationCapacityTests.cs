@@ -9,6 +9,30 @@ namespace TerraScale.DotNet.Tests.Native;
 public sealed class NativeIsolationCapacityTests
 {
     [Test]
+    public async Task SuspendedCallbacksRetainInvocationContextAndPropagateFaults()
+    {
+        using var executor = new NativeInvocationExecutor(1);
+        var ambient = new AsyncLocal<string>();
+        foreach (var value in new[] { "first caller", "second caller" })
+        {
+            ambient.Value = value;
+            var result = await executor.ExecuteAsync(async () =>
+            {
+                await Task.Yield();
+                await Task.Yield();
+                return (ambient.Value, Thread.CurrentThread.IsThreadPoolThread);
+            });
+            await Assert.That(result.Value).IsEqualTo(value);
+            await Assert.That(result.IsThreadPoolThread).IsFalse();
+        }
+        await Assert.ThrowsAsync<InvalidOperationException>(() => executor.ExecuteAsync<bool>(async () =>
+        {
+            await Task.Yield();
+            throw new InvalidOperationException("Suspended provider failure.");
+        }));
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task TimedOutCallbacksAndCleanupHoldCapacityUntilActualCompletion(bool cleanup)
@@ -65,7 +89,9 @@ public sealed class NativeIsolationCapacityTests
     }
 
     [Test]
-    public async Task ConcurrentClientDeadlinesDoNotDependOnWorkersBlockedByProviders()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConcurrentClientDeadlinesDoNotDependOnWorkersBlockedByProviders(bool suspend)
     {
         ThreadPool.GetMinThreads(out var minimum, out _);
         var instances = Math.Clamp((minimum + 31) / 16, 4, 16);
@@ -88,11 +114,12 @@ public sealed class NativeIsolationCapacityTests
             {
                 var handler = new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("Cancelled providers must never dispatch."));
                 var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
-                    _ =>
+                    async _ =>
                     {
+                        if (suspend) await Task.Yield();
                         started.Release();
                         if (!release.Wait(TimeSpan.FromSeconds(30))) throw new TimeoutException("Provider was not released.");
-                        return ValueTask.FromResult("tbk1.fixture-key");
+                        return "tbk1.fixture-key";
                     }, TimeSpan.FromSeconds(30), handler, clock);
                 clients.Add(client);
                 for (var operation = 0; operation < NativeTransport.MaximumOutstandingOperations; operation++)
@@ -109,6 +136,9 @@ public sealed class NativeIsolationCapacityTests
             await Assert.That(watchdogReleased).IsFalse();
             foreach (var result in results)
                 await Assert.That(((NativeResult<NativePoint>.Failure)result).Error.Code).IsEqualTo("deadline_exceeded");
+            // Disposing while callbacks are suspended/blocked must retain their
+            // owned executor until all late continuations and cleanup finish.
+            foreach (var client in clients) client.Dispose();
         }
         finally
         {

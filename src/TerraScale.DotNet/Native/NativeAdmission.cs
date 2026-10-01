@@ -27,6 +27,12 @@ public sealed class NativeAdmissionException : InvalidOperationException
 }
 
 /// <summary>Resolves current scoped credential and capability admission immediately before a finite request.</summary>
+/// <remarks>
+/// The returned task must represent the provider's complete work; detached or async-void work is unsupported.
+/// Native clients isolate invocation and context-capturing continuations on owned workers. Providers that opt out of
+/// context capture (for example, with ConfigureAwait(false) or Task.Run) must keep shared-pool continuations nonblocking;
+/// starvation caused by such provider code is outside the client's finite-deadline guarantee.
+/// </remarks>
 public interface INativeAdmissionProvider
 {
     /// <summary>Admits the requested scope and capabilities using the current credential. Direct providers delegate provisioning checks to the caller.</summary>

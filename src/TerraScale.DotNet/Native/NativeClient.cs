@@ -7,7 +7,14 @@ using System.Text.Json;
 namespace TerraScale.DotNet.Native;
 
 /// <summary>Native v1 transport. Credentials and admission are resolved anew for every finite request.</summary>
-/// <remarks>At most 16 operations per client remain outstanding, including callbacks and cleanup that outlive a caller deadline. Additional calls wait within their original deadline. Unexpected provider programming and lifecycle exceptions propagate. Invalid credentials and admissions return distinct local failure codes.</remarks>
+/// <remarks>
+/// At most 16 operations per client remain outstanding, including callbacks and cleanup that outlive a caller deadline.
+/// Additional calls wait within their original deadline. Provider, handler and content tasks must represent all their work;
+/// detached or async-void work is unsupported. Callback invocation and context-capturing continuations use owned workers.
+/// Callbacks that opt out of context capture (for example, with ConfigureAwait(false) or Task.Run) must keep shared-pool
+/// continuations nonblocking; starvation caused by such callback code is outside the finite-deadline guarantee.
+/// Unexpected provider programming and lifecycle exceptions propagate. Invalid credentials and admissions return distinct local failure codes.
+/// </remarks>
 public sealed class NativeClient : IDisposable
 {
     private readonly Guid owner = Guid.NewGuid();

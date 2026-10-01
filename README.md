@@ -132,6 +132,13 @@ Auth consumers use `TerraScaleAuthClientOptions` and `AddTerraScaleAuthClient`.
 Regional database origins are `https://<region>.api.terrascale.tech`, for example
 `https://gru.api.terrascale.tech`. Direct-origin callers own prior provisioning
 and capability checks; accepting a canonical URL does not establish eligibility.
+Native clients and discovery routers use owned workers for callback invocation
+and context-capturing continuations. Key/admission providers and custom HTTP
+handler/content callbacks must return tasks representing their complete work;
+detached or async-void work is unsupported. Callbacks that opt out of context
+capture with `ConfigureAwait(false)`, `Task.Run`, or similar APIs must keep
+shared-pool continuations nonblocking. Shared-pool starvation caused by such
+callback code is outside the finite-deadline guarantee.
 Discovery caches only authenticated leases for the same credential, coalesces
 scope requests, and retains at most 256 scope observation floors for its lifetime.
 Floors survive lease expiry: deployment or cell changes require explicit

@@ -8,7 +8,13 @@ using System.Text.Json;
 namespace TerraScale.DotNet.Native;
 
 /// <summary>Consumes authenticated, scoped Atlas admission without catalog or origin fallback.</summary>
-/// <remarks>At most 16 discovery operations remain outstanding, including late callbacks and cleanup; additional calls wait within their original deadline.</remarks>
+/// <remarks>
+/// At most 16 discovery operations remain outstanding, including late callbacks and cleanup; additional calls wait within their original deadline.
+/// Handler and content tasks must represent all their work; detached or async-void work is unsupported.
+/// Callback invocation and context-capturing continuations use owned workers. Callbacks that opt out of context capture
+/// (for example, with ConfigureAwait(false) or Task.Run) must keep shared-pool continuations nonblocking;
+/// starvation caused by such callback code is outside the finite-deadline guarantee.
+/// </remarks>
 public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposable
 {
     private const int BodyLimit = 64 * 1024;
