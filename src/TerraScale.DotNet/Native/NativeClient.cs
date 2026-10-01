@@ -211,7 +211,6 @@ public sealed class NativeClient : IDisposable
                 () => admissionProvider.ResolveAsync(Scope, key, capabilities, budgetToken).AsTask(), budgetToken).ConfigureAwait(false);
             var response = await NativeTransport.InvokeAsync(async () =>
             {
-                admission.AssertCurrent();
                 budgetToken.ThrowIfCancellationRequested();
                 // The transport invocation owns the request until it completes,
                 // even if a synchronous handler outlives the caller's wait.
@@ -223,6 +222,7 @@ public sealed class NativeClient : IDisposable
                     request.Content = new ByteArrayContent(Encoding.UTF8.GetBytes(body));
                     request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
                 }
+                admission.AssertCurrent();
                 lock (dispatchGate)
                 {
                     budgetToken.ThrowIfCancellationRequested();

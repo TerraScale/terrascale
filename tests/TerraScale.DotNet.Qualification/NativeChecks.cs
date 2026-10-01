@@ -197,7 +197,15 @@ internal static class NativeChecks
                 return Json("{\"version\":1,\"rows\":[]}");
             if (request.RequestUri.AbsolutePath == statusPath)
             {
-                Require(body.RootElement.GetProperty("effect_digest").GetString() == identity!.EffectDigest, "Status looked up another identity.");
+                var transaction = body.RootElement.GetProperty("transaction_id");
+                Require(transaction.EnumerateObject().Count() == 2 &&
+                    transaction.GetProperty("expires_at_unix_ms").GetString() == identity!.TransactionId.ExpiresAtUnixMs.ToString(CultureInfo.InvariantCulture) &&
+                    transaction.GetProperty("nonce").GetString() == identity.TransactionId.Nonce,
+                    "Status looked up another transaction ID.");
+                var authority = body.RootElement.GetProperty("authority");
+                Require(identity!.Authority is NativeAuthority.Leaderless && authority.EnumerateObject().Count() == 1 &&
+                    authority.GetProperty("mode").GetString() == "leaderless", "Status looked up another authority.");
+                Require(body.RootElement.GetProperty("effect_digest").GetString() == identity.EffectDigest, "Status looked up another effect.");
                 return Json(NativeCodec.EncodeTransactionStatus(new NativeTransactionStatus(identity!, NativeTransactionState.Committed, receipt)));
             }
             Require(request.RequestUri.AbsolutePath == commitPath, "Public client used an undocumented route.");
