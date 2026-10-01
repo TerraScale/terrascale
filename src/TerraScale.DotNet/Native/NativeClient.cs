@@ -353,9 +353,10 @@ internal static class NativeTransport
     internal static Task<byte[]> ReadBodyAsync(HttpContent content, Operation operation, int limit,
         Func<Exception> overflow, CancellationToken cancellationToken)
     {
-        if (content.Headers.ContentLength > limit) throw overflow();
         return operation.InvokeAsync(async () =>
         {
+            // The length getter can invoke custom content synchronously too.
+            if (content.Headers.ContentLength > limit) throw overflow();
             // Copy directly into a bounded destination. ReadAsStreamAsync can
             // materialize an undeclared custom content body before any check.
             using var destination = new BoundedBodyStream(limit, overflow, cancellationToken);

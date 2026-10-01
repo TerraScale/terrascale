@@ -16,6 +16,8 @@ public sealed class NativeBlockingInvocationTests
     [Arguments("assert", true)]
     [Arguments("send", false)]
     [Arguments("send", true)]
+    [Arguments("length", false)]
+    [Arguments("length", true)]
     [Arguments("serialize", false)]
     [Arguments("serialize", true)]
     [Arguments("read", false)]
@@ -51,7 +53,7 @@ public sealed class NativeBlockingInvocationTests
             var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
             await Assert.That(error.Code).IsEqualTo(cancelCaller ? "cancelled" : "deadline_exceeded");
             await Assert.That(error.Transaction).IsEqualTo(prepared.Identity);
-            var dispatched = stage is "send" or "serialize" or "read";
+            var dispatched = stage is "send" or "length" or "serialize" or "read";
             await Assert.That(error.MutationOutcome).IsEqualTo(dispatched ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown);
             await Assert.That(calls).IsEqualTo(dispatched ? 1 : 0);
         }
@@ -60,7 +62,7 @@ public sealed class NativeBlockingInvocationTests
             blocker.Release.Set();
             await blocker.Finished.Task.WaitAsync(TimeSpan.FromSeconds(10));
         }
-        if (stage is "send" or "serialize" or "read")
+        if (stage is "send" or "length" or "serialize" or "read")
         {
             await content.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await Assert.That(retainedBody).IsEqualTo(prepared.RequestBody);
@@ -71,6 +73,8 @@ public sealed class NativeBlockingInvocationTests
     [Test]
     [Arguments("send", false)]
     [Arguments("send", true)]
+    [Arguments("length", false)]
+    [Arguments("length", true)]
     [Arguments("serialize", false)]
     [Arguments("serialize", true)]
     [Arguments("read", false)]
@@ -163,7 +167,7 @@ public sealed class NativeBlockingInvocationTests
             if (stage == "serialize") blocker.Wait();
             return stream.CopyToAsync(destination);
         }
-        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+        protected override bool TryComputeLength(out long length) { if (stage == "length") blocker.Wait(); length = 0; return false; }
         protected override void Dispose(bool disposing)
         {
             if (disposing) { stream.Dispose(); Disposed.TrySetResult(); }
