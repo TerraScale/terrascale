@@ -144,7 +144,8 @@ The vendored SDK includes the regional API hostname correction documented in
 `vendor/PROVENANCE.md`. Reapply it after vendoring the current pin; for upgrades,
 check whether the chosen upstream revision already contains the correction.
 `make check-modules` verifies
-public dependency resolution and runs in CI before the vendored build checks.
+public dependency resolution in its own CI job, alongside lint, unit tests,
+and four browser shards. It needs no npm install or browser assets.
 It uses the installed Go toolchain and a temporary module cache, removed on
 exit, so a warm runner cache cannot hide download failures. The check downloads
 the full module graph, including tool and transitive module dependencies.
