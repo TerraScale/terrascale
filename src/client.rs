@@ -3,7 +3,7 @@
 use crate::auth_idp::AuthIdpClient;
 use crate::auth_routing::AuthRouter;
 use crate::config::{ClientConfig, DEFAULT_API_BASE_URL};
-use crate::discovery::{AtlasDiscovery, NativeRequirement, ScopeKey};
+use crate::discovery::{AtlasDiscovery, DiscoveryClock, NativeRequirement, ScopeKey};
 use crate::documents::{DatabaseScope, DocumentsClient};
 use crate::error::{Error, ErrorKind, Result};
 use crate::subscriptions::SubscriptionsClient;
@@ -32,14 +32,18 @@ pub(crate) struct Shared {
 pub(crate) type SharedClient = Arc<Shared>;
 
 impl Shared {
-    fn new(config: ClientConfig, transport: Arc<dyn HttpTransport>) -> Self {
+    fn new(
+        config: ClientConfig,
+        transport: Arc<dyn HttpTransport>,
+        native_router: AtlasDiscovery,
+    ) -> Self {
         let auth_router = AuthRouter::for_config(
             config.auth_base_url(),
             config.auth_reverse_proxy(),
             config.discovery_base_url(),
         );
         Self {
-            native_router: AtlasDiscovery::new(config.clone(), transport.clone()),
+            native_router,
             discovery_failed_until: Mutex::new(HashMap::new()),
             transport,
             config,
@@ -171,7 +175,13 @@ impl Shared {
                 let mut origin = self.native_origin(scope, requirement).await?;
                 // A refresh can restore the failed region to the top rank.
                 // Exclude failures from this request before sending again.
+                let mut exclusions = 0;
                 while origin != DEFAULT_API_BASE_URL && failed_origins.contains(&origin) {
+                    if exclusions >= failed_origins.len() {
+                        origin = DEFAULT_API_BASE_URL.to_owned();
+                        break;
+                    }
+                    exclusions += 1;
                     self.native_router
                         .failover(scope, &origin, requirement)
                         .await;
@@ -432,8 +442,22 @@ impl TerraScaleClient {
         Self::with_transport(config, Arc::new(ReqwestTransport::new()))
     }
     pub fn with_transport(config: ClientConfig, transport: Arc<dyn HttpTransport>) -> Self {
+        let router = AtlasDiscovery::new(config.clone(), transport.clone());
         Self {
-            shared: Arc::new(Shared::new(config, transport)),
+            shared: Arc::new(Shared::new(config, transport, router)),
+        }
+    }
+    /// Use a caller-owned transport and discovery clock. The clock must advance
+    /// consistently in both wall and monotonic time; injection alone does not
+    /// establish healthy-clock provenance for a deployed client.
+    pub fn with_transport_and_clock(
+        config: ClientConfig,
+        transport: Arc<dyn HttpTransport>,
+        clock: Arc<dyn DiscoveryClock>,
+    ) -> Self {
+        let router = AtlasDiscovery::with_clock(config.clone(), transport.clone(), clock);
+        Self {
+            shared: Arc::new(Shared::new(config, transport, router)),
         }
     }
     #[must_use]

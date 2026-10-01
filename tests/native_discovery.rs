@@ -1128,14 +1128,17 @@ fn current_fixture() -> Json {
     body
 }
 
-fn ranked_fixture() -> Json {
-    let mut body = current_fixture();
+fn ranked_from(mut body: Json) -> Json {
     let mut next = body["endpoints"][0].clone();
     next["region"] = json!("FRA");
     next["url"] = json!("https://fra.api.terrascale.tech");
     next["priority"] = json!(2);
     body["endpoints"].as_array_mut().unwrap().push(next);
     body
+}
+
+fn ranked_fixture() -> Json {
+    ranked_from(current_fixture())
 }
 
 async fn point(client: &TerraScaleClient) -> Result<Point> {
@@ -1211,9 +1214,10 @@ async fn transport_5xx_and_421_fail_over_then_repin_with_default_options() {
 #[tokio::test]
 async fn failover_excludes_failed_regions_after_the_discovery_lease_expires() {
     for failures in [1, 2] {
-        let mock = Arc::new(Mock::default());
-        let client = TerraScaleClient::with_transport(config(), mock.clone());
-        let mut first = ranked_fixture();
+        let clock = Clock::new();
+        let mock = Mock::new(clock.clone());
+        let client = TerraScaleClient::with_transport_and_clock(config(), mock.clone(), clock);
+        let mut first = ranked_from(fixture());
         first["refreshSeconds"] = json!(1);
         let mut next = first["endpoints"][0].clone();
         next["region"] = json!("SFO");
@@ -1454,8 +1458,9 @@ async fn default_client_selects_authenticated_native_origin_and_status_after_dow
 }
 #[tokio::test]
 async fn default_point_routes_discovery_then_native_and_transport_loss_never_replays_commit() {
-    let mock = Arc::new(Mock::default());
-    let client = TerraScaleClient::with_transport(
+    let clock = Clock::new();
+    let mock = Mock::new(clock.clone());
+    let client = TerraScaleClient::with_transport_and_clock(
         ClientConfig::builder()
             .api_key(native_key())
             .max_retry_attempts(3)
@@ -1463,8 +1468,9 @@ async fn default_point_routes_discovery_then_native_and_transport_loss_never_rep
             .build()
             .unwrap(),
         mock.clone(),
+        clock,
     );
-    let mut discovery = ranked_fixture();
+    let mut discovery = ranked_from(fixture());
     discovery["refreshSeconds"] = json!(1);
     mock.response(200, &discovery);
     mock.response(
