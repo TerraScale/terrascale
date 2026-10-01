@@ -1,34 +1,40 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- Multi-target so net10.0 consumers (the terrabase benchmark lane) can
-         reference this project directly while the package keeps its primary
-         net11.0 target. Toolchains older than .NET 11 cannot build net11.0, so
-         the target list drops it there instead of failing the whole build.
-         Clears the singular TargetFramework inherited from Directory.Build.props
-         so cross-target dispatch runs; per-TFM inner builds set TargetFramework
-         as a global property and are unaffected. -->
+    <!-- Build both supported targets with .NET 11, or .NET 10 LTS with an
+         older toolchain. Clear the inherited singular TargetFramework so
+         multi-target dispatch selects the configured frameworks. -->
     <TargetFrameworks Condition="$([MSBuild]::VersionGreaterThanOrEquals('$(BundledNETCoreAppTargetFrameworkVersion)', '11.0'))">net10.0;net11.0</TargetFrameworks>
     <TargetFrameworks Condition="'$(TargetFrameworks)' == ''">net10.0</TargetFrameworks>
     <TargetFramework />
     <PackageId>TerraScale.DotNet</PackageId>
     <Version>0.1.0</Version>
-    <Description>Official .NET SDK for TerraScale public APIs.</Description>
-    <PackageProjectUrl>https://git.terrascale.tech/TerraScale/TerraScale.DotNet</PackageProjectUrl>
-    <RepositoryUrl>https://git.terrascale.tech/TerraScale/TerraScale.DotNet</RepositoryUrl>
+    <Description>Official .NET SDK for TerraScale native database and auth APIs.</Description>
+    <PackageProjectUrl>https://git.terrascale.tech/TerraScale/ts-dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://git.terrascale.tech/TerraScale/ts-dotnet</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageTags>terrascale;database;documents;projects;auth;notifications;backups;billing;sdk</PackageTags>
-    <PackageReleaseNotes>Supports TerraScale public API /api/v1 on .NET 11 preview. Public Alpha API candidate qualification is an external release gate recorded outside the immutable package.</PackageReleaseNotes>
+    <PackageTags>terrascale;database;documents;native;auth;sdk</PackageTags>
+    <PackageReleaseNotes>Native v1 client replaces TerraScaleClient, its options, AddTerraScaleClient, and the obsolete EF provider; use NativeClient and AddTerraScaleAuthClient. Supports .NET 10 and .NET 11. Producer and release qualification remain external gates recorded against immutable package bytes.</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Deterministic>true</Deterministic>
+    <!-- Required only by source-generated platform file-persistence interop. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IncludeSymbols>false</IncludeSymbols>
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="TerraScale.DotNet.Tests" />
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="../../contracts/native/**/*" Pack="true" PackagePath="contracts/native" />
+    <EmbeddedResource Include="../../contracts/native/client-openapi.json" LogicalName="TerraScale.DotNet.Native.client-openapi.json" />
+    <EmbeddedResource Include="../../contracts/native/atomic_vectors.json" LogicalName="TerraScale.DotNet.Native.atomic_vectors.json" />
+    <EmbeddedResource Include="../../contracts/native/atlas/native-wire-identity.json" LogicalName="TerraScale.DotNet.Native.atlas.native-wire-identity.json" />
+    <EmbeddedResource Include="../../contracts/native/atlas/native-discovery-success.json" LogicalName="TerraScale.DotNet.Native.atlas.native-discovery-success.json" />
+    <EmbeddedResource Include="../../contracts/native/atlas/native-discovery-forbidden.json" LogicalName="TerraScale.DotNet.Native.atlas.native-discovery-forbidden.json" />
+    <EmbeddedResource Include="../../contracts/auth/error-codes.json" LogicalName="TerraScale.DotNet.Auth.error-codes.json" />
+    <None Include="../../contracts/auth/error-codes.json" Pack="true" PackagePath="contracts/auth" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
-    <PackageReference Include="ZString" Version="2.6.0" />
   </ItemGroup>
 </Project>

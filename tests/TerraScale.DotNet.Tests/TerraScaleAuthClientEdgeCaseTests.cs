@@ -113,7 +113,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         var body = UserJson("usr_1").Replace("\"created_at\":1", "\"created_at\":\"not-a-number\"");
         var client = CreateClient(new ScriptedHandler(Always(HttpStatusCode.OK, body)));
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.GetAsync("usr_1"));
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.GetAsync("usr_1"));
         await Assert.That(exception!.ErrorCode).IsEqualTo("invalid_response");
     }
 
@@ -122,7 +122,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     {
         var client = CreateClient(new ScriptedHandler(Always(HttpStatusCode.OK, "{\"data\": [")));
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.ListAsync());
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
         await Assert.That(exception!.ErrorCode).IsEqualTo("invalid_response");
     }
 
@@ -131,7 +131,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     {
         var client = CreateClient(new ScriptedHandler(Always(HttpStatusCode.OK, string.Empty)));
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.ListAsync());
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
         await Assert.That(exception!.ErrorCode).IsEqualTo("invalid_response");
     }
 
@@ -143,7 +143,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
             Content = new StringContent("<html><body><h1>Bad Gateway</h1></body></html>", Encoding.UTF8, "text/html"),
         })));
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.ListAsync());
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
         await Assert.That(exception!.ErrorCode).IsEqualTo("invalid_response");
     }
 
@@ -152,12 +152,12 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     {
         // Bare array where the users envelope object is expected.
         var bareArray = CreateClient(new ScriptedHandler(Always(HttpStatusCode.OK, "[" + UserJson("usr_1") + "]")));
-        var arrayError = await Assert.ThrowsAsync<TerraScaleApiException>(() => bareArray.Users.ListAsync());
+        var arrayError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => bareArray.Users.ListAsync());
         await Assert.That(arrayError!.ErrorCode).IsEqualTo("invalid_response");
 
         // Envelope object where the organizations bare array is expected.
         var enveloped = CreateClient(new ScriptedHandler(Always(HttpStatusCode.OK, PageJson())));
-        var envelopeError = await Assert.ThrowsAsync<TerraScaleApiException>(() => enveloped.Organizations.ListAsync());
+        var envelopeError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => enveloped.Organizations.ListAsync());
         await Assert.That(envelopeError!.ErrorCode).IsEqualTo("invalid_response");
     }
 
@@ -226,11 +226,11 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         var client = CreateClient(new ScriptedHandler(Always(HttpStatusCode.Unauthorized,
             ErrorEnvelopeJson("unauthorized", "The management key is missing or invalid."))));
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.ListAsync());
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(exception.ErrorCode).IsEqualTo("unauthorized");
-        await Assert.That(exception.Message).IsEqualTo("The management key is missing or invalid.");
+        await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 401.");
     }
 
     [Test]
@@ -239,7 +239,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         var client = CreateClient(new ScriptedHandler(Always(HttpStatusCode.Forbidden,
             ErrorEnvelopeJson("insufficient_scope", "This key lacks the required scope."))));
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.ListAsync());
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(exception.ErrorCode).IsEqualTo("insufficient_scope");
@@ -253,8 +253,8 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         var orgClient = CreateClient(new ScriptedHandler(Always(HttpStatusCode.NotFound,
             ErrorEnvelopeJson("not_found", "No such resource."))));
 
-        var userError = await Assert.ThrowsAsync<TerraScaleApiException>(() => userClient.Users.GetAsync("usr_x"));
-        var orgError = await Assert.ThrowsAsync<TerraScaleApiException>(() => orgClient.Organizations.GetAsync("org_x"));
+        var userError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => userClient.Users.GetAsync("usr_x"));
+        var orgError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => orgClient.Organizations.GetAsync("org_x"));
 
         await Assert.That(userError!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(userError.ErrorCode).IsEqualTo("user_not_found");
@@ -268,7 +268,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         var client = CreateClient(new ScriptedHandler(Always(HttpStatusCode.Conflict,
             ErrorEnvelopeJson("email_taken", "an account with this email already exists"))));
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.CreateAsync(email: "a@b.test"));
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.CreateAsync(email: "a@b.test"));
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(exception.ErrorCode).IsEqualTo("email_taken");
@@ -281,13 +281,13 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
 
         var retriedHandler = new ScriptedHandler(Always(HttpStatusCode.TooManyRequests, rateLimited, TimeSpan.Zero));
         var retried = CreateClient(retriedHandler, maxRetryAttempts: 1);
-        var retriedError = await Assert.ThrowsAsync<TerraScaleApiException>(() => retried.Users.ListAsync());
+        var retriedError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => retried.Users.ListAsync());
         await Assert.That(retriedError!.ErrorCode).IsEqualTo("rate_limited");
         await Assert.That(retriedHandler.Attempts).IsEqualTo(2);
 
         var immediateHandler = new ScriptedHandler(Always(HttpStatusCode.TooManyRequests, rateLimited, TimeSpan.FromSeconds(2)));
         var immediate = CreateClient(immediateHandler, maxRetryAttempts: 0);
-        var immediateError = await Assert.ThrowsAsync<TerraScaleApiException>(() => immediate.Users.ListAsync());
+        var immediateError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => immediate.Users.ListAsync());
         await Assert.That(immediateHandler.Attempts).IsEqualTo(1);
         await Assert.That(immediateError!.ErrorCode).IsEqualTo("rate_limited");
         await Assert.That(immediateError.RetryAfter).IsEqualTo(TimeSpan.FromSeconds(2));
@@ -301,8 +301,8 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         var unconfigured = CreateClient(new ScriptedHandler(Always(HttpStatusCode.ServiceUnavailable,
             ErrorEnvelopeJson("billing_not_configured", "Stripe is not configured for this instance."))));
 
-        var overviewError = await Assert.ThrowsAsync<TerraScaleApiException>(() => unavailable.Billing.GetOverviewAsync());
-        var checkoutError = await Assert.ThrowsAsync<TerraScaleApiException>(() => unconfigured.Billing.CreateCheckoutAsync("pro"));
+        var overviewError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => unavailable.Billing.GetOverviewAsync());
+        var checkoutError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => unconfigured.Billing.CreateCheckoutAsync("pro"));
 
         await Assert.That(overviewError!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(overviewError.ErrorCode).IsEqualTo("temporarily_unavailable");
@@ -322,12 +322,12 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         });
         var client = CreateClient(handler);
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(
             () => client.Oidc.RequestClientCredentialsTokenAsync("cid", "secret"));
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(exception.ErrorCode).IsEqualTo("invalid_client");
-        await Assert.That(exception.Message).IsEqualTo("client authentication failed");
+        await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 401.");
     }
 
     [Test]
@@ -335,11 +335,11 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     {
         var client = CreateClient(new ScriptedHandler(Always(HttpStatusCode.Unauthorized, """{"error":"invalid_grant"}""")));
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(
             () => client.Oidc.RefreshTokenAsync("cid", "secret", "rt_x"));
 
         await Assert.That(exception!.ErrorCode).IsEqualTo("invalid_grant");
-        await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 401 Unauthorized.");
+        await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 401.");
     }
 
     [Test]
@@ -347,10 +347,10 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     {
         var client = CreateClient(new ScriptedHandler(Always(HttpStatusCode.InternalServerError, """{"error":{"code":null,"message":null}}""")));
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.ListAsync());
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
 
         await Assert.That(exception!.ErrorCode).IsNull();
-        await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 500 Internal Server Error.");
+        await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 500.");
     }
 
     [Test]
@@ -358,10 +358,10 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     {
         var client = CreateClient(new ScriptedHandler(Always(HttpStatusCode.InternalServerError, string.Empty)));
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.ListAsync());
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-        await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 500 Internal Server Error.");
+        await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 500.");
     }
 
     [Test]
@@ -369,7 +369,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     {
         var client = CreateClient(new ScriptedHandler(Always(HttpStatusCode.OK, "{}")));
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.DeleteAsync("usr_1"));
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.DeleteAsync("usr_1"));
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 200, but HTTP 204 was required.");
@@ -581,7 +581,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         var handler = new ScriptedHandler(Always(HttpStatusCode.ServiceUnavailable, "{}"));
         var client = CreateClient(handler, maxRetryAttempts: 2, retryDelay: TimeSpan.Zero);
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.ListAsync());
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(handler.Attempts).IsEqualTo(3);
@@ -594,7 +594,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         var client = CreateClient(handler, maxRetryAttempts: 1, retryDelay: TimeSpan.FromSeconds(10));
 
         var stopwatch = Stopwatch.StartNew();
-        await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.ListAsync());
+        await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
         stopwatch.Stop();
 
         await Assert.That(handler.Attempts).IsEqualTo(2);
@@ -608,7 +608,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         var handler = new ScriptedHandler(Always(HttpStatusCode.ServiceUnavailable, "{}"));
         var client = CreateClient(handler, maxRetryAttempts: 5, retryDelay: TimeSpan.Zero);
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.CreateAsync(email: "a@b.test"));
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.CreateAsync(email: "a@b.test"));
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(handler.Attempts).IsEqualTo(1);
@@ -628,7 +628,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
             var handler = new ScriptedHandler(Always(status, ErrorEnvelopeJson(code, "boom")));
             var client = CreateClient(handler, maxRetryAttempts: 3, retryDelay: TimeSpan.Zero);
 
-            var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.ListAsync());
+            var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
 
             await Assert.That(exception!.ErrorCode).IsEqualTo(code);
             await Assert.That(handler.Attempts).IsEqualTo(1);
@@ -700,7 +700,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         var client = CreateClient(handler, maxRetryAttempts: 1, retryDelay: TimeSpan.Zero);
 
         var stopwatch = Stopwatch.StartNew();
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.ListAsync());
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
         stopwatch.Stop();
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
@@ -1029,7 +1029,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         options.ApiKey = "sk_mutated";
         options.InstanceSlug = "evil";
 
-        await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.ListAsync());
+        await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
 
         // The client snapshotted the options at construction: no retries, the
         // original key, and the original instance slug.

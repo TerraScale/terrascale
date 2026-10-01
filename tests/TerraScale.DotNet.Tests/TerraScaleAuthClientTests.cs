@@ -82,7 +82,7 @@ public sealed class TerraScaleAuthClientTests
             ApiKey = "sk_key_secret",
             InstanceSlug = "acme",
         });
-        _ = await Assert.ThrowsAsync<TerraScaleApiException>(() => direct.Users.DeleteAsync("usr_1"));
+        _ = await Assert.ThrowsAsync<TerraScaleAuthException>(() => direct.Users.DeleteAsync("usr_1"));
         await Assert.That(directHandler.Requests.Select(uri => uri.Host).SequenceEqual([
             "atlas.terrascale.tech", "sfo.auth.terrascale.tech",
         ])).IsTrue();
@@ -170,11 +170,11 @@ public sealed class TerraScaleAuthClientTests
         };
         var client = CreateClient(handler);
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.CreateAsync(email: "a@b.test"));
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.CreateAsync(email: "a@b.test"));
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(exception.ErrorCode).IsEqualTo("email_taken");
-        await Assert.That(exception.Message).IsEqualTo("an account with this email already exists");
+        await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 409.");
     }
 
     [Test]
@@ -186,12 +186,12 @@ public sealed class TerraScaleAuthClientTests
         };
         var client = CreateClient(handler);
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(
             () => CreateClient(handler).Oidc.RequestClientCredentialsTokenAsync("client", "secret"));
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(exception.ErrorCode).IsEqualTo("invalid_client");
-        await Assert.That(exception.Message).IsEqualTo("bad credentials");
+        await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 401.");
     }
 
     [Test]
@@ -219,7 +219,7 @@ public sealed class TerraScaleAuthClientTests
             MaxRetryAttempts = 5,
             RetryDelay = TimeSpan.Zero,
         });
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(
             () => mutationClient.Users.DeleteAsync("usr_1"));
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(mutationHandler.Attempts).IsEqualTo(1);
@@ -282,7 +282,7 @@ public sealed class TerraScaleAuthClientTests
         var handler = new RecordingHandler("{}");
         var client = CreateClient(handler);
 
-        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Users.DeleteAsync("usr_1"));
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.DeleteAsync("usr_1"));
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }

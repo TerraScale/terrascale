@@ -11,9 +11,14 @@ concurrency:
   group: ts-dotnet-${{ forgejo.workflow }}-${{ forgejo.ref }}
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_CLI_USE_MSBUILDSERVER: "0"
+  SOURCE_REVISION: ${{ forgejo.sha }}
+
 jobs:
   ci:
-    name: Build and test ts-dotnet
+    name: Build, test and export the native SDK
     runs-on: terrascale-builder
     timeout-minutes: 30
     steps:
@@ -25,44 +30,56 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # The contract bundle is pinned by CONTRACT_VERSION + CONTRACT_ARCHIVE_SHA256
-      # and downloaded from the organization CONTRACT_URL, exactly as the retired
-      # central ts-deploy workflow did via the old Makefile contracts target.
-      - name: Materialize the pinned contract bundle
-        env:
-          CONTRACT_URL: ${{ vars.CONTRACT_URL }}
-        run: >-
-          CONTRACT_ARCHIVE_SHA256="$(tr -d '[:space:]' < CONTRACT_ARCHIVE_SHA256)"
-          dotnet run scripts/contracts.cs --version "$(tr -d '[:space:]' < CONTRACT_VERSION)"
-
       - name: Verify dependency audit failure handling
         run: dotnet run scripts/check-nuget-vulnerabilities.tests.cs -- --minimum-expected-tests 13
 
       - name: Fail closed on vulnerable NuGet packages
-        run: dotnet run scripts/check-nuget-vulnerabilities.cs src/TerraScale.DotNet/TerraScale.DotNet.csproj src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj
+        run: dotnet run scripts/check-nuget-vulnerabilities.cs src/TerraScale.DotNet/TerraScale.DotNet.csproj
 
       - name: Build the Release solution
-        run: dotnet build TerraScale.DotNet.slnx --configuration Release --nologo
+        run: dotnet build TerraScale.DotNet.slnx --configuration Release --nologo -p:SourceRevisionId="$SOURCE_REVISION"
 
       - name: Check .NET formatting
         run: dotnet format style TerraScale.DotNet.slnx --verify-no-changes --no-restore
 
-      - name: Run TerraScale.DotNet TUnit tests
+      - name: Run native and ts-auth TUnit tests
         run: |
           for framework in net10.0 net11.0; do
             dotnet run \
               --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj \
               --framework "$framework" \
               --configuration Release --no-build --no-restore -- \
-              --minimum-expected-tests 1
+              --minimum-expected-tests 135
           done
 
-      - name: Run Entity Framework Core TUnit tests
+      - name: Pack and bind the exact source revision
         run: |
+          candidate_version="0.1.0-native.g${SOURCE_REVISION}"
+          dotnet pack src/TerraScale.DotNet/TerraScale.DotNet.csproj \
+            --configuration Release --no-build --no-restore --nologo \
+            --output .ci-package/pack \
+            -p:PackageVersion="$candidate_version" -p:SourceRevisionId="$SOURCE_REVISION"
+          python3 scripts/native_package_artifact.py create \
+            --package ".ci-package/pack/TerraScale.DotNet.${candidate_version}.nupkg" \
+            --version "$candidate_version" --source-revision "$SOURCE_REVISION" \
+            --directory .ci-package/export
+
+      - name: Verify both installed package consumers
+        run: |
+          candidate_version="0.1.0-native.g${SOURCE_REVISION}"
+          candidate_sha="$(python3 -c 'import json; print(json.load(open(".ci-package/export/native-package.json"))["package_sha256"])')"
           for framework in net10.0 net11.0; do
-            dotnet run \
-              --project tests/TerraScale.EntityFrameworkCore.Tests/TerraScale.EntityFrameworkCore.Tests.csproj \
-              --framework "$framework" \
-              --configuration Release --no-build --no-restore -- \
-              --minimum-expected-tests 1
+            python3 scripts/qualification/check_native_package.py \
+              --package ".ci-package/export/TerraScale.DotNet.${candidate_version}.nupkg" \
+              --sha256 "$candidate_sha" --version "$candidate_version" --framework "$framework" \
+              --receipt ".ci-package/export/${framework}-consumer.json"
           done
+
+      - name: Export qualified package bytes and metadata
+        # Forgejo's fork, v3-node20: legacy artifact protocol, not GitHub v4.
+        uses: https://data.forgejo.org/forgejo/upload-artifact@ed48a7bb0c8a9079492c354d37994c413423c83e
+        with:
+          name: terrascale-dotnet-native-${{ forgejo.sha }}-${{ forgejo.run_id }}
+          path: .ci-package/export/
+          if-no-files-found: error
+          retention-days: 30

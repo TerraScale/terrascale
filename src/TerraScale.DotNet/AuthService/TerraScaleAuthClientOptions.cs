@@ -54,6 +54,9 @@ public sealed record TerraScaleAuthClientOptions
     /// </summary>
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromMilliseconds(250);
 
+    /// <inheritdoc />
+    public override string ToString() => "TerraScale auth client options";
+
     internal void Validate()
     {
         if (BaseAddress is null)
@@ -132,7 +135,7 @@ public sealed record TerraScaleAuthClientOptions
         }
     }
 
-    private static void ValidateEndpoint(Uri endpoint, string name)
+    internal static void ValidateEndpoint(Uri endpoint, string name)
     {
         if (!endpoint.IsAbsoluteUri)
         {

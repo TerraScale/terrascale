@@ -1,0 +1,54 @@
+{
+  "schema": "terrascale.dotnet.native-contract-inputs.v1",
+  "producer_contract_family": "native-v1",
+  "artifacts": [
+    {
+      "path": "client-openapi.json",
+      "bytes": 98014,
+      "sha256": "563a66449d8c2eeb4306b9bb9d994cabb86c14bd4c469f785dabe5afb9f6ef3d"
+    },
+    {
+      "path": "atomic_vectors.json",
+      "bytes": 8776,
+      "sha256": "4ce4286b6e2eeae4ee15dec83f788f33cffdba7606a49021ec81afe0a4a9e816"
+    },
+    {
+      "path": "atlas/native-wire-identity.json",
+      "bytes": 2581,
+      "sha256": "b789d6fb7782e34ece3b516139856f2b6d2dea0543436820eefa50ff31355538"
+    },
+    {
+      "path": "atlas/native-discovery-success.json",
+      "bytes": 771,
+      "sha256": "82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec"
+    },
+    {
+      "path": "atlas/native-discovery-forbidden.json",
+      "bytes": 154,
+      "sha256": "3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c"
+    }
+  ],
+  "foundation_manifest_sha256": "daf01f656ea1559029f417801d63bd746729d31f324ae41ab6ec11c9e3e22e7d",
+  "foundation_review_sha256": "6a4edd023dd6b95389ce4325c82296789e24db9426ee2093dcb6af352d962911",
+  "discovery_manifest_sha256": "7fd968f0e4552f8f3dcdf90eae2b3e64f704ea02c30ec45e0941ce9010b9f930",
+  "discovery_review_sha256": "822871a5e0fd4798514e6e5783d191df79c8e18e49c78b0b026da57dc96d61cb",
+  "openapi_effect_example_correction": {
+    "preimage_sha256": "2c8fc075bb2714de6f0ba10756f903e09e4d2a43ecaa63b2135ccb2042545a52",
+    "manifest_sha256": "79d13c23e706b4ff3a2a2d35dc98306a99fcd3f3cfa12bbb89b6dd08a540273e",
+    "identity_mapping_sha256": "89e61a94011507c211c617db2ff6616c66cc309e7fd3d82ac539cd34b1b32388",
+    "accepted_encoder_proof_sha256": "6a6505fe6076b7c734bfc60a07ae84a92b3aad55d7d98b48ba1a65d0d2ecdeb4",
+    "accepted_encoder_result_sha256": "b980cc24a1ad7977abd1a0d7d3f3b8ec3538e1d315203b5234a6c0079e1d952e",
+    "independent_reviewer": "/root/cli_check_04",
+    "independent_verdict": "ACCEPTED_SOURCE_CORRECTION_ONLY"
+  },
+  "regional_origin_derivation": {
+    "historical_success_sha256": "d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0",
+    "derived_success_sha256": "82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec",
+    "change": "GRU origin aligned with production https://gru.api.terrascale.tech; derived codec bytes, not a new live capture"
+  },
+  "transaction_status_documentation_correction": {
+    "preimage_sha256": "dc9936a2825b10e5da9eb7801964751bcd211bc8e7a197ca41736af73af7fd98",
+    "sha256": "563a66449d8c2eeb4306b9bb9d994cabb86c14bd4c469f785dabe5afb9f6ef3d",
+    "scope": "transactionStatus descriptions and code sample only; schema and protocol are unchanged"
+  }
+}

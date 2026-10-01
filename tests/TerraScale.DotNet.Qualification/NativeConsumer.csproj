@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>preview</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="NativeChecks.cs" />
+    <Compile Include="NativeConsumer.cs" />
+    <PackageReference Include="TerraScale.DotNet" Version="$(NativeSdkPackageVersion)" />
+  </ItemGroup>
+  <Target Name="RequireNativeSdkPackageVersion" BeforeTargets="CollectPackageReferences">
+    <Error Condition="'$(NativeSdkPackageVersion)' == ''" Text="Supply the exact immutable NativeSdkPackageVersion; the baseline package is not a native candidate." />
+  </Target>
+</Project>

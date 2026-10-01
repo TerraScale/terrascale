@@ -3,7 +3,7 @@
 **/TestResults/
 **/__pycache__/
 *.py[cod]
-contracts/
+/.ci-package/
 
 # Private generated CI release candidates and signatures
 /.terrascale-develop-release/
