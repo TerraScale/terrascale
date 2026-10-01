@@ -19,6 +19,8 @@ jobs:
           persist-credentials: false
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
+      - name: Verify public Go module resolution
+        run: make check-modules
       - name: Check generated Templ and CSS, and lint
         run: make lint check-css
       # The ts-builder job image supplies the pinned Go and Node.js toolchains

@@ -71,6 +71,7 @@ already-running server instead of starting the dashboard in-process.
 
 ```sh
 make lint       # gofmt check and go vet
+make check-modules # verify public dependency downloads and checksums
 make generate   # regenerate Go components from internal/**/*.templ
 make check-generated # verify generated templ Go sources are current
 make css        # bundle web/assets into web/static/css/terrascale.css
@@ -120,15 +121,19 @@ records the source commit for the vendored `ts-go` package. Do not replace this
 with a sibling checkout path in `go.mod`; standalone CI and Docker builds must
 work from the repository contents.
 
-Adding or upgrading a third-party module still makes `go mod tidy` resolve
-`terrascale.tech/sdk`. Serve the pinned commit from a local file proxy, with
-the module zip built by `golang.org/x/mod/zip.CreateFromDir` from a clean
-`git archive` of that commit, at
-`<dir>/terrascale.tech/sdk/@v/<version>.{info,mod,zip}` plus a `list` file.
-Then run `GOFLAGS=-mod=mod GOPROXY=file://<dir>,https://proxy.golang.org
-GONOSUMDB=terrascale.tech go mod tidy && go mod vendor`. `go.sum` verifies that
-the zip matches the recorded checksum. `go mod vendor` deletes
-`vendor/PROVENANCE.md`, so restore it with `git checkout`.
+The SDK declares the `terrascale.tech/sdk` module path, but that vanity domain
+does not yet serve Go module metadata. A versioned `replace` in `go.mod`
+resolves it through the [public ts-go repository](https://git.terrascale.tech/TerraScale/ts-go).
+The pin keeps the dashboard's current API contract; it does not track the
+SDK's main branch. Downloads use the public Go proxy with direct HTTPS fallback
+and the public checksum database, without credentials or a local module proxy.
+
+To upgrade the SDK, update both its `require` version and the public repository
+version in `replace`, then run `GOFLAGS=-mod=mod go mod tidy` and
+`GOFLAGS=-mod=mod go mod vendor`. Third-party module updates use those same
+commands. `go mod vendor` deletes `vendor/PROVENANCE.md`; restore it and update
+its source commit and checksums for SDK upgrades. `make check-modules` verifies
+public dependency resolution and runs in CI before the vendored build checks.
 
 The MCP endpoint and its tool conventions are described in [mcp.md](mcp.md).
 

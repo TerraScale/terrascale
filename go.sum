@@ -1,3 +1,5 @@
+git.terrascale.tech/TerraScale/ts-go v0.0.0-20260930023159-430cb6624fa8 h1:Mt4n4uAGYCBld4TRX0UDpXBjr70DYI9Z4gjIAIqc9zs=
+git.terrascale.tech/TerraScale/ts-go v0.0.0-20260930023159-430cb6624fa8/go.mod h1:CBgIEfw0wTY2UDGAo1hmt1COj0872PnfTUNB3o0/3io=
 github.com/CAFxX/httpcompression v0.0.9 h1:0ue2X8dOLEpxTm8tt+OdHcgA+gbDge0OqFQWGKSqgrg=
 github.com/CAFxX/httpcompression v0.0.9/go.mod h1:XX8oPZA+4IDcfZ0A71Hz0mZsv/YJOgYygkFhizVPilM=
 github.com/a-h/parse v0.0.0-20250122154542-74294addb73e h1:HjVbSQHy+dnlS6C3XajZ69NYAb5jbGNfHanvm1+iYlo=
@@ -104,5 +106,3 @@ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8
 gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
-terrascale.tech/sdk v0.0.0-20260930023159-430cb6624fa8 h1:WXJF46MOFVpOsdkyJ9cj+CS4V5ifdH7DjCHz84f0HKE=
-terrascale.tech/sdk v0.0.0-20260930023159-430cb6624fa8/go.mod h1:CBgIEfw0wTY2UDGAo1hmt1COj0872PnfTUNB3o0/3io=

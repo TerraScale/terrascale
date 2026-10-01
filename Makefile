@@ -6,7 +6,7 @@ GO_TEST_FLAGS ?= -race -count=1
 VERSION ?= $(shell git rev-parse HEAD 2>/dev/null || echo dev)
 export GOFLAGS
 
-.PHONY: build check-css check-generated css dev generate js serve lint perf test-fast test-slow
+.PHONY: build check-css check-generated check-modules css dev generate js serve lint perf test-fast test-slow
 
 TEMPL_GENERATE_ARGS = -path internal -include-version=false -include-timestamp=false
 
@@ -15,6 +15,11 @@ generate:
 
 check-generated:
 	GOTOOLCHAIN=local GOFLAGS=-mod=vendor $(GO) tool templ generate $(TEMPL_GENERATE_ARGS) -check
+
+# Check that dependencies remain available publicly even though builds use vendor.
+check-modules:
+	GOFLAGS=-mod=readonly GOPROXY=https://proxy.golang.org,direct \
+		GOPRIVATE= GONOPROXY= GONOSUMDB= GOSUMDB=sum.golang.org $(GO) mod download
 
 css:
 	$(NPM) run build:css
