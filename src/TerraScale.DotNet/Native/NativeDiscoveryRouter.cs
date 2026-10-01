@@ -8,6 +8,7 @@ using System.Text.Json;
 namespace TerraScale.DotNet.Native;
 
 /// <summary>Consumes authenticated, scoped Atlas admission without catalog or origin fallback.</summary>
+/// <remarks>At most 16 discovery operations remain outstanding, including late callbacks and cleanup; additional calls wait within their original deadline.</remarks>
 public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposable
 {
     private const int BodyLimit = 64 * 1024;
@@ -19,6 +20,7 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         "invalid_request", "invalid_scope", "invalid_cursor", "discovery_unconfigured",
         "discovery_forbidden", "no_eligible_region", "routing_observation_regressed"
     };
+    private readonly NativeTransport.Isolation isolation = new();
     private readonly HttpClient client;
     private readonly bool ownsClient;
     private readonly Uri atlasOrigin;
@@ -98,6 +100,7 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         var acquired = false;
         try
         {
+            using var transport = await isolation.StartAsync(deadline.Token).ConfigureAwait(false);
             await state.Fetch.WaitAsync(deadline.Token).ConfigureAwait(false);
             acquired = true;
             var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)));
@@ -113,7 +116,7 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
                     state.Cached = null;
                 }
             }
-            var lease = await FetchAsync(scope, apiKey, deadline.Token, cancellationToken).ConfigureAwait(false);
+            var lease = await FetchAsync(scope, apiKey, transport, deadline.Token, cancellationToken).ConfigureAwait(false);
             state.CredentialDigest = digest;
             state.Cached = lease;
             return Admit(scope, lease, capabilities);
@@ -137,7 +140,7 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         }
     }
 
-    private async Task<Lease> FetchAsync(NativeScope scope, string apiKey, CancellationToken deadlineToken, CancellationToken cancellationToken)
+    private async Task<Lease> FetchAsync(NativeScope scope, string apiKey, NativeTransport.Operation transport, CancellationToken deadlineToken, CancellationToken cancellationToken)
     {
         Floor? observed;
         lock (gate) floors.TryGetValue(scope, out observed);
@@ -159,9 +162,9 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         var startedAt = clock.GetUtcNow();
         var startedTimestamp = clock.GetTimestamp();
 
-        var response = await SendDiscoveryAsync(address, apiKey, deadlineToken, cancellationToken).ConfigureAwait(false);
-        await using var responseLifetime = NativeTransport.Own(response, deadlineToken);
-        var body = await ReadDiscoveryBodyAsync(response, deadlineToken, cancellationToken).ConfigureAwait(false);
+        var response = await SendDiscoveryAsync(address, apiKey, transport, deadlineToken, cancellationToken).ConfigureAwait(false);
+        await using var responseLifetime = transport.Own(response, deadlineToken);
+        var body = await ReadDiscoveryBodyAsync(response, transport, deadlineToken, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode != HttpStatusCode.OK)
             throw new NativeAdmissionException(ReadErrorCode(body), (int)response.StatusCode);
         if (!string.Equals(response.Content.Headers.ContentType?.MediaType, "application/json", StringComparison.OrdinalIgnoreCase))
@@ -220,19 +223,20 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
     private async Task<HttpResponseMessage> SendDiscoveryAsync(
         Uri address,
         string apiKey,
+        NativeTransport.Operation transport,
         CancellationToken deadlineToken,
         CancellationToken cancellationToken)
     {
         try
         {
-            return await NativeTransport.InvokeAsync(async () =>
+            return await transport.InvokeAsync(async () =>
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, address);
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
                 deadlineToken.ThrowIfCancellationRequested();
                 return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadlineToken).ConfigureAwait(false);
-            }, deadlineToken, NativeTransport.ReleaseLate).ConfigureAwait(false);
+            }, deadlineToken, NativeTransport.DisposeResource).ConfigureAwait(false);
         }
         catch (HttpRequestException)
         {
@@ -246,12 +250,13 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
 
     private static async Task<byte[]> ReadDiscoveryBodyAsync(
         HttpResponseMessage response,
+        NativeTransport.Operation transport,
         CancellationToken deadlineToken,
         CancellationToken cancellationToken)
     {
         try
         {
-            var body = await ReadBodyAsync(response, deadlineToken).ConfigureAwait(false);
+            var body = await ReadBodyAsync(response, transport, deadlineToken).ConfigureAwait(false);
             deadlineToken.ThrowIfCancellationRequested();
             return body;
         }
@@ -277,17 +282,17 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
             throw new NativeAdmissionException("discovery_expired");
     }
 
-    private static async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    private static async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, NativeTransport.Operation transport, CancellationToken cancellationToken)
     {
         if (response.Content.Headers.ContentLength > BodyLimit)
             throw new NativeAdmissionException("invalid_discovery");
-        var stream = await NativeTransport.InvokeAsync(() => response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
-            NativeTransport.ReleaseLate).ConfigureAwait(false);
+        var stream = await transport.InvokeAsync(() => response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
+            NativeTransport.DisposeResource).ConfigureAwait(false);
         using var body = new MemoryStream();
         var buffer = new byte[4096];
         while (true)
         {
-            var count = await NativeTransport.InvokeAsync(() => stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
+            var count = await transport.InvokeAsync(() => stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
             if (count == 0) return body.ToArray();
             if (body.Length + count > BodyLimit) throw new NativeAdmissionException("invalid_discovery");
             body.Write(buffer, 0, count);

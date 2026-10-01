@@ -7,10 +7,11 @@ using System.Text.Json;
 namespace TerraScale.DotNet.Native;
 
 /// <summary>Native v1 transport. Credentials and admission are resolved anew for every finite request.</summary>
-/// <remarks>Unexpected provider programming and lifecycle exceptions propagate. Invalid credentials and admissions return distinct local failure codes.</remarks>
+/// <remarks>At most 16 operations per client remain outstanding, including callbacks and cleanup that outlive a caller deadline. Additional calls wait within their original deadline. Unexpected provider programming and lifecycle exceptions propagate. Invalid credentials and admissions return distinct local failure codes.</remarks>
 public sealed class NativeClient : IDisposable
 {
     private readonly Guid owner = Guid.NewGuid();
+    private readonly NativeTransport.Isolation isolation = new();
     private readonly HttpClient client;
     private readonly INativeAdmissionProvider admissionProvider;
     private readonly Func<CancellationToken, ValueTask<string>> keyProvider;
@@ -204,12 +205,13 @@ public sealed class NativeClient : IDisposable
         var phase = "credential";
         try
         {
+            using var transport = await isolation.StartAsync(budgetToken).ConfigureAwait(false);
             budgetToken.ThrowIfCancellationRequested();
-            var key = ValidateKey(await NativeTransport.InvokeAsync(() => keyProvider(budgetToken).AsTask(), budgetToken).ConfigureAwait(false));
+            var key = ValidateKey(await transport.InvokeAsync(() => keyProvider(budgetToken).AsTask(), budgetToken).ConfigureAwait(false));
             phase = "admission";
-            var admission = await NativeTransport.InvokeAsync(
+            var admission = await transport.InvokeAsync(
                 () => admissionProvider.ResolveAsync(Scope, key, capabilities, budgetToken).AsTask(), budgetToken).ConfigureAwait(false);
-            var response = await NativeTransport.InvokeAsync(async () =>
+            var response = await transport.InvokeAsync(async () =>
             {
                 budgetToken.ThrowIfCancellationRequested();
                 // The transport invocation owns the request until it completes,
@@ -230,8 +232,8 @@ public sealed class NativeClient : IDisposable
                     sent = true;
                 }
                 return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budgetToken).ConfigureAwait(false);
-            }, budgetToken, NativeTransport.ReleaseLate).ConfigureAwait(false);
-            await using var responseLifetime = NativeTransport.Own(response, budget.Token);
+            }, budgetToken, NativeTransport.DisposeResource).ConfigureAwait(false);
+            await using var responseLifetime = transport.Own(response, budget.Token);
             status = (int)response.StatusCode;
             retryAfter = RetryAfter(response);
             if (response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.OK)
@@ -239,7 +241,7 @@ public sealed class NativeClient : IDisposable
             if (!string.Equals(response.Content.Headers.ContentType?.MediaType, "application/json", StringComparison.OrdinalIgnoreCase) ||
                 response.Content.Headers.ContentEncoding.Count > 0)
                 throw new InvalidDataException("Native response has unsupported media type or encoding.");
-            var bytes = await ReadBodyAsync(response, budget.Token).ConfigureAwait(false);
+            var bytes = await ReadBodyAsync(response, transport, budget.Token).ConfigureAwait(false);
             budget.Token.ThrowIfCancellationRequested();
             using var document = NativeCodec.Parse(bytes);
             if (!response.IsSuccessStatusCode)
@@ -315,16 +317,16 @@ public sealed class NativeClient : IDisposable
         return null;
     }
 
-    private static async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    private static async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, NativeTransport.Operation transport, CancellationToken cancellationToken)
     {
         if (response.Content.Headers.ContentLength > NativeCodec.MaximumBodyBytes) throw new InvalidDataException("Native response exceeds the 4 MiB limit.");
-        var stream = await NativeTransport.InvokeAsync(() => response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
-            NativeTransport.ReleaseLate).ConfigureAwait(false);
+        var stream = await transport.InvokeAsync(() => response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
+            NativeTransport.DisposeResource).ConfigureAwait(false);
         using var output = new MemoryStream();
         var buffer = new byte[81920];
         while (true)
         {
-            var count = await NativeTransport.InvokeAsync(() => stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
+            var count = await transport.InvokeAsync(() => stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
             if (count == 0) break;
             if (output.Length + count > NativeCodec.MaximumBodyBytes) throw new InvalidDataException("Native response exceeds the 4 MiB limit.");
             output.Write(buffer, 0, count);
@@ -346,75 +348,114 @@ public sealed class NativeClient : IDisposable
 
 internal static class NativeTransport
 {
-    internal static IAsyncDisposable Own(IDisposable resource, CancellationToken cancellationToken) =>
-        new ResourceLifetime(resource, cancellationToken);
+    internal const int MaximumOutstandingOperations = 16;
 
-    // Caller streams may block in synchronous Dispose. Cleanup owns the
-    // original resource on a worker; a cancelled caller never waits for it.
-    internal static void ReleaseLate(IDisposable resource) => _ = Task.Run(() => DisposeResource(resource));
-
-    private static void DisposeResource(IDisposable resource)
+    // Capacity belongs to the client/router, not process-wide state. A timed-out
+    // caller releases its own reference, while callbacks and cleanup retain
+    // theirs until actual completion. Queued callers use no blocking worker.
+    internal sealed class Isolation
     {
-        try { resource.Dispose(); }
-        catch (Exception) { /* Cleanup cannot replace the protocol outcome or expose transport diagnostics. */ }
+        private readonly SemaphoreSlim capacity = new(MaximumOutstandingOperations, MaximumOutstandingOperations);
+
+        internal async Task<Operation> StartAsync(CancellationToken cancellationToken)
+        {
+            await capacity.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return new Operation(capacity);
+            }
+            catch { capacity.Release(); throw; }
+        }
     }
 
-    private sealed class ResourceLifetime(IDisposable resource, CancellationToken cancellationToken) : IAsyncDisposable
+    internal sealed class Operation(SemaphoreSlim capacity) : IDisposable
     {
-        private IDisposable? owned = resource;
+        private int references = 1;
+        private int disposed;
 
-        public async ValueTask DisposeAsync()
+        internal IAsyncDisposable Own(IDisposable resource, CancellationToken cancellationToken)
         {
-            var original = Interlocked.Exchange(ref owned, null);
-            if (original is null) return;
-            var cleanup = Task.Run(() => DisposeResource(original));
-            try { await cleanup.WaitAsync(cancellationToken).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            AddReference();
+            return new ResourceLifetime(this, resource, cancellationToken);
+        }
+
+        internal async Task<T> InvokeAsync<T>(Func<Task<T>> invoke, CancellationToken cancellationToken, Action<T>? releaseLate = null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            AddReference();
+            Task<T>? operation = null;
+            var transferred = false;
+            try
             {
-                // The existing cleanup still owns eventual release and observes its own faults.
+                // Isolation bounds invocation as well as the returned task.
+                operation = Task.Run(() =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return invoke();
+                });
+                var result = await operation.WaitAsync(cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                return result;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested && operation is not null)
+            {
+                transferred = true;
+                _ = CompleteLateAsync(operation, releaseLate);
+                throw;
+            }
+            finally { if (!transferred) ReleaseReference(); }
+        }
+
+        private async Task CompleteLateAsync<T>(Task<T> pending, Action<T>? releaseLate)
+        {
+            try
+            {
+                var result = await pending.ConfigureAwait(false);
+                if (releaseLate is not null)
+                    await Task.Run(() => releaseLate(result)).ConfigureAwait(false);
+            }
+            catch (Exception) { /* Observe late faults without replacing the caller's outcome. */ }
+            finally { ReleaseReference(); }
+        }
+
+        private void AddReference() => Interlocked.Increment(ref references);
+        private void ReleaseReference()
+        {
+            if (Interlocked.Decrement(ref references) == 0) capacity.Release();
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0) ReleaseReference();
+        }
+
+        private sealed class ResourceLifetime(Operation operation, IDisposable resource, CancellationToken cancellationToken) : IAsyncDisposable
+        {
+            private IDisposable? owned = resource;
+
+            public async ValueTask DisposeAsync()
+            {
+                var original = Interlocked.Exchange(ref owned, null);
+                if (original is null) return;
+                var cleanup = Task.Run(() =>
+                {
+                    try { DisposeResource(original); }
+                    finally { operation.ReleaseReference(); }
+                });
+                try { await cleanup.WaitAsync(cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    // Cleanup retains operation capacity until eventual release.
+                }
             }
         }
     }
 
-    internal static Task<T> InvokeAsync<T>(Func<Task<T>> invoke, CancellationToken cancellationToken, Action<T>? releaseLate = null)
+    internal static void DisposeResource(IDisposable resource)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        // A callback can block before returning its task. Isolate invocation
-        // as well as completion, checking cancellation again on the worker.
-        var operation = Task.Run(() =>
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return invoke();
-        });
-        return AwaitOwnedAsync(operation, cancellationToken, releaseLate);
-    }
-
-    private static async Task<T> AwaitOwnedAsync<T>(Task<T> operation, CancellationToken cancellationToken, Action<T>? releaseLate)
-    {
-        try
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var result = await operation.WaitAsync(cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-            return result;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // The already-started caller transport may ignore cancellation.
-            // Its completion callback owns late resource release and observes
-            // faults; no new request or read is started after the deadline.
-            _ = operation.ContinueWith(static (completed, release) =>
-            {
-                try
-                {
-                    if (completed.IsCompletedSuccessfully)
-                        ((Action<T>?)release)?.Invoke(completed.GetAwaiter().GetResult());
-                    else _ = completed.Exception;
-                }
-                catch (Exception) { /* Late cleanup cannot alter the completed operation. */ }
-            }, releaseLate, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
-            throw;
-        }
+        try { resource.Dispose(); }
+        catch (Exception) { /* Cleanup cannot replace the protocol outcome. */ }
     }
 
     internal static HttpClient CreateClient(HttpMessageHandler? handler = null) => new(handler ?? new HttpClientHandler
