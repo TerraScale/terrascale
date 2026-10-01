@@ -33,10 +33,92 @@ describe("current database request conformance", () => {
     expect(() => client.read(collection, "01ARZ3NDEKTSV4RRFFQ69G5FAV")).toThrow(TypeError);
   });
 
-  test("rejects test API origins and credential-bearing origins at construction", () => {
-    for (const endpoint of ["https://gru.terrascale.tech", "https://api.terrascale.tech.", "https://gru.api.terrascale.tech.", "https://secret@gru.terrascale.tech", "https://gru.api.terrascale.tech/base", "http://public.example"]) {
+  test("rejects global API and retired regional origins and credential-bearing origins at construction", () => {
+    for (const endpoint of ["https://api.terrascale.tech", "https://gru.terrascale.tech", "https://api.terrascale.tech.", "https://gru.api.terrascale.tech.", "https://secret@gru.api.terrascale.tech", "https://gru.api.terrascale.tech/base", "http://public.example"]) {
       expect(() => createTerraBaseClient({ ...scope, endpoint, apiKey: "key" })).toThrow();
     }
+  });
+
+  test.each(["auth", "atlas", "www", "status", "sync", "app", "dash", "docs", "git", "cdn", "admin", "mcp", "mail"])("rejects reserved TerraScale %s origins before dispatch", label => {
+    expect(() => createTerraBaseClient({ ...scope, endpoint: `https://${label}.api.terrascale.tech`, apiKey: "key" })).toThrow(/canonical.*hostname/u);
+  });
+
+  test.each([
+    "https://terrascale.tech", "https://gru.api.terrascale.tech.", "https://GRU.api.terrascale.tech",
+    "https://nested.gru.terrascale.tech", "https://gru.api.terrascale.tech:8443", "https://-gru.api.terrascale.tech",
+    "https://gru.api.terrascale.tech:443", "https://%67ru.api.terrascale.tech", "https://K.terrascale.tech",
+    "https://abcdefghijklmnopq.api.terrascale.tech", "http://gru.api.terrascale.tech",
+  ])("rejects noncanonical TerraScale origin %s", endpoint => {
+    expect(() => createTerraBaseClient({ ...scope, endpoint, apiKey: "key" })).toThrow(/canonical.*hostname/u);
+  });
+
+  test.each(["https://native.example.test.", "https://native.example.test..:8443", "http://localhost.:9911"])("rejects trailing-dot provisioned origin %s without acquiring credentials or dispatching", endpoint => {
+    let credentials = 0, requests = 0;
+    expect(() => createTerraBaseClient({ ...scope, endpoint, apiKey: () => { credentials++; return "key"; }, fetch: async () => { requests++; return json(point); } })).toThrow(/canonical hostname/u);
+    expect(credentials).toBe(0);
+    expect(requests).toBe(0);
+  });
+
+  test.each([
+    "https://gru.api.terrascale.tech", "https://fra.api.terrascale.tech/", "https://native.example.test:8443", "https://CUSTOM.example.test",
+    "https://ams.api.terrascale.tech", "https://abcdefghijklmnop.api.terrascale.tech", "https://9-a.api.terrascale.tech",
+    "http://localhost:9911", "http://127.0.0.1:9911", "http://[::1]:9911", "http://native.localhost:9911",
+  ])("preserves direct provisioned origin %s", async endpoint => {
+    const requests: Request[] = [];
+    const client = createTerraBaseClient({ ...scope, endpoint, apiKey: "key", fetch: async input => { requests.push(input as Request); return json(point); } });
+    expect((await client.read(collection, document)).ok).toBe(true);
+    expect(requests.map(request => new URL(request.url).origin)).toEqual([new URL(endpoint).origin]);
+  });
+
+  test.each(["fetch", "stream"] as const)("native %s TypeError remains a transport fault for reads and dispatched commits", async fault => {
+    const requests: Request[] = [];
+    const streams: ReadableStream<Uint8Array>[] = [];
+    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terrascale.tech", apiKey: "key", fetch: async input => {
+      requests.push(input as Request);
+      if (fault === "fetch") throw new TypeError("connection reset");
+      const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.error(new TypeError("connection reset")); } });
+      streams.push(stream);
+      return new Response(stream, { headers: { "content-type": "application/json" } });
+    } });
+    const prepared = await client.prepareCommit(commit);
+    expect(await client.read(collection, document)).toMatchObject({ ok: false, error: { code: "transport_unavailable" } });
+    expect(await client.commit(prepared)).toMatchObject({ ok: false, error: { code: "transport_unavailable", mutation_outcome: "uncertain", transaction: prepared } });
+    expect(requests).toHaveLength(2);
+    expect(requests.map(request => new URL(request.url).hostname)).toEqual(["gru.api.terrascale.tech", "gru.api.terrascale.tech"]);
+    expect(streams.every(stream => !stream.locked)).toBe(true);
+  });
+
+  test.each(["json", "shape"] as const)("native %s validation remains invalid_response for reads and commits", async fault => {
+    let requests = 0;
+    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terrascale.tech", apiKey: "key", fetch: async () => {
+      requests++;
+      return fault === "json" ? new Response("{", { headers: { "content-type": "application/json" } }) : json({ version: 1, invented: true });
+    } });
+    const prepared = await client.prepareCommit(commit);
+    expect(await client.read(collection, document)).toMatchObject({ ok: false, error: { code: "invalid_response", status: 200 } });
+    expect(await client.commit(prepared)).toMatchObject({ ok: false, error: { code: "invalid_response", status: 200, mutation_outcome: "uncertain", transaction: prepared } });
+    expect(requests).toBe(2);
+  });
+
+  test.each(["fetch", "stream"] as const)("native %s abort remains cancelled with one dispatch and uncertain commit", async fault => {
+    const controller = new AbortController();
+    let requests = 0, cancelled = 0;
+    const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terrascale.tech", apiKey: "key", fetch: async input => {
+      requests++;
+      const request = input as Request;
+      if (fault === "fetch") {
+        controller.abort(new TypeError("caller cancellation"));
+        throw request.signal.reason;
+      }
+      return new Response(new ReadableStream<Uint8Array>({
+        pull() { controller.abort(new TypeError("caller cancellation")); },
+        cancel() { cancelled++; },
+      }), { headers: { "content-type": "application/json" } });
+    } });
+    const prepared = await client.prepareCommit(commit);
+    expect(await client.commit(prepared, { signal: controller.signal })).toMatchObject({ ok: false, error: { code: "cancelled", mutation_outcome: "uncertain", transaction: prepared } });
+    expect(requests).toBe(1);
+    if (fault === "stream") expect(cancelled).toBe(1);
   });
 
   test("caller replacement of public scope cannot change fingerprinting or point scope validation", async () => {

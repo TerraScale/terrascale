@@ -3,7 +3,7 @@ import { createTerraBaseClient } from "./database.js";
 import { TerraBaseDiscoveryRouter } from "./discovery.js";
 import type { DatabaseCommit } from "./database-types.js";
 
-// Native8 host migration fixture; deterministic routing and negative conformance only.
+// Exact actual receiver bytes; mutations below are deterministic negative/ranking conformance only.
 const successBytes = "{\"schema_version\":1,\"scope\":{\"tenant_id\":\"10000000-0000-0000-0000-000000000001\",\"database_id\":\"20000000-0000-0000-0000-000000000001\",\"shard_id\":\"18446744073709551615\"},\"authority\":{\"deployment_id\":\"fixture-deployment\",\"cell\":\"gru\",\"publisher_id\":\"publisher-a\",\"publisher_generation\":\"18446744073709551615\"},\"revision\":\"41\",\"published_at\":1790769600,\"expires_at\":1790769609,\"refreshSeconds\":8,\"residency\":null,\"endpoints\":[{\"region\":\"GRU\",\"url\":\"https://gru.api.terrascale.tech\",\"catalog\":{\"digest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},\"capabilities\":{\"atomic_groups\":false,\"client_v1\":true,\"conditional_mutation\":false,\"query\":true,\"read\":true,\"security_state\":false,\"subscriptions\":true,\"write\":true},\"security_writer\":null,\"priority\":1}]}";
 const forbiddenBytes = "{\"error\":{\"code\":\"discovery_forbidden\",\"message\":\"native discovery admission is unavailable\",\"fix\":\"retry with current authorized native scope metadata\"}}";
 const now = 1790769600000;
@@ -394,6 +394,81 @@ describe("native Atlas response cancellation", () => {
 });
 
 describe("native client consumes actual Atlas admission", () => {
+  test.each(["read", "query", "subscription", "commit", "status"] as const)("public %s preserves the actual Atlas 403 without data dispatch", async operation => {
+    const requests: Request[] = [];
+    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
+      requests.push(input as Request);
+      return response(forbiddenBytes, 403);
+    } });
+    const prepared = await client.prepareCommit(commit());
+    const result = operation === "read" ? await client.read(collection, document)
+      : operation === "query" ? await client.query(collection, { predicate: { op: "is_missing", path: [1] }, limit: 1 })
+      : operation === "subscription" ? await client.subscription(collection, { phase: "snapshot", predicate: { op: "is_missing", path: [1] }, limit: 1 })
+      : operation === "commit" ? await client.commit(prepared)
+      : await client.transactionStatus(prepared);
+    expect(result).toMatchObject({ ok: false, error: { code: "discovery_forbidden", status: 403 } });
+    if (operation === "commit") expect(result).toMatchObject({ error: { transaction: prepared, mutation_outcome: "unknown" } });
+    expect(requests.map(request => new URL(request.url).hostname)).toEqual(["atlas.terrascale.tech"]);
+  });
+
+  test.each(["network", "not-found", "unconfigured", "legacy"] as const)("public read fails closed on discovery %s", async fault => {
+    const requests: Request[] = [];
+    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
+      requests.push(input as Request);
+      if (fault === "network") throw new Error("Atlas unavailable");
+      if (fault === "not-found") return new Response(null, { status: 404 });
+      if (fault === "unconfigured") return response({ error: { code: "discovery_unconfigured", message: "native discovery admission is unavailable", fix: "retry after native discovery is configured" } }, 503);
+      return response({ version: 1, database: "old", endpoints: [] });
+    } });
+    const code = fault === "network" ? "discovery_unavailable" : fault === "unconfigured" ? "discovery_unconfigured" : "invalid_response";
+    expect(await client.read(collection, document)).toMatchObject({ ok: false, error: { code } });
+    expect(requests.map(request => new URL(request.url).hostname)).toEqual(["atlas.terrascale.tech"]);
+  });
+
+  test.each(["read", "commit"] as const)("public %s discovery timeout settles without data dispatch", async operation => {
+    const requests: Request[] = [];
+    const client = createTerraBaseClient({ ...scope, apiKey: key, discoveryTimeoutMs: 10, requestTimeoutMs: 500, fetch: async input => {
+      const request = input as Request;
+      requests.push(request);
+      return new Promise<Response>((_resolve, reject) => {
+        const abort = (): void => reject(request.signal.reason);
+        request.signal.addEventListener("abort", abort, { once: true });
+        if (request.signal.aborted) abort();
+      });
+    } });
+    const prepared = await client.prepareCommit(commit());
+    const keepAlive = setTimeout(() => undefined, 1000);
+    try {
+      const result = operation === "read" ? await client.read(collection, document) : await client.commit(prepared);
+      expect(result).toMatchObject({ ok: false, error: { code: "discovery_unavailable" } });
+      if (operation === "commit") expect(result).toMatchObject({ error: { transaction: prepared, mutation_outcome: "unknown" } });
+      expect(requests.map(request => new URL(request.url).hostname)).toEqual(["atlas.terrascale.tech"]);
+      expect(requests[0]!.signal.aborted).toBe(true);
+    } finally { clearTimeout(keepAlive); }
+  });
+
+  test("public reads and writes choose independently eligible endpoints from one admitted lease", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    const value = fixture();
+    value.endpoints[0].priority = 2;
+    value.endpoints.push({ ...structuredClone(value.endpoints[0]), region: "FRA", url: "https://fra.api.terrascale.tech", priority: 1 });
+    value.endpoints[1].capabilities.read = false;
+    const requests: Request[] = [];
+    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
+      const request = input as Request;
+      requests.push(request);
+      if (new URL(request.url).hostname === "atlas.terrascale.tech") return response(value);
+      if (request.url.endsWith("/transactions/status")) return response({ ...JSON.parse(await request.text()), state: "unknown", outcome: null });
+      if (request.url.endsWith("/transactions")) return response({ error: { code: "commit_uncertain" } }, 503);
+      return response(point);
+    } });
+    const prepared = await client.prepareCommit(commit());
+    expect((await client.read(collection, document)).ok).toBe(true);
+    expect(await client.transactionStatus(prepared)).toMatchObject({ ok: true, value: { state: "unknown", outcome: null } });
+    expect(await client.commit(prepared)).toMatchObject({ ok: false, error: { code: "commit_uncertain", transaction: prepared, mutation_outcome: "uncertain" } });
+    expect(requests.map(request => new URL(request.url).hostname)).toEqual(["atlas.terrascale.tech", "gru.api.terrascale.tech", "fra.api.terrascale.tech", "fra.api.terrascale.tech"]);
+  });
+
   test("first discovers the exact private tuple then connects directly to the admitted native path", async () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
     const requests: Request[] = [];
@@ -501,184 +576,4 @@ describe("native client consumes actual Atlas admission", () => {
     for (let i = 0; i < 2; i++) expect(await client.commit(prepared)).toEqual({ ok: false, error: { code: "transport_unavailable", transaction: prepared, mutation_outcome: "uncertain" } });
     expect(bodies).toHaveLength(2); expect(bodies[0]).toBe(bodies[1]);
   });
-});
-
-describe("hosted native routing", () => {
-  const ranked = (): Record<string, any> => {
-    const value = fixture();
-    value.endpoints.push({ ...structuredClone(value.endpoints[0]), region: "FRA", url: "https://fra.api.terrascale.tech", priority: 2 });
-    return value;
-  };
-
-  test("pins priority one until refresh and then accepts a new ranking", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
-    const value = ranked(), hosts: string[] = []; let atlas = 0;
-    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
-      const host = new URL((input as Request).url).hostname;
-      if (host === "atlas.terrascale.tech") { atlas++; return response(value); }
-      hosts.push(host); return response(point);
-    } });
-    expect((await client.read(collection, document)).ok).toBe(true);
-    vi.setSystemTime(now + 7999);
-    expect((await client.read(collection, document)).ok).toBe(true);
-    expect(atlas).toBe(1);
-    vi.setSystemTime(now + 8000); advanceLease(value, now + 8000);
-    value.endpoints[0].priority = 2; value.endpoints[1].priority = 1;
-    expect((await client.read(collection, document)).ok).toBe(true);
-    expect(atlas).toBe(2);
-    expect(hosts).toEqual(["gru.api.terrascale.tech", "gru.api.terrascale.tech", "fra.api.terrascale.tech"]);
-  });
-
-  test.each(["network", 421, 500, 503] as const)("fails over on %s, re-resolves, and pins the next region", async fault => {
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
-    const value = ranked(), hosts: string[] = []; let atlas = 0;
-    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
-      const host = new URL((input as Request).url).hostname;
-      if (host === "atlas.terrascale.tech") { atlas++; return response(value); }
-      hosts.push(host);
-      if (host === "gru.api.terrascale.tech") {
-        if (fault === "network") throw new Error("connection reset");
-        return new Response("regional failure", { status: fault });
-      }
-      return response(point);
-    } });
-    expect((await client.read(collection, document)).ok).toBe(true);
-    expect((await client.read(collection, document)).ok).toBe(true);
-    expect(atlas).toBe(2);
-    expect(hosts).toEqual(["gru.api.terrascale.tech", "fra.api.terrascale.tech", "fra.api.terrascale.tech"]);
-    vi.setSystemTime(now + 8000); advanceLease(value, now + 8000);
-    expect((await client.read(collection, document)).ok).toBe(true);
-    expect(hosts.slice(-2)).toEqual(["gru.api.terrascale.tech", "fra.api.terrascale.tech"]);
-  });
-
-  test.each([404, 500, 503, "legacy", "network"] as const)("uses the proxy on discovery %s, retries at refresh, then pins native8", async fault => {
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
-    const hosts: string[] = []; let atlas = 0;
-    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
-      const host = new URL((input as Request).url).hostname;
-      expect((input as Request).headers.get("authorization")).toBe("Bearer " + key);
-      if (host === "atlas.terrascale.tech") {
-        atlas++;
-        if (atlas > 1) { const value = ranked(); advanceLease(value, now + 8000); return response(value); }
-        if (fault === "network") throw new Error("Atlas unavailable");
-        if (fault === "legacy") return response({ version: 1, database: "old", endpoints: [] });
-        return new Response("native producer unavailable", { status: fault });
-      }
-      hosts.push(host); return response(point);
-    } });
-    expect((await client.read(collection, document)).ok).toBe(true);
-    vi.setSystemTime(now + 7999);
-    expect((await client.read(collection, document)).ok).toBe(true); expect(atlas).toBe(1);
-    vi.setSystemTime(now + 8000);
-    expect((await client.read(collection, document)).ok).toBe(true); expect(atlas).toBe(2);
-    expect(hosts).toEqual(["api.terrascale.tech", "api.terrascale.tech", "gru.api.terrascale.tech"]);
-  });
-
-  test("an uncertain commit changes the next pin without automatic replay", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
-    const hosts: string[] = []; let atlas = 0;
-    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
-      const request = input as Request, host = new URL(request.url).hostname;
-      if (host === "atlas.terrascale.tech") { atlas++; return response(ranked()); }
-      hosts.push(host);
-      return request.url.endsWith("/transactions") ? response({ error: { code: "commit_uncertain" } }, 503) : response(point);
-    } });
-    const prepared = await client.prepareCommit(commit());
-    expect(await client.commit(prepared)).toMatchObject({ ok: false, error: { mutation_outcome: "uncertain", transaction: prepared } });
-    expect(hosts).toEqual(["gru.api.terrascale.tech"]);
-    expect((await client.read(collection, document)).ok).toBe(true);
-    expect(hosts).toEqual(["gru.api.terrascale.tech", "fra.api.terrascale.tech"]); expect(atlas).toBe(2);
-  });
-
-  test("a custom endpoint disables all discovery", async () => {
-    const hosts: string[] = [];
-    const client = createTerraBaseClient({ ...scope, apiKey: "custom-key", endpoint: "https://native.example.test", fetch: async input => {
-      hosts.push(new URL((input as Request).url).hostname); return response(point);
-    } });
-    expect((await client.read(collection, document)).ok).toBe(true);
-    expect(hosts).toEqual(["native.example.test"]);
-  });
-});
-
-describe("hosted routing deadlines and stream faults", () => {
-  test("discovery timeout falls back without consuming the entire operation deadline", async () => {
-    const hosts: string[] = [];
-    const client = createTerraBaseClient({ ...scope, apiKey: key, discoveryTimeoutMs: 10, requestTimeoutMs: 500, fetch: async input => {
-      const request = input as Request, host = new URL(request.url).hostname;
-      hosts.push(host);
-      if (host === "atlas.terrascale.tech") return new Promise<Response>((_resolve, reject) => request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true }));
-      return response(point);
-    } });
-    const keepAlive = setTimeout(() => undefined, 1000);
-    try { expect((await client.read(collection, document)).ok).toBe(true); }
-    finally { clearTimeout(keepAlive); }
-    expect(hosts).toEqual(["atlas.terrascale.tech", "api.terrascale.tech"]);
-  });
-
-  test("a lost response stream fails over for a safe read", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
-    const value = fixture();
-    value.endpoints.push({ ...structuredClone(value.endpoints[0]), region: "FRA", url: "https://fra.api.terrascale.tech", priority: 2 });
-    const hosts: string[] = [];
-    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
-      const host = new URL((input as Request).url).hostname;
-      if (host === "atlas.terrascale.tech") return response(value);
-      hosts.push(host);
-      if (host === "gru.api.terrascale.tech") return new Response(new ReadableStream({ start(stream) { stream.error(new TypeError("connection reset")); } }), { headers });
-      return response(point);
-    } });
-    expect((await client.read(collection, document)).ok).toBe(true);
-    expect(hosts).toEqual(["gru.api.terrascale.tech", "fra.api.terrascale.tech"]);
-  });
-
-  test("Retry-After beyond the remaining deadline cancels failover", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
-    const hosts: string[] = [];
-    const client = createTerraBaseClient({ ...scope, apiKey: key, requestTimeoutMs: 30, fetch: async input => {
-      const host = new URL((input as Request).url).hostname;
-      if (host === "atlas.terrascale.tech") return response(fixture());
-      hosts.push(host); return new Response(null, { status: 503, headers: { "retry-after": "60" } });
-    } });
-    expect(await client.read(collection, document)).toMatchObject({ ok: false, error: { code: "cancelled" } });
-    expect(hosts).toEqual(["gru.api.terrascale.tech"]);
-  });
-
-  test.each([400, 401, 403, 409, 429])("regional HTTP %s neither fails over nor re-resolves", async status => {
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
-    const hosts: string[] = []; let atlas = 0;
-    const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
-      const host = new URL((input as Request).url).hostname;
-      if (host === "atlas.terrascale.tech") { atlas++; return response(fixture()); }
-      hosts.push(host); return response({ error: { code: "denied" } }, status);
-    } });
-    expect(await client.read(collection, document)).toMatchObject({ ok: false, error: { status } });
-    expect(await client.read(collection, document)).toMatchObject({ ok: false, error: { status } });
-    expect(atlas).toBe(1); expect(hosts).toEqual(["gru.api.terrascale.tech", "gru.api.terrascale.tech"]);
-  });
-
-  test("explicit proxy origin disables discovery", async () => {
-    const hosts: string[] = [];
-    const client = createTerraBaseClient({ ...scope, apiKey: "custom-key", endpoint: "https://api.terrascale.tech", fetch: async input => {
-      hosts.push(new URL((input as Request).url).hostname); return response(point);
-    } });
-    expect((await client.read(collection, document)).ok).toBe(true);
-    expect(hosts).toEqual(["api.terrascale.tech"]);
-  });
-});
-
-test("hosted fallback keeps native cadence across key rotation", async () => {
-  vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
-  const value = fixture(); value.refreshSeconds = 2;
-  let atlas = 0, credential = key;
-  const client = createTerraBaseClient({ ...scope, apiKey: () => credential, fetch: async input => {
-    const host = new URL((input as Request).url).hostname;
-    if (host === "atlas.terrascale.tech") { atlas++; return atlas === 1 ? response(value) : new Response(null, { status: 404 }); }
-    return response(point);
-  } });
-  expect((await client.read(collection, document)).ok).toBe(true);
-  credential = rotatedKey;
-  expect((await client.read(collection, document)).ok).toBe(true);
-  vi.setSystemTime(now + 1999); expect((await client.read(collection, document)).ok).toBe(true); expect(atlas).toBe(2);
-  vi.setSystemTime(now + 2000); expect((await client.read(collection, document)).ok).toBe(true); expect(atlas).toBe(3);
-  vi.setSystemTime(now + 4000); expect((await client.read(collection, document)).ok).toBe(true); expect(atlas).toBe(4);
 });

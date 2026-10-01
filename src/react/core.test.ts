@@ -141,7 +141,7 @@ describe("reactive hook core", () => {
     assert.equal(subscriptions, 2);
   });
 
-  test("native query remains a typed generic observer source and reports hosted transport failure", async () => {
+  test("native query remains a typed generic observer source and fails closed on discovery transport failure", async () => {
     const uuid = (tail: string): string => `00000000-0000-4000-8000-${tail.padStart(12, "0")}`;
     const client = createTerraBaseClient({ tenant: uuid("1"), database: uuid("2"), shard: 1n, apiKey: nativeTestKey, fetch: unavailableDiscovery });
     const source = createDatabaseQuery(client, { collection: uuid("3"), predicate: { op: "is_missing", path: [1] } });
@@ -151,7 +151,7 @@ describe("reactive hook core", () => {
     const stop = observer.subscribe(() => { if (observer.getSnapshot().status === "error") finish(); });
     await terminal;
     assert.equal(observer.getSnapshot().status, "error");
-    assert.equal(observer.getSnapshot().error?.code, "transport_unavailable");
+    assert.equal(observer.getSnapshot().error?.code, "discovery_unavailable");
     assert.equal(observer.getSnapshot().data, undefined);
     stop();
   });

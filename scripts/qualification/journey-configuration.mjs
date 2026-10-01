@@ -1,3 +1,5 @@
+import { nativeRegionalOrigin, nativeServiceOrigin } from "../../src/native-origin.ts";
+
 const commonInputs = [
   "TERRABASE_TENANT",
   "TERRABASE_DATABASE",
@@ -17,10 +19,6 @@ const targetInputs = {
   ],
   browser: ["TERRABASE_BROWSER_DOCUMENT"],
 };
-const reservedRegions = new Set([
-  "API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH",
-  "DOCS", "GIT", "CDN", "ADMIN", "MCP", "MAIL",
-]);
 
 function present(value) {
   return typeof value === "string" && value.trim() !== "";
@@ -34,26 +32,12 @@ function required(environment, name) {
 }
 
 function directOrigin(endpoint) {
-  let url;
   try {
-    url = new URL(endpoint);
-  } catch {
-    throw new Error("Direct qualification endpoint must be a bare service origin.");
+    return nativeServiceOrigin(endpoint);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Direct qualification endpoint is forbidden: ${reason} Use a bare canonical regional HTTPS origin, independent HTTPS origin, or loopback HTTP origin.`, { cause: error });
   }
-  const hostname = url.hostname.replace(/\.+$/u, "");
-  if (url.hostname !== hostname || hostname === "api.terrascale.tech" || (hostname.endsWith(".terrascale.tech") && !/^[a-z0-9][a-z0-9-]{0,15}\.api\.terrascale\.tech$/u.test(hostname))) {
-    throw new Error("Direct qualification requires a canonical regional service origin.");
-  }
-  const loopback =
-    ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ||
-    url.hostname.endsWith(".localhost");
-  if (
-    url.username || url.password || url.search || url.hash || url.pathname !== "/" ||
-    (url.protocol !== "https:" && !(url.protocol === "http:" && loopback))
-  ) {
-    throw new Error("Direct qualification endpoint must be bare HTTPS or loopback HTTP.");
-  }
-  return url.origin;
 }
 
 /** Pure admission only; absent configuration is a skip, partial configuration is an error. */
@@ -96,11 +80,12 @@ export function journeyConfiguration(environment, target) {
       throw new Error("Atlas qualification must omit the provisioned endpoint to prove actual discovery.");
     }
     const region = required(environment, "TERRABASE_EXPECTED_REGION");
-    if (!/^[A-Z0-9][A-Z0-9-]{0,15}$/u.test(region) || reservedRegions.has(region)) {
+    try {
+      nativeOrigin = nativeRegionalOrigin(region);
+    } catch {
       throw new Error("Expected native region must be canonical.");
     }
     required(environment, "TERRASCALE_QUALIFICATION_ALLOCATION_ID");
-    nativeOrigin = `https://${region.toLowerCase()}.api.terrascale.tech`;
   }
   return Object.freeze({
     routing,

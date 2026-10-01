@@ -50,11 +50,11 @@ describe("real packaged consumer admission", () => {
     expect(() => qualificationConfiguration()).toThrow(/omit/u);
   });
 
-  test("direct producer qualification remains explicit and requires a canonical regional host", () => {
+  test("direct producer qualification remains explicit and rejects noncanonical regional hosts", () => {
     allocation("direct");
     expect(qualificationConfiguration()).toMatchObject({ routing: "direct" });
     vi.stubEnv("TERRABASE_ENDPOINT", "https://gru.api.terrascale.tech.");
-    expect(() => qualificationConfiguration()).toThrow(/canonical/u);
+    expect(() => qualificationConfiguration()).toThrow(/forbidden/u);
     vi.stubEnv("TERRABASE_ENDPOINT", "");
     expect(() => qualificationConfiguration()).toThrow(/incomplete/u);
   });

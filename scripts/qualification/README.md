@@ -16,7 +16,7 @@ Omit `TERRABASE_ENDPOINT` and supply independently allocated
 routes require actual native keys and isolated write scope.
 For provisioned development/native exclusion/CAS qualification, explicitly set
 `TERRABASE_ROUTING_MODE=direct` and `TERRABASE_ENDPOINT` to the allocated bare
-HTTPS origin or loopback HTTP origin. The test API host is always rejected.
+HTTPS origin or loopback HTTP origin. TerraScale data origins use `https://<region>.api.terrascale.tech`; retired root regional hosts and the global API host are rejected.
 
 The Node suite and browser journey share this routing admission. Completely
 absent configuration remains an honest skip; partial or invalid configuration

@@ -39,26 +39,16 @@ point explicitly and preserve conflicts. Publication is acknowledged before
 advancing delivery, and cleanup cancels owned work. Mutations prepare and commit
 through the same client; a presentation rollback does not establish a server abort.
 
-Omitting `endpoint` resolves authenticated native8 discovery at
-`https://atlas.terrascale.tech/api/v1/discovery` with the native `tbk1` key.
-The client pins the top-priority eligible `https://<region>.api.terrascale.tech`
-origin until the earlier of `refreshSeconds` and `expires_at`. Regional transport
-errors, 421 and 5xx trigger re-resolution and failover for safe operations;
-commits are never replayed automatically.
-
-While native discovery is unavailable (network errors, 404/5xx or a non-native8
-success response), requests use `https://api.terrascale.tech`, the Atlas Worker
-proxy to the nearest healthy region. Discovery resumes on its normal refresh
-cadence (eight seconds before the first native document), and native8 establishes
-a direct regional pin as soon as available. The hosted native producer is still
-pending orchestrator directory work.
-
-`discoveryTimeoutMs` defaults to 3000 and accepts 1–30000 ms within the complete
-operation deadline. An explicit `endpoint` disables discovery and automatic
-failover. It accepts a custom HTTPS origin, a canonical regional origin or the
-Atlas proxy; HTTP is allowed only on loopback for development. Obsolete
-single-level regional hosts are rejected. Database keys and hosted identity
-management keys are separate credentials. See [hosted routing](docs/hosted-routing.md).
+Omitting `endpoint` uses authenticated, scope-bound routing at
+`https://atlas.terrascale.tech` with the native `tbk1` database key. The client
+selects an eligible canonical regional origin and checks its bounded lease again
+before dispatch. `discoveryTimeoutMs` defaults to 3000 and accepts 1–30000 ms.
+Each operation uses the receiver's highest-priority endpoint with the required
+capabilities. Discovery denial, unavailability, invalid or expired leases, and
+missing capabilities return a typed error before any native data request.
+Set `endpoint` to use an independently provisioned direct HTTPS origin. HTTP is
+allowed only on loopback for development, and the public test host is rejected.
+Database keys and hosted identity management keys are separate credentials.
 
 The admitted Atlas receiver advertises conditional mutations, atomic groups,
 and security state as unavailable. Discovered clients refuse those operations
@@ -139,3 +129,9 @@ Hosted OAuth resource requests use one exact registered HTTPS `resource`. `oidc.
 `oauthClients` and `oauthResources` provide the producer's snake_case policy records and named management operations. Resource PATCH requires `expected_auth_epoch`; client PATCH accepts it. JSON epochs outside JavaScript's exact integer range are rejected. Client PATCH returns a bare client view unless `rotate_secret` is true, when it returns the client and its one-time secret. Resource create/PATCH always return the resource and nullable one-time introspection secret.
 
 Use `oidc.introspectResource` with independently configured `issuer`, exact `audience`, `introspection_client_id`, and `introspection_secret`. It uses resource Basic authentication only, with each credential component form encoded before Base64. An active result requires the exact configured issuer/audience, `Bearer`, integer timestamps valid at the local clock with no default skew, and the required user/service session shape. Inactive results contain only `active: false`. Resource results expose no internal epochs, refresh family, or token-use fields. The provider checks current durable token/session/resource state; an active principal or scope does not grant project ownership or management authority. Product authorization remains at the caller's existing authorization boundary.
+
+Regional native database origins use `https://<region>.api.terrascale.tech`,
+for example `https://gru.api.terrascale.tech`. The global API host and retired
+root regional hosts cannot serve as native origins. Auth uses its separate
+`.auth.terrascale.tech` namespace. Direct independent origins must use ASCII
+hostnames; percent-encoded and Unicode hostname aliases are rejected.
