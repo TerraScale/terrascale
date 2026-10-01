@@ -455,7 +455,12 @@ async fn browser_confirms_a_device_with_datastar_without_navigation() {
 import { pathToFileURL } from 'node:url';
 const { chromium } = await import(pathToFileURL(process.env.TS_AUTH_PLAYWRIGHT_MODULE).href);
 const [origin, code] = process.argv.slice(2);
-const browser = await chromium.launch({executablePath: process.env.TS_AUTH_CHROMIUM_PATH, headless: true, args:['--no-sandbox','--disable-dev-shm-usage']});
+const browser = await chromium.launch({
+  executablePath: process.env.TS_AUTH_CHROMIUM_PATH,
+  headless: true,
+  timeout: 60000,
+  args: ['--no-sandbox', '--disable-dev-shm-usage'],
+});
 try {
   const context = await browser.newContext();
   await context.addCookies([{name:'tsauth_session', value:'device-session-secret', url:origin, httpOnly:true, sameSite:'Lax'}]);

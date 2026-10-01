@@ -49,7 +49,9 @@ const { chromium } = await import(pathToFileURL(modulePath).href);
 const browser = await chromium.launch({
   executablePath: chromiumPath,
   headless: true,
-  timeout: 20000,
+  // Shared CI runners can spend most of 20 seconds starting Chromium.
+  // Keep startup bounded independently of the interaction deadlines below.
+  timeout: 60000,
   args: ['--no-sandbox', '--disable-dev-shm-usage'],
 });
 const consoleErrors = [];
