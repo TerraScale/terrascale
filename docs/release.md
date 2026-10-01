@@ -2,9 +2,9 @@
 
 The release artifact is one immutable public npm tarball. Qualification installs
 those exact bytes in a separate consumer; source tests alone cannot qualify it.
-Production publication remains blocked by C06/C07 management and credential
-admission, native single-writer security persistence, and installed real-producer
-and deployed authenticated account/browser journeys.
+CI publishes automatically: see [Publishing](#publishing). Capabilities still
+pending C06/C07 management and credential admission or native single-writer
+security persistence fail at runtime with explicit capability errors.
 
 The native Forgejo workflow verifies the event revision on Node 22.23.2 and
 24.21.0 and current browser engines. All jobs pin the existing builder image to
@@ -60,10 +60,10 @@ browser tests verify browser compatibility, while the separate real-allocation
 browser journey requires actual service credentials and does not use intercepted
 producer responses.
 
-`qualify-npm-artifact.ts` preserves clean-source, reviewed toolchain, installed
+`qualify-npm-artifact.js` preserves clean-source, reviewed toolchain, installed
 consumer, archive, audit, license, and cryptographic evidence checks. Its report
 retains active producer blockers and cannot mark a release eligible while they
-remain. `promote-npm-candidate.ts` requires an admitted build receipt bound to
+remain. `promote-npm-candidate.js` requires an admitted build receipt bound to
 source and output bytes and refuses publication with active blockers. The
 required release-E2E check fails before any skip-capable suite until production
 persistence and deployed account flows are admitted. Environment variable
@@ -72,3 +72,13 @@ presence is not successful journey evidence.
 Hosted OAuth resource conformance must bind the accepted producer protocol snapshot and its actual HTTP response artifact manifest. Request-only controls use deliberately failing transports; captured-response playback proves decoding only and is not hosted or native qualification. Active resource responses are checked against independently configured canonical issuer, exact registered audience, fresh local time, and user/service session shape. Keep no-resource browser login supported, resource Basic introspection separate from client-secret-post token and client introspection, and management authorization separate from token activity.
 
 Client/resource management responses use exact snake_case records and safe numeric epochs. Verify both client PATCH branches (bare view without rotation, one-time secret envelope with rotation), the always-enveloped resource create/PATCH response, inactive responses, and actual 401/500 errors. Set `TERRASCALE_AUTH_COMPONENT_RESPONSES` to the accepted immutable captured manifest for component-byte decoding checks. An expired retained response must fail acceptance; do not rewrite its timestamps or claim a live authenticated exchange from playback.
+
+## Publishing
+
+The `release/npm` job in `.forgejo/workflows/ci.yml` publishes the `terrascale`
+npm package on every push to `main`, after the static, Node and browser jobs
+pass. It skips immediately when npm already has the `package.json` version;
+otherwise it packs the tarball once and publishes those exact bytes. Bump the
+version to release. The publish token is the Forgejo action secret `NPM_TOKEN`;
+its canonical copy is the operator-only OpenBao object
+`/infra/npm/terrascale-publish` (`NPM_TOKEN`, `NPM_USER`).

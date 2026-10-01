@@ -1,6 +1,6 @@
 # Installed current producer journey
 
-`current-producer-consumer.mjs` verifies a supplied immutable npm tarball digest,
+`current-producer-consumer.js` verifies a supplied immutable npm tarball digest,
 installs it in a fresh temporary consumer and imports only the installed package.
 It requires a real isolated allocation and never substitutes an in-process server.
 The packaged-consumer wrapper delegates to this same journey.

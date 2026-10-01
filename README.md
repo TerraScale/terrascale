@@ -1,17 +1,22 @@
-# @terrascale/sdk
+# terrascale
 
-The TypeScript SDK for native TerraBase documents and hosted TerraScale identity.
+The JavaScript SDK for native TerraBase documents and hosted TerraScale identity.
 The package targets Node.js 22 and 24 and current Chrome, Firefox, Safari, and Edge.
 Release qualification installs the exact packed artifact into a separate consumer.
 
-```ts
-import { createTerraBaseClient } from "@terrascale/sdk";
+The source is plain ES modules typed with JSDoc and published as written; there
+is no transpile step. `npm run build` generates the `.d.ts` declarations in
+`types/`, so TypeScript and editor consumers get the same types the source is
+checked against.
+
+```js
+import { createTerraBaseClient } from "terrascale";
 
 const database = createTerraBaseClient({
-  tenant: process.env.TERRABASE_TENANT!,
-  database: process.env.TERRABASE_DATABASE!,
-  shard: BigInt(process.env.TERRABASE_SHARD!),
-  apiKey: process.env.TERRABASE_API_KEY!,
+  tenant: process.env.TERRABASE_TENANT,
+  database: process.env.TERRABASE_DATABASE,
+  shard: BigInt(process.env.TERRABASE_SHARD),
+  apiKey: process.env.TERRABASE_API_KEY,
 });
 
 const result = await database.read(collectionUuid, documentUuid);
@@ -32,9 +37,9 @@ Subscriptions first consume a complete paginated snapshot, then finite poll
 groups. SQL execution requires the separate PostgreSQL listener contract.
 
 `createDatabaseQuery(client, options)` delivers complete native snapshot and poll
-cuts to `useQuery` from `@terrascale/sdk/react` or `createQuery` from
-`@terrascale/sdk/svelte`. TanStack DB 0.9.2 integration is available through
-`terrascaleCollectionOptions` from `@terrascale/sdk/tanstack`; map each complete
+cuts to `useQuery` from `terrascale/react` or `createQuery` from
+`terrascale/svelte`. TanStack DB 0.9.2 integration is available through
+`terrascaleCollectionOptions` from `terrascale/tanstack`; map each complete
 point explicitly and preserve conflicts. Publication is acknowledged before
 advancing delivery, and cleanup cancels owned work. Mutations prepare and commit
 through the same client; a presentation rollback does not establish a server abort.
@@ -72,15 +77,15 @@ unknown, pending, and expired status do not establish an abort. Persist the
 transaction identity, authority, and fingerprint when recovery spans restarts.
 `local_durable` and `object_durable` are distinct acknowledgement levels.
 
-`@terrascale/sdk/ts-auth` contains the separate hosted identity management and
+`terrascale/ts-auth` contains the separate hosted identity management and
 OIDC client. Its private transport preserves form-encoded token operations,
 bounded responses, deadlines, and a single changed-token refresh. Configure
 its own origin, instance, and identity credentials.
 
-`@terrascale/sdk/local` is an explicitly enabled Node development runtime:
+`terrascale/local` is an explicitly enabled Node development runtime:
 
-```ts
-import { createTerraScaleSqliteRuntime } from "@terrascale/sdk/local";
+```js
+import { createTerraScaleSqliteRuntime } from "terrascale/local";
 
 const local = createTerraScaleSqliteRuntime({
   sqlite: { enabled: true, databasePath: "/absolute/path/development.sqlite" },
@@ -100,12 +105,13 @@ environments. Its official Better Auth 1.7.2 adapter uses development SQLite
 transactions and maintained adapter suites. These checks do not qualify
 production security, regional replication, or the deployed customer application.
 
-Management/catalog provisioning and credential lifecycle (C06/C07), production
-Better Auth security persistence, and real installed producer/deployed account
-journeys remain required release blockers. The management, administration, and
-production Better Auth entrypoints fail with explicit capability errors until
-those owning contracts are admitted. Candidate inspection does not authorize
-publication.
+The management, administration, and production Better Auth entrypoints fail
+with explicit capability errors until management/catalog provisioning and
+credential lifecycle (C06/C07) and production Better Auth security persistence
+are admitted.
+
+Every push to `main` that passes CI publishes the `package.json` version to npm
+when that version is not yet published. Bump the version to release.
 
 ```sh
 npm ci

@@ -1,0 +1,158 @@
+import assert from "node:assert/strict";
+import { test } from "vitest";
+import {
+  localSqliteUnitTestsAllowed,
+  localFixture,
+} from "./local/test-environment.js";
+/** @import { DBAdapter } from "@better-auth/core/db/adapter" */
+/** @import { BetterAuthOptions } from "@better-auth/core" */
+const options = {
+  appName: "local-native-auth",
+  secret: "test-secret-test-secret-test-secret",
+};
+/** @param {string} email */
+const user = (email) => ({
+  name: email,
+  email,
+  emailVerified: false,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+});
+
+test.skipIf(!localSqliteUnitTestsAllowed)(
+  "pinned local factory converts dates, supports custom names and enforces unique writes",
+  async () => {
+    const fixture = await localFixture();
+    try {
+      const adapter = (await fixture.runtime.createBetterAuthAdapter())({
+        ...options,
+        user: { modelName: "members", fields: { email: "email_address" } },
+      });
+      const created = await adapter.create({
+        model: "user",
+        data: user("user@example.test"),
+      });
+      assert.ok(created.createdAt instanceof Date);
+      assert.equal(typeof /** @type {{ id?: string }} */ (created).id, "string");
+      const found = /** @type {{ email: string } | null} */ (
+        await adapter.findOne({
+          model: "user",
+          where: [{ field: "email", value: "user@example.test" }],
+        })
+      );
+      assert.equal(found?.email, "user@example.test");
+      const competing = await Promise.allSettled(
+        Array.from({ length: 8 }, () =>
+          adapter.create({ model: "user", data: user("unique@example.test") }),
+        ),
+      );
+      assert.equal(
+        competing.filter((result) => result.status === "fulfilled").length,
+        1,
+      );
+      assert.equal(await adapter.count({ model: "user" }), 2);
+      const page = /** @type {{ email: string }[]} */ (
+        await adapter.findMany({
+          model: "user",
+          sortBy: { field: "email", direction: "asc" },
+          limit: 1,
+          offset: 1,
+        })
+      );
+      assert.equal(page.length, 1);
+    } finally {
+      await fixture.close();
+    }
+  },
+);
+
+test.skipIf(!localSqliteUnitTestsAllowed)(
+  "local one-time consume is atomic and an async callback rolls back after an awaited failure",
+  async () => {
+    const fixture = await localFixture();
+    try {
+      const adapter = (await fixture.runtime.createBetterAuthAdapter())(
+        options,
+      );
+      const record = await adapter.create({
+        model: "verification",
+        data: {
+          identifier: "one-time",
+          value: "secret",
+          expiresAt: new Date(Date.now() + 60_000),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+      const competing = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          adapter.consumeOne({
+            model: "verification",
+            where: [{ field: "id", value: /** @type {{ id: string }} */ (record).id }],
+          }),
+        ),
+      );
+      assert.equal(competing.filter((value) => value !== null).length, 1);
+      /** @type {Omit<DBAdapter<BetterAuthOptions>, "transaction"> | undefined} */
+      let escaped;
+      await assert.rejects(
+        adapter.transaction(async (transaction) => {
+          escaped = transaction;
+          await transaction.create({
+            model: "user",
+            data: user("rolled-back@example.test"),
+          });
+          await Promise.resolve();
+          throw new Error("rollback requested");
+        }),
+        /rollback requested/u,
+      );
+      assert.equal(await adapter.count({ model: "user" }), 0);
+      assert.ok(escaped !== undefined);
+      await assert.rejects(escaped.count({ model: "user" }), /settled/u);
+    } finally {
+      await fixture.close();
+    }
+  },
+);
+
+test.skipIf(!localSqliteUnitTestsAllowed)(
+  "caught auth failures poison the transaction and later operations cannot commit",
+  async () => {
+    const fixture = await localFixture();
+    try {
+      const adapter = (await fixture.runtime.createBetterAuthAdapter())(
+        options,
+      );
+      await adapter.create({
+        model: "user",
+        data: user("existing@example.test"),
+      });
+      await assert.rejects(
+        adapter.transaction(async (transaction) => {
+          await transaction.create({
+            model: "user",
+            data: user("must-rollback@example.test"),
+          });
+          await transaction
+            .create({ model: "user", data: user("existing@example.test") })
+            .catch(() => undefined);
+          return "caught";
+        }),
+        /unique/u,
+      );
+      assert.equal(await adapter.count({ model: "user" }), 1);
+      const updated = await adapter.update({
+        model: "user",
+        where: [
+          { field: "email", value: "existing@example.test" },
+          { field: "name", value: "wrong" },
+        ],
+        update: { name: "bad" },
+      });
+      assert.equal(updated, null);
+    } finally {
+      await fixture.close();
+    }
+  },
+);
