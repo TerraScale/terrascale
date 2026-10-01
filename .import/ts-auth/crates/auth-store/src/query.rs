@@ -11,7 +11,7 @@ use crate::{StoreError, StoreResult};
 pub const TERRASCALE_API_HOST: &str = "api.terrascale.tech";
 
 /// Regional storage authority shared by every hosted auth replica.
-pub const GRU_AUTHORITY_HOST: &str = "gru.terrascale.tech";
+pub const GRU_AUTHORITY_HOST: &str = "gru.api.terrascale.tech";
 
 #[derive(Clone)]
 pub struct QueryTransport {

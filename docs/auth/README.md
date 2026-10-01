@@ -89,7 +89,7 @@ mise exec -- cargo run --locked -p auth-app
 | Variable | Meaning |
 | --- | --- |
 | `TS_AUTH_PUBLIC_ORIGIN` | One global public origin shared by every replica (issuer URLs, email links, WebAuthn RP) |
-| `TS_AUTH_TERRASCALE_API_URL` | TerraScale API origin (default `https://api.terrascale.tech`); must be `https://api.terrascale.tech` or `https://gru.terrascale.tech`, or a loopback URL in Development. Non-loopback storage routes strictly to the GRU authority |
+| `TS_AUTH_TERRASCALE_API_URL` | TerraScale API origin (default `https://api.terrascale.tech`); must be `https://api.terrascale.tech` or `https://gru.api.terrascale.tech`, or a loopback URL in Development. Non-loopback storage routes strictly to the GRU authority |
 | `TS_AUTH_TERRASCALE_API_KEY` | Project API key for TerraBase |
 | `TS_AUTH_TERRASCALE_PROJECT_ID` / `TS_AUTH_TERRASCALE_TENANT_ID` | Optional project/tenant selectors |
 | `TS_AUTH_DATABASE` | TerraBase database backing ts-auth |

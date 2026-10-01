@@ -259,6 +259,49 @@ fn test_options(storage_url: String, database: String, public_origin: String) ->
     }
 }
 
+#[tokio::test]
+async fn production_storage_origin_admission_uses_the_regional_api_namespace() {
+    for storage_origin in [
+        "https://api.terrascale.tech",
+        "https://gru.api.terrascale.tech",
+    ] {
+        let options = test_options(
+            storage_origin.to_owned(),
+            "origin-admission".to_owned(),
+            "https://auth.example.test".to_owned(),
+        );
+        let state = build_state_with_mode(options, false)
+            .expect("production storage origin should be admitted");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, build_router(state)).await.unwrap();
+        });
+        let response = Client::new()
+            .get(format!("http://{address}/healthz"))
+            .send()
+            .await
+            .expect("admitted production configuration should serve HTTP");
+        task.abort();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    for storage_origin in [
+        "https://gru.terrascale.tech",
+        "https://fra.api.terrascale.tech",
+    ] {
+        let options = test_options(
+            storage_origin.to_owned(),
+            "origin-admission".to_owned(),
+            "https://auth.example.test".to_owned(),
+        );
+        assert!(
+            build_state_with_mode(options, false).is_err(),
+            "retired hosts and other regional authorities must be rejected"
+        );
+    }
+}
+
 async fn create_instance(server: &TestServer, client: &Client, slug: &str) -> Value {
     let response = client
         .post(format!("{}/v1/instances", server.origin))
