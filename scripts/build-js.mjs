@@ -161,21 +161,19 @@ async function build() {
   const datastar = await readVendor('datastar.js');
   const datastarMap = await readVendor('datastar.js.map');
   const datastarLicense = await readVendor('LICENSE.datastar.md');
-  const helpers = (await readRequired(
-    resolve(repository, 'internal/ui/layout_helpers.go'),
-    'Missing internal/ui/layout_helpers.go; the JS build reads its Datastar SRI pin',
+  const pins = (await readRequired(
+    resolve(repository, 'internal/ui/datastar_pins.go'),
+    'Missing internal/ui/datastar_pins.go; the JS build reads its Datastar SRI pins',
   )).toString('utf8');
-  const pinned = helpers.match(/^\s*(?:const\s+)?datastarIntegrity\s*=\s*"([^"]+)"/m)?.[1];
+  const pinned = pins.match(/^\s*const\s+datastarIntegrity\s*=\s*"([^"]+)"/m)?.[1];
   const integrity = sri(datastar);
   if (integrity !== pinned) {
-    throw new Error(`vendor/datastar.js hashes to ${integrity}, but datastarIntegrity in internal/ui/layout_helpers.go is ${pinned ?? 'missing'}`);
+    throw new Error(`vendor/datastar.js hashes to ${integrity}, but datastarIntegrity in internal/ui/datastar_pins.go is ${pinned ?? 'missing'}`);
   }
-  // Pinned from the official release alongside the bundle. A bundle
-  // upgrade must refresh its source map too.
-  const pinnedMap = 'sha384-pt2bLYQEhQctXw5tJaokvLV96hxW/GSwz2K8L+3xltbjrLNwyWS8PG/2NprOqeIS';
+  const pinnedMap = pins.match(/^\s*const\s+datastarMapIntegrity\s*=\s*"([^"]+)"/m)?.[1];
   const mapIntegrity = sri(datastarMap);
   if (mapIntegrity !== pinnedMap) {
-    throw new Error(`vendor/datastar.js.map hashes to ${mapIntegrity}, but the pinned official Datastar source map is ${pinnedMap}`);
+    throw new Error(`vendor/datastar.js.map hashes to ${mapIntegrity}, but datastarMapIntegrity in internal/ui/datastar_pins.go is ${pinnedMap ?? 'missing'}`);
   }
   const datastarFile = { path: resolve(outdir, 'datastar.js'), contents: datastar, text: datastar.toString('utf8') };
   const codicon = await extractCodicon();
@@ -267,6 +265,8 @@ if (watchMode) {
     }, 30);
   };
   watch(source, { recursive: true }, rebuild);
-  watch(resolve(repository, 'internal/ui/layout_helpers.go'), rebuild);
-  console.log('JS: watching web/assets/js/ and internal/ui/layout_helpers.go');
+  watch(resolve(repository, 'internal/ui'), (_, filename) => {
+    if (!filename || filename === 'datastar_pins.go') rebuild();
+  });
+  console.log('JS: watching web/assets/js/ and internal/ui/datastar_pins.go');
 }

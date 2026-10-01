@@ -1,1 +1,1 @@
-web/assets/js/vendor/* -text
+web/assets/js/vendor/** -text

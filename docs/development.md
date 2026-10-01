@@ -39,12 +39,12 @@ process with Ctrl+C terminates Air, its app child, and both asset watchers.
 
 Page behavior uses the official Datastar v1.0.4 bundle, vendored with its
 source map and license under `web/assets/js/vendor/`. `scripts/build-js.mjs`
-checks the bundle against `datastarIntegrity` in `internal/ui/layout_helpers.go`,
+checks the bundle and source map against the hashes in `internal/ui/datastar_pins.go`,
 rejects remote dynamic imports, and copies these files into `web/static/js/`.
 Pages load it from the dashboard using a content-hashed URL, without a CDN
 request. When upgrading, replace the official bundle, source map and license
-together and update `datastarIntegrity` and the pinned source map hash in
-`scripts/build-js.mjs` from the official release. Git
+together and update both hashes in `internal/ui/datastar_pins.go` from the
+official release. Git
 preserves the bundle's bytes without normalizing line endings.
 Behavior lives in Go handlers, templ components, native HTML (`<details>`,
 `<dialog>` with `command`/`commandfor`) and Datastar attributes. The one custom
