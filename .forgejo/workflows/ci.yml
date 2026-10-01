@@ -192,6 +192,8 @@ jobs:
         run: npx playwright install firefox webkit
 
       - name: Provision pinned actual Chrome and Edge binaries
+        env:
+          TS_NIX_CACHE: file:///cache/nix
         run: bash scripts/ci/provision-branded-browsers.sh
 
       - name: Run browser qualification against the current package
