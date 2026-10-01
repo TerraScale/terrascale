@@ -154,7 +154,7 @@ async function readRequired(file, missing) {
 
 const readVendor = name => readRequired(
   resolve(source, 'vendor', name),
-  `Missing web/assets/js/vendor/${name}; restore it from the official Datastar v1.0.4 release`,
+  `Missing web/assets/js/vendor/${name}; restore it from the pinned official Datastar release`,
 );
 
 async function build() {
@@ -170,12 +170,12 @@ async function build() {
   if (integrity !== pinned) {
     throw new Error(`vendor/datastar.js hashes to ${integrity}, but datastarIntegrity in internal/ui/layout_helpers.go is ${pinned ?? 'missing'}`);
   }
-  // Pinned from the official v1.0.4 release alongside the bundle. A bundle
+  // Pinned from the official release alongside the bundle. A bundle
   // upgrade must refresh its source map too.
   const pinnedMap = 'sha384-pt2bLYQEhQctXw5tJaokvLV96hxW/GSwz2K8L+3xltbjrLNwyWS8PG/2NprOqeIS';
   const mapIntegrity = sri(datastarMap);
   if (mapIntegrity !== pinnedMap) {
-    throw new Error(`vendor/datastar.js.map hashes to ${mapIntegrity}, but the pinned official Datastar v1.0.4 source map is ${pinnedMap}`);
+    throw new Error(`vendor/datastar.js.map hashes to ${mapIntegrity}, but the pinned official Datastar source map is ${pinnedMap}`);
   }
   const datastarFile = { path: resolve(outdir, 'datastar.js'), contents: datastar, text: datastar.toString('utf8') };
   const codicon = await extractCodicon();
@@ -255,7 +255,7 @@ console.log(`JS: ${bytes} bytes${watchMode ? ' (dev)' : ''} → ${outdir}`);
 
 if (watchMode) {
   let timer;
-  watch(source, { recursive: true }, () => {
+  const rebuild = () => {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       try {
@@ -265,6 +265,8 @@ if (watchMode) {
         console.error(`JS: build failed\n${error.message}`);
       }
     }, 30);
-  });
-  console.log('JS: watching web/assets/js/');
+  };
+  watch(source, { recursive: true }, rebuild);
+  watch(resolve(repository, 'internal/ui/layout_helpers.go'), rebuild);
+  console.log('JS: watching web/assets/js/ and internal/ui/layout_helpers.go');
 }

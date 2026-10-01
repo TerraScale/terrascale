@@ -58,7 +58,7 @@ templ Card(p CardProps) {
 						}
 					>{ p.Title }</h2>
 					if p.Description != "" && !p.ActionsAlongsideTitle {
-						<p class="ts-card-description">{ p.Description }</p>
+						@cardDescription(p.Description)
 					}
 				</div>
 				if p.Actions != nil {
@@ -67,7 +67,7 @@ templ Card(p CardProps) {
 					</div>
 				}
 				if p.Description != "" && p.ActionsAlongsideTitle {
-					<p class="ts-card-description">{ p.Description }</p>
+					@cardDescription(p.Description)
 				}
 			</header>
 		}
@@ -75,6 +75,10 @@ templ Card(p CardProps) {
 			{ children... }
 		</div>
 	</section>
+}
+
+templ cardDescription(text string) {
+	<p class="ts-card-description">{ text }</p>
 }
 
 // Stats is a row of headline numbers; children are Stat items.
