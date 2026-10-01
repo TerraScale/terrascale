@@ -372,20 +372,27 @@ rotation.
 ## CI
 
 `.forgejo/workflows/ci.yml` checks out a pinned `ts-rust` revision and runs
-two jobs in parallel. `fast` checks formatting, runs Clippy with warnings
-denied and the Cargo tests, runs a locked dependency advisory audit, and runs
-the explicit Chromium admin and device-authorization tests. `release` builds
-`auth-app` as a static x86_64 musl executable with the job image's musl
-toolchain (`scripts/ci/stage-release.sh`), packages it into the distroless
-`Containerfile`, and smoke-checks `/healthz`, `/openapi/v1.json` and
-fail-closed `/readyz` (`scripts/ci/package-image.sh`). Both keep compiled
-dependencies in their own Cargo target directory on the runner's shared
-`/cache` and compile through the kache store at `/cache/kache`, which every
-TerraScale Rust job shares, so units an earlier job built are restored
-instead of recompiled (`scripts/ci/cargo-cache.sh`). Once both pass, pushes
-to `main` rebuild the binary from a clean Cargo cache without kache, repeat
-the image checks, and publish the image as
-`git.terrascale.tech/<owner>/ts-auth:<commit>`.
+three jobs in parallel. `lint` checks formatting, runs Clippy with warnings
+denied, and runs a locked dependency advisory audit. `fast` runs the Cargo
+tests and the explicit Chromium admin and device-authorization tests.
+`release` builds `auth-app` as a static x86_64 musl executable with the job
+image's musl toolchain (`scripts/ci/stage-release.sh`), packages it into the
+distroless `Containerfile`, and smoke-checks `/healthz`, `/openapi/v1.json`
+and fail-closed `/readyz` (`scripts/ci/package-image.sh`). Each job keeps
+compiled dependencies in its own Cargo target directory on the runner's
+shared `/cache` and compiles through the kache store at `/cache/kache`, which
+every TerraScale Rust job shares, so units an earlier job built are restored
+instead of recompiled (`scripts/ci/cargo-cache.sh`). On pushes to `main`,
+`release` instead builds the binary from a clean Cargo cache without kache
+and stages the smoke-checked image in `git.terrascale.tech/<owner>/ts-auth-ci`.
+Its registry manifest digest is passed to `publish` as a job output
+(`scripts/ci/transfer-image.sh`), so jobs can run on different machines and
+a publish retry within 30 days pulls the same image. Once all three jobs pass, `publish`
+pushes it as `git.terrascale.tech/<owner>/ts-auth:<commit>`. Each transfer
+uses a private temporary registry auth file and removes it on exit. The daily
+`registry-retention.yml` workflow removes staging candidates older than 30 days;
+retry the release job too when that retention window has elapsed. Published
+release tags are retained.
 
 The locked dependency audit ignores only `RUSTSEC-2023-0071` for `rsa`:
 ts-auth currently uses RSA public-key signature verification for JWT,
