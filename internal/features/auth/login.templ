@@ -19,10 +19,12 @@ templ loginView(data loginPageData, csrfToken string) {
 		<div class="ts-login-column">
 			<div class="ts-login-panel">
 				<div class="ts-login-stack">
-					<img class="ts-login-logo" src={ static.URL("brand/logo-terrascale-blue.svg") } alt="TerraScale" decoding="async"/>
-					<div class="ts-auth-heading">
-						<h1 class="ts-auth-title" id="login-title">Sign in</h1>
-						<p class="ts-auth-subtitle">Access your databases and cloud operations.</p>
+					<div class="ts-login-heading">
+						<img class="ts-login-logo" src={ static.URL("brand/logo-terrascale-blue.svg") } alt="TerraScale" decoding="async"/>
+						<div class="ts-auth-heading">
+							<h1 class="ts-auth-title" id="login-title">Sign in</h1>
+							<p class="ts-auth-subtitle">Access your databases and cloud operations.</p>
+						</div>
 					</div>
 					if data.Error != "" {
 						@ui.Alert("danger", "", data.Error)

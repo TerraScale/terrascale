@@ -2,7 +2,7 @@
 
 .ts-login {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(480px, 25vw);
+  grid-template-columns: minmax(0, 3fr) minmax(19rem, 1fr);
   min-height: 100dvh;
 }
 
@@ -51,36 +51,44 @@
   background: var(--ts-canvas);
 }
 
-/* The panel fills the column above the locale footer: the credential stack
-   centers in the space it leaves, and the account link takes the floor row
-   just above the locale separator.
-   The 384px measure is a px literal on purpose: the design system's rem steps
-   off a 14px root, so 24rem would land 48px short of it. */
+/* The reference places the header in the top 304px and the account link
+   immediately above the locale footer. */
 .ts-login-panel {
   display: grid;
   grid-template-rows: 1fr auto;
   gap: var(--ts-s5);
   width: min(384px, calc(100% - 2 * var(--ts-s5)));
   margin-inline: auto;
-  padding: var(--ts-s10) 0;
+  padding-top: var(--ts-s4);
 }
 
 .ts-login-stack {
   display: grid;
-  align-content: center;
+  align-content: start;
   gap: var(--ts-s5);
   min-height: 0;
+}
+
+.ts-login-heading {
+  display: grid;
+  align-content: end;
+  gap: var(--ts-s5);
+  min-height: 288px;
+  padding-bottom: var(--ts-s3);
+}
+
+.ts-login-heading .ts-auth-title {
+  font-size: var(--ts-fs-3xl);
 }
 
 .ts-login-logo {
   justify-self: center;
   width: auto;
   height: 80px;
+  object-fit: contain;
 }
 
-/* The login password field carries the same large control height as the email
-   field above it; the shared PasswordInput keeps the 36px default elsewhere. */
-.ts-login-panel .ts-input-group .ts-input {
+.ts-login-panel .ts-auth-providers .ts-btn {
   height: var(--ts-control-h-lg);
 }
 
@@ -110,5 +118,9 @@
 
   .ts-login-logo {
     height: 64px;
+  }
+
+  .ts-login-heading {
+    min-height: 0;
   }
 }
