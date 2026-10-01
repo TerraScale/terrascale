@@ -16,7 +16,8 @@ test("packed browser direct endpoint validation and pre-abort dispatch boundary"
       "https://api.terrascale.tech",
       "https://api.terrascale.tech.",
       "http://remote.example.test",
-      "https://gru.terrascale.tech/path",
+      "https://gru.terrascale.tech",
+      "https://gru.api.terrascale.tech/path",
     ]) {
       try {
         sdk.createTerraBaseClient({ ...scope, endpoint, apiKey: "unused" });
@@ -28,7 +29,7 @@ test("packed browser direct endpoint validation and pre-abort dispatch boundary"
     let dispatches = 0;
     const client = sdk.createTerraBaseClient({
       ...scope,
-      endpoint: "https://gru.terrascale.tech",
+      endpoint: "https://gru.api.terrascale.tech",
       apiKey: () => {
         credentials += 1;
         return "unused";
@@ -54,7 +55,7 @@ test("packed browser direct endpoint validation and pre-abort dispatch boundary"
     };
   });
   expect(observation).toEqual({
-    rejected: 4,
+    rejected: 5,
     credentials: 0,
     dispatches: 0,
     ok: false,
