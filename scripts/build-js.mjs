@@ -139,7 +139,43 @@ function hash(contents) {
   return createHash('sha256').update(contents).digest('hex').slice(0, 8).toUpperCase();
 }
 
+function sri(contents) {
+  return `sha384-${createHash('sha384').update(contents).digest('base64')}`;
+}
+
+async function readRequired(file, missing) {
+  try {
+    return await readFile(file);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    throw new Error(missing, { cause: error });
+  }
+}
+
+const readVendor = name => readRequired(
+  resolve(source, 'vendor', name),
+  `Missing web/assets/js/vendor/${name}; restore it from the pinned official Datastar release`,
+);
+
 async function build() {
+  const datastar = await readVendor('datastar.js');
+  const datastarMap = await readVendor('datastar.js.map');
+  const datastarLicense = await readVendor('LICENSE.datastar.md');
+  const pins = (await readRequired(
+    resolve(repository, 'internal/ui/datastar_pins.go'),
+    'Missing internal/ui/datastar_pins.go; the JS build reads its Datastar SRI pins',
+  )).toString('utf8');
+  const pinned = pins.match(/^\s*const\s+datastarIntegrity\s*=\s*"([^"]+)"/m)?.[1];
+  const integrity = sri(datastar);
+  if (integrity !== pinned) {
+    throw new Error(`vendor/datastar.js hashes to ${integrity}, but datastarIntegrity in internal/ui/datastar_pins.go is ${pinned ?? 'missing'}`);
+  }
+  const pinnedMap = pins.match(/^\s*const\s+datastarMapIntegrity\s*=\s*"([^"]+)"/m)?.[1];
+  const mapIntegrity = sri(datastarMap);
+  if (mapIntegrity !== pinnedMap) {
+    throw new Error(`vendor/datastar.js.map hashes to ${mapIntegrity}, but datastarMapIntegrity in internal/ui/datastar_pins.go is ${pinnedMap ?? 'missing'}`);
+  }
+  const datastarFile = { path: resolve(outdir, 'datastar.js'), contents: datastar, text: datastar.toString('utf8') };
   const codicon = await extractCodicon();
   const workerResult = await esbuild.build({
     ...shared,
@@ -164,12 +200,23 @@ async function build() {
     splitting: true,
     plugins: [patchPlugin(monacoPatches(workerFiles, codicon.name))],
   });
-  assertSelfHosted([...workerResult.outputFiles, ...mainResult.outputFiles]);
+  assertSelfHosted([
+    ...workerResult.outputFiles,
+    ...mainResult.outputFiles,
+    datastarFile,
+  ]);
 
   const files = [
     ...workerResult.outputFiles,
     ...mainResult.outputFiles,
     { path: resolve(outdir, codicon.name), contents: codicon.contents },
+    // Keep the pinned Datastar bundle intact so the layout's SRI hash applies.
+    // Serving it here avoids a CDN request on every document navigation.
+    datastarFile,
+    // The official bundle references this map. Keep it for production DevTools;
+    // normal navigation does not request it.
+    { path: resolve(outdir, 'datastar.js.map'), contents: datastarMap },
+    { path: resolve(outdir, 'LICENSE.datastar.md'), contents: datastarLicense },
   ];
   // Write the new build before pruning the old one, so a page loading during a
   // development rebuild never finds its chunks missing.
@@ -206,7 +253,7 @@ console.log(`JS: ${bytes} bytes${watchMode ? ' (dev)' : ''} → ${outdir}`);
 
 if (watchMode) {
   let timer;
-  watch(source, { recursive: true }, () => {
+  const rebuild = () => {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       try {
@@ -216,6 +263,10 @@ if (watchMode) {
         console.error(`JS: build failed\n${error.message}`);
       }
     }, 30);
+  };
+  watch(source, { recursive: true }, rebuild);
+  watch(resolve(repository, 'internal/ui'), (_, filename) => {
+    if (!filename || filename === 'datastar_pins.go') rebuild();
   });
-  console.log('JS: watching web/assets/js/');
+  console.log('JS: watching web/assets/js/ and internal/ui/datastar_pins.go');
 }

@@ -1,12 +1,26 @@
 /* Audit: filter bar inside the activity card and severity share meters. */
 
+.ts-audit-page {
+  padding-top: var(--ts-s4);
+}
+
+@media (max-width: 47.99rem) {
+  .ts-audit-page {
+    padding-top: var(--ts-s3);
+  }
+}
+
 .ts-audit-filters {
-  padding: 0 var(--ts-s6) var(--ts-s4);
+  padding-bottom: var(--ts-s4);
   border-bottom: 1px solid var(--ts-line);
 }
 
 .ts-audit-search-field {
   flex: 1 1 260px;
+}
+
+.ts-audit-apply {
+  margin-left: auto;
 }
 
 .ts-audit-table td:first-child {

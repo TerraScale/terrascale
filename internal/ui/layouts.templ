@@ -44,8 +44,7 @@ templ document(page core.Page, bodyClass string) {
 				<link rel="preload" href={ static.URL("fonts/jetbrains-mono-latin-wght-normal.woff2") } as="font" type="font/woff2" crossorigin/>
 			}
 			<link id="ts-css" rel="stylesheet" href={ static.URL("css/terrascale.css") } data-dashboard-css/>
-			<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin/>
-			<script type="module" src={ datastarURL } integrity={ datastarIntegrity } crossorigin="anonymous" if page.Nonce != "" {
+			<script type="module" src={ static.URL("js/datastar.js") } integrity={ datastarIntegrity } crossorigin="anonymous" if page.Nonce != "" {
 	nonce={ page.Nonce }
 }></script>
 			// Prefetch same-origin pages on hover so navigations feel instant.

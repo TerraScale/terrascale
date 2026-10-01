@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mxschmitt/playwright-go"
 )
@@ -318,6 +319,12 @@ func TestCutoverSeededChartsRenderLabelledSamplesForSelectedRange(t *testing.T) 
 		visible(t, page.GetByText(label, playwright.PageGetByTextOptions{Exact: new(true)}))
 	}
 	periodFill := page.Locator(`.ts-usage-billing-kpis .ts-chart-meter[aria-label*="recorded billing period"] rect.ts-svg-sharebar-fill`)
+	now := time.Now().UTC()
+	if now.Before(time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)) || !now.Before(time.Date(2026, time.October, 1, 0, 0, 0, 0, time.UTC)) {
+		must(t, expect.Locator(periodFill).ToHaveCount(0))
+		visible(t, page.GetByText("Unavailable", playwright.PageGetByTextOptions{Exact: new(true)}))
+		return
+	}
 	must(t, expect.Locator(periodFill).ToHaveCount(1))
 	var width float64
 	if _, err := fmt.Sscan(requiredAttribute(t, periodFill, "width", "billing period fill must have a width"), &width); err != nil || width <= 0 {
