@@ -1,6 +1,6 @@
 //! Native cursor-based snapshots and ordered atomic change groups.
 
-use crate::client::{native_deadline, SharedClient};
+use crate::client::{check_native_deadline, native_deadline, SharedClient};
 use crate::discovery::NativeRequirement;
 use crate::documents::{
     validate_cursor, validate_limit, validate_rows, DatabaseScope, Point, PointState, Predicate,
@@ -369,6 +369,7 @@ impl SubscriptionsClient {
             .await?;
         page.validate_in(scope, input.limit)
             .map_err(|e| Error::invalid_response(e.message))?;
+        check_native_deadline(deadline)?;
         Ok(page)
     }
     pub async fn poll(
@@ -399,6 +400,7 @@ impl SubscriptionsClient {
             .await?;
         page.validate_in(scope)
             .map_err(|e| Error::invalid_response(e.message))?;
+        check_native_deadline(deadline)?;
         Ok(page)
     }
 }

@@ -2,7 +2,7 @@
 
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::client::{native_deadline, SharedClient};
+use crate::client::{check_native_deadline, native_deadline, SharedClient};
 use crate::discovery::NativeRequirement;
 use crate::error::{Error, ErrorKind, Result};
 use crate::transport::{Method, Request};
@@ -469,6 +469,7 @@ impl DocumentsClient {
         point
             .validate_in(scope)
             .map_err(|e| Error::invalid_response(e.message))?;
+        check_native_deadline(deadline)?;
         Ok(point)
     }
 
@@ -499,6 +500,7 @@ impl DocumentsClient {
         if let Some(cursor) = &page.next_cursor {
             validate_cursor(cursor).map_err(|e| Error::invalid_response(e.message))?;
         }
+        check_native_deadline(deadline)?;
         Ok(page)
     }
 }

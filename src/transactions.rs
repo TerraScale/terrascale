@@ -1,6 +1,6 @@
 //! Frozen native transaction identity, canonical effect digest, and resolution.
 
-use crate::client::{native_deadline, NativeSendPhase, SharedClient};
+use crate::client::{check_native_deadline, native_deadline, NativeSendPhase, SharedClient};
 use crate::discovery::NativeRequirement;
 use crate::documents::{validate_context, DatabaseScope, Event, Observed, ProtocolVersion};
 use crate::error::{Error, ErrorKind, Result};
@@ -493,6 +493,7 @@ impl TransactionsClient {
             .await;
         let result = result.and_then(|receipt| {
             receipt.validate_for(operation)?;
+            check_native_deadline(deadline)?;
             Ok(receipt)
         });
         match result {
@@ -551,6 +552,7 @@ impl TransactionsClient {
             )
             .await?;
         status.validate_for(operation)?;
+        check_native_deadline(deadline)?;
         Ok(status)
     }
 }
