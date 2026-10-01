@@ -126,7 +126,10 @@ fn fixture_router() -> (AtlasDiscovery, Arc<Mock>, Arc<Clock>) {
 #[derive(Debug)]
 enum LifecycleReply {
     Pending,
+    Gated(tokio::sync::oneshot::Receiver<Result<Response>>),
     Ready(Result<Response>),
+    Delayed(Duration, Result<Response>),
+    Cooperative(Response),
 }
 #[derive(Debug, Default)]
 struct LifecycleTransport {
@@ -137,6 +140,14 @@ struct LifecycleTransport {
     released: AtomicUsize,
 }
 impl LifecycleTransport {
+    fn gated(&self) -> tokio::sync::oneshot::Sender<Result<Response>> {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        self.replies
+            .lock()
+            .unwrap()
+            .push_back(LifecycleReply::Gated(receiver));
+        sender
+    }
     fn pending(&self) {
         self.replies
             .lock()
@@ -148,6 +159,18 @@ impl LifecycleTransport {
             .lock()
             .unwrap()
             .push_back(LifecycleReply::Ready(response));
+    }
+    fn delayed(&self, delay: Duration, response: Result<Response>) {
+        self.replies
+            .lock()
+            .unwrap()
+            .push_back(LifecycleReply::Delayed(delay, response));
+    }
+    fn cooperative(&self, response: Response) {
+        self.replies
+            .lock()
+            .unwrap()
+            .push_back(LifecycleReply::Cooperative(response));
     }
     fn admit(&self, target: &DatabaseScope) {
         let mut body = fixture();
@@ -179,7 +202,28 @@ impl HttpTransport for LifecycleTransport {
                 self.dispatched.notify_one();
                 std::future::pending().await
             }
+            LifecycleReply::Gated(receiver) => {
+                self.dispatched.notify_one();
+                receiver.await.expect("lifecycle reply sender dropped")
+            }
             LifecycleReply::Ready(response) => response,
+            LifecycleReply::Delayed(delay, response) => {
+                tokio::time::sleep(delay).await;
+                response
+            }
+            LifecycleReply::Cooperative(response) => {
+                // Exhaust the real runtime's current cooperative budget without
+                // assuming its size. Returning this valid admission then makes
+                // the next resolver mutex acquisition yield to its caller.
+                std::future::poll_fn(|context| loop {
+                    let consume = std::pin::pin!(tokio::task::consume_budget());
+                    if std::future::Future::poll(consume, context).is_pending() {
+                        return std::task::Poll::Ready(());
+                    }
+                })
+                .await;
+                Ok(response)
+            }
         }
     }
 }
@@ -229,7 +273,7 @@ async fn lifecycle_queue<F: std::future::Future>(
 }
 
 #[tokio::test]
-async fn actual_worker_sqlite_bytes_preserve_full_u64_and_fixed_clock_provenance() {
+async fn derived_receiver_codec_bytes_preserve_full_u64_and_fixed_clock_provenance() {
     let (router, mock, _) = fixture_router();
     mock.raw(200, SUCCESS, 100);
     let resolved = router
@@ -313,7 +357,7 @@ async fn credentials_custom_origin_nil_scope_and_zero_shard_fail_before_transpor
     ] {
         let router = AtlasDiscovery::new(
             ClientConfig::builder()
-                .discovery_base_url(origin)
+                .atlas_base_url(origin)
                 .api_key(native_key())
                 .build()
                 .unwrap(),
@@ -330,7 +374,7 @@ async fn credentials_custom_origin_nil_scope_and_zero_shard_fail_before_transpor
     }
     assert_eq!(
         ClientConfig::builder()
-            .discovery_base_url("http://atlas.terrascale.tech")
+            .atlas_base_url("http://atlas.terrascale.tech")
             .api_key(native_key())
             .build()
             .unwrap_err()
@@ -440,6 +484,18 @@ async fn receiver_ranking_dynamic_regions_residency_and_operation_capabilities_a
             "GRU"
         );
     }
+    // Selecting a less highly ranked endpoint for a different capability must
+    // not pin later reads away from the first admitted endpoint.
+    assert_eq!(
+        router
+            .resolve(&scope(), NativeRequirement::Point)
+            .await
+            .unwrap()
+            .endpoint
+            .region,
+        "Z9-NEW"
+    );
+    assert_eq!(mock.requests.lock().unwrap().len(), 1);
     for requirement in [
         NativeRequirement::Commit {
             conditional: true,
@@ -537,6 +593,7 @@ async fn closed_schema_nullable_fields_duplicates_and_invalid_native_metadata_fa
     }
     for url in [
         "https://api.terrascale.tech",
+        "https://gru.terrascale.tech",
         "https://evil.invalid",
         "https://gru.api.terrascale.tech/",
         "https://gru.api.terrascale.tech:443",
@@ -1127,269 +1184,6 @@ fn current_fixture() -> Json {
     body["expires_at"] = json!(now + 9);
     body
 }
-
-fn ranked_from(mut body: Json) -> Json {
-    let mut next = body["endpoints"][0].clone();
-    next["region"] = json!("FRA");
-    next["url"] = json!("https://fra.api.terrascale.tech");
-    next["priority"] = json!(2);
-    body["endpoints"].as_array_mut().unwrap().push(next);
-    body
-}
-
-fn ranked_fixture() -> Json {
-    ranked_from(current_fixture())
-}
-
-async fn point(client: &TerraScaleClient) -> Result<Point> {
-    client
-        .documents()
-        .get(
-            &scope(),
-            "30000000-0000-0000-0000-000000000001".parse().unwrap(),
-            "40000000-0000-0000-0000-000000000001".parse().unwrap(),
-        )
-        .await
-}
-fn absent() -> Json {
-    json!({"version":1,"state":"absent","context":[],"siblings":[],"state_version":null})
-}
-
-#[tokio::test]
-async fn default_and_explicit_global_base_discover_then_pin_top_region() {
-    for explicit in [false, true] {
-        let mock = Arc::new(Mock::default());
-        let mut builder = ClientConfig::builder().api_key(native_key());
-        if explicit {
-            builder = builder.api_base_url(DEFAULT_API_BASE_URL);
-        }
-        let client = TerraScaleClient::with_transport(builder.build().unwrap(), mock.clone());
-        mock.response(200, &ranked_fixture());
-        mock.response(200, &absent());
-        mock.response(200, &absent());
-        point(&client).await.unwrap();
-        point(&client).await.unwrap();
-        let requests = mock.requests.lock().unwrap();
-        assert_eq!(requests.len(), 3);
-        assert!(requests[0].url.starts_with(ATLAS_BASE_URL));
-        assert!(requests[1]
-            .url
-            .starts_with("https://gru.api.terrascale.tech/v1/"));
-        assert_eq!(requests[1].url, requests[2].url);
-    }
-}
-
-#[tokio::test]
-async fn transport_5xx_and_421_fail_over_then_repin_with_default_options() {
-    for failure in [None, Some(500), Some(503), Some(599), Some(421)] {
-        let mock = Arc::new(Mock::default());
-        let client = TerraScaleClient::with_transport(config(), mock.clone());
-        mock.response(200, &ranked_fixture());
-        let response = failure.map_or_else(
-            || Err(Error::transport("region offline")),
-            |status| {
-                Ok(Response::json(
-                    status,
-                    &json!({"error":{"code":"unavailable","message":"region rejected request"}}),
-                ))
-            },
-        );
-        mock.replies.lock().unwrap().push_back((response, 0));
-        mock.response(200, &absent());
-        mock.response(200, &absent());
-        point(&client).await.unwrap();
-        point(&client).await.unwrap();
-        let requests = mock.requests.lock().unwrap();
-        assert_eq!(requests.len(), 4, "failure {failure:?}");
-        assert!(requests[1]
-            .url
-            .starts_with("https://gru.api.terrascale.tech/v1/"));
-        assert!(requests[2]
-            .url
-            .starts_with("https://fra.api.terrascale.tech/v1/"));
-        assert_eq!(requests[2].url, requests[3].url);
-    }
-}
-
-#[tokio::test]
-async fn failover_excludes_failed_regions_after_the_discovery_lease_expires() {
-    for failures in [1, 2] {
-        let clock = Clock::new();
-        let mock = Mock::new(clock.clone());
-        let client = TerraScaleClient::with_transport_and_clock(config(), mock.clone(), clock);
-        let mut first = ranked_from(fixture());
-        first["refreshSeconds"] = json!(1);
-        let mut next = first["endpoints"][0].clone();
-        next["region"] = json!("SFO");
-        next["url"] = json!("https://sfo.api.terrascale.tech");
-        next["priority"] = json!(3);
-        first["endpoints"].as_array_mut().unwrap().push(next);
-        mock.response(200, &first);
-        for index in 0..failures {
-            mock.replies.lock().unwrap().push_back((
-                Err(Error::transport("region offline")),
-                if index + 1 == failures { 1100 } else { 0 },
-            ));
-        }
-        let mut refreshed = first;
-        refreshed["refreshSeconds"] = json!(8);
-        mock.response(200, &refreshed);
-        mock.response(200, &absent());
-        mock.response(200, &absent());
-        point(&client).await.unwrap();
-        point(&client).await.unwrap();
-        let requests = mock.requests.lock().unwrap();
-        let regions = ["gru", "fra", "sfo"];
-        let expected: Vec<_> = std::iter::once("atlas")
-            .chain(regions[..failures].iter().copied())
-            .chain(["atlas", regions[failures], regions[failures]])
-            .collect();
-        let actual: Vec<_> = requests
-            .iter()
-            .map(|request| {
-                let url = reqwest::Url::parse(&request.url).unwrap();
-                url.host_str()
-                    .unwrap()
-                    .split('.')
-                    .next()
-                    .unwrap()
-                    .to_owned()
-            })
-            .collect();
-        assert_eq!(actual, expected, "failed regions: {failures}");
-        assert!(requests[failures + 1].url.contains("/api/v1/discovery?"));
-        assert_eq!(requests[failures + 2].url, requests[failures + 3].url);
-    }
-}
-
-#[tokio::test]
-async fn discovery_transport_and_5xx_failures_fall_back_to_atlas_api_proxy() {
-    for failure in [None, Some(200), Some(400), Some(404), Some(503)] {
-        let mock = Arc::new(Mock::default());
-        let client = TerraScaleClient::with_transport(config(), mock.clone());
-        let response = failure.map_or_else(|| Err(Error::transport("Atlas offline")), |status|
-            Ok(Response::json(status, &json!({"error":{"code":"discovery_unconfigured","message":"offline","fix":"retry"}}))));
-        mock.replies.lock().unwrap().push_back((response, 0));
-        mock.response(200, &absent());
-        mock.response(200, &absent());
-        point(&client).await.unwrap();
-        point(&client).await.unwrap();
-        let requests = mock.requests.lock().unwrap();
-        assert_eq!(requests.len(), 3);
-        assert!(requests[0].url.starts_with(ATLAS_BASE_URL));
-        assert!(requests[1]
-            .url
-            .starts_with("https://api.terrascale.tech/v1/"));
-        assert_eq!(requests[1].url, requests[2].url);
-    }
-}
-
-#[tokio::test]
-async fn another_scopes_discovery_failure_does_not_interrupt_a_live_pin() {
-    let mock = Arc::new(Mock::default());
-    let client = TerraScaleClient::with_transport(config(), mock.clone());
-    mock.response(200, &ranked_fixture());
-    mock.response(200, &absent());
-    point(&client).await.unwrap();
-    mock.replies
-        .lock()
-        .unwrap()
-        .push_back((Err(Error::transport("Atlas offline")), 0));
-    mock.response(200, &absent());
-    let mut other = scope();
-    other.database = "20000000-0000-0000-0000-000000000002".parse().unwrap();
-    client
-        .documents()
-        .get(
-            &other,
-            "30000000-0000-0000-0000-000000000001".parse().unwrap(),
-            "40000000-0000-0000-0000-000000000001".parse().unwrap(),
-        )
-        .await
-        .unwrap();
-    mock.response(200, &absent());
-    point(&client).await.unwrap();
-    let requests = mock.requests.lock().unwrap();
-    assert_eq!(requests.len(), 5);
-    assert!(requests[3]
-        .url
-        .starts_with("https://api.terrascale.tech/v1/"));
-    assert_eq!(requests[1].url, requests[4].url);
-}
-
-#[tokio::test]
-async fn custom_base_disables_discovery_even_with_a_discovery_override() {
-    let mock = Arc::new(Mock::default());
-    let client = TerraScaleClient::with_transport(
-        ClientConfig::builder()
-            .api_key("test-key")
-            .api_base_url("https://custom.test")
-            .discovery_base_url("https://unused-discovery.test")
-            .build()
-            .unwrap(),
-        mock.clone(),
-    );
-    mock.response(200, &absent());
-    point(&client).await.unwrap();
-    let requests = mock.requests.lock().unwrap();
-    assert_eq!(requests.len(), 1);
-    assert!(requests[0].url.starts_with("https://custom.test/v1/"));
-}
-
-#[tokio::test(start_paused = true)]
-async fn discovery_timeout_falls_back_to_the_atlas_api_proxy() {
-    let transport = Arc::new(LifecycleTransport::default());
-    transport.pending();
-    transport.reply(Ok(Response::json(200, &absent())));
-    let client = TerraScaleClient::with_transport(config(), transport.clone());
-    point(&client).await.unwrap();
-    let requests = transport.requests.lock().unwrap();
-    assert_eq!(requests.len(), 2);
-    assert!(requests[0].url.starts_with(ATLAS_BASE_URL));
-    assert!(requests[1]
-        .url
-        .starts_with("https://api.terrascale.tech/v1/"));
-    assert_eq!(transport.active.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn strict_affinity_is_direct_and_failover_affinity_honors_preference() {
-    for affinity in [RegionAffinity::Strict, RegionAffinity::Failover] {
-        let mock = Arc::new(Mock::default());
-        let client = TerraScaleClient::with_transport(
-            ClientConfig::builder()
-                .api_key(native_key())
-                .preferred_region("FRA")
-                .region_affinity(affinity)
-                .build()
-                .unwrap(),
-            mock.clone(),
-        );
-        if affinity == RegionAffinity::Failover {
-            mock.response(200, &ranked_fixture());
-        }
-        mock.response(200, &absent());
-        point(&client).await.unwrap();
-        let requests = mock.requests.lock().unwrap();
-        assert_eq!(
-            requests.len(),
-            if affinity == RegionAffinity::Strict {
-                1
-            } else {
-                2
-            }
-        );
-        assert!(requests
-            .last()
-            .unwrap()
-            .url
-            .starts_with("https://fra.api.terrascale.tech/v1/"));
-    }
-    assert!(ClientConfig::builder()
-        .region_affinity(RegionAffinity::Strict)
-        .build()
-        .is_err());
-}
 fn operation() -> PreparedTransaction {
     PreparedTransaction::new(
         scope(),
@@ -1407,6 +1201,816 @@ fn operation() -> PreparedTransaction {
     )
     .unwrap()
 }
+fn unconditional_operation() -> PreparedTransaction {
+    let original = operation();
+    let body: Json = serde_json::from_slice(original.body()).unwrap();
+    let mut writes: Vec<Write> = serde_json::from_value(body["writes"].clone()).unwrap();
+    writes[0].condition = Condition::None {};
+    PreparedTransaction::new(
+        *original.scope(),
+        original.transaction_id().clone(),
+        original.authority().clone(),
+        writes,
+    )
+    .unwrap()
+}
+async fn default_point(client: &TerraScaleClient) -> Result<Point> {
+    client
+        .documents()
+        .get(
+            &scope(),
+            "30000000-0000-0000-0000-000000000001".parse().unwrap(),
+            "40000000-0000-0000-0000-000000000001".parse().unwrap(),
+        )
+        .await
+}
+
+#[tokio::test]
+async fn default_client_discovery_failures_never_dispatch_native_or_cache_a_bypass() {
+    let mut wrong_origin = current_fixture();
+    wrong_origin["endpoints"][0]["url"] = json!("https://gru.terrascale.tech");
+    let failures = [
+        (
+            Ok(raw(403, FORBIDDEN)),
+            ErrorKind::Authorization,
+            "discovery_forbidden",
+        ),
+        (
+            Ok(Response::json(
+                503,
+                &json!({"error":{"code":"no_eligible_region","message":"unavailable","fix":"retry"}}),
+            )),
+            ErrorKind::Unavailable,
+            "no_eligible_region",
+        ),
+        (
+            Ok(raw(200, b"{")),
+            ErrorKind::InvalidResponse,
+            "invalid_response",
+        ),
+        (
+            Ok(Response::json(200, &wrong_origin)),
+            ErrorKind::InvalidResponse,
+            "invalid_response",
+        ),
+        (
+            Err(Error::transport("Atlas offline")),
+            ErrorKind::Transport,
+            "transport",
+        ),
+    ];
+    for (reply, kind, code) in failures {
+        let mock = Arc::new(Mock::default());
+        let client = TerraScaleClient::with_transport(config(), mock.clone());
+        for _ in 0..2 {
+            mock.replies.lock().unwrap().push_back((reply.clone(), 0));
+            let error = default_point(&client).await.unwrap_err();
+            assert_eq!(error.kind, kind, "{code}");
+            assert_eq!(error.code, code);
+        }
+        let requests = mock.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2, "{code}");
+        assert!(requests.iter().all(|request| {
+            request.method == Method::Get
+                && request.route_name == "native.discovery"
+                && request
+                    .url
+                    .starts_with(&format!("{ATLAS_BASE_URL}/api/v1/discovery?"))
+        }));
+    }
+}
+
+#[tokio::test]
+async fn default_commit_discovery_denial_never_dispatches_mutation() {
+    let mock = Arc::new(Mock::default());
+    let client = TerraScaleClient::with_transport(config(), mock.clone());
+    mock.raw(403, FORBIDDEN, 0);
+    let error = client
+        .transactions()
+        .commit(&operation())
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Authorization);
+    assert_eq!(error.status, Some(403));
+    assert_eq!(error.code, "discovery_forbidden");
+    let requests = mock.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method, Method::Get);
+    assert_eq!(requests[0].route_name, "native.discovery");
+    assert!(requests[0].url.starts_with(ATLAS_BASE_URL));
+    assert!(requests[0].body.is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn default_client_discovery_timeout_releases_work_without_native_dispatch() {
+    for commit in [false, true] {
+        let transport = Arc::new(LifecycleTransport::default());
+        transport.pending();
+        let client = TerraScaleClient::with_transport(config(), transport.clone());
+        let started = tokio::time::Instant::now();
+        let error = if commit {
+            // Discovery never dispatches the mutation, so preflight timeout
+            // remains a definite error rather than an uncertain commit.
+            client
+                .transactions()
+                .commit(&operation())
+                .await
+                .unwrap_err()
+        } else {
+            default_point(&client).await.unwrap_err()
+        };
+        assert_eq!(started.elapsed(), Duration::from_secs(30));
+        assert_eq!(error.kind, ErrorKind::Transport);
+        assert_eq!(error.code, "transport");
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].route_name, "native.discovery");
+        assert!(requests[0].url.starts_with(ATLAS_BASE_URL));
+        assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+        assert_eq!(transport.released.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn public_commit_deadline_after_admission_before_native_send_is_definite() {
+    let transport = Arc::new(LifecycleTransport::default());
+    let client = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .api_key(native_key())
+            .max_retry_attempts(3)
+            .retry_delay_ms(0)
+            .build()
+            .unwrap(),
+        transport.clone(),
+    );
+    transport.cooperative(Response::json(200, &current_fixture()));
+    let operation = unconditional_operation();
+    let transactions = client.transactions();
+    let started = tokio::time::Instant::now();
+    let mut commit = Box::pin(transactions.commit(&operation));
+    tokio::task::yield_now().await;
+    assert!(futures_util::poll!(commit.as_mut()).is_pending());
+    assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+    assert_eq!(transport.released.load(Ordering::SeqCst), 1);
+    // The successful admission has returned, but the next mutex acquisition
+    // yielded. Expire the original public budget before any native send starts.
+    tokio::time::advance(Duration::from_secs(30)).await;
+    let error = commit.await.unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Transport);
+    assert_eq!(started.elapsed(), Duration::from_secs(30));
+    let requests = transport.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].route_name, "native.discovery");
+    assert_eq!(requests[0].method, Method::Get);
+    assert!(requests[0].body.is_none());
+    assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+    assert_eq!(transport.released.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn public_commit_failed_refresh_after_admission_before_native_send_is_definite() {
+    let failures = [
+        (
+            Err(Error::transport("pre-send refresh failure")),
+            ErrorKind::Transport,
+        ),
+        (
+            Ok(Response::json(
+                503,
+                &json!({"error":{"code":"no_eligible_region","message":"unavailable","fix":"retry"}}),
+            )),
+            ErrorKind::Unavailable,
+        ),
+        (Ok(raw(200, b"{")), ErrorKind::InvalidResponse),
+    ];
+    for (failure, kind) in failures {
+        let transport = Arc::new(LifecycleTransport::default());
+        let client = TerraScaleClient::with_transport(
+            ClientConfig::builder()
+                .api_key(native_key())
+                .max_retry_attempts(3)
+                .retry_delay_ms(0)
+                .build()
+                .unwrap(),
+            transport.clone(),
+        );
+        let mut admitted = current_fixture();
+        admitted["refreshSeconds"] = json!(1);
+        transport.cooperative(Response::json(200, &admitted));
+        transport.reply(failure);
+        let operation = unconditional_operation();
+        let transactions = client.transactions();
+        let mut commit = Box::pin(transactions.commit(&operation));
+        tokio::task::yield_now().await;
+        assert!(futures_util::poll!(commit.as_mut()).is_pending());
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+        assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+        assert_eq!(transport.released.load(Ordering::SeqCst), 1);
+        // Use the genuine clock backing the public client, not an injected
+        // admission clock. The one-second accepted lease must actually expire.
+        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        let error = commit.await.unwrap_err();
+        assert_eq!(error.kind, kind);
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests
+            .iter()
+            .all(|request| request.route_name == "native.discovery"
+                && request.method == Method::Get
+                && request.body.is_none()));
+        let url = reqwest::Url::parse(&requests[1].url).unwrap();
+        let pairs = url
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(pairs["rev"], "41");
+        assert_eq!(pairs["observed_deployment_id"], "fixture-deployment");
+        assert_eq!(pairs["observed_cell"], "gru");
+        assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+        assert_eq!(transport.released.load(Ordering::SeqCst), 2);
+    }
+}
+
+#[tokio::test]
+async fn dropping_public_preflight_or_native_dispatch_releases_work_for_a_new_operation() {
+    for during_discovery in [false, true] {
+        let transport = Arc::new(LifecycleTransport::default());
+        let config = if during_discovery {
+            config()
+        } else {
+            ClientConfig::builder()
+                .api_key(native_key())
+                .api_base_url("https://gru.api.terrascale.tech")
+                .build()
+                .unwrap()
+        };
+        let client = TerraScaleClient::with_transport(config, transport.clone());
+        transport.pending();
+        let mut pending = Box::pin(default_point(&client));
+        lifecycle_dispatch(pending.as_mut(), &transport).await;
+        drop(pending);
+        assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+        assert_eq!(transport.released.load(Ordering::SeqCst), 1);
+        if during_discovery {
+            transport.reply(Ok(Response::json(200, &current_fixture())));
+        }
+        transport.reply(Ok(Response::json(
+            200,
+            &json!({"version":1,"state":"absent","context":[],"siblings":[],"state_version":null}),
+        )));
+        default_point(&client).await.unwrap();
+        assert_eq!(
+            transport.requests.lock().unwrap().len(),
+            if during_discovery { 3 } else { 2 }
+        );
+        assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            transport.released.load(Ordering::SeqCst),
+            if during_discovery { 3 } else { 2 }
+        );
+    }
+}
+
+#[tokio::test]
+async fn explicit_provisioned_origins_skip_even_custom_atlas_without_leaking_auth_credentials() {
+    for origin in [
+        "https://gru.api.terrascale.tech",
+        "https://iad-2.api.terrascale.tech",
+        "https://native.customer.example",
+        "http://127.0.0.1:8123",
+        "http://localhost:8123",
+        "http://native.test:8123",
+    ] {
+        let mock = Arc::new(Mock::default());
+        let client = TerraScaleClient::with_transport(
+            ClientConfig::builder()
+                .api_base_url(origin)
+                .atlas_base_url("https://unused-atlas.test")
+                .api_key(native_key())
+                .auth_api_key("isolated-auth-secret")
+                .build()
+                .unwrap(),
+            mock.clone(),
+        );
+        mock.response(
+            200,
+            &json!({"version":1,"state":"absent","context":[],"siblings":[],"state_version":null}),
+        );
+        default_point(&client).await.unwrap();
+        let requests = mock.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1, "{origin}");
+        assert_eq!(requests[0].route_name, "native.point");
+        assert!(requests[0].url.starts_with(&format!("{origin}/v1/")));
+        assert_eq!(
+            requests[0]
+                .headers
+                .iter()
+                .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                .count(),
+            1
+        );
+        assert!(requests[0]
+            .headers
+            .contains(&("authorization".into(), format!("Bearer {}", native_key()))));
+        assert!(requests[0]
+            .headers
+            .iter()
+            .all(|(_, value)| !value.contains("isolated-auth-secret")));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn concurrent_public_point_and_resolver_waits_share_only_their_original_budget() {
+    for direct_resolver in [false, true] {
+        let transport = Arc::new(LifecycleTransport::default());
+        let client = TerraScaleClient::with_transport(config(), transport.clone());
+        transport.pending();
+        let started = tokio::time::Instant::now();
+        let mut owner = Box::pin(default_point(&client));
+        lifecycle_dispatch(owner.as_mut(), &transport).await;
+        tokio::time::advance(Duration::from_secs(10)).await;
+        let waiter_started = tokio::time::Instant::now();
+        let mut waiter = Box::pin(async {
+            if direct_resolver {
+                client
+                    .discovery()
+                    .resolve(&scope(), NativeRequirement::Point)
+                    .await
+                    .map(|_| ())
+            } else {
+                default_point(&client).await.map(|_| ())
+            }
+        });
+        lifecycle_queue(waiter.as_mut(), &transport).await;
+        tokio::time::advance(Duration::from_secs(20)).await;
+        assert_eq!(owner.await.unwrap_err().kind, ErrorKind::Transport);
+        assert_eq!(started.elapsed(), Duration::from_secs(30));
+        transport.pending();
+        lifecycle_dispatch(waiter.as_mut(), &transport).await;
+        // The waiter spent 20 seconds on the mutex. Its fetch has ten left,
+        // even though the owner failed and the scope has never been observed.
+        assert_eq!(waiter.await.unwrap_err().kind, ErrorKind::Transport);
+        assert_eq!(waiter_started.elapsed(), Duration::from_secs(30));
+        assert_eq!(started.elapsed(), Duration::from_secs(40));
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests
+            .iter()
+            .all(|request| request.route_name == "native.discovery"
+                && request.url.starts_with(ATLAS_BASE_URL)));
+        assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+        assert_eq!(transport.released.load(Ordering::SeqCst), 2);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn simultaneous_failed_discovery_waiters_never_dispatch_after_their_deadline() {
+    let transport = Arc::new(LifecycleTransport::default());
+    let client = TerraScaleClient::with_transport(config(), transport.clone());
+    transport.pending();
+    let started = tokio::time::Instant::now();
+    let mut owner = Box::pin(default_point(&client));
+    lifecycle_dispatch(owner.as_mut(), &transport).await;
+    let mut waiters = Vec::new();
+    for _ in 0..16 {
+        let mut waiter = Box::pin(default_point(&client));
+        lifecycle_queue(waiter.as_mut(), &transport).await;
+        waiters.push(waiter);
+    }
+    tokio::time::advance(Duration::from_secs(30)).await;
+    assert_eq!(owner.await.unwrap_err().kind, ErrorKind::Transport);
+    for waiter in waiters {
+        assert_eq!(waiter.await.unwrap_err().kind, ErrorKind::Transport);
+    }
+    assert_eq!(started.elapsed(), Duration::from_secs(30));
+    assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+    assert_eq!(transport.released.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn every_public_native_call_shares_discovery_and_dispatch_budget_with_commit_uncertainty() {
+    for route in ["point", "query", "snapshot", "poll", "status", "commit"] {
+        let transport = Arc::new(LifecycleTransport::default());
+        let client = TerraScaleClient::with_transport(config(), transport.clone());
+        transport.delayed(
+            Duration::from_secs(2),
+            Ok(Response::json(200, &current_fixture())),
+        );
+        transport.pending();
+        let started = tokio::time::Instant::now();
+        let target = scope();
+        let collection = "30000000-0000-0000-0000-000000000001".parse().unwrap();
+        let predicate = Predicate::IsMissing { path: vec![1] };
+        // Construct the unconditional operation through the public preparation
+        // API; no synthetic admission or receipt is used.
+        let operation = PreparedTransaction::new(
+            target,
+            TransactionId::new(5000),
+            Authority::Leaderless {},
+            vec![Write {
+                collection,
+                document: "40000000-0000-0000-0000-000000000001".parse().unwrap(),
+                schema_generation: DecimalU64(1),
+                schema_digest: Digest::from_bytes([1; 32]),
+                observed: vec![],
+                condition: Condition::None {},
+                value: WriteValue::Tombstone {},
+            }],
+        )
+        .unwrap();
+        let error = match route {
+            "point" => default_point(&client).await.unwrap_err(),
+            "query" => client
+                .documents()
+                .query(&target, collection, &Query::new(predicate, 1).unwrap())
+                .await
+                .unwrap_err(),
+            "snapshot" => client
+                .subscriptions()
+                .snapshot(
+                    &target,
+                    collection,
+                    &SnapshotRequest::new(predicate, 1).unwrap(),
+                )
+                .await
+                .unwrap_err(),
+            "poll" => client
+                .subscriptions()
+                .poll(
+                    &target,
+                    collection,
+                    &PollRequest::new(predicate, "AQ".into()).unwrap(),
+                )
+                .await
+                .unwrap_err(),
+            "status" => client.transactions().status(&operation).await.unwrap_err(),
+            "commit" => match client.transactions().commit(&operation).await.unwrap() {
+                CommitOutcome::Uncertain(uncertain) => {
+                    assert_eq!(uncertain.operation.body(), operation.body());
+                    uncertain.cause
+                }
+                CommitOutcome::Committed(_) => panic!("pending commit cannot have a receipt"),
+            },
+            _ => unreachable!(),
+        };
+        assert_eq!(error.kind, ErrorKind::Transport, "{route}");
+        assert_eq!(started.elapsed(), Duration::from_secs(30), "{route}");
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2, "{route}");
+        assert_eq!(requests[0].route_name, "native.discovery");
+        assert!(requests[1]
+            .url
+            .starts_with("https://gru.api.terrascale.tech/v1/"));
+        if route == "commit" {
+            assert_eq!(requests[1].route_name, "native.commit");
+            assert_eq!(requests[1].body.as_deref(), Some(operation.body()));
+        }
+        assert_eq!(transport.active.load(Ordering::SeqCst), 0, "{route}");
+        assert_eq!(transport.released.load(Ordering::SeqCst), 2, "{route}");
+    }
+}
+
+#[derive(Debug)]
+struct ProcessingClock {
+    time: Arc<Clock>,
+    calls: AtomicUsize,
+    gate_call: usize,
+    entered: tokio::sync::Notify,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+}
+impl DiscoveryClock for ProcessingClock {
+    fn now(&self) -> Result<DiscoveryTime> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) + 1 == self.gate_call {
+            // Hold synchronous response processing (or cache selection) while
+            // the test advances the operation's real Tokio deadline.
+            self.entered.notify_one();
+            self.release.lock().unwrap().recv().unwrap();
+        }
+        self.time.now()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn direct_resolver_checks_deadline_after_synchronous_processing_and_keeps_observation() {
+    for cached in [false, true] {
+        for expired in [false, true] {
+            let time = Clock::new();
+            let (release, receiver) = std::sync::mpsc::channel();
+            let clock = Arc::new(ProcessingClock {
+                time: time.clone(),
+                calls: AtomicUsize::new(0),
+                gate_call: if cached { 3 } else { 2 },
+                entered: tokio::sync::Notify::new(),
+                release: Mutex::new(receiver),
+            });
+            let transport = Arc::new(LifecycleTransport::default());
+            transport.admit(&scope());
+            let router = AtlasDiscovery::with_clock(config(), transport.clone(), clock.clone());
+            if cached {
+                router
+                    .resolve(&scope(), NativeRequirement::Point)
+                    .await
+                    .unwrap();
+            }
+            let owned = router.clone();
+            let runtime = tokio::runtime::Handle::current();
+            let call = tokio::task::spawn_blocking(move || {
+                runtime.block_on(owned.resolve(&scope(), NativeRequirement::Point))
+            });
+            clock.entered.notified().await;
+            tokio::time::advance(Duration::from_secs(if expired { 31 } else { 29 })).await;
+            release.send(()).unwrap();
+            let result = call.await.unwrap();
+            if expired {
+                let error = result.unwrap_err();
+                assert_eq!(error.kind, ErrorKind::Transport);
+                assert_eq!(error.message, "Atlas request deadline exceeded.");
+            } else {
+                result.unwrap();
+            }
+            // Validated metadata must still be retained after the timed-out
+            // response, so a fresh caller reuses it without another GET.
+            router
+                .resolve(&scope(), NativeRequirement::Point)
+                .await
+                .unwrap();
+            assert_eq!(transport.requests.lock().unwrap().len(), 1);
+            assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+            time.advance(8_000);
+            let mut regressed = fixture();
+            regressed["revision"] = json!("40");
+            regressed["published_at"] = json!(1790769608u64);
+            regressed["expires_at"] = json!(1790769617u64);
+            transport.reply(Ok(Response::json(200, &regressed)));
+            assert_eq!(
+                router
+                    .resolve(&scope(), NativeRequirement::Point)
+                    .await
+                    .unwrap_err()
+                    .code,
+                "routing_observation_regressed"
+            );
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn late_ready_native_success_obeys_the_deadline_and_retains_uncertain_commit_identity() {
+    for expired in [false, true] {
+        for commit in [false, true] {
+            let transport = Arc::new(LifecycleTransport::default());
+            let client = TerraScaleClient::with_transport(
+                ClientConfig::builder()
+                    .api_key(native_key())
+                    .api_base_url("https://native.example.test")
+                    .max_retry_attempts(3)
+                    .retry_delay_ms(0)
+                    .build()
+                    .unwrap(),
+                transport.clone(),
+            );
+            let operation = unconditional_operation();
+            let reply = transport.gated();
+            let response = if commit {
+                Response::json(
+                    200,
+                    &Receipt {
+                        version: ProtocolVersion,
+                        transaction_id: operation.transaction_id().clone(),
+                        authority: operation.authority().clone(),
+                        effect_digest: operation.effect_digest(),
+                        event: Event {
+                            database: scope().database,
+                            shard: scope().shard,
+                            replica: "50000000-0000-0000-0000-000000000001".parse().unwrap(),
+                            incarnation: Incarnation::from_bytes([2; 16]),
+                            sequence: DecimalU64(1),
+                        },
+                        commit_sequence: DecimalU64(1),
+                        durability: Durability::ObjectDurable,
+                    },
+                )
+            } else {
+                Response::json(
+                    200,
+                    &Point {
+                        version: ProtocolVersion,
+                        state: PointState::Absent,
+                        context: vec![],
+                        siblings: vec![],
+                        state_version: None,
+                    },
+                )
+            };
+            let call = async {
+                if commit {
+                    match client.transactions().commit(&operation).await? {
+                        CommitOutcome::Committed(_) => Ok(()),
+                        CommitOutcome::Uncertain(uncertain) => {
+                            assert_eq!(uncertain.operation.body(), operation.body());
+                            assert_eq!(
+                                uncertain.operation.transaction_id(),
+                                operation.transaction_id()
+                            );
+                            Err(uncertain.cause)
+                        }
+                    }
+                } else {
+                    default_point(&client).await.map(|_| ())
+                }
+            };
+            let mut call = Box::pin(call);
+            lifecycle_dispatch(call.as_mut(), &transport).await;
+            // Leave the ready response unpolled until after the original
+            // deadline; timeout_at otherwise accepts the inner Ready first.
+            reply.send(Ok(response)).unwrap();
+            tokio::time::advance(Duration::from_secs(if expired { 31 } else { 29 })).await;
+            let result = call.await;
+            if expired {
+                let error = result.unwrap_err();
+                assert_eq!(error.kind, ErrorKind::Transport);
+                assert_eq!(error.message, "Native operation deadline exceeded.");
+            } else {
+                result.unwrap();
+            }
+            let requests = transport.requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            if commit {
+                assert_eq!(requests[0].body.as_deref(), Some(operation.body()));
+            }
+            assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+            assert_eq!(transport.released.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn safe_retry_delay_and_dispatch_never_renew_the_public_budget() {
+    let transport = Arc::new(LifecycleTransport::default());
+    let client = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .api_base_url("https://gru.api.terrascale.tech")
+            .api_key(native_key())
+            .max_retry_attempts(2)
+            .retry_delay_ms(5_000)
+            .build()
+            .unwrap(),
+        transport.clone(),
+    );
+    transport.delayed(
+        Duration::from_secs(20),
+        Ok(Response::json(
+            503,
+            &json!({"error":{"code":"unavailable","message":"wait"}}),
+        )),
+    );
+    transport.pending();
+    let started = tokio::time::Instant::now();
+    assert_eq!(
+        default_point(&client).await.unwrap_err().kind,
+        ErrorKind::Transport
+    );
+    assert_eq!(started.elapsed(), Duration::from_secs(30));
+    let requests = transport.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests
+        .iter()
+        .all(|request| request.route_name == "native.point"
+            && request
+                .url
+                .starts_with("https://gru.api.terrascale.tech/v1/")));
+    assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+    assert_eq!(transport.released.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn timed_out_refresh_and_queued_deadline_keep_the_last_observation_floor() {
+    let (router, transport, clock) = lifecycle_router();
+    transport.admit(&scope());
+    router
+        .resolve(&scope(), NativeRequirement::Point)
+        .await
+        .unwrap();
+    clock.advance(8_000);
+    transport.pending();
+    let target = scope();
+    let started = tokio::time::Instant::now();
+    let mut owner = Box::pin(router.resolve(&target, NativeRequirement::Point));
+    lifecycle_dispatch(owner.as_mut(), &transport).await;
+    let mut waiter = Box::pin(router.resolve(&target, NativeRequirement::Point));
+    lifecycle_queue(waiter.as_mut(), &transport).await;
+    tokio::time::advance(Duration::from_secs(30)).await;
+    assert_eq!(owner.await.unwrap_err().kind, ErrorKind::Transport);
+    assert_eq!(waiter.await.unwrap_err().kind, ErrorKind::Transport);
+    assert_eq!(started.elapsed(), Duration::from_secs(30));
+    let mut regressed = fixture();
+    regressed["published_at"] = json!(1790769608u64);
+    regressed["expires_at"] = json!(1790769617u64);
+    regressed["revision"] = json!("40");
+    transport.reply(Ok(Response::json(200, &regressed)));
+    assert_eq!(
+        router
+            .resolve(&target, NativeRequirement::Point)
+            .await
+            .unwrap_err()
+            .code,
+        "routing_observation_regressed"
+    );
+    let requests = transport.requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    for request in &requests[1..] {
+        let url = reqwest::Url::parse(&request.url).unwrap();
+        let pairs = url
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(pairs["rev"], "41");
+        assert_eq!(pairs["observed_deployment_id"], "fixture-deployment");
+        assert_eq!(pairs["observed_cell"], "gru");
+    }
+    assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+    assert_eq!(transport.released.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn fresh_lease_native_retry_classes_are_terminal_by_default_and_bounded_when_opted_in() {
+    let mut failures = vec![Err(Error::transport("native transport loss"))];
+    for status in [408, 429, 500, 501, 502, 503, 504, 520, 521, 522, 523, 524] {
+        failures.push(Ok(Response::json(
+            status,
+            &json!({"error":{"code":"native_failure","message":"unavailable"}}),
+        )));
+    }
+    for failure in failures {
+        for retries in [0, 2] {
+            let mock = Arc::new(Mock::default());
+            let client = TerraScaleClient::with_transport(
+                ClientConfig::builder()
+                    .api_key(native_key())
+                    .max_retry_attempts(retries)
+                    .retry_delay_ms(0)
+                    .build()
+                    .unwrap(),
+                mock.clone(),
+            );
+            let mut body = current_fixture();
+            let mut second = body["endpoints"][0].clone();
+            second["region"] = json!("IAD");
+            second["url"] = json!("https://iad.api.terrascale.tech");
+            second["priority"] = json!(2);
+            body["endpoints"].as_array_mut().unwrap().push(second);
+            mock.response(200, &body);
+            for _ in 0..=retries {
+                mock.replies.lock().unwrap().push_back((failure.clone(), 0));
+            }
+            let error = default_point(&client).await.unwrap_err();
+            if let Ok(response) = &failure {
+                assert_eq!(error.status, Some(response.status));
+            } else {
+                assert_eq!(error.kind, ErrorKind::Transport);
+            }
+            let requests = mock.requests.lock().unwrap();
+            assert_eq!(requests.len(), usize::from(retries) + 2);
+            assert_eq!(requests[0].route_name, "native.discovery");
+            assert!(requests[1..]
+                .iter()
+                .all(|request| request.route_name == "native.point"
+                    && request
+                        .url
+                        .starts_with("https://gru.api.terrascale.tech/v1/")));
+            assert!(mock.replies.lock().unwrap().is_empty());
+        }
+    }
+    // Misdirected routing and malformed success do not establish a new endpoint
+    // or trigger retry/demotion, even when safe retries were requested.
+    for response in [
+        Response::json(
+            421,
+            &json!({"error":{"code":"misdirected","message":"wrong member"}}),
+        ),
+        raw(200, b"{"),
+    ] {
+        let mock = Arc::new(Mock::default());
+        let client = TerraScaleClient::with_transport(
+            ClientConfig::builder()
+                .api_key(native_key())
+                .max_retry_attempts(2)
+                .retry_delay_ms(0)
+                .build()
+                .unwrap(),
+            mock.clone(),
+        );
+        mock.response(200, &current_fixture());
+        mock.replies.lock().unwrap().push_back((Ok(response), 0));
+        default_point(&client).await.unwrap_err();
+        let requests = mock.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1]
+            .url
+            .starts_with("https://gru.api.terrascale.tech/v1/"));
+    }
+}
+
 #[tokio::test]
 async fn default_client_selects_authenticated_native_origin_and_status_after_downshift() {
     let mock = Arc::new(Mock::default());
@@ -1470,7 +2074,7 @@ async fn default_point_routes_discovery_then_native_and_transport_loss_never_rep
         mock.clone(),
         clock,
     );
-    let mut discovery = ranked_from(fixture());
+    let mut discovery = fixture();
     discovery["refreshSeconds"] = json!(1);
     mock.response(200, &discovery);
     mock.response(

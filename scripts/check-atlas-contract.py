@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify frozen Atlas contracts and migrated fixed-clock codec fixture bytes."""
+"""Verify frozen Atlas contracts and derived regional .api receiver codec bytes."""
 import hashlib
 import json
 import re

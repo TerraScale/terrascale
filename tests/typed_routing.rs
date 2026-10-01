@@ -121,12 +121,54 @@ async fn malformed_native_discovery_credentials_fail_before_transport() {
     assert_eq!(regional_host(RegionCode::Gru), "gru.api.terrascale.tech");
     assert_eq!(
         ClientConfig::builder()
-            .api_base_url(DEFAULT_API_BASE_URL)
+            .api_base_url("https://api.terrascale.tech")
             .build()
-            .unwrap()
-            .api_base_url(),
-        Some(DEFAULT_API_BASE_URL)
+            .unwrap_err()
+            .code,
+        "invalid_native_origin"
     );
+    for origin in [
+        "https://api.terrascale.tech.",
+        "https://API.terrascale.tech:443",
+        "https://API.terrascale.tech.:443",
+        "https://gru.terrascale.tech",
+        "https://gru.auth.terrascale.tech",
+        "https://atlas.terrascale.tech",
+        "https://auth.terrascale.tech",
+        "https://status.terrascale.tech",
+        "https://sync.terrascale.tech",
+        "https://www.terrascale.tech",
+        "https://app.terrascale.tech",
+        "https://dash.terrascale.tech",
+        "https://docs.terrascale.tech",
+        "https://git.terrascale.tech",
+        "https://cdn.terrascale.tech",
+        "https://admin.terrascale.tech",
+        "https://mcp.terrascale.tech",
+        "https://mail.terrascale.tech",
+        "https://terrascale.tech",
+        "https://terrascale.tech.",
+        "https://gru.api.terrascale.tech.",
+        "https://GRU.api.terrascale.tech",
+        "https://gru.api.terrascale.tech:443",
+        "https://gru.api.terrascale.tech:8443",
+        "https://nested.gru.terrascale.tech",
+        "https://-gru.api.terrascale.tech",
+        "https://gru-.api.terrascale.tech",
+        "https://gr_u.api.terrascale.tech",
+        "https://abcdefghijklmnopq.api.terrascale.tech",
+    ] {
+        assert_eq!(
+            ClientConfig::builder()
+                .api_key("must-not-be-dispatched")
+                .api_base_url(origin)
+                .build()
+                .unwrap_err()
+                .code,
+            "invalid_native_origin",
+            "{origin}"
+        );
+    }
     assert!(ClientConfig::builder()
         .tenant_id("legacy-tenant-slug")
         .build()

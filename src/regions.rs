@@ -8,6 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
+pub(crate) const NATIVE_ZONE: &str = "api.terrascale.tech";
+
+pub(crate) fn regional_origin(region: &str) -> String {
+    format!("https://{}.{NATIVE_ZONE}", region.to_ascii_lowercase())
+}
+
 /// Launch regions (GOAL D-05).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -72,7 +78,59 @@ impl fmt::Display for RegionCode {
 /// Public direct regional native member hostname.
 #[must_use]
 pub fn regional_host(region: RegionCode) -> String {
-    format!("{}.api.terrascale.tech", region.as_str())
+    format!("{}.{NATIVE_ZONE}", region.as_str())
+}
+
+/// Canonical Atlas region code and direct-member DNS label policy.
+pub(crate) fn valid_region(region: &str) -> bool {
+    let bytes = region.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 16
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes[bytes.len() - 1].is_ascii_alphanumeric()
+        && !region.contains("--")
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'-')
+        && ![
+            "API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH", "DOCS", "GIT", "CDN",
+            "ADMIN", "MCP", "MAIL",
+        ]
+        .contains(&region)
+}
+
+/// Explicit origins inside TerraScale's zone must be canonical direct members.
+/// Independent provisioned HTTPS and local/test origins retain their own policy.
+pub(crate) fn validate_native_origin(origin: &str) -> Result<()> {
+    let url = reqwest::Url::parse(origin).map_err(|_| {
+        Error::new(
+            crate::error::ErrorKind::Validation,
+            "invalid_base_url",
+            "Invalid native origin.",
+        )
+    })?;
+    if url.path() != "/" {
+        return Err(Error::new(
+            crate::error::ErrorKind::Validation,
+            "invalid_base_url",
+            "Native origin must not contain a path.",
+        ));
+    }
+    let host = url.host_str().unwrap_or_default();
+    let zone_host = host.trim_end_matches('.');
+    if zone_host == "terrascale.tech" || zone_host.ends_with(".terrascale.tech") {
+        let region = zone_host.strip_suffix(&format!(".{NATIVE_ZONE}"));
+        if !region.is_some_and(|region| valid_region(&region.to_ascii_uppercase()))
+            || !region.is_some_and(|region| origin == regional_origin(region))
+        {
+            return Err(Error::new(
+                crate::error::ErrorKind::Validation,
+                "invalid_native_origin",
+                "TerraScale native origins require a canonical direct regional HTTPS origin.",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Normalize and validate a base URL (no trailing slash).

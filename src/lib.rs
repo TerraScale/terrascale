@@ -25,7 +25,7 @@ pub use auth_idp::{
     verify_auth_idp_webhook, verify_auth_idp_webhook_with_tolerance, AuthIdpClient,
 };
 pub use client::TerraScaleClient;
-pub use config::{ClientConfig, ClientConfigBuilder, RegionAffinity, DEFAULT_API_BASE_URL};
+pub use config::{ClientConfig, ClientConfigBuilder};
 pub use discovery::{
     AtlasDiscovery, DiscoveryAuthority, DiscoveryClock, DiscoveryMetadata, DiscoveryTime,
     NativeCapabilities, NativeEndpoint, NativeRequirement, RegionRtt, ResolvedNativeOrigin,

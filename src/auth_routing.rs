@@ -45,12 +45,10 @@ impl AuthRouter {
     pub(crate) fn for_config(
         auth_base: Option<&str>,
         reverse_proxy: bool,
-        atlas_base: Option<&str>,
+        atlas_base: &str,
     ) -> Option<Self> {
         (auth_base == Some(PUBLIC_AUTH_BASE) && !reverse_proxy).then(|| Self {
-            atlas_origin: atlas_base
-                .unwrap_or(crate::discovery::ATLAS_BASE_URL)
-                .to_owned(),
+            atlas_origin: atlas_base.to_owned(),
             cached: Mutex::new(None),
         })
     }

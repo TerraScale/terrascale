@@ -9,4 +9,4 @@ pub const MANIFEST_SHA256: &str =
 
 /// Separate authenticated Atlas receiver/codec fixture pin.
 pub const ATLAS_MANIFEST_SHA256: &str =
-    "3fc0c1c10978f3b6116e3a6b63b281f86059575700f9479660bb6ebfc09144e0";
+    "606223e8ee176cc8ba317dd554318d672ed3cb1a5e66da3bfeefb869ec0760b8";

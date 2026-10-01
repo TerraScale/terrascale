@@ -2,7 +2,7 @@
 
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::client::SharedClient;
+use crate::client::{check_native_deadline, native_deadline, SharedClient};
 use crate::discovery::NativeRequirement;
 use crate::error::{Error, ErrorKind, Result};
 use crate::transport::{Method, Request};
@@ -450,9 +450,10 @@ impl DocumentsClient {
         collection: CollectionId,
         document: DocumentId,
     ) -> Result<Point> {
+        let deadline = native_deadline();
         let origin = self
             .shared
-            .native_origin(scope, NativeRequirement::Point)
+            .native_origin(scope, NativeRequirement::Point, deadline)
             .await?;
         let request = Request {
             route_name: "native.point".into(),
@@ -463,11 +464,12 @@ impl DocumentsClient {
         };
         let point: Point = self
             .shared
-            .send_native_typed(scope, NativeRequirement::Point, request)
+            .send_native_typed(scope, NativeRequirement::Point, request, deadline)
             .await?;
         point
             .validate_in(scope)
             .map_err(|e| Error::invalid_response(e.message))?;
+        check_native_deadline(deadline)?;
         Ok(point)
     }
 
@@ -477,10 +479,11 @@ impl DocumentsClient {
         collection: CollectionId,
         query: &Query,
     ) -> Result<QueryPage> {
+        let deadline = native_deadline();
         query.validate()?;
         let origin = self
             .shared
-            .native_origin(scope, NativeRequirement::Query)
+            .native_origin(scope, NativeRequirement::Query, deadline)
             .await?;
         let request = Request::json(
             "native.query",
@@ -490,13 +493,14 @@ impl DocumentsClient {
         )?;
         let page: QueryPage = self
             .shared
-            .send_native_typed(scope, NativeRequirement::Query, request)
+            .send_native_typed(scope, NativeRequirement::Query, request, deadline)
             .await?;
         validate_rows(&page.rows, scope, usize::from(query.limit))
             .map_err(|e| Error::invalid_response(e.message))?;
         if let Some(cursor) = &page.next_cursor {
             validate_cursor(cursor).map_err(|e| Error::invalid_response(e.message))?;
         }
+        check_native_deadline(deadline)?;
         Ok(page)
     }
 }

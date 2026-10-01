@@ -2,8 +2,8 @@
 
 use crate::auth_idp::AuthIdpClient;
 use crate::auth_routing::AuthRouter;
-use crate::config::{ClientConfig, DEFAULT_API_BASE_URL};
-use crate::discovery::{AtlasDiscovery, DiscoveryClock, NativeRequirement, ScopeKey};
+use crate::config::ClientConfig;
+use crate::discovery::{AtlasDiscovery, DiscoveryClock, NativeRequirement};
 use crate::documents::{DatabaseScope, DocumentsClient};
 use crate::error::{Error, ErrorKind, Result};
 use crate::subscriptions::SubscriptionsClient;
@@ -12,14 +12,40 @@ use crate::transport::{
     HttpTransport, Method, Request, ReqwestTransport, Response, MAX_JSON_BYTES,
 };
 use serde::de::DeserializeOwned;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Duration;
 
 // Retained only as internal auth credential-isolation markers, never sent.
 pub(crate) const SKIP_AUTH_MARKER: &str = "x-terrascale-sdk-skip-auth";
 pub(crate) const SKIP_SESSION_MARKER: &str = "x-terrascale-sdk-skip-session";
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
+
+/// One budget created by the public native caller, shared by all of its awaits.
+pub(crate) fn native_deadline() -> tokio::time::Instant {
+    tokio::time::Instant::now() + Duration::from_secs(30)
+}
+pub(crate) fn check_native_deadline(deadline: tokio::time::Instant) -> Result<()> {
+    if tokio::time::Instant::now() >= deadline {
+        return Err(Error::transport("Native operation deadline exceeded."));
+    }
+    Ok(())
+}
+
+/// Per-call witness set only when dispatch polls the native transport future.
+/// It does not prove delivery or commit; errors after this point may be uncertain.
+#[derive(Debug, Default)]
+pub(crate) struct NativeSendPhase(AtomicBool);
+impl NativeSendPhase {
+    fn start(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+    pub(crate) fn has_started(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct Shared {
@@ -27,7 +53,6 @@ pub(crate) struct Shared {
     config: ClientConfig,
     auth_router: Option<AuthRouter>,
     native_router: AtlasDiscovery,
-    discovery_failed_until: Mutex<HashMap<ScopeKey, Instant>>,
 }
 pub(crate) type SharedClient = Arc<Shared>;
 
@@ -40,11 +65,10 @@ impl Shared {
         let auth_router = AuthRouter::for_config(
             config.auth_base_url(),
             config.auth_reverse_proxy(),
-            config.discovery_base_url(),
+            config.atlas_base_url(),
         );
         Self {
             native_router,
-            discovery_failed_until: Mutex::new(HashMap::new()),
             transport,
             config,
             auth_router,
@@ -58,7 +82,9 @@ impl Shared {
         &self,
         scope: &DatabaseScope,
         requirement: NativeRequirement,
+        deadline: tokio::time::Instant,
     ) -> Result<String> {
+        check_native_deadline(deadline)?;
         if let Some(tenant) = self.config.tenant_id() {
             if tenant != scope.tenant {
                 return Err(Error::new(
@@ -68,58 +94,22 @@ impl Shared {
                 ));
             }
         }
-        if !self.config.discovery_enabled() {
-            return Ok(self
-                .config
-                .api_base_url()
-                .unwrap_or(DEFAULT_API_BASE_URL)
-                .to_owned());
-        }
-        let scope_key = (scope.tenant, scope.database, scope.shard);
-        if self
-            .discovery_failed_until
-            .lock()
-            .ok()
-            .is_some_and(|until| {
-                until
-                    .get(&scope_key)
-                    .is_some_and(|until| Instant::now() < *until)
-            })
-        {
-            return Ok(DEFAULT_API_BASE_URL.to_owned());
-        }
-        match self.native_router.resolve(scope, requirement).await {
-            Ok(resolved) => Ok(resolved.endpoint.url),
-            Err(error)
-                if error.kind == ErrorKind::Transport
-                    || error.kind == ErrorKind::InvalidResponse
-                    || (error.status.is_some()
-                        && error.code != "routing_observation_regressed") =>
-            {
-                if let Ok(mut until) = self.discovery_failed_until.lock() {
-                    let now = Instant::now();
-                    until.retain(|_, expires| *expires > now);
-                    if until.len() >= 128 {
-                        if let Some(oldest) = until
-                            .iter()
-                            .min_by_key(|(_, expires)| **expires)
-                            .map(|(key, _)| *key)
-                        {
-                            until.remove(&oldest);
-                        }
-                    }
-                    until.insert(scope_key, now + Duration::from_secs(1));
-                }
-                Ok(DEFAULT_API_BASE_URL.to_owned())
-            }
-            Err(error) => Err(error),
+        match self.config.api_base_url() {
+            Some(origin) => Ok(origin.to_owned()),
+            None => Ok(self
+                .native_router
+                .resolve_until(scope, requirement, deadline)
+                .await?
+                .endpoint
+                .url),
         }
     }
 
     async fn dispatch(
         &self,
         mut request: Request,
-        native: Option<(&DatabaseScope, NativeRequirement)>,
+        native: Option<(&DatabaseScope, NativeRequirement, tokio::time::Instant)>,
+        send_phase: Option<&NativeSendPhase>,
     ) -> Result<Response> {
         let auth = request.route_name.starts_with("auth_idp.");
         let skip_auth = request
@@ -167,35 +157,30 @@ impl Shared {
         };
         let mut endpoint_index = 0;
         let mut retries = 0;
-        let mut failed_origins = std::collections::HashSet::new();
         loop {
             let mut attempt = request.clone();
-            let mut native_origin = None;
-            if let Some((scope, requirement)) = native {
-                let mut origin = self.native_origin(scope, requirement).await?;
-                // A refresh can restore the failed region to the top rank.
-                // Exclude failures from this request before sending again.
-                let mut exclusions = 0;
-                while origin != DEFAULT_API_BASE_URL && failed_origins.contains(&origin) {
-                    if exclusions >= failed_origins.len() {
-                        origin = DEFAULT_API_BASE_URL.to_owned();
-                        break;
-                    }
-                    exclusions += 1;
-                    self.native_router
-                        .failover(scope, &origin, requirement)
-                        .await;
-                    origin = self.native_origin(scope, requirement).await?;
-                }
+            if let Some((scope, requirement, deadline)) = native {
+                let origin = self.native_origin(scope, requirement, deadline).await?;
                 rebase(&mut attempt, &origin)?;
-                native_origin = Some(origin);
+                check_native_deadline(deadline)?;
             }
             if let Some(endpoints) = &endpoints {
                 rebase(&mut attempt, &endpoints[endpoint_index])?;
             }
             // AuthIdpClient owns its public deadline and error code.
-            let result = if auth {
-                self.transport.send(attempt).await
+            // Native callers share the same outer deadline across preflight,
+            // resolver wait/fetch, every dispatch and retry delay.
+            let result = if auth || native.is_some() {
+                let mut send = self.transport.send(attempt);
+                if let Some(phase) = send_phase {
+                    std::future::poll_fn(|context| {
+                        phase.start();
+                        std::future::Future::poll(send.as_mut(), context)
+                    })
+                    .await
+                } else {
+                    send.await
+                }
             } else {
                 tokio::time::timeout(Duration::from_secs(30), self.transport.send(attempt))
                     .await
@@ -221,37 +206,6 @@ impl Shared {
             match result {
                 Ok(response) => return Ok(response),
                 Err(error) => {
-                    let safe = request.method == Method::Get
-                        || matches!(
-                            request.route_name.as_str(),
-                            "native.query" | "native.subscription" | "native.transaction_status"
-                        );
-                    let routing_failure = error.kind == ErrorKind::Transport
-                        || error
-                            .status
-                            .is_some_and(|status| status == 421 || status >= 500);
-                    if routing_failure && self.config.discovery_enabled() {
-                        if let (Some((scope, requirement)), Some(origin)) = (native, native_origin)
-                        {
-                            if failed_origins.insert(origin.clone()) {
-                                let alternative = self
-                                    .native_router
-                                    .failover(scope, &origin, requirement)
-                                    .await;
-                                if alternative
-                                    && safe
-                                    && error
-                                        .retry_after
-                                        .is_none_or(|delay| delay <= MAX_RETRY_AFTER)
-                                {
-                                    if let Some(delay) = error.retry_after {
-                                        tokio::time::sleep(delay).await;
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                    }
                     // GET authentication discovery can fail over. Mutations never replay.
                     if request.method == Method::Get
                         && endpoints
@@ -262,6 +216,11 @@ impl Shared {
                         endpoint_index += 1;
                         continue;
                     }
+                    let safe = request.method == Method::Get
+                        || matches!(
+                            request.route_name.as_str(),
+                            "native.query" | "native.subscription" | "native.transaction_status"
+                        );
                     if !safe
                         || retries >= self.config.max_retry_attempts()
                         || !is_retryable(&error)
@@ -286,7 +245,7 @@ impl Shared {
 
     pub(crate) async fn send_typed<T: DeserializeOwned>(&self, request: Request) -> Result<T> {
         let route = request.route_name.clone();
-        self.dispatch(request, None)
+        self.dispatch(request, None, None)
             .await?
             .json_body()
             .map_err(|mut error| {
@@ -295,22 +254,43 @@ impl Shared {
             })
     }
     pub(crate) async fn send_response(&self, request: Request) -> Result<Response> {
-        self.dispatch(request, None).await
+        self.dispatch(request, None, None).await
     }
     pub(crate) async fn send_native_typed<T: DeserializeOwned>(
         &self,
         scope: &DatabaseScope,
         requirement: NativeRequirement,
         request: Request,
+        deadline: tokio::time::Instant,
     ) -> Result<T> {
+        self.send_native_typed_with_phase(scope, requirement, request, deadline, None)
+            .await
+    }
+    pub(crate) async fn send_native_typed_with_phase<T: DeserializeOwned>(
+        &self,
+        scope: &DatabaseScope,
+        requirement: NativeRequirement,
+        request: Request,
+        deadline: tokio::time::Instant,
+        send_phase: Option<&NativeSendPhase>,
+    ) -> Result<T> {
+        check_native_deadline(deadline)?;
         let route = request.route_name.clone();
-        self.dispatch(request, Some((scope, requirement)))
-            .await?
-            .json_body()
-            .map_err(|mut error| {
-                error.code = format!("{}.invalid_response", route_to_code(&route));
-                error
-            })
+        let response = tokio::time::timeout_at(
+            deadline,
+            self.dispatch(request, Some((scope, requirement, deadline)), send_phase),
+        )
+        .await
+        .map_err(|_| Error::transport("Native operation deadline exceeded."))??;
+        // timeout_at polls the inner future first, so a ready response can
+        // arrive on a poll after the deadline. Decoding shares the same budget.
+        check_native_deadline(deadline)?;
+        let decoded = response.json_body().map_err(|mut error| {
+            error.code = format!("{}.invalid_response", route_to_code(&route));
+            error
+        });
+        check_native_deadline(deadline)?;
+        decoded
     }
 }
 
@@ -423,9 +403,8 @@ fn is_retryable(error: &Error) -> bool {
     if error.kind == ErrorKind::InvalidResponse {
         return false;
     }
-    // 520-524 are Cloudflare's origin-connectivity class (returned before the
-    // request reaches the member); they demote and fail over like a
-    // transport error (ADR 0050 §5.3).
+    // A caller may opt into bounded safe retries for transport/connectivity
+    // errors. Each retry selects the current receiver rank without demotion.
     error.kind == ErrorKind::Transport
         || matches!(error.status, Some(408 | 429 | 500..=504 | 520..=524))
 }
