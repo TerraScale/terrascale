@@ -37,5 +37,6 @@ jobs:
           fly machine list -a "$FLY_APP" --json > "$machines_json"
           fly volumes list -a "$FLY_APP" --json > "$volumes_json"
           node scripts/check-fly-deployment.mjs production "$machines_json" "$volumes_json"
-          curl -fsS --retry 6 --retry-delay 2 --retry-connrefused \
+          curl -fsS --retry 6 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 10 --max-time 20 --retry-max-time 90 \
             "https://${FLY_APP}.fly.dev/health/ready"
