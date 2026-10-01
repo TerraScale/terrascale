@@ -387,8 +387,12 @@ instead of recompiled (`scripts/ci/cargo-cache.sh`). On pushes to `main`,
 and stages the smoke-checked image in `git.terrascale.tech/<owner>/ts-auth-ci`.
 Its registry manifest digest is passed to `publish` as a job output
 (`scripts/ci/transfer-image.sh`), so jobs can run on different machines and
-a publish retry pulls the same image. Once all three jobs pass, `publish`
-pushes it as `git.terrascale.tech/<owner>/ts-auth:<commit>`.
+a publish retry within 30 days pulls the same image. Once all three jobs pass, `publish`
+pushes it as `git.terrascale.tech/<owner>/ts-auth:<commit>`. Each transfer
+uses a private temporary registry auth file and removes it on exit. The daily
+`registry-retention.yml` workflow removes staging candidates older than 30 days;
+retry the release job too when that retention window has elapsed. Published
+release tags are retained.
 
 The locked dependency audit ignores only `RUSTSEC-2023-0071` for `rsa`:
 ts-auth currently uses RSA public-key signature verification for JWT,

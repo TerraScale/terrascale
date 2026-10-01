@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ts-auth-${{ forgejo.workflow }}-${{ forgejo.ref }}
+  group: ts-auth-${{ forgejo.ref }}
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
 env:
@@ -51,6 +51,9 @@ jobs:
           set -euo pipefail
           cargo fmt --all -- --check
           bash scripts/ci/cargo-cache.sh cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Check image transfer guards
+        run: bash scripts/check-image-transfer.sh
 
       - name: Audit locked Rust dependencies
         run: |
@@ -152,7 +155,7 @@ jobs:
       # works across runner machines and survives a retry of publish alone.
       - name: Stage the image for publish
         id: hand-off
-        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+        if: env.TS_AUTH_PUBLISH == 'true'
         env:
           REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
           REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
@@ -173,25 +176,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Load the release image
+      - name: Publish the digest-pinned release image
         env:
           IMAGE_MANIFEST_DIGEST: ${{ needs.release.outputs.image-manifest-digest }}
           REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
           REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
-        run: bash scripts/ci/transfer-image.sh load
-
-      - name: Push the image
-        env:
-          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
-          REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
-        run: |
-          set -euo pipefail
-          source_commit="${FORGEJO_SHA:?event SHA is required}"
-          local_image="$(bash scripts/ci/image-ref.sh)"
-          remote_image="git.terrascale.tech/$(printf '%s' "${REPOSITORY_OWNER:?owner is required}" | tr '[:upper:]' '[:lower:]')/ts-auth:${source_commit}"
-          export REGISTRY_AUTH_FILE="${RUNNER_TEMP:-/tmp}/ts-auth-podman-auth.json"
-          printf '%s\n' "${REGISTRY_PUSH_TOKEN:?registry push token is required}" | \
-            podman login git.terrascale.tech --username "${REPOSITORY_OWNER}" --password-stdin >/dev/null
-          podman tag "${local_image}" "${remote_image}"
-          podman push "${remote_image}"
-          podman image inspect "${remote_image}"
+        run: bash scripts/ci/transfer-image.sh publish
