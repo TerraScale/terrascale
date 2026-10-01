@@ -10,7 +10,9 @@ namespace TerraScale.DotNet.Native;
 /// <remarks>
 /// At most 16 operations per client remain outstanding, including callbacks, cancellation registrations and cleanup that outlive a caller deadline.
 /// Additional calls wait within their original deadline. Provider, handler and content tasks must represent all their work;
-/// detached or async-void work is unsupported. Callback invocation and context-capturing continuations use owned workers.
+/// detached or async-void work is unsupported. Direct SDK invocations and context-capturing continuations use owned workers.
+/// Framework StreamContent reads are isolated individually. Custom callbacks invoked outside the captured context by
+/// framework helpers (such as connection callbacks or a custom serializer's own copy loop) must remain nonblocking.
 /// Extensions receive a separate token whose cancellation is dispatched on distinct owned workers; cancellation callbacks
 /// cannot delay the caller-facing signal. Response disposal waits for actual body invocation completion.
 /// Cancellation sources introduced by a caller-owned HttpClient (such as its Timeout) run their own registrations;
@@ -388,10 +390,28 @@ internal static class NativeTransport
         {
             // The length getter can invoke custom content synchronously too.
             if (content.Headers.ContentLength > limit) throw overflow();
-            // Copy directly into a bounded destination. ReadAsStreamAsync can
-            // materialize an undeclared custom content body before any check.
             using var destination = new BoundedHttpBodyStream(limit, overflow, cancellationToken);
-            await content.CopyToAsync(destination, operation.ExtensionToken).ConfigureAwait(false);
+            if (content.GetType() == typeof(StreamContent))
+            {
+                // The concrete framework StreamContent exposes its stream
+                // without serializing a body. Subclasses remain custom content.
+                // Its framework copy loop opts out of context capture, so own
+                // each read invocation instead of letting it invoke later reads.
+                var stream = await content.ReadAsStreamAsync(operation.ExtensionToken).ConfigureAwait(false);
+                var chunk = new byte[81920];
+                while (true)
+                {
+                    var count = await operation.ReadStreamChunkAsync(stream, chunk, cancellationToken).ConfigureAwait(false);
+                    if (count == 0) break;
+                    await destination.WriteAsync(chunk.AsMemory(0, count), cancellationToken).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                // Custom serializers write directly into the bounded destination;
+                // ReadAsStreamAsync could first buffer their complete output.
+                await content.CopyToAsync(destination, operation.ExtensionToken).ConfigureAwait(false);
+            }
             cancellationToken.ThrowIfCancellationRequested();
             return destination.ToArray();
         }, cancellationToken);
@@ -478,6 +498,16 @@ internal static class NativeTransport
         }
 
         internal CancellationToken ExtensionToken => extensions.Token;
+
+        internal Task<int> ReadStreamChunkAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken) =>
+            executor.ExecuteAsync(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                // The enclosing body invocation owns the buffer and operation
+                // reference until this actual read finishes. Only its caller's
+                // outer wait may abandon the body; do not abandon a chunk here.
+                return stream.ReadAsync(buffer, ExtensionToken).AsTask();
+            });
 
         private void CancelExtensions()
         {

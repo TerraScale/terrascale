@@ -117,12 +117,15 @@ public sealed class NativeResponseBoundaryTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task UndeclaredSerializingContentStopsAtTheBodyLimit(bool discovery)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task UndeclaredSerializingContentStopsAtTheBodyLimit(bool discovery, bool derivedStreamContent)
     {
         var limit = discovery ? 64 * 1024 : NativeCodec.MaximumBodyBytes;
-        using var content = new OversizedContent();
+        var serializer = new OversizedSerializer();
+        using HttpContent content = derivedStreamContent ? new DerivedOversizedContent(serializer) : new OversizedContent(serializer);
         using var handler = new NativeClientTests.Handler((_, _) => Task.FromResult(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = content }));
         if (discovery)
@@ -139,8 +142,8 @@ public sealed class NativeResponseBoundaryTests
             var result = await client.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document);
             await Assert.That(((NativeResult<NativePoint>.Failure)result).Error.Code).IsEqualTo("invalid_response");
         }
-        await Assert.That(content.BytesWritten).IsEqualTo(limit);
-        await Assert.That(content.AttemptedBytes).IsEqualTo(limit + 8192);
+        await Assert.That(serializer.BytesWritten).IsEqualTo(limit);
+        await Assert.That(serializer.AttemptedBytes).IsEqualTo(limit + 8192);
     }
 
     [Test]
@@ -227,10 +230,38 @@ public sealed class NativeResponseBoundaryTests
 
     private sealed class OversizedContent : HttpContent
     {
+        private readonly OversizedSerializer serializer;
+        internal OversizedContent(OversizedSerializer serializer)
+        {
+            this.serializer = serializer;
+            Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        }
+        protected override Task SerializeToStreamAsync(Stream destination, TransportContext? context) => serializer.SerializeAsync(destination);
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+    }
+
+    private sealed class DerivedOversizedContent : StreamContent
+    {
+        private readonly OversizedSerializer serializer;
+        internal DerivedOversizedContent(OversizedSerializer serializer) : base(Stream.Null)
+        {
+            this.serializer = serializer;
+            Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        }
+        protected override Task SerializeToStreamAsync(Stream destination, TransportContext? context) => serializer.SerializeAsync(destination);
+        protected override Task SerializeToStreamAsync(Stream destination, TransportContext? context, CancellationToken cancellationToken) =>
+            serializer.SerializeAsync(destination);
+        protected override Task<Stream> CreateContentReadStreamAsync() => throw new InvalidOperationException("Custom content must not be prebuffered.");
+        protected override Task<Stream> CreateContentReadStreamAsync(CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Custom content must not be prebuffered.");
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+    }
+
+    private sealed class OversizedSerializer
+    {
         internal int BytesWritten { get; private set; }
         internal int AttemptedBytes { get; private set; }
-        internal OversizedContent() => Headers.ContentType = new MediaTypeHeaderValue("application/json");
-        protected override async Task SerializeToStreamAsync(Stream destination, TransportContext? context)
+        internal async Task SerializeAsync(Stream destination)
         {
             var chunk = new byte[8192];
             // No Content-Length or stream override: default ReadAsStreamAsync
@@ -242,7 +273,6 @@ public sealed class NativeResponseBoundaryTests
                 BytesWritten += chunk.Length;
             }
         }
-        protected override bool TryComputeLength(out long length) { length = 0; return false; }
     }
 
     private sealed class AdmissionFailureContent : HttpContent

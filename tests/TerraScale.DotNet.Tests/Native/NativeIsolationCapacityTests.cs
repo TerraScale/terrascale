@@ -211,12 +211,21 @@ public sealed class NativeIsolationCapacityTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task ConcurrentClientDeadlinesDoNotDependOnWorkersBlockedByProviders(bool suspend)
+    public Task ConcurrentClientDeadlinesDoNotDependOnWorkersBlockedByProviders(bool suspend) =>
+        ConcurrentClientDeadlinesAsync(suspend, streamRead: false);
+
+    [Test]
+    public Task ConcurrentClientDeadlinesDoNotDependOnBlockingReadsAfterSuspension() =>
+        ConcurrentClientDeadlinesAsync(suspend: false, streamRead: true);
+
+    private static async Task ConcurrentClientDeadlinesAsync(bool suspend, bool streamRead)
     {
         ThreadPool.GetMinThreads(out var minimum, out _);
         var instances = Math.Clamp((minimum + 31) / 16, 4, 16);
         using var release = new ManualResetEventSlim();
         using var started = new SemaphoreSlim(0);
+        using var firstReads = new SemaphoreSlim(0);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var stopWatchdog = new ManualResetEventSlim();
         using var clock = new ArmedDeadlineClock();
         var clients = new List<NativeClient>();
@@ -225,31 +234,53 @@ public sealed class NativeIsolationCapacityTests
         var watchdog = new Thread(() =>
         {
             // The test's own failure guard must survive thread-pool starvation.
-            if (!stopWatchdog.Wait(TimeSpan.FromSeconds(15))) { watchdogReleased = true; release.Set(); }
+            if (!stopWatchdog.Wait(TimeSpan.FromSeconds(15)))
+            {
+                watchdogReleased = true;
+                releaseFirst.TrySetResult();
+                release.Set();
+            }
         }) { IsBackground = true };
         watchdog.Start();
         try
         {
             for (var index = 0; index < instances; index++)
             {
-                var handler = new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("Cancelled providers must never dispatch."));
+                var handler = new NativeClientTests.Handler((_, _) =>
+                {
+                    if (!streamRead) throw new InvalidOperationException("Cancelled providers must never dispatch.");
+                    var content = new StreamContent(new SuspendThenBlockStream(firstReads, releaseFirst.Task, started, release));
+                    content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+                });
                 var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
                     async _ =>
                     {
                         if (suspend) await Task.Yield();
-                        started.Release();
-                        if (!release.Wait(TimeSpan.FromSeconds(30))) throw new TimeoutException("Provider was not released.");
+                        if (!streamRead)
+                        {
+                            started.Release();
+                            if (!release.Wait(TimeSpan.FromSeconds(30))) throw new TimeoutException("Provider was not released.");
+                        }
                         return "tbk1.fixture-key";
                     }, TimeSpan.FromSeconds(30), handler, clock);
                 clients.Add(client);
                 for (var operation = 0; operation < NativeTransport.MaximumOutstandingOperations; operation++)
                     requests.Add(client.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document));
             }
+            if (streamRead)
+            {
+                // Every first read must actually suspend before returning a
+                // positive count and allowing the framework/SDK's next read.
+                for (var index = 0; index < requests.Count; index++)
+                    if (!await firstReads.WaitAsync(TimeSpan.FromSeconds(10))) throw new TimeoutException("First stream read did not start.");
+                releaseFirst.TrySetResult();
+            }
             for (var index = 0; index < requests.Count; index++)
-                if (!await started.WaitAsync(TimeSpan.FromSeconds(10))) throw new TimeoutException("Concurrent provider did not start.");
+                if (!await started.WaitAsync(TimeSpan.FromSeconds(10))) throw new TimeoutException("Concurrent callback did not start.");
             var beginning = System.Diagnostics.Stopwatch.GetTimestamp();
             // These are real shared-pool deadline timers, armed only after all
-            // providers start. No ThreadPool minimum or maximum is changed.
+            // blocking callbacks start. No ThreadPool minimum or maximum is changed.
             clock.Arm(TimeSpan.FromMilliseconds(100));
             var results = await Task.WhenAll(requests).WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(beginning)).IsLessThan(TimeSpan.FromSeconds(5));
@@ -262,6 +293,7 @@ public sealed class NativeIsolationCapacityTests
         }
         finally
         {
+            releaseFirst.TrySetResult();
             release.Set();
             stopWatchdog.Set();
             if (!watchdog.Join(TimeSpan.FromSeconds(5))) throw new TimeoutException("Test watchdog did not finish.");
@@ -272,6 +304,41 @@ public sealed class NativeIsolationCapacityTests
                 finally { client.Dispose(); }
             }
         }
+    }
+
+    private sealed class SuspendThenBlockStream(SemaphoreSlim firstReads, Task releaseFirst,
+        SemaphoreSlim started, ManualResetEventSlim release) : Stream
+    {
+        private int reads;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref reads) == 1)
+            {
+                var pending = FirstReadAsync(buffer);
+                if (pending.IsCompleted) throw new InvalidOperationException("The first read must suspend.");
+                firstReads.Release();
+                return pending;
+            }
+            started.Release();
+            if (!release.Wait(TimeSpan.FromSeconds(30))) throw new TimeoutException("Second stream read was not released.");
+            return ValueTask.FromResult(0);
+        }
+        private async ValueTask<int> FirstReadAsync(Memory<byte> buffer)
+        {
+            await releaseFirst;
+            buffer.Span[0] = (byte)' ';
+            return 1;
+        }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class ArmedDeadlineClock : TimeProvider, IDisposable

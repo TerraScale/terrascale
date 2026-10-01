@@ -11,7 +11,9 @@ namespace TerraScale.DotNet.Native;
 /// <remarks>
 /// At most 16 discovery operations remain outstanding, including late callbacks, cancellation registrations and cleanup; additional calls wait within their original deadline.
 /// Handler and content tasks must represent all their work; detached or async-void work is unsupported.
-/// Callback invocation and context-capturing continuations use owned workers. Callbacks that opt out of context capture
+/// Direct SDK invocations and context-capturing continuations use owned workers. Framework StreamContent reads are isolated individually.
+/// Custom callbacks invoked outside the captured context by framework helpers (such as connection callbacks or
+/// a custom serializer's own copy loop) must remain nonblocking. Callbacks that opt out of context capture
 /// (for example, with ConfigureAwait(false) or Task.Run) must keep shared-pool continuations nonblocking;
 /// starvation caused by such callback code is outside the finite-deadline guarantee.
 /// Extensions receive a separate token cancelled on distinct owned workers; response disposal waits for actual body invocation completion.

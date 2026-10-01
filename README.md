@@ -132,7 +132,7 @@ Auth consumers use `TerraScaleAuthClientOptions` and `AddTerraScaleAuthClient`.
 Regional database origins are `https://<region>.api.terrascale.tech`, for example
 `https://gru.api.terrascale.tech`. Direct-origin callers own prior provisioning
 and capability checks; accepting a canonical URL does not establish eligibility.
-Native clients and discovery routers use owned workers for callback invocation
+Native clients and discovery routers use owned workers for direct SDK invocation
 and context-capturing continuations. Key/admission providers and custom HTTP
 handler/content callbacks must return tasks representing their complete work;
 detached or async-void work is unsupported. Callbacks that opt out of context
@@ -147,6 +147,12 @@ continuations to finish before synchronous cleanup runs.
 Cancellation sources introduced by a caller-owned `HttpClient`, such as its
 `Timeout`, execute their own registrations; callbacks registered with those
 sources must remain nonblocking.
+Concrete framework `StreamContent` uses an isolated invocation for every stream
+read, including reads after an earlier suspension. Custom content (including
+`StreamContent` subclasses) serializes directly into a bounded destination.
+Custom callbacks invoked outside the captured context by framework helpers,
+such as connection callbacks or a custom serializer's own copy loop, must remain
+nonblocking.
 Discovery caches only authenticated leases for the same credential, coalesces
 scope requests, and retains at most 256 scope observation floors for its lifetime.
 Floors survive lease expiry: deployment or cell changes require explicit
