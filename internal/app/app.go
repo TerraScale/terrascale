@@ -84,7 +84,7 @@ func New(cfg config.Config) (*Application, error) {
 	}
 	status.Mount(mux, deps)
 	auth.Mount(mux, deps)
-	deviceAuthorization := auth.NewDeviceAuthorization(deps, cfg.SecureCookies)
+	deviceAuthorization := auth.NewDeviceAuthorization(deps, cfg.SecureCookies, cfg.PublicURL)
 	deviceAuthorization.MountBrowser(mux)
 	admin.Mount(mux, deps)
 	authentication.Mount(mux, deps)

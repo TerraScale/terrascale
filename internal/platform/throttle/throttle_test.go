@@ -131,8 +131,8 @@ func TestClientKey(t *testing.T) {
 			if tc.header != "" {
 				r.Header.Set("Fly-Client-IP", tc.header)
 			}
-			if got := tc.limiter.clientKey(r); got != tc.want {
-				t.Fatalf("clientKey = %q, want %q", got, tc.want)
+			if got := tc.limiter.ClientKey(r); got != tc.want {
+				t.Fatalf("ClientKey = %q, want %q", got, tc.want)
 			}
 		})
 	}

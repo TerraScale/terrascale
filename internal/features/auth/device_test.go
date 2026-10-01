@@ -44,7 +44,7 @@ func newDeviceFixture(t *testing.T) *deviceFixture {
 	f.sessions = session.New(f.store, session.Options{})
 	f.guard = csrf.New(f.sessions, csrf.Options{})
 	deps := core.Deps{Store: f.store, Sessions: f.sessions, CSRF: f.guard, Render: render.New(f.store, f.guard, nil, false), Throttle: throttle.New(throttle.Options{Client: throttle.Budget{Burst: 100, Interval: time.Second}, Account: throttle.Budget{Burst: 100, Interval: time.Second}}), Demo: true}
-	f.d = NewDeviceAuthorization(deps, false)
+	f.d = NewDeviceAuthorization(deps, false, "http://dashboard.test")
 	f.time.Store(time.Now().Unix())
 	f.d.now = func() time.Time { return time.Unix(f.time.Load(), 0) }
 	start := httptest.NewRecorder()
@@ -242,5 +242,68 @@ func TestDevicePublicEndpointsRejectCrossSiteAndUnknownClients(t *testing.T) {
 	f.public.ServeHTTP(w, r)
 	if w.Code != 403 {
 		t.Fatal("accepted cross-site device request")
+	}
+}
+
+func TestDeviceGrantQuotaIsPerClient(t *testing.T) {
+	f := newDeviceFixture(t)
+	for range maxDeviceGrantsPerClient {
+		f.issue(t)
+	}
+	if w := f.post(f.public, "/api/v1/dashboard/cli/device-authorization", url.Values{"client_id": {deviceClient}}, false); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("unbounded client grants: %d", w.Code)
+	}
+	r := httptest.NewRequest("POST", "http://dashboard.test/api/v1/dashboard/cli/device-authorization", strings.NewReader("client_id=terrascale-cli"))
+	r.RemoteAddr = "192.0.2.2:1234"
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	f.public.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("one client's quota blocked another: %d", w.Code)
+	}
+}
+func TestDeviceApprovalUsesConfiguredOrigin(t *testing.T) {
+	f := newDeviceFixture(t)
+	r := httptest.NewRequest("POST", "http://evil.test/api/v1/dashboard/cli/device-authorization", strings.NewReader("client_id=terrascale-cli"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	f.public.ServeHTTP(w, r)
+	if w.Code != 200 || strings.Contains(w.Body.String(), "evil.test") || !strings.Contains(w.Body.String(), "http://dashboard.test/cli/approve") {
+		t.Fatalf("untrusted verification origin: %s", w.Body.String())
+	}
+}
+func TestDeviceTokenQuotaFailureCanBeRetried(t *testing.T) {
+	f := newDeviceFixture(t)
+	var revokeID string
+	for range core.MaxAccessTokens {
+		token, _, err := f.store.CreateAccessToken(f.p, "existing", time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		revokeID = token.ID
+	}
+	device, code := f.issue(t)
+	f.decide(code, "approve", "device-fixture-password")
+	f.time.Add(5)
+	if w := f.poll(device); w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "temporarily_unavailable") {
+		t.Fatalf("quota failure mislabeled: %d %s", w.Code, w.Body.String())
+	}
+	if err := f.store.RevokeAccessToken(f.p, revokeID); err != nil {
+		t.Fatal(err)
+	}
+	f.time.Add(5)
+	if w := f.poll(device); w.Code != 200 {
+		t.Fatalf("approved grant lost on quota failure: %d %s", w.Code, w.Body.String())
+	}
+}
+func TestDeviceCorrectPasswordAgainstExpiredCodeIsForgiven(t *testing.T) {
+	f := newDeviceFixture(t)
+	f.d.deps.Throttle = throttle.New(throttle.Options{Client: throttle.Budget{Burst: 100, Interval: time.Hour}, Account: throttle.Budget{Burst: 1, Interval: time.Hour}})
+	_, code := f.issue(t)
+	f.time.Add(int64(deviceLifetime.Seconds()))
+	for range 2 {
+		if w := f.decide(code, "approve", "device-fixture-password"); w.Code != 200 {
+			t.Fatalf("correct password spent account budget: %d", w.Code)
+		}
 	}
 }

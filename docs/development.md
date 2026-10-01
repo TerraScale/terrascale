@@ -194,3 +194,18 @@ or Node.js toolchain on the runner; the Dockerfile keeps the Go build and npm
 caches in BuildKit cache mounts. Production deploys one warm machine and the
 preview workflow deploys one machine per pull request. No live deployment is
 required for local development or tests.
+
+## Public device authorization origin
+
+Set `DASHBOARD_PUBLIC_URL` to the dashboard's public HTTP(S) origin, such as
+`https://dashboard.terrascale.tech`, when serving a custom domain. Paths,
+credentials, queries, and fragments are rejected at startup. CLI verification
+links use this configured origin regardless of the request's Host header.
+
+On Fly, an unset value defaults to `https://$FLY_APP_NAME.fly.dev`, which also
+keeps PR previews tied to their own app. Without either setting, device-code
+issuance accepts only a loopback Host for local development. Pending grants are
+limited to ten per client address (using the same trusted proxy header and IPv6
+/64 grouping as password throttling) and 1,000 per demo process. An approved
+grant remains available for retry when the account's access-token quota is full;
+revoke an existing token and poll again after the advertised interval.

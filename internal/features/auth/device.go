@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"mime"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -18,15 +19,18 @@ import (
 )
 
 const (
-	deviceClient     = "terrascale-cli"
-	deviceGrantType  = "urn:ietf:params:oauth:grant-type:device_code"
-	deviceLifetime   = 10 * time.Minute
-	cliTokenLifetime = 30 * 24 * time.Hour
-	maxDeviceGrants  = 1000
-	deviceAlphabet   = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	deviceClient             = "terrascale-cli"
+	deviceGrantType          = "urn:ietf:params:oauth:grant-type:device_code"
+	deviceLifetime           = 10 * time.Minute
+	cliTokenLifetime         = 30 * 24 * time.Hour
+	maxDeviceGrants          = 1000
+	maxDeviceGrantsPerClient = 10
+	deviceAlphabet           = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 )
 
 type deviceGrant struct {
+	clientKey         string
+	redeeming         bool
 	codeHash          [32]byte
 	expires, nextPoll time.Time
 	interval          time.Duration
@@ -39,16 +43,17 @@ type deviceGrant struct {
 // in-memory demo. Only code digests are retained. Tokens are minted once, during
 // redemption, after explicit approval by a live credential-bound browser session.
 type DeviceAuthorization struct {
-	deps   core.Deps
-	secure bool
-	mu     sync.Mutex
-	grants map[[32]byte]*deviceGrant
-	codes  map[[32]byte][32]byte
-	now    func() time.Time
+	deps      core.Deps
+	secure    bool
+	publicURL string
+	mu        sync.Mutex
+	grants    map[[32]byte]*deviceGrant
+	codes     map[[32]byte][32]byte
+	now       func() time.Time
 }
 
-func NewDeviceAuthorization(deps core.Deps, secure bool) *DeviceAuthorization {
-	return &DeviceAuthorization{deps: deps, secure: secure, grants: map[[32]byte]*deviceGrant{}, codes: map[[32]byte][32]byte{}, now: time.Now}
+func NewDeviceAuthorization(deps core.Deps, secure bool, publicURL string) *DeviceAuthorization {
+	return &DeviceAuthorization{deps: deps, secure: secure, publicURL: publicURL, grants: map[[32]byte]*deviceGrant{}, codes: map[[32]byte][32]byte{}, now: time.Now}
 }
 
 func (d *DeviceAuthorization) MountBrowser(mux *http.ServeMux) {
@@ -113,11 +118,28 @@ func (d *DeviceAuthorization) issue(w http.ResponseWriter, r *http.Request) {
 	if !deviceForm(w, r) || !d.allow(w, r, "") {
 		return
 	}
-	scheme := "http"
-	if d.secure || r.TLS != nil {
-		scheme = "https"
+	base := d.publicURL
+	if base == "" {
+		scheme := "http"
+		if d.secure || r.TLS != nil {
+			scheme = "https"
+		}
+		origin, err := url.Parse(scheme + "://" + r.Host)
+		if err != nil || origin.User != nil || origin.Path != "" || strings.ContainsAny(r.Host, "?#") {
+			deviceError(w, 400, "invalid_request")
+			return
+		}
+		host := origin.Hostname()
+		addr, _ := netip.ParseAddr(host)
+		// Unconfigured local test/dev servers can use their loopback origin.
+		// Deployed callers always receive the configured public origin.
+		if host != "localhost" && !addr.IsLoopback() {
+			deviceError(w, 503, "temporarily_unavailable")
+			return
+		}
+		base = origin.String()
 	}
-	base := (&url.URL{Scheme: scheme, Host: r.Host}).String()
+	clientKey := d.deps.Throttle.ClientKey(r)
 	now := d.now()
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -126,7 +148,19 @@ func (d *DeviceAuthorization) issue(w http.ResponseWriter, r *http.Request) {
 			d.remove(key, grant)
 		}
 	}
+	clientGrants := 0
+	for _, grant := range d.grants {
+		if grant.clientKey == clientKey {
+			clientGrants++
+		}
+	}
+	if clientGrants >= maxDeviceGrantsPerClient {
+		w.Header().Set("Retry-After", "5")
+		deviceError(w, 429, "slow_down")
+		return
+	}
 	if len(d.grants) >= maxDeviceGrants {
+		w.Header().Set("Retry-After", "5")
 		deviceError(w, 503, "temporarily_unavailable")
 		return
 	}
@@ -149,7 +183,7 @@ func (d *DeviceAuthorization) issue(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	d.grants[key] = &deviceGrant{codeHash: codeHash, expires: now.Add(deviceLifetime), nextPoll: now.Add(5 * time.Second), interval: 5 * time.Second}
+	d.grants[key] = &deviceGrant{clientKey: clientKey, codeHash: codeHash, expires: now.Add(deviceLifetime), nextPoll: now.Add(5 * time.Second), interval: 5 * time.Second}
 	d.codes[codeHash] = key
 	code = code[:4] + "-" + code[4:]
 	verification := base + "/cli/approve"
@@ -157,6 +191,9 @@ func (d *DeviceAuthorization) issue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *DeviceAuthorization) remove(key [32]byte, grant *deviceGrant) {
+	if d.grants[key] != grant {
+		return
+	}
 	delete(d.grants, key)
 	delete(d.codes, grant.codeHash)
 }
@@ -177,47 +214,64 @@ func (d *DeviceAuthorization) poll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := sha256.Sum256([]byte(device))
+	now := d.now()
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	grant, ok := d.grants[key]
 	if !ok {
+		d.mu.Unlock()
 		if d.allow(w, r, "") {
 			deviceError(w, 400, "invalid_grant")
 		}
 		return
 	}
-	now := d.now()
 	if !now.Before(grant.expires) {
 		d.remove(key, grant)
+		d.mu.Unlock()
 		deviceError(w, 400, "expired_token")
 		return
 	}
 	if now.Before(grant.nextPoll) {
 		grant.interval += 5 * time.Second
 		grant.nextPoll = now.Add(grant.interval)
+		d.mu.Unlock()
 		deviceError(w, 400, "slow_down")
 		return
 	}
 	grant.nextPoll = now.Add(grant.interval)
 	if grant.denied {
 		d.remove(key, grant)
+		d.mu.Unlock()
 		deviceError(w, 400, "access_denied")
 		return
 	}
-	if grant.session == nil {
+	if grant.session == nil || grant.redeeming {
+		d.mu.Unlock()
 		deviceError(w, 400, "authorization_pending")
 		return
 	}
-	p, valid := grant.session()
-	if !valid || p.AccountID != grant.principal.AccountID || p.UserID != grant.principal.UserID || p.AuthVersion != grant.principal.AuthVersion {
+	grant.redeeming = true
+	validate, principal := grant.session, grant.principal
+	d.mu.Unlock()
+
+	p, valid := validate()
+	if !valid || p.AccountID != principal.AccountID || p.UserID != principal.UserID || p.AuthVersion != principal.AuthVersion {
+		d.mu.Lock()
 		d.remove(key, grant)
+		d.mu.Unlock()
 		deviceError(w, 400, "access_denied")
 		return
 	}
 	_, token, err := d.deps.Store.CreateAccessToken(p, "TerraScale CLI", cliTokenLifetime)
-	d.remove(key, grant)
+	d.mu.Lock()
+	if err == nil {
+		d.remove(key, grant)
+	} else {
+		grant.redeeming = false
+	}
+	d.mu.Unlock()
 	if err != nil {
-		deviceError(w, 400, "access_denied")
+		w.Header().Set("Retry-After", "5")
+		deviceError(w, 503, "temporarily_unavailable")
 		return
 	}
 	deviceJSON(w, 200, map[string]any{"access_token": token, "token_type": "Bearer", "expires_in": int(cliTokenLifetime.Seconds())})
@@ -321,6 +375,7 @@ func (d *DeviceAuthorization) decide(w http.ResponseWriter, r *http.Request) {
 			d.render(w, r, data)
 			return
 		}
+		d.deps.Throttle.Forgive(r, account.User.Email)
 		if sessions, ok := d.deps.Sessions.(core.CLIGrantSessions); ok {
 			validate, ok = sessions.BindCLIGrant(r)
 			if !ok {
@@ -350,9 +405,6 @@ func (d *DeviceAuthorization) decide(w http.ResponseWriter, r *http.Request) {
 		data.Pending = false
 		d.render(w, r, data)
 		return
-	}
-	if action == "approve" {
-		d.deps.Throttle.Forgive(r, account.User.Email)
 	}
 	data.Pending = false
 	data.Result = action

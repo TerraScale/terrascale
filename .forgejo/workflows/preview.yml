@@ -2,6 +2,9 @@ name: preview
 on:
   pull_request:
     types: [opened, reopened, synchronize, closed]
+permissions:
+  contents: read
+  issues: write
 concurrency:
   group: preview-${{ github.event.number }}
   cancel-in-progress: true
@@ -65,9 +68,9 @@ jobs:
           # Do not pipe curl into grep -q: with pipefail, grep can close the
           # pipe after its match and make curl report a false failure. That
           # would issue a duplicate comment and fail the preview with curl 22.
-          curl -sf -H "Authorization: token $FORGEJO_TOKEN" "$COMMENTS_URL" > "$COMMENTS_FILE"
+          curl --fail-with-body --silent --show-error -H "Authorization: token $FORGEJO_TOKEN" "$COMMENTS_URL" > "$COMMENTS_FILE"
           if ! grep -Fq "PR preview:" "$COMMENTS_FILE"; then
-            curl -sf -X POST \
+            curl --fail-with-body --silent --show-error -X POST \
               -H "Authorization: token $FORGEJO_TOKEN" \
               -H "Content-Type: application/json" \
               -d '{"body": "🚀 PR preview: https://'"$PR_APP"'.fly.dev"}' \
