@@ -57,7 +57,7 @@ case $mode in
     trap 'rm -f -- "$REGISTRY_AUTH_FILE" "$digest_file"' EXIT
     # Preserve the registry manifest and compressed layers. Podman's local
     # pull/tag/push round trip can change them before a post-push check runs.
-    skopeo copy --preserve-digests --src-authfile "$REGISTRY_AUTH_FILE" \
+    skopeo copy --all --preserve-digests --src-authfile "$REGISTRY_AUTH_FILE" \
       --dest-authfile "$REGISTRY_AUTH_FILE" --digestfile "$digest_file" \
       "docker://$staging@$IMAGE_MANIFEST_DIGEST" "docker://$remote_image"
     [[ $(cat "$digest_file") == "$IMAGE_MANIFEST_DIGEST" ]] || {

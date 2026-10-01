@@ -28,11 +28,13 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$CALLS"
 case "$1" in
   copy)
-    [[ $2 == --preserve-digests ]] || exit 1
+    [[ $2 == --all && $3 == --preserve-digests ]] || exit 1
+    [[ $4 == --src-authfile && $5 == "$REGISTRY_AUTH_FILE" ]] || exit 1
+    [[ $6 == --dest-authfile && $7 == "$REGISTRY_AUTH_FILE" ]] || exit 1
     [[ ${FAIL_COPY:-} != 1 ]] || exit 1
     while (($#)); do
       if [[ $1 == --digestfile ]]; then
-        printf '%s\n' "$IMAGE_MANIFEST_DIGEST" > "$2"
+        printf '%s\n' "${COPY_DIGEST:-$IMAGE_MANIFEST_DIGEST}" > "$2"
         break
       fi
       shift
@@ -78,11 +80,13 @@ bash "$transfer" publish
 commit=$(printf '%040d' 1)
 awk -v ref="docker://git.terrascale.tech/terrascale/ts-auth:$commit" \
   -v source="docker://git.terrascale.tech/terrascale/ts-auth-ci@$IMAGE_MANIFEST_DIGEST" \
-  '$1 == "copy" && $2 == "--preserve-digests" && $(NF-1) == source && $NF == ref {found++} END {exit found != 2}' "$CALLS"
+  '$1 == "copy" && $2 == "--all" && $3 == "--preserve-digests" && $(NF-1) == source && $NF == ref {found++} END {exit found != 2}' "$CALLS"
 reject env PUSH_DIGEST=invalid bash "$transfer" stage
 cp "$RELEASE_MANIFEST" "$sandbox/released-before-failure"
 reject env FAIL_COPY=1 bash "$transfer" publish
 cmp "$RELEASE_MANIFEST" "$sandbox/released-before-failure"
+reject env COPY_DIGEST="sha256:$(printf '%064d' 4)" bash "$transfer" publish
+grep -F 'published manifest digest does not match the staged digest' "$sandbox/rejected" >/dev/null
 # Single and double underscores are valid registry component separators.
 for owner in org_name org__name; do
   REPOSITORY_OWNER="$owner" bash "$transfer" publish
