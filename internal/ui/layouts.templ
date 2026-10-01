@@ -155,7 +155,14 @@ templ shellSidebar(page core.Page, admin bool) {
 		if !admin {
 			@contextSwitcher(page)
 		}
-		<nav class="ts-sidebar-content" aria-label={ navSectionsLabel(admin) }>
+		<nav
+			class="ts-sidebar-content"
+			aria-label={ navSectionsLabel(admin) }
+			if !admin {
+				data-init={ navScrollRestore }
+				data-on:click__window={ navScrollSave }
+			}
+		>
 			for _, group := range page.Shell.Navigation {
 				<div class="ts-nav-group">
 					if group.Label != "" {
