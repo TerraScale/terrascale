@@ -72,6 +72,7 @@ already-running server instead of starting the dashboard in-process.
 ```sh
 make lint       # gofmt check and go vet
 make check-modules # verify public dependency downloads and checksums
+make check-e2e-shards # verify every browser test runs in exactly one CI shard
 make generate   # regenerate Go components from internal/**/*.templ
 make check-generated # verify generated templ Go sources are current
 make css        # bundle web/assets into web/static/css/terrascale.css
@@ -144,15 +145,20 @@ The vendored SDK includes the regional API hostname correction documented in
 `vendor/PROVENANCE.md`. Reapply it after vendoring the current pin; for upgrades,
 check whether the chosen upstream revision already contains the correction.
 `make check-modules` verifies
-public dependency resolution and runs in CI's lint job.
+public dependency resolution in its own CI job, alongside lint, unit tests,
+and browser shards. The workflow's consecutive shard matrix is the single
+source of truth for the total, read by `scripts/e2e-shard-count.sh` for both
+CI runs and local coverage checks. The lint job verifies that the actual shard patterns
+cover every listed browser test exactly once, and that invalid shard inputs
+are rejected. Shard helpers respect `GO`, and browser jobs log their resolved
+test pattern. Public module verification needs no npm install or browser assets.
 It uses the installed Go toolchain and a temporary module cache, removed on
 exit, so a warm runner cache cannot hide download failures. The check downloads
 the full module graph, including tool and transitive module dependencies.
-It sets `GOENV=off` to ignore settings saved by `go env -w`, and clears exported
-`GOINSECURE` and Go's [module privacy settings](https://go.dev/ref/mod#private-modules),
-`GOPRIVATE`, `GONOPROXY`, and `GONOSUMDB`, so local overrides cannot
-bypass the public proxy, checksum database, or HTTPS verification. Cleanup
-makes the throwaway cache writable and removes it directly, even if Go fails to start,
+It disables the saved Go environment file with `GOENV=off` and clears Go's [module privacy settings](https://go.dev/ref/mod#private-modules),
+`GOPRIVATE`, `GONOPROXY`, `GONOSUMDB`, and `GOINSECURE`, so inherited exclusions cannot
+bypass the public proxy or checksum database. Cleanup makes the throwaway
+cache writable and removes the directory directly, even if Go fails to start,
 while preserving the download exit status.
 
 The MCP endpoint and its tool conventions are described in [mcp.md](mcp.md).

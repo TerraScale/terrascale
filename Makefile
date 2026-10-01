@@ -6,7 +6,7 @@ GO_TEST_FLAGS ?= -race -count=1
 VERSION ?= $(shell git rev-parse HEAD 2>/dev/null || echo dev)
 export GOFLAGS
 
-.PHONY: build check-css check-generated check-modules css dev generate js serve lint perf test-fast test-slow test-unit test-browser
+.PHONY: build check-css check-generated check-modules check-e2e-shards css dev generate js serve lint perf test-fast test-slow test-unit test-browser
 
 TEMPL_GENERATE_ARGS = -path internal -include-version=false -include-timestamp=false
 
@@ -19,7 +19,7 @@ check-generated:
 # Check that dependencies remain available publicly even though builds use vendor.
 # This includes the public ts-go replacement; Forgejo's go-import metadata points
 # to its own Git repository. Public proxy/sumdb availability is a CI requirement.
-# Ignore saved Go settings and clear exported exclusions/insecure-fetch overrides.
+# Disable saved Go settings and clear inherited privacy/insecure exclusions.
 check-modules:
 	@set -eu; \
 		task_module_cache=$$(mktemp -d); \
@@ -76,13 +76,18 @@ test-slow: test-unit test-browser
 # browser tests in its own process, dashboard and Chromium (see
 # scripts/e2e-shard.sh); the default 1/1 runs them all.
 E2E_SHARD ?= 1/1
+E2E_SHARDS ?= $(shell scripts/e2e-shard-count.sh)
+
+check-e2e-shards: js
+	@GO="$(GO)" scripts/check-e2e-shards.sh "$(E2E_SHARDS)" $(GO_TEST_FLAGS)
 
 test-unit: js
 	$(GO) test $(GO_TEST_FLAGS) -parallel 8 ./internal/...
 
 test-browser: js
-	$(GO) test $(GO_TEST_FLAGS) -p 1 -parallel 1 \
-		-run "$$(scripts/e2e-shard.sh $(E2E_SHARD) $(GO_TEST_FLAGS))" ./tests/...
+	@run=$$(GO="$(GO)" scripts/e2e-shard.sh "$(E2E_SHARD)" $(GO_TEST_FLAGS)) && \
+		printf 'test-browser %s: -run %s\n' "$(E2E_SHARD)" "$$run" >&2 && \
+		$(GO) test $(GO_TEST_FLAGS) -p 1 -parallel 1 -run "$$run" ./tests/...
 
 perf: js
 	DASHBOARD_E2E_PERF=1 $(GO) test -count=1 -run TestPerformance -v ./tests/e2e

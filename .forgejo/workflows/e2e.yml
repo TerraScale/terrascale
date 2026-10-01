@@ -11,6 +11,19 @@ concurrency:
 # library-patched Chromium with fonts and a 1777 /tmp, and npm and Go caches on
 # the runner's persistent /cache, so each parallel job sets up in seconds.
 jobs:
+  modules:
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          persist-credentials: false
+      # This checks downloads only and needs neither npm nor browser assets.
+      - name: Verify public Go module resolution
+        run: make check-modules
   lint:
     runs-on: terrascale-builder
     timeout-minutes: 10
@@ -22,10 +35,8 @@ jobs:
           persist-credentials: false
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
-      - name: Verify public Go module resolution
-        run: make check-modules
-      - name: Check generated Templ and CSS, and lint
-        run: make lint check-css
+      - name: Check generated assets, lint, and browser shard coverage
+        run: make lint check-css check-e2e-shards
   unit:
     runs-on: terrascale-builder
     timeout-minutes: 10
@@ -57,5 +68,5 @@ jobs:
           persist-credentials: false
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
-      - name: Run Go browser and account-to-ts-go tests (shard ${{ matrix.shard }}/4)
-        run: make test-browser E2E_SHARD=${{ matrix.shard }}/4
+      - name: Run Go browser and account-to-ts-go tests (shard ${{ matrix.shard }})
+        run: make test-browser E2E_SHARD="${{ matrix.shard }}/$(scripts/e2e-shard-count.sh)"
