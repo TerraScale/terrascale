@@ -58,6 +58,8 @@ public sealed class TerraScaleDiscoveryRouter
     /// <summary>The Atlas metadata origin serving discovery and the region catalog.</summary>
     public Uri DiscoveryOrigin => discoveryOrigin;
 
+    internal TerraScaleRoutingCache RoutingCache => routingCache;
+
     /// <summary>
     /// Records one measured client-to-region round trip; measured latency
     /// outranks geography in Atlas ranking (ADR 0050 §2).
@@ -75,7 +77,12 @@ public sealed class TerraScaleDiscoveryRouter
     public Task<TerraScaleRoutingBase?> ResolveBaseAsync(string database, bool needsWrite, CancellationToken cancellationToken) =>
         ResolveBaseAsync(database, needsWrite, null, cancellationToken);
 
-    internal async Task<TerraScaleRoutingBase?> ResolveBaseAsync(
+    /// <summary>
+    /// Resolves one attempt while excluding every region already failed by
+    /// this operation, including after a discovery refresh. Callers that own
+    /// a safe retry loop must retain the failed regions across its attempts.
+    /// </summary>
+    public async Task<TerraScaleRoutingBase?> ResolveBaseAsync(
         string database, bool needsWrite, IReadOnlySet<string>? failedRegions, CancellationToken cancellationToken)
     {
         if (!TerraScaleRoutingValidation.IsValidDatabaseName(database))

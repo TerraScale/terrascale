@@ -106,6 +106,9 @@ public sealed class TerraScaleDiscoveryRoutingTests
         }
 
         var client = CreateClient(transport, new Uri("https://atlas-expired-failure.test"));
+        long nowMs = 0;
+        client.DiscoveryRouter!.RoutingCache.NowMs = () => nowMs;
+        transport.AdvanceTime = milliseconds => nowMs += milliseconds;
         _ = await client.Documents.GetAsync("orders-expired-failure", "items", "item-1");
         _ = await client.Documents.GetAsync("orders-expired-failure", "items", "item-1");
         var expected = new List<string>
@@ -136,6 +139,9 @@ public sealed class TerraScaleDiscoveryRoutingTests
             options.MaxRetryAttempts = 3;
             options.RetryDelay = TimeSpan.Zero;
         });
+        long nowMs = 0;
+        client.DiscoveryRouter!.RoutingCache.NowMs = () => nowMs;
+        transport.AdvanceTime = milliseconds => nowMs += milliseconds;
 
         _ = await Assert.ThrowsAsync<HttpRequestException>(() =>
             client.Documents.UpsertAsync("orders-expired-mutation", "items", "item-1", new { status = "paid" }));
@@ -470,6 +476,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
         public bool ThrowRegionalRequests { get; set; }
         public bool TimeoutRegionalRequests { get; set; }
         public Queue<(string Region, int DelayMs)> RegionalTransportFailures { get; } = new();
+        public Action<int>? AdvanceTime { get; set; }
         public bool ThrowDiscovery { get; set; }
         public bool OmitPlacement { get; set; }
         public HttpStatusCode RegionalFailureStatus { get; set; } = HttpStatusCode.ServiceUnavailable;
@@ -520,7 +527,8 @@ public sealed class TerraScaleDiscoveryRoutingTests
             if (RegionalTransportFailures.TryPeek(out var failure) && uri.Host == $"{failure.Region}.api.terrascale.tech")
             {
                 RegionalTransportFailures.Dequeue();
-                await Task.Delay(failure.DelayMs, cancellationToken).ConfigureAwait(false);
+                if (AdvanceTime is { } advanceTime) advanceTime(failure.DelayMs);
+                else await Task.Delay(failure.DelayMs, cancellationToken).ConfigureAwait(false);
                 throw new HttpRequestException("Region offline");
             }
 
