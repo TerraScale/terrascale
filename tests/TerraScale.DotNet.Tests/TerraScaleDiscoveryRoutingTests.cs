@@ -13,6 +13,38 @@ public sealed class TerraScaleDiscoveryRoutingTests
     private const string ApiProxyOrigin = "https://api.terrascale.tech";
 
     [Test]
+    [Arguments(429)]
+    [Arguments(503)]
+    public async Task OrdinaryRetryDisposesTheResponseBeforeRetryAfter(int status)
+    {
+        using var content = new DisposalTrackingContent();
+        using var transport = new OrdinaryRetryTransport((HttpStatusCode)status, content);
+        using var http = new HttpClient(transport);
+        var client = new TerraScaleClient(http, new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri("https://configured.example.invalid"),
+            ApiKey = "test-key",
+            MaxRetryAttempts = 1,
+        });
+        var disposedAtDelay = false;
+        var delays = new List<TimeSpan>();
+        client.DelayRetryAsync = (delay, token) =>
+        {
+            token.ThrowIfCancellationRequested();
+            disposedAtDelay = content.IsDisposed;
+            delays.Add(delay);
+            return Task.CompletedTask;
+        };
+
+        _ = await client.Documents.GetAsync("orders-ordinary-retry", "items", "item-1");
+
+        await Assert.That(disposedAtDelay).IsTrue();
+        await Assert.That(delays.Count).IsEqualTo(1);
+        await Assert.That(delays[0]).IsEqualTo(TimeSpan.FromSeconds(1));
+        await Assert.That(transport.RequestCount).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task DefaultOptionsDiscoverAndPinTheTopRankedRegion()
     {
         var transport = new ScriptedTransport();
@@ -617,6 +649,36 @@ public sealed class TerraScaleDiscoveryRoutingTests
         };
         configure?.Invoke(options);
         return new TerraScaleClient(httpClient, options);
+    }
+
+    private sealed class DisposalTrackingContent() : StringContent("{}", Encoding.UTF8, "application/json")
+    {
+        public bool IsDisposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) IsDisposed = true;
+            base.Dispose(disposing);
+        }
+    }
+
+    private sealed class OrdinaryRetryTransport(HttpStatusCode failureStatus, HttpContent failureContent) : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            var response = new HttpResponseMessage(RequestCount == 1 ? failureStatus : HttpStatusCode.OK)
+            {
+                Content = RequestCount == 1 ? failureContent : new StringContent("{\"status\":\"paid\"}", Encoding.UTF8, "application/json"),
+            };
+            if (RequestCount == 1)
+                response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(1));
+            else
+                response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"r1\"");
+            return Task.FromResult(response);
+        }
     }
 
     private sealed class ScriptedTransport : HttpMessageHandler

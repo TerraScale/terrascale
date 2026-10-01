@@ -1151,7 +1151,14 @@ public sealed class TerraScaleClient
 
                     ReportRoutingFailure(routing, routedBase);
                     AddRetryEvent(activity, attempt + 1, delay, $"HTTP {(int)response.StatusCode}");
-                    pendingResponse = response;
+                    if (failedRegions.Count > 0)
+                    {
+                        pendingResponse = response;
+                    }
+                    else
+                    {
+                        response.Dispose();
+                    }
                     await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception exception) when (exception is HttpRequestException ||
