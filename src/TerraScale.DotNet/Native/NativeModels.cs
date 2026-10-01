@@ -277,16 +277,18 @@ public abstract record NativeResult<T>
 /// <summary>Immutable bytes and identity prepared before any mutation is dispatched.</summary>
 public sealed class NativePreparedCommit
 {
-    internal NativePreparedCommit(Guid owner, NativeScope scope, string? explicitOrigin, NativeTransactionIdentity identity, string requestBody)
+    internal NativePreparedCommit(Guid owner, NativeScope scope, string? explicitOrigin, NativeTransactionIdentity identity, string requestBody, ImmutableArray<string> capabilities)
     {
         Owner = owner;
         Scope = scope;
         ExplicitOrigin = explicitOrigin;
         Identity = identity;
         RequestBody = requestBody;
+        Capabilities = capabilities;
     }
 
     internal Guid Owner { get; }
+    internal ImmutableArray<string> Capabilities { get; }
     /// <summary>The immutable provisioned scope bound to this operation.</summary>
     public NativeScope Scope { get; }
     /// <summary>The optional previously admitted direct-origin binding.</summary>

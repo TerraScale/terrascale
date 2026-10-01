@@ -20,7 +20,7 @@ public sealed record NativeRetainedOperation(
 }
 
 /// <summary>Private local recovery metadata; no API key, OAuth token or discovery grant is serialized.</summary>
-/// <remarks>Unix files must be owner-private. On Windows the caller must provision and verify a private directory ACL.</remarks>
+/// <remarks>Unix files must be owner-private and stored in a directory with a trusted owner and no group/other write permission. On Windows the caller must provision and verify a trusted private directory hierarchy with private ACLs.</remarks>
 public static class NativeOperationStore
 {
     private const int MaximumRetainedBytes = NativeCodec.MaximumBodyBytes + 8192;
@@ -35,32 +35,7 @@ public static class NativeOperationStore
         var destination = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(destination)!;
         if (!Directory.Exists(directory)) throw new DirectoryNotFoundException("Native operation directory must already exist.");
-        var temporary = Path.Combine(directory, ".native-operation-" + Guid.NewGuid().ToString("N") + ".tmp");
-        try
-        {
-            var options = new FileStreamOptions
-            {
-                Mode = FileMode.CreateNew,
-                Access = FileAccess.Write,
-                Share = FileShare.None,
-                Options = FileOptions.Asynchronous
-            };
-            if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-            await using (var stream = new FileStream(temporary, options))
-            {
-                await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
-            }
-            cancellationToken.ThrowIfCancellationRequested();
-            NativeFilePersistence.MoveDurably(temporary, destination, directory);
-        }
-        finally
-        {
-            try { if (File.Exists(temporary)) File.Delete(temporary); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
+        await NativeFilePersistence.SaveAsync(bytes, destination, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Loads a private bounded operation file and revalidates its scope and exact native effect.</summary>

@@ -100,6 +100,114 @@ public sealed class NativeBoundaryTests
     }
 
     [Test]
+    public async Task MalformedWriteMetadataIsRejectedBeforeDigestAllocation()
+    {
+        var commit = NativeCodecTests.CreateCommit();
+        var write = commit.Writes[0];
+        foreach (var invalid in new[]
+        {
+            write with { SchemaDigest = new string('x', 64) },
+            write with { SchemaDigest = new string('a', 1024 * 1024) },
+            write with { Collection = "invalid" },
+            write with { Observed = default },
+            write with { Observed = [new NativeObserved(NativeCodecTests.Replica, "not-hex", 1)] }
+        })
+        {
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+            {
+                NativeCodec.EncodeCommit(NativeCodecTests.Scope, commit with { Writes = [invalid] });
+                return Task.CompletedTask;
+            });
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OversizedJsonStringsAreRejectedWithoutAllocatingTheEncodedInput(bool multibyte)
+    {
+        var text = multibyte ? new string('é', NativeCodec.MaximumBodyBytes / 2 + 1)
+            : new string('a', NativeCodec.MaximumBodyBytes + 1);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        try { using var document = NativeCodec.Parse(text); throw new InvalidOperationException("Oversized JSON accepted."); }
+        catch (InvalidDataException) { }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        await Assert.That(allocated).IsLessThan(1024L * 1024);
+    }
+
+    [Test]
+    public async Task CompleteConflictResponsesMayExceedMutationObservationBounds()
+    {
+        var context = Enumerable.Range(1, 1025).Select(index => new NativeObserved(
+            $"00000000-0000-0000-0000-{index:x12}", new string('1', 32), 1)).ToImmutableArray();
+        var siblings = context.Select(origin => new NativeSibling(new NativeEvent(NativeCodecTests.Database, 0,
+            origin.Replica, origin.Incarnation, 1), 1, NativeCodecTests.SchemaDigest, new NativeWriteValue.Tombstone())).ToImmutableArray();
+        var point = new NativePoint(NativePointState.Conflict, null, context, siblings);
+        using var handler = new NativeClientTests.Handler((_, _) => Task.FromResult(NativeClientTests.Json(NativeCodec.EncodePoint(point))));
+        using var client = NativeClientTests.Client(handler);
+        var result = await client.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document);
+        var actual = ((NativeResult<NativePoint>.Success)result).Value;
+        await Assert.That(actual.Context.Length).IsEqualTo(1025);
+        await Assert.That(actual.Siblings.Length).IsEqualTo(1025);
+        var commit = NativeCodecTests.CreateCommit();
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        {
+            client.PrepareCommit(commit with { Writes = [commit.Writes[0] with { Observed = context }] });
+            return Task.CompletedTask;
+        });
+    }
+
+    [Test]
+    public async Task CancelledPreparedAndRestoredCommitsDoNotDecodeTheirImmutableBodiesAgain()
+    {
+        var calls = 0;
+        using var handler = new NativeClientTests.Handler((_, _) => { calls++; throw new InvalidOperationException("No dispatch expected."); });
+        using var client = NativeClientTests.Client(handler);
+        var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit(new string('a', 400_000)));
+        var restored = client.RestoreCommit(new NativeRetainedOperation(prepared.Scope, prepared.ExplicitOrigin, prepared.Identity, prepared.RequestBody));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        foreach (var operation in new[] { prepared, restored })
+        {
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            var task = client.CommitAsync(operation, cancellation.Token);
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            var failure = ((NativeResult<NativeCommitReceipt>.Failure)await task).Error;
+            await Assert.That(allocated).IsLessThan(256L * 1024);
+            await Assert.That(failure.Code).IsEqualTo("cancelled");
+            await Assert.That(failure.MutationOutcome).IsEqualTo(NativeMutationOutcome.Unknown);
+            await Assert.That(failure.Transaction).IsEqualTo(prepared.Identity);
+        }
+        await Assert.That(calls).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task PersistenceRemainsBoundToTheOpenedDirectoryAfterPathReplacement()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Directory.CreateTempSubdirectory("terrascale-native-anchor-");
+        try
+        {
+            var original = Path.Combine(root.FullName, "original");
+            var moved = Path.Combine(root.FullName, "moved");
+            Directory.CreateDirectory(original);
+            using var parent = NativeOperationDirectory.Open(original);
+            Directory.Move(original, moved);
+            Directory.CreateDirectory(original);
+            using var handler = new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected."));
+            using var client = NativeClientTests.Client(handler);
+            var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+            await parent.SaveAsync(System.Text.Encoding.UTF8.GetBytes(prepared.RequestBody), "operation.json", CancellationToken.None);
+            await Assert.That(await File.ReadAllTextAsync(Path.Combine(moved, "operation.json"))).IsEqualTo(prepared.RequestBody);
+            await Assert.That(Directory.GetFiles(original).Length).IsEqualTo(0);
+            await Assert.That(Directory.GetFiles(moved).Length).IsEqualTo(1);
+            await Assert.ThrowsAsync<IOException>(() => parent.SaveAsync([1], "operation.json", CancellationToken.None));
+            await Assert.That(Directory.GetFiles(moved).Length).IsEqualTo(1);
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Test]
     public async Task RecoveryLoadRejectsLinksAndChecksTheOpenedFilesPermissions()
     {
         if (OperatingSystem.IsWindows()) return;

@@ -71,6 +71,19 @@ public sealed class NativeDiscoveryRouterTests
     }
 
     [Test]
+    [Arguments("null")]
+    [Arguments("42")]
+    [Arguments("{}")]
+    public async Task NonStringErrorCodesPreserveTheReceivedHttpStatus(string code)
+    {
+        var transport = new Transport("{\"error\":{\"code\":" + code + "}}", HttpStatusCode.ServiceUnavailable);
+        using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(3), transport);
+        var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None));
+        await Assert.That(failure.Code).IsEqualTo("discovery_http_error");
+        await Assert.That(failure.Status).IsEqualTo(503);
+    }
+
+    [Test]
     public async Task DiscoveryDeadlineStillBoundsBodyAfterResponseHeaders()
     {
         var body = new StallStream();

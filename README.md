@@ -138,7 +138,8 @@ Floors survive lease expiry: deployment or cell changes require explicit
 reprovisioning and a new router. The pinned contract rejects future publication
 timestamps and consumes fetch latency from the lease, so clocks must be synchronized.
 Recovery persistence flushes the file and synchronizes its rename before `SaveAsync`
-returns: Linux/macOS use directory fsync, and Windows uses a write-through move.
+returns: Linux/macOS anchor temporary creation, no-replace publication, cleanup and fsync
+to one open directory descriptor; Windows uses a write-through move.
 Unix recovery loads open without following links and validate permissions on the
-opened file. On Windows callers must secure retained operation directories with
-private ACLs.
+opened file. Unix directories must have a trusted owner and deny group/other
+writes. Windows callers must secure the directory hierarchy with private ACLs.

@@ -388,7 +388,9 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         {
             using var document = JsonDocument.Parse(body);
             var error = document.RootElement.GetProperty("error");
-            var code = ReadString(error, "code");
+            if (!error.TryGetProperty("code", out var rawCode) || rawCode.ValueKind != JsonValueKind.String)
+                return "discovery_http_error";
+            var code = rawCode.GetString()!;
             return DiscoveryErrorCodes.Contains(code) ? code : "discovery_http_error";
         }
         catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException)

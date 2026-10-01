@@ -49,7 +49,12 @@ public static class NativeCodec
     }
 
     /// <summary>Parses bounded strict JSON and rejects duplicate members; dispose the returned document.</summary>
-    public static JsonDocument Parse(string json) => Parse(Utf8.GetBytes(json));
+    public static JsonDocument Parse(string json)
+    {
+        if (json.Length > MaximumBodyBytes || Utf8.GetByteCount(json) > MaximumBodyBytes)
+            throw Invalid("Native JSON exceeds its byte limit.");
+        return Parse(Utf8.GetBytes(json));
+    }
 
     /// <summary>Parses bounded strict JSON and rejects duplicate members; dispose the returned document.</summary>
     public static JsonDocument Parse(byte[] json) => ParseBounded(json, MaximumBodyBytes);
@@ -196,7 +201,7 @@ public static class NativeCodec
     private static object WirePoint(NativePoint point)
     {
         var root = Object(("version", 1), ("state", point.State.ToString().ToLowerInvariant()),
-            ("state_version", point.StateVersion), ("context", WireObserved(point.Context)),
+            ("state_version", point.StateVersion), ("context", WireObserved(point.Context, int.MaxValue)),
             ("siblings", point.Siblings.Select(sibling =>
             {
                 var fields = Object(("event", WireEvent(sibling.Event)), ("schema_generation", Decimal(sibling.SchemaGeneration)),
@@ -261,9 +266,9 @@ public static class NativeCodec
             "conflict" => NativePointState.Conflict,
             _ => throw Invalid("Unsupported point state.")
         };
-        var context = DecodeObserved(root.GetProperty("context"));
+        var context = DecodeObserved(root.GetProperty("context"), int.MaxValue);
         var siblings = ImmutableArray.CreateBuilder<NativeSibling>();
-        foreach (var raw in Array(root.GetProperty("siblings")))
+        foreach (var raw in Array(root.GetProperty("siblings"), int.MaxValue))
         {
             Fields(raw, ["event", "schema_generation", "schema_digest", "kind"], ["fields"]);
             var value = DecodeWriteValue(raw, sibling: true);
@@ -282,12 +287,13 @@ public static class NativeCodec
             _ => false
         };
         if (!valid) throw Invalid("Point state contradicts its siblings or condition token.");
+        var observed = context.ToDictionary(origin => (origin.Replica, origin.Incarnation), origin => origin.Sequence);
         var events = new HashSet<(string, string, ulong)>();
         foreach (var sibling in siblings)
         {
             var occurrence = sibling.Event;
             if (!events.Add((occurrence.Replica, occurrence.Incarnation, occurrence.Sequence)) ||
-                !context.Any(origin => origin.Replica == occurrence.Replica && origin.Incarnation == occurrence.Incarnation && origin.Sequence >= occurrence.Sequence))
+                (!observed.TryGetValue((occurrence.Replica, occurrence.Incarnation), out var sequence) || sequence < occurrence.Sequence))
                 throw Invalid("Point causal context is incomplete or contains duplicate siblings.");
         }
         return new NativePoint(state, version, context, siblings.ToImmutable());
@@ -489,17 +495,17 @@ public static class NativeCodec
         return new NativeWriteValue.Live(fields);
     }
 
-    private static ImmutableArray<NativeObserved> DecodeObserved(JsonElement root)
+    private static ImmutableArray<NativeObserved> DecodeObserved(JsonElement root, int maximum = 1024)
     {
         var entries = ImmutableArray.CreateBuilder<NativeObserved>();
-        foreach (var raw in Array(root))
+        foreach (var raw in Array(root, maximum))
         {
             Fields(raw, ["replica", "incarnation", "sequence"]);
             entries.Add(new NativeObserved(CanonicalUuid(Text(raw.GetProperty("replica")), "replica"),
                 Hex(Text(raw.GetProperty("incarnation")), 16, "incarnation"), U64(raw.GetProperty("sequence"), true)));
         }
         var result = entries.ToImmutable();
-        WireObserved(result);
+        ValidateObserved(result, maximum);
         return result;
     }
 
@@ -568,6 +574,36 @@ public static class NativeCodec
         _ => throw Invalid("Invalid native document condition.")
     };
 
+    private static void ValidateObserved(ImmutableArray<NativeObserved> entries, int maximum = 1024)
+    {
+        Bounded(entries, maximum);
+        string? previous = null;
+        foreach (var entry in entries)
+        {
+            var order = CanonicalUuid(entry.Replica, "replica") + Hex(entry.Incarnation, 16, "incarnation");
+            if (entry.Sequence == 0 || (previous is not null && string.CompareOrdinal(previous, order) >= 0))
+                throw Invalid("Observed origins must be strictly increasing with positive sequence.");
+            previous = order;
+        }
+    }
+
+    private static void ValidateWriteMetadata(NativeWrite write, NativeAuthority authority)
+    {
+        if (write is null) throw Invalid("Native write must be present.");
+        CanonicalUuid(write.Collection, "collection");
+        CanonicalUuid(write.Document, "document");
+        Hex(write.SchemaDigest, 32, "schema digest");
+        if (write.SchemaGeneration == 0) throw Invalid("Schema generation must be positive.");
+        if (authority is NativeAuthority.SingleWriter && write.Condition is NativeCondition.None)
+            throw Invalid("Single-writer mutations require an atomic condition.");
+        if (write.Condition is NativeCondition.Version version) Hex(version.Token, 32, "condition version");
+        else if (write.Condition is not (NativeCondition.None or NativeCondition.Absent))
+            throw Invalid("Invalid native document condition.");
+        ValidateObserved(write.Observed);
+        if (write.Value is not (NativeWriteValue.Live or NativeWriteValue.Tombstone))
+            throw Invalid("Unsupported native write kind.");
+    }
+
     private static object WireWrite(NativeWrite write, NativeAuthority authority)
     {
         if (authority is NativeAuthority.SingleWriter && write.Condition is NativeCondition.None)
@@ -585,9 +621,9 @@ public static class NativeCodec
             ("condition", WireCondition(write.Condition)), ("observed", WireObserved(write.Observed)), ("value", value));
     }
 
-    private static object[] WireObserved(ImmutableArray<NativeObserved> entries)
+    private static object[] WireObserved(ImmutableArray<NativeObserved> entries, int maximum = 1024)
     {
-        Bounded(entries, 1024);
+        Bounded(entries, maximum);
         string? previous = null;
         var result = new object[entries.Length];
         for (var index = 0; index < entries.Length; index++)
@@ -721,6 +757,7 @@ public static class NativeCodec
         bytes.UInt64((ulong)writes.Length);
         foreach (var write in writes)
         {
+            ValidateWriteMetadata(write, authority);
             bytes.Uuid(write.Collection); bytes.Uuid(write.Document); bytes.UInt64(write.SchemaGeneration); bytes.Hex(write.SchemaDigest);
             bytes.Byte(write.Condition is NativeCondition.None ? (byte)0 : write.Condition is NativeCondition.Absent ? (byte)1 : (byte)2);
             if (write.Condition is NativeCondition.Version version) bytes.Hex(version.Token);

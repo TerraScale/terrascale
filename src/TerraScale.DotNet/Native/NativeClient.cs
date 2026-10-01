@@ -90,7 +90,7 @@ public sealed class NativeClient : IDisposable
     {
         ThrowIfDisposed();
         var encoded = NativeCodec.EncodeCommit(Scope, commit);
-        return new NativePreparedCommit(owner, Scope, explicitOrigin, encoded.Identity, encoded.Body);
+        return new NativePreparedCommit(owner, Scope, explicitOrigin, encoded.Identity, encoded.Body, CommitCapabilities(commit));
     }
 
     /// <summary>Restoration revalidates the retained scope, explicit-origin binding and canonical effect.</summary>
@@ -103,7 +103,7 @@ public sealed class NativeClient : IDisposable
         var commit = NativeCodec.DecodeCommit(Scope, document.RootElement);
         var identity = NativeCodec.EncodeCommit(Scope, commit).Identity;
         NativeCodec.RequireIdentity(identity, retained.Identity);
-        return new NativePreparedCommit(owner, Scope, explicitOrigin, identity, retained.RequestBody);
+        return new NativePreparedCommit(owner, Scope, explicitOrigin, identity, retained.RequestBody, CommitCapabilities(commit));
     }
 
     /// <summary>Fixes the collection, typed predicate and limit across opaque continuation pages.</summary>
@@ -145,21 +145,24 @@ public sealed class NativeClient : IDisposable
     public Task<NativeResult<NativeCommitReceipt>> CommitAsync(NativePreparedCommit prepared, CancellationToken cancellationToken = default)
     {
         RequirePrepared(prepared);
-        using var document = NativeCodec.Parse(prepared.RequestBody);
-        var commit = NativeCodec.DecodeCommit(Scope, document.RootElement);
-        var capabilities = ImmutableArray.CreateBuilder<string>();
-        capabilities.Add("client_v1");
-        capabilities.Add("write");
-        if (commit.Writes.Any(write => write.Condition is not NativeCondition.None)) capabilities.Add("conditional_mutation");
-        if (commit.Writes.Length > 1) capabilities.Add("atomic_groups");
-        if (commit.Authority is NativeAuthority.SingleWriter) capabilities.Add("security_state");
         return RequestAsync(NativeCodec.ScopePath(Scope) + "/transactions", HttpMethod.Post, prepared.RequestBody, root =>
         {
             var receipt = NativeCodec.DecodeReceipt(root);
             NativeCodec.RequireIdentity(receipt.Identity, prepared.Identity);
             NativeCodec.RequireScope(receipt.Event, Scope);
             return receipt;
-        }, capabilities.ToImmutable(), cancellationToken, prepared.Identity, mutation: true);
+        }, prepared.Capabilities, cancellationToken, prepared.Identity, mutation: true);
+    }
+
+    private static ImmutableArray<string> CommitCapabilities(NativeCommit commit)
+    {
+        var capabilities = ImmutableArray.CreateBuilder<string>();
+        capabilities.Add("client_v1");
+        capabilities.Add("write");
+        if (commit.Writes.Any(write => write.Condition is not NativeCondition.None)) capabilities.Add("conditional_mutation");
+        if (commit.Writes.Length > 1) capabilities.Add("atomic_groups");
+        if (commit.Authority is NativeAuthority.SingleWriter) capabilities.Add("security_state");
+        return capabilities.ToImmutable();
     }
 
     /// <summary>Resolves status for the original immutable identity without submitting a mutation.</summary>
