@@ -1,4 +1,4 @@
-import { isTestApiHostname } from "./native-origin.js";
+import { isDataApiHostname } from "./native-origin.js";
 
 /** Shared fetch signature; native database and hosted identity credentials stay distinct. */
 export type FetchLike = (
@@ -66,9 +66,8 @@ export function resolveTsAuthRuntimeConfig(
   } catch {
     return { apiBaseUrl, maxRetryAttempts, retryDelayMs, requestTimeoutMs };
   }
-  const hostname = url.hostname.replace(/\.+$/u, "");
-  if (isTestApiHostname(hostname)) {
-    throw new TypeError("The test API host is not an admitted service origin.");
+  if (isDataApiHostname(url.hostname)) {
+    throw new TypeError("Database API hosts cannot be used as an auth origin.");
   }
   for (const key of url.searchParams.keys()) {
     if (
@@ -91,6 +90,7 @@ export function resolveTsAuthRuntimeConfig(
       "The ts-auth apiBaseUrl must be a bare origin without credentials, a path, query, or fragment.",
     );
   }
+  const hostname = url.hostname.toLowerCase();
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
   const testTransport =
     config.fetch !== undefined &&

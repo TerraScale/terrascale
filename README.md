@@ -129,3 +129,9 @@ Hosted OAuth resource requests use one exact registered HTTPS `resource`. `oidc.
 `oauthClients` and `oauthResources` provide the producer's snake_case policy records and named management operations. Resource PATCH requires `expected_auth_epoch`; client PATCH accepts it. JSON epochs outside JavaScript's exact integer range are rejected. Client PATCH returns a bare client view unless `rotate_secret` is true, when it returns the client and its one-time secret. Resource create/PATCH always return the resource and nullable one-time introspection secret.
 
 Use `oidc.introspectResource` with independently configured `issuer`, exact `audience`, `introspection_client_id`, and `introspection_secret`. It uses resource Basic authentication only, with each credential component form encoded before Base64. An active result requires the exact configured issuer/audience, `Bearer`, integer timestamps valid at the local clock with no default skew, and the required user/service session shape. Inactive results contain only `active: false`. Resource results expose no internal epochs, refresh family, or token-use fields. The provider checks current durable token/session/resource state; an active principal or scope does not grant project ownership or management authority. Product authorization remains at the caller's existing authorization boundary.
+
+Regional native database origins use `https://<region>.api.terrascale.tech`,
+for example `https://gru.api.terrascale.tech`. The global API host and retired
+root regional hosts cannot serve as native origins. Auth uses its separate
+`.auth.terrascale.tech` namespace. Direct independent origins must use ASCII
+hostnames; percent-encoded and Unicode hostname aliases are rejected.

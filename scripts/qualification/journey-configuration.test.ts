@@ -26,7 +26,7 @@ function allocation(): Record<string, string> {
 describe("pure Node/browser journey configuration admission", () => {
   test.each(["native", "browser"])("%s defaults to Atlas and enables a complete allocation without an endpoint", target => {
     const configuration = journeyConfiguration(allocation(), target);
-    expect(configuration).toMatchObject({ routing: "atlas", nativeOrigin: "https://gru.terrascale.tech" });
+    expect(configuration).toMatchObject({ routing: "atlas", nativeOrigin: "https://gru.api.terrascale.tech" });
     expect(configuration).not.toHaveProperty("endpoint");
   });
 
@@ -57,10 +57,10 @@ describe("pure Node/browser journey configuration admission", () => {
   });
 
   test.each([
-    ["GRU", "https://gru.terrascale.tech"],
-    ["AMS", "https://ams.terrascale.tech"],
-    ["ABCDEFGHIJKLMNOP", "https://abcdefghijklmnop.terrascale.tech"],
-    ["9-A", "https://9-a.terrascale.tech"],
+    ["GRU", "https://gru.api.terrascale.tech"],
+    ["AMS", "https://ams.api.terrascale.tech"],
+    ["ABCDEFGHIJKLMNOP", "https://abcdefghijklmnop.api.terrascale.tech"],
+    ["9-A", "https://9-a.api.terrascale.tech"],
   ])("preserves canonical Atlas expectation %s", (region, origin) => {
     for (const target of ["native", "browser"]) {
       expect(journeyConfiguration({ ...allocation(), TERRABASE_EXPECTED_REGION: region }, target))
@@ -70,18 +70,19 @@ describe("pure Node/browser journey configuration admission", () => {
 
   test.each([
     "https://api.terrascale.tech",
-    "https://gru.api.terrascale.tech.",
+    "https://gru.terrascale.tech",
     "http://remote.example.test",
-    "https://gru.terrascale.tech/path",
-    "https://credential@gru.terrascale.tech",
+    "https://gru.api.terrascale.tech/path",
+    "https://credential@gru.api.terrascale.tech",
     "https://auth.terrascale.tech", "https://atlas.terrascale.tech", "https://sync.terrascale.tech",
     "https://status.terrascale.tech", "https://www.terrascale.tech", "https://app.terrascale.tech",
     "https://dash.terrascale.tech", "https://docs.terrascale.tech", "https://git.terrascale.tech",
     "https://cdn.terrascale.tech", "https://admin.terrascale.tech", "https://mcp.terrascale.tech", "https://mail.terrascale.tech",
-    "https://terrascale.tech", "https://gru.terrascale.tech.", "https://GRU.terrascale.tech",
-    "https://nested.gru.terrascale.tech", "https://gru.terrascale.tech:8443", "https://gru.terrascale.tech:443",
-    "https://-gru.terrascale.tech", "https://abcdefghijklmnopq.terrascale.tech", "https://%67ru.terrascale.tech",
-    "https://K.terrascale.tech", "http://gru.terrascale.tech", "https://GRU.API.TerraScale.Tech",
+    "https://terrascale.tech", "https://gru.api.terrascale.tech.", "https://GRU.api.terrascale.tech",
+    "https://nested.gru.terrascale.tech", "https://gru.api.terrascale.tech:8443", "https://gru.api.terrascale.tech:443",
+    "https://-gru.api.terrascale.tech", "https://abcdefghijklmnopq.api.terrascale.tech", "https://%67ru.api.terrascale.tech",
+    "https://K.terrascale.tech", "http://gru.api.terrascale.tech", "https://GRU.API.TerraScale.Tech",
+    "https://%6eative.example.test", "https://K.example.test", "https://xn--foo.api.terrascale.tech", "https://ams-.api.terrascale.tech",
     "https://native.example.test.", "https://native.example.test..:8443", "http://localhost.:9911",
   ])("rejects unadmitted direct origin %s before qualification or SDK credential acquisition", endpoint => {
     for (const target of ["native", "browser"]) {
@@ -97,11 +98,11 @@ describe("pure Node/browser journey configuration admission", () => {
   });
 
   test.each([
-    ["https://gru.terrascale.tech", "https://gru.terrascale.tech"],
-    ["https://fra.terrascale.tech/", "https://fra.terrascale.tech"],
-    ["https://ams.terrascale.tech", "https://ams.terrascale.tech"],
-    ["https://abcdefghijklmnop.terrascale.tech", "https://abcdefghijklmnop.terrascale.tech"],
-    ["https://9-a.terrascale.tech", "https://9-a.terrascale.tech"],
+    ["https://gru.api.terrascale.tech", "https://gru.api.terrascale.tech"],
+    ["https://fra.api.terrascale.tech/", "https://fra.api.terrascale.tech"],
+    ["https://ams.api.terrascale.tech", "https://ams.api.terrascale.tech"],
+    ["https://abcdefghijklmnop.api.terrascale.tech", "https://abcdefghijklmnop.api.terrascale.tech"],
+    ["https://9-a.api.terrascale.tech", "https://9-a.api.terrascale.tech"],
     ["https://native.example.test:8443", "https://native.example.test:8443"],
     ["https://CUSTOM.example.test", "https://custom.example.test"],
     ["http://localhost:9911", "http://localhost:9911"],
@@ -135,12 +136,12 @@ describe("native and hosted origin admission remain distinct", () => {
   test.each([
     "https://api.terrascale.tech", "https://gru.api.terrascale.tech",
     "https://GRU.API.TerraScale.Tech", "https://gru.api.terrascale.tech.",
-  ])("hosted identity also rejects the obsolete test API origin %s before dispatch", apiBaseUrl => {
+  ])("hosted identity rejects the database API origin %s before dispatch", apiBaseUrl => {
     let requests = 0;
     expect(() => createTsAuthClient({
       apiBaseUrl, instanceSlug: "test", accessToken: "hosted-key",
       fetch: async () => { requests++; throw new Error("Unexpected hosted request."); },
-    })).toThrow(/test API host/u);
+    })).toThrow(/Database API host/u);
     expect(requests).toBe(0);
   });
 

@@ -125,7 +125,7 @@ import { createTerraBaseClient } from "@terrascale/sdk";
 
 const env = process.env;
 const scope = { tenant: env.TERRABASE_TENANT, database: env.TERRABASE_DATABASE, shard: BigInt(env.TERRABASE_SHARD) };
-const nativeOrigin = "https://" + env.TERRABASE_EXPECTED_REGION.toLowerCase() + ".terrascale.tech";
+const nativeOrigin = "https://" + env.TERRABASE_EXPECTED_REGION.toLowerCase() + ".api.terrascale.tech";
 let atlasCalls = 0, nativeCalls = 0;
 const trace = async (input, init) => {
   assert.ok(input instanceof Request, "the public SDK owns each typed request");

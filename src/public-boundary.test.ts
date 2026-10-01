@@ -5,7 +5,7 @@ test("root exposes current native typed operations and pure builders", () => {
     tenant: "00000000-0000-0000-0000-000000000001",
     database: "00000000-0000-0000-0000-000000000002",
     shard: 1n,
-    endpoint: "https://gru.terrascale.tech",
+    endpoint: "https://gru.api.terrascale.tech",
     apiKey: "constructor-only",
   });
   for (const name of [

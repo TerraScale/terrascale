@@ -8,7 +8,7 @@ const config = {
   tenant: "00000000-0000-0000-0000-000000000001",
   database: "00000000-0000-0000-0000-000000000002",
   shard: 1n,
-  endpoint: "https://gru.terrascale.tech",
+  endpoint: "https://gru.api.terrascale.tech",
   apiKey: "fault-control-only",
 };
 const collection = "00000000-0000-0000-0000-000000000003";

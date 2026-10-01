@@ -34,8 +34,9 @@ function required(environment, name) {
 function directOrigin(endpoint) {
   try {
     return nativeServiceOrigin(endpoint);
-  } catch {
-    throw new Error("Direct qualification requires a canonical regional HTTPS origin, independent HTTPS origin, or loopback HTTP origin.");
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Direct qualification endpoint is forbidden: ${reason} Use a bare canonical regional HTTPS origin, independent HTTPS origin, or loopback HTTP origin.`, { cause: error });
   }
 }
 

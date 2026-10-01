@@ -1,5 +1,6 @@
 /** Internal admission policy shared by native clients and qualification configuration. */
 export const terraScaleServiceDomain = "terrascale.tech";
+const dataApiDomain = `api.${terraScaleServiceDomain}`;
 
 const reservedRegions = new Set([
   "API", "ATLAS", "AUTH", "SYNC", "STATUS", "WWW", "APP", "DASH",
@@ -7,7 +8,7 @@ const reservedRegions = new Set([
 ]);
 
 function isNativeRegion(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Z0-9][A-Z0-9-]{0,15}$/u.test(value) && !reservedRegions.has(value);
+  return typeof value === "string" && /^[A-Z0-9][A-Z0-9-]{0,15}$/u.test(value) && !value.endsWith("-") && !value.includes("--") && !reservedRegions.has(value);
 }
 
 export function requireNativeRegion(value: unknown): string {
@@ -16,14 +17,13 @@ export function requireNativeRegion(value: unknown): string {
 }
 
 export function nativeRegionalOrigin(code: unknown): string {
-  return `https://${requireNativeRegion(code).toLowerCase()}.${terraScaleServiceDomain}`;
+  return `https://${requireNativeRegion(code).toLowerCase()}.${dataApiDomain}`;
 }
 
-/** Hosted identity also refuses the obsolete test API zone, without using native admission. */
-export function isTestApiHostname(hostname: string): boolean {
+/** Hosted identity refuses database API origins, without using native admission. */
+export function isDataApiHostname(hostname: string): boolean {
   const canonical = hostname.toLowerCase().replace(/\.+$/u, "");
-  const testDomain = `api.${terraScaleServiceDomain}`;
-  return canonical === testDomain || canonical.endsWith(`.${testDomain}`);
+  return canonical === dataApiDomain || canonical.endsWith(`.${dataApiDomain}`);
 }
 
 export function nativeServiceOrigin(raw: string): string {
@@ -31,14 +31,17 @@ export function nativeServiceOrigin(raw: string): string {
   if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "" || url.pathname !== "/") {
     throw new TypeError("Service origin must be bare and contain no credentials.");
   }
-  if (isTestApiHostname(url.hostname)) {
-    throw new TypeError("The test API host is not a regional TerraBase endpoint.");
+  const authority = raw.slice(raw.indexOf("//") + 2).split(/[/?#]/u, 1)[0]!;
+  const rawHostname = authority.startsWith("[") ? authority.slice(0, authority.indexOf("]") + 1) : authority.split(":", 1)[0]!;
+  // Independent origins may use ASCII case aliases, but must not be silently
+  // redirected through percent decoding or IDNA hostname normalization.
+  if (!/^[\x00-\x7f]+$/u.test(rawHostname) || rawHostname.toLowerCase() !== url.hostname) {
+    throw new TypeError("Service origins must use a canonical ASCII hostname.");
   }
   const hostname = url.hostname.replace(/\.+$/u, "");
   const regionalSuffix = `.${terraScaleServiceDomain}`;
   if (hostname === terraScaleServiceDomain || hostname.endsWith(regionalSuffix)) {
-    const code = hostname.slice(0, -regionalSuffix.length).toUpperCase();
-    const authority = raw.slice(raw.indexOf("//") + 2).split(/[/?#]/u, 1)[0]!;
+    const code = hostname.endsWith(`.${dataApiDomain}`) ? hostname.slice(0, -(dataApiDomain.length + 1)).toUpperCase() : "";
     if (!isNativeRegion(code) || url.origin !== nativeRegionalOrigin(code) || url.hostname !== hostname || authority !== hostname) {
       throw new TypeError("TerraScale service origins must use a canonical regional hostname.");
     }

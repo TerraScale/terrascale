@@ -4,7 +4,7 @@ import { TerraBaseDiscoveryRouter } from "./discovery.js";
 import type { DatabaseCommit } from "./database-types.js";
 
 // Exact actual receiver bytes; mutations below are deterministic negative/ranking conformance only.
-const successBytes = "{\"schema_version\":1,\"scope\":{\"tenant_id\":\"10000000-0000-0000-0000-000000000001\",\"database_id\":\"20000000-0000-0000-0000-000000000001\",\"shard_id\":\"18446744073709551615\"},\"authority\":{\"deployment_id\":\"fixture-deployment\",\"cell\":\"gru\",\"publisher_id\":\"publisher-a\",\"publisher_generation\":\"18446744073709551615\"},\"revision\":\"41\",\"published_at\":1790769600,\"expires_at\":1790769609,\"refreshSeconds\":8,\"residency\":null,\"endpoints\":[{\"region\":\"GRU\",\"url\":\"https://gru.terrascale.tech\",\"catalog\":{\"digest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},\"capabilities\":{\"atomic_groups\":false,\"client_v1\":true,\"conditional_mutation\":false,\"query\":true,\"read\":true,\"security_state\":false,\"subscriptions\":true,\"write\":true},\"security_writer\":null,\"priority\":1}]}";
+const successBytes = "{\"schema_version\":1,\"scope\":{\"tenant_id\":\"10000000-0000-0000-0000-000000000001\",\"database_id\":\"20000000-0000-0000-0000-000000000001\",\"shard_id\":\"18446744073709551615\"},\"authority\":{\"deployment_id\":\"fixture-deployment\",\"cell\":\"gru\",\"publisher_id\":\"publisher-a\",\"publisher_generation\":\"18446744073709551615\"},\"revision\":\"41\",\"published_at\":1790769600,\"expires_at\":1790769609,\"refreshSeconds\":8,\"residency\":null,\"endpoints\":[{\"region\":\"GRU\",\"url\":\"https://gru.api.terrascale.tech\",\"catalog\":{\"digest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},\"capabilities\":{\"atomic_groups\":false,\"client_v1\":true,\"conditional_mutation\":false,\"query\":true,\"read\":true,\"security_state\":false,\"subscriptions\":true,\"write\":true},\"security_writer\":null,\"priority\":1}]}";
 const forbiddenBytes = "{\"error\":{\"code\":\"discovery_forbidden\",\"message\":\"native discovery admission is unavailable\",\"fix\":\"retry with current authorized native scope metadata\"}}";
 const now = 1790769600000;
 const scope = { tenant: "10000000-0000-0000-0000-000000000001", database: "20000000-0000-0000-0000-000000000001", shard: 18446744073709551615n };
@@ -31,7 +31,7 @@ describe("native Atlas routing freshness and observation", () => {
   test("uses receiver priority among operation-eligible regions, independently of array or static region order", async () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
     const value = fixture();
-    value.endpoints.push({ ...structuredClone(value.endpoints[0]), region: "FRA", url: "https://fra.terrascale.tech", priority: 1 });
+    value.endpoints.push({ ...structuredClone(value.endpoints[0]), region: "FRA", url: "https://fra.api.terrascale.tech", priority: 1 });
     value.endpoints[0].priority = 2; value.endpoints[1].capabilities.read = false;
     const router = new TerraBaseDiscoveryRouter(scope, async () => response(value));
     expect((await router.resolve(key, ["client_v1", "write"])).region).toBe("FRA");
@@ -451,7 +451,7 @@ describe("native client consumes actual Atlas admission", () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
     const value = fixture();
     value.endpoints[0].priority = 2;
-    value.endpoints.push({ ...structuredClone(value.endpoints[0]), region: "FRA", url: "https://fra.terrascale.tech", priority: 1 });
+    value.endpoints.push({ ...structuredClone(value.endpoints[0]), region: "FRA", url: "https://fra.api.terrascale.tech", priority: 1 });
     value.endpoints[1].capabilities.read = false;
     const requests: Request[] = [];
     const client = createTerraBaseClient({ ...scope, apiKey: key, fetch: async input => {
@@ -466,7 +466,7 @@ describe("native client consumes actual Atlas admission", () => {
     expect((await client.read(collection, document)).ok).toBe(true);
     expect(await client.transactionStatus(prepared)).toMatchObject({ ok: true, value: { state: "unknown", outcome: null } });
     expect(await client.commit(prepared)).toMatchObject({ ok: false, error: { code: "commit_uncertain", transaction: prepared, mutation_outcome: "uncertain" } });
-    expect(requests.map(request => new URL(request.url).hostname)).toEqual(["atlas.terrascale.tech", "gru.terrascale.tech", "fra.terrascale.tech", "fra.terrascale.tech"]);
+    expect(requests.map(request => new URL(request.url).hostname)).toEqual(["atlas.terrascale.tech", "gru.api.terrascale.tech", "fra.api.terrascale.tech", "fra.api.terrascale.tech"]);
   });
 
   test("first discovers the exact private tuple then connects directly to the admitted native path", async () => {
@@ -478,7 +478,7 @@ describe("native client consumes actual Atlas admission", () => {
     } });
     expect((await client.read(collection, document)).ok).toBe(true);
     expect(requests).toHaveLength(2);
-    expect(requests[1]!.url).toBe("https://gru.terrascale.tech/v1/tenants/" + scope.tenant + "/databases/" + scope.database + "/shards/18446744073709551615/collections/" + collection + "/documents/" + document);
+    expect(requests[1]!.url).toBe("https://gru.api.terrascale.tech/v1/tenants/" + scope.tenant + "/databases/" + scope.database + "/shards/18446744073709551615/collections/" + collection + "/documents/" + document);
     expect(requests[1]!.credentials).toBe("omit"); expect(requests[1]!.redirect).toBe("manual");
     expect([...requests[1]!.headers]).toEqual([["accept", "application/json"], ["authorization", "Bearer " + key]]);
   });
