@@ -403,6 +403,12 @@ type CredentialSessions interface {
 	StartIfPasswordHash(http.ResponseWriter, *http.Request, Principal, string) error
 }
 
+// CLIGrantSessions binds device approval to a live browser session without
+// exposing or retaining its bearer secret in the authorization feature.
+type CLIGrantSessions interface {
+	BindCLIGrant(*http.Request) (func() (Principal, bool), bool)
+}
+
 // Throttle bounds password guessing. Allow reserves one attempt for the
 // request's client and the account before the password is checked, and
 // reports how long to wait once either budget is spent. Forgive returns the

@@ -134,22 +134,6 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			Flow:        true,
 		})
 	})
-	mux.HandleFunc("GET /cli/approve", func(w http.ResponseWriter, r *http.Request) {
-		renderAuthStatus(w, r, deps, authStatusPageData{
-			Title:       "Approve CLI access",
-			Description: "This in-memory demo cannot verify CLI device requests.",
-			Message:     "No verifiable CLI request is available, and no access was granted.",
-			Flow:        true,
-		})
-	})
-	mux.HandleFunc("POST /cli/approve/submit", func(w http.ResponseWriter, r *http.Request) {
-		renderAuthStatus(w, r, deps, authStatusPageData{
-			Title:       "Approve CLI access",
-			Description: "This in-memory demo cannot verify CLI device requests.",
-			Message:     "The approval was rejected because no verifiable CLI request is available. No access was granted.",
-			Flow:        true,
-		})
-	})
 	mux.HandleFunc("GET /oauth/consent", oauthConsent(deps))
 	mux.HandleFunc("POST /oauth/consent/submit", func(w http.ResponseWriter, r *http.Request) {
 		renderAuthStatus(w, r, deps, authStatusPageData{
