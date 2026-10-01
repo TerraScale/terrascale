@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json.Nodes;
 
 namespace TerraScale.DotNet.Tests;
 
@@ -10,6 +11,38 @@ namespace TerraScale.DotNet.Tests;
 public sealed class TerraScaleDiscoveryRoutingTests
 {
     private const string ApiProxyOrigin = "https://api.terrascale.tech";
+
+    [Test]
+    [Arguments(429)]
+    [Arguments(503)]
+    public async Task OrdinaryRetryDisposesTheResponseBeforeRetryAfter(int status)
+    {
+        using var content = new DisposalTrackingContent();
+        using var transport = new OrdinaryRetryTransport((HttpStatusCode)status, content);
+        using var http = new HttpClient(transport);
+        var client = new TerraScaleClient(http, new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri("https://configured.example.invalid"),
+            ApiKey = "test-key",
+            MaxRetryAttempts = 1,
+        });
+        var disposedAtDelay = false;
+        var delays = new List<TimeSpan>();
+        client.DelayRetryAsync = (delay, token) =>
+        {
+            token.ThrowIfCancellationRequested();
+            disposedAtDelay = content.IsDisposed;
+            delays.Add(delay);
+            return Task.CompletedTask;
+        };
+
+        _ = await client.Documents.GetAsync("orders-ordinary-retry", "items", "item-1");
+
+        await Assert.That(disposedAtDelay).IsTrue();
+        await Assert.That(delays.Count).IsEqualTo(1);
+        await Assert.That(delays[0]).IsEqualTo(TimeSpan.FromSeconds(1));
+        await Assert.That(transport.RequestCount).IsEqualTo(2);
+    }
 
     [Test]
     public async Task DefaultOptionsDiscoverAndPinTheTopRankedRegion()
@@ -85,6 +118,74 @@ public sealed class TerraScaleDiscoveryRoutingTests
     }
 
     [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task FailoverRefreshesAnExpiredDocumentAndExcludesFailedRegions(int failures)
+    {
+        var transport = new ScriptedTransport();
+        var document = JsonNode.Parse(transport.DiscoveryBody)!;
+        document["refreshSeconds"] = 1;
+        var next = document["endpoints"]![0]!.DeepClone();
+        next["region"] = "SFO";
+        next["url"] = "https://sfo.api.terrascale.tech";
+        next["priority"] = 3;
+        document["endpoints"]!.AsArray().Add(next);
+        transport.DiscoveryBody = document.ToJsonString();
+        string[] regions = ["fra", "gru", "sfo"];
+        for (var index = 0; index < failures; index++)
+        {
+            transport.RegionalTransportFailures.Enqueue((regions[index], index + 1 == failures ? 1100 : 0));
+        }
+
+        var client = CreateClient(transport, new Uri("https://atlas-expired-failure.test"));
+        long nowMs = 0;
+        client.DiscoveryRouter!.RoutingCache.NowMs = () => nowMs;
+        transport.AdvanceTime = milliseconds => nowMs += milliseconds;
+        _ = await client.Documents.GetAsync("orders-expired-failure", "items", "item-1");
+        _ = await client.Documents.GetAsync("orders-expired-failure", "items", "item-1");
+        var expected = new List<string>
+        {
+            "GET https://atlas-expired-failure.test/api/v1/discovery?database=orders-expired-failure&branch=main"
+        };
+        expected.AddRange(regions.Take(failures).Select(region =>
+            $"GET https://{region}.api.terrascale.tech/api/v1/databases/orders-expired-failure/collections/items/documents/item-1"));
+        expected.Add("GET https://atlas-expired-failure.test/api/v1/discovery?database=orders-expired-failure&branch=main&rev=7");
+        var success = $"GET https://{regions[failures]}.api.terrascale.tech/api/v1/databases/orders-expired-failure/collections/items/documents/item-1";
+        expected.Add(success);
+        expected.Add(success);
+        await Assert.That(transport.Requests.Count).IsEqualTo(expected.Count);
+        for (var index = 0; index < expected.Count; index++)
+        {
+            await Assert.That(transport.Requests[index]).IsEqualTo(expected[index]);
+        }
+    }
+
+    [Test]
+    public async Task ExpiredDiscoveryDoesNotReplayAnUnkeyedMutationAfterTransportLoss()
+    {
+        var transport = new ScriptedTransport();
+        var discovery = JsonNode.Parse(transport.DiscoveryBody)!.AsObject();
+        discovery["refreshSeconds"] = 1;
+        transport.DiscoveryBody = discovery.ToJsonString();
+        transport.RegionalTransportFailures.Enqueue(("fra", 1100));
+        var client = CreateClient(transport, new Uri("https://atlas-expired-mutation.test"), options =>
+        {
+            options.MaxRetryAttempts = 3;
+            options.RetryDelay = TimeSpan.Zero;
+        });
+        long nowMs = 0;
+        client.DiscoveryRouter!.RoutingCache.NowMs = () => nowMs;
+        transport.AdvanceTime = milliseconds => nowMs += milliseconds;
+
+        _ = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.Documents.UpsertAsync("orders-expired-mutation", "items", "item-1", new { status = "paid" }));
+
+        await Assert.That(transport.Requests.Count).IsEqualTo(2);
+        await Assert.That(transport.Requests[0]).IsEqualTo("GET https://atlas-expired-mutation.test/api/v1/discovery?database=orders-expired-mutation&branch=main");
+        await Assert.That(transport.Requests[1]).IsEqualTo("PUT https://fra.api.terrascale.tech/api/v1/databases/orders-expired-mutation/collections/items/documents/item-1");
+    }
+
+    [Test]
     public async Task MisdirectionWithoutPlacementFailsOverAndRepins()
     {
         var transport = new ScriptedTransport { MisdirectDataRequests = true, OmitPlacement = true };
@@ -118,6 +219,264 @@ public sealed class TerraScaleDiscoveryRoutingTests
             client.Documents.GetAsync("orders-exhausted", "items", "item-1"));
         await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(transport.Requests.Count).IsEqualTo(3);
+    }
+
+    [Test]
+    [Arguments(false, 0)]
+    [Arguments(false, 3)]
+    [Arguments(true, 0)]
+    [Arguments(true, 3)]
+    public async Task ExpiredDiscoveryExhaustionPreservesRegionalFailureWithoutProxyReplay(bool transportFailure, int retryAttempts)
+    {
+        var transport = new ScriptedTransport
+        {
+            FailAllRegionalRequests = !transportFailure,
+            RegionalFailureAdvanceMs = 1100,
+            DistinctRegionalFailures = true,
+        };
+        var discovery = JsonNode.Parse(transport.DiscoveryBody)!.AsObject();
+        discovery["refreshSeconds"] = 1;
+        transport.DiscoveryBody = discovery.ToJsonString();
+        if (transportFailure)
+        {
+            transport.RegionalTransportFailures.Enqueue(("fra", 1100));
+            transport.RegionalTransportFailures.Enqueue(("gru", 1100));
+        }
+        var client = CreateClient(transport, new Uri("https://atlas-expired-exhausted.test"), options =>
+        {
+            options.MaxRetryAttempts = retryAttempts;
+            options.RetryDelay = TimeSpan.Zero;
+        });
+        long nowMs = 0;
+        client.DiscoveryRouter!.RoutingCache.NowMs = () => nowMs;
+        transport.AdvanceTime = milliseconds => nowMs += milliseconds;
+
+        if (transportFailure)
+        {
+            var error = await Assert.ThrowsAsync<HttpRequestException>(() =>
+                client.Documents.GetAsync("orders-expired-exhausted", "items", "item-1"));
+            await Assert.That(error!.Message).IsEqualTo("gru region offline");
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.Documents.GetAsync("orders-expired-exhausted", "items", "item-1"));
+            await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(error.ResponseBody).Contains("gru region down");
+            await Assert.That(error.ResponseBody).DoesNotContain("fra region down");
+        }
+
+        await Assert.That(transport.Requests.Count).IsEqualTo(5);
+        await Assert.That(transport.Requests.Count(request => request.Contains("/api/v1/discovery", StringComparison.Ordinal))).IsEqualTo(3);
+        await Assert.That(transport.Requests[1]).IsEqualTo("GET https://fra.api.terrascale.tech/api/v1/databases/orders-expired-exhausted/collections/items/documents/item-1");
+        await Assert.That(transport.Requests[3]).IsEqualTo("GET https://gru.api.terrascale.tech/api/v1/databases/orders-expired-exhausted/collections/items/documents/item-1");
+        await Assert.That(transport.Requests.Any(request => request.StartsWith($"GET {ApiProxyOrigin}/", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    public async Task MixedServerFailureAndMisdirectionCannotReplayExhaustedPlacementThroughProxy()
+    {
+        var transport = new ScriptedTransport
+        {
+            FailRegionalRequests = true,
+            MisdirectRegion = "gru",
+            Placement = "FRA",
+        };
+        var client = CreateClient(transport, new Uri("https://atlas-mixed-exhausted.test"));
+        var error = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Documents.GetAsync("orders-mixed-exhausted", "items", "item-1"));
+        await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+        await Assert.That(error.ResponseBody).Contains("Wrong region");
+        await Assert.That(transport.Requests.Count).IsEqualTo(3);
+        await Assert.That(transport.Requests[2]).StartsWith("GET https://gru.api.terrascale.tech/");
+        await Assert.That(transport.Requests.Any(request => request.StartsWith($"GET {ApiProxyOrigin}/", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    public async Task DefaultDiagnosticTimeoutPermitsHealthyFailover()
+    {
+        RegionalBodyStream? originalBody = null;
+        var transport = new ScriptedTransport
+        {
+            FailRegionalRequests = true,
+            RegionalErrorContent = body => new StreamContent(originalBody = new RegionalBodyStream(Encoding.UTF8.GetBytes(body), false, stall: true)),
+        };
+        var client = CreateClient(transport, new Uri("https://atlas-default-retention-timeout.test"));
+
+        // Independent watchdog: production diagnostic retention must finish
+        // well before the overall 30-second operation deadline.
+        _ = await client.Documents.GetAsync("orders-default-retention-timeout", "items", "item-1").WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.That(originalBody!.CancellationObserved).IsTrue();
+        await Assert.That(originalBody.IsDisposed).IsTrue();
+        await Assert.That(transport.Requests.Count).IsEqualTo(3);
+        await Assert.That(transport.Requests[^1]).StartsWith("GET https://gru.api.terrascale.tech/");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StalledRegionalDiagnosticsCannotPreventAHealthyFailover(bool stalledAsyncDisposal)
+    {
+        RegionalBodyStream? originalBody = null;
+        Action? expireRetention = null;
+        var transport = new ScriptedTransport
+        {
+            FailRegionalRequests = true,
+            RegionalErrorContent = body => new StreamContent(originalBody = new RegionalBodyStream(Encoding.UTF8.GetBytes(body), false,
+                stall: true, stalledAsyncDisposal: stalledAsyncDisposal, onStall: () => expireRetention!())),
+        };
+        var client = CreateClient(transport, new Uri("https://atlas-stalled-error.test"));
+        client.ScheduleRetainedErrorTimeout = retention => expireRetention = retention.Cancel;
+        using var caller = new CancellationTokenSource();
+
+        _ = await client.Documents.GetAsync("orders-stalled-error", "items", "item-1", caller.Token).WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.That(caller.IsCancellationRequested).IsFalse();
+        await Assert.That(originalBody!.CancellationObserved).IsTrue();
+        await Assert.That(originalBody.IsDisposed).IsTrue();
+        await Assert.That(originalBody.AsyncDisposals).IsEqualTo(0);
+        await Assert.That(transport.Requests.Count).IsEqualTo(3);
+        await Assert.That(transport.Requests[^1]).StartsWith("GET https://gru.api.terrascale.tech/");
+    }
+
+    [Test]
+    public async Task CallerCancellationDuringRegionalRetentionStopsBeforeAnotherRequest()
+    {
+        using var caller = new CancellationTokenSource();
+        RegionalBodyStream? originalBody = null;
+        var transport = new ScriptedTransport
+        {
+            FailRegionalRequests = true,
+            RegionalErrorContent = body => new StreamContent(originalBody = new RegionalBodyStream(Encoding.UTF8.GetBytes(body), false,
+                onRead: caller.Cancel)),
+        };
+        var client = CreateClient(transport, new Uri("https://atlas-cancelled-retention.test"));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => client.Documents.GetAsync("orders-cancelled-retention", "items", "item-1", caller.Token));
+        await Assert.That(originalBody!.IsDisposed).IsTrue();
+        await Assert.That(originalBody.Reads).IsEqualTo(1);
+        await Assert.That(transport.Requests.Count).IsEqualTo(2);
+        await Assert.That(transport.Requests[^1]).StartsWith("GET https://fra.api.terrascale.tech/");
+    }
+
+    [Test]
+    [Arguments("normal")]
+    [Arguments("oversized")]
+    [Arguments("interrupted")]
+    public async Task DiscoveryExhaustionAfterRetryDelayRetainsTheLastRegionalResponse(string bodyMode)
+    {
+        var transport = new ScriptedTransport
+        {
+            FailRegionalRequests = true,
+            DistinctRegionalFailures = true,
+            RegionalRetryAfter = TimeSpan.FromSeconds(1),
+        };
+        var discovery = JsonNode.Parse(transport.DiscoveryBody)!.AsObject();
+        discovery["refreshSeconds"] = 1;
+        transport.DiscoveryBody = discovery.ToJsonString();
+        var client = CreateClient(transport, new Uri("https://atlas-delay-exhausted.test"));
+        long nowMs = 0;
+        var delays = new List<TimeSpan>();
+        RegionalBodyStream? originalBody = null;
+        var disposedAtDelay = false;
+        var disposedAtRefresh = false;
+        transport.RegionalErrorContent = body =>
+        {
+            if (bodyMode == "oversized") body += new string(' ', 2 * 1024 * 1024);
+            originalBody = new RegionalBodyStream(Encoding.UTF8.GetBytes(body), bodyMode == "interrupted");
+            var content = new StreamContent(originalBody);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+            return content;
+        };
+        transport.BeforeDiscovery = () =>
+        {
+            if (originalBody is not null) disposedAtRefresh = originalBody.IsDisposed;
+        };
+        client.DiscoveryRouter!.RoutingCache.NowMs = () => nowMs;
+        client.DelayRetryAsync = (delay, token) =>
+        {
+            token.ThrowIfCancellationRequested();
+            disposedAtDelay = originalBody!.IsDisposed;
+            delays.Add(delay);
+            nowMs += checked((long)delay.TotalMilliseconds);
+            var refreshed = JsonNode.Parse(transport.DiscoveryBody)!.AsObject();
+            refreshed["endpoints"]!.AsArray().RemoveAt(1);
+            transport.DiscoveryBody = refreshed.ToJsonString();
+            return Task.CompletedTask;
+        };
+        var error = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Documents.GetAsync("orders-delay-exhausted", "items", "item-1"));
+        await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(error.ResponseBody).Contains("fra region down");
+        await Assert.That(disposedAtDelay).IsTrue();
+        await Assert.That(disposedAtRefresh).IsTrue();
+        await Assert.That(originalBody!.IsDisposed).IsTrue();
+        await Assert.That(originalBody.BytesRead).IsLessThanOrEqualTo(1_048_576);
+        if (bodyMode == "oversized")
+        {
+            await Assert.That(originalBody.BytesRead).IsEqualTo(1_048_576);
+            await Assert.That(error.ResponseBody).Contains("response body truncated after 65536 characters");
+        }
+        if (bodyMode == "interrupted")
+        {
+            await Assert.That(originalBody.Interrupted).IsTrue();
+            await Assert.That(error.ResponseBody).IsEqualTo(originalBody.Prefix);
+        }
+        await Assert.That(delays.Count).IsEqualTo(1);
+        await Assert.That(delays[0]).IsEqualTo(TimeSpan.FromSeconds(1));
+        await Assert.That(nowMs).IsEqualTo(1000);
+        await Assert.That(transport.Requests.Count).IsEqualTo(3);
+        await Assert.That(transport.Requests[2]).Contains("/api/v1/discovery");
+        await Assert.That(transport.Requests.Any(request => request.StartsWith($"GET {ApiProxyOrigin}/", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task FailedRefreshAfterRegionalFailureCannotReplayThroughTheProxy(bool transportFailure, bool discoveryHttpFailure)
+    {
+        var transport = new ScriptedTransport
+        {
+            FailRegionalRequests = !transportFailure,
+            RegionalFailureAdvanceMs = 1100,
+            DistinctRegionalFailures = true,
+        };
+        var discovery = JsonNode.Parse(transport.DiscoveryBody)!.AsObject();
+        discovery["refreshSeconds"] = 1;
+        transport.DiscoveryBody = discovery.ToJsonString();
+        if (transportFailure) transport.RegionalTransportFailures.Enqueue(("fra", 1100));
+        var client = CreateClient(transport, new Uri("https://atlas-refresh-unavailable.test"), options =>
+        {
+            options.MaxRetryAttempts = 3;
+            options.RetryDelay = TimeSpan.Zero;
+        });
+        long nowMs = 0;
+        client.DiscoveryRouter!.RoutingCache.NowMs = () => nowMs;
+        transport.AdvanceTime = milliseconds =>
+        {
+            nowMs += milliseconds;
+            transport.ThrowDiscovery = !discoveryHttpFailure;
+            transport.DiscoveryStatus = HttpStatusCode.ServiceUnavailable;
+        };
+        if (transportFailure)
+        {
+            var error = await Assert.ThrowsAsync<HttpRequestException>(() =>
+                client.Documents.GetAsync("orders-refresh-unavailable", "items", "item-1"));
+            await Assert.That(error!.Message).IsEqualTo("fra region offline");
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.Documents.GetAsync("orders-refresh-unavailable", "items", "item-1"));
+            await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(error.ResponseBody).Contains("fra region down");
+        }
+        await Assert.That(transport.Requests.Count).IsEqualTo(3);
+        await Assert.That(transport.Requests[1]).StartsWith("GET https://fra.api.terrascale.tech/");
+        await Assert.That(transport.Requests[2]).Contains("/api/v1/discovery");
+        await Assert.That(transport.Requests.Any(request => request.StartsWith($"GET {ApiProxyOrigin}/", StringComparison.Ordinal))).IsFalse();
     }
 
     [Test]
@@ -392,6 +751,101 @@ public sealed class TerraScaleDiscoveryRoutingTests
         return new TerraScaleClient(httpClient, options);
     }
 
+    private sealed class DisposalTrackingContent() : StringContent("{}", Encoding.UTF8, "application/json")
+    {
+        public bool IsDisposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) IsDisposed = true;
+            base.Dispose(disposing);
+        }
+    }
+
+    private sealed class OrdinaryRetryTransport(HttpStatusCode failureStatus, HttpContent failureContent) : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            var response = new HttpResponseMessage(RequestCount == 1 ? failureStatus : HttpStatusCode.OK)
+            {
+                Content = RequestCount == 1 ? failureContent : new StringContent("{\"status\":\"paid\"}", Encoding.UTF8, "application/json"),
+            };
+            if (RequestCount == 1)
+                response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(1));
+            else
+                response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"r1\"");
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed class RegionalBodyStream : MemoryStream
+    {
+        private readonly byte[] bytes;
+        private readonly bool interrupt;
+        private readonly bool stall;
+        private readonly bool stalledAsyncDisposal;
+        private readonly Action? onStall;
+        private readonly Action? onRead;
+        private CancellationToken stalledToken;
+        private int reads;
+        public RegionalBodyStream(byte[] bytes, bool interrupt, bool stall = false, bool stalledAsyncDisposal = false,
+            Action? onStall = null, Action? onRead = null) : base(bytes)
+        {
+            this.bytes = bytes;
+            this.interrupt = interrupt;
+            this.stall = stall;
+            this.stalledAsyncDisposal = stalledAsyncDisposal;
+            this.onStall = onStall;
+            this.onRead = onRead;
+        }
+        public int BytesRead { get; private set; }
+        public int Reads => reads;
+        public int AsyncDisposals { get; private set; }
+        public bool IsDisposed { get; private set; }
+        public bool Interrupted { get; private set; }
+        public bool CancellationObserved => stalledToken.IsCancellationRequested;
+        public string Prefix => Encoding.UTF8.GetString(bytes.AsSpan(0, bytes.Length - 2));
+        public override bool CanSeek => false;
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            onRead?.Invoke();
+            var previousReads = reads++;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (previousReads > 0)
+            {
+                if (interrupt)
+                {
+                    Interrupted = true;
+                    throw new IOException("Regional error body interrupted.");
+                }
+                if (stall) return StallAsync(cancellationToken);
+            }
+            var count = Read(buffer.Span[..Math.Min(buffer.Length, interrupt || stall ? bytes.Length - 2 : buffer.Length)]);
+            BytesRead += count;
+            return ValueTask.FromResult(count);
+        }
+        private async ValueTask<int> StallAsync(CancellationToken cancellationToken)
+        {
+            stalledToken = cancellationToken;
+            onStall?.Invoke();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+        public override ValueTask DisposeAsync()
+        {
+            AsyncDisposals++;
+            return stalledAsyncDisposal ? new ValueTask(Task.Delay(Timeout.InfiniteTimeSpan)) : base.DisposeAsync();
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) IsDisposed = true;
+            base.Dispose(disposing);
+        }
+    }
+
     private sealed class ScriptedTransport : HttpMessageHandler
     {
         private const string DefaultDiscoveryBody =
@@ -406,8 +860,17 @@ public sealed class TerraScaleDiscoveryRoutingTests
         public bool AlwaysMisdirect { get; set; }
         public bool FailRegionalRequests { get; set; }
         public bool FailAllRegionalRequests { get; set; }
+        public int RegionalFailureAdvanceMs { get; set; }
+        public bool DistinctRegionalFailures { get; set; }
+        public string? MisdirectRegion { get; set; }
+        public string Placement { get; set; } = "GRU,SFO";
+        public TimeSpan? RegionalRetryAfter { get; set; }
+        public Func<string, HttpContent>? RegionalErrorContent { get; set; }
+        public Action? BeforeDiscovery { get; set; }
         public bool ThrowRegionalRequests { get; set; }
         public bool TimeoutRegionalRequests { get; set; }
+        public Queue<(string Region, int DelayMs)> RegionalTransportFailures { get; } = new();
+        public Action<int>? AdvanceTime { get; set; }
         public bool ThrowDiscovery { get; set; }
         public bool OmitPlacement { get; set; }
         public HttpStatusCode RegionalFailureStatus { get; set; } = HttpStatusCode.ServiceUnavailable;
@@ -429,6 +892,7 @@ public sealed class TerraScaleDiscoveryRoutingTests
 
             if (uri.AbsolutePath == "/api/v1/discovery")
             {
+                BeforeDiscovery?.Invoke();
                 if (ThrowDiscovery) throw new HttpRequestException("Atlas offline");
                 var database = Uri.UnescapeDataString(
                     uri.Query.TrimStart('?').Split('&').First(value => value.StartsWith("database=", StringComparison.Ordinal))["database=".Length..]);
@@ -448,11 +912,20 @@ public sealed class TerraScaleDiscoveryRoutingTests
             var dataRequestCount = Requests.Count(value =>
                 !value.Contains("/api/v1/discovery", StringComparison.Ordinal) &&
                 !value.Contains("/api/v1/regions", StringComparison.Ordinal));
-            if (MisdirectDataRequests && (AlwaysMisdirect || dataRequestCount == 1))
+            if (uri.Host == $"{MisdirectRegion}.api.terrascale.tech" ||
+                MisdirectDataRequests && (AlwaysMisdirect || dataRequestCount == 1))
             {
                 var misdirected = Respond(HttpStatusCode.MisdirectedRequest, "{\"error\":{\"code\":\"misdirected_request\",\"message\":\"Wrong region\"}}");
-                if (!OmitPlacement) misdirected.Headers.TryAddWithoutValidation("X-TerraScale-Placement", "GRU,SFO");
+                if (!OmitPlacement) misdirected.Headers.TryAddWithoutValidation("X-TerraScale-Placement", Placement);
                 return misdirected;
+            }
+
+            if (RegionalTransportFailures.TryPeek(out var failure) && uri.Host == $"{failure.Region}.api.terrascale.tech")
+            {
+                RegionalTransportFailures.Dequeue();
+                if (AdvanceTime is { } advanceTime) advanceTime(failure.DelayMs);
+                else await Task.Delay(failure.DelayMs, cancellationToken).ConfigureAwait(false);
+                throw new HttpRequestException(DistinctRegionalFailures ? $"{failure.Region} region offline" : "Region offline");
             }
 
             if (ThrowRegionalRequests && uri.Host == "fra.api.terrascale.tech")
@@ -468,7 +941,18 @@ public sealed class TerraScaleDiscoveryRoutingTests
             if ((FailRegionalRequests && uri.Host == "fra.api.terrascale.tech") ||
                 (FailAllRegionalRequests && uri.Host.EndsWith(".api.terrascale.tech", StringComparison.Ordinal)))
             {
-                return Respond(RegionalFailureStatus, "{\"error\":{\"code\":\"unavailable\",\"message\":\"region down\"}}");
+                AdvanceTime?.Invoke(RegionalFailureAdvanceMs);
+                var message = DistinctRegionalFailures ? $"{uri.Host.Split('.')[0]} region down" : "region down";
+                var errorBody = "{\"error\":{\"code\":\"unavailable\",\"message\":\"" + message + "\"}}";
+                var failed = Respond(RegionalFailureStatus, errorBody);
+                if (RegionalErrorContent is { } contentFactory)
+                {
+                    failed.Content.Dispose();
+                    failed.Content = contentFactory(errorBody);
+                }
+                if (RegionalRetryAfter is { } retryAfter)
+                    failed.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(retryAfter);
+                return failed;
             }
 
             var body = uri.AbsolutePath == "/api/v1/health"

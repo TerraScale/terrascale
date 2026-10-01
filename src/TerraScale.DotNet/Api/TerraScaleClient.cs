@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
@@ -17,6 +18,8 @@ namespace TerraScale.DotNet;
 public sealed class TerraScaleClient
 {
     private const int MaxOperationBytes = 1_048_576;
+    private const int MaxRetainedErrorBytes = 1_048_576;
+    private static readonly TimeSpan RetainedErrorReadTimeout = TimeSpan.FromMilliseconds(250);
     private const int MaxSessionConsistencyScopes = 4096;
     private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(30);
@@ -1064,96 +1067,181 @@ public sealed class TerraScaleClient
         var failedRegions = new HashSet<string>(StringComparer.Ordinal);
         var routing = TerraScaleRequestRouting.Classify(method, requestUri, router);
 
-        while (true)
+        HttpResponseMessage? pendingResponse = null;
+        ExceptionDispatchInfo? pendingException = null;
+        try
         {
-            var routedBase = await ResolveRoutedBaseAsync(routing, requestCancellationToken).ConfigureAwait(false);
-            using var request = await CreateRequestAsync(
-                method,
-                requestUri,
-                routedBase?.BaseAddress,
-                contentFactory,
-                authenticationMode,
-                configureRequest,
-                requestId,
-                idempotencyKey,
-                requestCancellationToken).ConfigureAwait(false);
-
-            try
+            while (true)
             {
-                var attemptStartedAt = Stopwatch.GetTimestamp();
-                var response = await httpClient.SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseHeadersRead,
+                var resolution = await ResolveRoutedBaseAsync(routing, failedRegions, requestCancellationToken).ConfigureAwait(false);
+                if (resolution.Exhausted || resolution.Base is null && failedRegions.Count > 0)
+                {
+                    if (pendingResponse is { } finalResponse)
+                    {
+                        pendingResponse = null;
+                        return finalResponse;
+                    }
+                    pendingException?.Throw();
+                    throw new InvalidOperationException("Exhausted regional routing has no retained failure.");
+                }
+                pendingResponse?.Dispose();
+                pendingResponse = null;
+                pendingException = null;
+                var routedBase = resolution.Base;
+                using var request = await CreateRequestAsync(
+                    method,
+                    requestUri,
+                    routedBase?.BaseAddress,
+                    contentFactory,
+                    authenticationMode,
+                    configureRequest,
+                    requestId,
+                    idempotencyKey,
                     requestCancellationToken).ConfigureAwait(false);
 
-                if (routedBase is ({ }, { } region) && (int)response.StatusCode < 500)
+                try
                 {
-                    // Measured client-to-region latency feeds the next discovery
-                    // request (ADR 0050 §2); only discovered endpoints report it.
-                    router?.RecordLatency(region, Stopwatch.GetElapsedTime(attemptStartedAt).TotalMilliseconds);
-                }
+                    var attemptStartedAt = Stopwatch.GetTimestamp();
+                    var response = await httpClient.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        requestCancellationToken).ConfigureAwait(false);
 
-                if (response.StatusCode == HttpStatusCode.MisdirectedRequest)
-                {
-                    var adopted = !repairedMisdirect && TryAdoptPlacement(response, routing);
-                    var alternative = TryFailover(routing, routedBase, failedRegions);
-                    if (!repairedMisdirect && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) && (alternative || adopted))
+                    if (routedBase is ({ }, { } region) && (int)response.StatusCode < 500)
                     {
-                        repairedMisdirect = true;
+                        // Measured client-to-region latency feeds the next discovery
+                        // request (ADR 0050 §2); only discovered endpoints report it.
+                        router?.RecordLatency(region, Stopwatch.GetElapsedTime(attemptStartedAt).TotalMilliseconds);
+                    }
+
+                    if (response.StatusCode == HttpStatusCode.MisdirectedRequest)
+                    {
+                        var adopted = !repairedMisdirect && TryAdoptPlacement(response, routing);
+                        var alternative = TryFailover(routing, routedBase, failedRegions);
+                        if (!repairedMisdirect && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) && (alternative || adopted))
+                        {
+                            repairedMisdirect = true;
+                            pendingResponse = await RetainRegionalFailureAsync(response, requestCancellationToken).ConfigureAwait(false);
+                            continue;
+                        }
+                    }
+
+                    if ((int)response.StatusCode >= 500)
+                    {
+                        var alternative = TryFailover(routing, routedBase, failedRegions);
+                        if (alternative && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) &&
+                            (GetRetryAfter(response) ?? TimeSpan.Zero) <= MaxRetryAfter)
+                        {
+                            var failoverDelay = GetRetryAfter(response) ?? TimeSpan.Zero;
+                            pendingResponse = await RetainRegionalFailureAsync(response, requestCancellationToken).ConfigureAwait(false);
+                            await DelayRetryAsync(failoverDelay, requestCancellationToken).ConfigureAwait(false);
+                            continue;
+                        }
+                        if (!alternative && routedBase?.Region is not null) return response;
+                    }
+
+                    if (!ShouldRetryResponse(response, method, idempotencyKey, attempt, allowUnkeyedPutRetry))
+                    {
+                        return response;
+                    }
+
+                    var delay = GetRetryDelay(response, attempt);
+                    if (delay > MaxRetryAfter)
+                    {
+                        return response;
+                    }
+
+                    ReportRoutingFailure(routing, routedBase);
+                    AddRetryEvent(activity, attempt + 1, delay, $"HTTP {(int)response.StatusCode}");
+                    if (failedRegions.Count > 0)
+                    {
+                        pendingResponse = await RetainRegionalFailureAsync(response, requestCancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
                         response.Dispose();
+                    }
+                    await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is HttpRequestException ||
+                    exception is OperationCanceledException && !requestCancellationToken.IsCancellationRequested)
+                {
+                    var alternative = TryFailover(routing, routedBase, failedRegions);
+                    if (alternative && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry))
+                    {
+                        pendingException = ExceptionDispatchInfo.Capture(exception);
                         continue;
                     }
-                }
 
-                if ((int)response.StatusCode >= 500)
-                {
-                    var alternative = TryFailover(routing, routedBase, failedRegions);
-                    if (alternative && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) &&
-                        (GetRetryAfter(response) ?? TimeSpan.Zero) <= MaxRetryAfter)
+                    if (routedBase?.Region is not null || !CanRetry(method, idempotencyKey, attempt, allowUnkeyedPutRetry))
                     {
-                        var failoverDelay = GetRetryAfter(response) ?? TimeSpan.Zero;
-                        response.Dispose();
-                        await DelayRetryAsync(failoverDelay, requestCancellationToken).ConfigureAwait(false);
-                        continue;
+                        throw;
                     }
+
+                    var delay = GetRetryDelay(response: null, attempt);
+                    AddRetryEvent(activity, attempt + 1, delay, exception.GetType().Name);
+                    pendingException = ExceptionDispatchInfo.Capture(exception);
+                    await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
                 }
 
-                if (!ShouldRetryResponse(response, method, idempotencyKey, attempt, allowUnkeyedPutRetry))
-                {
-                    return response;
-                }
-
-                var delay = GetRetryDelay(response, attempt);
-                if (delay > MaxRetryAfter)
-                {
-                    return response;
-                }
-
-                ReportRoutingFailure(routing, routedBase);
-                AddRetryEvent(activity, attempt + 1, delay, $"HTTP {(int)response.StatusCode}");
-                response.Dispose();
-                await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
+                attempt++;
             }
-            catch (Exception exception) when (exception is HttpRequestException ||
-                exception is OperationCanceledException && !requestCancellationToken.IsCancellationRequested)
+        }
+        finally
+        {
+            pendingResponse?.Dispose();
+        }
+    }
+
+    internal Action<CancellationTokenSource> ScheduleRetainedErrorTimeout { get; set; } = static retention => retention.CancelAfter(RetainedErrorReadTimeout);
+
+    private async Task<HttpResponseMessage> RetainRegionalFailureAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var retention = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            ScheduleRetainedErrorTimeout(retention);
+            using var body = new MemoryStream();
+            try
             {
-                var alternative = TryFailover(routing, routedBase, failedRegions);
-                if (alternative && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry))
+                using var stream = await response.Content.ReadAsStreamAsync(retention.Token)
+                    .WaitAsync(retention.Token).ConfigureAwait(false);
+                var chunk = new byte[8192];
+                while (body.Length < MaxRetainedErrorBytes)
                 {
-                    continue;
+                    var count = await stream.ReadAsync(chunk.AsMemory(0,
+                        (int)Math.Min(chunk.Length, MaxRetainedErrorBytes - body.Length)), retention.Token)
+                        .AsTask().WaitAsync(retention.Token).ConfigureAwait(false);
+                    if (count == 0) break;
+                    body.Write(chunk, 0, count);
                 }
-
-                if (!CanRetry(method, idempotencyKey, attempt, allowUnkeyedPutRetry))
-                {
-                    throw;
-                }
-
-                var delay = GetRetryDelay(response: null, attempt);
-                AddRetryEvent(activity, attempt + 1, delay, exception.GetType().Name);
-                await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
             }
-
-            attempt++;
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Slow diagnostics may not consume the failover budget.
+            }
+            catch (Exception exception) when (exception is IOException or HttpRequestException)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                // Preserve the original HTTP failure even if its diagnostic
+                // body is interrupted. Never retain the transport exception.
+            }
+            var retained = new HttpResponseMessage(response.StatusCode)
+            {
+                Version = response.Version,
+                ReasonPhrase = response.ReasonPhrase,
+                Content = new ByteArrayContent(body.ToArray()),
+            };
+            foreach (var header in response.Headers)
+                retained.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            foreach (var header in response.Content.Headers)
+                if (!header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                    retained.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            return retained;
+        }
+        finally
+        {
+            response.Dispose();
         }
     }
 
@@ -1164,30 +1252,28 @@ public sealed class TerraScaleClient
     /// routes, and the configured origin for product routes. A null result keeps
     /// the configured origin — the last resort when discovery cannot answer.
     /// </summary>
-    private async Task<(Uri BaseAddress, string? Region)?> ResolveRoutedBaseAsync(
+    private async Task<((Uri BaseAddress, string? Region)? Base, bool Exhausted)> ResolveRoutedBaseAsync(
         TerraScaleRequestRouting routing,
+        IReadOnlySet<string> failedRegions,
         CancellationToken cancellationToken)
     {
         if (router is null)
         {
-            return null;
+            return (null, false);
         }
 
         switch (routing.Kind)
         {
             case TerraScaleRouteKind.ConfiguredOrigin:
-                return null;
+                return (null, false);
             case TerraScaleRouteKind.DiscoveryOrigin:
-                return (router.DiscoveryOrigin, null);
+                return ((router.DiscoveryOrigin, null), false);
             case TerraScaleRouteKind.Database:
-                if (await router.ResolveBaseAsync(routing.Database!, routing.NeedsWrite, cancellationToken).ConfigureAwait(false) is { } discovered)
-                {
-                    return (discovered.BaseAddress, discovered.Region);
-                }
-
-                return null;
+                var resolution = await router.ResolveAttemptAsync(
+                    routing.Database!, routing.NeedsWrite, failedRegions, cancellationToken).ConfigureAwait(false);
+                return (resolution.Base is { } discovered ? (discovered.BaseAddress, discovered.Region) : null, resolution.Exhausted);
             default:
-                return null;
+                return (null, false);
         }
     }
 
@@ -1240,7 +1326,7 @@ public sealed class TerraScaleClient
         }
 
         router.ReportRegionFailure(routing.Database, region);
-        return router.HasAlternative(routing.Database, region, routing.NeedsWrite);
+        return router.HasAlternative(routing.Database, failedRegions, routing.NeedsWrite);
     }
 
     private async ValueTask<HttpRequestMessage> CreateRequestAsync(
@@ -1603,7 +1689,7 @@ public sealed class TerraScaleClient
     private static TimeSpan BoundRetryAfter(TimeSpan delay) =>
         delay <= TimeSpan.Zero ? TimeSpan.Zero : delay;
 
-    private static Task DelayRetryAsync(TimeSpan delay, CancellationToken cancellationToken) =>
+    internal Func<TimeSpan, CancellationToken, Task> DelayRetryAsync { get; set; } = static (delay, cancellationToken) =>
         delay == TimeSpan.Zero ? Task.CompletedTask : Task.Delay(delay, cancellationToken);
 
     private static bool IsRetryableStatus(HttpStatusCode statusCode) =>

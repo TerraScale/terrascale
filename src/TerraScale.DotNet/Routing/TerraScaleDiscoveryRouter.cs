@@ -58,6 +58,8 @@ public sealed class TerraScaleDiscoveryRouter
     /// <summary>The Atlas metadata origin serving discovery and the region catalog.</summary>
     public Uri DiscoveryOrigin => discoveryOrigin;
 
+    internal TerraScaleRoutingCache RoutingCache => routingCache;
+
     /// <summary>
     /// Records one measured client-to-region round trip; measured latency
     /// outranks geography in Atlas ranking (ADR 0050 §2).
@@ -72,11 +74,26 @@ public sealed class TerraScaleDiscoveryRouter
     /// null when discovery cannot answer (cache miss plus failed or timed-out
     /// request): the caller uses the Atlas API proxy for that request.
     /// </summary>
-    public async Task<TerraScaleRoutingBase?> ResolveBaseAsync(string database, bool needsWrite, CancellationToken cancellationToken)
+    public Task<TerraScaleRoutingBase?> ResolveBaseAsync(string database, bool needsWrite, CancellationToken cancellationToken) =>
+        ResolveBaseAsync(database, needsWrite, null, cancellationToken);
+
+    /// <summary>
+    /// Resolves one attempt while excluding every region already failed by
+    /// this operation, including after a discovery refresh. Callers that own
+    /// a safe retry loop must retain the failed regions across its attempts.
+    /// </summary>
+    public async Task<TerraScaleRoutingBase?> ResolveBaseAsync(
+        string database, bool needsWrite, IReadOnlySet<string>? failedRegions, CancellationToken cancellationToken)
+    {
+        return (await ResolveAttemptAsync(database, needsWrite, failedRegions, cancellationToken).ConfigureAwait(false)).Base;
+    }
+
+    internal async Task<TerraScaleRoutingResolution> ResolveAttemptAsync(
+        string database, bool needsWrite, IReadOnlySet<string>? failedRegions, CancellationToken cancellationToken)
     {
         if (!TerraScaleRoutingValidation.IsValidDatabaseName(database))
         {
-            return null;
+            return new TerraScaleRoutingResolution(null, false);
         }
 
         var scope = ScopeFor(database);
@@ -85,7 +102,7 @@ public sealed class TerraScaleDiscoveryRouter
         {
             if (routingCache.FailureBackoffRemainingMs(scope, 1000) > 0)
             {
-                return null;
+                return new TerraScaleRoutingResolution(null, false);
             }
 
             var stale = routingCache.ConsumeStale(scope);
@@ -105,7 +122,7 @@ public sealed class TerraScaleDiscoveryRouter
                     // mid-flight; the fetched document is older than what the
                     // scope already holds. Drop it — the stale-marked scope
                     // refreshes correctly on the next request.
-                    return null;
+                    return new TerraScaleRoutingResolution(null, false);
                 }
 
                 routingCache.Set(scope, document);
@@ -120,23 +137,25 @@ public sealed class TerraScaleDiscoveryRouter
                 // the caller to the Atlas proxy; the member's response stays
                 // authoritative for existence, not the discovery cache.
                 routingCache.NoteFailure(scope);
-                return null;
+                return new TerraScaleRoutingResolution(null, false);
             }
             catch (HttpRequestException)
             {
                 routingCache.NoteFailure(scope);
-                return null;
+                return new TerraScaleRoutingResolution(null, false);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 // The discovery timeout fired; arm the backoff and degrade.
                 routingCache.NoteFailure(scope);
-                return null;
+                return new TerraScaleRoutingResolution(null, false);
             }
         }
 
-        var endpoint = SelectEndpoint(scope, document, needsWrite);
-        return endpoint is null ? null : new TerraScaleRoutingBase(endpoint.Url, endpoint.Region);
+        var endpoint = SelectEndpoint(scope, document, needsWrite, failedRegions);
+        return new TerraScaleRoutingResolution(
+            endpoint is null ? null : new TerraScaleRoutingBase(endpoint.Url, endpoint.Region),
+            endpoint is null && failedRegions is { Count: > 0 });
     }
 
     /// <summary>A member 421 or placement header teaches placement without a round trip.</summary>
@@ -196,11 +215,14 @@ public sealed class TerraScaleDiscoveryRouter
         }
     }
 
-    internal bool HasAlternative(string database, string region, bool needsWrite)
+    internal bool HasAlternative(string database, IReadOnlySet<string> failedRegions, bool needsWrite)
     {
         var required = needsWrite ? TerraScaleRoutingCapability.Write : TerraScaleRoutingCapability.Read;
-        return routingCache.Get(ScopeFor(database))?.Endpoints.Any(endpoint =>
-            endpoint.Region != region && endpoint.Capabilities.Contains(required)) == true;
+        var document = routingCache.Get(ScopeFor(database));
+        // An expired document must refresh on the next safe attempt. Selection
+        // then excludes every region already failed by this request.
+        return document is null || document.Endpoints.Any(endpoint =>
+            !failedRegions.Contains(endpoint.Region) && endpoint.Capabilities.Contains(required));
     }
 
     private void InvalidateScope(TerraScaleRoutingScope scope)
@@ -218,11 +240,13 @@ public sealed class TerraScaleDiscoveryRouter
     /// the configured preference or the document's first eligible endpoint.
     /// Only a selection that actually moves rewrites the remembered region.
     /// </summary>
-    private TerraScaleRoutingEndpoint? SelectEndpoint(TerraScaleRoutingScope scope, TerraScaleRoutingDocument document, bool needsWrite)
+    private TerraScaleRoutingEndpoint? SelectEndpoint(
+        TerraScaleRoutingScope scope, TerraScaleRoutingDocument document, bool needsWrite, IReadOnlySet<string>? failedRegions)
     {
         var required = needsWrite ? TerraScaleRoutingCapability.Write : TerraScaleRoutingCapability.Read;
         var eligible = document.Endpoints
-            .Where(endpoint => endpoint.Capabilities.Contains(required))
+            .Where(endpoint => endpoint.Capabilities.Contains(required) &&
+                (failedRegions is null || !failedRegions.Contains(endpoint.Region)))
             .ToList();
         if (eligible.Count == 0)
         {
@@ -310,3 +334,5 @@ public sealed class TerraScaleDiscoveryException(string code, string message) : 
     /// <summary>The failure class: <c>not_found</c>, <c>unavailable</c>, or <c>invalid_document</c>.</summary>
     public string Code { get; } = code;
 }
+
+internal sealed record TerraScaleRoutingResolution(TerraScaleRoutingBase? Base, bool Exhausted);
