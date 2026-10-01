@@ -44,10 +44,11 @@ public sealed class NativeStreamingTests
             if (bodyRead)
             {
                 await Assert.That(error.Status).IsEqualTo(200);
+                await Assert.That(pendingBody.Disposed.Task.IsCompleted).IsFalse();
+                pendingBody.Completion.TrySetResult(0);
                 await pendingBody.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 await Assert.That(pendingBody.Reads).IsEqualTo(1);
                 await Assert.That(pendingBody.AsyncDisposals).IsEqualTo(0);
-                pendingBody.Completion.TrySetResult(0);
             }
             else
             {

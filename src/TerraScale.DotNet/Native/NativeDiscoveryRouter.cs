@@ -9,11 +9,14 @@ namespace TerraScale.DotNet.Native;
 
 /// <summary>Consumes authenticated, scoped Atlas admission without catalog or origin fallback.</summary>
 /// <remarks>
-/// At most 16 discovery operations remain outstanding, including late callbacks and cleanup; additional calls wait within their original deadline.
+/// At most 16 discovery operations remain outstanding, including late callbacks, cancellation registrations and cleanup; additional calls wait within their original deadline.
 /// Handler and content tasks must represent all their work; detached or async-void work is unsupported.
 /// Callback invocation and context-capturing continuations use owned workers. Callbacks that opt out of context capture
 /// (for example, with ConfigureAwait(false) or Task.Run) must keep shared-pool continuations nonblocking;
 /// starvation caused by such callback code is outside the finite-deadline guarantee.
+/// Extensions receive a separate token cancelled on distinct owned workers; response disposal waits for actual body invocation completion.
+/// Cancellation sources introduced by a caller-owned HttpClient (such as its Timeout) run their own registrations;
+/// callbacks registered with those sources must remain nonblocking.
 /// </remarks>
 public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposable
 {
@@ -243,7 +246,7 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
                 deadlineToken.ThrowIfCancellationRequested();
                 try
                 {
-                    return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadlineToken).ConfigureAwait(false);
+                    return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, transport.ExtensionToken).ConfigureAwait(false);
                 }
                 catch (TaskCanceledException exception) when (!deadlineToken.IsCancellationRequested && exception.InnerException is TimeoutException)
                 {

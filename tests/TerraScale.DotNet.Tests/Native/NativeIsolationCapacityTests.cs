@@ -9,6 +9,126 @@ namespace TerraScale.DotNet.Tests.Native;
 public sealed class NativeIsolationCapacityTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BlockingExtensionCancellationCannotDelayCallerOrDeadline(bool callerCancellation)
+    {
+        using var blocker = new Blocker(1);
+        using var caller = new CancellationTokenSource();
+        using var clock = new ArmedDeadlineClock();
+        using var stopWatchdog = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowRegistration = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishProvider = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var watchdogReleased = false;
+        var watchdog = new Thread(() =>
+        {
+            if (!stopWatchdog.Wait(TimeSpan.FromSeconds(15))) { watchdogReleased = true; blocker.Release.Set(); }
+        }) { IsBackground = true };
+        watchdog.Start();
+        using var handler = new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("Cancelled provider must never dispatch."));
+        using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
+            async token =>
+            {
+                await Task.Yield();
+                entered.TrySetResult();
+                await allowRegistration.Task;
+                using var registration = token.Register(blocker.Wait);
+                registered.TrySetResult();
+                await finishProvider.Task;
+                return "tbk1.fixture-key";
+            }, TimeSpan.FromSeconds(30), handler, clock);
+        try
+        {
+            var request = client.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document, caller.Token);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // ReadAsync has returned with its deadline wait installed; only now
+            // let the suspended provider register its newer blocking callback.
+            allowRegistration.TrySetResult();
+            await registered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var beginning = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (callerCancellation) caller.Cancel();
+            else clock.Arm(TimeSpan.FromMilliseconds(100));
+            var result = await request.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(beginning)).IsLessThan(TimeSpan.FromSeconds(5));
+            await Assert.That(((NativeResult<NativePoint>.Failure)result).Error.Code)
+                .IsEqualTo(callerCancellation ? "cancelled" : "deadline_exceeded");
+            if (!await blocker.Started.WaitAsync(TimeSpan.FromSeconds(5))) throw new TimeoutException("Extension cancellation did not start.");
+            await Assert.That(watchdogReleased).IsFalse();
+        }
+        finally
+        {
+            allowRegistration.TrySetResult();
+            blocker.Release.Set();
+            finishProvider.TrySetResult();
+            stopWatchdog.Set();
+            if (!watchdog.Join(TimeSpan.FromSeconds(5))) throw new TimeoutException("Test watchdog did not finish.");
+            using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await client.WaitForIdleAsync(drain.Token);
+        }
+    }
+
+    [Test]
+    public async Task CancelledAsyncBodyCopiesFinishBeforeDisposalUsesContinuationWorkers()
+    {
+        const int capacity = NativeTransport.MaximumOutstandingOperations;
+        using var caller = new CancellationTokenSource();
+        using var started = new SemaphoreSlim(0);
+        using var stopWatchdog = new ManualResetEventSlim();
+        var io = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var contents = new System.Collections.Concurrent.ConcurrentBag<AsyncReadDisposalContent>();
+        var dispatches = 0;
+        var watchdogReleased = false;
+        var watchdog = new Thread(() =>
+        {
+            if (!stopWatchdog.Wait(TimeSpan.FromSeconds(15)))
+            {
+                watchdogReleased = true;
+                io.TrySetResult();
+                foreach (var content in contents) content.ReleaseDisposal();
+            }
+        }) { IsBackground = true };
+        watchdog.Start();
+        using var handler = new NativeClientTests.Handler((_, _) =>
+        {
+            if (Interlocked.Increment(ref dispatches) > capacity)
+                return Task.FromResult(NativeClientTests.Json("{\"version\":1,\"state\":\"absent\",\"state_version\":null,\"context\":[],\"siblings\":[]}"));
+            var content = new AsyncReadDisposalContent(io.Task, started);
+            contents.Add(content);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        });
+        using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
+            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(30), handler);
+        try
+        {
+            var requests = Enumerable.Range(0, capacity).Select(_ =>
+                client.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document, caller.Token)).ToArray();
+            for (var index = 0; index < capacity; index++)
+                if (!await started.WaitAsync(TimeSpan.FromSeconds(5))) throw new TimeoutException("Asynchronous body copy did not start.");
+            caller.Cancel();
+            foreach (var result in await Task.WhenAll(requests).WaitAsync(TimeSpan.FromSeconds(5)))
+                await Assert.That(((NativeResult<NativePoint>.Failure)result).Error.Code).IsEqualTo("cancelled");
+            io.TrySetResult();
+            using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await client.WaitForIdleAsync(drain.Token);
+            var recovered = await client.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document).WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(recovered is NativeResult<NativePoint>.Success).IsTrue();
+            await Assert.That(contents.All(content => content.DisposedAfterRead)).IsTrue();
+            await Assert.That(watchdogReleased).IsFalse();
+        }
+        finally
+        {
+            io.TrySetResult();
+            foreach (var content in contents) content.ReleaseDisposal();
+            stopWatchdog.Set();
+            if (!watchdog.Join(TimeSpan.FromSeconds(5))) throw new TimeoutException("Test watchdog did not finish.");
+            using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await client.WaitForIdleAsync(drain.Token);
+        }
+    }
+
+    [Test]
     public async Task SuspendedCallbacksRetainInvocationContextAndPropagateFaults()
     {
         using var executor = new NativeInvocationExecutor(1);
@@ -61,7 +181,7 @@ public sealed class NativeIsolationCapacityTests
             for (var index = 0; index < capacity; index++)
             {
                 originals.Add(client.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document, caller.Token));
-                await blocker.Started.WaitAsync(TimeSpan.FromSeconds(10));
+                if (!await blocker.Started.WaitAsync(TimeSpan.FromSeconds(10))) throw new TimeoutException("Capacity callback did not start.");
             }
             caller.Cancel();
             foreach (var result in await Task.WhenAll(originals).WaitAsync(TimeSpan.FromSeconds(10)))
@@ -201,6 +321,42 @@ public sealed class NativeIsolationCapacityTests
         protected override void Dispose(bool disposing)
         {
             if (disposing && Interlocked.Exchange(ref disposed, 1) == 0) blocker.Wait();
+            base.Dispose(disposing);
+        }
+    }
+
+    private sealed class AsyncReadDisposalContent : HttpContent
+    {
+        private readonly Task io;
+        private readonly SemaphoreSlim started;
+        private readonly ManualResetEventSlim readFinished = new();
+        private bool readCompleted;
+        internal AsyncReadDisposalContent(Task io, SemaphoreSlim started)
+        {
+            this.io = io;
+            this.started = started;
+            Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        }
+        internal bool DisposedAfterRead { get; private set; }
+        internal void ReleaseDisposal() => readFinished.Set();
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            try
+            {
+                started.Release();
+                await io;
+                await stream.WriteAsync("{\"version\":1,\"state\":\"absent\",\"state_version\":null,\"context\":[],\"siblings\":[]}"u8.ToArray());
+            }
+            finally { readCompleted = true; readFinished.Set(); }
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (!readFinished.Wait(TimeSpan.FromSeconds(30))) throw new TimeoutException("Active body copy did not finish.");
+                DisposedAfterRead = readCompleted;
+            }
             base.Dispose(disposing);
         }
     }

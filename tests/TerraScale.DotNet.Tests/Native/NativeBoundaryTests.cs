@@ -22,9 +22,13 @@ public sealed class NativeBoundaryTests
         };
         using var handler = new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected."));
         using var client = NativeClientTests.Client(handler);
+        await Assert.That(client.PrepareCommit(commit with { Writes = [commit.Writes[0]] }).RequestBody.Length).IsGreaterThan(0);
         var before = GC.GetAllocatedBytesForCurrentThread();
         try { client.PrepareCommit(commit); throw new InvalidOperationException("Oversized commit was accepted."); }
-        catch (InvalidDataException) { }
+        catch (InvalidDataException exception)
+        {
+            if (exception.Message != "Native encoding exceeds its byte limit.") throw;
+        }
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         await Assert.That(allocated).IsLessThan(64L * 1024 * 1024);
     }
@@ -44,9 +48,13 @@ public sealed class NativeBoundaryTests
             }).ToImmutableArray()
         };
         using var client = NativeClientTests.Client(new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected.")));
+        await Assert.That(client.PrepareCommit(commit with { Writes = [commit.Writes[0]] }).RequestBody.Length).IsGreaterThan(0);
         var before = GC.GetAllocatedBytesForCurrentThread();
         try { client.PrepareCommit(commit); throw new InvalidOperationException("Oversized commit was accepted."); }
-        catch (InvalidDataException) { }
+        catch (InvalidDataException exception)
+        {
+            if (exception.Message != "Native request exceeds the 4 MiB limit.") throw;
+        }
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         await Assert.That(allocated).IsLessThan(64L * 1024 * 1024);
     }
@@ -316,6 +324,10 @@ public sealed class NativeBoundaryTests
         var point = new NativePoint(queryPage ? NativePointState.Value : NativePointState.Conflict,
             queryPage ? new string('d', 64) : null, context, siblings);
         var rows = Enumerable.Range(0, 128).Select(index => new NativeQueryRow($"018f0000-0000-7000-8000-{index:x12}", point)).ToImmutableArray();
+        var control = queryPage
+            ? NativeCodec.EncodeQueryPage(new NativeQueryPage([rows[0]], null))
+            : NativeCodec.EncodePoint(point with { Siblings = siblings.Take(2).ToImmutableArray(), Context = context.Take(2).ToImmutableArray() });
+        await Assert.That(control.Length).IsGreaterThan(0);
         var before = GC.GetAllocatedBytesForCurrentThread();
         try
         {
@@ -323,7 +335,10 @@ public sealed class NativeBoundaryTests
             else NativeCodec.EncodePoint(point);
             throw new InvalidOperationException("Oversized point/page was accepted.");
         }
-        catch (InvalidDataException) { }
+        catch (InvalidDataException exception)
+        {
+            if (exception.Message != "Native request exceeds the 4 MiB limit.") throw;
+        }
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         await Assert.That(allocated).IsLessThan(64L * 1024 * 1024);
     }

@@ -52,6 +52,8 @@ public sealed class NativeBlockingDisposalTests
                 await Assert.That(error.Transaction).IsEqualTo(prepared.Identity);
                 await Assert.That(error.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
             }
+            await Assert.That(body.DisposalStarted.Task.IsCompleted).IsFalse();
+            body.ReadCompletion.TrySetResult(0);
             await body.DisposalStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await Assert.That(body.Disposed.Task.IsCompleted).IsFalse();
             await Assert.That(calls).IsEqualTo(1);

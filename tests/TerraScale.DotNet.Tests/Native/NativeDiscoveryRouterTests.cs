@@ -138,9 +138,10 @@ public sealed class NativeDiscoveryRouterTests
             await Assert.That(calls).IsEqualTo(2);
             if (bodyRead)
             {
+                await Assert.That(pendingBody.Disposed.Task.IsCompleted).IsFalse();
+                pendingBody.Completion.TrySetResult(0);
                 await pendingBody.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 await Assert.That(pendingBody.Reads).IsEqualTo(1);
-                pendingBody.Completion.TrySetResult(0);
             }
             else
             {

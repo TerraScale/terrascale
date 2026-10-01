@@ -139,6 +139,14 @@ detached or async-void work is unsupported. Callbacks that opt out of context
 capture with `ConfigureAwait(false)`, `Task.Run`, or similar APIs must keep
 shared-pool continuations nonblocking. Shared-pool starvation caused by such
 callback code is outside the finite-deadline guarantee.
+Extensions receive a separate token cancelled on distinct owned workers, so
+blocking cancellation registrations cannot delay the caller-facing deadline.
+Cancellation callbacks retain operation capacity until completion. Response
+disposal waits for actual body invocation completion, allowing captured read
+continuations to finish before synchronous cleanup runs.
+Cancellation sources introduced by a caller-owned `HttpClient`, such as its
+`Timeout`, execute their own registrations; callbacks registered with those
+sources must remain nonblocking.
 Discovery caches only authenticated leases for the same credential, coalesces
 scope requests, and retains at most 256 scope observation floors for its lifetime.
 Floors survive lease expiry: deployment or cell changes require explicit

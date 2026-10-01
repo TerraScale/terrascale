@@ -8,9 +8,13 @@ namespace TerraScale.DotNet.Native;
 
 /// <summary>Native v1 transport. Credentials and admission are resolved anew for every finite request.</summary>
 /// <remarks>
-/// At most 16 operations per client remain outstanding, including callbacks and cleanup that outlive a caller deadline.
+/// At most 16 operations per client remain outstanding, including callbacks, cancellation registrations and cleanup that outlive a caller deadline.
 /// Additional calls wait within their original deadline. Provider, handler and content tasks must represent all their work;
 /// detached or async-void work is unsupported. Callback invocation and context-capturing continuations use owned workers.
+/// Extensions receive a separate token whose cancellation is dispatched on distinct owned workers; cancellation callbacks
+/// cannot delay the caller-facing signal. Response disposal waits for actual body invocation completion.
+/// Cancellation sources introduced by a caller-owned HttpClient (such as its Timeout) run their own registrations;
+/// callbacks registered with those sources must remain nonblocking.
 /// Callbacks that opt out of context capture (for example, with ConfigureAwait(false) or Task.Run) must keep shared-pool
 /// continuations nonblocking; starvation caused by such callback code is outside the finite-deadline guarantee.
 /// Unexpected provider programming and lifecycle exceptions propagate. Invalid credentials and admissions return distinct local failure codes.
@@ -224,10 +228,10 @@ public sealed class NativeClient : IDisposable
         {
             using var transport = await isolation.StartAsync(budgetToken).ConfigureAwait(false);
             budgetToken.ThrowIfCancellationRequested();
-            var key = ValidateKey(await transport.InvokeAsync(() => keyProvider(budgetToken).AsTask(), budgetToken).ConfigureAwait(false));
+            var key = ValidateKey(await transport.InvokeAsync(() => keyProvider(transport.ExtensionToken).AsTask(), budgetToken).ConfigureAwait(false));
             phase = "admission";
             var admission = await transport.InvokeAsync(
-                () => admissionProvider.ResolveAsync(Scope, key, capabilities, budgetToken).AsTask(), budgetToken).ConfigureAwait(false);
+                () => admissionProvider.ResolveAsync(Scope, key, capabilities, transport.ExtensionToken).AsTask(), budgetToken).ConfigureAwait(false);
             var response = await transport.InvokeAsync(async () =>
             {
                 budgetToken.ThrowIfCancellationRequested();
@@ -250,7 +254,7 @@ public sealed class NativeClient : IDisposable
                 }
                 try
                 {
-                    return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budgetToken).ConfigureAwait(false);
+                    return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, transport.ExtensionToken).ConfigureAwait(false);
                 }
                 catch (TaskCanceledException exception) when (!budgetToken.IsCancellationRequested && exception.InnerException is TimeoutException)
                 {
@@ -381,7 +385,7 @@ internal static class NativeTransport
             // Copy directly into a bounded destination. ReadAsStreamAsync can
             // materialize an undeclared custom content body before any check.
             using var destination = new BoundedHttpBodyStream(limit, overflow, cancellationToken);
-            await content.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+            await content.CopyToAsync(destination, operation.ExtensionToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             return destination.ToArray();
         }, cancellationToken);
@@ -394,18 +398,20 @@ internal static class NativeTransport
     {
         private readonly SemaphoreSlim capacity = new(MaximumOutstandingOperations, MaximumOutstandingOperations);
         private readonly NativeInvocationExecutor executor = new(MaximumOutstandingOperations);
+        private readonly NativeInvocationExecutor cancellationExecutor = new(MaximumOutstandingOperations);
         private readonly object gate = new();
         private int active;
         private bool disposed;
 
         private void EndOperation()
         {
-            lock (gate) { if (--active == 0 && disposed) executor.Dispose(); }
+            lock (gate) { if (--active == 0 && disposed) StopExecutors(); }
         }
         public void Dispose()
         {
-            lock (gate) { disposed = true; if (active == 0) executor.Dispose(); }
+            lock (gate) { disposed = true; if (active == 0) StopExecutors(); }
         }
+        private void StopExecutors() { executor.Dispose(); cancellationExecutor.Dispose(); }
 
         // Qualification can await every outstanding callback and cleanup,
         // rather than observing only the caller's cancellation return.
@@ -430,18 +436,65 @@ internal static class NativeTransport
                 {
                     ObjectDisposedException.ThrowIf(disposed, this);
                     active++;
-                    return new Operation(capacity, executor, EndOperation);
+                    return new Operation(capacity, executor, cancellationExecutor, EndOperation, cancellationToken);
                 }
             }
             catch { capacity.Release(); throw; }
         }
     }
 
-    internal sealed class Operation(SemaphoreSlim capacity, NativeInvocationExecutor executor, Action completed) : IDisposable
+    internal sealed class Operation : IDisposable
     {
-        private NativeInvocationExecutor Executor => executor;
+        private readonly SemaphoreSlim capacity;
+        private readonly NativeInvocationExecutor executor;
+        private readonly NativeInvocationExecutor cancellationExecutor;
+        private readonly Action completed;
+        private readonly CancellationTokenSource extensions = new();
+        private readonly CancellationToken callerSignal;
+        private readonly CancellationTokenRegistration cancellationRegistration;
+        private readonly List<Task> invocations = [];
+        private readonly object invocationGate = new();
         private int references = 1;
         private int disposed;
+        private int cancellationQueued;
+
+        internal Operation(SemaphoreSlim capacity, NativeInvocationExecutor executor, NativeInvocationExecutor cancellationExecutor,
+            Action completed, CancellationToken cancellationToken)
+        {
+            this.capacity = capacity;
+            this.executor = executor;
+            this.cancellationExecutor = cancellationExecutor;
+            this.completed = completed;
+            callerSignal = cancellationToken;
+            // Only this bounded SDK callback sees the caller-facing signal.
+            // Extension registrations cannot delay deadline waits or Cancel().
+            cancellationRegistration = cancellationToken.UnsafeRegister(_ => CancelExtensions(), null);
+        }
+
+        internal CancellationToken ExtensionToken => extensions.Token;
+
+        private void CancelExtensions()
+        {
+            if (Interlocked.Exchange(ref cancellationQueued, 1) != 0) return;
+            AddReference();
+            _ = CancelExtensionsAsync();
+        }
+
+        private async Task CancelExtensionsAsync()
+        {
+            try
+            {
+                // Blocking cancellation callbacks must not occupy workers needed
+                // by the extension's asynchronous invocation continuations.
+                await cancellationExecutor.ExecuteAsync(() =>
+                {
+                    extensions.Cancel();
+                    return Task.FromResult(true);
+                }).ConfigureAwait(false);
+            }
+            catch (Exception) { /* Observe extension cancellation faults without replacing the caller's outcome. */ }
+            finally { ReleaseReference(); }
+        }
 
         internal IAsyncDisposable Own(IDisposable resource, CancellationToken cancellationToken)
         {
@@ -463,6 +516,7 @@ internal static class NativeTransport
                     cancellationToken.ThrowIfCancellationRequested();
                     return invoke();
                 });
+                lock (invocationGate) invocations.Add(operation);
                 var result = await operation.WaitAsync(cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
                 return result;
@@ -497,6 +551,7 @@ internal static class NativeTransport
         {
             if (Interlocked.Decrement(ref references) == 0)
             {
+                extensions.Dispose();
                 capacity.Release();
                 completed();
             }
@@ -504,7 +559,33 @@ internal static class NativeTransport
 
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref disposed, 1) == 0) ReleaseReference();
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                // A deadline waiter can resume before the signal visits our
+                // older registration. Do not unregister that cancellation.
+                if (callerSignal.IsCancellationRequested) CancelExtensions();
+                cancellationRegistration.Dispose();
+                ReleaseReference();
+            }
+        }
+
+        private async Task DisposeAfterInvocationsAsync(IDisposable resource)
+        {
+            Task[] pending;
+            lock (invocationGate) pending = invocations.ToArray();
+            // Content disposal may synchronously wait for an active body copy.
+            // Wait for its actual completion before occupying an owned worker.
+            try { await Task.WhenAll(pending).ConfigureAwait(false); }
+            catch (Exception) { /* Invocation faults are already observed by their callers or late completion. */ }
+            try
+            {
+                await executor.ExecuteAsync(() =>
+                {
+                    DisposeResource(resource);
+                    return Task.FromResult(true);
+                }).ConfigureAwait(false);
+            }
+            finally { ReleaseReference(); }
         }
 
         private sealed class ResourceLifetime(Operation operation, IDisposable resource, CancellationToken cancellationToken) : IAsyncDisposable
@@ -515,12 +596,7 @@ internal static class NativeTransport
             {
                 var original = Interlocked.Exchange(ref owned, null);
                 if (original is null) return;
-                var cleanup = operation.Executor.ExecuteAsync(() =>
-                {
-                    try { DisposeResource(original); }
-                    finally { operation.ReleaseReference(); }
-                    return Task.FromResult(true);
-                });
+                var cleanup = operation.DisposeAfterInvocationsAsync(original);
                 try { await cleanup.WaitAsync(cancellationToken).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
