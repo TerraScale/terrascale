@@ -9,7 +9,7 @@ mode=${1:-}
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 owner=${REPOSITORY_OWNER:?REPOSITORY_OWNER is required}
 owner=${owner,,}
-[[ $owner =~ ^[a-z0-9][a-z0-9_.-]*$ ]] || { echo "invalid registry owner" >&2; exit 2; }
+[[ $owner =~ ^[a-z0-9]+((\.|__|-+)[a-z0-9]+)*$ ]] || { echo "invalid registry owner" >&2; exit 2; }
 staging="git.terrascale.tech/$owner/ts-auth-ci"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 : "${REGISTRY_PUSH_TOKEN:?registry push token is required}"
@@ -61,7 +61,13 @@ case $mode in
     [[ ${actual_id#sha256:} == "${image_id#sha256:}" ]] || { echo "loaded image ID does not match" >&2; exit 1; }
     remote_image="git.terrascale.tech/$owner/ts-auth:$source_commit"
     podman tag "$image_id" "$remote_image"
-    podman push "$remote_image"
+    digest_file=$(mktemp "$RUNNER_TEMP/ts-auth-manifest-digest.XXXXXXXX")
+    trap 'rm -f -- "$REGISTRY_AUTH_FILE" "$digest_file"' EXIT
+    podman push --digestfile "$digest_file" "$remote_image"
+    [[ $(cat "$digest_file") == "$IMAGE_MANIFEST_DIGEST" ]] || {
+      echo "published manifest digest does not match the staged digest" >&2
+      exit 1
+    }
     printf 'published %s from manifest %s\n' "$remote_image" "$IMAGE_MANIFEST_DIGEST"
     ;;
   prune)
