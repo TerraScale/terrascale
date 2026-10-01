@@ -82,7 +82,7 @@
 .ts-auth-providers {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--ts-s2);
+  gap: var(--ts-s5);
 }
 
 .ts-auth-locale .ts-select {
