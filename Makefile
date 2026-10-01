@@ -20,7 +20,7 @@ check-generated:
 check-modules:
 	@set -eu; \
 		task_module_cache=$$(mktemp -d); \
-		trap 'GOTOOLCHAIN=local GOMODCACHE="$$task_module_cache" GOFLAGS= $(GO) clean -modcache' EXIT; \
+		trap 'task_exit_status=$$?; if [ -n "$${task_module_cache:-}" ]; then GOTOOLCHAIN=local GOMODCACHE="$$task_module_cache" GOFLAGS= $(GO) clean -modcache || :; fi; exit "$$task_exit_status"' EXIT; \
 		trap 'exit 1' HUP INT TERM; \
 		GOTOOLCHAIN=local GOMODCACHE="$$task_module_cache" GOFLAGS=-mod=readonly \
 		GOPROXY=https://proxy.golang.org,direct GOPRIVATE= GONOPROXY= \
