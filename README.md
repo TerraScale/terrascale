@@ -1,17 +1,22 @@
 # @terrascale/sdk
 
-The TypeScript SDK for native TerraBase documents and hosted TerraScale identity.
+The JavaScript SDK for native TerraBase documents and hosted TerraScale identity.
 The package targets Node.js 22 and 24 and current Chrome, Firefox, Safari, and Edge.
 Release qualification installs the exact packed artifact into a separate consumer.
 
-```ts
+The source is plain ES modules typed with JSDoc and published as written; there
+is no transpile step. `npm run build` generates the `.d.ts` declarations in
+`types/`, so TypeScript and editor consumers get the same types the source is
+checked against.
+
+```js
 import { createTerraBaseClient } from "@terrascale/sdk";
 
 const database = createTerraBaseClient({
-  tenant: process.env.TERRABASE_TENANT!,
-  database: process.env.TERRABASE_DATABASE!,
-  shard: BigInt(process.env.TERRABASE_SHARD!),
-  apiKey: process.env.TERRABASE_API_KEY!,
+  tenant: process.env.TERRABASE_TENANT,
+  database: process.env.TERRABASE_DATABASE,
+  shard: BigInt(process.env.TERRABASE_SHARD),
+  apiKey: process.env.TERRABASE_API_KEY,
 });
 
 const result = await database.read(collectionUuid, documentUuid);
@@ -79,7 +84,7 @@ its own origin, instance, and identity credentials.
 
 `@terrascale/sdk/local` is an explicitly enabled Node development runtime:
 
-```ts
+```js
 import { createTerraScaleSqliteRuntime } from "@terrascale/sdk/local";
 
 const local = createTerraScaleSqliteRuntime({

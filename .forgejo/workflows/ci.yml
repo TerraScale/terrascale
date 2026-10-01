@@ -1,4 +1,4 @@
-name: TypeScript SDK native checks
+name: JavaScript SDK native checks
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ts-typescript-${{ forgejo.workflow }}-${{ forgejo.ref }}
+  group: ts-js-${{ forgejo.workflow }}-${{ forgejo.ref }}
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
 # Node.js 24 (.node-version) and the Playwright 1.63 engines are baked into
@@ -38,7 +38,7 @@ jobs:
         run: test "$(node --version)" = "v$(cat .node-version)"
 
       - name: Provision the reviewed npm CLI
-        run: node scripts/provision-reviewed-npm.ts
+        run: node scripts/provision-reviewed-npm.js
 
       - name: Extract the frozen actual producer source inputs
         run: bash scripts/ci/provision-current-contract-inputs.sh
@@ -49,10 +49,10 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Typecheck the SDK
+      - name: Typecheck the SDK JSDoc types
         run: npm run typecheck
 
-      - name: Build the SDK
+      - name: Generate the SDK type declarations
         run: npm run build
 
       - name: Check native OpenAPI and canonical effect vectors
@@ -71,7 +71,7 @@ jobs:
         run: npm run check:forbidden-surface
 
       - name: Generate and validate the locked dependency SBOM
-        run: npm run check:sbom -- --output ts-typescript-sbom.json
+        run: npm run check:sbom -- --output ts-js-sbom.json
 
       - name: Fail closed on high or critical dependency vulnerabilities
         run: npm run check:vulnerabilities
@@ -131,7 +131,7 @@ jobs:
           fi
 
       - name: Provision the reviewed npm CLI
-        run: node scripts/provision-reviewed-npm.ts
+        run: node scripts/provision-reviewed-npm.js
 
       - name: Extract the frozen actual producer source inputs
         run: bash scripts/ci/provision-current-contract-inputs.sh
@@ -145,7 +145,7 @@ jobs:
       - name: Check native OpenAPI and canonical effect vectors
         run: npm run check:current-contract
 
-      - name: Build the SDK
+      - name: Generate the SDK type declarations
         run: npm run build
 
       - name: Run the complete SDK test suite
@@ -180,12 +180,12 @@ jobs:
         run: test "$(node --version)" = "v$(cat .node-version)"
 
       - name: Provision the reviewed npm CLI
-        run: node scripts/provision-reviewed-npm.ts
+        run: node scripts/provision-reviewed-npm.js
 
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Build the SDK
+      - name: Generate the SDK type declarations
         run: npm run build
 
       - name: Verify the pinned Playwright engine installations

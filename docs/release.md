@@ -60,10 +60,10 @@ browser tests verify browser compatibility, while the separate real-allocation
 browser journey requires actual service credentials and does not use intercepted
 producer responses.
 
-`qualify-npm-artifact.ts` preserves clean-source, reviewed toolchain, installed
+`qualify-npm-artifact.js` preserves clean-source, reviewed toolchain, installed
 consumer, archive, audit, license, and cryptographic evidence checks. Its report
 retains active producer blockers and cannot mark a release eligible while they
-remain. `promote-npm-candidate.ts` requires an admitted build receipt bound to
+remain. `promote-npm-candidate.js` requires an admitted build receipt bound to
 source and output bytes and refuses publication with active blockers. The
 required release-E2E check fails before any skip-capable suite until production
 persistence and deployed account flows are admitted. Environment variable

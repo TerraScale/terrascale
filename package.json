@@ -1,7 +1,7 @@
 {
   "name": "@terrascale/sdk",
   "version": "0.3.0",
-  "description": "TypeScript SDK for native TerraBase documents and hosted TerraScale identity.",
+  "description": "JavaScript SDK, typed with JSDoc, for native TerraBase documents and hosted TerraScale identity.",
   "type": "module",
   "license": "Apache-2.0",
   "private": false,
@@ -10,102 +10,101 @@
     "registry": "https://registry.npmjs.org/"
   },
   "sideEffects": false,
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./src/index.js",
+  "types": "./types/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./types/index.d.ts",
+      "import": "./src/index.js"
     },
     "./admin": {
-      "types": "./dist/admin.d.ts",
-      "import": "./dist/admin.js"
+      "types": "./types/admin.d.ts",
+      "import": "./src/admin.js"
     },
     "./schema": {
-      "types": "./dist/schema.d.ts",
-      "import": "./dist/schema.js"
+      "types": "./types/schema.d.ts",
+      "import": "./src/schema.js"
     },
     "./sql": {
-      "types": "./dist/sql.d.ts",
-      "import": "./dist/sql.js"
+      "types": "./types/sql.d.ts",
+      "import": "./src/sql.js"
     },
     "./management": {
-      "types": "./dist/management.d.ts",
-      "import": "./dist/management.js"
+      "types": "./types/management.d.ts",
+      "import": "./src/management.js"
     },
     "./ts-auth": {
-      "types": "./dist/ts-auth.d.ts",
-      "import": "./dist/ts-auth.js"
+      "types": "./types/ts-auth.d.ts",
+      "import": "./src/ts-auth.js"
     },
     "./react": {
-      "types": "./dist/react/index.d.ts",
-      "import": "./dist/react/index.js"
+      "types": "./types/react/index.d.ts",
+      "import": "./src/react/index.js"
     },
     "./svelte": {
-      "types": "./dist/svelte/index.d.ts",
-      "import": "./dist/svelte/index.js"
+      "types": "./types/svelte/index.d.ts",
+      "import": "./src/svelte/index.js"
     },
     "./tanstack": {
-      "types": "./dist/tanstack/index.d.ts",
-      "import": "./dist/tanstack/index.js"
+      "types": "./types/tanstack/index.d.ts",
+      "import": "./src/tanstack/index.js"
     },
     "./better-auth": {
-      "types": "./dist/better-auth.d.ts",
-      "workerd": "./dist/better-auth.js",
+      "types": "./types/better-auth.d.ts",
+      "workerd": "./src/better-auth.js",
       "browser": null,
-      "node": "./dist/better-auth.js"
+      "node": "./src/better-auth.js"
     },
     "./local": {
-      "types": "./dist/local/index.d.ts",
+      "types": "./types/local/index.d.ts",
       "workerd": null,
       "browser": null,
-      "node": "./dist/local/index.js"
+      "node": "./src/local/index.js"
     },
     "./postgres": {
-      "types": "./dist/postgres.d.ts",
+      "types": "./types/postgres.d.ts",
       "workerd": null,
       "browser": null,
-      "node": "./dist/postgres.js"
+      "node": "./src/postgres.js"
     }
   },
   "bin": {
-    "terrascale-local": "./dist/local/cli.js"
+    "terrascale-local": "./src/local/cli.js"
   },
   "files": [
-    "dist",
-    "!dist/integration",
-    "!dist/internal",
-    "!dist/**/*.test.*",
-    "!dist/**/*capture*",
-    "!dist/**/*.map",
+    "src",
+    "!src/integration",
+    "!src/**/*.test.js",
+    "types",
+    "!types/integration",
     "sdk-route-manifest.json",
     "sdk-current-contract.json",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
-    "qualify:artifact": "node scripts/qualify-npm-artifact.ts",
-    "qualify:current-producer": "node scripts/qualification/current-producer-consumer.mjs",
-    "check:route-manifest": "node scripts/generate-client-route-manifest.ts --check",
-    "check:openapi-contract-descriptor": "node scripts/generate-openapi-contract-descriptor.ts --check",
-    "check:public-contract-fixture": "vitest run test/public-contract-fixture.test.ts",
-    "check:forbidden-surface": "vitest run test/forbidden-surface.test.ts",
-    "check:sbom": "node scripts/check-sbom.mjs",
-    "check:vulnerabilities": "node scripts/check-vulnerabilities.mjs",
-    "generate:route-manifest": "npm run build && node scripts/generate-client-route-manifest.ts",
-    "generate:openapi-contract-descriptor": "npm run build && node scripts/generate-openapi-contract-descriptor.ts",
-    "local": "node dist/local/cli.js",
+    "build": "node -e \"require('node:fs').rmSync('types', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "qualify:artifact": "node scripts/qualify-npm-artifact.js",
+    "qualify:current-producer": "node scripts/qualification/current-producer-consumer.js",
+    "check:route-manifest": "node scripts/generate-client-route-manifest.js --check",
+    "check:openapi-contract-descriptor": "node scripts/generate-openapi-contract-descriptor.js --check",
+    "check:public-contract-fixture": "vitest run test/public-contract-fixture.test.js",
+    "check:forbidden-surface": "vitest run test/forbidden-surface.test.js",
+    "check:sbom": "node scripts/check-sbom.js",
+    "check:vulnerabilities": "node scripts/check-vulnerabilities.js",
+    "generate:route-manifest": "npm run build && node scripts/generate-client-route-manifest.js",
+    "generate:openapi-contract-descriptor": "npm run build && node scripts/generate-openapi-contract-descriptor.js",
+    "local": "node src/local/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:browser": "playwright test",
-    "check:current-contract": "vitest run test/current-producer-contract.test.ts test/openapi-drift.test.ts",
-    "qualify:auth-authority": "node scripts/qualify-auth-authority.ts",
-    "qualify:release-e2e": "node scripts/run-packed-release-e2e.ts",
-    "check:current-contract-inputs": "node scripts/openapi-contract-paths.ts --check-inputs",
-    "check:frameworks": "vitest run src/database-view.test.ts src/react/core.test.ts src/svelte/index.test.ts src/tanstack/index.test.ts",
-    "check:local-better-auth": "vitest run src/better-auth-factory-conformance.test.ts",
-    "qualify:current-postgres-producer": "node scripts/current-postgres-producer.ts"
+    "check:current-contract": "vitest run test/current-producer-contract.test.js test/openapi-drift.test.js",
+    "qualify:auth-authority": "node scripts/qualify-auth-authority.js",
+    "qualify:release-e2e": "node scripts/run-packed-release-e2e.js",
+    "check:current-contract-inputs": "node scripts/openapi-contract-paths.js --check-inputs",
+    "check:frameworks": "vitest run src/database-view.test.js src/react/core.test.js src/svelte/index.test.js src/tanstack/index.test.js",
+    "check:local-better-auth": "vitest run src/better-auth-factory-conformance.test.js",
+    "qualify:current-postgres-producer": "node scripts/current-postgres-producer.js"
   },
   "peerDependencies": {
     "@better-auth/core": "1.7.2",

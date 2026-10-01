@@ -1,15 +1,14 @@
 {
+  // Emits only the published declarations; the JavaScript in src ships as is.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
-    "sourceMap": false,
-    "declarationMap": false
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "rootDir": "src",
+    "outDir": "types"
   },
-  "exclude": [
-    "dist",
-    "node_modules",
-    "src/**/*.test.ts",
-    "src/integration",
-    "src/local/test-environment.ts"
-  ]
+  "include": ["src/**/*.js"],
+  "exclude": ["src/**/*.test.js", "src/integration", "types", "node_modules"]
 }
