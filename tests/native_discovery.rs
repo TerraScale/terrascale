@@ -1671,6 +1671,90 @@ async fn every_public_native_call_shares_discovery_and_dispatch_budget_with_comm
     }
 }
 
+#[derive(Debug)]
+struct ProcessingClock {
+    time: Arc<Clock>,
+    calls: AtomicUsize,
+    gate_call: usize,
+    entered: tokio::sync::Notify,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+}
+impl DiscoveryClock for ProcessingClock {
+    fn now(&self) -> Result<DiscoveryTime> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) + 1 == self.gate_call {
+            // Hold synchronous response processing (or cache selection) while
+            // the test advances the operation's real Tokio deadline.
+            self.entered.notify_one();
+            self.release.lock().unwrap().recv().unwrap();
+        }
+        self.time.now()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn direct_resolver_checks_deadline_after_synchronous_processing_and_keeps_observation() {
+    for cached in [false, true] {
+        for expired in [false, true] {
+            let time = Clock::new();
+            let (release, receiver) = std::sync::mpsc::channel();
+            let clock = Arc::new(ProcessingClock {
+                time: time.clone(),
+                calls: AtomicUsize::new(0),
+                gate_call: if cached { 3 } else { 2 },
+                entered: tokio::sync::Notify::new(),
+                release: Mutex::new(receiver),
+            });
+            let transport = Arc::new(LifecycleTransport::default());
+            transport.admit(&scope());
+            let router = AtlasDiscovery::with_clock(config(), transport.clone(), clock.clone());
+            if cached {
+                router
+                    .resolve(&scope(), NativeRequirement::Point)
+                    .await
+                    .unwrap();
+            }
+            let owned = router.clone();
+            let runtime = tokio::runtime::Handle::current();
+            let call = tokio::task::spawn_blocking(move || {
+                runtime.block_on(owned.resolve(&scope(), NativeRequirement::Point))
+            });
+            clock.entered.notified().await;
+            tokio::time::advance(Duration::from_secs(if expired { 31 } else { 29 })).await;
+            release.send(()).unwrap();
+            let result = call.await.unwrap();
+            if expired {
+                let error = result.unwrap_err();
+                assert_eq!(error.kind, ErrorKind::Transport);
+                assert_eq!(error.message, "Atlas request deadline exceeded.");
+            } else {
+                result.unwrap();
+            }
+            // Validated metadata must still be retained after the timed-out
+            // response, so a fresh caller reuses it without another GET.
+            router
+                .resolve(&scope(), NativeRequirement::Point)
+                .await
+                .unwrap();
+            assert_eq!(transport.requests.lock().unwrap().len(), 1);
+            assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+            time.advance(8_000);
+            let mut regressed = fixture();
+            regressed["revision"] = json!("40");
+            regressed["published_at"] = json!(1790769608u64);
+            regressed["expires_at"] = json!(1790769617u64);
+            transport.reply(Ok(Response::json(200, &regressed)));
+            assert_eq!(
+                router
+                    .resolve(&scope(), NativeRequirement::Point)
+                    .await
+                    .unwrap_err()
+                    .code,
+                "routing_observation_regressed"
+            );
+        }
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn late_ready_native_success_obeys_the_deadline_and_retains_uncertain_commit_identity() {
     for expired in [false, true] {

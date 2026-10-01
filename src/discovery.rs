@@ -597,9 +597,16 @@ impl AtlasDiscovery {
         requirement: NativeRequirement,
         deadline: tokio::time::Instant,
     ) -> Result<ResolvedNativeOrigin> {
-        tokio::time::timeout_at(deadline, self.resolve_inner(scope, requirement, deadline))
-            .await
-            .map_err(|_| Error::transport("Atlas request deadline exceeded."))?
+        let result =
+            tokio::time::timeout_at(deadline, self.resolve_inner(scope, requirement, deadline))
+                .await
+                .map_err(|_| Error::transport("Atlas request deadline exceeded."))?;
+        // timeout_at accepts an inner Ready without polling its timer. Check
+        // after synchronous decoding, floor publication, and cached selection.
+        if tokio::time::Instant::now() >= deadline {
+            return Err(Error::transport("Atlas request deadline exceeded."));
+        }
+        result
     }
     async fn resolve_inner(
         &self,
