@@ -299,6 +299,55 @@ public sealed class TerraScaleDiscoveryRoutingTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task FailedRefreshAfterRegionalFailureCannotReplayThroughTheProxy(bool transportFailure, bool discoveryHttpFailure)
+    {
+        var transport = new ScriptedTransport
+        {
+            FailRegionalRequests = !transportFailure,
+            RegionalFailureAdvanceMs = 1100,
+            DistinctRegionalFailures = true,
+        };
+        var discovery = JsonNode.Parse(transport.DiscoveryBody)!.AsObject();
+        discovery["refreshSeconds"] = 1;
+        transport.DiscoveryBody = discovery.ToJsonString();
+        if (transportFailure) transport.RegionalTransportFailures.Enqueue(("fra", 1100));
+        var client = CreateClient(transport, new Uri("https://atlas-refresh-unavailable.test"), options =>
+        {
+            options.MaxRetryAttempts = 3;
+            options.RetryDelay = TimeSpan.Zero;
+        });
+        long nowMs = 0;
+        client.DiscoveryRouter!.RoutingCache.NowMs = () => nowMs;
+        transport.AdvanceTime = milliseconds =>
+        {
+            nowMs += milliseconds;
+            transport.ThrowDiscovery = !discoveryHttpFailure;
+            transport.DiscoveryStatus = HttpStatusCode.ServiceUnavailable;
+        };
+        if (transportFailure)
+        {
+            var error = await Assert.ThrowsAsync<HttpRequestException>(() =>
+                client.Documents.GetAsync("orders-refresh-unavailable", "items", "item-1"));
+            await Assert.That(error!.Message).IsEqualTo("fra region offline");
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.Documents.GetAsync("orders-refresh-unavailable", "items", "item-1"));
+            await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(error.ResponseBody).Contains("fra region down");
+        }
+        await Assert.That(transport.Requests.Count).IsEqualTo(3);
+        await Assert.That(transport.Requests[1]).StartsWith("GET https://fra.api.terrascale.tech/");
+        await Assert.That(transport.Requests[2]).Contains("/api/v1/discovery");
+        await Assert.That(transport.Requests.Any(request => request.StartsWith($"GET {ApiProxyOrigin}/", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
     public async Task UnkeyedMutationIsSentOnceAndLaterReadsUseTheNextRegion()
     {
         var transport = new ScriptedTransport { FailRegionalRequests = true };
