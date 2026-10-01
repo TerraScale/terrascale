@@ -24,12 +24,12 @@ func TestNativeDefaultRoutingFailsClosed(t *testing.T) {
 		t.Fatalf("default fell back: %v calls=%d", err, calls)
 	}
 	for _, origin := range []string{
-		"https://API.TERRASCALE.TECH.",
+		"https://api.terrascale.tech", "https://API.TERRASCALE.TECH.",
 		"https://gru.terrascale.tech", "https://gru.api.terrascale.tech.",
 		"https://api。terrascale。tech", "https://api．terrascale．tech",
 		"https://ａｐｉ.terrascale.tech", "https://gru.ａｐｉ.terrascale.tech",
 		"https://gru.api.terrascale.tech/path", "https://gru.api.terrascale.tech?", "https://:",
-		"http://gru.terrascale.tech",
+		"http://gru.api.terrascale.tech",
 	} {
 		if _, err := NewClient(Config{DataBaseURL: origin}); err == nil {
 			t.Errorf("unsafe native origin accepted: %s", origin)

@@ -1,45 +1,58 @@
 # Hosted native routing
 
-Both SDKs resolve the authenticated native8 document with
-`GET https://atlas.terrascale.tech/api/v1/discovery`. The native key and exact
-UUID tenant/database/shard scope are captured once for the complete operation.
-Name-based ADR 0050 documents are not interpreted as native routes.
+With `DataBaseURL` empty, Documents operations discover the authenticated native8
+routing document through `GET https://atlas.terrascale.tech/api/v1/discovery`.
+The exact UUID tenant/database/shard scope and a canonical native `tbk1` key are
+captured for the complete operation. Product discovery preferences, static
+catalogs, and name-based documents cannot provide native admission or affinity.
 
-The canonical native origin is `https://<region>.api.terrascale.tech`, with the
-region lowercased. The obsolete single-level regional hostname is rejected.
-The SDK pins the lowest-numbered priority that supports the operation until the
-earlier of `refreshSeconds` and `expires_at`. Discovery latency consumes the
-lease; expiry, credential rotation and observation floors are checked before
-sending to a region. No cookies or redirects are admitted.
+Atlas ranks eligible endpoints by proximity. For each operation the SDK selects
+the first endpoint whose capabilities support that operation, even when a
+previous operation selected another endpoint from the same cached document.
+The canonical direct origin is `https://<region>.api.terrascale.tech`, with the
+region lowercased. The global `api.terrascale.tech` host and retired regional
+`<region>.terrascale.tech` origins are rejected.
 
-A transport failure, HTTP 421, or 5xx excludes the failed region, re-resolves
-Atlas, and selects the next eligible priority. The replacement pin lasts for
-the refreshed lease. Normal refresh makes the preferred region eligible again.
-Retries remain inside the original deadline and honor `Retry-After`. Reads,
-queries, subscription snapshot/poll requests and transaction status may fail
-over automatically; commits are never replayed automatically. A failed commit
-changes routing for the next operation while preserving its frozen identity and
-uncertain outcome. Use transaction status before an explicit retry.
+Authenticated documents have bounded leases, scoped key fingerprints, and
+monotonic deployment/cell/publisher/revision observations. The SDK accounts for
+discovery latency and checks expiry and current observation floors before native
+dispatch. Expiry and credential rotation cannot erase previously observed floors.
+Native discovery and data requests do not send cookies or follow redirects.
 
-When Atlas has a network error, times out, returns 404/5xx, or does not provide
-a valid native8 success document, the SDK sends to `https://api.terrascale.tech`.
-That Atlas Worker reverse-proxies to the nearest healthy region. The proxy is
-used until the next discovery refresh, then a valid native8 document establishes
-a regional pin. Before the first native document, the refresh interval is eight
-seconds; afterward it uses the last native document's `refreshSeconds`.
-Authentication/authorization errors, redirects, capability denial and regressed
-observations remain errors. Proxy routing does not synthesize a native document
-or capability grant; the server decides admission.
+`RequestTimeout` bounds the complete native operation (default and maximum
+30 seconds). Atlas discovery and native dispatch share that original deadline;
+a shorter caller deadline wins. Discovery deliberately has no separate
+three-second cap, and native dispatch receives only the time remaining after
+discovery. Choose a shorter request or caller deadline when the complete
+operation needs a tighter budget.
 
-The hosted Atlas native8 producer is not yet published. It depends on
-orchestrator directory work, so hosted callers currently use the proxy path.
-Deterministic routing and transport fault tests prove SDK behavior. Archived
-Atlas receiver captures and their hashes remain unchanged; host migration
-fixtures derive the new origin without claiming a live producer receipt.
-Live API qualification remains gated on real configuration.
+Discovery denial, timeouts, transport errors, unavailable/404/5xx responses,
+malformed documents, and missing capabilities stop the operation before data
+dispatch. There is no API proxy, static catalog, fabricated affinity, or stale
+lease fallback. Actual Atlas errors retain their HTTP status in `*sdk.APIError`,
+including oversized or unreadable error responses. Complete error bodies of at
+most 64 KiB can refine the status-based default code using recognized Atlas
+status/code pairs. Producer messages, fixes, raw bodies, JSON correlation fields
+and placement headers are discarded rather than redacted. A bounded ASCII
+identifier from `X-Request-ID` and parsed `Retry-After` remain available; native
+key syntax is rejected as a correlation identifier. Malformed, partial, or
+oversized bodies retain the status-based default code. Reader errors are never
+copied into these diagnostics. Local
+discovery failures retain `*sdk.NativeRoutingError`, wrapped by `*sdk.RoutingError`.
 
-An explicit endpoint disables discovery, including refresh and failover. Custom
-HTTPS origins, canonical regional origins and the explicit Atlas proxy are
-accepted; HTTP is limited to loopback development.
+A native transport failure or non-success response is returned to the caller.
+No operation automatically replays against another region. A dispatched commit
+may remain uncertain; its prepared transaction retains the frozen identity and
+effects. Reconcile through transaction status before explicitly retrying.
 
-Go options: `DataBaseURL`, `DataDiscoveryTimeout`, `RequestTimeout`.
+An explicit `DataBaseURL` is a source-preparation or separately authorized
+deployment option. It requires an ASCII HTTPS origin without credentials,
+paths, query, fragment, or trailing-dot hostname. TerraScale origins must use a
+lowercase direct regional hostname; the apex, reserved service labels, nested
+service hosts, and retired regional origins are rejected. Independent HTTPS origins
+remain valid for source preparation. HTTP is limited to loopback development.
+An explicit-origin fixture does not qualify hosted runtime routing.
+
+The archived Atlas success/denial captures are retained unchanged. Local caller
+regressions derive finite routing fixtures from them; these checks do not claim
+that a current public Atlas/region deployment is available.

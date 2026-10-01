@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"mime"
 	"net/http"
 	"net/url"
@@ -21,12 +20,15 @@ import (
 )
 
 const (
-	nativeProxyOrigin         = "https://api.terrascale.tech"
-	nativeDefaultRefresh      = 8 * time.Second
 	nativeDiscoveryURL        = "https://atlas.terrascale.tech/api/v1/discovery"
 	nativeDiscoveryBodyLimit  = 64 << 10
 	nativeDiscoveryCacheLimit = 256
+	nativeRegionalDomain      = "api.terrascale.tech"
 )
+
+func nativeRegionalOrigin(region string) string {
+	return "https://" + strings.ToLower(region) + "." + nativeRegionalDomain
+}
 
 // NativeRoutingError describes a local native routing failure. It is wrapped
 // by RoutingError; Code never invents an Atlas HTTP status or response.
@@ -118,9 +120,10 @@ type nativeDiscoveryDocument struct {
 }
 
 var (
-	nativeDiscoveryIdentity = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
-	nativeDiscoveryToken    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-	nativeDiscoveryRegion   = regexp.MustCompile(`^[A-Z0-9][A-Z0-9-]{0,15}$`)
+	nativeDiscoveryIdentity  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	nativeDiscoveryToken     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	nativeDiscoveryRegion    = regexp.MustCompile(`^[A-Z0-9][A-Z0-9-]{0,15}$`)
+	nativeDiscoveryRequestID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 )
 
 func validNativeDiscoveryRegion(region string) bool {
@@ -160,7 +163,7 @@ func (d nativeDiscoveryDocument) validate(scope DocumentScope) error {
 	}
 	seen := make(map[string]bool, len(d.Endpoints))
 	for i, endpoint := range d.Endpoints {
-		if !validNativeDiscoveryRegion(endpoint.Region) || seen[endpoint.Region] || endpoint.URL != "https://"+strings.ToLower(endpoint.Region)+".api.terrascale.tech" || int(endpoint.Priority) != i+1 {
+		if !validNativeDiscoveryRegion(endpoint.Region) || seen[endpoint.Region] || endpoint.URL != nativeRegionalOrigin(endpoint.Region) || int(endpoint.Priority) != i+1 {
 			return fmt.Errorf("invalid discovery endpoint or priority")
 		}
 		seen[endpoint.Region] = true
@@ -179,9 +182,8 @@ func (d nativeDiscoveryDocument) validate(scope DocumentScope) error {
 }
 
 type nativeDiscoveryFloor struct {
-	RefreshSeconds uint8
-	Authority      nativeDiscoveryAuthority
-	Revision       DecimalU64
+	Authority nativeDiscoveryAuthority
+	Revision  DecimalU64
 }
 
 func (f nativeDiscoveryFloor) accepts(d nativeDiscoveryDocument) bool {
@@ -198,16 +200,13 @@ type nativeDiscoveryKey struct {
 	Credential [32]byte
 }
 type nativeDiscoveryLease struct {
-	Document    nativeDiscoveryDocument
-	Deadline    time.Time
-	Used        uint64
-	Proxy       bool
-	Failed      map[string]bool
-	Invalidated bool
+	Document nativeDiscoveryDocument
+	Deadline time.Time
+	Used     uint64
 }
 
 func (l nativeDiscoveryLease) valid(now time.Time) bool {
-	return now.Before(l.Deadline) && (l.Proxy || now.Unix() >= l.Document.PublishedAt && now.Unix() < l.Document.ExpiresAt)
+	return now.Before(l.Deadline) && now.Unix() >= l.Document.PublishedAt && now.Unix() < l.Document.ExpiresAt
 }
 
 type nativeDiscoveryAdmission struct {
@@ -223,7 +222,7 @@ func (r *nativeDiscoveryRouter) assertCurrent(admission nativeDiscoveryAdmission
 	if !admission.Lease.valid(now) {
 		return nativeRoutingFailure("discovery_expired", nil)
 	}
-	if !admission.Lease.Proxy && !r.floors[admission.Key.Scope].accepts(admission.Lease.Document) {
+	if !r.floors[admission.Key.Scope].accepts(admission.Lease.Document) {
 		return nativeRoutingFailure("routing_observation_regressed", nil)
 	}
 	return nil
@@ -235,18 +234,17 @@ type nativeDiscoveryCall struct {
 	CallerCanceled bool
 }
 type nativeDiscoveryRouter struct {
-	mu      sync.Mutex
-	http    *http.Client
-	now     func() time.Time
-	floors  map[DocumentScope]nativeDiscoveryFloor
-	leases  map[nativeDiscoveryKey]nativeDiscoveryLease
-	calls   map[nativeDiscoveryKey]*nativeDiscoveryCall
-	serial  uint64
-	timeout time.Duration
+	mu     sync.Mutex
+	http   *http.Client
+	now    func() time.Time
+	floors map[DocumentScope]nativeDiscoveryFloor
+	leases map[nativeDiscoveryKey]nativeDiscoveryLease
+	calls  map[nativeDiscoveryKey]*nativeDiscoveryCall
+	serial uint64
 }
 
 func newNativeDiscoveryRouter(client *http.Client) *nativeDiscoveryRouter {
-	return &nativeDiscoveryRouter{http: client, now: time.Now, timeout: 3 * time.Second,
+	return &nativeDiscoveryRouter{http: client, now: time.Now,
 		floors: make(map[DocumentScope]nativeDiscoveryFloor), leases: make(map[nativeDiscoveryKey]nativeDiscoveryLease), calls: make(map[nativeDiscoveryKey]*nativeDiscoveryCall)}
 }
 
@@ -279,20 +277,14 @@ func (r *nativeDiscoveryRouter) resolve(ctx context.Context, scope DocumentScope
 		}
 		r.mu.Lock()
 		floor := r.floors[scope]
-		previous := r.leases[key]
-		if lease, ok := r.leases[key]; ok && !lease.Proxy && !lease.Invalidated && lease.valid(r.now()) && floor.accepts(lease.Document) {
+		if lease, ok := r.leases[key]; ok && lease.valid(r.now()) && floor.accepts(lease.Document) {
 			r.serial++
 			lease.Used = r.serial
 			r.leases[key] = lease
 			r.mu.Unlock()
 			for _, endpoint := range lease.Document.Endpoints {
-				if !lease.Failed[endpoint.URL] && endpoint.Capabilities.supports(required) {
-					return nativeDiscoveryAdmission{URL: endpoint.URL, Key: key, Lease: lease}, nil
-				}
-			}
-			for _, endpoint := range lease.Document.Endpoints {
 				if endpoint.Capabilities.supports(required) {
-					return nativeDiscoveryAdmission{}, nativeRoutingFailure("regions_unavailable", nil)
+					return nativeDiscoveryAdmission{URL: endpoint.URL, Key: key, Lease: lease}, nil
 				}
 			}
 			return nativeDiscoveryAdmission{}, nativeRoutingFailure("capability_unavailable", nil)
@@ -323,9 +315,9 @@ func (r *nativeDiscoveryRouter) resolve(ctx context.Context, scope DocumentScope
 		call := &nativeDiscoveryCall{Done: make(chan struct{})}
 		r.calls[key] = call
 		r.mu.Unlock()
-		discoveryCtx, cancel := context.WithTimeout(ctx, r.timeout)
-		lease, err := r.fetch(discoveryCtx, scope, credential, floor)
-		cancel()
+		// Discovery consumes the initiating operation's original request budget.
+		// A separate fetch timeout would shorten it; native dispatch cannot renew it.
+		lease, err := r.fetch(ctx, scope, credential, floor)
 		r.mu.Lock()
 		if err == nil {
 			current := r.floors[scope]
@@ -336,7 +328,7 @@ func (r *nativeDiscoveryRouter) resolve(ctx context.Context, scope DocumentScope
 			} else if !lease.valid(r.now()) {
 				err = nativeRoutingFailure("discovery_expired", nil)
 			} else {
-				r.floors[scope] = nativeDiscoveryFloor{Authority: lease.Document.Authority, Revision: lease.Document.Revision, RefreshSeconds: lease.Document.RefreshSeconds}
+				r.floors[scope] = nativeDiscoveryFloor{Authority: lease.Document.Authority, Revision: lease.Document.Revision}
 				if len(r.leases) >= nativeDiscoveryCacheLimit {
 					var oldestKey nativeDiscoveryKey
 					oldest := ^uint64(0)
@@ -349,9 +341,6 @@ func (r *nativeDiscoveryRouter) resolve(ctx context.Context, scope DocumentScope
 				}
 				r.serial++
 				lease.Used = r.serial
-				if previous.Invalidated {
-					lease.Failed = maps.Clone(previous.Failed)
-				}
 				r.leases[key] = lease
 			}
 		}
@@ -366,87 +355,6 @@ func (r *nativeDiscoveryRouter) resolve(ctx context.Context, scope DocumentScope
 			return nativeDiscoveryAdmission{}, err
 		}
 	}
-}
-
-// resolveHosted retains native admission errors, but uses the Atlas proxy when
-// its native producer is unavailable. The proxy never grants native capabilities.
-func (r *nativeDiscoveryRouter) resolveHosted(ctx context.Context, scope DocumentScope, credential string, required nativeRequirements) (nativeDiscoveryAdmission, error) {
-	fingerprint, err := nativeCredentialFingerprint(credential)
-	if err != nil {
-		return nativeDiscoveryAdmission{}, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nativeDiscoveryAdmission{}, err
-	}
-	key := nativeDiscoveryKey{Scope: scope, Credential: fingerprint}
-	r.mu.Lock()
-	previous := r.leases[key]
-	if previous.Proxy && previous.valid(r.now()) {
-		r.serial++
-		previous.Used = r.serial
-		r.leases[key] = previous
-		r.mu.Unlock()
-		return nativeDiscoveryAdmission{URL: nativeProxyOrigin, Key: key, Lease: previous}, nil
-	}
-	r.mu.Unlock()
-	admission, err := r.resolve(ctx, scope, credential, required)
-	if err == nil {
-		return admission, nil
-	}
-	if ctx.Err() != nil {
-		return nativeDiscoveryAdmission{}, err
-	}
-	var apiError *APIError
-	var routingError *NativeRoutingError
-	unavailable := errors.As(err, &apiError) && (apiError.Status == 404 || apiError.Status >= 500)
-	if errors.As(err, &routingError) {
-		unavailable = routingError.Code == "discovery_unavailable" || routingError.Code == "invalid_discovery" || routingError.Code == "discovery_expired" || routingError.Code == "regions_unavailable"
-	}
-	if !unavailable {
-		return nativeDiscoveryAdmission{}, err
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	// A concurrent successful refresh takes precedence over a fallback decision.
-	if current, ok := r.leases[key]; ok && !current.Proxy && !current.Invalidated && current.valid(r.now()) && r.floors[scope].accepts(current.Document) && len(current.Failed) == 0 {
-		for _, endpoint := range current.Document.Endpoints {
-			if endpoint.Capabilities.supports(required) {
-				return nativeDiscoveryAdmission{URL: endpoint.URL, Key: key, Lease: current}, nil
-			}
-		}
-	}
-	refresh := nativeDefaultRefresh
-	if cadence := r.floors[scope].RefreshSeconds; cadence > 0 {
-		refresh = time.Duration(cadence) * time.Second
-	}
-	lease := nativeDiscoveryLease{Proxy: true, Document: previous.Document, Deadline: r.now().Add(refresh)}
-	if len(r.leases) >= nativeDiscoveryCacheLimit {
-		return nativeDiscoveryAdmission{}, nativeRoutingFailure("routing_capacity", nil)
-	}
-	r.serial++
-	lease.Used = r.serial
-	r.leases[key] = lease
-	return nativeDiscoveryAdmission{URL: nativeProxyOrigin, Key: key, Lease: lease}, nil
-}
-
-// fail changes subsequent routing even when the failed operation cannot be replayed.
-func (r *nativeDiscoveryRouter) fail(admission nativeDiscoveryAdmission) {
-	if admission.Lease.Proxy {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	lease, ok := r.leases[admission.Key]
-	if !ok || lease.Proxy || lease.Document.Revision != admission.Lease.Document.Revision || lease.Document.Authority != admission.Lease.Document.Authority {
-		return
-	}
-	lease.Failed = maps.Clone(lease.Failed)
-	if lease.Failed == nil {
-		lease.Failed = make(map[string]bool)
-	}
-	lease.Failed[admission.URL] = true
-	lease.Invalidated = true
-	r.leases[admission.Key] = lease
 }
 
 func (r *nativeDiscoveryRouter) fetch(ctx context.Context, scope DocumentScope, credential string, floor nativeDiscoveryFloor) (nativeDiscoveryLease, error) {
@@ -470,8 +378,17 @@ func (r *nativeDiscoveryRouter) fetch(ctx context.Context, scope DocumentScope, 
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, nativeDiscoveryBodyLimit))
-		return nativeDiscoveryLease{}, errorFromResponse("native.discovery", http.MethodGet, "/api/v1/discovery", response.StatusCode, response.Header, body)
+		// The observed HTTP status remains authoritative even when diagnostics
+		// cannot be read safely. Never decode a partial or oversized error body,
+		// or expose a reader error that could contain credentials.
+		var body []byte
+		if response.ContentLength <= nativeDiscoveryBodyLimit {
+			value, readErr := io.ReadAll(io.LimitReader(response.Body, nativeDiscoveryBodyLimit+1))
+			if readErr == nil && len(value) <= nativeDiscoveryBodyLimit {
+				body = value
+			}
+		}
+		return nativeDiscoveryLease{}, nativeDiscoveryResponseError(response.StatusCode, response.Header, body)
 	}
 	if response.ContentLength > nativeDiscoveryBodyLimit {
 		return nativeDiscoveryLease{}, nativeRoutingFailure("invalid_discovery", fmt.Errorf("discovery response byte limit"))
@@ -482,9 +399,6 @@ func (r *nativeDiscoveryRouter) fetch(ctx context.Context, scope DocumentScope, 
 	}
 	if len(body) > nativeDiscoveryBodyLimit {
 		return nativeDiscoveryLease{}, nativeRoutingFailure("invalid_discovery", fmt.Errorf("discovery response byte limit"))
-	}
-	if response.StatusCode != http.StatusOK {
-		return nativeDiscoveryLease{}, errorFromResponse("native.discovery", http.MethodGet, "/api/v1/discovery", response.StatusCode, response.Header, body)
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
@@ -510,4 +424,39 @@ func (r *nativeDiscoveryRouter) fetch(ctx context.Context, scope DocumentScope, 
 		return nativeDiscoveryLease{}, nativeRoutingFailure("discovery_expired", nil)
 	}
 	return lease, nil
+}
+
+// nativeDiscoveryResponseError retains status and recognized Atlas metadata,
+// never arbitrary producer text. Native credentials are canonical tbk1 values;
+// the bounded correlation identifier grammar excludes their periods and spaces.
+func nativeDiscoveryResponseError(status int, headers http.Header, body []byte) *APIError {
+	safeHeaders := make(http.Header)
+	requestID := headers.Get("X-Request-ID")
+	if len(requestID) <= 128 && nativeDiscoveryRequestID.MatchString(requestID) && !strings.Contains(strings.ToLower(requestID), "tbk1") {
+		safeHeaders.Set("X-Request-ID", requestID)
+	}
+	if retryAfter := headers.Get("Retry-After"); len(retryAfter) <= 128 {
+		safeHeaders.Set("Retry-After", retryAfter)
+	}
+	apiError := errorFromResponse("native.discovery", http.MethodGet, "/api/v1/discovery", status, safeHeaders, nil)
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) != nil {
+		return apiError
+	}
+	// Only these source-recognized status/code pairs refine the safe default.
+	// Message, fix, raw body, JSON correlation fields and placement are discarded
+	// instead of redacted, so encoded producer text cannot survive diagnostics.
+	switch {
+	case status == http.StatusForbidden && envelope.Error.Code == "discovery_forbidden":
+		apiError.Code = "discovery_forbidden"
+	case (status == http.StatusNotFound || status == http.StatusServiceUnavailable) && envelope.Error.Code == "discovery_unavailable":
+		apiError.Code = "discovery_unavailable"
+	case status == http.StatusServiceUnavailable && envelope.Error.Code == "no_eligible_region":
+		apiError.Code = "no_eligible_region"
+	}
+	return apiError
 }

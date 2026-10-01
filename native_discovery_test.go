@@ -31,14 +31,6 @@ func nativeDiscoveryFixture(t *testing.T) ([]byte, nativeDiscoveryDocument) {
 	if err := decodeNativeJSON(body, &document); err != nil {
 		t.Fatal(err)
 	}
-	// Derive current host conformance from the immutable archived receiver capture.
-	for i := range document.Endpoints {
-		document.Endpoints[i].URL = "https://" + strings.ToLower(document.Endpoints[i].Region) + ".api.terrascale.tech"
-	}
-	body, err = json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
 	return body, document
 }
 func nativeDiscoveryTestKey(value byte) string {
@@ -81,10 +73,10 @@ func nativeDiscoveryJoinContext(ctx context.Context) (context.Context, <-chan st
 	return nativeDiscoveryJoinedContext{Context: ctx, onWait: sync.OnceFunc(func() { close(joined) })}, joined
 }
 
-func TestNativeDiscoveryActualReceiverArtifacts(t *testing.T) {
+func TestNativeDiscoveryPinnedReceiverArtifacts(t *testing.T) {
 	pins := map[string]string{
-		"native-discovery-success.json":           "d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0",
-		"native-discovery-success-receipt.json":   "c34ed011a4f10065b3fba4168b0a940eb7f3ef945a70414ae8210908ad8080ba",
+		"native-discovery-success.json":           "82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec",
+		"native-discovery-success-receipt.json":   "d56ccaaef70693c5df168a7ae1c8c854f0c504c331d551d4273000fdac6c246d",
 		"native-discovery-forbidden.json":         "3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c",
 		"native-discovery-forbidden-receipt.json": "2b63d132df8b304286ebb0e9b4ab967a317544e8128f9105c7d71a138721528f",
 		"native-wire-identity.json":               "b789d6fb7782e34ece3b516139856f2b6d2dea0543436820eefa50ff31355538",
@@ -117,7 +109,7 @@ func TestNativeDiscoveryCapturesCanonicalKeyWithoutAmbientHeaders(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, host := range []string{"atlas", "gru"} {
-		origin, _ := url.Parse("https://" + host + ".terrascale.tech")
+		origin, _ := url.Parse("https://" + host + ".api.terrascale.tech")
 		jar.SetCookies(origin, []*http.Cookie{{Name: "ambient", Value: "cookie"}})
 	}
 	transport := pinningRoundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -259,7 +251,7 @@ func TestNativeDiscoveryClosedResponseValidation(t *testing.T) {
 				}
 				return nativeDiscoveryResponse(200, changed), nil
 			}))
-			_, err = client.nativeRouter.resolve(t.Context(), fixture.Scope.documentScope(), nativeDiscoveryTestKey(5), nativeRead)
+			_, err = client.Documents.Get(t.Context(), fixture.Scope.documentScope(), nativeTestCollection, nativeTestDocument)
 			assertNativeRoutingCode(t, err, "invalid_discovery")
 		})
 	}
@@ -271,7 +263,7 @@ func TestNativeDiscoveryClosedResponseValidation(t *testing.T) {
 	}
 	for _, changed := range malformed {
 		client := nativeDiscoveryClient(t, pinningRoundTripperFunc(func(*http.Request) (*http.Response, error) { return nativeDiscoveryResponse(200, changed), nil }))
-		_, err := client.nativeRouter.resolve(t.Context(), fixture.Scope.documentScope(), nativeDiscoveryTestKey(5), nativeRead)
+		_, err := client.Documents.Get(t.Context(), fixture.Scope.documentScope(), nativeTestCollection, nativeTestDocument)
 		assertNativeRoutingCode(t, err, "invalid_discovery")
 	}
 }
@@ -754,7 +746,7 @@ func TestNativeDiscoveryHonorsActualErrorsAndNoRedirects(t *testing.T) {
 				response.ContentLength = test.length
 				return response, nil
 			}))
-			_, err := client.nativeRouter.resolve(t.Context(), fixture.Scope.documentScope(), nativeDiscoveryTestKey(5), nativeRead)
+			_, err := client.Documents.Get(t.Context(), fixture.Scope.documentScope(), nativeTestCollection, nativeTestDocument)
 			if err == nil || calls != 1 {
 				t.Fatalf("discovery denial/redirect accepted: %v calls%d", err, calls)
 			}
@@ -947,7 +939,7 @@ func TestNativeDiscoveryCommitPreservesUncertaintyAndNeverReplays(t *testing.T) 
 	request.Writes[0].Value.Fields[0].Value = BoolValue(false)
 	request.TransactionID.Nonce[0] ^= 1
 	_, err = uncertain.Operation.Retry(t.Context())
-	if !errors.As(err, &uncertain) || dataCalls != 2 || atlasCalls != 2 {
+	if !errors.As(err, &uncertain) || dataCalls != 2 || atlasCalls != 1 {
 		t.Fatal("explicit frozen retry failed")
 	}
 	client.cfg.DataAccessToken = ""
@@ -989,6 +981,44 @@ func TestNativeDiscoveryLeaseEvictionPreservesFloor(t *testing.T) {
 	}
 	if _, exists := client.nativeRouter.leases[oldest]; exists {
 		t.Fatal("lease eviction did not select oldest")
+	}
+}
+
+func TestNativeCommitCanceledAfterAdmissionNeverDispatches(t *testing.T) {
+	body, fixture := nativeDiscoveryFixture(t)
+	scope := fixture.Scope.documentScope()
+	calls := 0
+	client := nativeDiscoveryClient(t, pinningRoundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.Host != "atlas.terrascale.tech" {
+			t.Fatal("canceled commit reached native transport")
+		}
+		return nativeDiscoveryResponse(200, body), nil
+	}))
+	if _, err := client.nativeRouter.resolve(t.Context(), scope, client.nativeToken(), nativeWrite); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	now := client.nativeRouter.now()
+	clockReads := 0
+	client.nativeRouter.now = func() time.Time {
+		clockReads++
+		if clockReads == 2 { // cached resolution, then the final admission check
+			cancel()
+		}
+		return now
+	}
+	write := nativeTestWrite()
+	write.Condition.Kind = ConditionNone
+	request, err := NewCommitRequest(scope, nativeTestID, MutationAuthority{Mode: AuthorityLeaderless}, []DocumentWrite{write})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Documents.Commit(ctx, scope, request)
+	var commit *CommitError
+	if !errors.Is(err, context.Canceled) || !errors.As(err, &commit) || commit.Uncertain || calls != 1 {
+		t.Fatalf("pre-send cancellation lost certainty: %v calls=%d", err, calls)
 	}
 }
 
@@ -1109,7 +1139,7 @@ func TestNativeDiscoveryGenericZeroRequestRetainsActualDenial(t *testing.T) {
 		}
 		return nativeDiscoveryResponse(403, forbidden), nil
 	}))
-	_, err = client.nativeRouter.resolve(t.Context(), scope, nativeDiscoveryTestKey(5), nativeRead)
+	_, err = client.Documents.Get(t.Context(), scope, nativeTestCollection, nativeTestDocument)
 	var actual *APIError
 	if !errors.As(err, &actual) || actual.Status != 403 || actual.Code != "discovery_forbidden" {
 		t.Fatalf("zero actual denial changed: %v", err)
@@ -1117,7 +1147,7 @@ func TestNativeDiscoveryGenericZeroRequestRetainsActualDenial(t *testing.T) {
 	fixture.Scope.Shard = 0
 	body, _ := json.Marshal(fixture)
 	client = nativeDiscoveryClient(t, pinningRoundTripperFunc(func(*http.Request) (*http.Response, error) { return nativeDiscoveryResponse(200, body), nil }))
-	_, err = client.nativeRouter.resolve(t.Context(), scope, nativeDiscoveryTestKey(5), nativeRead)
+	_, err = client.Documents.Get(t.Context(), scope, nativeTestCollection, nativeTestDocument)
 	assertNativeRoutingCode(t, err, "invalid_discovery")
 }
 
