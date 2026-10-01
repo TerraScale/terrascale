@@ -193,7 +193,9 @@ public sealed class NativeDiscoveryRouterTests
     }
 
     [Test]
-    public async Task PublisherConflictAndDuplicateWireFieldsAreRejected()
+    [Arguments("41")]
+    [Arguments("42")]
+    public async Task PublisherConflictAndDuplicateWireFieldsAreRejected(string revision)
     {
         var clock = new TestClock();
         var transport = new Transport(Body(clock, Endpoint("GRU")));
@@ -201,6 +203,7 @@ public sealed class NativeDiscoveryRouterTests
         await router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None);
         var conflict = JsonNode.Parse(transport.Body)!;
         conflict["authority"]!["publisher_id"] = "publisher-b";
+        conflict["revision"] = revision;
         transport.Body = conflict.ToJsonString();
         var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential.Replace("AAAA", "AQAA", StringComparison.Ordinal), ["read"], CancellationToken.None));
         await Assert.That(failure.Code).IsEqualTo("routing_observation_regressed");

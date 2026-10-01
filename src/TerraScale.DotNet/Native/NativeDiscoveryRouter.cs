@@ -451,7 +451,7 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
     {
         internal bool Accepts(Document document) => Authority.Deployment == document.Authority.Deployment &&
             Authority.Cell == document.Authority.Cell && document.Authority.Generation >= Authority.Generation && document.Revision >= Revision &&
-            !(document.Authority.Generation == Authority.Generation && document.Revision == Revision && document.Authority.Publisher != Authority.Publisher);
+            !(document.Authority.Generation == Authority.Generation && document.Authority.Publisher != Authority.Publisher);
     }
 
     /// <summary>Disposes an owned discovery transport once; a caller-owned HttpClient remains usable.</summary>

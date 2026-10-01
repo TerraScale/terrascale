@@ -43,6 +43,47 @@ public sealed class NativeBoundaryTests
     }
 
     [Test]
+    public async Task LiteralUnicodeRetainedBodiesAreValidatedWithoutReplacementSerialization()
+    {
+        var commit = NativeCodecTests.CreateCommit("marker");
+        commit = commit with { Writes = [commit.Writes[0], commit.Writes[0] with
+        {
+            Document = "018f0000-0000-7000-8000-000000000006"
+        }] };
+        var small = NativeCodec.EncodeCommit(NativeCodecTests.Scope, commit);
+        // Independent TB-DOC-EFFECT-v1 digest for two 400,000-character UTF-8 values.
+        const string digest = "aa43ee6d10b4e2564c28483341c731922e7b851d976e8eb1cea389a5b3b96254";
+        var body = small.Body.Replace(small.Identity.EffectDigest, digest, StringComparison.Ordinal)
+            .Replace("marker", new string('é', 400_000), StringComparison.Ordinal);
+        var identity = small.Identity with { EffectDigest = digest };
+        await Assert.That(System.Text.Encoding.UTF8.GetByteCount(body)).IsLessThan(NativeCodec.MaximumBodyBytes);
+        using var document = NativeCodec.Parse(body);
+        var decoded = NativeCodec.DecodeCommit(NativeCodecTests.Scope, document.RootElement);
+        await Assert.That(decoded.Writes.Length).IsEqualTo(2);
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        {
+            NativeCodec.EncodeCommit(NativeCodecTests.Scope, decoded);
+            return Task.CompletedTask;
+        });
+
+        using var handler = new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected."));
+        using var client = NativeClientTests.Client(handler);
+        var prepared = client.RestoreCommit(new NativeRetainedOperation(NativeCodecTests.Scope, "https://gru.api.terrascale.tech", identity, body));
+        await Assert.That(prepared.RequestBody).IsEqualTo(body);
+        await Assert.That(prepared.Identity).IsEqualTo(identity);
+        var directory = Directory.CreateTempSubdirectory("terrascale-native-unicode-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "operation.json");
+            await NativeOperationStore.SaveAsync(prepared, path);
+            var retained = await NativeOperationStore.LoadAsync(path);
+            await Assert.That(retained.Identity).IsEqualTo(identity);
+            await Assert.That(client.RestoreCommit(retained).RequestBody).IsEqualTo(body);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Test]
     public async Task QueryEncoderRejectsUninitializedOversizedDuplicateAndDescendingRows()
     {
         var point = new NativePoint(NativePointState.Absent, null, [], []);

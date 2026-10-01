@@ -29,8 +29,8 @@ public static class NativeOperationStore
     public static async Task SaveAsync(NativePreparedCommit prepared, string path, CancellationToken cancellationToken = default)
     {
         using var body = NativeCodec.Parse(prepared.RequestBody);
-        var commit = NativeCodec.DecodeCommit(prepared.Scope, body.RootElement);
-        NativeCodec.RequireIdentity(NativeCodec.EncodeCommit(prepared.Scope, commit).Identity, prepared.Identity);
+        NativeCodec.DecodeCommit(prepared.Scope, body.RootElement, out var identity);
+        NativeCodec.RequireIdentity(identity, prepared.Identity);
         var bytes = Encode(prepared);
         var destination = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(destination)!;
@@ -82,8 +82,8 @@ public static class NativeOperationStore
         }
         var requestBody = root.GetProperty("request_body").GetRawText();
         using var request = NativeCodec.Parse(requestBody);
-        var commit = NativeCodec.DecodeCommit(scope, request.RootElement);
-        return new NativeRetainedOperation(scope, origin, NativeCodec.EncodeCommit(scope, commit).Identity, requestBody);
+        NativeCodec.DecodeCommit(scope, request.RootElement, out var identity);
+        return new NativeRetainedOperation(scope, origin, identity, requestBody);
     }
 
     private static string RetainedString(JsonElement value, string name) => value.ValueKind == JsonValueKind.String
@@ -157,10 +157,16 @@ public static class NativeRecovery
                 }
                 var remaining = deadline - Stopwatch.GetElapsedTime(started);
                 var delay = retryAfter > pollInterval ? retryAfter.Value : pollInterval;
-                if (remaining <= TimeSpan.Zero || delay >= remaining)
+                if (remaining <= TimeSpan.Zero)
                 {
                     failure = new NativeFailure("deadline_exceeded", Transaction: prepared.Identity, MutationOutcome: NativeMutationOutcome.Uncertain);
                     break;
+                }
+                if (delay >= remaining)
+                {
+                    // No further request fits. Observe caller cancellation and
+                    // the real deadline while the remaining budget elapses.
+                    await Task.Delay(Timeout.InfiniteTimeSpan, budget.Token).ConfigureAwait(false);
                 }
                 await Task.Delay(delay, budget.Token).ConfigureAwait(false);
             }

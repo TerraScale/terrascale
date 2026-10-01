@@ -90,6 +90,29 @@ public sealed class NativeClientTests
     }
 
     [Test]
+    [Arguments("commit", "commit_uncertain", 503)]
+    [Arguments("precondition", "precondition_failed", 412)]
+    public async Task CredentialCodeCollisionsRedactDiagnosticsWithoutChangingTheOutcome(string key, string code, int status)
+    {
+        var calls = 0;
+        using var handler = new Handler((_, _) =>
+        {
+            calls++;
+            return Task.FromResult(Json("{\"error\":{\"code\":\"" + code + "\"}}", (HttpStatusCode)status));
+        });
+        using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
+            _ => ValueTask.FromResult(key), TimeSpan.FromSeconds(2), handler);
+        var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+        var result = await client.CommitAsync(prepared);
+        var failure = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
+        await Assert.That(failure.Code).IsEqualTo("invalid_response");
+        await Assert.That(failure.Status).IsEqualTo(status);
+        await Assert.That(failure.Transaction).IsEqualTo(prepared.Identity);
+        await Assert.That(failure.MutationOutcome).IsEqualTo(status == 412 ? NativeMutationOutcome.Rejected : NativeMutationOutcome.Uncertain);
+        await Assert.That(calls).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task OnlyRetainedPreconditionFailureIsARejectedCommitOutcome()
     {
         foreach (var code in new[] { "precondition_failed", "invalid_key", "idempotency_conflict", "commit_uncertain" })

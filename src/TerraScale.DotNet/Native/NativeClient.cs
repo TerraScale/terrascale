@@ -100,8 +100,7 @@ public sealed class NativeClient : IDisposable
         if (retained.Scope != Scope || retained.ExplicitOrigin != explicitOrigin)
             throw new InvalidDataException("Retained native operation belongs to another scope or explicit origin.");
         using var document = NativeCodec.Parse(retained.RequestBody);
-        var commit = NativeCodec.DecodeCommit(Scope, document.RootElement);
-        var identity = NativeCodec.EncodeCommit(Scope, commit).Identity;
+        var commit = NativeCodec.DecodeCommit(Scope, document.RootElement, out var identity);
         NativeCodec.RequireIdentity(identity, retained.Identity);
         return new NativePreparedCommit(owner, Scope, explicitOrigin, identity, retained.RequestBody, CommitCapabilities(commit));
     }
@@ -233,11 +232,12 @@ public sealed class NativeClient : IDisposable
             if (!response.IsSuccessStatusCode)
             {
                 var code = NativeCodec.DecodeError(document.RootElement);
-                if (code.Contains(key, StringComparison.Ordinal)) code = "invalid_response";
-                return Failure<T>(code, status, retryAfter, identity, mutation
+                var outcome = mutation
                     ? code == "precondition_failed" && status == 412 ? NativeMutationOutcome.Rejected
                         : code == "commit_uncertain" ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown
-                    : NativeMutationOutcome.Unknown);
+                    : NativeMutationOutcome.Unknown;
+                if (code.Contains(key, StringComparison.Ordinal)) code = "invalid_response";
+                return Failure<T>(code, status, retryAfter, identity, outcome);
             }
             return new NativeResult<T>.Success(decode(document.RootElement));
         }

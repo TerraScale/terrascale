@@ -93,6 +93,51 @@ public sealed class NativeRecoveryTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task RecoveryWaitsForCancellationOrDeadlineWhenTheNextDelayCannotFit(bool retryAfter, bool cancelCaller)
+    {
+        using var caller = new CancellationTokenSource();
+        var responseSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        NativeTransactionIdentity? identity = null;
+        using var handler = new NativeClientTests.Handler((_, _) =>
+        {
+            calls++;
+            var response = retryAfter
+                ? NativeClientTests.Json("{\"error\":{\"code\":\"rate_limited\"}}", HttpStatusCode.TooManyRequests)
+                : NativeClientTests.Json(NativeCodec.EncodeTransactionStatus(new NativeTransactionStatus(identity!, NativeTransactionState.Pending)));
+            if (retryAfter) response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(10));
+            responseSent.SetResult();
+            return Task.FromResult(response);
+        });
+        using var client = NativeClientTests.Client(handler);
+        var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+        identity = prepared.Identity;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var recovery = NativeRecovery.ResolveAsync(client, prepared, TimeSpan.FromMilliseconds(500),
+            retryAfter ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromSeconds(10), caller.Token);
+        await responseSent.Task;
+        var completedBeforeCancellation = false;
+        if (cancelCaller)
+        {
+            await Task.Delay(30);
+            completedBeforeCancellation = recovery.IsCompleted;
+            caller.Cancel();
+        }
+        var result = await recovery;
+        await Assert.That(completedBeforeCancellation).IsFalse();
+        await Assert.That(result.LastFailure!.Code).IsEqualTo(cancelCaller ? "cancelled" : "deadline_exceeded");
+        await Assert.That(result.LastFailure.Transaction).IsEqualTo(prepared.Identity);
+        await Assert.That(result.LastFailure.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
+        await Assert.That(calls).IsEqualTo(1);
+        if (!cancelCaller)
+            await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(started)).IsGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(400));
+    }
+
+    [Test]
     public async Task RetainedBodyRestoresAcrossClientsWithoutSerializingCredentials()
     {
         var directory = Directory.CreateTempSubdirectory("terrascale-native-retained-");

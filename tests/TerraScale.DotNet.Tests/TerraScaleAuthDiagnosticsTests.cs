@@ -80,6 +80,29 @@ public sealed class TerraScaleAuthDiagnosticsTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task UnknownLengthAuthErrorsRespectTheStreamingByteBoundary(bool overflow)
+    {
+        const string prefix = "{\"error\":\"invalid_client\",\"extra\":\"";
+        const string suffix = "\"}";
+        var length = overflow ? 128 * 1024 : 64 * 1024;
+        var body = Encoding.UTF8.GetBytes(prefix + new string('x', length - prefix.Length - suffix.Length) + suffix);
+        using var stream = new CountingBodyStream(body);
+        using var content = new StreamContent(stream);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        using var http = new HttpClient(new StreamHandler(content));
+        await Assert.That(content.Headers.ContentLength).IsNull();
+
+        var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Users.ListAsync());
+
+        await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(error.ErrorCode).IsEqualTo(overflow ? null : "invalid_client");
+        await Assert.That(stream.BytesRead).IsEqualTo(overflow ? 65_537 : 65_536);
+        await Assert.That(stream.Disposed).IsTrue();
+    }
+
+    [Test]
     public async Task AuthDiscoveryAcceptsOwnerValidRegionsBeyondLaunchFallbacks()
     {
         var hosts = new List<string>();
@@ -107,6 +130,37 @@ public sealed class TerraScaleAuthDiagnosticsTests
                 ReasonPhrase = Secret,
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
             });
+    }
+
+    private sealed class StreamHandler(HttpContent content) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = content });
+    }
+
+    private sealed class CountingBodyStream(byte[] bytes) : Stream
+    {
+        public int BytesRead { get; private set; }
+        public bool Disposed { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var count = Math.Min(bytes.Length - BytesRead, buffer.Length);
+            bytes.AsMemory(BytesRead, count).CopyTo(buffer);
+            BytesRead += count;
+            return ValueTask.FromResult(count);
+        }
+        protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class DiscoveryHandler(List<string> hosts) : HttpMessageHandler

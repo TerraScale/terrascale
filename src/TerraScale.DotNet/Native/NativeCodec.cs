@@ -97,28 +97,29 @@ public static class NativeCodec
     /// <summary>Validates an ordered typed group and computes its exact immutable native body and effect identity.</summary>
     public static (string Body, NativeTransactionIdentity Identity) EncodeCommit(NativeScope scope, NativeCommit commit)
     {
-        ValidateScope(scope);
-        ArgumentNullException.ThrowIfNull(commit);
+        var identity = CommitIdentity(scope, commit);
         var authority = WireAuthority(commit.Authority);
         var transaction = WireTransaction(commit.TransactionId);
-        Bounded(commit.Writes, 1024, 1);
         // Reject oversized aggregate effects before allocating base64 wire
         // strings for every write. The digest walk uses one bounded buffer.
-        var digest = EffectDigest(scope, commit.Authority, commit.Writes);
-        string? previous = null;
         var writes = new List<object>(commit.Writes.Length);
         foreach (var write in commit.Writes)
         {
-            var wire = WireWrite(write, commit.Authority);
-            var order = write.Collection + write.Document;
-            if (previous is not null && string.CompareOrdinal(previous, order) >= 0)
-                throw Invalid("Writes must be strictly sorted by collection and document.");
-            previous = order;
-            writes.Add(wire);
+            writes.Add(WireWrite(write, commit.Authority));
         }
-        var identity = new NativeTransactionIdentity(commit.TransactionId, commit.Authority, digest);
         return (Json(Object(("version", 1), ("transaction_id", transaction), ("authority", authority),
-            ("effect_digest", digest), ("writes", writes))), identity);
+            ("effect_digest", identity.EffectDigest), ("writes", writes))), identity);
+    }
+
+    private static NativeTransactionIdentity CommitIdentity(NativeScope scope, NativeCommit commit)
+    {
+        ValidateScope(scope);
+        ArgumentNullException.ThrowIfNull(commit);
+        _ = WireAuthority(commit.Authority);
+        _ = WireTransaction(commit.TransactionId);
+        Bounded(commit.Writes, 1024, 1);
+        return new NativeTransactionIdentity(commit.TransactionId, commit.Authority,
+            EffectDigest(scope, commit.Authority, commit.Writes));
     }
 
     /// <summary>Encodes status lookup for the original transaction identity.</summary>
@@ -408,7 +409,9 @@ public static class NativeCodec
     }
 
     /// <summary>Decodes a complete actual native commit request and verifies its supplied effect digest.</summary>
-    public static NativeCommit DecodeCommit(NativeScope scope, JsonElement root)
+    public static NativeCommit DecodeCommit(NativeScope scope, JsonElement root) => DecodeCommit(scope, root, out _);
+
+    internal static NativeCommit DecodeCommit(NativeScope scope, JsonElement root, out NativeTransactionIdentity identity)
     {
         Fields(root, ["version", "transaction_id", "authority", "effect_digest", "writes"]);
         Version(root);
@@ -423,8 +426,8 @@ public static class NativeCodec
                 DecodeObserved(raw.GetProperty("observed")), DecodeWriteValue(raw.GetProperty("value"))));
         }
         var commit = new NativeCommit(DecodeTransaction(root.GetProperty("transaction_id")), authority, writes.ToImmutable());
-        var encoded = EncodeCommit(scope, commit);
-        if (encoded.Identity.EffectDigest != Hex(Text(root.GetProperty("effect_digest")), 32, "effect digest"))
+        identity = CommitIdentity(scope, commit);
+        if (identity.EffectDigest != Hex(Text(root.GetProperty("effect_digest")), 32, "effect digest"))
             throw Invalid("Retained body contradicts its canonical effect digest.");
         return commit;
     }
@@ -755,9 +758,14 @@ public static class NativeCodec
             bytes.UInt64(writer.Generation); bytes.Uuid(writer.Writer.Replica); bytes.Hex(writer.Writer.Incarnation);
         }
         bytes.UInt64((ulong)writes.Length);
+        string? previousWrite = null;
         foreach (var write in writes)
         {
             ValidateWriteMetadata(write, authority);
+            var order = write.Collection + write.Document;
+            if (previousWrite is not null && string.CompareOrdinal(previousWrite, order) >= 0)
+                throw Invalid("Writes must be strictly sorted by collection and document.");
+            previousWrite = order;
             bytes.Uuid(write.Collection); bytes.Uuid(write.Document); bytes.UInt64(write.SchemaGeneration); bytes.Hex(write.SchemaDigest);
             bytes.Byte(write.Condition is NativeCondition.None ? (byte)0 : write.Condition is NativeCondition.Absent ? (byte)1 : (byte)2);
             if (write.Condition is NativeCondition.Version version) bytes.Hex(version.Token);
