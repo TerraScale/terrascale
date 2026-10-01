@@ -168,17 +168,27 @@ public sealed class NativeStreamingTests
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
-    private sealed class EofCancellingStream(byte[] bytes, Action cancel) : MemoryStream(bytes)
+    private sealed class EofCancellingStream(byte[] bytes, Action cancel) : Stream
     {
         public TaskCompletionSource DisposalCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly MemoryStream body = new(bytes);
+        public override bool CanRead => true;
         public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            var count = Read(buffer.Span);
+            var count = body.Read(buffer.Span);
             if (count == 0) cancel();
             return ValueTask.FromResult(count);
         }
-        protected override void Dispose(bool disposing) { base.Dispose(disposing); if (disposing) DisposalCompleted.TrySetResult(); }
+        protected override void Dispose(bool disposing) { if (disposing) { body.Dispose(); DisposalCompleted.TrySetResult(); } base.Dispose(disposing); }
     }
 
     private sealed class BodyStream(int remaining, Action? cancel) : Stream

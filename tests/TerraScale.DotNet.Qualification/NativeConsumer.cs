@@ -30,7 +30,7 @@ using (var openApi = await JsonDocument.ParseAsync(stream))
         var request = examples.GetProperty(example.Name).GetProperty("value");
         if (request.GetProperty("effect_digest").GetString() != example.Digest)
             throw new InvalidOperationException("Installed OpenAPI differs from an accepted producer digest.");
-        var commit = NativeCodec.DecodeCommit(scope, request);
+        var commit = NativeCodec.DecodeCommit(scope, request.GetRawText());
         if (NativeCodec.EncodeCommit(scope, commit).Identity.EffectDigest != example.Digest)
             throw new InvalidOperationException("Installed SDK differs from a real producer example digest.");
         var changedIdentity = commit with

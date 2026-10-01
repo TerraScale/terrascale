@@ -190,7 +190,7 @@ public sealed class NativeClient : IDisposable
 
     private string CollectionPath(string collection) => NativeCodec.ScopePath(Scope) + "/collections/" + NativeCodec.CanonicalUuid(collection, "collection");
 
-    private async Task<NativeResult<T>> RequestAsync<T>(string path, HttpMethod method, string? body,
+    internal async Task<NativeResult<T>> RequestAsync<T>(string path, HttpMethod method, string? body,
         Func<JsonElement, T> decode, IReadOnlyCollection<string> capabilities, CancellationToken cancellationToken,
         NativeTransactionIdentity? identity = null, bool mutation = false)
     {
@@ -231,7 +231,14 @@ public sealed class NativeClient : IDisposable
                     phase = "response";
                     sent = true;
                 }
-                return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budgetToken).ConfigureAwait(false);
+                try
+                {
+                    return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budgetToken).ConfigureAwait(false);
+                }
+                catch (TaskCanceledException exception) when (!budgetToken.IsCancellationRequested && exception.InnerException is TimeoutException)
+                {
+                    throw new NativeTransport.HttpTimeoutException();
+                }
             }, budgetToken, NativeTransport.DisposeResource).ConfigureAwait(false);
             await using var responseLifetime = transport.Own(response, budget.Token);
             status = (int)response.StatusCode;
@@ -242,34 +249,38 @@ public sealed class NativeClient : IDisposable
                 response.Content.Headers.ContentEncoding.Count > 0)
                 throw new InvalidDataException("Native response has unsupported media type or encoding.");
             var bytes = await ReadBodyAsync(response, transport, budget.Token).ConfigureAwait(false);
-            budget.Token.ThrowIfCancellationRequested();
-            using var document = NativeCodec.Parse(bytes);
-            if (!response.IsSuccessStatusCode)
+            var success = response.IsSuccessStatusCode;
+            var result = await transport.InvokeAsync(() =>
             {
-                var code = NativeCodec.DecodeError(document.RootElement);
-                budget.Token.ThrowIfCancellationRequested();
-                var outcome = mutation
-                    ? code == "precondition_failed" && status == 412 ? NativeMutationOutcome.Rejected
-                        : code == "commit_uncertain" ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown
-                    : NativeMutationOutcome.Unknown;
-                if (code.Contains(key, StringComparison.Ordinal)) code = "invalid_response";
-                await responseLifetime.DisposeAsync().ConfigureAwait(false);
-                budget.Token.ThrowIfCancellationRequested();
-                return Failure<T>(code, status, retryAfter, identity, outcome);
-            }
-            var decoded = decode(document.RootElement);
+                using var document = NativeCodec.Parse(bytes);
+                if (!success)
+                {
+                    var code = NativeCodec.DecodeError(document.RootElement);
+                    var outcome = mutation
+                        ? code == "precondition_failed" && status == 412 ? NativeMutationOutcome.Rejected
+                            : code == "commit_uncertain" ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown
+                        : NativeMutationOutcome.Unknown;
+                    if (code.Contains(key, StringComparison.Ordinal)) code = "invalid_response";
+                    return Task.FromResult(Failure<T>(code, status, retryAfter, identity, outcome));
+                }
+                return Task.FromResult<NativeResult<T>>(new NativeResult<T>.Success(decode(document.RootElement)));
+            }, budgetToken).ConfigureAwait(false);
             await responseLifetime.DisposeAsync().ConfigureAwait(false);
-            budget.Token.ThrowIfCancellationRequested();
-            return new NativeResult<T>.Success(decoded);
+            budgetToken.ThrowIfCancellationRequested();
+            return result;
         }
         catch (NativeAdmissionException exception)
         {
             return Failure<T>(exception.Code, exception.Status, null, identity, NativeMutationOutcome.Unknown);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (budgetToken.IsCancellationRequested)
         {
             return Failure<T>(cancellationToken.IsCancellationRequested ? "cancelled" : "deadline_exceeded", status, retryAfter,
                 identity, MutationOutcome());
+        }
+        catch (NativeTransport.HttpTimeoutException)
+        {
+            return Failure<T>("deadline_exceeded", status, retryAfter, identity, MutationOutcome());
         }
         catch (Exception exception) when (exception is InvalidDataException or JsonException or FormatException)
         {
@@ -317,22 +328,9 @@ public sealed class NativeClient : IDisposable
         return null;
     }
 
-    private static async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, NativeTransport.Operation transport, CancellationToken cancellationToken)
-    {
-        if (response.Content.Headers.ContentLength > NativeCodec.MaximumBodyBytes) throw new InvalidDataException("Native response exceeds the 4 MiB limit.");
-        var stream = await transport.InvokeAsync(() => response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
-            NativeTransport.DisposeResource).ConfigureAwait(false);
-        using var output = new MemoryStream();
-        var buffer = new byte[81920];
-        while (true)
-        {
-            var count = await transport.InvokeAsync(() => stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
-            if (count == 0) break;
-            if (output.Length + count > NativeCodec.MaximumBodyBytes) throw new InvalidDataException("Native response exceeds the 4 MiB limit.");
-            output.Write(buffer, 0, count);
-        }
-        return output.ToArray();
-    }
+    private static Task<byte[]> ReadBodyAsync(HttpResponseMessage response, NativeTransport.Operation transport, CancellationToken cancellationToken) =>
+        NativeTransport.ReadBodyAsync(response.Content, transport, NativeCodec.MaximumBodyBytes,
+            () => new InvalidDataException("Native response exceeds the 4 MiB limit."), cancellationToken);
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
 
@@ -349,6 +347,71 @@ public sealed class NativeClient : IDisposable
 internal static class NativeTransport
 {
     internal const int MaximumOutstandingOperations = 16;
+
+    internal sealed class HttpTimeoutException : TimeoutException;
+
+    internal static Task<byte[]> ReadBodyAsync(HttpContent content, Operation operation, int limit,
+        Func<Exception> overflow, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength > limit) throw overflow();
+        return operation.InvokeAsync(async () =>
+        {
+            // Copy directly into a bounded destination. ReadAsStreamAsync can
+            // materialize an undeclared custom content body before any check.
+            using var destination = new BoundedBodyStream(limit, overflow, cancellationToken);
+            await content.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return destination.ToArray();
+        }, cancellationToken);
+    }
+
+    private sealed class BoundedBodyStream(int limit, Func<Exception> overflow, CancellationToken token) : Stream
+    {
+        private readonly MemoryStream body = new();
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => body.Length;
+        public override long Position { get => body.Position; set => throw new NotSupportedException(); }
+        internal byte[] ToArray() => body.ToArray();
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            token.ThrowIfCancellationRequested();
+            if (buffer.Length > limit - body.Length) throw overflow();
+            body.Write(buffer);
+        }
+        public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+        public override void WriteByte(byte value)
+        {
+            Span<byte> buffer = stackalloc byte[1];
+            buffer[0] = value;
+            Write(buffer);
+        }
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Write(buffer.Span);
+            return ValueTask.CompletedTask;
+        }
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+        public override void Flush() => token.ThrowIfCancellationRequested();
+        public override Task FlushAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Flush();
+            return Task.CompletedTask;
+        }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) body.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+
 
     // Capacity belongs to the client/router, not process-wide state. A timed-out
     // caller releases its own reference, while callbacks and cleanup retain

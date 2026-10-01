@@ -100,7 +100,6 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         var acquired = false;
         try
         {
-            using var transport = await isolation.StartAsync(deadline.Token).ConfigureAwait(false);
             await state.Fetch.WaitAsync(deadline.Token).ConfigureAwait(false);
             acquired = true;
             var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)));
@@ -116,12 +115,13 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
                     state.Cached = null;
                 }
             }
+            using var transport = await isolation.StartAsync(deadline.Token).ConfigureAwait(false);
             var lease = await FetchAsync(scope, apiKey, transport, deadline.Token, cancellationToken).ConfigureAwait(false);
             state.CredentialDigest = digest;
             state.Cached = lease;
             return Admit(scope, lease, capabilities);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             throw new NativeAdmissionException("discovery_unavailable");
         }
@@ -235,14 +235,25 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
                 deadlineToken.ThrowIfCancellationRequested();
-                return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadlineToken).ConfigureAwait(false);
+                try
+                {
+                    return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadlineToken).ConfigureAwait(false);
+                }
+                catch (TaskCanceledException exception) when (!deadlineToken.IsCancellationRequested && exception.InnerException is TimeoutException)
+                {
+                    throw new NativeTransport.HttpTimeoutException();
+                }
             }, deadlineToken, NativeTransport.DisposeResource).ConfigureAwait(false);
+        }
+        catch (NativeTransport.HttpTimeoutException)
+        {
+            throw new NativeAdmissionException("discovery_unavailable");
         }
         catch (HttpRequestException)
         {
             throw new NativeAdmissionException("discovery_unavailable");
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (deadlineToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             throw new NativeAdmissionException("discovery_unavailable");
         }
@@ -268,7 +279,7 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         {
             throw new NativeAdmissionException("discovery_unavailable");
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (deadlineToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             throw new NativeAdmissionException("discovery_unavailable");
         }
@@ -282,22 +293,9 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
             throw new NativeAdmissionException("discovery_expired");
     }
 
-    private static async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, NativeTransport.Operation transport, CancellationToken cancellationToken)
-    {
-        if (response.Content.Headers.ContentLength > BodyLimit)
-            throw new NativeAdmissionException("invalid_discovery");
-        var stream = await transport.InvokeAsync(() => response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
-            NativeTransport.DisposeResource).ConfigureAwait(false);
-        using var body = new MemoryStream();
-        var buffer = new byte[4096];
-        while (true)
-        {
-            var count = await transport.InvokeAsync(() => stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
-            if (count == 0) return body.ToArray();
-            if (body.Length + count > BodyLimit) throw new NativeAdmissionException("invalid_discovery");
-            body.Write(buffer, 0, count);
-        }
-    }
+    private static Task<byte[]> ReadBodyAsync(HttpResponseMessage response, NativeTransport.Operation transport, CancellationToken cancellationToken) =>
+        NativeTransport.ReadBodyAsync(response.Content, transport, BodyLimit,
+            () => new NativeAdmissionException("invalid_discovery"), cancellationToken);
 
     private static Document ParseDocument(JsonElement root, NativeScope expected)
     {

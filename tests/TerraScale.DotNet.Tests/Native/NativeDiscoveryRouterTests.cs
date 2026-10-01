@@ -338,6 +338,44 @@ public sealed class NativeDiscoveryRouterTests
         }
     }
 
+    [Test]
+    public async Task SameScopeWaitersDoNotReserveTransportCapacityOrBlockCachedScopes()
+    {
+        var clock = new TestClock();
+        var body = Body(clock, Endpoint("GRU"));
+        var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        using var handler = new NativeClientTests.Handler(async (_, token) =>
+        {
+            if (Interlocked.Increment(ref calls) == 1) return NativeClientTests.Json(body);
+            blocked.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            throw new InvalidOperationException("Blocked discovery should be cancelled.");
+        });
+        using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(30), handler, clock);
+        _ = await router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None);
+        using var cancellation = new CancellationTokenSource();
+        var pending = new List<Task<NativeAdmission>>();
+        try
+        {
+            var other = Scope with { Shard = 1 };
+            pending.Add(router.ResolveAsync(other, Credential, ["read"], cancellation.Token).AsTask());
+            await blocked.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            for (var index = 0; index < NativeTransport.MaximumOutstandingOperations; index++)
+                pending.Add(router.ResolveAsync(other, Credential, ["read"], cancellation.Token).AsTask());
+            var cached = await router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None)
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            cached.AssertCurrent();
+            await Assert.That(calls).IsEqualTo(2);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            foreach (var task in pending)
+                await Assert.ThrowsAsync<OperationCanceledException>(() => task.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+    }
+
     private static object Endpoint(string region, bool write = true, int priority = 1) => new
     {
         region,

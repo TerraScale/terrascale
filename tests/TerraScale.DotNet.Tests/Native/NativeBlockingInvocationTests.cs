@@ -16,8 +16,8 @@ public sealed class NativeBlockingInvocationTests
     [Arguments("assert", true)]
     [Arguments("send", false)]
     [Arguments("send", true)]
-    [Arguments("stream", false)]
-    [Arguments("stream", true)]
+    [Arguments("serialize", false)]
+    [Arguments("serialize", true)]
     [Arguments("read", false)]
     [Arguments("read", true)]
     public async Task SynchronousCallbacksCannotHoldTheNativeDeadline(string stage, bool cancelCaller)
@@ -51,7 +51,7 @@ public sealed class NativeBlockingInvocationTests
             var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
             await Assert.That(error.Code).IsEqualTo(cancelCaller ? "cancelled" : "deadline_exceeded");
             await Assert.That(error.Transaction).IsEqualTo(prepared.Identity);
-            var dispatched = stage is "send" or "stream" or "read";
+            var dispatched = stage is "send" or "serialize" or "read";
             await Assert.That(error.MutationOutcome).IsEqualTo(dispatched ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown);
             await Assert.That(calls).IsEqualTo(dispatched ? 1 : 0);
         }
@@ -60,7 +60,7 @@ public sealed class NativeBlockingInvocationTests
             blocker.Release.Set();
             await blocker.Finished.Task.WaitAsync(TimeSpan.FromSeconds(10));
         }
-        if (stage is "send" or "stream" or "read")
+        if (stage is "send" or "serialize" or "read")
         {
             await content.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await Assert.That(retainedBody).IsEqualTo(prepared.RequestBody);
@@ -71,8 +71,8 @@ public sealed class NativeBlockingInvocationTests
     [Test]
     [Arguments("send", false)]
     [Arguments("send", true)]
-    [Arguments("stream", false)]
-    [Arguments("stream", true)]
+    [Arguments("serialize", false)]
+    [Arguments("serialize", true)]
     [Arguments("read", false)]
     [Arguments("read", true)]
     public async Task SynchronousDiscoveryCallbacksReleaseTheScopeOnCancellation(string stage, bool cancelCaller)
@@ -158,12 +158,11 @@ public sealed class NativeBlockingInvocationTests
             stream = new BlockingReadStream(stage, blocker);
             Headers.ContentType = new MediaTypeHeaderValue("application/json");
         }
-        protected override Task<Stream> CreateContentReadStreamAsync()
+        protected override Task SerializeToStreamAsync(Stream destination, TransportContext? context)
         {
-            if (stage == "stream") blocker.Wait();
-            return Task.FromResult(stream);
+            if (stage == "serialize") blocker.Wait();
+            return stream.CopyToAsync(destination);
         }
-        protected override Task SerializeToStreamAsync(Stream destination, TransportContext? context) => throw new NotSupportedException();
         protected override bool TryComputeLength(out long length) { length = 0; return false; }
         protected override void Dispose(bool disposing)
         {
@@ -172,12 +171,24 @@ public sealed class NativeBlockingInvocationTests
         }
     }
 
-    private sealed class BlockingReadStream(string stage, Blocker blocker) : MemoryStream("{}"u8.ToArray())
+    private sealed class BlockingReadStream(string stage, Blocker blocker) : Stream
     {
+        private readonly MemoryStream body = new("{}"u8.ToArray());
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             if (stage == "read") blocker.Wait();
-            return base.ReadAsync(buffer, cancellationToken);
+            return body.ReadAsync(buffer, cancellationToken);
         }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing) { if (disposing) body.Dispose(); base.Dispose(disposing); }
     }
 }

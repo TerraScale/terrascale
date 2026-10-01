@@ -341,7 +341,13 @@ public static class NativeCodec
     }
 
     /// <summary>Strictly decodes a complete native Point without dropping conflict siblings.</summary>
-    public static NativePoint DecodePoint(JsonElement root)
+    public static NativePoint DecodePoint(string json)
+    {
+        using var document = Parse(json);
+        return DecodePoint(document.RootElement);
+    }
+
+    internal static NativePoint DecodePoint(JsonElement root)
     {
         Fields(root, ["version", "state", "state_version", "context", "siblings"]);
         Version(root);
@@ -387,7 +393,13 @@ public static class NativeCodec
     }
 
     /// <summary>Validates every ordered row before returning a bounded native page.</summary>
-    public static NativeQueryPage DecodeQueryPage(JsonElement root, int limit)
+    public static NativeQueryPage DecodeQueryPage(string json, int limit)
+    {
+        using var document = Parse(json);
+        return DecodeQueryPage(document.RootElement, limit);
+    }
+
+    internal static NativeQueryPage DecodeQueryPage(JsonElement root, int limit)
     {
         Fields(root, ["version", "rows"], ["next_cursor"]);
         Version(root);
@@ -407,7 +419,13 @@ public static class NativeCodec
     }
 
     /// <summary>Strictly decodes the complete native durability and transaction receipt.</summary>
-    public static NativeCommitReceipt DecodeReceipt(JsonElement root)
+    public static NativeCommitReceipt DecodeReceipt(string json)
+    {
+        using var document = Parse(json);
+        return DecodeReceipt(document.RootElement);
+    }
+
+    internal static NativeCommitReceipt DecodeReceipt(JsonElement root)
     {
         Fields(root, ["version", "durability", "transaction_id", "event", "commit_sequence", "effect_digest", "authority"]);
         Version(root);
@@ -422,7 +440,13 @@ public static class NativeCodec
     }
 
     /// <summary>Strictly decodes an identity-bound retained or unresolved transaction status.</summary>
-    public static NativeTransactionStatus DecodeStatus(JsonElement root)
+    public static NativeTransactionStatus DecodeStatus(string json)
+    {
+        using var document = Parse(json);
+        return DecodeStatus(document.RootElement);
+    }
+
+    internal static NativeTransactionStatus DecodeStatus(JsonElement root)
     {
         Fields(root, ["version", "state", "transaction_id", "authority", "effect_digest", "outcome"]);
         Version(root);
@@ -458,7 +482,13 @@ public static class NativeCodec
     }
 
     /// <summary>Accepts only the published closed native error-code set.</summary>
-    public static string DecodeError(JsonElement root)
+    public static string DecodeError(string json)
+    {
+        using var document = Parse(json);
+        return DecodeError(document.RootElement);
+    }
+
+    internal static string DecodeError(JsonElement root)
     {
         Fields(root, ["error"]);
         var error = root.GetProperty("error");
@@ -495,7 +525,13 @@ public static class NativeCodec
     }
 
     /// <summary>Decodes a complete actual native commit request and verifies its supplied effect digest.</summary>
-    public static NativeCommit DecodeCommit(NativeScope scope, JsonElement root) => DecodeCommit(scope, root, out _);
+    public static NativeCommit DecodeCommit(NativeScope scope, string json)
+    {
+        using var document = Parse(json);
+        return DecodeCommit(scope, document.RootElement);
+    }
+
+    internal static NativeCommit DecodeCommit(NativeScope scope, JsonElement root) => DecodeCommit(scope, root, out _);
 
     internal static NativeCommit DecodeCommit(NativeScope scope, JsonElement root, out NativeTransactionIdentity identity)
     {

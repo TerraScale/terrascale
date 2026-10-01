@@ -102,7 +102,7 @@ internal static class NativeChecks
             var raw = vector.GetProperty("scope");
             var scope = new NativeScope(raw.GetProperty("tenant").GetString()!, raw.GetProperty("database").GetString()!,
                 ulong.Parse(raw.GetProperty("shard").GetString()!, CultureInfo.InvariantCulture));
-            var commit = NativeCodec.DecodeCommit(scope, vector.GetProperty("request"));
+            var commit = NativeCodec.DecodeCommit(scope, vector.GetProperty("request").GetRawText());
             Require(NativeCodec.EncodeCommit(scope, commit).Identity.EffectDigest == vector.GetProperty("effect_digest").GetString(),
                 "Packaged native codec differs from an actual published effect vector.");
         }
@@ -209,7 +209,7 @@ internal static class NativeChecks
                 return Json(NativeCodec.EncodeTransactionStatus(new NativeTransactionStatus(identity!, NativeTransactionState.Committed, receipt)));
             }
             Require(request.RequestUri.AbsolutePath == commitPath, "Public client used an undocumented route.");
-            var commit = NativeCodec.DecodeCommit(Scope, body.RootElement);
+            var commit = NativeCodec.DecodeCommit(Scope, body.RootElement.GetRawText());
             identity = NativeCodec.EncodeCommit(Scope, commit).Identity;
             receipt = new NativeCommitReceipt(NativeDurability.LocalDurable, identity,
                 new NativeEvent(Scope.Database, Scope.Shard, "88888888-8888-8888-8888-888888888888", new string('9', 32), 1), 1);
