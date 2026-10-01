@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
@@ -1064,9 +1065,27 @@ public sealed class TerraScaleClient
         var failedRegions = new HashSet<string>(StringComparer.Ordinal);
         var routing = TerraScaleRequestRouting.Classify(method, requestUri, router);
 
+        HttpResponseMessage? pendingResponse = null;
+        ExceptionDispatchInfo? pendingException = null;
+        try
+        {
         while (true)
         {
-            var routedBase = await ResolveRoutedBaseAsync(routing, failedRegions, requestCancellationToken).ConfigureAwait(false);
+            var resolution = await ResolveRoutedBaseAsync(routing, failedRegions, requestCancellationToken).ConfigureAwait(false);
+            if (resolution.Exhausted)
+            {
+                if (pendingResponse is { } finalResponse)
+                {
+                    pendingResponse = null;
+                    return finalResponse;
+                }
+                pendingException?.Throw();
+                throw new InvalidOperationException("Exhausted regional routing has no retained failure.");
+            }
+            pendingResponse?.Dispose();
+            pendingResponse = null;
+            pendingException = null;
+            var routedBase = resolution.Base;
             using var request = await CreateRequestAsync(
                 method,
                 requestUri,
@@ -1096,33 +1115,27 @@ public sealed class TerraScaleClient
                 if (response.StatusCode == HttpStatusCode.MisdirectedRequest)
                 {
                     var adopted = !repairedMisdirect && TryAdoptPlacement(response, routing);
-                    var alternative = await TryFailoverAsync(routing, routedBase, failedRegions,
-                        CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry), requestCancellationToken, response).ConfigureAwait(false);
+                    var alternative = TryFailover(routing, routedBase, failedRegions);
                     if (!repairedMisdirect && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) && (alternative || adopted))
                     {
                         repairedMisdirect = true;
-                        response.Dispose();
+                        pendingResponse = response;
                         continue;
                     }
                 }
 
                 if ((int)response.StatusCode >= 500)
                 {
-                    var alternative = await TryFailoverAsync(routing, routedBase, failedRegions,
-                        CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry), requestCancellationToken, response).ConfigureAwait(false);
+                    var alternative = TryFailover(routing, routedBase, failedRegions);
                     if (alternative && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) &&
                         (GetRetryAfter(response) ?? TimeSpan.Zero) <= MaxRetryAfter)
                     {
                         var failoverDelay = GetRetryAfter(response) ?? TimeSpan.Zero;
-                        response.Dispose();
+                        pendingResponse = response;
                         await DelayRetryAsync(failoverDelay, requestCancellationToken).ConfigureAwait(false);
                         continue;
                     }
-
-                    if (!alternative && routedBase?.Region is not null)
-                    {
-                        return response;
-                    }
+                    if (!alternative && routedBase?.Region is not null) return response;
                 }
 
                 if (!ShouldRetryResponse(response, method, idempotencyKey, attempt, allowUnkeyedPutRetry))
@@ -1144,10 +1157,10 @@ public sealed class TerraScaleClient
             catch (Exception exception) when (exception is HttpRequestException ||
                 exception is OperationCanceledException && !requestCancellationToken.IsCancellationRequested)
             {
-                var alternative = await TryFailoverAsync(routing, routedBase, failedRegions,
-                        CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry), requestCancellationToken).ConfigureAwait(false);
+                var alternative = TryFailover(routing, routedBase, failedRegions);
                 if (alternative && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry))
                 {
+                    pendingException = ExceptionDispatchInfo.Capture(exception);
                     continue;
                 }
 
@@ -1163,6 +1176,11 @@ public sealed class TerraScaleClient
 
             attempt++;
         }
+        }
+        finally
+        {
+            pendingResponse?.Dispose();
+        }
     }
 
     /// <summary>
@@ -1172,31 +1190,28 @@ public sealed class TerraScaleClient
     /// routes, and the configured origin for product routes. A null result keeps
     /// the configured origin — the last resort when discovery cannot answer.
     /// </summary>
-    private async Task<(Uri BaseAddress, string? Region)?> ResolveRoutedBaseAsync(
+    private async Task<((Uri BaseAddress, string? Region)? Base, bool Exhausted)> ResolveRoutedBaseAsync(
         TerraScaleRequestRouting routing,
         IReadOnlySet<string> failedRegions,
         CancellationToken cancellationToken)
     {
         if (router is null)
         {
-            return null;
+            return (null, false);
         }
 
         switch (routing.Kind)
         {
             case TerraScaleRouteKind.ConfiguredOrigin:
-                return null;
+                return (null, false);
             case TerraScaleRouteKind.DiscoveryOrigin:
-                return (router.DiscoveryOrigin, null);
+                return ((router.DiscoveryOrigin, null), false);
             case TerraScaleRouteKind.Database:
-                if (await router.ResolveBaseAsync(routing.Database!, routing.NeedsWrite, failedRegions, cancellationToken).ConfigureAwait(false) is { } discovered)
-                {
-                    return (discovered.BaseAddress, discovered.Region);
-                }
-
-                return null;
+                var resolution = await router.ResolveAttemptAsync(
+                    routing.Database!, routing.NeedsWrite, failedRegions, cancellationToken).ConfigureAwait(false);
+                return (resolution.Base is { } discovered ? (discovered.BaseAddress, discovered.Region) : null, resolution.Exhausted);
             default:
-                return null;
+                return (null, false);
         }
     }
 
@@ -1240,9 +1255,7 @@ public sealed class TerraScaleClient
         }
     }
 
-    private async Task<bool> TryFailoverAsync(
-        TerraScaleRequestRouting routing, (Uri BaseAddress, string? Region)? routedBase,
-        HashSet<string> failedRegions, bool allowFailover, CancellationToken cancellationToken, HttpResponseMessage? response = null)
+    private bool TryFailover(TerraScaleRequestRouting routing, (Uri BaseAddress, string? Region)? routedBase, HashSet<string> failedRegions)
     {
         if (router is null || routing.Database is null || routedBase is not ({ }, { } region) ||
             !failedRegions.Add(region))
@@ -1251,16 +1264,7 @@ public sealed class TerraScaleClient
         }
 
         router.ReportRegionFailure(routing.Database, region);
-        try
-        {
-            return allowFailover && await router.HasAlternativeAsync(
-                routing.Database, failedRegions, routing.NeedsWrite, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            response?.Dispose();
-            throw;
-        }
+        return router.HasAlternative(routing.Database, failedRegions, routing.NeedsWrite);
     }
 
     private async ValueTask<HttpRequestMessage> CreateRequestAsync(
