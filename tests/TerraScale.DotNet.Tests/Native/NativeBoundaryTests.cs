@@ -360,6 +360,51 @@ public sealed class NativeBoundaryTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RecoveryLoadRejectsOwnerPrivateFilesInWritableParents(bool groupWritable)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var directory = Directory.CreateTempSubdirectory("terrascale-native-parent-");
+        try
+        {
+            using var client = NativeClientTests.Client(new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected.")));
+            var path = Path.Combine(directory.FullName, "operation.json");
+            var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+            await NativeOperationStore.SaveAsync(prepared, path);
+            await Assert.That((await NativeOperationStore.LoadAsync(path)).Identity).IsEqualTo(prepared.Identity);
+            File.SetUnixFileMode(directory.FullName, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                (groupWritable ? UnixFileMode.GroupWrite : UnixFileMode.OtherWrite));
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(path));
+            await Assert.That(error!.Message).IsEqualTo("Native operation directory must prevent changes by other users.");
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Test]
+    public async Task RecoveryReadRemainsBoundToTheValidatedDirectoryAfterPathReplacement()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Directory.CreateTempSubdirectory("terrascale-native-read-anchor-");
+        try
+        {
+            var original = Path.Combine(root.FullName, "original");
+            var moved = Path.Combine(root.FullName, "moved");
+            Directory.CreateDirectory(original);
+            await File.WriteAllTextAsync(Path.Combine(original, "operation.json"), "original");
+            using var parent = NativeOperationDirectory.Open(original);
+            Directory.Move(original, moved);
+            Directory.CreateDirectory(original);
+            await File.WriteAllTextAsync(Path.Combine(original, "operation.json"), "replacement");
+            using var handle = parent.OpenRead("operation.json");
+            using var stream = new FileStream(handle, FileAccess.Read);
+            using var reader = new StreamReader(stream);
+            await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("original");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Test]
     public async Task RecoveryLoadRejectsOwnerPrivateFifosAndDirectories()
     {
         if (OperatingSystem.IsWindows()) return;
@@ -402,7 +447,9 @@ public sealed class NativeBoundaryTests
             var report = await stdout + await stderr;
             if (probe.ExitCode != 0 || !report.Contains("FIFO_PROBE_READY", StringComparison.Ordinal))
                 throw new InvalidOperationException("FIFO recovery probe failed: " + report);
-            await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(directory.FullName));
+            var nested = Directory.CreateDirectory(Path.Combine(directory.FullName, "nested"));
+            var invalidDirectory = await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(nested.FullName));
+            await Assert.That(invalidDirectory!.Message).IsEqualTo("Native operation file must be a regular file.");
         }
         finally { directory.Delete(recursive: true); }
     }

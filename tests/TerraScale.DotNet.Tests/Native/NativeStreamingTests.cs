@@ -117,7 +117,7 @@ public sealed class NativeStreamingTests
         using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
             _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2), handler);
         var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
-        var result = await client.CommitAsync(prepared, cancellation.Token);
+        var result = await client.CommitAsync(prepared, cancellation.Token).WaitAsync(TimeSpan.FromSeconds(10));
         var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
         await Assert.That(error.Code).IsEqualTo(mode is "declared" or "overflow" ? "invalid_response"
             : mode == "cancel" ? "cancelled" : "deadline_exceeded");

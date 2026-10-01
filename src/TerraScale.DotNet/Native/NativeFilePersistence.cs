@@ -55,7 +55,8 @@ internal static partial class NativeFilePersistence
             return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous);
         }
 
-        var handle = OpenUnix(path, directory: false);
+        using var parent = NativeOperationDirectory.Open(Path.GetDirectoryName(path)!);
+        var handle = parent.OpenRead(Path.GetFileName(path));
         try
         {
             // Inspect the opened inode, never a pathname that can be replaced
@@ -63,6 +64,8 @@ internal static partial class NativeFilePersistence
             if (FStat(handle, out var status) != 0) throw IoError("Cannot inspect native operation file type.");
             if ((status.Mode & 0xF000) != 0x8000)
                 throw new InvalidDataException("Native operation file must be a regular file.");
+            if (status.Uid != GetEffectiveUid())
+                throw new InvalidDataException("Native operation file must belong to the current user.");
             var mode = File.GetUnixFileMode(handle);
             if ((mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
                 UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0)
@@ -76,14 +79,26 @@ internal static partial class NativeFilePersistence
         }
     }
 
+    internal static void ValidateDirectory(SafeFileHandle parent)
+    {
+        if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Directory-descriptor persistence requires Unix.");
+        if (FStat(parent, out var status) != 0) throw IoError("Cannot inspect native operation directory owner.");
+        if (status.Uid != 0 && status.Uid != GetEffectiveUid())
+            throw new InvalidDataException("Native operation directory must have a trusted owner.");
+        if ((File.GetUnixFileMode(parent) & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0)
+            throw new InvalidDataException("Native operation directory must prevent changes by other users.");
+    }
+
+    internal static int ReadFlags(bool directory) => OperatingSystem.IsLinux() ? 0x20000 | 0x80000 | 0x800 | (directory ? 0x10000 : 0)
+        : OperatingSystem.IsMacOS() ? 0x100 | 0x1000000 | 0x4 | (directory ? 0x100000 : 0)
+        : throw new PlatformNotSupportedException("Native operation persistence supports Linux, macOS and Windows.");
+
     internal static SafeFileHandle OpenUnix(string path, bool directory)
     {
         // O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, plus O_DIRECTORY
         // for fsync. Nonblocking open also prevents a substituted FIFO hanging.
 
-        var flags = OperatingSystem.IsLinux() ? 0x20000 | 0x80000 | 0x800 | (directory ? 0x10000 : 0)
-            : OperatingSystem.IsMacOS() ? 0x100 | 0x1000000 | 0x4 | (directory ? 0x100000 : 0)
-            : throw new PlatformNotSupportedException("Native operation persistence supports Linux, macOS and Windows.");
+        var flags = ReadFlags(directory);
         var descriptor = Open(path, flags);
         if (descriptor < 0)
         {
@@ -130,6 +145,9 @@ internal static partial class NativeFilePersistence
     [LibraryImport("System.Native", EntryPoint = "SystemNative_FStat", SetLastError = true)]
     private static partial int FStat(SafeFileHandle descriptor, out NativeFileStatus status);
 
+    [LibraryImport("System.Native", EntryPoint = "SystemNative_GetEUid")]
+    private static partial uint GetEffectiveUid();
+
     [LibraryImport("kernel32.dll", EntryPoint = "MoveFileExW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool MoveFileEx(string existing, string destination, uint flags);
@@ -148,26 +166,48 @@ internal sealed partial class NativeOperationDirectory : IDisposable
         var parent = NativeFilePersistence.OpenUnix(path, directory: true);
         try
         {
-            if ((File.GetUnixFileMode(parent) & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0)
-                throw new InvalidDataException("Native operation directory must prevent changes by other users.");
+            NativeFilePersistence.ValidateDirectory(parent);
             return new NativeOperationDirectory(parent);
         }
         catch { parent.Dispose(); throw; }
     }
 
+    internal SafeFileHandle OpenRead(string fileName)
+    {
+        ValidateFileName(fileName);
+        var descriptor = OpenAtRead(parent, fileName, NativeFilePersistence.ReadFlags(directory: false));
+        if (descriptor < 0)
+        {
+            if (Marshal.GetLastPInvokeError() == (OperatingSystem.IsLinux() ? 40 : 62))
+                throw new InvalidDataException("Native operation path must not be a symbolic link.");
+            throw NativeFilePersistence.IoError("Cannot open private native operation file.");
+        }
+        return new SafeFileHandle((nint)descriptor, ownsHandle: true);
+    }
+
+    private static void ValidateFileName(string fileName)
+    {
+        if (string.IsNullOrEmpty(fileName) || fileName is "." or ".." || fileName != Path.GetFileName(fileName) || fileName.Contains('\0'))
+            throw new ArgumentException("Native operation destination must be a filename.", nameof(fileName));
+    }
+
     internal async Task SaveAsync(byte[] bytes, string fileName, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrEmpty(fileName) || fileName is "." or ".." || fileName != Path.GetFileName(fileName))
-            throw new ArgumentException("Native operation destination must be a filename.", nameof(fileName));
+        if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Directory-descriptor persistence requires Unix.");
+        ValidateFileName(fileName);
         var temporary = ".native-operation-" + Guid.NewGuid().ToString("N") + ".tmp";
         // O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode 0600.
         var flags = OperatingSystem.IsLinux() ? 1 | 0x40 | 0x80 | 0x20000 | 0x80000
             : 1 | 0x200 | 0x800 | 0x100 | 0x1000000;
-        var descriptor = OpenAt(parent, temporary, flags, 0x180);
+        var descriptor = OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+            ? OpenAtDarwinArm64(parent, temporary, flags, 0, 0, 0, 0, 0, 0x180)
+            : OpenAt(parent, temporary, flags, 0x180);
         if (descriptor < 0) throw NativeFilePersistence.IoError("Cannot create private native operation file.");
         try
         {
             using var handle = new SafeFileHandle((nint)descriptor, ownsHandle: true);
+            if (File.GetUnixFileMode(handle) != (UnixFileMode.UserRead | UnixFileMode.UserWrite))
+                throw new InvalidDataException("Native operation creation must produce owner-only read/write permissions.");
             await using (var stream = new FileStream(handle, FileAccess.Write, 81920, isAsync: false))
             {
                 await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
@@ -194,6 +234,18 @@ internal sealed partial class NativeOperationDirectory : IDisposable
 
     [LibraryImport("libc", EntryPoint = "openat", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static partial int OpenAt(SafeFileHandle parent, string path, int flags, uint mode);
+
+    // Darwin ARM64 puts openat's variadic mode in the first stack slot.
+    // Occupy x3..x7 in this fixed-signature declaration so its ninth argument
+    // occupies that slot. A uint64 slot carries the promoted mode_t value;
+    // the C caller layouts are verified in Fixtures/darwin-openat-abi.c.
+    [LibraryImport("libc", EntryPoint = "openat", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial int OpenAtDarwinArm64(SafeFileHandle parent, string path, int flags,
+        nuint x3, nuint x4, nuint x5, nuint x6, nuint x7, ulong mode);
+
+    // Reading supplies no variadic argument because O_CREAT is absent.
+    [LibraryImport("libc", EntryPoint = "openat", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial int OpenAtRead(SafeFileHandle parent, string path, int flags);
 
     [LibraryImport("libc", EntryPoint = "linkat", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static partial int LinkAt(SafeFileHandle sourceParent, string source, SafeFileHandle destinationParent, string destination, int flags);

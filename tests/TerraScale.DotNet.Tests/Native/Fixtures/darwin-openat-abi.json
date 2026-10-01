@@ -1,0 +1,10 @@
+{
+  "target": "arm64-apple-macos11",
+  "compiler": "clang 21.1.8",
+  "command": "clang --target=arm64-apple-macos11 -O2 -S darwin-openat-abi.c",
+  "source_sha256": "8f127d183532d5dece9131aa9a7490b62a8dfb4388bb957840d9a18fdbc54858",
+  "assembly_sha256": "5dac430c1b6499fcf3dbe6ceb7000398f5164c6653550eb34e8db904bb7e022b",
+  "c_variadic_mode_store": "str x3, [sp]",
+  "fixed_signature_mode_store": "mov w8, w3; str x8, [sp]",
+  "result": "Both signatures place the mode at stack offset zero before the call. This is compiler layout evidence, not a macOS runtime qualification."
+}
