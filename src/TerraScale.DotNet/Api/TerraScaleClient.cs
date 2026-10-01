@@ -1627,7 +1627,7 @@ public sealed class TerraScaleClient
     private static TimeSpan BoundRetryAfter(TimeSpan delay) =>
         delay <= TimeSpan.Zero ? TimeSpan.Zero : delay;
 
-    private static Task DelayRetryAsync(TimeSpan delay, CancellationToken cancellationToken) =>
+    internal Func<TimeSpan, CancellationToken, Task> DelayRetryAsync { get; set; } = static (delay, cancellationToken) =>
         delay == TimeSpan.Zero ? Task.CompletedTask : Task.Delay(delay, cancellationToken);
 
     private static bool IsRetryableStatus(HttpStatusCode statusCode) =>

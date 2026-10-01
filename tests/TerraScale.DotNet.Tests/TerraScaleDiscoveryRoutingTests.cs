@@ -272,21 +272,27 @@ public sealed class TerraScaleDiscoveryRoutingTests
         var discovery = JsonNode.Parse(transport.DiscoveryBody)!.AsObject();
         discovery["refreshSeconds"] = 1;
         transport.DiscoveryBody = discovery.ToJsonString();
-        transport.AdvanceTime = _ =>
+        var client = CreateClient(transport, new Uri("https://atlas-delay-exhausted.test"));
+        long nowMs = 0;
+        var delays = new List<TimeSpan>();
+        client.DiscoveryRouter!.RoutingCache.NowMs = () => nowMs;
+        client.DelayRetryAsync = (delay, token) =>
         {
+            token.ThrowIfCancellationRequested();
+            delays.Add(delay);
+            nowMs += checked((long)delay.TotalMilliseconds);
             var refreshed = JsonNode.Parse(transport.DiscoveryBody)!.AsObject();
             refreshed["endpoints"]!.AsArray().RemoveAt(1);
             transport.DiscoveryBody = refreshed.ToJsonString();
+            return Task.CompletedTask;
         };
-        var client = CreateClient(transport, new Uri("https://atlas-delay-exhausted.test"));
-        // Set and the alternative check see a fresh lease. The next resolution,
-        // after Retry-After, sees expiry and fetches a document containing only FRA.
-        var checks = 0;
-        client.DiscoveryRouter!.RoutingCache.NowMs = () => ++checks <= 2 ? 0 : 1100;
         var error = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
             client.Documents.GetAsync("orders-delay-exhausted", "items", "item-1"));
         await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(error.ResponseBody).Contains("fra region down");
+        await Assert.That(delays.Count).IsEqualTo(1);
+        await Assert.That(delays[0]).IsEqualTo(TimeSpan.FromSeconds(1));
+        await Assert.That(nowMs).IsEqualTo(1000);
         await Assert.That(transport.Requests.Count).IsEqualTo(3);
         await Assert.That(transport.Requests[2]).Contains("/api/v1/discovery");
         await Assert.That(transport.Requests.Any(request => request.StartsWith($"GET {ApiProxyOrigin}/", StringComparison.Ordinal))).IsFalse();
