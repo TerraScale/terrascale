@@ -113,6 +113,22 @@ func (m *Manager) Token(r *http.Request) (string, bool) {
 
 func (m *Manager) principalFor(token string) (core.Principal, bool) {
 	key := sha256.Sum256([]byte(token))
+	return m.principalForHash(key)
+}
+
+func (m *Manager) BindCLIGrant(r *http.Request) (func() (core.Principal, bool), bool) {
+	token, ok := m.Token(r)
+	if !ok {
+		return nil, false
+	}
+	key := sha256.Sum256([]byte(token))
+	if _, valid := m.principalForHash(key); !valid {
+		return nil, false
+	}
+	return func() (core.Principal, bool) { return m.principalForHash(key) }, true
+}
+
+func (m *Manager) principalForHash(key [32]byte) (core.Principal, bool) {
 	m.mu.RLock()
 	item, ok := m.items[key]
 	m.mu.RUnlock()

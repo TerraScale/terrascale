@@ -123,16 +123,15 @@ var databaseRegionChoices = []databaseRegionChoice{
 }
 
 templ databaseActions(d pageData) {
+	@databaseSearch(d)
 	if d.CanProvision {
 		@ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-database", Label: "New database", Icon: icons.Plus(16), Variant: "primary", Small: true})
 	}
-	@databaseSearch(d)
 }
 
 templ databaseSearch(d pageData) {
-	<form class="ts-filters ts-db-search" method="get" action="/databases" role="search" aria-label="Filter databases">
+	<form class="ts-filters ts-db-search" method="get" action="/databases" role="search" aria-label="Search databases">
 		<input class="ts-input ts-input-sm" type="search" name="q" value={ d.Search } placeholder="Search databases..." aria-label="Search databases"/>
-		<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Filter</button>
 		if d.Search != "" {
 			<a class="ts-btn ts-btn-ghost ts-btn-sm" href="/databases">Clear</a>
 		}

@@ -191,6 +191,25 @@ func regionArc(from, to regionPin) string {
 // leaves the current document, after other handlers had a chance to cancel it.
 const navClickPending = "$_navPending = $_navPending || !!(!evt.defaultPrevented && evt.button === 0 && !evt.metaKey && !evt.ctrlKey && !evt.shiftKey && !evt.altKey && evt.target.closest && evt.target.closest('a[href]:not([target]):not([download])') && evt.target.closest('a[href]').origin === location.origin && (evt.target.closest('a[href]').pathname !== location.pathname || evt.target.closest('a[href]').search !== location.search))"
 
+// Sidebar scroll is handed off only by a same-tab navigation inside the menu.
+// The destination consumes it once; forms and links elsewhere keep native behavior.
+const navScrollKey = "ts-dashboard:nav-scroll"
+
+const navScrollSave = `(() => {
+	const link = evt.target.closest?.('a[href]');
+	if (evt.defaultPrevented || evt.button !== 0 || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.altKey || !link || !el.contains(link) || link.hasAttribute('download') || (link.target && link.target !== '_self') || link.origin !== location.origin || (link.pathname === location.pathname && link.search === location.search)) return;
+	try { sessionStorage.setItem('` + navScrollKey + `', JSON.stringify({href: link.href, top: el.scrollTop})); } catch {}
+})()`
+
+const navScrollRestore = `(() => {
+	try {
+		const saved = sessionStorage.getItem('` + navScrollKey + `');
+		sessionStorage.removeItem('` + navScrollKey + `');
+		const position = JSON.parse(saved);
+		if (position?.href === location.href && Number.isFinite(position.top) && position.top >= 0) el.scrollTop = position.top;
+	} catch {}
+})()`
+
 // navSubmitPending flags native form submissions; Datastar-handled forms
 // prevent the default and never show the bar. A form marked data-submit-once
 // is not sent again while a navigation is loading, so a double click cannot

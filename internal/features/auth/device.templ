@@ -1,0 +1,53 @@
+package auth
+
+import (
+	"terrascale.tech/dashboard/internal/ui"
+	static "terrascale.tech/dashboard/web/static"
+)
+
+templ deviceAuthorizationView(data devicePage, csrfToken string) {
+	<main class="ts-auth">
+		<div class="ts-auth-card">
+			<div class="ts-auth-brand">
+				<img class="ts-brand-logo" src={ static.URL("brand/logo-terrascale-blue.svg") } alt="TerraScale" decoding="async"/>
+			</div>
+			<div class="ts-auth-heading">
+				<h1 class="ts-auth-title">Approve CLI access</h1>
+				<p class="ts-auth-subtitle">Connect the TerraScale CLI to your account.</p>
+			</div>
+			if data.Error != "" {
+				@ui.Alert("danger", "", data.Error)
+			}
+			if data.Result == "approve" {
+				@ui.Alert("success", "CLI authorized", "Return to your terminal. The CLI will receive its credential automatically. You can close this page.")
+			} else if data.Result == "deny" {
+				@ui.Alert("warning", "Request denied", "No credential was issued. The waiting CLI will receive your decision.")
+			} else if data.Pending && data.Authenticated {
+				<p class="ts-auth-subtitle">Signed in as { data.Email }</p>
+				<p class="ts-auth-subtitle">Only approve a code from a CLI login you started. Verify that this code matches your terminal:</p>
+				<p class="ts-label"><strong>{ data.Code }</strong></p>
+				<p class="ts-auth-subtitle">The CLI will have your dashboard permissions for 30 days. You can revoke its token in your profile.</p>
+				<form class="ts-form" method="post" action="/cli/approve/submit" data-submit-once>
+					<input type="hidden" name="_csrf" value={ csrfToken }/>
+					<input type="hidden" name="user_code" value={ data.Code }/>
+					@ui.Field(ui.FieldProps{ID: "cliPassword", Label: "Confirm your current password"}) {
+						@ui.PasswordInput(ui.PasswordProps{ID: "cliPassword", Name: "password", Autocomplete: "current-password"})
+					}
+					<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" name="decision" value="approve" type="submit">Authorize CLI</button>
+					<button class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" name="decision" value="deny" type="submit" formnovalidate>Deny request</button>
+				</form>
+			} else if data.Pending {
+				<p class="ts-auth-subtitle">Code: <strong>{ data.Code }</strong></p>
+				<p class="ts-auth-subtitle">Sign in, then confirm this code to authorize the CLI.</p>
+				<a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href={ templ.SafeURL(data.SignInURL) }>Sign in to approve</a>
+			} else {
+				<form class="ts-form" method="get" action="/cli/approve">
+					@ui.Field(ui.FieldProps{ID: "cliCode", Label: "Code shown in your terminal"}) {
+						<input class="ts-input" id="cliCode" name="user_code" value={ data.Code } autocomplete="off" autocapitalize="characters" maxlength="9" placeholder="ABCD-EFGH" required/>
+					}
+					<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Continue</button>
+				</form>
+			}
+		</div>
+	</main>
+}

@@ -18,38 +18,42 @@ templ loginView(data loginPageData, csrfToken string) {
 		</section>
 		<div class="ts-login-column">
 			<div class="ts-login-panel">
-				<img class="ts-login-logo" src={ static.URL("brand/logo-terrascale-blue.svg") } alt="TerraScale" decoding="async"/>
-				<div class="ts-auth-heading">
-					<h1 class="ts-auth-title" id="login-title">Sign in</h1>
-					<p class="ts-auth-subtitle">Access your databases and cloud operations.</p>
-				</div>
-				if data.Error != "" {
-					@ui.Alert("danger", "", data.Error)
-				}
-				<form class="ts-form" method="post" action="/login" data-submit-once novalidate>
-					<input type="hidden" name="_csrf" value={ csrfToken }/>
-					<input type="hidden" name="redirectTo" value={ data.RedirectTo }/>
-					{{ email := ui.FieldProps{ID: "email", Label: "Email", Error: data.EmailError} }}
-					@ui.Field(email) {
-						<input class="ts-input ts-input-lg" type="email" id="email" name="email" value={ data.Email } autocomplete="email" placeholder="name@company.com" required { email.ControlAttrs()... }/>
-					}
-					<div class="ts-field">
-						<div class="ts-row-between">
-							<label class="ts-label" for="password">Password</label>
-							<a class="ts-link ts-meta" href="/reset-password">Forgot password</a>
+				<div class="ts-login-stack">
+					<div class="ts-login-heading">
+						<img class="ts-login-logo" src={ static.URL("brand/logo-terrascale-blue.svg") } alt="TerraScale" decoding="async"/>
+						<div class="ts-auth-heading">
+							<h1 class="ts-auth-title" id="login-title">Sign in</h1>
+							<p class="ts-auth-subtitle">Access your databases and cloud operations.</p>
 						</div>
-						@ui.PasswordInput(ui.PasswordProps{ID: "password", Autocomplete: "current-password", Placeholder: "Enter your password", Attrs: passwordAttrs(data)})
-						if data.PasswordError != "" {
-							<p class="ts-field-error" id="password-error">{ data.PasswordError }</p>
-						}
 					</div>
-					<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Sign in</button>
-				</form>
-				<div class="ts-auth-divider" aria-hidden="true">Other sign-in options</div>
-				<div class="ts-auth-providers">
-					<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="Passkey sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo">Passkey</button>
-					<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="Google sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src={ static.URL("brand/google.svg") } alt="" aria-hidden="true" width="18" height="18"/></button>
-					<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="GitHub sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src={ static.URL("brand/github.svg") } alt="" aria-hidden="true" width="18" height="18"/></button>
+					if data.Error != "" {
+						@ui.Alert("danger", "", data.Error)
+					}
+					<form class="ts-form" method="post" action="/login" data-submit-once novalidate>
+						<input type="hidden" name="_csrf" value={ csrfToken }/>
+						<input type="hidden" name="redirectTo" value={ data.RedirectTo }/>
+						{{ email := ui.FieldProps{ID: "email", Label: "Email", Error: data.EmailError} }}
+						@ui.Field(email) {
+							<input class="ts-input ts-input-lg" type="email" id="email" name="email" value={ data.Email } autocomplete="email" placeholder="name@company.com" required { email.ControlAttrs()... }/>
+						}
+						<div class="ts-field">
+							<div class="ts-row-between">
+								<label class="ts-label" for="password">Password</label>
+								<a class="ts-link ts-meta" href="/reset-password">Forgot password</a>
+							</div>
+							@ui.PasswordInput(ui.PasswordProps{ID: "password", Autocomplete: "current-password", Placeholder: "Enter your password", Attrs: passwordAttrs(data)})
+							if data.PasswordError != "" {
+								<p class="ts-field-error" id="password-error">{ data.PasswordError }</p>
+							}
+						</div>
+						<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Sign in</button>
+					</form>
+					<div class="ts-auth-divider" aria-hidden="true">Other sign-in options</div>
+					<div class="ts-auth-providers">
+						<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="Passkey sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo">Passkey</button>
+						<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="Google sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src={ static.URL("brand/google.svg") } alt="" aria-hidden="true" width="18" height="18"/></button>
+						<button class="ts-btn ts-btn-secondary" type="button" disabled aria-label="GitHub sign-in unavailable in the in-memory demo" title="Unavailable in the in-memory demo"><img src={ static.URL("brand/github.svg") } alt="" aria-hidden="true" width="18" height="18"/></button>
+					</div>
 				</div>
 				<p class="ts-auth-footer">New to TerraScale? <a class="ts-link" href={ signUpURL(data.RedirectTo) }>Create account</a></p>
 			</div>
