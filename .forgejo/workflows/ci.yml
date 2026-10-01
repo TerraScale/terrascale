@@ -27,10 +27,22 @@ jobs:
           persist-credentials: false
       - name: Install the locked dependencies
         run: npm ci
-      - name: Run the build, validators, and type checks
-        run: npm run check
-      - name: Check formatting and lint rules
-        run: npm run lint
+      # ESLint never reads `build/`, so it runs alongside the build,
+      # validators, and type checks instead of after them. Both must pass.
+      - name: Run the build, validators, type checks, and lint rules
+        run: |
+          set -u
+          lint_log="$(mktemp)"
+          npm run lint > "${lint_log}" 2>&1 &
+          lint_pid=$!
+          check_status=0
+          npm run check || check_status=$?
+          lint_status=0
+          wait "${lint_pid}" || lint_status=$?
+          echo "::group::npm run lint (exit ${lint_status})"
+          cat "${lint_log}"
+          echo "::endgroup::"
+          test "${check_status}" -eq 0 && test "${lint_status}" -eq 0
       # A merged push publishes what verification just approved: the check
       # step above leaves `build/` populated, so the exact verified output is
       # what gets uploaded. Pull requests never take this step.
