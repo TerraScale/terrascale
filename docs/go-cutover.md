@@ -16,7 +16,8 @@ The deployable application in this checkout is the Go server in `cmd/dashboard`.
 It renders with templ, uses the Datastar Go SDK, and serves the Datastar v1.0.4
 browser bundle. The application uses the first-party
 `terrascale.tech/sdk` Go module pinned to ts-go commit
-`3088ef2e3bd0cfbd22c980c029b2b745b82d1eff`; the dependency is vendored, so
+`430cb6624fa85ab22effc1a28d718db7d11297e1` from the public repository through
+the versioned replacement in `go.mod`; the dependency is vendored, so
 builds do not use a sibling C# or SDK checkout. Multiple CSS source files under
 `web/assets` are bundled by Lightning CSS into
 `web/static/css/terrascale.css`.

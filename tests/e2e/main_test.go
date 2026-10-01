@@ -10,6 +10,7 @@ package e2e
 import (
 	"cmp"
 	"errors"
+	"flag"
 	"fmt"
 	"net/http/httptest"
 	"os"
@@ -39,6 +40,10 @@ func TestMain(m *testing.M) {
 }
 
 func run(m *testing.M) int {
+	flag.Parse()
+	if flag.Lookup("test.list").Value.String() != "" {
+		return m.Run()
+	}
 	// The in-process dashboard runs under the race detector, where full-cost
 	// password hashing queues parallel sign-ups past the browser timeouts.
 	auth.UseTestPasswordCost()

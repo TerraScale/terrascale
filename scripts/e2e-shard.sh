@@ -8,14 +8,22 @@ set -euo pipefail
 
 shard=${1:?usage: e2e-shard.sh INDEX/TOTAL [go test flags...]}
 shift
-index=${shard%/*}
-total=${shard#*/}
-if ! ((index >= 1 && index <= total)); then
+if [[ ! $shard =~ ^([1-9][0-9]{0,8})/([1-9][0-9]{0,8})$ ]]; then
 	echo "e2e-shard: shard $shard is not INDEX/TOTAL with 1 <= INDEX <= TOTAL" >&2
 	exit 2
 fi
+index=${BASH_REMATCH[1]}
+total=${BASH_REMATCH[2]}
+if ((index > total)); then
+	echo "e2e-shard: shard $shard has INDEX greater than TOTAL" >&2
+	exit 2
+fi
 
-tests=$(go test "$@" -list . ./tests/... | awk '/^Test/')
+tests=$("${GO:-go}" test "$@" -list . ./tests/... | awk '/^Test/')
 selected=$(awk -v index_="$index" -v total="$total" \
 	'(NR - 1) % total == index_ - 1 { printf "%s%s", sep, $0; sep = "|" }' <<<"$tests")
+if [[ -z $selected ]]; then
+	echo "e2e-shard: shard $shard selected no tests" >&2
+	exit 3
+fi
 printf '^(%s)$\n' "$selected"

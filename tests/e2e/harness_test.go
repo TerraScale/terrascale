@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mxschmitt/playwright-go"
 )
@@ -124,12 +125,27 @@ func goTo(t *testing.T, page playwright.Page, path string) playwright.Response {
 	return response
 }
 
+// waitForPath checks the current URL without depending on a later navigation
+// or load event. Page assertions assess DOM readiness.
 func waitForPath(t *testing.T, page playwright.Page, match func(*url.URL) bool) {
 	t.Helper()
-	must(t, page.WaitForURL(func(raw string) bool {
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	ticks := time.Tick(20 * time.Millisecond)
+	for {
+		raw := page.URL()
 		parsed, err := url.Parse(raw)
-		return err == nil && match(parsed)
-	}))
+		if err == nil && match(parsed) {
+			return
+		}
+		select {
+		case <-ticks:
+		case <-deadline.C:
+			t.Fatalf("expected page URL was not reached; current URL: %s", page.URL())
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+	}
 }
 
 func currentPath(t *testing.T, page playwright.Page) string {

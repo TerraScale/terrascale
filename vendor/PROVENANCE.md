@@ -1,21 +1,36 @@
 # Vendored dependencies
 
-`terrascale.tech/sdk` is the first-party `ts-go` repository at commit
-`430cb6624fa85ab22effc1a28d718db7d11297e1` (commit time
-2026-09-30T02:31:59Z). The module is pinned in `go.mod` as
-`v0.0.0-20260930023159-430cb6624fa8`; its module zip checksum in `go.sum` is
-`h1:WXJF46MOFVpOsdkyJ9cj+CS4V5ifdH7DjCHz84f0HKE=`. The source was taken
-from a clean checkout of `ssh://git@git.terrascale.tech/TerraScale/ts-go.git`.
-That repository did not contain a LICENSE, NOTICE, or COPYING file at this
-commit. Third-party licenses copied by `go mod vendor` remain alongside their
-packages.
+`terrascale.tech/sdk` is the first-party [ts-go repository](https://git.terrascale.tech/TerraScale/ts-go)
+at commit `430cb6624fa85ab22effc1a28d718db7d11297e1` (commit time
+2026-09-30T02:31:59Z). Its `require` and public-repository `replace` in `go.mod`
+pin `v0.0.0-20260930023159-430cb6624fa8`.
 
-The `ts-go` vanity import currently has no publicly resolvable Go module
-version. To refresh this snapshot, first make the chosen `ts-go` commit
-available to Go as a versioned module through an internal proxy (or publish the
-module and its `go-import` metadata), update `go.mod`, then run `go mod tidy`
-and `go mod vendor`. Verify the new commit, module checksum, and an offline
-`GOFLAGS=-mod=vendor GOPROXY=off go test ./...` build before updating this file.
+The public repository module ZIP checksum recorded in `go.sum` is
+`h1:Mt4n4uAGYCBld4TRX0UDpXBjr70DYI9Z4gjIAIqc9zs=`; the module file checksum is
+`h1:CBgIEfw0wTY2UDGAo1hmt1COj0872PnfTUNB3o0/3io=`. Go verifies these through
+the public checksum database. This commit does not contain a LICENSE, NOTICE,
+or COPYING file. Third-party licenses copied by `go mod vendor` remain
+alongside their packages.
+
+The vanity import has no Go module metadata, so the versioned replacement
+resolves the source through the public HTTPS repository without credentials,
+an internal proxy, or a sibling checkout. The public source version matches
+the dashboard's existing upstream pin. The regional hostname correction below
+remains a downstream vendor patch.
+
+The repository's public `go-import` metadata names
+`https://git.terrascale.tech/TerraScale/ts-go.git`, with no Codeberg mirror.
+`make check-modules` intentionally verifies this replacement alongside all
+other modules through the public proxy and checksum database from an empty
+cache. Public availability of this pinned revision is required for CI.
+
+To refresh, update both SDK versions in `go.mod`, run `GOFLAGS=-mod=mod go mod
+tidy` and `GOFLAGS=-mod=mod go mod vendor`, then restore this file and record
+the new commit and checksums. Reapply the regional hostname correction below
+when refreshing the current pin; for SDK upgrades, check whether upstream
+already includes it and update the patch record accordingly. Run
+`make check-modules`, lint, and the fast and slow tests before shipping.
+Builds continue to use `GOFLAGS=-mod=vendor`.
 
 ## Regional API hostname correction
 
