@@ -19,6 +19,7 @@ public sealed class TerraScaleClient
 {
     private const int MaxOperationBytes = 1_048_576;
     private const int MaxRetainedErrorBytes = 1_048_576;
+    private static readonly TimeSpan RetainedErrorReadTimeout = TimeSpan.FromMilliseconds(250);
     private const int MaxSessionConsistencyScopes = 4096;
     private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(30);
@@ -1196,18 +1197,26 @@ public sealed class TerraScaleClient
     {
         try
         {
+            using var retention = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            retention.CancelAfter(RetainedErrorReadTimeout);
             using var body = new MemoryStream();
             try
             {
-                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+                await using var stream = await response.Content.ReadAsStreamAsync(retention.Token)
+                    .WaitAsync(retention.Token).ConfigureAwait(false);
                 var chunk = new byte[8192];
                 while (body.Length < MaxRetainedErrorBytes)
                 {
                     var count = await stream.ReadAsync(chunk.AsMemory(0,
-                        (int)Math.Min(chunk.Length, MaxRetainedErrorBytes - body.Length)), cancellationToken).ConfigureAwait(false);
+                        (int)Math.Min(chunk.Length, MaxRetainedErrorBytes - body.Length)), retention.Token)
+                        .AsTask().WaitAsync(retention.Token).ConfigureAwait(false);
                     if (count == 0) break;
                     body.Write(chunk, 0, count);
                 }
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Slow diagnostics may not consume the failover budget.
             }
             catch (Exception exception) when (exception is IOException or HttpRequestException)
             {

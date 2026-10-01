@@ -293,6 +293,27 @@ public sealed class TerraScaleDiscoveryRoutingTests
     }
 
     [Test]
+    public async Task StalledRegionalDiagnosticsCannotPreventAHealthyFailover()
+    {
+        RegionalBodyStream? originalBody = null;
+        var transport = new ScriptedTransport
+        {
+            FailRegionalRequests = true,
+            RegionalErrorContent = body => new StreamContent(originalBody = new RegionalBodyStream(Encoding.UTF8.GetBytes(body), false, stall: true)),
+        };
+        var client = CreateClient(transport, new Uri("https://atlas-stalled-error.test"));
+        using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+        _ = await client.Documents.GetAsync("orders-stalled-error", "items", "item-1", caller.Token);
+
+        await Assert.That(caller.IsCancellationRequested).IsFalse();
+        await Assert.That(originalBody!.CancellationObserved).IsTrue();
+        await Assert.That(originalBody.IsDisposed).IsTrue();
+        await Assert.That(transport.Requests.Count).IsEqualTo(3);
+        await Assert.That(transport.Requests[^1]).StartsWith("GET https://gru.api.terrascale.tech/");
+    }
+
+    [Test]
     [Arguments("normal")]
     [Arguments("oversized")]
     [Arguments("interrupted")]
@@ -349,6 +370,11 @@ public sealed class TerraScaleDiscoveryRoutingTests
         {
             await Assert.That(originalBody.BytesRead).IsEqualTo(1_048_576);
             await Assert.That(error.ResponseBody).Contains("response body truncated after 65536 characters");
+        }
+        if (bodyMode == "interrupted")
+        {
+            await Assert.That(originalBody.Interrupted).IsTrue();
+            await Assert.That(error.ResponseBody).IsEqualTo(originalBody.Prefix);
         }
         await Assert.That(delays.Count).IsEqualTo(1);
         await Assert.That(delays[0]).IsEqualTo(TimeSpan.FromSeconds(1));
@@ -709,19 +735,46 @@ public sealed class TerraScaleDiscoveryRoutingTests
         }
     }
 
-    private sealed class RegionalBodyStream(byte[] bytes, bool interrupt) : MemoryStream(bytes)
+    private sealed class RegionalBodyStream : MemoryStream
     {
+        private readonly byte[] bytes;
+        private readonly bool interrupt;
+        private readonly bool stall;
+        private CancellationToken stalledToken;
         private int reads;
+        public RegionalBodyStream(byte[] bytes, bool interrupt, bool stall = false) : base(bytes)
+        {
+            this.bytes = bytes;
+            this.interrupt = interrupt;
+            this.stall = stall;
+        }
         public int BytesRead { get; private set; }
         public bool IsDisposed { get; private set; }
+        public bool Interrupted { get; private set; }
+        public bool CancellationObserved => stalledToken.IsCancellationRequested;
+        public string Prefix => Encoding.UTF8.GetString(bytes.AsSpan(0, bytes.Length - 2));
         public override bool CanSeek => false;
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (interrupt && reads++ > 0) throw new IOException("Regional error body interrupted.");
-            var count = Read(buffer.Span);
+            if (reads++ > 0)
+            {
+                if (interrupt)
+                {
+                    Interrupted = true;
+                    throw new IOException("Regional error body interrupted.");
+                }
+                if (stall) return StallAsync(cancellationToken);
+            }
+            var count = Read(buffer.Span[..Math.Min(buffer.Length, interrupt || stall ? bytes.Length - 2 : buffer.Length)]);
             BytesRead += count;
             return ValueTask.FromResult(count);
+        }
+        private async ValueTask<int> StallAsync(CancellationToken cancellationToken)
+        {
+            stalledToken = cancellationToken;
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
         }
         protected override void Dispose(bool disposing)
         {
