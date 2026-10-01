@@ -213,11 +213,11 @@ public sealed class NativeClientTests
     {
         using var cancellation = new CancellationTokenSource();
         var calls = 0;
-        using var handler = new Handler((_, token) =>
+        using var handler = new Handler((_, _) =>
         {
             calls++;
             cancellation.Cancel();
-            return Task.FromCanceled<HttpResponseMessage>(token);
+            return Task.FromCanceled<HttpResponseMessage>(cancellation.Token);
         });
         using var client = Client(handler);
         var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());

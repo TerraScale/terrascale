@@ -194,7 +194,18 @@ internal static class NativeChecks
             Require(request.Content!.Headers.ContentType!.ToString() == "application/json", "Native request media type changed.");
             using var body = NativeCodec.Parse(await request.Content.ReadAsStringAsync(token));
             if (request.RequestUri.AbsolutePath == queryPath)
+            {
+                var query = body.RootElement;
+                Require(query.EnumerateObject().Count() == 3 && query.GetProperty("version").GetInt32() == 1 &&
+                    query.GetProperty("limit").GetInt32() == 1 && !query.TryGetProperty("cursor", out _),
+                    "Prepared query version, limit or cursor changed.");
+                var predicate = query.GetProperty("predicate");
+                var path = predicate.GetProperty("path");
+                Require(predicate.EnumerateObject().Count() == 2 && predicate.GetProperty("op").GetString() == "is_missing" &&
+                    path.ValueKind == JsonValueKind.Array && path.GetArrayLength() == 1 && path[0].GetUInt32() == 1 &&
+                    !predicate.TryGetProperty("value", out _), "Prepared query predicate or field path changed.");
                 return Json("{\"version\":1,\"rows\":[]}");
+            }
             if (request.RequestUri.AbsolutePath == statusPath)
             {
                 var transaction = body.RootElement.GetProperty("transaction_id");
