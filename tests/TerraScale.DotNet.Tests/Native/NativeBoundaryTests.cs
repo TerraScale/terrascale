@@ -26,6 +26,24 @@ public sealed class NativeBoundaryTests
     }
 
     [Test]
+    public async Task SharedSmallFieldsStopWireAllocationBeforeMaterializingEveryWrite()
+    {
+        var shared = new NativeWriteValue.Live(Enumerable.Range(1, 1024)
+            .Select(id => new NativeField((uint)id, new NativeValue.Null())).ToImmutableArray());
+        var commit = NativeCodecTests.CreateCommit();
+        commit = commit with { Writes = Enumerable.Range(0, 512).Select(index => commit.Writes[0] with
+        {
+            Document = $"018f0000-0000-7000-8000-{index:x12}", Value = shared
+        }).ToImmutableArray() };
+        using var client = NativeClientTests.Client(new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected.")));
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        try { client.PrepareCommit(commit); throw new InvalidOperationException("Oversized commit was accepted."); }
+        catch (InvalidDataException) { }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        await Assert.That(allocated).IsLessThan(64L * 1024 * 1024);
+    }
+
+    [Test]
     public async Task JsonEncodingEnforcesWireLimitWhenTextEscapingExpandsAValidEffect()
     {
         var commit = NativeCodecTests.CreateCommit(new string('é', 400_000));
@@ -312,6 +330,22 @@ public sealed class NativeBoundaryTests
             File.SetUnixFileMode(fifo, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(fifo));
             await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(directory.FullName));
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Test]
+    public async Task RecoveryLoadRejectsEmbeddedNulInsteadOfOpeningTheFilenamePrefix()
+    {
+        var directory = Directory.CreateTempSubdirectory("terrascale-native-nul-");
+        try
+        {
+            using var client = NativeClientTests.Client(new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected.")));
+            var path = Path.Combine(directory.FullName, "operation.json");
+            await NativeOperationStore.SaveAsync(client.PrepareCommit(NativeCodecTests.CreateCommit()), path);
+            await Assert.ThrowsAsync<ArgumentException>(() => NativeOperationStore.LoadAsync(path + "\0suffix"));
+            var retained = await NativeOperationStore.LoadAsync(path);
+            await Assert.That(retained.Scope).IsEqualTo(NativeCodecTests.Scope);
         }
         finally { directory.Delete(recursive: true); }
     }

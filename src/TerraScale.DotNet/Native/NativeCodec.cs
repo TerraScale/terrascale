@@ -101,17 +101,52 @@ public static class NativeCodec
     public static (string Body, NativeTransactionIdentity Identity) EncodeCommit(NativeScope scope, NativeCommit commit)
     {
         var identity = CommitIdentity(scope, commit);
-        var authority = WireAuthority(commit.Authority);
-        var transaction = WireTransaction(commit.TransactionId);
-        // Reject oversized aggregate effects before allocating base64 wire
-        // strings for every write. The digest walk uses one bounded buffer.
-        var writes = new List<object>(commit.Writes.Length);
-        foreach (var write in commit.Writes)
+        var body = Json(writer =>
         {
-            writes.Add(WireWrite(write, commit.Authority));
-        }
-        return (Json(Object(("version", 1), ("transaction_id", transaction), ("authority", authority),
-            ("effect_digest", identity.EffectDigest), ("writes", writes))), identity);
+            writer.WriteStartObject();
+            writer.WriteNumber("version", 1);
+            writer.WritePropertyName("transaction_id");
+            JsonSerializer.Serialize(writer, WireTransaction(commit.TransactionId));
+            writer.WritePropertyName("authority");
+            JsonSerializer.Serialize(writer, WireAuthority(commit.Authority));
+            writer.WriteString("effect_digest", identity.EffectDigest);
+            writer.WriteStartArray("writes");
+            foreach (var write in commit.Writes)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("collection", write.Collection);
+                writer.WriteString("document", write.Document);
+                writer.WriteString("schema_generation", Decimal(write.SchemaGeneration));
+                writer.WriteString("schema_digest", write.SchemaDigest);
+                writer.WritePropertyName("condition");
+                JsonSerializer.Serialize(writer, WireCondition(write.Condition));
+                writer.WriteStartArray("observed");
+                foreach (var entry in write.Observed)
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("replica", entry.Replica);
+                    writer.WriteString("incarnation", entry.Incarnation);
+                    writer.WriteString("sequence", Decimal(entry.Sequence));
+                    writer.WriteEndObject();
+                }
+                writer.WriteEndArray();
+                writer.WriteStartObject("value");
+                if (write.Value is NativeWriteValue.Live live)
+                {
+                    writer.WriteString("kind", "live");
+                    WriteWireFields(writer, live.Fields);
+                }
+                else writer.WriteString("kind", "tombstone");
+                writer.WriteEndObject();
+                writer.WriteEndObject();
+                // Stop the aggregate wire walk at the body limit, including
+                // groups sharing many small fields or one large payload.
+                writer.Flush();
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        });
+        return (body, identity);
     }
 
     private static NativeTransactionIdentity CommitIdentity(NativeScope scope, NativeCommit commit)
@@ -251,17 +286,21 @@ public static class NativeCodec
         writer.WriteStartArray("siblings");
         foreach (var sibling in point.Siblings)
         {
-            var fields = Object(("event", WireEvent(sibling.Event)), ("schema_generation", Decimal(sibling.SchemaGeneration)),
-                ("schema_digest", Hex(sibling.SchemaDigest, 32, "schema digest")));
+            writer.WriteStartObject();
+            writer.WritePropertyName("event");
+            JsonSerializer.Serialize(writer, WireEvent(sibling.Event));
+            writer.WriteString("schema_generation", Decimal(sibling.SchemaGeneration));
+            writer.WriteString("schema_digest", Hex(sibling.SchemaDigest, 32, "schema digest"));
             if (sibling.Value is NativeWriteValue.Live live)
             {
                 ValidateDocument(live.Fields);
-                fields["kind"] = "live";
-                fields["fields"] = WireFields(live.Fields, 1, new Budget());
+                writer.WriteString("kind", "live");
+                WriteWireFields(writer, live.Fields);
             }
-            else if (sibling.Value is NativeWriteValue.Tombstone) fields["kind"] = "tombstone";
+            else if (sibling.Value is NativeWriteValue.Tombstone) writer.WriteString("kind", "tombstone");
             else throw Invalid("Unsupported native sibling.");
-            JsonSerializer.Serialize(writer, fields);
+            writer.WriteEndObject();
+            writer.Flush();
         }
         writer.WriteEndArray();
         writer.WriteEndObject();
@@ -653,38 +692,57 @@ public static class NativeCodec
             throw Invalid("Unsupported native write kind.");
     }
 
-    private static object WireWrite(NativeWrite write, NativeAuthority authority)
+    private static void WriteWireFields(Utf8JsonWriter writer, ImmutableArray<NativeField> fields)
     {
-        if (authority is NativeAuthority.SingleWriter && write.Condition is NativeCondition.None)
-            throw Invalid("Single-writer mutations require an atomic condition.");
-        if (write.SchemaGeneration == 0) throw Invalid("Schema generation must be positive.");
-        object value;
-        if (write.Value is NativeWriteValue.Live live)
+        writer.WriteStartArray("fields");
+        foreach (var field in fields)
         {
-            value = Object(("kind", "live"), ("fields", WireFields(live.Fields, 1, new Budget())));
+            writer.WriteStartObject();
+            writer.WriteNumber("id", field.Id);
+            writer.WritePropertyName("value");
+            WriteWireValue(writer, field.Value);
+            writer.WriteEndObject();
         }
-        else if (write.Value is NativeWriteValue.Tombstone) value = Object(("kind", "tombstone"));
-        else throw Invalid("Unsupported native write kind.");
-        return Object(("collection", CanonicalUuid(write.Collection, "collection")), ("document", CanonicalUuid(write.Document, "document")),
-            ("schema_generation", Decimal(write.SchemaGeneration)), ("schema_digest", Hex(write.SchemaDigest, 32, "schema digest")),
-            ("condition", WireCondition(write.Condition)), ("observed", WireObserved(write.Observed)), ("value", value));
+        writer.WriteEndArray();
     }
 
-    private static object[] WireObserved(ImmutableArray<NativeObserved> entries, int maximum = 1024)
+    private static void WriteWireValue(Utf8JsonWriter writer, NativeValue value)
     {
-        Bounded(entries, maximum);
-        string? previous = null;
-        var result = new object[entries.Length];
-        for (var index = 0; index < entries.Length; index++)
+        writer.WriteStartObject();
+        switch (value)
         {
-            var entry = entries[index];
-            var order = CanonicalUuid(entry.Replica, "replica") + Hex(entry.Incarnation, 16, "incarnation");
-            if (entry.Sequence == 0 || (previous is not null && string.CompareOrdinal(previous, order) >= 0))
-                throw Invalid("Observed origins must be strictly increasing with positive sequence.");
-            previous = order;
-            result[index] = Object(("replica", entry.Replica), ("incarnation", entry.Incarnation), ("sequence", Decimal(entry.Sequence)));
+            case NativeValue.Null:
+                writer.WriteString("type", "null");
+                break;
+            case NativeValue.Boolean boolean:
+                writer.WriteString("type", "bool");
+                writer.WriteBoolean("value", boolean.Value);
+                break;
+            case NativeValue.Integer integer:
+                writer.WriteString("type", "i64");
+                writer.WriteString("value", Decimal(integer.Value));
+                break;
+            case NativeValue.Text text:
+                writer.WriteString("type", "utf8");
+                writer.WriteString("value", text.Value);
+                break;
+            case NativeValue.Bytes bytes:
+                writer.WriteString("type", "bytes");
+                writer.WriteString("value", Base64Url(bytes.Value.AsSpan()));
+                break;
+            case NativeValue.Map map:
+                writer.WriteString("type", "map");
+                WriteWireFields(writer, map.Fields);
+                break;
+            case NativeValue.Array array:
+                writer.WriteString("type", "array");
+                writer.WriteStartArray("items");
+                foreach (var item in array.Items) WriteWireValue(writer, item);
+                writer.WriteEndArray();
+                break;
+            default: throw Invalid("Invalid native value.");
         }
-        return result;
+        writer.WriteEndObject();
     }
 
     private static object[] WireFields(ImmutableArray<NativeField> fields, int depth, Budget budget)

@@ -45,6 +45,8 @@ internal static partial class NativeFilePersistence
 
     internal static FileStream OpenPrivateRead(string path)
     {
+        // Managed validation rejects embedded NUL before native string marshalling.
+        path = Path.GetFullPath(path);
         if (OperatingSystem.IsWindows())
         {
             // Windows callers own the containing directory's private ACL.
