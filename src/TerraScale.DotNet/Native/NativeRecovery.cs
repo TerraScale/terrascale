@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 
@@ -122,15 +121,19 @@ public static class NativeOperationStore
 public static class NativeRecovery
 {
     /// <summary>Finite status polling only; unresolved outcomes never trigger a fresh or automatic commit.</summary>
-    public static async Task<NativeRecoveryResult> ResolveAsync(NativeClient client, NativePreparedCommit prepared,
-        TimeSpan deadline, TimeSpan pollInterval, CancellationToken cancellationToken = default)
+    public static Task<NativeRecoveryResult> ResolveAsync(NativeClient client, NativePreparedCommit prepared,
+        TimeSpan deadline, TimeSpan pollInterval, CancellationToken cancellationToken = default) =>
+        ResolveAsync(client, prepared, deadline, pollInterval, TimeProvider.System, cancellationToken);
+
+    internal static async Task<NativeRecoveryResult> ResolveAsync(NativeClient client, NativePreparedCommit prepared,
+        TimeSpan deadline, TimeSpan pollInterval, TimeProvider clock, CancellationToken cancellationToken = default)
     {
         client.RequirePrepared(prepared);
         if (deadline <= TimeSpan.Zero || deadline > TimeSpan.FromMinutes(5)) throw new ArgumentOutOfRangeException(nameof(deadline));
         if (pollInterval < TimeSpan.FromMilliseconds(100) || pollInterval > TimeSpan.FromSeconds(30)) throw new ArgumentOutOfRangeException(nameof(pollInterval));
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(deadline);
-        var started = Stopwatch.GetTimestamp();
+        using var expiry = new CancellationTokenSource(deadline, clock);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
+        var started = clock.GetTimestamp();
         var state = NativeTransactionState.Unknown;
         NativeFailure? failure = null;
         try
@@ -155,7 +158,7 @@ public static class NativeRecovery
                     if (!Transient(failure)) return new NativeRecoveryResult(prepared.Identity, state, null, failure);
                     retryAfter = failure.RetryAfter;
                 }
-                var remaining = deadline - Stopwatch.GetElapsedTime(started);
+                var remaining = deadline - clock.GetElapsedTime(started);
                 var delay = retryAfter > pollInterval ? retryAfter.Value : pollInterval;
                 if (remaining <= TimeSpan.Zero)
                 {
@@ -168,7 +171,7 @@ public static class NativeRecovery
                     // the real deadline while the remaining budget elapses.
                     await Task.Delay(Timeout.InfiniteTimeSpan, budget.Token).ConfigureAwait(false);
                 }
-                await Task.Delay(delay, budget.Token).ConfigureAwait(false);
+                await Task.Delay(delay, clock, budget.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)

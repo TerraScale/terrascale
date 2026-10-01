@@ -97,25 +97,41 @@ public sealed class NativeRecoveryTests
     {
         foreach (var cancelCaller in new[] { false, true })
         {
-            using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var caller = new CancellationTokenSource();
+            var clock = new RecoveryClock();
+            var requestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var calls = 0;
             using var handler = new NativeClientTests.Handler(async (_, token) =>
             {
                 calls++;
-                if (cancelCaller) caller.Cancel();
+                requestStarted.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
                 return NativeClientTests.Json("{}");
             });
-            using var client = NativeClientTests.Client(handler);
+            using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
+                _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(30), handler);
             var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
-            var result = await NativeRecovery.ResolveAsync(client, prepared, TimeSpan.FromMilliseconds(100),
-                TimeSpan.FromMilliseconds(100), caller.Token);
-            await Assert.That(result.LastFailure!.Code).IsEqualTo(cancelCaller ? "cancelled" : "deadline_exceeded");
-            await Assert.That(result.LastFailure.Transaction).IsEqualTo(prepared.Identity);
-            await Assert.That(result.LastFailure.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
-            await Assert.That(result.Identity).IsEqualTo(prepared.Identity);
-            await Assert.That(result.IsResolved).IsFalse();
-            await Assert.That(calls).IsEqualTo(1);
+            var recovery = NativeRecovery.ResolveAsync(client, prepared, TimeSpan.FromMilliseconds(100),
+                TimeSpan.FromMilliseconds(100), clock, caller.Token);
+            try
+            {
+                await requestStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                if (cancelCaller) caller.Cancel();
+                else clock.Expire(TimeSpan.FromMilliseconds(100));
+                var result = await recovery.WaitAsync(TimeSpan.FromSeconds(10));
+                await Assert.That(result.LastFailure!.Code).IsEqualTo(cancelCaller ? "cancelled" : "deadline_exceeded");
+                await Assert.That(result.LastFailure.Transaction).IsEqualTo(prepared.Identity);
+                await Assert.That(result.LastFailure.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
+                await Assert.That(result.Identity).IsEqualTo(prepared.Identity);
+                await Assert.That(result.IsResolved).IsFalse();
+                await Assert.That(calls).IsEqualTo(1);
+            }
+            finally
+            {
+                caller.Cancel();
+                using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await client.WaitForIdleAsync(drain.Token);
+            }
         }
     }
 
@@ -127,6 +143,7 @@ public sealed class NativeRecoveryTests
     public async Task RecoveryWaitsForCancellationOrDeadlineWhenTheNextDelayCannotFit(bool retryAfter, bool cancelCaller)
     {
         using var caller = new CancellationTokenSource();
+        var clock = new RecoveryClock();
         var responseSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
         NativeTransactionIdentity? identity = null;
@@ -140,28 +157,34 @@ public sealed class NativeRecoveryTests
             responseSent.SetResult();
             return Task.FromResult(response);
         });
-        using var client = NativeClientTests.Client(handler);
+        using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
+            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(30), handler);
         var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
         identity = prepared.Identity;
-        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        const long started = 0;
         var recovery = NativeRecovery.ResolveAsync(client, prepared, TimeSpan.FromMilliseconds(500),
-            retryAfter ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromSeconds(10), caller.Token);
-        await responseSent.Task;
-        var completedBeforeCancellation = false;
-        if (cancelCaller)
+            retryAfter ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromSeconds(10), clock, caller.Token);
+        try
         {
-            await Task.Delay(30);
-            completedBeforeCancellation = recovery.IsCompleted;
-            caller.Cancel();
+            await responseSent.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await clock.RemainingObserved.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(recovery.IsCompleted).IsFalse();
+            if (cancelCaller) caller.Cancel();
+            else clock.Expire(TimeSpan.FromMilliseconds(500));
+            var result = await recovery.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(result.LastFailure!.Code).IsEqualTo(cancelCaller ? "cancelled" : "deadline_exceeded");
+            await Assert.That(result.LastFailure.Transaction).IsEqualTo(prepared.Identity);
+            await Assert.That(result.LastFailure.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
+            await Assert.That(calls).IsEqualTo(1);
+            if (!cancelCaller)
+                await Assert.That(clock.GetElapsedTime(started)).IsGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(500));
         }
-        var result = await recovery;
-        await Assert.That(completedBeforeCancellation).IsFalse();
-        await Assert.That(result.LastFailure!.Code).IsEqualTo(cancelCaller ? "cancelled" : "deadline_exceeded");
-        await Assert.That(result.LastFailure.Transaction).IsEqualTo(prepared.Identity);
-        await Assert.That(result.LastFailure.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
-        await Assert.That(calls).IsEqualTo(1);
-        if (!cancelCaller)
-            await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(started)).IsGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(400));
+        finally
+        {
+            caller.Cancel();
+            using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await client.WaitForIdleAsync(drain.Token);
+        }
     }
 
     [Test]
@@ -203,5 +226,36 @@ public sealed class NativeRecoveryTests
             });
         }
         finally { directory.Delete(recursive: true); }
+    }
+
+    private sealed class RecoveryClock : TimeProvider
+    {
+        private long timestamp;
+        private int observations;
+        private RecoveryTimer? timer;
+        internal TaskCompletionSource RemainingObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp()
+        {
+            if (Interlocked.Increment(ref observations) > 1) RemainingObserved.TrySetResult();
+            return Interlocked.Read(ref timestamp);
+        }
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            timer = new RecoveryTimer(callback, state);
+        internal void Expire(TimeSpan elapsed)
+        {
+            Interlocked.Exchange(ref timestamp, elapsed.Ticks);
+            timer!.Fire();
+        }
+
+        private sealed class RecoveryTimer(TimerCallback callback, object? state) : ITimer
+        {
+            private readonly object gate = new();
+            private bool disposed;
+            internal void Fire() { lock (gate) { if (!disposed) callback(state); } }
+            public bool Change(TimeSpan dueTime, TimeSpan period) { lock (gate) return !disposed; }
+            public void Dispose() { lock (gate) disposed = true; }
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
     }
 }
