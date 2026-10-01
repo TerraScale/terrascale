@@ -77,9 +77,13 @@ func TestPackagedGoConsumerPreservesNativeIntegers(t *testing.T) {
 	write(filepath.Join(consumer, "go.mod"), []byte("module consumer.test\n\ngo 1.25.0\n\nrequire terrascale.tech/sdk v0.0.0\n"))
 	write(filepath.Join(consumer, "go.sum"), sums)
 	write(filepath.Join(consumer, "consumer_test.go"), []byte(packagedNativeConsumer))
+	// The module cache is isolated so the SDK must resolve from the packed
+	// archive. The content-addressed build cache is shared; -trimpath keeps its
+	// keys independent of this temporary workspace, so unchanged packages are
+	// not recompiled on every run.
 	command := exec.CommandContext(t.Context(), "go", "test", "-mod=mod", "-count=1", "./...")
 	command.Dir = consumer
-	command.Env = append(os.Environ(), "GOWORK=off", "GOENV=off", "GOFLAGS=-modcacherw", "GOTOOLCHAIN=local", "GOSUMDB=off", "GONOSUMDB=*", "GOPRIVATE=", "GONOPROXY=none", "GOPROXY="+(&url.URL{Scheme: "file", Path: proxy}).String(), "GOPATH="+filepath.Join(workspace, "gopath"), "GOMODCACHE="+filepath.Join(workspace, "modules"), "GOCACHE="+filepath.Join(workspace, "build-cache"))
+	command.Env = append(os.Environ(), "GOWORK=off", "GOENV=off", "GOFLAGS=-modcacherw -trimpath", "GOTOOLCHAIN=local", "GOSUMDB=off", "GONOSUMDB=*", "GOPRIVATE=", "GONOPROXY=none", "GOPROXY="+(&url.URL{Scheme: "file", Path: proxy}).String(), "GOPATH="+filepath.Join(workspace, "gopath"), "GOMODCACHE="+filepath.Join(workspace, "modules"))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("clean packaged consumer failed: %v\n%s", err, output)
 	}
