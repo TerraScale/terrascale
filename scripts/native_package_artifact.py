@@ -11,7 +11,9 @@ import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
 
-from qualification.check_native_package import EXPECTED_ARTIFACTS, EXPECTED_PROVENANCE_SHA256
+from qualification.check_native_package import (
+    EXPECTED_ARTIFACTS, EXPECTED_AUTH_ARTIFACTS, EXPECTED_PROVENANCE_SHA256,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +52,7 @@ def inspect_package(package: Path, revision: str, version: str) -> dict:
                 repository.get("url") != "https://git.terrascale.tech/TerraScale/ts-dotnet":
             raise ValueError("The package does not bind the expected official Git source revision.")
         expected_contracts = {"contracts/native/" + name for name in EXPECTED_ARTIFACTS}
+        expected_contracts.update("contracts/auth/" + name for name in EXPECTED_AUTH_ARTIFACTS)
         expected_contracts.add("contracts/native/provenance.json")
         if {name for name in names if name.startswith("contracts/")} != expected_contracts:
             raise ValueError("The package contract layout differs.")
@@ -60,6 +63,14 @@ def inspect_package(package: Path, revision: str, version: str) -> dict:
             data = archive.read(path)
             if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
                 raise ValueError("The package native contract bytes differ.")
+            entries[path] = {"bytes": size, "sha256": digest}
+        for name, (size, digest) in EXPECTED_AUTH_ARTIFACTS.items():
+            path = "contracts/auth/" + name
+            if archive.getinfo(path).file_size != size:
+                raise ValueError("The package auth contract size differs.")
+            data = archive.read(path)
+            if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
+                raise ValueError("The package auth contract bytes differ.")
             entries[path] = {"bytes": size, "sha256": digest}
         if archive.getinfo("contracts/native/provenance.json").file_size > 8192:
             raise ValueError("The package provenance exceeds its bound.")

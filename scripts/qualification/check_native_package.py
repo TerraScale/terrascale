@@ -29,6 +29,9 @@ EXPECTED_ARTIFACTS = {
     "atlas/native-discovery-success.json": (771, "82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec"),
     "atlas/native-discovery-forbidden.json": (154, "3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c"),
 }
+EXPECTED_AUTH_ARTIFACTS = {
+    "error-codes.json": (3961, "e1ce0aea7380acb466d30c186e11a4c3226e7d9801804643a156383ba305bcaf"),
+}
 EXPECTED_PROVENANCE = {
     "schema": "terrascale.dotnet.native-contract-inputs.v1",
     "producer_contract_family": "native-v1",
@@ -154,6 +157,16 @@ def main() -> None:
             if actual_sha != expected_sha:
                 raise SystemExit("Native package contract bytes differ from the independent producer pin.")
             archive_contracts[name] = {"bytes": size, "sha256": actual_sha}
+        archive_auth_contracts = {}
+        for name, (size, expected_sha) in EXPECTED_AUTH_ARTIFACTS.items():
+            entry = "contracts/auth/" + name
+            if archive.namelist().count(entry) != 1 or archive.getinfo(entry).file_size != size:
+                raise SystemExit("Auth package contract entry differs from the source pin.")
+            data = archive.read(entry)
+            actual_sha = hashlib.sha256(data).hexdigest()
+            if actual_sha != expected_sha:
+                raise SystemExit("Auth package contract bytes differ from the source pin.")
+            archive_auth_contracts[name] = {"bytes": size, "sha256": actual_sha}
         provenance_entry = "contracts/native/provenance.json"
         if archive.namelist().count(provenance_entry) != 1 or archive.getinfo(provenance_entry).file_size > 8192:
             raise SystemExit("Native package provenance entry is invalid.")
@@ -173,6 +186,7 @@ def main() -> None:
         "execution_source_inputs": {},
         "runner_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "archive_contracts": archive_contracts,
+        "archive_auth_contracts": archive_auth_contracts,
         "archive_provenance_sha256": hashlib.sha256(provenance_bytes).hexdigest(),
         "phases": [],
         "producer_native": "NOT RUN",
