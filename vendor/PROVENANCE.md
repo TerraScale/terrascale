@@ -18,6 +18,12 @@ an internal proxy, or a sibling checkout. The public source version matches
 the dashboard's existing upstream pin. The regional hostname correction below
 remains a downstream vendor patch.
 
+The repository's public `go-import` metadata names
+`https://git.terrascale.tech/TerraScale/ts-go.git`, with no Codeberg mirror.
+`make check-modules` intentionally verifies this replacement alongside all
+other modules through the public proxy and checksum database from an empty
+cache. Public availability of this pinned revision is required for CI.
+
 To refresh, update both SDK versions in `go.mod`, run `GOFLAGS=-mod=mod go mod
 tidy` and `GOFLAGS=-mod=mod go mod vendor`, then restore this file and record
 the new commit and checksums. Reapply the regional hostname correction below

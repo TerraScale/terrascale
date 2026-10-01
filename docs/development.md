@@ -127,6 +127,10 @@ resolves it through the [public ts-go repository](https://git.terrascale.tech/Te
 The pin keeps the dashboard's current API contract; it does not track the
 SDK's main branch. Downloads use the public Go proxy with direct HTTPS fallback
 and the public checksum database, without credentials or a local module proxy.
+The repository's `go-import` metadata points to
+`https://git.terrascale.tech/TerraScale/ts-go.git`. The public replacement,
+including its pinned revision and checksum records, is intentionally part of
+the CI download check; it does not require a Codeberg mirror.
 
 To upgrade the SDK, update both its `require` version and the public repository
 version in `replace`, then run `GOFLAGS=-mod=mod go mod tidy` and
@@ -142,6 +146,11 @@ public dependency resolution and runs in CI before the vendored build checks.
 It uses the installed Go toolchain and a temporary module cache, removed on
 exit, so a warm runner cache cannot hide download failures. The check downloads
 the full module graph, including tool and transitive module dependencies.
+It clears Go's [module privacy settings](https://go.dev/ref/mod#private-modules),
+`GOPRIVATE`, `GONOPROXY`, and `GONOSUMDB`, so local exclusions cannot
+bypass the public proxy or checksum database. Cleanup makes the throwaway
+cache writable and removes the directory directly, even if Go fails to start,
+while preserving the download exit status.
 
 The MCP endpoint and its tool conventions are described in [mcp.md](mcp.md).
 
