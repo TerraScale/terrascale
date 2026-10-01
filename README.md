@@ -15,11 +15,11 @@ bits; bytes use canonical base64url.
 
 Database requests use authenticated Atlas admission followed by an eligible
 direct regional origin. `NativeDiscoveryRouter` calls Atlas with the current
-credential and exact tenant/database/shard scope before each request. It checks
+credential and exact tenant/database/shard scope and reuses the matching bounded lease. It checks
 scope, operation capabilities, observation monotonicity and lease freshness
 immediately before dispatch. Admission failure stops the request.
-`api.terrascale.tech` and regional `.api.terrascale.tech` hosts are test-only and
-are rejected as native origins. There is no database proxy fallback.
+`api.terrascale.tech` is a proxy and retired root regional hosts are
+rejected as native origins. There is no database proxy fallback.
 
 ```csharp
 using TerraScale.DotNet.Native;
@@ -57,8 +57,9 @@ Caller-owned `HttpClient` instances must be configured the same way; the SDK
 never reconfigures or disposes them. Deadlines and cancellation are explicit.
 Failures expose fixed safe metadata instead of response bodies or credentials.
 
-The exact producer OpenAPI, atomic vectors, Atlas wire identity and Atlas
-success/forbidden fixtures are tracked under `contracts/native`, embedded in
+The pinned producer OpenAPI with a documented status-description correction,
+atomic vectors, historical Atlas wire identity, derived production-origin success
+codec fixture and historical forbidden fixture are tracked under `contracts/native`, embedded in
 the SDK, and included in the package with their provenance. These inputs are
 contract evidence; local handler checks do not prove live-service behavior.
 
@@ -119,3 +120,21 @@ exact-byte handoff and its publication boundary.
 [Package qualification](scripts/qualification/README.md) describes the bounded
 package-only consumer. Publishing and live-service qualification are separate
 gates; neither is implied by a source build or artifact export.
+
+## Native client migration
+
+This native SDK release removes `TerraScaleClient`, `TerraScaleClientOptions`,
+`AddTerraScaleClient`, and the obsolete Entity Framework provider. Construct
+`NativeClient` with a provisioned `NativeScope`, current scoped-key provider,
+and `NativeDiscoveryRouter`, or register that client explicitly with DI.
+Auth consumers use `TerraScaleAuthClientOptions` and `AddTerraScaleAuthClient`.
+
+Regional database origins are `https://<region>.api.terrascale.tech`, for example
+`https://gru.api.terrascale.tech`. Direct-origin callers own prior provisioning
+and capability checks; accepting a canonical URL does not establish eligibility.
+Discovery caches only authenticated leases for the same credential, coalesces
+scope requests, and retains at most 256 scope observation floors for its lifetime.
+Floors survive lease expiry: deployment or cell changes require explicit
+reprovisioning and a new router. The pinned contract rejects future publication
+timestamps and consumes fetch latency from the lease, so clocks must be synchronized.
+On Windows callers must secure retained operation directories with private ACLs.

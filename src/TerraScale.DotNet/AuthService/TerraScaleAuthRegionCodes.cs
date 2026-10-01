@@ -6,5 +6,6 @@ internal static class TerraScaleAuthRegionCodes
     internal static bool IsValid(string value) =>
         value.Length is >= 1 and <= 16 &&
         (value[0] is (>= 'A' and <= 'Z') or (>= '0' and <= '9')) &&
+        !value.EndsWith('-') && !value.Contains("--", StringComparison.Ordinal) &&
         value.All(character => character is (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '-');
 }

@@ -26,7 +26,7 @@ public sealed class NativeDiscoveryRouterTests
         var admission = await router.ResolveAsync(Scope, Credential, ["client_v1", "write"], CancellationToken.None);
         admission.AssertCurrent();
 
-        await Assert.That(admission.Origin.ToString()).IsEqualTo("https://fra.terrascale.tech/");
+        await Assert.That(admission.Origin.ToString()).IsEqualTo("https://fra.api.terrascale.tech/");
         await Assert.That(transport.Requests.Count).IsEqualTo(1);
         await Assert.That(transport.Requests[0]).IsEqualTo(
             $"https://atlas.terrascale.tech/api/v1/discovery?database_id={Scope.Database}&shard_id=18446744073709551615&tenant_id={Scope.Tenant}");
@@ -75,7 +75,7 @@ public sealed class NativeDiscoveryRouterTests
     {
         var body = new StallStream();
         var transport = new HeaderOnlyTransport(body);
-        using var router = new NativeDiscoveryRouter(TimeSpan.FromMilliseconds(20), transport);
+        using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(2), transport);
         var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None));
         await Assert.That(failure.Code).IsEqualTo("discovery_unavailable");
         await Assert.That(failure.Status).IsNull();
@@ -101,16 +101,16 @@ public sealed class NativeDiscoveryRouterTests
         document["scope"]!["tenant_id"] = "10000000-0000-0000-0000-000000000002";
         using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(3), new Transport(document.ToJsonString()), clock);
 
-        var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None));
+        var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential.Replace("AAAA", "AgAA", StringComparison.Ordinal), ["read"], CancellationToken.None));
         await Assert.That(failure.Code).IsEqualTo("invalid_discovery");
     }
 
     [Test]
-    [Arguments("https://gru.api.terrascale.tech")]
+    [Arguments("https://gru.terrascale.tech")]
     [Arguments("https://api.terrascale.tech")]
     [Arguments("http://127.0.0.1:12345")]
-    [Arguments("https://gru.terrascale.tech:444")]
-    [Arguments("https://gru.terrascale.tech/path")]
+    [Arguments("https://gru.api.terrascale.tech:444")]
+    [Arguments("https://gru.api.terrascale.tech/path")]
     public async Task ProductionMetadataCannotSelectLegacyOrDevelopmentOrigins(string origin)
     {
         var clock = new TestClock();
@@ -118,15 +118,15 @@ public sealed class NativeDiscoveryRouterTests
         document["endpoints"]![0]!["url"] = origin;
         using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(3), new Transport(document.ToJsonString()), clock);
 
-        var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None));
+        var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential.Replace("AAAA", "AgAA", StringComparison.Ordinal), ["read"], CancellationToken.None));
         await Assert.That(failure.Code).IsEqualTo("invalid_discovery");
     }
 
     [Test]
-    [Arguments("gru", "https://gru.terrascale.tech")]
+    [Arguments("gru", "https://gru.api.terrascale.tech")]
     [Arguments("ATLAS", "https://atlas.terrascale.tech")]
-    [Arguments("GRU", "https://gru.terrascale.tech.attacker.example")]
-    [Arguments("BRA", "https://gru.terrascale.tech")]
+    [Arguments("GRU", "https://gru.api.terrascale.tech.attacker.example")]
+    [Arguments("BRA", "https://gru.api.terrascale.tech")]
     public async Task DiscoveryRequiresCanonicalNonReservedMatchingRegionalIdentity(string region, string origin)
     {
         var clock = new TestClock();
@@ -135,7 +135,7 @@ public sealed class NativeDiscoveryRouterTests
         document["endpoints"]![0]!["url"] = origin;
         using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(3), new Transport(document.ToJsonString()), clock);
 
-        var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None));
+        var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential.Replace("AAAA", "AgAA", StringComparison.Ordinal), ["read"], CancellationToken.None));
         await Assert.That(failure.Code).IsEqualTo("invalid_discovery");
     }
 
@@ -168,7 +168,7 @@ public sealed class NativeDiscoveryRouterTests
         var successor = JsonNode.Parse(transport.Body)!;
         successor["revision"] = "42";
         transport.Body = successor.ToJsonString();
-        await router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None);
+        await router.ResolveAsync(Scope, Credential.Replace("AAAA", "AQAA", StringComparison.Ordinal), ["read"], CancellationToken.None);
         var fenced = await CaptureAsync(() => { first.AssertCurrent(); return ValueTask.FromResult(first); });
         await Assert.That(fenced.Code).IsEqualTo("routing_observation_regressed");
         successor["revision"] = "41";
@@ -189,10 +189,10 @@ public sealed class NativeDiscoveryRouterTests
         var conflict = JsonNode.Parse(transport.Body)!;
         conflict["authority"]!["publisher_id"] = "publisher-b";
         transport.Body = conflict.ToJsonString();
-        var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None));
+        var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential.Replace("AAAA", "AQAA", StringComparison.Ordinal), ["read"], CancellationToken.None));
         await Assert.That(failure.Code).IsEqualTo("routing_observation_regressed");
         transport.Body = Body(clock, Endpoint("GRU")).Replace("\"revision\":\"41\"", "\"revision\":\"41\",\"revision\":\"42\"", StringComparison.Ordinal);
-        failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None));
+        failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential.Replace("AAAA", "AgAA", StringComparison.Ordinal), ["read"], CancellationToken.None));
         await Assert.That(failure.Code).IsEqualTo("invalid_discovery");
     }
 
@@ -207,10 +207,46 @@ public sealed class NativeDiscoveryRouterTests
         await Assert.That(failure.Code).IsEqualTo("unsupported_discovery_writer");
     }
 
+    [Test]
+    public async Task ParallelSameCredentialResolvesShareLeaseAndCredentialChangeFencesOldAdmissions()
+    {
+        var clock = new TestClock();
+        var transport = new Transport(Body(clock, Endpoint("GRU")));
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fetches = 0;
+        using var http = new HttpClient(new NativeClientTests.Handler(async (_, token) =>
+        {
+            Interlocked.Increment(ref fetches);
+            started.TrySetResult();
+            await release.Task.WaitAsync(token);
+            return NativeClientTests.Json(transport.Body);
+        }));
+        using var router = new NativeDiscoveryRouter(http, TimeSpan.FromSeconds(3), clock: clock);
+        var pending = Enumerable.Range(0, 32).Select(_ =>
+            router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None).AsTask()).ToArray();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        release.SetResult();
+        var admissions = await Task.WhenAll(pending);
+        await Assert.That(fetches).IsEqualTo(1);
+        foreach (var admission in admissions) admission.AssertCurrent();
+        var successor = JsonNode.Parse(transport.Body)!;
+        successor["revision"] = "42";
+        transport.Body = successor.ToJsonString();
+        var next = await router.ResolveAsync(Scope, Credential.Replace("AAAA", "AQAA", StringComparison.Ordinal), ["read"], CancellationToken.None);
+        next.AssertCurrent();
+        await Assert.That(fetches).IsEqualTo(2);
+        foreach (var admission in admissions)
+        {
+            var fenced = await CaptureAsync(() => { admission.AssertCurrent(); return ValueTask.FromResult(admission); });
+            await Assert.That(fenced.Code).IsEqualTo("routing_observation_regressed");
+        }
+    }
+
     private static object Endpoint(string region, bool write = true, int priority = 1) => new
     {
         region,
-        url = "https://" + region.ToLowerInvariant() + ".terrascale.tech",
+        url = "https://" + region.ToLowerInvariant() + ".api.terrascale.tech",
         catalog = new { digest = new string('c', 64) },
         capabilities = new { client_v1 = true, read = true, query = true, subscriptions = true, write, conditional_mutation = false, atomic_groups = false, security_state = false },
         security_writer = (object?)null,

@@ -7,6 +7,7 @@ using System.Text.Json;
 namespace TerraScale.DotNet.Native;
 
 /// <summary>Native v1 transport. Credentials and admission are resolved anew for every finite request.</summary>
+/// <remarks>Unexpected provider programming and lifecycle exceptions propagate. Invalid credentials and admissions return distinct local failure codes.</remarks>
 public sealed class NativeClient : IDisposable
 {
     private readonly Guid owner = Guid.NewGuid();
@@ -196,12 +197,15 @@ public sealed class NativeClient : IDisposable
         var sent = false;
         int? status = null;
         TimeSpan? retryAfter = null;
+        var phase = "credential";
         try
         {
             budget.Token.ThrowIfCancellationRequested();
             var key = ValidateKey(await keyProvider(budget.Token).AsTask().WaitAsync(budget.Token).ConfigureAwait(false));
+            phase = "admission";
             var admission = await admissionProvider.ResolveAsync(Scope, key, capabilities, budget.Token).AsTask()
                 .WaitAsync(budget.Token).ConfigureAwait(false);
+            phase = "response";
             using var request = new HttpRequestMessage(method, new Uri(admission.Origin, path));
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
@@ -212,6 +216,7 @@ public sealed class NativeClient : IDisposable
             }
             budget.Token.ThrowIfCancellationRequested();
             admission.AssertCurrent();
+            budget.Token.ThrowIfCancellationRequested();
             sent = true;
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token).ConfigureAwait(false);
             status = (int)response.StatusCode;
@@ -242,9 +247,9 @@ public sealed class NativeClient : IDisposable
             return Failure<T>(cancellationToken.IsCancellationRequested ? "cancelled" : "deadline_exceeded", status, retryAfter,
                 identity, mutation && sent ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown);
         }
-        catch (Exception exception) when (exception is InvalidDataException or JsonException or FormatException or ArgumentException)
+        catch (Exception exception) when (exception is InvalidDataException or JsonException or FormatException)
         {
-            return Failure<T>("invalid_response", status, retryAfter, identity,
+            return Failure<T>(phase == "credential" ? "invalid_credential" : phase == "admission" ? "invalid_admission" : "invalid_response", status, retryAfter, identity,
                 mutation && sent ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown);
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException)

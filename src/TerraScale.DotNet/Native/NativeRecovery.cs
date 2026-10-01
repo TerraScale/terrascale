@@ -20,6 +20,7 @@ public sealed record NativeRetainedOperation(
 }
 
 /// <summary>Private local recovery metadata; no API key, OAuth token or discovery grant is serialized.</summary>
+/// <remarks>Unix files must be owner-private. On Windows the caller must provision and verify a private directory ACL.</remarks>
 public static class NativeOperationStore
 {
     private const int MaximumRetainedBytes = NativeCodec.MaximumBodyBytes + 8192;
@@ -56,7 +57,9 @@ public static class NativeOperationStore
         }
         finally
         {
-            if (File.Exists(temporary)) File.Delete(temporary);
+            try { if (File.Exists(temporary)) File.Delete(temporary); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
     }
 
@@ -87,25 +90,35 @@ public static class NativeOperationStore
         if (!version.TryGetInt32(out var number) || number != 1) throw new InvalidDataException("Unsupported local operation format.");
         var rawScope = root.GetProperty("scope");
         Exact(rawScope, ["tenant", "database", "shard"]);
-        var shard = rawScope.GetProperty("shard").GetString();
+        var shard = RetainedString(rawScope.GetProperty("shard"), "shard");
         if (!ulong.TryParse(shard, NumberStyles.None, CultureInfo.InvariantCulture, out var shardNumber) ||
             shardNumber.ToString(CultureInfo.InvariantCulture) != shard)
             throw new InvalidDataException("Retained shard must be canonical u64 decimal.");
-        var scope = NativeCodec.ValidateScope(new NativeScope(rawScope.GetProperty("tenant").GetString()!,
-            rawScope.GetProperty("database").GetString()!, shardNumber));
+        var scope = NativeCodec.ValidateScope(new NativeScope(RetainedString(rawScope.GetProperty("tenant"), "tenant"),
+            RetainedString(rawScope.GetProperty("database"), "database"), shardNumber));
         var rawOrigin = root.GetProperty("explicit_origin");
-        var origin = rawOrigin.ValueKind == JsonValueKind.Null ? null : rawOrigin.GetString();
+        var origin = rawOrigin.ValueKind == JsonValueKind.Null ? null : RetainedString(rawOrigin, "explicit_origin");
         if (origin is not null)
         {
             // Development is only restored through an explicitly configured development client.
-            var canonical = NativeOrigin.Validate(origin, development: true).GetLeftPart(UriPartial.Authority);
-            if (canonical != origin) throw new InvalidDataException("Retained origin must be canonical.");
+            try
+            {
+                var canonical = NativeOrigin.Validate(origin, development: true).GetLeftPart(UriPartial.Authority);
+                if (canonical != origin) throw new InvalidDataException("Retained origin must be canonical.");
+            }
+            catch (ArgumentException exception)
+            {
+                throw new InvalidDataException("Retained origin is not a valid native origin.", exception);
+            }
         }
         var requestBody = root.GetProperty("request_body").GetRawText();
         using var request = NativeCodec.Parse(requestBody);
         var commit = NativeCodec.DecodeCommit(scope, request.RootElement);
         return new NativeRetainedOperation(scope, origin, NativeCodec.EncodeCommit(scope, commit).Identity, requestBody);
     }
+
+    private static string RetainedString(JsonElement value, string name) => value.ValueKind == JsonValueKind.String
+        ? value.GetString()! : throw new InvalidDataException($"Retained {name} must be a string.");
 
     private static byte[] Encode(NativePreparedCommit prepared)
     {
@@ -175,7 +188,11 @@ public static class NativeRecovery
                 }
                 var remaining = deadline - Stopwatch.GetElapsedTime(started);
                 var delay = retryAfter > pollInterval ? retryAfter.Value : pollInterval;
-                if (remaining <= TimeSpan.Zero || delay >= remaining) break;
+                if (remaining <= TimeSpan.Zero || delay >= remaining)
+                {
+                    failure = new NativeFailure("deadline_exceeded", Transaction: prepared.Identity, MutationOutcome: NativeMutationOutcome.Uncertain);
+                    break;
+                }
                 await Task.Delay(delay, budget.Token).ConfigureAwait(false);
             }
         }
@@ -187,7 +204,7 @@ public static class NativeRecovery
         return new NativeRecoveryResult(prepared.Identity, state, null, failure);
     }
 
-    private static bool Transient(NativeFailure failure) => failure.Code is "transport_unavailable" or "deadline_exceeded" ||
+    private static bool Transient(NativeFailure failure) => failure.Code is "transport_unavailable" or "deadline_exceeded" or "discovery_unavailable" or "discovery_expired" ||
         failure.Status == 429 && failure.Code == "rate_limited" || failure.Status == 503 &&
         failure.Code is "capacity" or "storage_unavailable" or "authority_unavailable" or "commit_uncertain";
 }

@@ -13,7 +13,7 @@ concurrency:
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-  DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+  DOTNET_CLI_USE_MSBUILDSERVER: "0"
   SOURCE_REVISION: ${{ forgejo.sha }}
 
 jobs:

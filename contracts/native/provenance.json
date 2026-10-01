@@ -4,8 +4,8 @@
   "artifacts": [
     {
       "path": "client-openapi.json",
-      "bytes": 98999,
-      "sha256": "dc9936a2825b10e5da9eb7801964751bcd211bc8e7a197ca41736af73af7fd98"
+      "bytes": 98014,
+      "sha256": "563a66449d8c2eeb4306b9bb9d994cabb86c14bd4c469f785dabe5afb9f6ef3d"
     },
     {
       "path": "atomic_vectors.json",
@@ -19,8 +19,8 @@
     },
     {
       "path": "atlas/native-discovery-success.json",
-      "bytes": 767,
-      "sha256": "d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0"
+      "bytes": 771,
+      "sha256": "82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec"
     },
     {
       "path": "atlas/native-discovery-forbidden.json",
@@ -40,5 +40,15 @@
     "accepted_encoder_result_sha256": "b980cc24a1ad7977abd1a0d7d3f3b8ec3538e1d315203b5234a6c0079e1d952e",
     "independent_reviewer": "/root/cli_check_04",
     "independent_verdict": "ACCEPTED_SOURCE_CORRECTION_ONLY"
+  },
+  "regional_origin_derivation": {
+    "historical_success_sha256": "d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0",
+    "derived_success_sha256": "82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec",
+    "change": "GRU origin aligned with production https://gru.api.terrascale.tech; derived codec bytes, not a new live capture"
+  },
+  "transaction_status_documentation_correction": {
+    "preimage_sha256": "dc9936a2825b10e5da9eb7801964751bcd211bc8e7a197ca41736af73af7fd98",
+    "sha256": "563a66449d8c2eeb4306b9bb9d994cabb86c14bd4c469f785dabe5afb9f6ef3d",
+    "scope": "transactionStatus descriptions and code sample only; schema and protocol are unchanged"
   }
 }

@@ -9,7 +9,7 @@ namespace TerraScale.DotNet.Tests.Native;
 public sealed class NativeClientTests
 {
     internal static NativeClient Client(HttpMessageHandler handler, INativeAdmissionProvider? provider = null) => new(
-        NativeCodecTests.Scope, provider ?? new NativeDirectAdmissionProvider("https://gru.terrascale.tech"),
+        NativeCodecTests.Scope, provider ?? new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
         static _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2), handler);
 
     internal static HttpResponseMessage Json(string json, HttpStatusCode status = HttpStatusCode.OK) =>
@@ -32,7 +32,7 @@ public sealed class NativeClientTests
             return Json(bodies.Count == 1 ? "{\"version\":1,\"rows\":[],\"next_cursor\":\"opaque_cursor-1\"}" : "{\"version\":1,\"rows\":[]}");
         });
         var key = 0;
-        using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.terrascale.tech"),
+        using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
             _ => ValueTask.FromResult("tbk1.fixture-" + ++key), TimeSpan.FromSeconds(2), handler);
         var query = client.PrepareQuery(NativeCodecTests.Collection, new NativeQueryPredicate(NativeQueryOperator.Equal, [1], new NativeValue.Text("value")), 1);
         var first = await client.QueryAsync(query);
@@ -179,7 +179,7 @@ public sealed class NativeClientTests
     [Test]
     public async Task TestApiOriginsAndUnmarkedLoopbackAreRejectedLocally()
     {
-        foreach (var origin in new[] { "https://api.terrascale.tech", "https://gru.api.terrascale.tech", "https://API.TERRASCALE.TECH.", "http://127.0.0.1:1" })
+        foreach (var origin in new[] { "https://api.terrascale.tech", "https://gru.terrascale.tech", "https://API.TERRASCALE.TECH.", "http://127.0.0.1:1" })
         {
             await Assert.ThrowsAsync<ArgumentException>(() =>
             {
@@ -187,6 +187,48 @@ public sealed class NativeClientTests
                 return Task.CompletedTask;
             });
         }
+    }
+
+    [Test]
+    public async Task InvalidLocalCredentialsAndAdmissionsAreDistinctFromWireFailures()
+    {
+        var calls = 0;
+        using var http = new HttpClient(new Handler((_, _) => { calls++; return Task.FromResult(Json("{}")); }));
+        using var credentialClient = new NativeClient(http, NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
+            _ => ValueTask.FromResult("invalid key"), TimeSpan.FromSeconds(2));
+        var credential = await credentialClient.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document);
+        await Assert.That(((NativeResult<NativePoint>.Failure)credential).Error.Code).IsEqualTo("invalid_credential");
+        using var admissionClient = new NativeClient(http, NativeCodecTests.Scope, new Provider(static () => throw new InvalidDataException()),
+            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2));
+        var admission = await admissionClient.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document);
+        await Assert.That(((NativeResult<NativePoint>.Failure)admission).Error.Code).IsEqualTo("invalid_admission");
+        await Assert.That(calls).IsEqualTo(0);
+        using var brokenClient = new NativeClient(http, NativeCodecTests.Scope, new Provider(static () => throw new ArgumentException("provider bug")),
+            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2));
+        await Assert.ThrowsAsync<ArgumentException>(() => brokenClient.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document));
+    }
+
+    [Test]
+    public async Task CancellationInsideFinalAdmissionCheckNeverDispatchesCommit()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var calls = 0;
+        using var http = new HttpClient(new Handler((_, _) => { calls++; return Task.FromResult(Json("{}")); }));
+        using var client = new NativeClient(http, NativeCodecTests.Scope, new Provider(() =>
+            new NativeAdmission("https://gru.api.terrascale.tech", cancellation.Cancel)),
+            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2));
+        var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+        var result = await client.CommitAsync(prepared, cancellation.Token);
+        var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
+        await Assert.That(error.Code).IsEqualTo("cancelled");
+        await Assert.That(error.MutationOutcome).IsEqualTo(NativeMutationOutcome.Unknown);
+        await Assert.That(calls).IsEqualTo(0);
+    }
+
+    private sealed class Provider(Func<NativeAdmission> resolve) : INativeAdmissionProvider
+    {
+        public ValueTask<NativeAdmission> ResolveAsync(NativeScope scope, string apiKey, IReadOnlyCollection<string> capabilities, CancellationToken cancellationToken) =>
+            ValueTask.FromResult(resolve());
     }
 
     internal sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
@@ -197,6 +239,6 @@ public sealed class NativeClientTests
     private sealed class StaleAdmission : INativeAdmissionProvider
     {
         public ValueTask<NativeAdmission> ResolveAsync(NativeScope scope, string apiKey, IReadOnlyCollection<string> capabilities, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new NativeAdmission("https://gru.terrascale.tech", static () => throw new NativeAdmissionException("discovery_expired")));
+            ValueTask.FromResult(new NativeAdmission("https://gru.api.terrascale.tech", static () => throw new NativeAdmissionException("discovery_expired")));
     }
 }

@@ -21,12 +21,12 @@ ROOT = Path(__file__).resolve().parents[2]
 PHASE_TIMEOUT_SECONDS = 120
 MAXIMUM_OUTPUT_BYTES = 1024 * 1024
 RETAINED_OUTPUT_BYTES = 32768
-EXPECTED_PROVENANCE_SHA256 = "0a63bafe4ada0aca4d440944d514cf63ce11298143e332ae87cf7a3af3146450"
+EXPECTED_PROVENANCE_SHA256 = "e7a84ef5ff0910520ac0c9d6aaeb56b6026eb46976fb14d8e8859961b12974f5"
 EXPECTED_ARTIFACTS = {
-    "client-openapi.json": (98999, "dc9936a2825b10e5da9eb7801964751bcd211bc8e7a197ca41736af73af7fd98"),
+    "client-openapi.json": (98014, "563a66449d8c2eeb4306b9bb9d994cabb86c14bd4c469f785dabe5afb9f6ef3d"),
     "atomic_vectors.json": (8776, "4ce4286b6e2eeae4ee15dec83f788f33cffdba7606a49021ec81afe0a4a9e816"),
     "atlas/native-wire-identity.json": (2581, "b789d6fb7782e34ece3b516139856f2b6d2dea0543436820eefa50ff31355538"),
-    "atlas/native-discovery-success.json": (767, "d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0"),
+    "atlas/native-discovery-success.json": (771, "82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec"),
     "atlas/native-discovery-forbidden.json": (154, "3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c"),
 }
 EXPECTED_PROVENANCE = {
@@ -37,6 +37,8 @@ EXPECTED_PROVENANCE = {
     "foundation_review_sha256": "6a4edd023dd6b95389ce4325c82296789e24db9426ee2093dcb6af352d962911",
     "discovery_manifest_sha256": "7fd968f0e4552f8f3dcdf90eae2b3e64f704ea02c30ec45e0941ce9010b9f930",
     "discovery_review_sha256": "822871a5e0fd4798514e6e5783d191df79c8e18e49c78b0b026da57dc96d61cb",
+    "regional_origin_derivation": {'historical_success_sha256': 'd32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0', 'derived_success_sha256': '82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec', 'change': 'GRU origin aligned with production https://gru.api.terrascale.tech; derived codec bytes, not a new live capture'},
+    "transaction_status_documentation_correction": {'preimage_sha256': 'dc9936a2825b10e5da9eb7801964751bcd211bc8e7a197ca41736af73af7fd98', 'sha256': '563a66449d8c2eeb4306b9bb9d994cabb86c14bd4c469f785dabe5afb9f6ef3d', 'scope': 'transactionStatus descriptions and code sample only; schema and protocol are unchanged'},
     "openapi_effect_example_correction": {
         "preimage_sha256": "2c8fc075bb2714de6f0ba10756f903e09e4d2a43ecaa63b2135ccb2042545a52",
         "manifest_sha256": "79d13c23e706b4ff3a2a2d35dc98306a99fcd3f3cfa12bbb89b6dd08a540273e",
@@ -68,7 +70,7 @@ def run_phase(command: list[str], directory: Path, environment: dict[str, str]) 
         process = subprocess.Popen(command, cwd=directory, env=environment, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, start_new_session=os.name == "posix")
     except OSError as error:
-        phase["failure"] = str(error)
+        phase["failure"] = f"{type(error).__name__}: {error}"
         return phase
     tail = bytearray()
     exceeded = threading.Event()
@@ -108,7 +110,7 @@ def run_phase(command: list[str], directory: Path, environment: dict[str, str]) 
         if exceeded.is_set():
             raise RuntimeError("Phase output exceeded 1 MiB.")
     except RuntimeError as error:
-        phase["failure"] = str(error)
+        phase["failure"] = f"{type(error).__name__}: {error}"
         stop_process_tree(process)
         process.wait(timeout=5)
         reader.join(timeout=5)
@@ -178,86 +180,91 @@ def main() -> None:
         "phase_timeout_seconds": PHASE_TIMEOUT_SECONDS,
         "phase_output_limit_bytes": MAXIMUM_OUTPUT_BYTES,
     }
-    with tempfile.TemporaryDirectory(prefix="terrascale-native-package-") as temporary:
-        scratch = Path(temporary)
-        feed = scratch / "feed"
-        feed.mkdir()
-        (feed / arguments.package.name).write_bytes(package_bytes)
-        consumer = scratch / "consumer"
-        consumer.mkdir()
-        for name in ("NativeConsumer.csproj", "NativeConsumer.cs", "NativeChecks.cs"):
-            origin = ROOT / "tests/TerraScale.DotNet.Qualification" / name
-            data = origin.read_bytes()
-            receipt["source_inputs"][name] = hashlib.sha256(data).hexdigest()
-            (consumer / name).write_bytes(data)
-        project = ET.parse(consumer / "NativeConsumer.csproj")
-        ET.SubElement(project.getroot().find("PropertyGroup"), "TargetFramework").text = arguments.framework
-        project.write(consumer / "NativeConsumer.csproj", encoding="utf-8", xml_declaration=False)
-        configuration = consumer / "NuGet.Config"
-        configuration.write_text(
-            '<configuration><packageSources><clear />'
-            '<add key="candidate" value="../feed" />'
-            '<add key="nuget" value="https://api.nuget.org/v3/index.json" />'
-            '</packageSources><packageSourceMapping>'
-            '<packageSource key="candidate"><package pattern="TerraScale.DotNet" /></packageSource>'
-            '<packageSource key="nuget"><package pattern="*" /></packageSource>'
-            '</packageSourceMapping></configuration>\n', encoding="utf-8")
-        receipt["nuget_configuration_sha256"] = hashlib.sha256(configuration.read_bytes()).hexdigest()
-        for name in ("NativeConsumer.csproj", "NativeConsumer.cs", "NativeChecks.cs"):
-            receipt["execution_source_inputs"][name] = hashlib.sha256((consumer / name).read_bytes()).hexdigest()
-        for name in ("tmp", "http-cache", "plugin-cache", "nuget-scratch"):
-            (scratch / name).mkdir()
-        environment = os.environ.copy()
-        environment.update({
-            "DOTNET_CLI_HOME": str(scratch / "dotnet-home"),
-            "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
-            "DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1",
-            "DOTNET_CLI_USE_MSBUILD_SERVER": "0",
-            "NUGET_PACKAGES": str(scratch / "packages"),
-            "NUGET_HTTP_CACHE_PATH": str(scratch / "http-cache"),
-            "NUGET_PLUGINS_CACHE_PATH": str(scratch / "plugin-cache"),
-            "NUGET_SCRATCH": str(scratch / "nuget-scratch"),
-            "TMPDIR": str(scratch / "tmp"),
-            "TMP": str(scratch / "tmp"),
-            "TEMP": str(scratch / "tmp"),
-        })
-        property_argument = "-p:NativeSdkPackageVersion=" + arguments.version
-        commands = [
-            ["dotnet", "restore", "NativeConsumer.csproj", property_argument, "--disable-build-servers", "--verbosity", "quiet"],
-            ["dotnet", "run", "--project", "NativeConsumer.csproj", "--no-restore", "--configuration", "Release",
-             property_argument, "-p:UseSharedCompilation=false", "--disable-build-servers", "--verbosity", "quiet"],
-        ]
-        try:
-            for command in commands:
-                phase = run_phase(command, consumer, environment)
-                receipt["phases"].append(phase)
-                if phase["exit_code"] != 0 or "failure" in phase:
-                    raise RuntimeError("Native package consumer phase failed.")
-            assets = json.loads((consumer / "obj/project.assets.json").read_text())
-            expected = "terrascale.dotnet/" + arguments.version.lower()
-            if not any(name.lower() == expected for name in assets["libraries"]):
-                raise RuntimeError("Consumer resolved another SDK version.")
-            if "Native SDK public package consumer passed." not in receipt["phases"][-1]["output"]:
-                raise RuntimeError("Native consumer completion marker is absent.")
-            receipt["status"] = "PASS_PACKAGE_PUBLIC_HANDLER_CONSUMER"
-        except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
-            receipt["status"] = "FAIL"
-            receipt["failure"] = str(error)
-        finally:
-            receipt["final_execution_source_inputs"] = {
-                name: hashlib.sha256((consumer / name).read_bytes()).hexdigest()
-                for name in ("NativeConsumer.csproj", "NativeConsumer.cs", "NativeChecks.cs")
-            }
-            receipt["final_nuget_configuration_sha256"] = hashlib.sha256(configuration.read_bytes()).hexdigest()
-            receipt["final_runner_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-            receipt["execution_inputs_unchanged"] = (
-                receipt["execution_source_inputs"] == receipt["final_execution_source_inputs"] and
-                receipt["nuget_configuration_sha256"] == receipt["final_nuget_configuration_sha256"] and
-                receipt["runner_sha256"] == receipt["final_runner_sha256"])
-            if not receipt["execution_inputs_unchanged"]:
+    scratch = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="terrascale-native-package-") as temporary:
+            scratch = Path(temporary)
+            feed = scratch / "feed"
+            feed.mkdir()
+            (feed / arguments.package.name).write_bytes(package_bytes)
+            consumer = scratch / "consumer"
+            consumer.mkdir()
+            for name in ("NativeConsumer.csproj", "NativeConsumer.cs", "NativeChecks.cs"):
+                origin = ROOT / "tests/TerraScale.DotNet.Qualification" / name
+                data = origin.read_bytes()
+                receipt["source_inputs"][name] = hashlib.sha256(data).hexdigest()
+                (consumer / name).write_bytes(data)
+            project = ET.parse(consumer / "NativeConsumer.csproj")
+            ET.SubElement(project.getroot().find("PropertyGroup"), "TargetFramework").text = arguments.framework
+            project.write(consumer / "NativeConsumer.csproj", encoding="utf-8", xml_declaration=False)
+            configuration = consumer / "NuGet.Config"
+            configuration.write_text(
+                '<configuration><packageSources><clear />'
+                '<add key="candidate" value="../feed" />'
+                '<add key="nuget" value="https://api.nuget.org/v3/index.json" />'
+                '</packageSources><packageSourceMapping>'
+                '<packageSource key="candidate"><package pattern="TerraScale.DotNet" /></packageSource>'
+                '<packageSource key="nuget"><package pattern="*" /></packageSource>'
+                '</packageSourceMapping></configuration>\n', encoding="utf-8")
+            receipt["nuget_configuration_sha256"] = hashlib.sha256(configuration.read_bytes()).hexdigest()
+            for name in ("NativeConsumer.csproj", "NativeConsumer.cs", "NativeChecks.cs"):
+                receipt["execution_source_inputs"][name] = hashlib.sha256((consumer / name).read_bytes()).hexdigest()
+            for name in ("tmp", "http-cache", "plugin-cache", "nuget-scratch"):
+                (scratch / name).mkdir()
+            environment = os.environ.copy()
+            environment.update({
+                "DOTNET_CLI_HOME": str(scratch / "dotnet-home"),
+                "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+                "DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1",
+                "DOTNET_CLI_USE_MSBUILDSERVER": "0",
+                "NUGET_PACKAGES": str(scratch / "packages"),
+                "NUGET_HTTP_CACHE_PATH": str(scratch / "http-cache"),
+                "NUGET_PLUGINS_CACHE_PATH": str(scratch / "plugin-cache"),
+                "NUGET_SCRATCH": str(scratch / "nuget-scratch"),
+                "TMPDIR": str(scratch / "tmp"),
+                "TMP": str(scratch / "tmp"),
+                "TEMP": str(scratch / "tmp"),
+            })
+            property_argument = "-p:NativeSdkPackageVersion=" + arguments.version
+            commands = [
+                ["dotnet", "restore", "NativeConsumer.csproj", property_argument, "--disable-build-servers", "--verbosity", "quiet"],
+                ["dotnet", "run", "--project", "NativeConsumer.csproj", "--no-restore", "--configuration", "Release",
+                 property_argument, "-p:UseSharedCompilation=false", "--disable-build-servers", "--verbosity", "quiet"],
+            ]
+            try:
+                for command in commands:
+                    phase = run_phase(command, consumer, environment)
+                    receipt["phases"].append(phase)
+                    if phase["exit_code"] != 0 or "failure" in phase:
+                        raise RuntimeError("Native package consumer phase failed.")
+                assets = json.loads((consumer / "obj/project.assets.json").read_text())
+                expected = "terrascale.dotnet/" + arguments.version.lower()
+                if not any(name.lower() == expected for name in assets["libraries"]):
+                    raise RuntimeError("Consumer resolved another SDK version.")
+                if "Native SDK public package consumer passed." not in receipt["phases"][-1]["output"]:
+                    raise RuntimeError("Native consumer completion marker is absent.")
+                receipt["status"] = "PASS_PACKAGE_PUBLIC_HANDLER_CONSUMER"
+            except Exception as error:
                 receipt["status"] = "FAIL"
-                receipt["failure"] = "Native package qualification inputs changed during execution."
-    receipt["cleanup"] = not scratch.exists()
+                receipt["failure"] = f"{type(error).__name__}: {error}"
+            finally:
+                receipt["final_execution_source_inputs"] = {
+                    name: hashlib.sha256((consumer / name).read_bytes()).hexdigest()
+                    for name in ("NativeConsumer.csproj", "NativeConsumer.cs", "NativeChecks.cs")
+                }
+                receipt["final_nuget_configuration_sha256"] = hashlib.sha256(configuration.read_bytes()).hexdigest()
+                receipt["final_runner_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+                receipt["execution_inputs_unchanged"] = (
+                    receipt["execution_source_inputs"] == receipt["final_execution_source_inputs"] and
+                    receipt["nuget_configuration_sha256"] == receipt["final_nuget_configuration_sha256"] and
+                    receipt["runner_sha256"] == receipt["final_runner_sha256"])
+                if not receipt["execution_inputs_unchanged"]:
+                    receipt["status"] = "FAIL"
+                    receipt["failure"] = "Native package qualification inputs changed during execution."
+    except Exception as error:
+        receipt["status"] = "FAIL"
+        receipt["failure"] = f"{type(error).__name__}: {error}"
+    receipt["cleanup"] = scratch is None or not scratch.exists()
     arguments.receipt.parent.mkdir(parents=True, exist_ok=True)
     with arguments.receipt.open("x", encoding="utf-8") as output:
         output.write(json.dumps(receipt, indent=2) + "\n")

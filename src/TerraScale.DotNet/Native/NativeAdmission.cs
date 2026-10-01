@@ -6,13 +6,18 @@ namespace TerraScale.DotNet.Native;
 public sealed class NativeAdmissionException : InvalidOperationException
 {
     /// <summary>Constructs a trusted provider's bounded safe code and optional HTTP status.</summary>
-    public NativeAdmissionException(string code, int? status = null) : base("Native endpoint admission is unavailable.")
+    public NativeAdmissionException(string code, int? status = null) : base($"Native endpoint admission failed: {ValidateCode(code)}.")
+    {
+        Code = code;
+        Status = status;
+    }
+
+    private static string ValidateCode(string code)
     {
         if (string.IsNullOrEmpty(code) || code.Length > 64 || code.Any(character =>
                 !char.IsAsciiLetterLower(character) && !char.IsAsciiDigit(character) && character != '_'))
             throw new ArgumentException("Invalid admission error code.", nameof(code));
-        Code = code;
-        Status = status;
+        return code;
     }
 
     /// <summary>The fixed admission code supplied by the trusted provider.</summary>
@@ -24,7 +29,7 @@ public sealed class NativeAdmissionException : InvalidOperationException
 /// <summary>Resolves current scoped credential and capability admission immediately before a finite request.</summary>
 public interface INativeAdmissionProvider
 {
-    /// <summary>Admits only the requested provisioned scope and exact capabilities using the current credential.</summary>
+    /// <summary>Admits the requested scope and capabilities using the current credential. Direct providers delegate provisioning checks to the caller.</summary>
     ValueTask<NativeAdmission> ResolveAsync(
         NativeScope scope,
         string apiKey,
@@ -64,11 +69,15 @@ public static class NativeOrigin
     public static Uri Validate(string origin, bool development = false)
     {
         var uri = NativeOriginValidation.Validate(origin, development);
+        var authority = origin[(origin.IndexOf("://", StringComparison.Ordinal) + 3)..].TrimEnd('/');
+        if (authority.Any(character => character > 127) || authority.Contains('%') || uri.IdnHost.EndsWith('.'))
+            throw new ArgumentException("Native origins require a canonical ASCII hostname.", nameof(origin));
         var host = uri.IdnHost.TrimEnd('.').ToLowerInvariant();
         const string zone = ".terrascale.tech";
         if (host == "terrascale.tech" || host.EndsWith(zone, StringComparison.Ordinal))
         {
-            var region = host.EndsWith(zone, StringComparison.Ordinal) ? host[..^zone.Length].ToUpperInvariant() : string.Empty;
+            const string regionalZone = ".api.terrascale.tech";
+            var region = host.EndsWith(regionalZone, StringComparison.Ordinal) ? host[..^regionalZone.Length].ToUpperInvariant() : string.Empty;
             if (!uri.IsDefaultPort || !NativeRegionalOrigin.IsRegionCode(region) ||
                 !NativeRegionalOrigin.IsTrustedMemberHost(origin.TrimEnd('/'), region))
                 throw new ArgumentException("TerraScale native origins must be canonical nonreserved regional HTTPS origins.", nameof(origin));
@@ -93,8 +102,6 @@ internal static class NativeOriginValidation
             throw new ArgumentException("Native origin must be bare and contain no credentials.", nameof(origin));
 
         var host = uri.IdnHost.TrimEnd('.').ToLowerInvariant();
-        if (host == "api.terrascale.tech" || host.EndsWith(".api.terrascale.tech", StringComparison.Ordinal))
-            throw new ArgumentException("The test API host is not a production origin.", nameof(origin));
 
         var loopback = host == "localhost" || host.EndsWith(".localhost", StringComparison.Ordinal) ||
             (IPAddress.TryParse(host.Trim('[', ']'), out var address) && IPAddress.IsLoopback(address));

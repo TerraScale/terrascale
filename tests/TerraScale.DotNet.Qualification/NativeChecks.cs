@@ -19,8 +19,8 @@ internal static class NativeChecks
     internal static Task DirectOriginsAsync()
     {
         foreach (var origin in new[] { "https://terrascale.tech", "https://atlas.terrascale.tech", "https://auth.terrascale.tech",
-            "https://gru.api.terrascale.tech", "https://x.gru.terrascale.tech", "https://GRU.terrascale.tech",
-            "https://gru.terrascale.tech.", "https://gru.terrascale.tech:8443", "https://gru.terrascale.tech:443" })
+            "https://gru.terrascale.tech", "https://x.gru.api.terrascale.tech", "https://GRU.api.terrascale.tech",
+            "https://gru.api.terrascale.tech.", "https://gru.api.terrascale.tech:8443", "https://gru.api.terrascale.tech:443" })
         {
             try
             {
@@ -29,7 +29,7 @@ internal static class NativeChecks
             }
             catch (ArgumentException) { }
         }
-        Require(NativeOrigin.Validate("https://gru.terrascale.tech").Host == "gru.terrascale.tech", "Canonical region origin was rejected.");
+        Require(NativeOrigin.Validate("https://gru.api.terrascale.tech").Host == "gru.api.terrascale.tech", "Canonical region origin was rejected.");
         Require(NativeOrigin.Validate("https://database.customer.example:8443").Host == "database.customer.example", "Provisioned independent origin was rejected.");
         Require(NativeOrigin.Validate("http://127.0.0.1:12345", development: true).IsLoopback, "Explicit development origin was rejected.");
         return Task.CompletedTask;
@@ -85,14 +85,14 @@ internal static class NativeChecks
     {
         foreach (var item in new[]
         {
-            ("client-openapi.json", "dc9936a2825b10e5da9eb7801964751bcd211bc8e7a197ca41736af73af7fd98", NativeContract.OpenApiSha256),
+            ("client-openapi.json", "563a66449d8c2eeb4306b9bb9d994cabb86c14bd4c469f785dabe5afb9f6ef3d", NativeContract.OpenApiSha256),
             ("atomic_vectors.json", "4ce4286b6e2eeae4ee15dec83f788f33cffdba7606a49021ec81afe0a4a9e816", NativeContract.AtomicVectorsSha256),
             ("atlas.native-wire-identity.json", "b789d6fb7782e34ece3b516139856f2b6d2dea0543436820eefa50ff31355538", NativeContract.AtlasWireIdentitySha256),
-            ("atlas.native-discovery-success.json", "d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0", NativeContract.AtlasDiscoverySuccessSha256),
+            ("atlas.native-discovery-success.json", "82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec", NativeContract.AtlasDiscoverySuccessSha256),
             ("atlas.native-discovery-forbidden.json", "3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c", NativeContract.AtlasDiscoveryForbiddenSha256)
         })
         {
-            Require(item.Item3 == item.Item2, "NativeContract differs from the independently accepted producer identity.");
+            Require(item.Item3 == item.Item2, "NativeContract differs from the pinned source identity and documented derivation.");
             var bytes = await ResourceAsync(item.Item1);
             Require(Convert.ToHexStringLower(SHA256.HashData(bytes)) == item.Item2, "Packaged native contract identity differs.");
         }
@@ -115,7 +115,7 @@ internal static class NativeChecks
         try
         {
             var originalBase = http.BaseAddress;
-            var client = new NativeClient(http, Scope, "https://gru.terrascale.tech", static _ => ValueTask.FromResult(Key), TimeSpan.FromSeconds(1));
+            var client = new NativeClient(http, Scope, "https://gru.api.terrascale.tech", static _ => ValueTask.FromResult(Key), TimeSpan.FromSeconds(1));
             var router = new NativeDiscoveryRouter(http, TimeSpan.FromSeconds(1));
             client.Dispose();
             client.Dispose();
@@ -130,7 +130,7 @@ internal static class NativeChecks
         Require(borrowedHandler.Disposals == 1, "Caller transport was not disposed exactly once.");
 
         var ownedHandler = new Handler((_, _) => Task.FromResult(Json("{}")));
-        var owned = new NativeClient(Scope, new NativeDirectAdmissionProvider("https://gru.terrascale.tech"),
+        var owned = new NativeClient(Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
             static _ => ValueTask.FromResult(Key), TimeSpan.FromSeconds(1), ownedHandler);
         owned.Dispose();
         owned.Dispose();
@@ -140,7 +140,7 @@ internal static class NativeChecks
         try
         {
             _ = new NativeClient(Scope with { Tenant = "unprovisioned" },
-                new NativeDirectAdmissionProvider("https://gru.terrascale.tech"), static _ => ValueTask.FromResult(Key),
+                new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"), static _ => ValueTask.FromResult(Key),
                 TimeSpan.FromSeconds(1), invalidClientHandler);
             throw new InvalidOperationException("Invalid native scope was accepted.");
         }
@@ -169,7 +169,7 @@ internal static class NativeChecks
             Require(request.Headers.Contains("Idempotency-Key") == false, "An unrelated idempotency header was introduced.");
             paths.Add(request.RequestUri!.AbsolutePath);
             if (request.RequestUri.Host == "atlas.terrascale.tech") return Json(discovery);
-            Require(request.RequestUri.Host == "gru.terrascale.tech", "Native request used a fallback or another origin.");
+            Require(request.RequestUri.Host == "gru.api.terrascale.tech", "Native request used a fallback or another origin.");
             if (request.Method == HttpMethod.Get)
                 return Json("{\"version\":1,\"state\":\"absent\",\"state_version\":null,\"context\":[],\"siblings\":[]}");
             Require(request.Content!.Headers.ContentType!.ToString() == "application/json", "Native request media type changed.");
@@ -212,7 +212,7 @@ internal static class NativeChecks
             var recovered = await NativeRecovery.ResolveAsync(client, prepared, TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(100), safety.Token);
             Require(recovered.IsResolved && recovered.Receipt!.Identity == prepared.Identity, "Public native status did not preserve the original receipt.");
             Require(paths.Count(path => path.EndsWith("/transactions", StringComparison.Ordinal)) == 1, "Recovery replayed a mutation.");
-            Require(paths.Count(path => path == "/api/v1/discovery") == 4, "Public requests did not independently resolve current admission.");
+            Require(paths.Count(path => path == "/api/v1/discovery") == 1, "Public requests did not reuse their matching authenticated lease.");
         }
         finally
         {

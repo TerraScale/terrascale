@@ -7,7 +7,7 @@ public sealed class NativeOriginTests
     [Test]
     public async Task CanonicalNonreservedRegionOriginsAreAccepted()
     {
-        foreach (var origin in new[] { "https://gru.terrascale.tech", "https://fra.terrascale.tech/", "https://us-east-1.terrascale.tech" })
+        foreach (var origin in new[] { "https://gru.api.terrascale.tech", "https://fra.api.terrascale.tech/", "https://us-east-1.api.terrascale.tech" })
             await Assert.That(NativeOrigin.Validate(origin).GetLeftPart(UriPartial.Authority)).IsEqualTo(origin.TrimEnd('/'));
     }
 
@@ -22,10 +22,12 @@ public sealed class NativeOriginTests
         }));
         foreach (var origin in new[]
         {
+            "https://gru.terrascale.tech", "https://xn--foo.api.terrascale.tech", "https://ams-.api.terrascale.tech",
+            "https://K.api.terrascale.tech", "https://%67ru.api.terrascale.tech", "https://backup.terrascale.tech",
             "https://terrascale.tech", "https://atlas.terrascale.tech", "https://auth.terrascale.tech",
-            "https://status.terrascale.tech", "https://gru.auth.terrascale.tech", "https://a.gru.terrascale.tech",
-            "https://GRU.terrascale.tech", "HTTPS://gru.terrascale.tech", "https://gru.terrascale.tech.",
-            "https://gru.terrascale.tech:8443", "https://gru.terrascale.tech:443", "https://gru.terrascale.tech/path"
+            "https://status.terrascale.tech", "https://gru.auth.terrascale.tech", "https://a.gru.api.terrascale.tech",
+            "https://GRU.api.terrascale.tech", "HTTPS://gru.api.terrascale.tech", "https://gru.api.terrascale.tech.",
+            "https://gru.api.terrascale.tech:8443", "https://gru.api.terrascale.tech:443", "https://gru.api.terrascale.tech/path"
         })
         {
             await Assert.ThrowsAsync<ArgumentException>(() =>
@@ -53,7 +55,7 @@ public sealed class NativeOriginTests
             await Assert.ThrowsAsync<ArgumentException>(() => { NativeOrigin.Validate(origin); return Task.CompletedTask; });
             await Assert.That(NativeOrigin.Validate(origin, development: true).IsLoopback).IsTrue();
         }
-        foreach (var origin in new[] { "http://database.customer.example", "https://user:secret@gru.terrascale.tech", "https://gru.terrascale.tech?secret=x", "https://gru.terrascale.tech/#secret" })
+        foreach (var origin in new[] { "http://database.customer.example", "https://user:secret@gru.api.terrascale.tech", "https://gru.api.terrascale.tech?secret=x", "https://gru.api.terrascale.tech/#secret" })
             await Assert.ThrowsAsync<ArgumentException>(() => { NativeOrigin.Validate(origin, development: true); return Task.CompletedTask; });
     }
 

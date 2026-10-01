@@ -5,12 +5,13 @@ internal static class NativeRegionalOrigin
 {
     internal static bool IsTrustedMemberHost(string value, string region) =>
         IsRegionCode(region) &&
-        string.Equals(value, $"https://{region.ToLowerInvariant()}.terrascale.tech", StringComparison.Ordinal);
+        string.Equals(value, $"https://{region.ToLowerInvariant()}.api.terrascale.tech", StringComparison.Ordinal);
 
     internal static bool IsRegionCode(string value)
     {
         if (value.Length is < 1 or > 16 ||
             value[0] is not ((>= 'A' and <= 'Z') or (>= '0' and <= '9')) ||
+            value.EndsWith('-') || value.Contains("--", StringComparison.Ordinal) ||
             value.Any(character => character is not ((>= 'A' and <= 'Z') or (>= '0' and <= '9') or '-')))
             return false;
 

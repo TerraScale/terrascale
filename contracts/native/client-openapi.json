@@ -1389,7 +1389,7 @@
         ],
         "operationId": "transactionStatus",
         "summary": "Resolve the original native transaction outcome",
-        "description": "Requires write permission for every collection in writes. A live write creates or updates a document; a tombstone deletes it. Writes are sorted by (collection, document), and field IDs are sorted within each object. Use the current point context as observed for updates/deletes. Identical retries with the same transaction ID and body return the original result without another effect. Reusing an ID for different content yields 409. An expired ID yields 409. A 503 commit_uncertain requires retrying the identical request and ID after recovery; do not create a fresh transaction to infer the first failed. The active durability profile decides whether the 200 receipt is local_durable or object_durable. Request and response JSON are limited to 4 MiB. Content-Type must be exactly application/json, with no content encoding or query string.",
+        "description": "Resolve the outcome of the original transaction identity without submitting writes. Send the original transaction_id, effect_digest and authority unchanged. Pending, unknown and expired states do not prove abort and never authorize a fresh mutation. Request and response JSON are limited to 4 MiB; use application/json without content encoding or query string.",
         "security": [
           {
             "scopedApiKey": []
@@ -1430,7 +1430,7 @@
         ],
         "requestBody": {
           "required": true,
-          "description": "Replace the sample schema digest with the provisioned collection digest and set expires_at_unix_ms to the current Unix time plus at most the configured retry window. Choose a fresh random 16-byte nonce.",
+          "description": "Use the exact identity retained before the original commit; do not generate a new nonce, expiry, effect digest or authority.",
           "content": {
             "application/json": {
               "schema": {
@@ -1457,7 +1457,7 @@
         },
         "responses": {
           "200": {
-            "description": "Accepted transaction receipt.",
+            "description": "Original transaction state and, when committed, its durable receipt.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1671,7 +1671,7 @@
             }
           },
           "503": {
-            "description": "authority_unavailable, commit_uncertain, storage_unavailable, or capacity; no definitive abort is implied",
+            "description": "Status is unavailable; retry status safely with the original identity. No definitive abort is implied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1711,7 +1711,7 @@
             }
           },
           "409": {
-            "description": "Schema changed or the idempotency token was reused with different content or expired.",
+            "description": "Original transaction identity conflicts with the retained outcome; this response does not submit or abort a mutation.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1747,8 +1747,8 @@
         "x-codeSamples": [
           {
             "lang": "Shell",
-            "label": "Create with fresh retry identity",
-            "source": "# Set TB_API_URL, TB_TOKEN, TB_TENANT, TB_DATABASE, TB_SHARD,\n# TB_COLLECTION, TB_DOCUMENT and the provisioned TB_SCHEMA_DIGEST.\nTB_EXPIRY_MS=$(($(date +%s) * 1000 + 600000))\nTB_NONCE=$(openssl rand -hex 16)\nTB_BODY=$(jq -nc --arg expiry \"$TB_EXPIRY_MS\" --arg nonce \"$TB_NONCE\" \\\n  --arg collection \"$TB_COLLECTION\" --arg document \"$TB_DOCUMENT\" \\\n  --arg digest \"$TB_SCHEMA_DIGEST\" \\\n  '{version:1,transaction_id:{expires_at_unix_ms:$expiry,nonce:$nonce},writes:[{collection:$collection,document:$document,schema_generation:\"1\",schema_digest:$digest,observed:[],value:{kind:\"live\",fields:[{id:1,value:{type:\"utf8\",value:\"first note\"}}]}}]}')\ncurl --fail-with-body -sS -X POST \\\n  -H \"Authorization: Bearer $TB_TOKEN\" -H 'Content-Type: application/json' \\\n  --data-binary \"$TB_BODY\" \\\n  \"$TB_API_URL/v1/tenants/$TB_TENANT/databases/$TB_DATABASE/shards/$TB_SHARD/transactions\""
+            "label": "Resolve the original transaction status",
+            "source": "# Set TB_API_URL, TB_TOKEN, TB_TENANT, TB_DATABASE, TB_SHARD.\n# TB_STATUS_BODY contains the original version, transaction_id, effect_digest and authority.\ncurl --fail-with-body -sS -X POST \\\n  -H \"Authorization: Bearer $TB_TOKEN\" -H 'Content-Type: application/json' \\\n  --data-binary \"$TB_STATUS_BODY\" \\\n  \"$TB_API_URL/v1/tenants/$TB_TENANT/databases/$TB_DATABASE/shards/$TB_SHARD/transactions/status\""
           }
         ]
       }

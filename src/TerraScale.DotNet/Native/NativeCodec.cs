@@ -564,7 +564,6 @@ public static class NativeCodec
         object value;
         if (write.Value is NativeWriteValue.Live live)
         {
-            ValidateDocument(live.Fields);
             value = Object(("kind", "live"), ("fields", WireFields(live.Fields, 1, new Budget())));
         }
         else if (write.Value is NativeWriteValue.Tombstone) value = Object(("kind", "tombstone"));
@@ -631,19 +630,39 @@ public static class NativeCodec
 
     private static void ValidateDocument(ImmutableArray<NativeField> fields)
     {
-        WireFields(fields, 1, new Budget());
-        var size = 98L + 13L * fields.Length;
+        Bounded(fields, 1024);
+        using var bytes = new Buffer(MaximumValueBytes);
+        var budget = new Budget();
+        long size = 98L + 13L * fields.Length;
+        uint previous = 0;
         foreach (var field in fields)
         {
-            size += NativeValueBytes(field.Value).Bytes.Length;
+            if (field.Id <= previous) throw Invalid("Field IDs must be strictly increasing positive u32 integers.");
+            previous = field.Id;
+            var start = bytes.Length;
+            WriteNativeValue(bytes, field.Value, 1, budget);
+            size += bytes.Length - start;
             if (size > MaximumValueBytes) throw Invalid("Encoded native document exceeds the 1 MiB limit.");
         }
     }
 
-    private static (byte Type, byte[] Bytes) NativeValueBytes(NativeValue value, bool insideArray = false)
+    // Nested framing is backfilled in the same buffer; payloads are never copied per ancestor.
+    private static byte WriteNativeValue(Buffer bytes, NativeValue value, int depth, Budget budget, bool insideArray = false)
     {
-        using var bytes = new Buffer(MaximumValueBytes);
+        budget.Take(depth);
+        var start = bytes.Length;
         byte type;
+        void Nested(NativeValue nested, bool inArray)
+        {
+            var typePosition = bytes.Length;
+            bytes.Byte(0);
+            var lengthPosition = bytes.Length;
+            bytes.UInt32(0);
+            var payload = bytes.Length;
+            var nestedType = WriteNativeValue(bytes, nested, depth + 1, budget, inArray);
+            bytes.PatchByte(typePosition, nestedType);
+            bytes.PatchUInt32(lengthPosition, checked((uint)(bytes.Length - payload)));
+        }
         switch (value)
         {
             case NativeValue.Null: type = 1; break;
@@ -656,26 +675,25 @@ public static class NativeCodec
             case NativeValue.Map map:
                 Bounded(map.Fields, 1024);
                 type = 6; bytes.UInt16((ushort)map.Fields.Length);
+                uint previous = 0;
                 foreach (var field in map.Fields)
                 {
+                    if (field.Id <= previous) throw Invalid("Field IDs must be strictly increasing positive u32 integers.");
+                    previous = field.Id;
                     bytes.UInt32(field.Id);
-                    var nested = NativeValueBytes(field.Value, insideArray);
-                    bytes.Byte(nested.Type); bytes.UInt32((uint)nested.Bytes.Length); bytes.Put(nested.Bytes);
+                    Nested(field.Value, insideArray);
                 }
                 break;
             case NativeValue.Array array:
                 if (insideArray) throw Invalid("Arrays cannot contain descendant arrays, including through maps.");
                 Bounded(array.Items, 1024);
                 type = 7; bytes.UInt16((ushort)array.Items.Length);
-                foreach (var item in array.Items)
-                {
-                    var nested = NativeValueBytes(item, insideArray: true);
-                    bytes.Byte(nested.Type); bytes.UInt32((uint)nested.Bytes.Length); bytes.Put(nested.Bytes);
-                }
+                foreach (var item in array.Items) Nested(item, true);
                 break;
             default: throw Invalid("Invalid native value.");
         }
-        return (type, bytes.Finish());
+        if (bytes.Length - start > MaximumValueBytes) throw Invalid("Native encoding exceeds its byte limit.");
+        return type;
     }
 
     private static string EffectDigest(NativeScope scope, NativeAuthority authority, ImmutableArray<NativeWrite> writes)
@@ -702,15 +720,31 @@ public static class NativeCodec
             bytes.Byte(write.Value is NativeWriteValue.Live ? (byte)1 : (byte)0);
             if (write.Value is NativeWriteValue.Live live)
             {
+                Bounded(live.Fields, 1024);
                 bytes.UInt64((ulong)live.Fields.Length);
+                var budget = new Budget();
+                long size = 98L + 13L * live.Fields.Length;
+                uint previous = 0;
                 foreach (var field in live.Fields)
                 {
-                    var native = NativeValueBytes(field.Value);
-                    bytes.UInt32(field.Id); bytes.Byte(native.Type); bytes.UInt64((ulong)native.Bytes.Length); bytes.Put(native.Bytes);
+                    if (field.Id <= previous) throw Invalid("Field IDs must be strictly increasing positive u32 integers.");
+                    previous = field.Id;
+                    bytes.UInt32(field.Id);
+                    var typePosition = bytes.Length;
+                    bytes.Byte(0);
+                    var lengthPosition = bytes.Length;
+                    bytes.UInt64(0);
+                    var start = bytes.Length;
+                    var type = WriteNativeValue(bytes, field.Value, 1, budget);
+                    var length = bytes.Length - start;
+                    bytes.PatchByte(typePosition, type);
+                    bytes.PatchUInt64(lengthPosition, (ulong)length);
+                    size += length;
+                    if (size > MaximumValueBytes) throw Invalid("Encoded native document exceeds the 1 MiB limit.");
                 }
             }
         }
-        return Convert.ToHexStringLower(SHA256.HashData(bytes.Finish()));
+        return Convert.ToHexStringLower(SHA256.HashData(bytes.Written));
     }
 
     private static Dictionary<string, object?> Object(params (string Name, object? Value)[] fields) =>
@@ -816,6 +850,11 @@ public static class NativeCodec
             if (stream.Length + bytes.Length > maximum) throw Invalid("Native encoding exceeds its byte limit.");
             stream.Write(bytes);
         }
+        public long Length => stream.Length;
+        public ReadOnlySpan<byte> Written => stream.GetBuffer().AsSpan(0, checked((int)stream.Length));
+        public void PatchByte(long position, byte value) => stream.GetBuffer()[checked((int)position)] = value;
+        public void PatchUInt32(long position, uint value) => System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(stream.GetBuffer().AsSpan(checked((int)position), 4), value);
+        public void PatchUInt64(long position, ulong value) => System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(stream.GetBuffer().AsSpan(checked((int)position), 8), value);
         public void Byte(byte value) => Put([value]);
         public void UInt16(ushort value) { Span<byte> bytes = stackalloc byte[2]; System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(bytes, value); Put(bytes); }
         public void UInt32(uint value) { Span<byte> bytes = stackalloc byte[4]; System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(bytes, value); Put(bytes); }

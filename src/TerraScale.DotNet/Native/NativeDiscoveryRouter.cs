@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace TerraScale.DotNet.Native;
@@ -24,7 +26,16 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
     private readonly TimeProvider clock;
     private readonly object gate = new();
     private readonly Dictionary<NativeScope, Floor> floors = [];
+    private readonly Dictionary<NativeScope, ScopeState> scopes = [];
     private int disposed;
+
+    private sealed class ScopeState
+    {
+        internal readonly SemaphoreSlim Fetch = new(1, 1);
+        internal int Users;
+        internal string? CredentialDigest;
+        internal Lease? Cached;
+    }
 
     /// <summary>Creates an owned discovery transport; a supplied handler transfers disposal ownership.</summary>
     /// <remarks>The handler must disable redirects, cookies and decompression; do not share or dispose it separately.</remarks>
@@ -72,14 +83,64 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         if (capabilities.Count == 0 || capabilities.Any(capability => !CapabilityNames.Contains(capability, StringComparer.Ordinal)))
             throw new NativeAdmissionException("invalid_capability");
 
-        Floor? observed;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout);
+        ScopeState state;
         lock (gate)
         {
-            floors.TryGetValue(scope, out observed);
-            if (observed is null && floors.Count >= ScopeLimit)
-                throw new NativeAdmissionException("routing_capacity");
+            if (!scopes.TryGetValue(scope, out state!))
+            {
+                if (scopes.Count >= ScopeLimit) throw new NativeAdmissionException("routing_capacity");
+                scopes[scope] = state = new ScopeState();
+            }
+            state.Users++;
         }
+        var acquired = false;
+        try
+        {
+            await state.Fetch.WaitAsync(deadline.Token).ConfigureAwait(false);
+            acquired = true;
+            var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)));
+            if (state.CredentialDigest == digest && state.Cached is { } cached)
+            {
+                try
+                {
+                    AssertCurrent(scope, cached);
+                    return Admit(scope, cached, capabilities);
+                }
+                catch (NativeAdmissionException exception) when (exception.Code is "discovery_expired" or "routing_observation_regressed")
+                {
+                    state.Cached = null;
+                }
+            }
+            var lease = await FetchAsync(scope, apiKey, deadline.Token, cancellationToken).ConfigureAwait(false);
+            state.CredentialDigest = digest;
+            state.Cached = lease;
+            return Admit(scope, lease, capabilities);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new NativeAdmissionException("discovery_unavailable");
+        }
+        finally
+        {
+            if (acquired) state.Fetch.Release();
+            lock (gate)
+            {
+                state.Users--;
+                if (state.Users == 0 && !floors.ContainsKey(scope))
+                {
+                    scopes.Remove(scope);
+                    state.Fetch.Dispose();
+                }
+            }
+        }
+    }
 
+    private async Task<Lease> FetchAsync(NativeScope scope, string apiKey, CancellationToken deadlineToken, CancellationToken cancellationToken)
+    {
+        Floor? observed;
+        lock (gate) floors.TryGetValue(scope, out observed);
         var query = new SortedDictionary<string, string>(StringComparer.Ordinal)
         {
             ["tenant_id"] = scope.Tenant,
@@ -100,10 +161,8 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         var startedAt = clock.GetUtcNow();
         var startedTimestamp = clock.GetTimestamp();
 
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(timeout);
-        using var response = await SendDiscoveryAsync(request, deadline.Token, cancellationToken).ConfigureAwait(false);
-        var body = await ReadDiscoveryBodyAsync(response, deadline.Token, cancellationToken).ConfigureAwait(false);
+        using var response = await SendDiscoveryAsync(request, deadlineToken, cancellationToken).ConfigureAwait(false);
+        var body = await ReadDiscoveryBodyAsync(response, deadlineToken, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode != HttpStatusCode.OK)
             throw new NativeAdmissionException(ReadErrorCode(body), (int)response.StatusCode);
         if (!string.Equals(response.Content.Headers.ContentType?.MediaType, "application/json", StringComparison.OrdinalIgnoreCase))
@@ -134,11 +193,16 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
             floors[scope] = new Floor(document.Authority, document.Revision);
         }
 
-        // Atlas orders eligible direct members by proximity. Operation capabilities
-        // further restrict admission; array order never overrides scope or fencing.
-        var endpoint = document.Endpoints.FirstOrDefault(endpoint =>
+        return lease;
+    }
+
+    private NativeAdmission Admit(NativeScope scope, Lease lease, IReadOnlyCollection<string> capabilities)
+    {
+        // Atlas owns ranking; each operation selects the first capable endpoint.
+        var endpoint = lease.Document.Endpoints.FirstOrDefault(endpoint =>
             endpoint.Capabilities.Contains("client_v1") && capabilities.All(endpoint.Capabilities.Contains));
         if (endpoint is null) throw new NativeAdmissionException("capability_unavailable");
+        AssertCurrent(scope, lease);
         return new NativeAdmission(endpoint.Url, () => AssertCurrent(scope, lease));
     }
 
