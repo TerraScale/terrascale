@@ -1,10 +1,12 @@
 name: ts-auth CI
 
-# fast and release run in parallel and keep compiled dependencies in per-job
-# Cargo target directories on the runner's persistent /cache volume, compiling
-# through the shared kache store there (scripts/ci/cargo-cache.sh). publish
-# never reads either cache: it builds the released binary from a clean target
-# directory and Cargo home, without kache.
+# lint, fast, and release run in parallel. lint and fast keep compiled
+# dependencies in per-job Cargo target directories on the runner's persistent
+# /cache volume, compiling through the shared kache store there
+# (scripts/ci/cargo-cache.sh). release does the same on pull requests; on
+# protected main it builds the released binary from a clean target directory
+# and Cargo home, without kache, and hands the smoke-checked image to publish
+# (scripts/ci/hand-off-image.sh), which pushes it only after every gate passed.
 # Release binaries are static x86_64 musl executables built with the job
 # image's musl toolchain, like TerraBase's.
 
@@ -24,8 +26,44 @@ env:
   TS_RUST_REV: 2dcc28c5a80fbb426f6c3027e7e5441e1a20769e
 
 jobs:
+  lint:
+    name: Lint and audit Rust ts-auth
+    runs-on: terrascale-builder
+    timeout-minutes: 60
+    env:
+      TS_AUTH_CARGO_CACHE_DIR: /cache/cargo-target/ts-auth/lint
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned Rust SDK and select the toolchain
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/ci/checkout-sdk.sh
+
+      - name: Check formatting and run Clippy
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          bash scripts/ci/cargo-cache.sh cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Audit locked Rust dependencies
+        run: |
+          set -euo pipefail
+          # This advisory affects RSA private-key operations. Production auth-
+          # security code uses RSA public keys for verification; the private
+          # keys in security_vectors.rs only create test signatures. Guard that
+          # production boundary before keeping this single-advisory exception.
+          bash scripts/check-rsa-private-usage.sh
+          cargo audit --file Cargo.lock --ignore RUSTSEC-2023-0071
+
   fast:
-    name: Check and test Rust ts-auth
+    name: Test Rust ts-auth
     runs-on: terrascale-builder
     timeout-minutes: 60
     env:
@@ -44,11 +82,9 @@ jobs:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         run: bash scripts/ci/checkout-sdk.sh
 
-      - name: Check formatting and run Rust tests
+      - name: Run Rust tests
         run: |
           set -euo pipefail
-          cargo fmt --all -- --check
-          bash scripts/ci/cargo-cache.sh cargo clippy --workspace --all-targets --locked -- -D warnings
           mkdir -p artifacts/ci/tests
           bash scripts/ci/cargo-cache.sh cargo test --workspace --all-targets --locked 2>&1 | tee artifacts/ci/tests/auth-tests.log
           bash scripts/check-rust-test-results.sh artifacts/ci/tests/auth-tests.log
@@ -61,16 +97,6 @@ jobs:
             --arg digests "SHA256SUMS" \
             '{schemaVersion: 1, sourceCommit: $sourceCommit, sdkCommit: $sdkCommit, testLog: $testLog, digests: $digests}' \
             > artifacts/ci/tests/test-receipt.json
-
-      - name: Audit locked Rust dependencies
-        run: |
-          set -euo pipefail
-          # This advisory affects RSA private-key operations. Production auth-
-          # security code uses RSA public keys for verification; the private
-          # keys in security_vectors.rs only create test signatures. Guard that
-          # production boundary before keeping this single-advisory exception.
-          bash scripts/check-rsa-private-usage.sh
-          cargo audit --file Cargo.lock --ignore RUSTSEC-2023-0071
 
       # Playwright and Chromium are baked into the ts-builder job image.
       - name: Run admin browser acceptance
@@ -89,6 +115,9 @@ jobs:
     timeout-minutes: 60
     env:
       TS_AUTH_CARGO_CACHE_DIR: /cache/cargo-target/ts-auth/release
+      TS_AUTH_PUBLISH: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
+    outputs:
+      image-archive-sha256: ${{ steps.hand-off.outputs.sha256 }}
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -103,15 +132,29 @@ jobs:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         run: bash scripts/ci/checkout-sdk.sh
 
+      # The published binary never reads the shared caches: on protected main
+      # it builds from a clean target directory and Cargo home, without kache.
       - name: Build the static release binary
-        run: bash scripts/ci/cargo-cache.sh bash scripts/ci/stage-release.sh artifacts/ci/container-publish
+        run: |
+          set -euo pipefail
+          if [[ ${TS_AUTH_PUBLISH} == true ]]; then
+            export CARGO_HOME="${RUNNER_TEMP:?}/cargo-home" CARGO_TARGET_DIR="${RUNNER_TEMP:?}/cargo-target"
+            bash scripts/ci/stage-release.sh artifacts/ci/container-publish
+          else
+            bash scripts/ci/cargo-cache.sh bash scripts/ci/stage-release.sh artifacts/ci/container-publish
+          fi
 
       - name: Package and smoke-check the release image
         run: bash scripts/ci/package-image.sh
 
+      - name: Hand the image to publish
+        id: hand-off
+        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+        run: bash scripts/ci/hand-off-image.sh save
+
   publish:
     name: Publish the immutable container on protected main
-    needs: [fast, release]
+    needs: [lint, fast, release]
     if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
     runs-on: terrascale-builder
     timeout-minutes: 60
@@ -124,19 +167,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Check out the pinned Rust SDK and select the toolchain
+      - name: Load the release image
         env:
-          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
-        run: bash scripts/ci/checkout-sdk.sh
-
-      - name: Build the static release binary from a clean cache
-        run: |
-          set -euo pipefail
-          export CARGO_HOME="${RUNNER_TEMP:?}/cargo-home" CARGO_TARGET_DIR="${RUNNER_TEMP:?}/cargo-target"
-          bash scripts/ci/stage-release.sh artifacts/ci/container-publish
-
-      - name: Package and smoke-check the release image
-        run: bash scripts/ci/package-image.sh
+          IMAGE_ARCHIVE_SHA256: ${{ needs.release.outputs.image-archive-sha256 }}
+        run: bash scripts/ci/hand-off-image.sh load
 
       - name: Push the image
         env:

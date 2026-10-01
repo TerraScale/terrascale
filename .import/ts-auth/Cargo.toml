@@ -38,3 +38,18 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+
+# Tests hash passwords with the production Argon2id parameters and run RSA
+# signature vectors. Unoptimized, these crates dominate the test run; compiled
+# with optimizations they cost one dependency rebuild instead.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
+[profile.dev.package.rsa]
+opt-level = 3
+
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
