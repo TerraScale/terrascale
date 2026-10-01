@@ -1,0 +1,29 @@
+{
+  "linked_producer_libraries": {
+    "tb_core": {
+      "file": "libtb_core-2af20c138e149dca.rlib",
+      "sha256": "379bd131fc355de93d7fe4ce1a70ab900227dbca49e1bda901c79f65bb6d2a31"
+    },
+    "tb_format": {
+      "file": "libtb_format-7176b1cad5852bdd.rlib",
+      "sha256": "cf0154bf9919e8942fbc9febc8bc58169dbcc572f68a369f6ddde0afcaef8a20"
+    },
+    "tb_document": {
+      "file": "libtb_document-8810714035c09483.rlib",
+      "sha256": "f52c703fb2dfc34e98ceb59287f42c32d4d60470c8a49a201a6e81c530395eae"
+    },
+    "tb_replication": {
+      "file": "libtb_replication-bf306e5b195c0506.rlib",
+      "sha256": "f042c6bd0f682d71f00e60f7e9365d9cf8829436c72e156156e072cb0440d1e3"
+    }
+  },
+  "probe_sha256": "0502fb9e13e8085d61aeae26a73ff6a1969785ef238ec3c2ef04a07ab897df6a",
+  "source_root": ".qualification/integration-20260930/revisions/local-packets-v3/worktrees/terrabase",
+  "producer_source_sha256": {
+    "crates/tb-document/src/conditional.rs": "31918f6adff9c1d499197d680ece5d6bcecfc3359d6ff72f90833fe8f74185e3",
+    "crates/tb-document/src/read_dependency.rs": "45437dd7a37d19a3c2304cf389ed906bb73aeeb5654f44d317e5e9c0e8ce909a",
+    "crates/tb-document/src/producer.rs": "4d66c6335075d3f1e5b75061c3a5726252a32783a9764d32938ca379e5f768c8"
+  },
+  "result": "a7367b35972e75f9f3e3e22d150a3d0f3d429892e75572d9d09a9a161ae939e9",
+  "derivation": "Probe links the retained TerraBase tb_document library and calls canonical_effect_digest; both reversed-order controls are rejected. This is encoder evidence, not deployed interoperability."
+}

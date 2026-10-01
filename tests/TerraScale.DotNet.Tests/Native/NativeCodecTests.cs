@@ -107,6 +107,37 @@ public sealed class NativeCodecTests
     }
 
     [Test]
+    public async Task ProducerMultiWriteDigestPreservesCrossCollectionFramingAndRejectsReorderedGroups()
+    {
+        // Linked TerraBase canonical_effect_digest output; source/library hashes and probe are in Fixtures/multi-write-producer.*.
+        var original = CreateCommit();
+        var first = original.Writes[0];
+        var second = first with { Document = "018f0000-0000-7000-8000-000000000006" };
+        var third = first with { Collection = "018f0000-0000-7000-8000-000000000007" };
+        var group = original with { Writes = [first, second, third] };
+        const string digest = "a7367b35972e75f9f3e3e22d150a3d0f3d429892e75572d9d09a9a161ae939e9";
+        var encoded = NativeCodec.EncodeCommit(Scope, group);
+        await Assert.That(encoded.Identity.EffectDigest).IsEqualTo(digest);
+        using var document = NativeCodec.Parse(encoded.Body);
+        var decoded = NativeCodec.DecodeCommit(Scope, document.RootElement);
+        await Assert.That(decoded.Writes.Length).IsEqualTo(3);
+        await Assert.That(NativeCodec.EncodeCommit(Scope, decoded).Identity.EffectDigest).IsEqualTo(digest);
+
+        foreach (var reordered in new[]
+        {
+            group with { Writes = [second, first, third] },
+            group with { Writes = [third, first, second] }
+        })
+        {
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+            {
+                NativeCodec.EncodeCommit(Scope, reordered);
+                return Task.CompletedTask;
+            });
+        }
+    }
+
+    [Test]
     public async Task PublishedNativeErrorsStayClosedAndUseFixedDiagnosticsForUnknownIdentifiers()
     {
         foreach (var code in new[]

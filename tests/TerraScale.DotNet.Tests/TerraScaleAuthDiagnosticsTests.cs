@@ -69,6 +69,17 @@ public sealed class TerraScaleAuthDiagnosticsTests
     }
 
     [Test]
+    [Arguments("{\"error\":\"\\uD800\"}")]
+    [Arguments("{\"error\":{\"code\":\"\\uD800\"}}")]
+    public async Task MalformedUnicodeErrorCodesKeepTheOriginalAuthStatus(string body)
+    {
+        using var http = Http(body, HttpStatusCode.Unauthorized);
+        var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Users.ListAsync());
+        await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(error.ErrorCode).IsNull();
+    }
+
+    [Test]
     public async Task LargeErrorPayloadKeepsTypedStatusWithoutCapturingContent()
     {
         var body = JsonSerializer.Serialize(new { error = "invalid_client", extra = new string('x', 65_536) + Secret });

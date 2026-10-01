@@ -223,7 +223,9 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
     {
         try
         {
-            return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadlineToken).ConfigureAwait(false);
+            return await NativeTransport.AwaitOwnedAsync(
+                client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadlineToken), deadlineToken,
+                static lateResponse => lateResponse.Dispose()).ConfigureAwait(false);
         }
         catch (HttpRequestException)
         {
@@ -272,12 +274,13 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
     {
         if (response.Content.Headers.ContentLength > BodyLimit)
             throw new NativeAdmissionException("invalid_discovery");
-        using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var stream = await NativeTransport.AwaitOwnedAsync(response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
+            static lateStream => lateStream.Dispose()).ConfigureAwait(false);
         using var body = new MemoryStream();
         var buffer = new byte[4096];
         while (true)
         {
-            var count = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            var count = await NativeTransport.AwaitOwnedAsync(stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
             if (count == 0) return body.ToArray();
             if (body.Length + count > BodyLimit) throw new NativeAdmissionException("invalid_discovery");
             body.Write(buffer, 0, count);
@@ -404,7 +407,12 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         if (value.ValueKind != JsonValueKind.Object) Invalid();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var property in value.EnumerateObject())
-            if (!names.Contains(property.Name, StringComparer.Ordinal) || !seen.Add(property.Name)) Invalid();
+        {
+            string name;
+            try { name = property.Name; }
+            catch (InvalidOperationException) { throw new NativeAdmissionException("invalid_discovery"); }
+            if (!names.Contains(name, StringComparer.Ordinal) || !seen.Add(name)) Invalid();
+        }
         if (seen.Count != names.Count) Invalid();
     }
 
@@ -412,7 +420,8 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
     {
         var property = value.GetProperty(name);
         if (property.ValueKind != JsonValueKind.String) Invalid();
-        return property.GetString()!;
+        try { return property.GetString()!; }
+        catch (InvalidOperationException) { throw new NativeAdmissionException("invalid_discovery"); }
     }
 
     private static long ReadInt64(JsonElement value, string name)

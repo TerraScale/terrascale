@@ -76,7 +76,7 @@ internal static class TerraScaleAuthErrors
                     ? nested.GetString() : null;
             return code is not null && KnownErrorCodes.TryGetValue(code, out var known) ? known : null;
         }
-        catch (JsonException)
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
             return null;
         }

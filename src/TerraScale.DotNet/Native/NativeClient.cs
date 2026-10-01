@@ -220,7 +220,7 @@ public sealed class NativeClient : IDisposable
             budget.Token.ThrowIfCancellationRequested();
             phase = "response";
             sent = true;
-            using var response = await AwaitOwnedAsync(client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token),
+            using var response = await NativeTransport.AwaitOwnedAsync(client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token),
                 budget.Token, static lateResponse => lateResponse.Dispose()).ConfigureAwait(false);
             status = (int)response.StatusCode;
             retryAfter = RetryAfter(response);
@@ -285,7 +285,11 @@ public sealed class NativeClient : IDisposable
         {
             var header = response.Headers.RetryAfter;
             if (header?.Delta is { } delta && delta >= TimeSpan.Zero) return delta;
-            if (header?.Date is { } date) return date > DateTimeOffset.UtcNow ? date - DateTimeOffset.UtcNow : TimeSpan.Zero;
+            if (header?.Date is { } date)
+            {
+                var now = DateTimeOffset.UtcNow;
+                return date > now ? date - now : TimeSpan.Zero;
+            }
         }
         catch (FormatException) { }
         return null;
@@ -294,13 +298,13 @@ public sealed class NativeClient : IDisposable
     private static async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         if (response.Content.Headers.ContentLength > NativeCodec.MaximumBodyBytes) throw new InvalidDataException("Native response exceeds the 4 MiB limit.");
-        using var stream = await AwaitOwnedAsync(response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
+        using var stream = await NativeTransport.AwaitOwnedAsync(response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
             static lateStream => lateStream.Dispose()).ConfigureAwait(false);
         using var output = new MemoryStream();
         var buffer = new byte[81920];
         while (true)
         {
-            var count = await AwaitOwnedAsync(stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
+            var count = await NativeTransport.AwaitOwnedAsync(stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
             if (count == 0) break;
             if (output.Length + count > NativeCodec.MaximumBodyBytes) throw new InvalidDataException("Native response exceeds the 4 MiB limit.");
             output.Write(buffer, 0, count);
@@ -308,7 +312,21 @@ public sealed class NativeClient : IDisposable
         return output.ToArray();
     }
 
-    private static async Task<T> AwaitOwnedAsync<T>(Task<T> operation, CancellationToken cancellationToken, Action<T>? releaseLate = null)
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+
+    /// <inheritdoc />
+    public override string ToString() => "Native database client";
+
+    /// <summary>Disposes an owned transport once; a caller-owned HttpClient remains usable.</summary>
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref disposed, 1) == 0 && ownsClient) client.Dispose();
+    }
+}
+
+internal static class NativeTransport
+{
+    internal static async Task<T> AwaitOwnedAsync<T>(Task<T> operation, CancellationToken cancellationToken, Action<T>? releaseLate = null)
     {
         try
         {
@@ -336,20 +354,6 @@ public sealed class NativeClient : IDisposable
         }
     }
 
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
-
-    /// <inheritdoc />
-    public override string ToString() => "Native database client";
-
-    /// <summary>Disposes an owned transport once; a caller-owned HttpClient remains usable.</summary>
-    public void Dispose()
-    {
-        if (Interlocked.Exchange(ref disposed, 1) == 0 && ownsClient) client.Dispose();
-    }
-}
-
-internal static class NativeTransport
-{
     internal static HttpClient CreateClient(HttpMessageHandler? handler = null) => new(handler ?? new HttpClientHandler
     {
         AllowAutoRedirect = false,

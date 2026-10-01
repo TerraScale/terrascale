@@ -92,8 +92,81 @@ public sealed class NativeDiscoveryRouterTests
         var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None));
         await Assert.That(failure.Code).IsEqualTo("discovery_unavailable");
         await Assert.That(failure.Status).IsNull();
-        await Assert.That(body.CancellationObserved).IsTrue();
+        await body.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(transport.Requests).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task NoncooperativeDiscoveryReleasesScopeAndLateResources(bool bodyRead, bool cancelCaller)
+    {
+        var clock = new TestClock();
+        using var caller = new CancellationTokenSource();
+        var pendingResponse = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var pendingBody = new NoncooperativeStream(() => { if (cancelCaller) caller.Cancel(); });
+        var calls = 0;
+        using var transport = new NativeClientTests.Handler((_, _) =>
+        {
+            if (++calls > 1) return Task.FromResult(NativeClientTests.Json(Body(clock, Endpoint("GRU"))));
+            if (!bodyRead)
+            {
+                if (cancelCaller) caller.Cancel();
+                return pendingResponse.Task;
+            }
+            var content = new StreamContent(pendingBody);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        });
+        using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(2), transport, clock);
+        try
+        {
+            var pending = router.ResolveAsync(Scope, Credential, ["read"], caller.Token).AsTask();
+            if (cancelCaller)
+                await Assert.ThrowsAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
+            else
+            {
+                var failure = await CaptureAsync(() => new ValueTask<NativeAdmission>(pending.WaitAsync(TimeSpan.FromSeconds(10))));
+                await Assert.That(failure.Code).IsEqualTo("discovery_unavailable");
+            }
+            await Assert.That(calls).IsEqualTo(1);
+            // A subsequent resolution can fetch again before the abandoned I/O completes.
+            var admission = await router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None);
+            admission.AssertCurrent();
+            await Assert.That(calls).IsEqualTo(2);
+            if (bodyRead)
+            {
+                await Assert.That(pendingBody.Disposed.Task.IsCompleted).IsTrue();
+                await Assert.That(pendingBody.Reads).IsEqualTo(1);
+                pendingBody.Completion.TrySetResult(0);
+            }
+            else
+            {
+                using var lateBody = new NoncooperativeStream(() => { });
+                pendingResponse.SetResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(lateBody) });
+                await lateBody.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
+        finally
+        {
+            pendingResponse.TrySetResult(NativeClientTests.Json("{}"));
+            pendingBody.Completion.TrySetResult(0);
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MalformedDiscoveryUnicodeCannotEscapeTheAdmissionFailureBoundary(bool propertyName)
+    {
+        var clock = new TestClock();
+        var body = Body(clock, Endpoint("GRU")).Replace(propertyName ? "\"authority\"" : "publisher-a",
+            propertyName ? "\"\\uD800\"" : "\\uD800", StringComparison.Ordinal);
+        using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(3), new Transport(body), clock);
+        var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None));
+        await Assert.That(failure.Code).IsEqualTo("invalid_discovery");
     }
 
     [Test]
@@ -326,9 +399,33 @@ public sealed class NativeDiscoveryRouterTests
         }
     }
 
+    private sealed class NoncooperativeStream(Action readStarted) : Stream
+    {
+        internal TaskCompletionSource<int> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int Reads { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Reads++;
+            readStarted();
+            return new ValueTask<int>(Completion.Task);
+        }
+        protected override void Dispose(bool disposing) { if (disposing) Disposed.TrySetResult(); base.Dispose(disposing); }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private sealed class StallStream : Stream
     {
-        internal bool CancellationObserved { get; private set; }
+        internal TaskCompletionSource CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
@@ -344,7 +441,7 @@ public sealed class NativeDiscoveryRouterTests
             try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
             catch (OperationCanceledException)
             {
-                CancellationObserved = true;
+                CancellationObserved.TrySetResult();
                 throw;
             }
             return 0;
