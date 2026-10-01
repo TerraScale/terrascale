@@ -195,7 +195,7 @@ public sealed class NativeBoundaryTests
         INativeAdmissionProvider provider = invalidCredential
             ? new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech") : new FinalInvalidAdmission();
         using var client = new NativeClient(http, NativeCodecTests.Scope, provider,
-            _ => ValueTask.FromResult(invalidCredential ? "tbk1.\u2603" : "tbk1.fixture-key"), TimeSpan.FromSeconds(2));
+            _ => ValueTask.FromResult(invalidCredential ? "tbk1.\u2603" : "tbk1.fixture-key"), TimeSpan.FromSeconds(30));
         var result = await client.CommitAsync(client.PrepareCommit(NativeCodecTests.CreateCommit()));
         var failure = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
         await Assert.That(failure.Code).IsEqualTo(invalidCredential ? "invalid_credential" : "invalid_admission");

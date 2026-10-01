@@ -16,7 +16,7 @@ public sealed class NativeStreamingTests
     {
         using var caller = new CancellationTokenSource();
         var pendingResponse = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var clock = new ManualDeadlineClock();
+        var clock = new NativeDeadlineClock();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var pendingBody = new NoncooperativeBodyStream(() => entered.TrySetResult());
         var calls = 0;
@@ -113,7 +113,7 @@ public sealed class NativeStreamingTests
     public async Task StreamedCommitFailuresPreserveUncertainIdentityWithoutReplay(string mode)
     {
         using var cancellation = new CancellationTokenSource();
-        var clock = new ManualDeadlineClock();
+        var clock = new NativeDeadlineClock();
         var readEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var body = new BodyStream(mode == "overflow" ? NativeCodec.MaximumBodyBytes + 1 : -1,
             () => readEntered.TrySetResult());
@@ -159,24 +159,6 @@ public sealed class NativeStreamingTests
         {
             await Assert.That(body.Reads).IsEqualTo(1);
             await Assert.That(body.CancellationObserved).IsTrue();
-        }
-    }
-
-    private sealed class ManualDeadlineClock : TimeProvider
-    {
-        private ManualTimer? timer;
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
-            timer = new ManualTimer(callback, state);
-        internal void Expire() => timer!.Fire();
-
-        private sealed class ManualTimer(TimerCallback callback, object? state) : ITimer
-        {
-            private readonly object gate = new();
-            private bool disposed;
-            internal void Fire() { lock (gate) { if (!disposed) callback(state); } }
-            public bool Change(TimeSpan dueTime, TimeSpan period) { lock (gate) return !disposed; }
-            public void Dispose() { lock (gate) disposed = true; }
-            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
         }
     }
 

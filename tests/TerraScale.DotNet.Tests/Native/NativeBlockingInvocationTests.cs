@@ -26,6 +26,7 @@ public sealed class NativeBlockingInvocationTests
     {
         using var blocker = new Blocker();
         using var caller = new CancellationTokenSource();
+        var clock = new NativeDeadlineClock();
         using var content = new BlockingContent(stage, blocker);
         var calls = 0;
         string? retainedBody = null;
@@ -41,7 +42,7 @@ public sealed class NativeBlockingInvocationTests
             {
                 if (stage == "credential") blocker.Wait();
                 return ValueTask.FromResult("tbk1.fixture-key");
-            }, TimeSpan.FromSeconds(2), handler);
+            }, TimeSpan.FromSeconds(30), handler, clock);
         var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
         // Keep the test itself finite against the unfixed synchronous invocation.
         var pending = Task.Run(() => client.CommitAsync(prepared, caller.Token));
@@ -49,6 +50,7 @@ public sealed class NativeBlockingInvocationTests
         {
             await blocker.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
             if (cancelCaller) caller.Cancel();
+            else clock.Expire();
             var result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
             var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
             await Assert.That(error.Code).IsEqualTo(cancelCaller ? "cancelled" : "deadline_exceeded");
@@ -59,6 +61,7 @@ public sealed class NativeBlockingInvocationTests
         }
         finally
         {
+            caller.Cancel();
             blocker.Release.Set();
             await blocker.Finished.Task.WaitAsync(TimeSpan.FromSeconds(10));
         }
@@ -85,6 +88,7 @@ public sealed class NativeBlockingInvocationTests
     {
         using var blocker = new Blocker();
         using var caller = new CancellationTokenSource();
+        var clock = new NativeDeadlineClock();
         using var content = new BlockingContent(stage, blocker);
         var calls = 0;
         using var handler = new NativeClientTests.Handler((_, _) =>
@@ -94,7 +98,7 @@ public sealed class NativeBlockingInvocationTests
             if (stage == "send") blocker.Wait();
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
         });
-        using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(2), handler);
+        using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(30), handler, clock);
         var scope = NativeCodecTests.Scope with { Shard = 1 };
         const string key = "tbk1.AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
         var pending = Task.Run(async () => await router.ResolveAsync(scope, key, ["read"], caller.Token));
@@ -102,6 +106,7 @@ public sealed class NativeBlockingInvocationTests
         {
             await blocker.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
             if (cancelCaller) caller.Cancel();
+            else clock.Expire();
             if (cancelCaller)
                 await Assert.ThrowsAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
             else
@@ -116,6 +121,7 @@ public sealed class NativeBlockingInvocationTests
         }
         finally
         {
+            caller.Cancel();
             blocker.Release.Set();
             await blocker.Finished.Task.WaitAsync(TimeSpan.FromSeconds(10));
         }

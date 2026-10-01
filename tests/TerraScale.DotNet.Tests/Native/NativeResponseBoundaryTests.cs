@@ -47,7 +47,7 @@ public sealed class NativeResponseBoundaryTests
                 1, NativeCodecTests.SchemaDigest, new NativeWriteValue.Tombstone())]);
         var body = NativeCodec.EncodePoint(point);
         using var handler = new NativeClientTests.Handler((_, _) => Task.FromResult(NativeClientTests.Json(body)));
-        var clock = new ManualDeadlineClock();
+        var clock = new NativeDeadlineClock();
         using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
             _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(30), handler, clock);
         using var caller = new CancellationTokenSource();
@@ -195,24 +195,6 @@ public sealed class NativeResponseBoundaryTests
                 return Task.CompletedTask;
             });
             await Assert.That(failure!.Message).IsEqualTo("Query limit must be between 1 and 128.");
-        }
-    }
-
-    private sealed class ManualDeadlineClock : TimeProvider
-    {
-        private ManualTimer? timer;
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
-            timer = new ManualTimer(callback, state);
-        internal void Expire() => timer!.Fire();
-
-        private sealed class ManualTimer(TimerCallback callback, object? state) : ITimer
-        {
-            private readonly object gate = new();
-            private bool disposed;
-            internal void Fire() { lock (gate) { if (!disposed) callback(state); } }
-            public bool Change(TimeSpan dueTime, TimeSpan period) { lock (gate) return !disposed; }
-            public void Dispose() { lock (gate) disposed = true; }
-            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
         }
     }
 

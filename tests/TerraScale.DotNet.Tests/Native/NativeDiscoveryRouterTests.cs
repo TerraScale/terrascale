@@ -86,14 +86,23 @@ public sealed class NativeDiscoveryRouterTests
     [Test]
     public async Task DiscoveryDeadlineStillBoundsBodyAfterResponseHeaders()
     {
+        var clock = new NativeDeadlineClock();
         var body = new StallStream();
+        using var caller = new CancellationTokenSource();
         var transport = new HeaderOnlyTransport(body);
-        using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(2), transport);
-        var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None));
-        await Assert.That(failure.Code).IsEqualTo("discovery_unavailable");
-        await Assert.That(failure.Status).IsNull();
-        await body.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        await Assert.That(transport.Requests).IsEqualTo(1);
+        using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(30), transport, clock);
+        var pending = router.ResolveAsync(Scope, Credential, ["read"], caller.Token).AsTask();
+        try
+        {
+            await body.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            clock.Expire();
+            var failure = await CaptureAsync(() => new ValueTask<NativeAdmission>(pending.WaitAsync(TimeSpan.FromSeconds(10))));
+            await Assert.That(failure.Code).IsEqualTo("discovery_unavailable");
+            await Assert.That(failure.Status).IsNull();
+            await body.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(transport.Requests).IsEqualTo(1);
+        }
+        finally { caller.Cancel(); }
     }
 
     [Test]
@@ -103,27 +112,31 @@ public sealed class NativeDiscoveryRouterTests
     [Arguments(true, true)]
     public async Task NoncooperativeDiscoveryReleasesScopeAndLateResources(bool bodyRead, bool cancelCaller)
     {
-        var clock = new TestClock();
+        var clock = new NativeDeadlineClock();
         using var caller = new CancellationTokenSource();
         var pendingResponse = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var pendingBody = new NoncooperativeStream(() => { if (cancelCaller) caller.Cancel(); });
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var pendingBody = new NoncooperativeStream(() => entered.TrySetResult());
         var calls = 0;
         using var transport = new NativeClientTests.Handler((_, _) =>
         {
             if (++calls > 1) return Task.FromResult(NativeClientTests.Json(Body(clock, Endpoint("GRU"))));
             if (!bodyRead)
             {
-                if (cancelCaller) caller.Cancel();
+                entered.TrySetResult();
                 return pendingResponse.Task;
             }
             var content = new StreamContent(pendingBody);
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
         });
-        using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(2), transport, clock);
+        using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(30), transport, clock);
         try
         {
             var pending = router.ResolveAsync(Scope, Credential, ["read"], caller.Token).AsTask();
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            if (cancelCaller) caller.Cancel();
+            else clock.Expire();
             if (cancelCaller)
                 await Assert.ThrowsAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
             else
@@ -152,6 +165,7 @@ public sealed class NativeDiscoveryRouterTests
         }
         finally
         {
+            caller.Cancel();
             if (!bodyRead)
             {
                 var fallback = NativeClientTests.Json("{}");
@@ -325,7 +339,7 @@ public sealed class NativeDiscoveryRouterTests
         using var router = new NativeDiscoveryRouter(http, TimeSpan.FromSeconds(3), clock: clock);
         var pending = Enumerable.Range(0, 32).Select(_ =>
             router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None).AsTask()).ToArray();
-        await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
         release.SetResult();
         var admissions = await Task.WhenAll(pending);
         await Assert.That(fetches).IsEqualTo(1);
@@ -369,7 +383,7 @@ public sealed class NativeDiscoveryRouterTests
             for (var index = 0; index < NativeTransport.MaximumOutstandingOperations; index++)
                 pending.Add(router.ResolveAsync(other, Credential, ["read"], cancellation.Token).AsTask());
             var cached = await router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None)
-                .AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
             cached.AssertCurrent();
             await Assert.That(calls).IsEqualTo(2);
         }
@@ -391,7 +405,7 @@ public sealed class NativeDiscoveryRouterTests
         priority
     };
 
-    private static string Body(TestClock clock, params object[] endpoints) => JsonSerializer.Serialize(new
+    private static string Body(TimeProvider clock, params object[] endpoints) => JsonSerializer.Serialize(new
     {
         schema_version = 1,
         scope = new { tenant_id = Scope.Tenant, database_id = Scope.Database, shard_id = Scope.Shard.ToString(CultureInfo.InvariantCulture) },
@@ -474,6 +488,7 @@ public sealed class NativeDiscoveryRouterTests
 
     private sealed class StallStream : Stream
     {
+        internal TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public override bool CanRead => true;
         public override bool CanSeek => false;
@@ -487,6 +502,7 @@ public sealed class NativeDiscoveryRouterTests
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            ReadStarted.TrySetResult();
             try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
             catch (OperationCanceledException)
             {

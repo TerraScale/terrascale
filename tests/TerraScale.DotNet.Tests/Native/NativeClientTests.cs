@@ -10,7 +10,7 @@ public sealed class NativeClientTests
 {
     internal static NativeClient Client(HttpMessageHandler handler, INativeAdmissionProvider? provider = null) => new(
         NativeCodecTests.Scope, provider ?? new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
-        static _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2), handler);
+        static _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(30), handler);
 
     internal static HttpResponseMessage Json(string json, HttpStatusCode status = HttpStatusCode.OK) =>
         new(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
@@ -62,7 +62,7 @@ public sealed class NativeClientTests
         });
         var key = 0;
         using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
-            _ => ValueTask.FromResult("tbk1.fixture-" + ++key), TimeSpan.FromSeconds(2), handler);
+            _ => ValueTask.FromResult("tbk1.fixture-" + ++key), TimeSpan.FromSeconds(30), handler);
         var query = client.PrepareQuery(NativeCodecTests.Collection, new NativeQueryPredicate(NativeQueryOperator.Equal, [1], new NativeValue.Text("value")), 1);
         var first = await client.QueryAsync(query);
         var cursor = ((NativeResult<NativeQueryPage>.Success)first).Value.NextCursor;
@@ -131,7 +131,7 @@ public sealed class NativeClientTests
             return Task.FromResult(Json("{\"error\":{\"code\":\"" + code + "\"}}", (HttpStatusCode)status));
         });
         using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
-            _ => ValueTask.FromResult(key), TimeSpan.FromSeconds(2), handler);
+            _ => ValueTask.FromResult(key), TimeSpan.FromSeconds(30), handler);
         var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
         var result = await client.CommitAsync(prepared);
         var failure = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
@@ -280,16 +280,16 @@ public sealed class NativeClientTests
         var calls = 0;
         using var http = new HttpClient(new Handler((_, _) => { calls++; return Task.FromResult(Json("{}")); }));
         using var credentialClient = new NativeClient(http, NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
-            _ => ValueTask.FromResult("invalid key"), TimeSpan.FromSeconds(2));
+            _ => ValueTask.FromResult("invalid key"), TimeSpan.FromSeconds(30));
         var credential = await credentialClient.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document);
         await Assert.That(((NativeResult<NativePoint>.Failure)credential).Error.Code).IsEqualTo("invalid_credential");
         using var admissionClient = new NativeClient(http, NativeCodecTests.Scope, new Provider(static () => throw new InvalidDataException()),
-            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2));
+            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(30));
         var admission = await admissionClient.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document);
         await Assert.That(((NativeResult<NativePoint>.Failure)admission).Error.Code).IsEqualTo("invalid_admission");
         await Assert.That(calls).IsEqualTo(0);
         using var brokenClient = new NativeClient(http, NativeCodecTests.Scope, new Provider(static () => throw new ArgumentException("provider bug")),
-            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2));
+            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(30));
         await Assert.ThrowsAsync<ArgumentException>(() => brokenClient.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document));
     }
 
@@ -301,7 +301,7 @@ public sealed class NativeClientTests
         using var http = new HttpClient(new Handler((_, _) => { calls++; return Task.FromResult(Json("{}")); }));
         using var client = new NativeClient(http, NativeCodecTests.Scope, new Provider(() =>
             new NativeAdmission("https://gru.api.terrascale.tech", cancellation.Cancel)),
-            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2));
+            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(30));
         var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
         var result = await client.CommitAsync(prepared, cancellation.Token);
         var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
