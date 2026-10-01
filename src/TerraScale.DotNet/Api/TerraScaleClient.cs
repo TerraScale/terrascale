@@ -18,6 +18,7 @@ namespace TerraScale.DotNet;
 public sealed class TerraScaleClient
 {
     private const int MaxOperationBytes = 1_048_576;
+    private const int MaxRetainedErrorBytes = 1_048_576;
     private const int MaxSessionConsistencyScopes = 4096;
     private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(30);
@@ -1119,7 +1120,7 @@ public sealed class TerraScaleClient
                         if (!repairedMisdirect && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) && (alternative || adopted))
                         {
                             repairedMisdirect = true;
-                            pendingResponse = response;
+                            pendingResponse = await RetainRegionalFailureAsync(response, requestCancellationToken).ConfigureAwait(false);
                             continue;
                         }
                     }
@@ -1131,7 +1132,7 @@ public sealed class TerraScaleClient
                             (GetRetryAfter(response) ?? TimeSpan.Zero) <= MaxRetryAfter)
                         {
                             var failoverDelay = GetRetryAfter(response) ?? TimeSpan.Zero;
-                            pendingResponse = response;
+                            pendingResponse = await RetainRegionalFailureAsync(response, requestCancellationToken).ConfigureAwait(false);
                             await DelayRetryAsync(failoverDelay, requestCancellationToken).ConfigureAwait(false);
                             continue;
                         }
@@ -1153,7 +1154,7 @@ public sealed class TerraScaleClient
                     AddRetryEvent(activity, attempt + 1, delay, $"HTTP {(int)response.StatusCode}");
                     if (failedRegions.Count > 0)
                     {
-                        pendingResponse = response;
+                        pendingResponse = await RetainRegionalFailureAsync(response, requestCancellationToken).ConfigureAwait(false);
                     }
                     else
                     {
@@ -1188,6 +1189,48 @@ public sealed class TerraScaleClient
         finally
         {
             pendingResponse?.Dispose();
+        }
+    }
+
+    private static async Task<HttpResponseMessage> RetainRegionalFailureAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var body = new MemoryStream();
+            try
+            {
+                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+                var chunk = new byte[8192];
+                while (body.Length < MaxRetainedErrorBytes)
+                {
+                    var count = await stream.ReadAsync(chunk.AsMemory(0,
+                        (int)Math.Min(chunk.Length, MaxRetainedErrorBytes - body.Length)), cancellationToken).ConfigureAwait(false);
+                    if (count == 0) break;
+                    body.Write(chunk, 0, count);
+                }
+            }
+            catch (Exception exception) when (exception is IOException or HttpRequestException)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                // Preserve the original HTTP failure even if its diagnostic
+                // body is interrupted. Never retain the transport exception.
+            }
+            var retained = new HttpResponseMessage(response.StatusCode)
+            {
+                Version = response.Version,
+                ReasonPhrase = response.ReasonPhrase,
+                Content = new ByteArrayContent(body.ToArray()),
+            };
+            foreach (var header in response.Headers)
+                retained.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            foreach (var header in response.Content.Headers)
+                if (!header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                    retained.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            return retained;
+        }
+        finally
+        {
+            response.Dispose();
         }
     }
 
