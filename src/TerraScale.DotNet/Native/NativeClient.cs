@@ -220,7 +220,8 @@ public sealed class NativeClient : IDisposable
             budget.Token.ThrowIfCancellationRequested();
             phase = "response";
             sent = true;
-            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token).ConfigureAwait(false);
+            using var response = await AwaitOwnedAsync(client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token),
+                budget.Token, static lateResponse => lateResponse.Dispose()).ConfigureAwait(false);
             status = (int)response.StatusCode;
             retryAfter = RetryAfter(response);
             if (response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.OK)
@@ -293,17 +294,46 @@ public sealed class NativeClient : IDisposable
     private static async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         if (response.Content.Headers.ContentLength > NativeCodec.MaximumBodyBytes) throw new InvalidDataException("Native response exceeds the 4 MiB limit.");
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var stream = await AwaitOwnedAsync(response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
+            static lateStream => lateStream.Dispose()).ConfigureAwait(false);
         using var output = new MemoryStream();
         var buffer = new byte[81920];
         while (true)
         {
-            var count = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            var count = await AwaitOwnedAsync(stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
             if (count == 0) break;
             if (output.Length + count > NativeCodec.MaximumBodyBytes) throw new InvalidDataException("Native response exceeds the 4 MiB limit.");
             output.Write(buffer, 0, count);
         }
         return output.ToArray();
+    }
+
+    private static async Task<T> AwaitOwnedAsync<T>(Task<T> operation, CancellationToken cancellationToken, Action<T>? releaseLate = null)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = await operation.WaitAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The already-started caller transport may ignore cancellation.
+            // Its completion callback owns late resource release and observes
+            // faults; no new request or read is started after the deadline.
+            _ = operation.ContinueWith(static (completed, release) =>
+            {
+                try
+                {
+                    if (completed.IsCompletedSuccessfully)
+                        ((Action<T>?)release)?.Invoke(completed.GetAwaiter().GetResult());
+                    else _ = completed.Exception;
+                }
+                catch (Exception) { /* Late cleanup cannot alter the completed operation. */ }
+            }, releaseLate, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+            throw;
+        }
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);

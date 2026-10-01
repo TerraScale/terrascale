@@ -8,6 +8,64 @@ namespace TerraScale.DotNet.Tests.Native;
 public sealed class NativeStreamingTests
 {
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task NoncooperativeTransportsStayFiniteAndReleaseLateResources(bool bodyRead, bool cancelCaller)
+    {
+        using var caller = new CancellationTokenSource();
+        var pendingResponse = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pendingBody = new NoncooperativeBodyStream(() => { if (cancelCaller) caller.Cancel(); });
+        var calls = 0;
+        using var handler = new NativeClientTests.Handler((_, _) =>
+        {
+            calls++;
+            if (!bodyRead)
+            {
+                if (cancelCaller) caller.Cancel();
+                return pendingResponse.Task;
+            }
+            var content = new StreamContent(pendingBody);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        });
+        using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
+            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2), handler);
+        var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+        try
+        {
+            var result = await client.CommitAsync(prepared, caller.Token).WaitAsync(TimeSpan.FromSeconds(10));
+            var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
+            await Assert.That(error.Code).IsEqualTo(cancelCaller ? "cancelled" : "deadline_exceeded");
+            await Assert.That(error.Transaction).IsEqualTo(prepared.Identity);
+            await Assert.That(error.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
+            await Assert.That(calls).IsEqualTo(1);
+            if (bodyRead)
+            {
+                await Assert.That(error.Status).IsEqualTo(200);
+                await Assert.That(pendingBody.Disposed.Task.IsCompleted).IsTrue();
+                await Assert.That(pendingBody.Reads).IsEqualTo(1);
+                await Assert.That(pendingBody.AsyncDisposals).IsEqualTo(0);
+                pendingBody.Completion.TrySetResult(0);
+            }
+            else
+            {
+                await Assert.That(error.Status).IsNull();
+                using var lateBody = new DisposalStream();
+                pendingResponse.SetResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(lateBody) });
+                await lateBody.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
+        finally
+        {
+            pendingResponse.TrySetResult(NativeClientTests.Json("{}"));
+            pendingBody.Completion.TrySetResult(0);
+            pendingBody.Dispose();
+        }
+    }
+
+    [Test]
     public async Task CancellationOnEofCannotPublishAValidCommitReceipt()
     {
         using var caller = new CancellationTokenSource();
@@ -78,6 +136,38 @@ public sealed class NativeStreamingTests
         }
     }
 
+    private sealed class DisposalStream() : MemoryStream("{}"u8.ToArray())
+    {
+        public TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        protected override void Dispose(bool disposing) { if (disposing) Disposed.TrySetResult(); base.Dispose(disposing); }
+    }
+
+    private sealed class NoncooperativeBodyStream(Action readStarted) : Stream
+    {
+        public TaskCompletionSource<int> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Reads { get; private set; }
+        public int AsyncDisposals { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Reads++;
+            readStarted();
+            return new ValueTask<int>(Completion.Task);
+        }
+        protected override void Dispose(bool disposing) { if (disposing) Disposed.TrySetResult(); base.Dispose(disposing); }
+        public override ValueTask DisposeAsync() { AsyncDisposals++; return new ValueTask(Task.Delay(Timeout.InfiniteTimeSpan)); }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private sealed class EofCancellingStream(byte[] bytes, Action cancel) : MemoryStream(bytes)
     {
         public bool Disposed { get; private set; }
@@ -93,9 +183,10 @@ public sealed class NativeStreamingTests
 
     private sealed class BodyStream(int remaining, Action? cancel) : Stream
     {
+        private CancellationToken readToken;
         public int Reads { get; private set; }
         public int BytesRead { get; private set; }
-        public bool CancellationObserved { get; private set; }
+        public bool CancellationObserved => readToken.IsCancellationRequested;
         public bool Disposed { get; private set; }
         public override bool CanRead => true;
         public override bool CanSeek => false;
@@ -107,6 +198,7 @@ public sealed class NativeStreamingTests
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             Reads++;
+            readToken = cancellationToken;
             if (remaining >= 0)
             {
                 var count = Math.Min(remaining, buffer.Length);
@@ -116,8 +208,7 @@ public sealed class NativeStreamingTests
                 return count;
             }
             cancel?.Invoke();
-            try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
-            catch (OperationCanceledException) { CancellationObserved = true; throw; }
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return 0;
         }
         protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }

@@ -105,6 +105,29 @@ public sealed class NativeBoundaryTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MalformedUnicodePropertyNamesReturnTypedFailures(bool mutation)
+    {
+        using var handler = new NativeClientTests.Handler((_, _) => Task.FromResult(NativeClientTests.Json("{\"\\uD800\":0}")));
+        using var client = NativeClientTests.Client(handler);
+        if (mutation)
+        {
+            var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+            var result = await client.CommitAsync(prepared);
+            var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
+            await Assert.That(error.Code).IsEqualTo("invalid_response");
+            await Assert.That(error.Transaction).IsEqualTo(prepared.Identity);
+            await Assert.That(error.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
+        }
+        else
+        {
+            var result = await client.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document);
+            await Assert.That(((NativeResult<NativePoint>.Failure)result).Error.Code).IsEqualTo("invalid_response");
+        }
+    }
+
+    [Test]
     public async Task MalformedWireSurrogateReturnsInvalidResponse()
     {
         var point = new NativePoint(NativePointState.Value, new string('d', 64),

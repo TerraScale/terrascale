@@ -90,13 +90,21 @@ public static class NativeOrigin
 /// <summary>Validates trusted Atlas authority configuration separately from native data origins.</summary>
 internal static class NativeAtlasOrigin
 {
-    internal static Uri Validate(Uri origin) => NativeOriginValidation.Validate(origin.AbsoluteUri, development: false);
+    internal static Uri Validate(Uri origin) => NativeOriginValidation.Validate(origin.OriginalString, development: false);
 }
 
 internal static class NativeOriginValidation
 {
     internal static Uri Validate(string origin, bool development)
     {
+        ArgumentNullException.ThrowIfNull(origin);
+        var schemeSeparator = origin.IndexOf("://", StringComparison.Ordinal);
+        if (schemeSeparator < 0 || origin != origin.Trim())
+            throw new ArgumentException("Native origin must be bare and contain no credentials.", nameof(origin));
+        var rawAuthority = origin.AsSpan(schemeSeparator + 3);
+        var suffixStart = rawAuthority.IndexOfAny("/\\?#");
+        if (suffixStart >= 0 && !rawAuthority[suffixStart..].SequenceEqual("/"))
+            throw new ArgumentException("Native origin must be bare and contain no credentials.", nameof(origin));
         if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) ||
             uri.UserInfo.Length != 0 || uri.AbsolutePath != "/" || uri.Query.Length != 0 || uri.Fragment.Length != 0)
             throw new ArgumentException("Native origin must be bare and contain no credentials.", nameof(origin));

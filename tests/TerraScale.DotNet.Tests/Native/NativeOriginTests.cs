@@ -41,6 +41,16 @@ public sealed class NativeOriginTests
     }
 
     [Test]
+    [Arguments("https://database.customer.example/a/..")]
+    [Arguments("https://database.customer.example/%2e")]
+    [Arguments("https://database.customer.example/.")]
+    public async Task NormalizedDotSegmentsCannotBecomeBareIndependentOrAtlasOrigins(string origin)
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => { NativeOrigin.Validate(origin); return Task.CompletedTask; });
+        await Assert.ThrowsAsync<ArgumentException>(() => { NativeAtlasOrigin.Validate(new Uri(origin)); return Task.CompletedTask; });
+    }
+
+    [Test]
     public async Task ExplicitIndependentProvisionedHttpsOriginsRemainAvailable()
     {
         foreach (var origin in new[] { "https://database.customer.example", "https://database.customer.example:8443" })

@@ -84,7 +84,10 @@ public static class NativeCodec
             var names = new HashSet<string>(StringComparer.Ordinal);
             foreach (var property in value.EnumerateObject())
             {
-                if (!names.Add(property.Name)) throw Invalid("Native JSON contains duplicate object members.");
+                string name;
+                try { name = property.Name; }
+                catch (InvalidOperationException) { throw Invalid("Native JSON property names contain invalid Unicode."); }
+                if (!names.Add(name)) throw Invalid("Native JSON contains duplicate object members.");
                 RejectDuplicateMembers(property.Value);
             }
         }
