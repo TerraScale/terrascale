@@ -3,23 +3,29 @@ set -euo pipefail
 
 : "${GITHUB_ENV:?GITHUB_ENV is required}"
 browser_paths="$(mktemp "${RUNNER_TEMP:-/tmp}/terrascale-branded-browsers.XXXXXX")"
+trap 'rm -f -- "$browser_paths"' EXIT
+script_dir=$(cd "$(dirname "$0")" && pwd)
 # Use actual vendor browsers and their Nix runtime closures. The revision and
 # NAR digest bind the definitions and upstream vendor archive hashes together.
-nix build --max-jobs 1 --cores 2 --no-link --print-out-paths --expr '
-  let
-    source = builtins.fetchTree {
-      type = "github";
-      owner = "NixOS";
-      repo = "nixpkgs";
-      rev = "b4fd65b198c599cbe814fcb9f42d25d021595ec9";
-      narHash = "sha256-ilerN1WLSvF+HMjziC/Wv99J5y02maDH+6hZPwsORKg=";
-    };
-    pkgs = import source {
-      system = "x86_64-linux";
-      config.allowUnfree = true;
-    };
-  in [ pkgs.google-chrome pkgs.microsoft-edge ]
-' > "${browser_paths}"
+# fetchTarball is fixed-output, so with a cache the source substitutes by its
+# NAR digest instead of being downloaded and unpacked again.
+# TS_NIX_CACHE persists fixed-output source inputs between jobs. Require the
+# runner's configured signatures for input-addressed paths. Browser closures
+# remain in the persistent /nix store; this job has no cache signing key, so
+# it must not publish unsigned closures for future signature-enforcing jobs.
+substituters=()
+if [ -n "${TS_NIX_CACHE:-}" ]; then
+  substituters=(--extra-substituters "${TS_NIX_CACHE}?priority=10")
+fi
+nix build "${substituters[@]}" --option require-sigs true --max-jobs 1 --cores 2 \
+  --no-link --print-out-paths --file "$script_dir/branded-browsers.nix" > "$browser_paths"
+if [ -n "${TS_NIX_CACHE:-}" ]; then
+  # The nixpkgs source is fixed-output and needs no private signing key.
+  if ! nix copy --to "${TS_NIX_CACHE}?compression=zstd&parallel-compression=true" \
+    "$(nix eval --raw --file "$script_dir/nixpkgs-pin.nix")"; then
+    echo "warning: could not populate the optional browser cache" >&2
+  fi
+fi
 
 chrome=""
 edge=""
