@@ -6,7 +6,7 @@ GO_TEST_FLAGS ?= -race -count=1
 VERSION ?= $(shell git rev-parse HEAD 2>/dev/null || echo dev)
 export GOFLAGS
 
-.PHONY: build check-css check-generated check-modules css dev generate js serve lint perf test-fast test-slow test-unit test-browser
+.PHONY: build check-css check-generated check-modules check-e2e-shards css dev generate js serve lint perf test-fast test-slow test-unit test-browser
 
 TEMPL_GENERATE_ARGS = -path internal -include-version=false -include-timestamp=false
 
@@ -76,6 +76,10 @@ test-slow: test-unit test-browser
 # browser tests in its own process, dashboard and Chromium (see
 # scripts/e2e-shard.sh); the default 1/1 runs them all.
 E2E_SHARD ?= 1/1
+E2E_SHARDS ?= 4
+
+check-e2e-shards: js
+	@scripts/check-e2e-shards.sh "$(E2E_SHARDS)" $(GO_TEST_FLAGS)
 
 test-unit: js
 	$(GO) test $(GO_TEST_FLAGS) -parallel 8 ./internal/...

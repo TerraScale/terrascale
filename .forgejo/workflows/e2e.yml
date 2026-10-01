@@ -37,8 +37,8 @@ jobs:
           persist-credentials: false
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
-      - name: Check generated Templ and CSS, and lint
-        run: make lint check-css
+      - name: Check generated assets, lint, and browser shard coverage
+        run: make lint check-css check-e2e-shards E2E_SHARDS=${{ env.E2E_SHARDS }}
   unit:
     runs-on: terrascale-builder
     timeout-minutes: 10

@@ -72,6 +72,7 @@ already-running server instead of starting the dashboard in-process.
 ```sh
 make lint       # gofmt check and go vet
 make check-modules # verify public dependency downloads and checksums
+make check-e2e-shards # verify every browser test runs in exactly one CI shard
 make generate   # regenerate Go components from internal/**/*.templ
 make check-generated # verify generated templ Go sources are current
 make css        # bundle web/assets into web/static/css/terrascale.css
@@ -145,7 +146,9 @@ The vendored SDK includes the regional API hostname correction documented in
 check whether the chosen upstream revision already contains the correction.
 `make check-modules` verifies
 public dependency resolution in its own CI job, alongside lint, unit tests,
-and four browser shards. It needs no npm install or browser assets.
+and four browser shards. The lint job verifies that the actual shard patterns
+cover every listed browser test exactly once, and that invalid shard inputs
+are rejected. Public module verification needs no npm install or browser assets.
 It uses the installed Go toolchain and a temporary module cache, removed on
 exit, so a warm runner cache cannot hide download failures. The check downloads
 the full module graph, including tool and transitive module dependencies.
