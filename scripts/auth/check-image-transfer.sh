@@ -86,7 +86,7 @@ cmp "$RELEASE_MANIFEST" "$sandbox/released-before-failure"
 # Single and double underscores are valid registry component separators.
 for owner in org_name org__name; do
   REPOSITORY_OWNER="$owner" bash "$transfer" publish
- done
+done
 reject env INTERRUPT_STAGE=1 bash "$transfer" stage
 test -z "$(find "$RUNNER_TEMP" -type f -print -quit)"
 grep -F 'login git.terrascale.tech --username terrascale --password-stdin' "$CALLS" >/dev/null
