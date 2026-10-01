@@ -17,8 +17,6 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$CALLS"
 case "$1 $2" in
   'login git.terrascale.tech') cat >/dev/null; printf '{}\n' > "$REGISTRY_AUTH_FILE" ;;
-  'pull --quiet') if [[ ${BAD_IMAGE_ID:-} == 1 ]]; then echo bad; else printf '%064d\n' 2; fi ;;
-  'image inspect') printf '%064d\n' "${WRONG_ID:-2}" ;;
   'push --digestfile')
     if [[ ${INTERRUPT_STAGE:-} == 1 ]]; then kill -TERM "$PPID"; sleep 1; exit 0; fi
     printf '%s\n' "${PUSH_DIGEST:-$IMAGE_MANIFEST_DIGEST}" > "$3" ;;
@@ -29,6 +27,19 @@ cat > "$sandbox/bin/skopeo" <<'STUB'
 set -euo pipefail
 printf '%s\n' "$*" >> "$CALLS"
 case "$1" in
+  copy)
+    [[ $2 == --all && $3 == --preserve-digests ]] || exit 1
+    [[ $4 == --src-authfile && $5 == "$REGISTRY_AUTH_FILE" ]] || exit 1
+    [[ $6 == --dest-authfile && $7 == "$REGISTRY_AUTH_FILE" ]] || exit 1
+    [[ ${FAIL_COPY:-} != 1 ]] || exit 1
+    while (($#)); do
+      if [[ $1 == --digestfile ]]; then
+        printf '%s\n' "${COPY_DIGEST:-$IMAGE_MANIFEST_DIGEST}" > "$2"
+        break
+      fi
+      shift
+    done
+    ;;
   list-tags) [[ ${FAIL_LIST_TAGS:-} != 1 ]] || exit 1; cat "$TAGS" ;;
   inspect)
     # The very old run-2 tag aliases a recent run-2 tag and must survive.
@@ -67,12 +78,19 @@ candidate=$(awk '$1 == "tag" {print $3; exit}' "$CALLS")
 bash "$transfer" publish
 bash "$transfer" publish
 commit=$(printf '%040d' 1)
-grep -Fx "tag $(printf '%064d' 2) git.terrascale.tech/terrascale/ts-auth:$commit" "$CALLS" >/dev/null
-awk -v ref="git.terrascale.tech/terrascale/ts-auth:$commit" '$1 == "push" && $2 == "--digestfile" && $4 == ref {found++} END {exit found != 2}' "$CALLS"
+awk -v ref="docker://git.terrascale.tech/terrascale/ts-auth:$commit" \
+  -v source="docker://git.terrascale.tech/terrascale/ts-auth-ci@$IMAGE_MANIFEST_DIGEST" \
+  '$1 == "copy" && $2 == "--all" && $3 == "--preserve-digests" && $(NF-1) == source && $NF == ref {found++} END {exit found != 2}' "$CALLS"
 reject env PUSH_DIGEST=invalid bash "$transfer" stage
-reject env PUSH_DIGEST="sha256:$(printf '%064d' 4)" bash "$transfer" publish
-reject env BAD_IMAGE_ID=1 bash "$transfer" publish
-reject env WRONG_ID=9 bash "$transfer" publish
+reject env FAIL_COPY=1 bash "$transfer" publish
+test -z "$(find "$RUNNER_TEMP" -mindepth 1 -print -quit)"
+reject env COPY_DIGEST="sha256:$(printf '%064d' 4)" bash "$transfer" publish
+grep -F 'published manifest digest does not match the staged digest' "$sandbox/rejected" >/dev/null
+test -z "$(find "$RUNNER_TEMP" -mindepth 1 -print -quit)"
+# Single and double underscores are valid registry component separators.
+for owner in org_name org__name; do
+  REPOSITORY_OWNER="$owner" bash "$transfer" publish
+done
 reject env INTERRUPT_STAGE=1 bash "$transfer" stage
 test -z "$(find "$RUNNER_TEMP" -type f -print -quit)"
 grep -F 'login git.terrascale.tech --username terrascale --password-stdin' "$CALLS" >/dev/null
@@ -84,7 +102,8 @@ jq -n --arg expired "$commit-1-1-$old" --arg alias "$commit-2-1-$old" --arg rece
 sed -i 's/\*-2-1-\*/\*-2-1-* || ${*: -1} == *:unmanaged/' "$sandbox/bin/skopeo"
 bash "$transfer" prune
 test "$(grep -c '^delete ' "$CALLS")" -eq 1
-grep -F "docker://git.terrascale.tech/terrascale/ts-auth-ci:$commit-1-1-$old" "$CALLS" >/dev/null
+awk -v expired="docker://git.terrascale.tech/terrascale/ts-auth-ci:$commit-1-1-$old" \
+  '$1 == "delete" {if ($NF != expired) exit 1; found++} END {if (found != 1) exit 1}' "$CALLS"
 test -z "$(find "$RUNNER_TEMP" -type f -print -quit)"
 printf '{"Tags":[]}\n' > "$TAGS"
 bash "$transfer" prune

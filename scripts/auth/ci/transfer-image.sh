@@ -9,7 +9,7 @@ mode=${1:-}
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 owner=${REPOSITORY_OWNER:?REPOSITORY_OWNER is required}
 owner=${owner,,}
-[[ $owner =~ ^[a-z0-9]+((\.|__|-+)[a-z0-9]+)*$ ]] || { echo "invalid registry owner" >&2; exit 2; }
+[[ $owner =~ ^[a-z0-9]+((\.|_{1,2}|-+)[a-z0-9]+)*$ ]] || { echo "invalid registry owner" >&2; exit 2; }
 staging="git.terrascale.tech/$owner/ts-auth-ci"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 : "${REGISTRY_PUSH_TOKEN:?registry push token is required}"
@@ -52,18 +52,14 @@ case $mode in
     ;;
   publish)
     source_commit=$(git -C "$repo" rev-parse HEAD)
-    image=$(bash "$repo/scripts/ci/image-ref.sh")
-    # Bind the local tag to the pulled image ID, even if an older local tag exists.
-    image_id=$(podman pull --quiet "$staging@$IMAGE_MANIFEST_DIGEST")
-    [[ ${image_id#sha256:} =~ ^[0-9a-f]{64}$ ]] || { echo "pull returned an invalid image ID" >&2; exit 1; }
-    podman tag "$image_id" "$image"
-    actual_id=$(podman image inspect "$image" --format '{{.Id}}')
-    [[ ${actual_id#sha256:} == "${image_id#sha256:}" ]] || { echo "loaded image ID does not match" >&2; exit 1; }
     remote_image="git.terrascale.tech/$owner/ts-auth:$source_commit"
-    podman tag "$image_id" "$remote_image"
     digest_file=$(mktemp "$RUNNER_TEMP/ts-auth-manifest-digest.XXXXXXXX")
     trap 'rm -f -- "$REGISTRY_AUTH_FILE" "$digest_file"' EXIT
-    podman push --digestfile "$digest_file" "$remote_image"
+    # Preserve the registry manifest and compressed layers. Podman's local
+    # pull/tag/push round trip can change them before a post-push check runs.
+    skopeo copy --all --preserve-digests --src-authfile "$REGISTRY_AUTH_FILE" \
+      --dest-authfile "$REGISTRY_AUTH_FILE" --digestfile "$digest_file" \
+      "docker://$staging@$IMAGE_MANIFEST_DIGEST" "docker://$remote_image"
     [[ $(cat "$digest_file") == "$IMAGE_MANIFEST_DIGEST" ]] || {
       echo "published manifest digest does not match the staged digest" >&2
       exit 1
