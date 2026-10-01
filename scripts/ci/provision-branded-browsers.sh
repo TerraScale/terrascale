@@ -9,12 +9,10 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 # NAR digest bind the definitions and upstream vendor archive hashes together.
 # fetchTarball is fixed-output, so with a cache the source substitutes by its
 # NAR digest instead of being downloaded and unpacked again.
-# TS_NIX_CACHE names a binary cache that persists between jobs (CI: the
-# runner's shared /cache volume). The pinned closures substitute from it
-# instead of being downloaded from upstream and rebuilt in every job. Require
-# signatures from the runner's configured public keys for non-content-addressed
-# paths: any job can write the shared cache, so unsigned browser closures must
-# never be trusted. Newly built closures also remain in the runner's /nix store.
+# TS_NIX_CACHE persists fixed-output source inputs between jobs. Require the
+# runner's configured signatures for input-addressed paths. Browser closures
+# remain in the persistent /nix store; this job has no cache signing key, so
+# it must not publish unsigned closures for future signature-enforcing jobs.
 substituters=()
 if [ -n "${TS_NIX_CACHE:-}" ]; then
   substituters=(--extra-substituters "${TS_NIX_CACHE}?priority=10")
@@ -22,11 +20,9 @@ fi
 nix build "${substituters[@]}" --option require-sigs true --max-jobs 1 --cores 2 \
   --no-link --print-out-paths --file "$script_dir/branded-browsers.nix" > "$browser_paths"
 if [ -n "${TS_NIX_CACHE:-}" ]; then
-  # Keep the evaluated nixpkgs source and both runtime closures in the cache;
-  # paths it already holds are skipped.
-  mapfile -t browser_roots < "$browser_paths"
+  # The nixpkgs source is fixed-output and needs no private signing key.
   if ! nix copy --to "${TS_NIX_CACHE}?compression=zstd&parallel-compression=true" \
-    "$(nix eval --raw --file "$script_dir/nixpkgs-pin.nix")" "${browser_roots[@]}"; then
+    "$(nix eval --raw --file "$script_dir/nixpkgs-pin.nix")"; then
     echo "warning: could not populate the optional browser cache" >&2
   fi
 fi
