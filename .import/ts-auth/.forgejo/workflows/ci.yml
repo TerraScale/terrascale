@@ -5,8 +5,8 @@ name: ts-auth CI
 # /cache volume, compiling through the shared kache store there
 # (scripts/ci/cargo-cache.sh). release does the same on pull requests; on
 # pushes to protected main it builds the released binary from a clean target directory
-# and Cargo home, without kache, and hands the smoke-checked image to publish
-# (scripts/ci/hand-off-image.sh), which pushes it only after every gate passed.
+# and Cargo home, without kache, and stages the smoke-checked image by registry
+# digest. publish tags that exact image for release only after every gate passed.
 # Release binaries are static x86_64 musl executables built with the job
 # image's musl toolchain, like TerraBase's.
 
@@ -117,7 +117,7 @@ jobs:
       TS_AUTH_CARGO_CACHE_DIR: /cache/cargo-target/ts-auth/release
       TS_AUTH_PUBLISH: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     outputs:
-      image-archive-sha256: ${{ steps.hand-off.outputs.sha256 }}
+      image-manifest-digest: ${{ steps.hand-off.outputs.image-digest }}
       publish-enabled: ${{ steps.hand-off.outputs.publish-enabled }}
     steps:
       - name: Check out the event revision
@@ -148,10 +148,15 @@ jobs:
       - name: Package and smoke-check the release image
         run: bash scripts/ci/package-image.sh
 
-      - name: Hand the image to publish
+      # Artifact actions are unavailable on this runner. A registry digest
+      # works across runner machines and survives a retry of publish alone.
+      - name: Stage the image for publish
         id: hand-off
-        if: env.TS_AUTH_PUBLISH == 'true'
-        run: bash scripts/ci/hand-off-image.sh save
+        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
+        run: bash scripts/ci/transfer-image.sh stage
 
   publish:
     name: Publish the immutable container on protected main
@@ -170,8 +175,10 @@ jobs:
 
       - name: Load the release image
         env:
-          IMAGE_ARCHIVE_SHA256: ${{ needs.release.outputs.image-archive-sha256 }}
-        run: bash scripts/ci/hand-off-image.sh load
+          IMAGE_MANIFEST_DIGEST: ${{ needs.release.outputs.image-manifest-digest }}
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
+        run: bash scripts/ci/transfer-image.sh load
 
       - name: Push the image
         env:

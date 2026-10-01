@@ -384,9 +384,11 @@ shared `/cache` and compiles through the kache store at `/cache/kache`, which
 every TerraScale Rust job shares, so units an earlier job built are restored
 instead of recompiled (`scripts/ci/cargo-cache.sh`). On pushes to `main`,
 `release` instead builds the binary from a clean Cargo cache without kache
-and hands the smoke-checked image to `publish` by its SHA-256
-(`scripts/ci/hand-off-image.sh`); once all three jobs pass, `publish` pushes
-it as `git.terrascale.tech/<owner>/ts-auth:<commit>`.
+and stages the smoke-checked image in `git.terrascale.tech/<owner>/ts-auth-ci`.
+Its registry manifest digest is passed to `publish` as a job output
+(`scripts/ci/transfer-image.sh`), so jobs can run on different machines and
+a publish retry pulls the same image. Once all three jobs pass, `publish`
+pushes it as `git.terrascale.tech/<owner>/ts-auth:<commit>`.
 
 The locked dependency audit ignores only `RUSTSEC-2023-0071` for `rsa`:
 ts-auth currently uses RSA public-key signature verification for JWT,
