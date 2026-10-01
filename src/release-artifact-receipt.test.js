@@ -418,11 +418,11 @@ async function createCandidateFixture(checkout, workspace) {
 
   const tarballPath = path.join(
     candidateDirectory,
-    `terrascale-sdk-${sourceManifest.version}.tgz`,
+    `terrascale-${sourceManifest.version}.tgz`,
   );
   const qualificationPath = path.join(
     candidateDirectory,
-    `terrascale-sdk-${sourceManifest.version}.qualification.json`,
+    `terrascale-${sourceManifest.version}.qualification.json`,
   );
   const buildReceiptPath = path.join(
     evidenceDirectory,

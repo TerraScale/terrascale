@@ -2,7 +2,7 @@
 
 Status: Accepted.
 
-Keep SQLite behind explicit `@terrascale/sdk/local` Node conditions and require
+Keep SQLite behind explicit `terrascale/local` Node conditions and require
 `sqlite: { enabled: true, databasePath: "/absolute/path/local.sqlite" }`. Reject
 production, CI, qualification, staging and deployment indicators before opening
 storage. Test helpers preserve these indicators and skip prohibited local suites.

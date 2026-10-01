@@ -1,5 +1,5 @@
 {
-  "name": "@terrascale/sdk",
+  "name": "terrascale",
   "version": "0.3.0",
   "description": "JavaScript SDK, typed with JSDoc, for native TerraBase documents and hosted TerraScale identity.",
   "type": "module",

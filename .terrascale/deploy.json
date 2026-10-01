@@ -248,7 +248,7 @@
     }
   ],
   "candidate": {
-    "genericPackageName": "ci-candidates-typescript",
+    "genericPackageName": "ci-candidates-ts-js",
     "retentionDays": 7
   },
   "promotion": {

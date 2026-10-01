@@ -1,5 +1,5 @@
 export const npmReleasePolicy = Object.freeze({
-  packageName: "@terrascale/sdk",
+  packageName: "terrascale",
   activeProducerBlockers: Object.freeze([
     "C06/C07 management/catalog/credential admission",
     "production single-writer Better Auth security persistence",
@@ -31,7 +31,7 @@ export const npmReleasePolicy = Object.freeze({
  * @returns {string}
  */
 export function qualificationFilename(version) {
-  return `terrascale-sdk-${version}.qualification.json`;
+  return `terrascale-${version}.qualification.json`;
 }
 
 /**
@@ -39,5 +39,5 @@ export function qualificationFilename(version) {
  * @returns {string}
  */
 export function tarballFilename(version) {
-  return `terrascale-sdk-${version}.tgz`;
+  return `terrascale-${version}.tgz`;
 }

@@ -72,3 +72,13 @@ presence is not successful journey evidence.
 Hosted OAuth resource conformance must bind the accepted producer protocol snapshot and its actual HTTP response artifact manifest. Request-only controls use deliberately failing transports; captured-response playback proves decoding only and is not hosted or native qualification. Active resource responses are checked against independently configured canonical issuer, exact registered audience, fresh local time, and user/service session shape. Keep no-resource browser login supported, resource Basic introspection separate from client-secret-post token and client introspection, and management authorization separate from token activity.
 
 Client/resource management responses use exact snake_case records and safe numeric epochs. Verify both client PATCH branches (bare view without rotation, one-time secret envelope with rotation), the always-enveloped resource create/PATCH response, inactive responses, and actual 401/500 errors. Set `TERRASCALE_AUTH_COMPONENT_RESPONSES` to the accepted immutable captured manifest for component-byte decoding checks. An expired retained response must fail acceptance; do not rewrite its timestamps or claim a live authenticated exchange from playback.
+
+## Publishing
+
+`.forgejo/workflows/release.yml` publishes the `terrascale` npm package. A `v*`
+tag matching `package.json` packs the tarball once and publishes those bytes;
+it refuses while `npmReleasePolicy.activeProducerBlockers` is non-empty or the
+version already exists. A manual run executes the same steps, authenticated,
+with `npm publish --dry-run`. The publish token is the Forgejo action secret
+`NPM_TOKEN`; its canonical copy is the operator-only OpenBao object
+`/infra/npm/terrascale-publish` (`NPM_TOKEN`, `NPM_USER`).

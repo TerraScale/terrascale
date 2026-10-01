@@ -24,7 +24,7 @@ export function qualificationConfiguration() {
 const consumerSource = String.raw`
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
-import { createTerraBaseClient } from "@terrascale/sdk";
+import { createTerraBaseClient } from "terrascale";
 
 const env = process.env;
 const scope = { tenant: env.TERRABASE_TENANT, database: env.TERRABASE_DATABASE, shard: BigInt(env.TERRABASE_SHARD) };
@@ -124,7 +124,7 @@ try {
 const atlasConsumerSource = String.raw`
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { createTerraBaseClient } from "@terrascale/sdk";
+import { createTerraBaseClient } from "terrascale";
 
 const env = process.env;
 const scope = { tenant: env.TERRABASE_TENANT, database: env.TERRABASE_DATABASE, shard: BigInt(env.TERRABASE_SHARD) };
@@ -254,7 +254,7 @@ export async function qualifyCurrentProducer() {
   if (digest !== config.digest) throw new Error("SDK artifact digest mismatch.");
   const consumer = await mkdtemp(path.join(tmpdir(), "terrascale-typescript-current-consumer-"));
   try {
-    await writeFile(path.join(consumer, "package.json"), JSON.stringify({ private: true, type: "module", dependencies: { "@terrascale/sdk": `file:${config.tarball}` } }));
+    await writeFile(path.join(consumer, "package.json"), JSON.stringify({ private: true, type: "module", dependencies: { "terrascale": `file:${config.tarball}` } }));
     await writeFile(path.join(consumer, "journey.mjs"), config.routing === "atlas" ? atlasConsumerSource : consumerSource);
     const installation = spawnSync("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--cache", path.join(consumer, ".npm-cache")], { cwd: consumer, encoding: "utf8", timeout: 120000 });
     if (installation.status !== 0) throw new Error("Independent package installation failed.");

@@ -1,0 +1,102 @@
+name: Publish the terrascale npm package
+
+# A version tag publishes the exact packed tarball after the release gates pass.
+# A manual run exercises the same path, authenticated, with `npm publish --dry-run`.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ts-js-release-${{ forgejo.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: release/npm
+    runs-on: terrascale-builder
+    container:
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:265dd0079910888f668752f27341065df6228eaa2306fd467b424cd042fe1f60
+    timeout-minutes: 20
+    env:
+      DRY_RUN: ${{ forgejo.ref_type != 'tag' }}
+    steps:
+      - name: Check out the exact event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          token: "${{ secrets.REGISTRY_TOKEN }}"
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Confirm the repository Node.js version
+        run: test "$(node --version)" = "v$(cat .node-version)"
+
+      - name: Provision the reviewed npm CLI
+        run: node scripts/provision-reviewed-npm.js
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Typecheck the SDK JSDoc types
+        run: npm run typecheck
+
+      - name: Generate the SDK type declarations
+        run: npm run build
+
+      - name: Enforce the tag version and release gates
+        env:
+          TAG: ${{ forgejo.ref_name }}
+        run: |
+          node --input-type=module -e '
+            import { readFile } from "node:fs/promises";
+            import { npmReleasePolicy } from "./scripts/npm-release-policy.js";
+            const manifest = JSON.parse(await readFile("package.json", "utf8"));
+            if (manifest.name !== npmReleasePolicy.packageName) throw new Error(`package.json name ${manifest.name} is not ${npmReleasePolicy.packageName}.`);
+            if (process.env.DRY_RUN === "true") process.exit(0);
+            if (process.env.TAG !== `v${manifest.version}`) throw new Error(`Tag ${process.env.TAG} does not match package version ${manifest.version}.`);
+            const blockers = npmReleasePolicy.activeProducerBlockers;
+            if (blockers.length > 0) throw new Error(`Publication is blocked: ${blockers.join("; ")}.`);
+          '
+
+      - name: Authenticate to the npm registry
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${NPM_TOKEN}"
+          umask 077
+          printf '//registry.npmjs.org/:_authToken=%s\n' "${NPM_TOKEN}" > "${RUNNER_TEMP:-/tmp}/npmrc"
+          echo "NPM_CONFIG_USERCONFIG=${RUNNER_TEMP:-/tmp}/npmrc" >> "${GITHUB_ENV:?GITHUB_ENV is required}"
+          NPM_CONFIG_USERCONFIG="${RUNNER_TEMP:-/tmp}/npmrc" npm whoami --registry https://registry.npmjs.org/
+
+      - name: Refuse an already published version
+        run: |
+          set -euo pipefail
+          spec="$(node -p 'const p = require("./package.json"); `${p.name}@${p.version}`')"
+          if npm view "${spec}" version --registry https://registry.npmjs.org/ >/dev/null 2>&1; then
+            echo "${spec} is already published." >&2
+            exit 1
+          fi
+
+      - name: Pack the release tarball
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/release
+          npm pack --ignore-scripts --pack-destination artifacts/release
+          sha256sum artifacts/release/*.tgz
+
+      - name: Publish the packed tarball
+        run: |
+          set -euo pipefail
+          flags=(--access public --ignore-scripts --registry https://registry.npmjs.org/)
+          if [ "${DRY_RUN}" = "true" ]; then flags+=(--dry-run); fi
+          npm publish artifacts/release/*.tgz "${flags[@]}"
+
+      - name: Remove the npm credential
+        if: always()
+        run: rm -f "${RUNNER_TEMP:-/tmp}/npmrc"

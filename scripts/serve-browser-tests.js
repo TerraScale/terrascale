@@ -19,7 +19,7 @@ const contentTypes = new Map([
 ]);
 
 const packageWorkspace = await mkdtemp(
-  path.join(tmpdir(), "terrascale-sdk-browser-package-"),
+  path.join(tmpdir(), "terrascale-browser-package-"),
 );
 const packageTarball =
   process.env.TERRASCALE_BROWSER_CANDIDATE_TARBALL === undefined

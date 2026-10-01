@@ -1,6 +1,6 @@
 /** Installed-package journey. The producer owns the TLS listener and fixture. */
 import { readFile } from "node:fs/promises";
-import { PostgresClient, PostgresError, postgresQuery } from "@terrascale/sdk/postgres";
+import { PostgresClient, PostgresError, postgresQuery } from "terrascale/postgres";
 
 /**
  * @param {string} name

@@ -60,10 +60,10 @@ const packageDirectory = path.join(workspace, "package");
 const consumer = path.join(workspace, "consumer");
 const startedAt = new Date().toISOString();
 const consumerJourney = String.raw`import assert from "node:assert/strict";
-import { createTerraBaseClient, terraScaleReleaseBlockers, TerraScaleCapabilityUnavailableError } from "@terrascale/sdk";
-import { requireTerraScaleAdministration } from "@terrascale/sdk/admin";
-import { requireTerraScaleBetterAuth } from "@terrascale/sdk/better-auth";
-import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
+import { createTerraBaseClient, terraScaleReleaseBlockers, TerraScaleCapabilityUnavailableError } from "terrascale";
+import { requireTerraScaleAdministration } from "terrascale/admin";
+import { requireTerraScaleBetterAuth } from "terrascale/better-auth";
+import { createTsAuthClient } from "terrascale/ts-auth";
 const scope = { tenant: "00000000-0000-0000-0000-000000000001", database: "00000000-0000-0000-0000-000000000002", shard: 1n };
 const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terrascale.tech", apiKey: "qualification-constructor-only" });
 assert.equal(typeof client.read, "function");
@@ -201,7 +201,7 @@ try {
       "-e",
       `
     import assert from "node:assert/strict";
-    for (const entry of ["local", "postgres"]) await assert.rejects(import("@terrascale/sdk/" + entry), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
+    for (const entry of ["local", "postgres"]) await assert.rejects(import("terrascale/" + entry), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
   `,
     ],
     consumer,
@@ -215,7 +215,7 @@ try {
       "-e",
       `
     import assert from "node:assert/strict";
-    for (const entry of ["better-auth", "local", "postgres"]) await assert.rejects(import("@terrascale/sdk/" + entry), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
+    for (const entry of ["better-auth", "local", "postgres"]) await assert.rejects(import("terrascale/" + entry), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
   `,
     ],
     consumer,
@@ -499,7 +499,7 @@ function requiredValue(args, index, option) {
  * @returns {void}
  */
 function qualifyManifest(manifest) {
-  if (manifest.name !== "@terrascale/sdk")
+  if (manifest.name !== "terrascale")
     throw new Error("Unexpected package name.");
   if (manifest.private !== false)
     throw new Error("Packed candidate must be public.");

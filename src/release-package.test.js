@@ -95,7 +95,7 @@ test("required release E2E refuses unavailable production capabilities even with
 
 test("clean SDK-only build packs and independently installs the current typed package", async () => {
   const workspace = await mkdtemp(
-    path.join(tmpdir(), "terrascale-sdk-release-package-"),
+    path.join(tmpdir(), "terrascale-release-package-"),
   );
   const checkout = path.join(workspace, "sdk");
   const packages = path.join(workspace, "packages");
@@ -195,7 +195,7 @@ test("clean SDK-only build packs and independently installs the current typed pa
         "--conditions=browser",
         "--input-type=module",
         "--eval",
-        "import assert from 'node:assert/strict'; for (const entry of ['local','better-auth','postgres']) await assert.rejects(import('@terrascale/sdk/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });",
+        "import assert from 'node:assert/strict'; for (const entry of ['local','better-auth','postgres']) await assert.rejects(import('terrascale/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });",
       ],
       { cwd: consumer },
     );
@@ -205,7 +205,7 @@ test("clean SDK-only build packs and independently installs the current typed pa
         "--conditions=workerd",
         "--input-type=module",
         "--eval",
-        "import assert from 'node:assert/strict'; for (const entry of ['local','postgres']) await assert.rejects(import('@terrascale/sdk/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });",
+        "import assert from 'node:assert/strict'; for (const entry of ['local','postgres']) await assert.rejects(import('terrascale/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });",
       ],
       { cwd: consumer },
     );
@@ -241,11 +241,11 @@ test("clean SDK-only build packs and independently installs the current typed pa
 });
 
 const installedBoundary = `import assert from "node:assert/strict";
-import * as sdk from "@terrascale/sdk";
-import { requireTerraScaleManagement } from "@terrascale/sdk/management";
-import { requireTerraScaleAdministration } from "@terrascale/sdk/admin";
-import { requireTerraScaleBetterAuth } from "@terrascale/sdk/better-auth";
-import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
+import * as sdk from "terrascale";
+import { requireTerraScaleManagement } from "terrascale/management";
+import { requireTerraScaleAdministration } from "terrascale/admin";
+import { requireTerraScaleBetterAuth } from "terrascale/better-auth";
+import { createTsAuthClient } from "terrascale/ts-auth";
 const client = sdk.createTerraBaseClient({ tenant: "00000000-0000-0000-0000-000000000001", database: "00000000-0000-0000-0000-000000000002", shard: 1n, endpoint: "https://gru.api.terrascale.tech", apiKey: "constructor-only" });
 for (const name of ["read", "query", "subscription", "prepareCommit", "commit", "transactionStatus"]) assert.equal(typeof client[name], "function");
 for (const name of ["createTerraScaleClient", "TerraScaleSyncV1Client", "TerraScaleHttp", "toUlid"]) assert.equal(name in sdk, false);
@@ -253,7 +253,7 @@ for (const gate of [requireTerraScaleManagement, requireTerraScaleAdministration
 assert.equal(typeof createTsAuthClient, "function");
 assert.equal(typeof sdk.collection, "function");
 assert.equal(typeof sdk.raw, "function");
-await assert.rejects(import("@terrascale/sdk/database-codec"), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
+await assert.rejects(import("terrascale/database-codec"), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
 `;
 
 const installedFrameworkCaller = String.raw`import assert from "node:assert/strict";
@@ -261,12 +261,12 @@ import React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { get } from "svelte/store";
 import { createCollection } from "@tanstack/db";
-import { createTerraBaseClient, createDatabaseQuery, raw, type DatabasePoint } from "@terrascale/sdk";
-import { PostgresClient, PostgresError, postgresQuery, type PostgresConfig, type PostgresResult } from "@terrascale/sdk/postgres";
-import { createTsAuthClient, type TsAuthOidcResourceIntrospection, type TsAuthOidcTokenRequest, type TsAuthUpdateOauthResourceRequest } from "@terrascale/sdk/ts-auth";
-import { useQuery, type ReactiveQuerySource } from "@terrascale/sdk/react";
-import { createQuery } from "@terrascale/sdk/svelte";
-import { terrascaleCollectionOptions } from "@terrascale/sdk/tanstack";
+import { createTerraBaseClient, createDatabaseQuery, raw, type DatabasePoint } from "terrascale";
+import { PostgresClient, PostgresError, postgresQuery, type PostgresConfig, type PostgresResult } from "terrascale/postgres";
+import { createTsAuthClient, type TsAuthOidcResourceIntrospection, type TsAuthOidcTokenRequest, type TsAuthUpdateOauthResourceRequest } from "terrascale/ts-auth";
+import { useQuery, type ReactiveQuerySource } from "terrascale/react";
+import { createQuery } from "terrascale/svelte";
+import { terrascaleCollectionOptions } from "terrascale/tanstack";
 
 // Hosted identity calls use only named operations. This installed caller
 // captures requests and fails transport; it claims no successful provider run.

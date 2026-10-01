@@ -40,8 +40,8 @@ try {
     path.join(consumer, "node_modules", "@terrascale", "sdk", "package.json"),
     "utf8",
   ));
-  if (installedManifest.name !== "@terrascale/sdk") {
-    throw new Error("Packed release E2E did not install @terrascale/sdk.");
+  if (installedManifest.name !== "terrascale") {
+    throw new Error("Packed release E2E did not install terrascale.");
   }
   const journey = path.join(consumer, "release-e2e.js");
   await copyFile(path.join(scriptDirectory, "packed-release-e2e-journey.js"), journey);
@@ -50,7 +50,7 @@ try {
     env: process.env,
     maxBuffer: 16 * 1024 * 1024,
   });
-  console.log(`Packed live E2E passed for @terrascale/sdk@${installedManifest.version}.`);
+  console.log(`Packed live E2E passed for terrascale@${installedManifest.version}.`);
 } finally {
   await rm(consumer, { recursive: true, force: true });
 }
