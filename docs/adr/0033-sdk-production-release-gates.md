@@ -1,18 +1,18 @@
 # SDK production release gates
 
-Status: Mandatory source, artifact and actual runtime qualification.
+Status: Accepted; publication is automatic.
+
+Date: 2026-10-01
 
 Require exact producer source/vector drift checks, clean install, typecheck,
-build, native codec conformance, maintained local Better Auth semantics, actual
-framework lifecycle regressions, declared runtime boundaries, supported Node
-and browser behavior, dependency audit and license evidence. Install one exact
-npm tarball independently and qualify that artifact against a real allocation.
+declaration build, native codec conformance, maintained local Better Auth
+semantics, actual framework lifecycle regressions, declared runtime boundaries,
+supported Node and browser behavior, dependency audit and license evidence.
 
-Management/catalog provisioning, credential lifecycle, production security
-authority and deployed authenticated account/browser journeys remain required
-blockers. Local SQLite and synthetic transport fixtures do not satisfy them.
-Release-E2E must fail when owning capabilities or configuration are unavailable.
-
-The artifact qualifier retains blockers in its report. Promotion verifies an
-admitted receipt against source identity and output bytes and refuses active
-blockers. Native CI does not publish and never receives npm publication secrets.
+CI publishes to npm on every push to `main` once those checks pass, provided
+the `package.json` version is not yet published. It packs one tarball and
+publishes those exact bytes. Capabilities whose owning contracts are not yet
+admitted (management/catalog provisioning, credential lifecycle, production
+security authority) are not publication blockers; their entrypoints fail at
+runtime with explicit capability errors. The artifact qualifier and promotion
+script remain available for independent installed-artifact qualification.

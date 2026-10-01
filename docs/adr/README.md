@@ -13,4 +13,4 @@ qualification tests.
 | [0004](0004-sqlite-local-development-only.md) | Accepted | SQLite is explicit local development only. |
 | [0005](0005-javascript-with-jsdoc-types.md) | Accepted | Ship JavaScript typed with JSDoc; generate declarations only. |
 | [0032](0032-public-protocol-bounds.md) | Accepted bounds; service parity pending | Apply workspace public limits and fail closed on hostile input. |
-| [0033](0033-sdk-production-release-gates.md) | Accepted release boundary; live qualification pending | Promote only the exact verified npm artifact and workspace-qualified SDK. |
+| [0033](0033-sdk-production-release-gates.md) | Accepted | CI publishes the exact packed tarball automatically after verification. |

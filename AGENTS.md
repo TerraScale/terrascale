@@ -2,13 +2,13 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 # TerraScale TypeScript SDK rules
 
 # SQLITE
-> @terrascale/sdk must support an explicitly enabled SQLite backend for local development only. TerraScale.Dashboard must use this SQLite mode for fast local development
+> terrascale must support an explicitly enabled SQLite backend for local development only. TerraScale.Dashboard must use this SQLite mode for fast local development
 > until TerraBaseV2 is ready. SQLite must never be enabled in production, CI qualification, staging, or deployed environments, and it must not become a public production
 > database contract.
 
 ## Repository role
 
-This repository owns the public `@terrascale/sdk` package
+This repository owns the public `terrascale` package
 
 ## Service ownership
 

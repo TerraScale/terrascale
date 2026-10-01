@@ -142,10 +142,6 @@ if (options.checkAvailability) {
       `Verified ${candidate.name}@${candidate.version} candidate ${candidate.tarball} and its qualification receipt.`,
     );
   } else {
-    if (npmReleasePolicy.activeProducerBlockers.length > 0)
-      throw new Error(
-        `Publication remains blocked: ${npmReleasePolicy.activeProducerBlockers.join("; ")}.`,
-      );
     await ensureVersionAvailable(
       candidate.name,
       candidate.version,

@@ -12,10 +12,11 @@ test("native CI preserves event identity, exact source gates and actual framewor
   assert.match(workflow, /permissions:\n  contents: read/u);
   assert.doesNotMatch(
     workflow,
-    /pull_request_target|CONTRACT_ARCHIVE|EDGE_CONTRACT_SOURCE|contracts\/v1|TERRASCALE_DEPLOY|NPM_TOKEN/u,
+    /pull_request_target|CONTRACT_ARCHIVE|EDGE_CONTRACT_SOURCE|contracts\/v1|TERRASCALE_DEPLOY/u,
   );
   for (const job of ["static", "node", "browser"]) {
     const definition = jobDefinition(workflow, job);
+    assert.doesNotMatch(definition, /NPM_TOKEN/u);
     assert.match(definition, /runs-on: terrascale-builder/u);
     assert.match(definition, /actions\/checkout@[0-9a-f]{40}/u);
     assert.match(definition, /ref: \$\{\{ forgejo\.sha \}\}/u);
@@ -48,6 +49,22 @@ test("native CI preserves event identity, exact source gates and actual framewor
     jobDefinition(workflow, "browser"),
     /bash scripts\/ci\/provision-branded-browsers\.sh/u,
   );
+});
+
+test("npm publication runs only after verification on pushes to main", async () => {
+  const workflow = await readFile(
+    new URL("../.forgejo/workflows/ci.yml", import.meta.url),
+    "utf8",
+  );
+  const publish = jobDefinition(workflow, "publish");
+  assert.match(publish, /needs: \[static, node, browser\]/u);
+  assert.match(
+    publish,
+    /if: \$\{\{ forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main' \}\}/u,
+  );
+  assert.match(publish, /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
+  assert.match(publish, /npm publish artifacts\/release\/\*\.tgz --access public --ignore-scripts/u);
+  assert.equal(workflow.match(/NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/gu)?.length, 1);
 });
 
 /**

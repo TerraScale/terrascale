@@ -105,12 +105,13 @@ environments. Its official Better Auth 1.7.2 adapter uses development SQLite
 transactions and maintained adapter suites. These checks do not qualify
 production security, regional replication, or the deployed customer application.
 
-Management/catalog provisioning and credential lifecycle (C06/C07), production
-Better Auth security persistence, and real installed producer/deployed account
-journeys remain required release blockers. The management, administration, and
-production Better Auth entrypoints fail with explicit capability errors until
-those owning contracts are admitted. Candidate inspection does not authorize
-publication.
+The management, administration, and production Better Auth entrypoints fail
+with explicit capability errors until management/catalog provisioning and
+credential lifecycle (C06/C07) and production Better Auth security persistence
+are admitted.
+
+Every push to `main` that passes CI publishes the `package.json` version to npm
+when that version is not yet published. Bump the version to release.
 
 ```sh
 npm ci

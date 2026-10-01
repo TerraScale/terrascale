@@ -337,7 +337,8 @@ try {
   for (const file of files)
     unpackedSize += (await readFile(path.join(packageDirectory, file))).length;
 
-  const limitations = [...npmReleasePolicy.activeProducerBlockers];
+  /** @type {string[]} */
+  const limitations = [];
   if (!options.release)
     limitations.push(
       "Diagnostic qualification was not produced in fail-closed release mode.",

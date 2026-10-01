@@ -2,9 +2,9 @@
 
 The release artifact is one immutable public npm tarball. Qualification installs
 those exact bytes in a separate consumer; source tests alone cannot qualify it.
-Production publication remains blocked by C06/C07 management and credential
-admission, native single-writer security persistence, and installed real-producer
-and deployed authenticated account/browser journeys.
+CI publishes automatically: see [Publishing](#publishing). Capabilities still
+pending C06/C07 management and credential admission or native single-writer
+security persistence fail at runtime with explicit capability errors.
 
 The native Forgejo workflow verifies the event revision on Node 22.23.2 and
 24.21.0 and current browser engines. All jobs pin the existing builder image to
@@ -75,10 +75,10 @@ Client/resource management responses use exact snake_case records and safe numer
 
 ## Publishing
 
-`.forgejo/workflows/release.yml` publishes the `terrascale` npm package. A `v*`
-tag matching `package.json` packs the tarball once and publishes those bytes;
-it refuses while `npmReleasePolicy.activeProducerBlockers` is non-empty or the
-version already exists. A manual run executes the same steps, authenticated,
-with `npm publish --dry-run`. The publish token is the Forgejo action secret
-`NPM_TOKEN`; its canonical copy is the operator-only OpenBao object
+The `release/npm` job in `.forgejo/workflows/ci.yml` publishes the `terrascale`
+npm package on every push to `main`, after the static, Node and browser jobs
+pass. It skips immediately when npm already has the `package.json` version;
+otherwise it packs the tarball once and publishes those exact bytes. Bump the
+version to release. The publish token is the Forgejo action secret `NPM_TOKEN`;
+its canonical copy is the operator-only OpenBao object
 `/infra/npm/terrascale-publish` (`NPM_TOKEN`, `NPM_USER`).

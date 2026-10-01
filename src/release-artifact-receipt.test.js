@@ -69,7 +69,7 @@ test("release qualification mode requires its exact clean two-runtime contract",
 // Promotion validates the exact publish toolchain; it is reproducible only on
 // the pinned Node 24 runtime and skips elsewhere (CI pins the matrix versions).
 test.skipIf(process.version !== nodeVersions[24])(
-  "promotion verifies bound candidates, rejects hostile substitutions and blocks publication until producer admission",
+  "promotion verifies bound candidates, rejects hostile substitutions and publishes through an isolated npm",
   async () => {
     const workspace = await mkdtemp(
       path.join(tmpdir(), "terrascale-npm-receipt-test-"),
@@ -341,10 +341,7 @@ test.skipIf(process.version !== nodeVersions[24])(
       }
 
       await fixture.reset();
-      await assert.rejects(
-        verifyIsolatedPublish(fixture, workspace),
-        /Publication remains blocked/u,
-      );
+      await verifyIsolatedPublish(fixture, workspace);
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

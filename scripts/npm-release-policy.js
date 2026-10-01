@@ -1,10 +1,5 @@
 export const npmReleasePolicy = Object.freeze({
   packageName: "terrascale",
-  activeProducerBlockers: Object.freeze([
-    "C06/C07 management/catalog/credential admission",
-    "production single-writer Better Auth security persistence",
-    "actual installed producer allocation and deployed account/browser journey",
-  ]),
   buildTarget: "npm",
   outputRoot: "artifacts/candidate",
   qualificationSchemaVersion: 1,
