@@ -1,6 +1,6 @@
 # Product-name migration check
 
-`test/product-name.test.ts` (part of `npm test`) scans every tracked
+`test/product-name.test.js` (part of `npm test`) scans every tracked
 worktree path and bounded UTF-8 text file for retired version-suffixed
 product names. It covers joined, hyphenated, underscored, spaced, dotted,
 and mixed-case forms.
