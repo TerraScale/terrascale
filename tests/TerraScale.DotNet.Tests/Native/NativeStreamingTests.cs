@@ -60,7 +60,11 @@ public sealed class NativeStreamingTests
         }
         finally
         {
-            pendingResponse.TrySetResult(NativeClientTests.Json("{}"));
+            if (!bodyRead)
+            {
+                var fallback = NativeClientTests.Json("{}");
+                if (!pendingResponse.TrySetResult(fallback)) fallback.Dispose();
+            }
             pendingBody.Completion.TrySetResult(0);
             pendingBody.Dispose();
         }

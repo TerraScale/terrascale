@@ -152,7 +152,11 @@ public sealed class NativeDiscoveryRouterTests
         }
         finally
         {
-            pendingResponse.TrySetResult(NativeClientTests.Json("{}"));
+            if (!bodyRead)
+            {
+                var fallback = NativeClientTests.Json("{}");
+                if (!pendingResponse.TrySetResult(fallback)) fallback.Dispose();
+            }
             pendingBody.Completion.TrySetResult(0);
         }
     }
