@@ -148,11 +148,11 @@ func TestNativePublicClientDiscoveryFailureStopsDispatch(t *testing.T) {
 			return nil, request.Context().Err()
 		}},
 		{"catalog", 0, func(*testing.T, *http.Request) (*http.Response, error) {
-			return routingContractResponse(200, []byte(`{"regions":[{"code":"GRU","available":true}],"hosts":{"GRU":"https://gru.terrascale.tech"}}`)), nil
+			return routingContractResponse(200, []byte(`{"regions":[{"code":"GRU","available":true}],"hosts":{"GRU":"https://gru.api.terrascale.tech"}}`)), nil
 		}},
 		{"API alias", 0, func(t *testing.T, _ *http.Request) (*http.Response, error) {
 			document := routingContractDiscovery(t)
-			document["endpoints"].([]any)[0].(map[string]any)["url"] = "https://gru.api.terrascale.tech"
+			document["endpoints"].([]any)[0].(map[string]any)["url"] = "https://gru.terrascale.tech"
 			return routingContractResponse(200, routingContractJSON(t, document)), nil
 		}},
 		{"no eligible capability", 0, func(t *testing.T, _ *http.Request) (*http.Response, error) {
@@ -216,7 +216,7 @@ func TestNativePublicClientSelectsClosestEligibleForEachOperation(t *testing.T) 
 		if err := json.Unmarshal(routingContractJSON(t, first), &endpoint); err != nil {
 			t.Fatal(err)
 		}
-		endpoint["region"], endpoint["url"], endpoint["priority"] = region, "https://"+strings.ToLower(region)+".terrascale.tech", i+1
+		endpoint["region"], endpoint["url"], endpoint["priority"] = region, "https://"+strings.ToLower(region)+".api.terrascale.tech", i+1
 		capabilities := endpoint["capabilities"].(map[string]any)
 		capabilities["query"], capabilities["subscriptions"], capabilities["write"] = i >= 1, i >= 1, i == 2
 		endpoints = append(endpoints, endpoint)
@@ -279,7 +279,7 @@ func TestNativePublicClientSelectsClosestEligibleForEachOperation(t *testing.T) 
 			t.Fatalf("%s: %v", operation.name, err)
 		}
 	}
-	want := []string{"gru.terrascale.tech", "fra.terrascale.tech", "fra.terrascale.tech", "fra.terrascale.tech", "sfo.terrascale.tech", "sfo.terrascale.tech", "gru.terrascale.tech"}
+	want := []string{"gru.api.terrascale.tech", "fra.api.terrascale.tech", "fra.api.terrascale.tech", "fra.api.terrascale.tech", "sfo.api.terrascale.tech", "sfo.api.terrascale.tech", "gru.api.terrascale.tech"}
 	if atlasCalls != 1 || !slices.Equal(dispatched, want) {
 		t.Fatalf("Atlas calls=%d, dispatched=%v, want=%v", atlasCalls, dispatched, want)
 	}

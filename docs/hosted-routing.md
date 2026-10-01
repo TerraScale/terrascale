@@ -9,8 +9,9 @@ catalogs, and name-based documents cannot provide native admission or affinity.
 Atlas ranks eligible endpoints by proximity. For each operation the SDK selects
 the first endpoint whose capabilities support that operation, even when a
 previous operation selected another endpoint from the same cached document.
-The canonical direct origin is `https://<region>.terrascale.tech`, with the
-region lowercased. The `api.terrascale.tech` host family is rejected.
+The canonical direct origin is `https://<region>.api.terrascale.tech`, with the
+region lowercased. The global `api.terrascale.tech` host and retired regional
+`<region>.terrascale.tech` origins are rejected.
 
 Authenticated documents have bounded leases, scoped key fingerprints, and
 monotonic deployment/cell/publisher/revision observations. The SDK accounts for
@@ -48,7 +49,7 @@ An explicit `DataBaseURL` is a source-preparation or separately authorized
 deployment option. It requires an ASCII HTTPS origin without credentials,
 paths, query, fragment, or trailing-dot hostname. TerraScale origins must use a
 lowercase direct regional hostname; the apex, reserved service labels, nested
-service hosts, and the API host family are rejected. Independent HTTPS origins
+service hosts, and retired regional origins are rejected. Independent HTTPS origins
 remain valid for source preparation. HTTP is limited to loopback development.
 An explicit-origin fixture does not qualify hosted runtime routing.
 

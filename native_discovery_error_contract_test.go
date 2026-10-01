@@ -297,7 +297,7 @@ func TestNativePublicClientDiscoverySharesOriginalDeadline(t *testing.T) {
 						return routingContractResponse(http.StatusOK, document), nil
 					}
 					dataCalls++
-					if request.URL.Host != "gru.terrascale.tech" || !deadline.Equal(discoveryDeadline) {
+					if request.URL.Host != "gru.api.terrascale.tech" || !deadline.Equal(discoveryDeadline) {
 						t.Fatal("native dispatch changed the admitted origin or renewed the deadline")
 					}
 					if name == "discovery_budget_above_three_seconds" {

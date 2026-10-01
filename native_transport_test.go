@@ -25,11 +25,11 @@ func TestNativeDefaultRoutingFailsClosed(t *testing.T) {
 	}
 	for _, origin := range []string{
 		"https://api.terrascale.tech", "https://API.TERRASCALE.TECH.",
-		"https://gru.api.terrascale.tech", "https://gru.api.terrascale.tech.",
+		"https://gru.terrascale.tech", "https://gru.api.terrascale.tech.",
 		"https://api。terrascale。tech", "https://api．terrascale．tech",
 		"https://ａｐｉ.terrascale.tech", "https://gru.ａｐｉ.terrascale.tech",
-		"https://gru.terrascale.tech/path", "https://gru.terrascale.tech?", "https://:",
-		"http://gru.terrascale.tech",
+		"https://gru.api.terrascale.tech/path", "https://gru.api.terrascale.tech?", "https://:",
+		"http://gru.api.terrascale.tech",
 	} {
 		if _, err := NewClient(Config{DataBaseURL: origin}); err == nil {
 			t.Errorf("unsafe native origin accepted: %s", origin)
@@ -92,7 +92,7 @@ func TestNativeUnexpectedCommitStatusNeverReplays(t *testing.T) {
 			client, _ := nativeTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("Location", "https://gru.terrascale.tech")
+				w.Header().Set("Location", "https://gru.api.terrascale.tech")
 				w.WriteHeader(test.status)
 				_, _ = w.Write([]byte(`{"error":{"code":"` + test.code + `"}}`))
 			})

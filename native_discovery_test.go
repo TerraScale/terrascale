@@ -73,10 +73,10 @@ func nativeDiscoveryJoinContext(ctx context.Context) (context.Context, <-chan st
 	return nativeDiscoveryJoinedContext{Context: ctx, onWait: sync.OnceFunc(func() { close(joined) })}, joined
 }
 
-func TestNativeDiscoveryActualReceiverArtifacts(t *testing.T) {
+func TestNativeDiscoveryPinnedReceiverArtifacts(t *testing.T) {
 	pins := map[string]string{
-		"native-discovery-success.json":           "d32d035bed11db296f3f911cc01f43cd6a3fafe208e005fe6abb35bc183759a0",
-		"native-discovery-success-receipt.json":   "c34ed011a4f10065b3fba4168b0a940eb7f3ef945a70414ae8210908ad8080ba",
+		"native-discovery-success.json":           "82fbc6518a5e8e825879243c45a86e6e66f44323a6dcd3ad8280c8109aa671ec",
+		"native-discovery-success-receipt.json":   "d56ccaaef70693c5df168a7ae1c8c854f0c504c331d551d4273000fdac6c246d",
 		"native-discovery-forbidden.json":         "3208d206e45cde22446e0e227c4882bdacb97f2a4926c0341a13580c23e48b9c",
 		"native-discovery-forbidden-receipt.json": "2b63d132df8b304286ebb0e9b4ab967a317544e8128f9105c7d71a138721528f",
 		"native-wire-identity.json":               "b789d6fb7782e34ece3b516139856f2b6d2dea0543436820eefa50ff31355538",
@@ -109,7 +109,7 @@ func TestNativeDiscoveryCapturesCanonicalKeyWithoutAmbientHeaders(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, host := range []string{"atlas", "gru"} {
-		origin, _ := url.Parse("https://" + host + ".terrascale.tech")
+		origin, _ := url.Parse("https://" + host + ".api.terrascale.tech")
 		jar.SetCookies(origin, []*http.Cookie{{Name: "ambient", Value: "cookie"}})
 	}
 	transport := pinningRoundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -129,7 +129,7 @@ func TestNativeDiscoveryCapturesCanonicalKeyWithoutAmbientHeaders(t *testing.T) 
 			return nativeDiscoveryResponse(200, body), nil
 		}
 		dataCalls++
-		if r.URL.Host != "gru.terrascale.tech" || r.URL.Path != scope.path()+"/collections/"+string(nativeTestCollection)+"/documents/"+string(nativeTestDocument) {
+		if r.URL.Host != "gru.api.terrascale.tech" || r.URL.Path != scope.path()+"/collections/"+string(nativeTestCollection)+"/documents/"+string(nativeTestDocument) {
 			t.Errorf("wrong direct native request: %s", r.URL)
 		}
 		return nativeDiscoveryResponse(200, []byte(nativeAbsentPoint)), nil
@@ -198,10 +198,10 @@ func TestNativeDiscoveryClosedResponseValidation(t *testing.T) {
 		"residency duplicates":  func(d map[string]any) { d["residency"] = []any{"GRU", "GRU"} },
 		"residency mismatch":    func(d map[string]any) { d["residency"] = []any{"SFO"} },
 		"url alias": func(d map[string]any) {
-			d["endpoints"].([]any)[0].(map[string]any)["url"] = "https://gru.api.terrascale.tech"
+			d["endpoints"].([]any)[0].(map[string]any)["url"] = "https://gru.terrascale.tech"
 		},
 		"url query": func(d map[string]any) {
-			d["endpoints"].([]any)[0].(map[string]any)["url"] = "https://gru.terrascale.tech?"
+			d["endpoints"].([]any)[0].(map[string]any)["url"] = "https://gru.api.terrascale.tech?"
 		},
 		"url unicode": func(d map[string]any) {
 			d["endpoints"].([]any)[0].(map[string]any)["url"] = "https://gru。terrascale。tech"
@@ -771,7 +771,7 @@ func TestNativeDiscoveryOperationCapabilitiesAndSourcePriority(t *testing.T) {
 	first.Capabilities.Write = false
 	second := fixture.Endpoints[0]
 	second.Region = "XYZ-9"
-	second.URL = "https://xyz-9.terrascale.tech"
+	second.URL = "https://xyz-9.api.terrascale.tech"
 	second.Priority = 2
 	fixture.Endpoints = []nativeDiscoveryEndpoint{first, second}
 	body, _ := json.Marshal(fixture)
@@ -835,11 +835,11 @@ func TestNativeDiscoveryOperationCapabilitiesAndSourcePriority(t *testing.T) {
 	if statusRequest.EffectDigest != request.EffectDigest || statusRequest.TransactionID != request.TransactionID {
 		t.Fatal("status changed retained identity")
 	}
-	if atlasCalls != 1 || len(hosts) != 5 || hosts[0] != "gru.terrascale.tech" {
+	if atlasCalls != 1 || len(hosts) != 5 || hosts[0] != "gru.api.terrascale.tech" {
 		t.Fatalf("wrong source priority/calls: %v %d", hosts, atlasCalls)
 	}
 	for _, host := range hosts[1:] {
-		if host != "xyz-9.terrascale.tech" {
+		if host != "xyz-9.api.terrascale.tech" {
 			t.Fatalf("capability-ineligible region selected: %s", host)
 		}
 	}
@@ -981,6 +981,44 @@ func TestNativeDiscoveryLeaseEvictionPreservesFloor(t *testing.T) {
 	}
 	if _, exists := client.nativeRouter.leases[oldest]; exists {
 		t.Fatal("lease eviction did not select oldest")
+	}
+}
+
+func TestNativeCommitCanceledAfterAdmissionNeverDispatches(t *testing.T) {
+	body, fixture := nativeDiscoveryFixture(t)
+	scope := fixture.Scope.documentScope()
+	calls := 0
+	client := nativeDiscoveryClient(t, pinningRoundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.Host != "atlas.terrascale.tech" {
+			t.Fatal("canceled commit reached native transport")
+		}
+		return nativeDiscoveryResponse(200, body), nil
+	}))
+	if _, err := client.nativeRouter.resolve(t.Context(), scope, client.nativeToken(), nativeWrite); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	now := client.nativeRouter.now()
+	clockReads := 0
+	client.nativeRouter.now = func() time.Time {
+		clockReads++
+		if clockReads == 2 { // cached resolution, then the final admission check
+			cancel()
+		}
+		return now
+	}
+	write := nativeTestWrite()
+	write.Condition.Kind = ConditionNone
+	request, err := NewCommitRequest(scope, nativeTestID, MutationAuthority{Mode: AuthorityLeaderless}, []DocumentWrite{write})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Documents.Commit(ctx, scope, request)
+	var commit *CommitError
+	if !errors.Is(err, context.Canceled) || !errors.As(err, &commit) || commit.Uncertain || calls != 1 {
+		t.Fatalf("pre-send cancellation lost certainty: %v calls=%d", err, calls)
 	}
 }
 
@@ -1191,7 +1229,7 @@ func TestNativeDiscoverySingleWriterStatusRequiresAdmittedFence(t *testing.T) {
 	}
 	// The explicit producer-preparation path keeps its prior server decision:
 	// the current native producer rejects SingleWriter with this actual code.
-	client.cfg.DataBaseURL = "https://gru.terrascale.tech"
+	client.cfg.DataBaseURL = "https://gru.api.terrascale.tech"
 	_, err = operation.Status(t.Context())
 	var actual *APIError
 	if !errors.As(err, &actual) || actual.Status != 503 || actual.Code != "authority_unavailable" || calls != 1 {

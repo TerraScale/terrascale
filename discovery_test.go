@@ -18,7 +18,7 @@ func TestManagementRoutingRequiresExplicitOrigin(t *testing.T) {
 		{name: "no origin"},
 		{name: "canonical metadata", discovery: DefaultDiscoveryBaseURL},
 		{name: "custom metadata", discovery: "https://metadata.example.test"},
-		{name: "native origin", data: "https://gru.terrascale.tech"},
+		{name: "native origin", data: "https://gru.api.terrascale.tech"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			calls, nativeCredentialCalls := 0, 0
@@ -68,15 +68,15 @@ func TestManagementRoutingDoesNotAdoptCatalogAuthority(t *testing.T) {
 	}{
 		{
 			name:    "available GRU",
-			catalog: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5,"longitude":-46.6,"available":true}],"hosts":{"GRU":"https://gru.terrascale.tech"}}`,
+			catalog: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5,"longitude":-46.6,"available":true}],"hosts":{"GRU":"https://gru.api.terrascale.tech"}}`,
 		},
 		{
 			name:    "unavailable GRU before FRA",
-			catalog: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5,"longitude":-46.6,"available":false},{"code":"FRA","name":"Frankfurt","country":"DE","latitude":50,"longitude":8,"available":true}],"hosts":{"GRU":"https://gru.terrascale.tech","FRA":"https://fra.terrascale.tech"}}`,
+			catalog: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5,"longitude":-46.6,"available":false},{"code":"FRA","name":"Frankfurt","country":"DE","latitude":50,"longitude":8,"available":true}],"hosts":{"GRU":"https://gru.api.terrascale.tech","FRA":"https://fra.api.terrascale.tech"}}`,
 		},
 		{
 			name:    "all unavailable",
-			catalog: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5,"longitude":-46.6,"available":false}],"hosts":{"GRU":"https://gru.terrascale.tech"}}`,
+			catalog: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5,"longitude":-46.6,"available":false}],"hosts":{"GRU":"https://gru.api.terrascale.tech"}}`,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

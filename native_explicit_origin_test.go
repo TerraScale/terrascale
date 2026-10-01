@@ -12,10 +12,10 @@ import (
 
 func TestNativePublicClientExplicitOriginRejectsServiceAliases(t *testing.T) {
 	origins := []string{
-		"https://terrascale.tech", "https://terrascale.tech.",
-		"https://gru.terrascale.tech.", "https://gru.terrascale.tech..",
-		"https://GRU.terrascale.tech", "https://gru.TERRASCALE.TECH",
-		"https://gru.api.terrascale.tech", "https://gru.auth.terrascale.tech",
+		"https://terrascale.tech", "https://terrascale.tech.", "https://gru.api.terrascale.tech:8443",
+		"https://gru.api.terrascale.tech.", "https://gru.api.terrascale.tech..",
+		"https://GRU.api.terrascale.tech", "https://gru.TERRASCALE.TECH",
+		"https://gru.terrascale.tech", "https://gru.auth.terrascale.tech",
 		"https://custom.gru.terrascale.tech", "https://native.example.test.",
 		"http://localhost.", "https://api。terrascale。tech",
 		"https://K.example.test", "https://İ.example.test",
@@ -46,8 +46,8 @@ func TestNativePublicClientExplicitOriginRejectsServiceAliases(t *testing.T) {
 
 func TestNativePublicClientExplicitOriginPreservesIndependentEndpoints(t *testing.T) {
 	for _, origin := range []string{
-		"https://gru.terrascale.tech", "https://xyz-9.terrascale.tech",
-		"https://gru.terrascale.tech:8443", "https://native.example.test",
+		"https://gru.api.terrascale.tech", "https://xyz-9.api.terrascale.tech",
+		"https://native.example.test",
 		"https://api.example.test:8443/", "https://auth.example.test",
 		"https://CUSTOM.example.test", "https://terrascale.tech.example.test",
 		"http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080",

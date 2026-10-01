@@ -53,8 +53,9 @@ func validateNativeOrigin(raw string) (string, error) {
 	if host == "terrascale.tech" {
 		return "", fmt.Errorf("sdk: native data origin requires a direct regional hostname")
 	}
-	if region, hosted := strings.CutSuffix(host, ".terrascale.tech"); hosted {
-		if hostname != host || !validNativeDiscoveryRegion(strings.ToUpper(region)) {
+	if strings.HasSuffix(host, ".terrascale.tech") {
+		region, regional := strings.CutSuffix(host, "."+nativeRegionalDomain)
+		if !regional || hostname != host || u.Port() != "" || !validNativeDiscoveryRegion(strings.ToUpper(region)) {
 			return "", fmt.Errorf("sdk: TerraScale native data origin requires a canonical direct regional hostname")
 		}
 	}
@@ -128,10 +129,18 @@ func (c *Client) doNative(ctx context.Context, scope DocumentScope, required nat
 	}
 	// Native transaction identities live in the body. No ETag, placement
 	// redirect, causal session shim or automatic mutation replay is used.
+	// Atlas owns availability and ranking. Local failures return after this
+	// single dispatch; capabilities can select a later admitted rank, but a
+	// transport failure cannot override Atlas by demoting or replaying it.
 	if c.cfg.DataBaseURL == "" {
 		if err := c.nativeRouter.assertCurrent(admission); err != nil {
 			return &RoutingError{Route: "native", Method: method, Path: path, Err: err}
 		}
+	}
+	// Admission consumes the original request budget. An expired or canceled
+	// context here proves that no native mutation has been dispatched.
+	if err := requestCtx.Err(); err != nil {
+		return nativeDispatchError(mutation, false, err)
 	}
 	response, err := c.nativeHTTP.Do(req)
 	if err != nil {

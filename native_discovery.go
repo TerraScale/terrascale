@@ -23,7 +23,12 @@ const (
 	nativeDiscoveryURL        = "https://atlas.terrascale.tech/api/v1/discovery"
 	nativeDiscoveryBodyLimit  = 64 << 10
 	nativeDiscoveryCacheLimit = 256
+	nativeRegionalDomain      = "api.terrascale.tech"
 )
+
+func nativeRegionalOrigin(region string) string {
+	return "https://" + strings.ToLower(region) + "." + nativeRegionalDomain
+}
 
 // NativeRoutingError describes a local native routing failure. It is wrapped
 // by RoutingError; Code never invents an Atlas HTTP status or response.
@@ -158,7 +163,7 @@ func (d nativeDiscoveryDocument) validate(scope DocumentScope) error {
 	}
 	seen := make(map[string]bool, len(d.Endpoints))
 	for i, endpoint := range d.Endpoints {
-		if !validNativeDiscoveryRegion(endpoint.Region) || seen[endpoint.Region] || endpoint.URL != "https://"+strings.ToLower(endpoint.Region)+".terrascale.tech" || int(endpoint.Priority) != i+1 {
+		if !validNativeDiscoveryRegion(endpoint.Region) || seen[endpoint.Region] || endpoint.URL != nativeRegionalOrigin(endpoint.Region) || int(endpoint.Priority) != i+1 {
 			return fmt.Errorf("invalid discovery endpoint or priority")
 		}
 		seen[endpoint.Region] = true
