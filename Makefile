@@ -18,8 +18,13 @@ check-generated:
 
 # Check that dependencies remain available publicly even though builds use vendor.
 check-modules:
-	GOFLAGS=-mod=readonly GOPROXY=https://proxy.golang.org,direct \
-		GOPRIVATE= GONOPROXY= GONOSUMDB= GOSUMDB=sum.golang.org $(GO) mod download
+	@set -eu; \
+		task_module_cache=$$(mktemp -d); \
+		trap 'GOTOOLCHAIN=local GOMODCACHE="$$task_module_cache" GOFLAGS= $(GO) clean -modcache' EXIT; \
+		trap 'exit 1' HUP INT TERM; \
+		GOTOOLCHAIN=local GOMODCACHE="$$task_module_cache" GOFLAGS=-mod=readonly \
+		GOPROXY=https://proxy.golang.org,direct GOPRIVATE= GONOPROXY= \
+		GONOSUMDB= GOSUMDB=sum.golang.org $(GO) mod download all
 
 css:
 	$(NPM) run build:css

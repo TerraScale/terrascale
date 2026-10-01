@@ -134,6 +134,9 @@ version in `replace`, then run `GOFLAGS=-mod=mod go mod tidy` and
 commands. `go mod vendor` deletes `vendor/PROVENANCE.md`; restore it and update
 its source commit and checksums for SDK upgrades. `make check-modules` verifies
 public dependency resolution and runs in CI before the vendored build checks.
+It uses the installed Go toolchain and a temporary module cache, removed on
+exit, so a warm runner cache cannot hide download failures. The check downloads
+the full module graph, including tool and transitive module dependencies.
 
 The MCP endpoint and its tool conventions are described in [mcp.md](mcp.md).
 
