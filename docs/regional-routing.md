@@ -5,7 +5,8 @@ Default native traffic uses authenticated scoped discovery at
 native `tbk1` credential and the exact tenant/database UUIDs and full-u64 shard scope.
 Atlas owns eligibility, residency, publication authority, and ranking. The SDK
 selects the first receiver-ranked endpoint supporting each requested operation.
-Direct native endpoints use `https://<region>.terrascale.tech`.
+Direct native endpoints use `https://<region>.api.terrascale.tech`, such as
+`https://gru.api.terrascale.tech`.
 
 `RegionRtt` hints supply bounded measured ranking inputs through the admitted
 header. They do not admit a region or override the receiver's ordered response.
@@ -13,15 +14,15 @@ There is no caller-selected region affinity or synthetic regional destination.
 `atlas_base_url` defaults to canonical Atlas; a custom discovery origin fails
 before native credentials are sent. An explicit reviewed direct `api_base_url`
 remains available for caller-provisioned native servers and producer qualification.
-Inside the TerraScale zone it must be exactly `https://<region>.terrascale.tech`,
+Inside the TerraScale zone it must be exactly `https://<region>.api.terrascale.tech`,
 with a valid single region label. Reserved service labels, the apex, nested labels,
-the obsolete `.api.` form, explicit ports and trailing dots are rejected before
+retired `<region>.terrascale.tech` origins, explicit ports and trailing dots are rejected before
 credentials can be dispatched. Independent HTTPS and explicit loopback/test
 origins remain caller-provisioned opt-outs from Atlas admission.
 
 Discovery transport failures, timeouts, malformed responses, denials, unavailable
 eligibility, expired publications, and clock or observation regressions return
-errors before native dispatch. `api.terrascale.tech` is a test host and is rejected
+errors before native dispatch. The global `api.terrascale.tech` proxy is rejected
 as a native origin, default, or fallback. Failed discovery never creates a bypass.
 
 Scoped observations retain their authority and revision floors after lease
