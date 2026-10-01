@@ -50,7 +50,7 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         internal Lease? Cached;
     }
 
-    /// <summary>Creates an owned discovery transport; a supplied handler transfers disposal ownership.</summary>
+    /// <summary>Creates an owned discovery transport; a supplied handler transfers disposal ownership. The clock controls leases and deadlines.</summary>
     /// <remarks>The handler must disable redirects, cookies and decompression; do not share or dispose it separately.</remarks>
     public NativeDiscoveryRouter(TimeSpan timeout, HttpMessageHandler? handler = null, TimeProvider? clock = null)
         : this(NativeTransport.CreateClient(handler), timeout, atlasOrigin: null, clock, ownsClient: true)
@@ -96,8 +96,8 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         if (capabilities.Count == 0 || capabilities.Any(capability => !CapabilityNames.Contains(capability, StringComparer.Ordinal)))
             throw new NativeAdmissionException("invalid_capability");
 
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(timeout);
+        using var expiry = new CancellationTokenSource(timeout, clock);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
         ScopeState state;
         lock (gate)
         {

@@ -5,20 +5,19 @@ namespace TerraScale.DotNet.Native;
 /// <summary>Fixed safe endpoint-admission failure metadata; no producer text or credential is retained.</summary>
 public sealed class NativeAdmissionException : InvalidOperationException
 {
-    /// <summary>Constructs a trusted provider's bounded safe code and optional HTTP status.</summary>
-    public NativeAdmissionException(string code, int? status = null) : base($"Native endpoint admission failed: {ValidateCode(code)}.")
+    /// <summary>Constructs a fixed admission code and optional HTTP status; unknown provider codes become invalid_admission.</summary>
+    public NativeAdmissionException(string code, int? status = null) : base($"Native endpoint admission failed: {NormalizeCode(code)}.")
     {
-        Code = code;
+        Code = NormalizeCode(code);
         Status = status;
     }
 
-    private static string ValidateCode(string code)
-    {
-        if (string.IsNullOrEmpty(code) || code.Length > 64 || code.Any(character =>
-                !char.IsAsciiLetterLower(character) && !char.IsAsciiDigit(character) && character != '_'))
-            throw new ArgumentException("Invalid admission error code.", nameof(code));
-        return code;
-    }
+    private static string NormalizeCode(string code) => code is
+        "invalid_request" or "invalid_scope" or "invalid_cursor" or "discovery_unconfigured" or
+        "discovery_forbidden" or "discovery_http_error" or "no_eligible_region" or "routing_observation_regressed" or
+        "invalid_capability" or "routing_capacity" or "discovery_unavailable" or "invalid_discovery" or
+        "capability_unavailable" or "discovery_expired" or "unsupported_discovery_writer" or
+        "invalid_credential" or "invalid_admission" ? code : "invalid_admission";
 
     /// <summary>The fixed admission code supplied by the trusted provider.</summary>
     public string Code { get; }

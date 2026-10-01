@@ -227,11 +227,12 @@ public sealed class NativeClient : IDisposable
         int? status = null;
         TimeSpan? retryAfter = null;
         var phase = "credential";
+        string? key = null;
         try
         {
             using var transport = await isolation.StartAsync(budgetToken).ConfigureAwait(false);
             budgetToken.ThrowIfCancellationRequested();
-            var key = ValidateKey(await transport.InvokeAsync(() => keyProvider(transport.ExtensionToken).AsTask(), budgetToken).ConfigureAwait(false));
+            key = ValidateKey(await transport.InvokeAsync(() => keyProvider(transport.ExtensionToken).AsTask(), budgetToken).ConfigureAwait(false));
             phase = "admission";
             var admission = await transport.InvokeAsync(
                 () => admissionProvider.ResolveAsync(Scope, key, capabilities, transport.ExtensionToken).AsTask(), budgetToken).ConfigureAwait(false);
@@ -295,7 +296,9 @@ public sealed class NativeClient : IDisposable
         }
         catch (NativeAdmissionException exception) when (phase == "admission")
         {
-            return Failure<T>(exception.Code, exception.Status, null, identity, NativeMutationOutcome.Unknown);
+            var code = key is not null && exception.Code.Contains(key, StringComparison.Ordinal)
+                ? "invalid_admission" : exception.Code;
+            return Failure<T>(code, exception.Status, null, identity, NativeMutationOutcome.Unknown);
         }
         catch (NativeAdmissionException) when (phase == "response")
         {

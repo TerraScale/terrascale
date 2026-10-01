@@ -15,7 +15,9 @@ public sealed class NativeBlockingDisposalTests
     public async Task BlockingSynchronousDisposalCannotHoldCancellationOrDeadline(bool discovery, bool cancelCaller)
     {
         using var caller = new CancellationTokenSource();
-        using var body = new BlockingStream(() => { if (cancelCaller) caller.Cancel(); });
+        var clock = new ManualDeadlineClock();
+        var readEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var body = new BlockingStream(() => readEntered.TrySetResult());
         var calls = 0;
         using var handler = new NativeClientTests.Handler((_, _) =>
         {
@@ -30,8 +32,9 @@ public sealed class NativeBlockingDisposalTests
         {
             if (discovery)
             {
-                using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(2), handler);
+                using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(30), handler, clock);
                 var pending = router.ResolveAsync(scope, key, ["read"], caller.Token).AsTask();
+                await ExpireAfterReadAsync();
                 if (cancelCaller)
                     await Assert.ThrowsAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
                 else
@@ -43,9 +46,11 @@ public sealed class NativeBlockingDisposalTests
             else
             {
                 using var client = new NativeClient(scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
-                    _ => ValueTask.FromResult(key), TimeSpan.FromSeconds(2), handler);
+                    _ => ValueTask.FromResult(key), TimeSpan.FromSeconds(30), handler, clock);
                 var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
-                var result = await client.CommitAsync(prepared, caller.Token).WaitAsync(TimeSpan.FromSeconds(10));
+                var pending = client.CommitAsync(prepared, caller.Token);
+                await ExpireAfterReadAsync();
+                var result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
                 var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
                 await Assert.That(error.Code).IsEqualTo(cancelCaller ? "cancelled" : "deadline_exceeded");
                 await Assert.That(error.Status).IsEqualTo(200);
@@ -60,9 +65,17 @@ public sealed class NativeBlockingDisposalTests
         }
         finally
         {
+            caller.Cancel();
             body.ReleaseDisposal.Set();
             body.ReadCompletion.TrySetResult(0);
             await body.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+
+        async Task ExpireAfterReadAsync()
+        {
+            await readEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            if (cancelCaller) caller.Cancel();
+            else clock.Expire();
         }
     }
 
@@ -122,6 +135,24 @@ public sealed class NativeBlockingDisposalTests
             handler.Body.ReleaseDisposal.Set();
             owner.Dispose();
             await handler.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    private sealed class ManualDeadlineClock : TimeProvider
+    {
+        private ManualTimer? timer;
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            timer = new ManualTimer(callback, state);
+        internal void Expire() => timer!.Fire();
+
+        private sealed class ManualTimer(TimerCallback callback, object? state) : ITimer
+        {
+            private readonly object gate = new();
+            private bool disposed;
+            internal void Fire() { lock (gate) { if (!disposed) callback(state); } }
+            public bool Change(TimeSpan dueTime, TimeSpan period) { lock (gate) return !disposed; }
+            public void Dispose() { lock (gate) disposed = true; }
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
         }
     }
 

@@ -162,6 +162,38 @@ public sealed class NativeClientTests
     }
 
     [Test]
+    [Arguments(false, "secret_canary", "tbk1.fixture-key", "invalid_admission")]
+    [Arguments(true, "secret_canary", "tbk1.fixture-key", "invalid_admission")]
+    [Arguments(false, "secret_canary", "secret_canary", "invalid_admission")]
+    [Arguments(true, "secret_canary", "secret_canary", "invalid_admission")]
+    [Arguments(false, "discovery_forbidden", "discovery", "invalid_admission")]
+    [Arguments(true, "discovery_forbidden", "discovery", "invalid_admission")]
+    [Arguments(false, "discovery_forbidden", "tbk1.fixture-key", "discovery_forbidden")]
+    [Arguments(true, "discovery_forbidden", "tbk1.fixture-key", "discovery_forbidden")]
+    public async Task AdmissionDiagnosticsNormalizeProviderCodesAndRedactCredentials(bool duringAssertion, string code, string key, string expected)
+    {
+        var calls = 0;
+        using var handler = new Handler((_, _) => { calls++; return Task.FromResult(Json("{}")); });
+        var provider = new Provider(() =>
+        {
+            if (!duringAssertion) throw new NativeAdmissionException(code, 403);
+            return new NativeAdmission("https://gru.api.terrascale.tech", () => throw new NativeAdmissionException(code, 403));
+        });
+        using var client = new NativeClient(NativeCodecTests.Scope, provider,
+            _ => ValueTask.FromResult(key), TimeSpan.FromSeconds(30), handler);
+        var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+        var result = await client.CommitAsync(prepared).WaitAsync(TimeSpan.FromSeconds(10));
+        var failure = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
+        await Assert.That(failure.Code).IsEqualTo(expected);
+        await Assert.That(failure.Status).IsEqualTo(403);
+        await Assert.That(failure.Transaction).IsEqualTo(prepared.Identity);
+        await Assert.That(failure.MutationOutcome).IsEqualTo(NativeMutationOutcome.Unknown);
+        await Assert.That(calls).IsEqualTo(0);
+        await Assert.That(result.ToString()).DoesNotContain(key);
+        if (expected != code) await Assert.That(result.ToString()).DoesNotContain(code);
+    }
+
+    [Test]
     public async Task UnknownNativeErrorIdentifiersCannotReachRetainedDiagnostics()
     {
         const string canary = "secret_canary";
