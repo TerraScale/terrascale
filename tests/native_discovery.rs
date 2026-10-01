@@ -126,6 +126,7 @@ fn fixture_router() -> (AtlasDiscovery, Arc<Mock>, Arc<Clock>) {
 #[derive(Debug)]
 enum LifecycleReply {
     Pending,
+    Gated(tokio::sync::oneshot::Receiver<Result<Response>>),
     Ready(Result<Response>),
     Delayed(Duration, Result<Response>),
     Cooperative(Response),
@@ -139,6 +140,14 @@ struct LifecycleTransport {
     released: AtomicUsize,
 }
 impl LifecycleTransport {
+    fn gated(&self) -> tokio::sync::oneshot::Sender<Result<Response>> {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        self.replies
+            .lock()
+            .unwrap()
+            .push_back(LifecycleReply::Gated(receiver));
+        sender
+    }
     fn pending(&self) {
         self.replies
             .lock()
@@ -192,6 +201,10 @@ impl HttpTransport for LifecycleTransport {
             LifecycleReply::Pending => {
                 self.dispatched.notify_one();
                 std::future::pending().await
+            }
+            LifecycleReply::Gated(receiver) => {
+                self.dispatched.notify_one();
+                receiver.await.expect("lifecycle reply sender dropped")
             }
             LifecycleReply::Ready(response) => response,
             LifecycleReply::Delayed(delay, response) => {
@@ -1655,6 +1668,96 @@ async fn every_public_native_call_shares_discovery_and_dispatch_budget_with_comm
         }
         assert_eq!(transport.active.load(Ordering::SeqCst), 0, "{route}");
         assert_eq!(transport.released.load(Ordering::SeqCst), 2, "{route}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn late_ready_native_success_obeys_the_deadline_and_retains_uncertain_commit_identity() {
+    for expired in [false, true] {
+        for commit in [false, true] {
+            let transport = Arc::new(LifecycleTransport::default());
+            let client = TerraScaleClient::with_transport(
+                ClientConfig::builder()
+                    .api_key(native_key())
+                    .api_base_url("https://native.example.test")
+                    .max_retry_attempts(3)
+                    .retry_delay_ms(0)
+                    .build()
+                    .unwrap(),
+                transport.clone(),
+            );
+            let operation = unconditional_operation();
+            let reply = transport.gated();
+            let response = if commit {
+                Response::json(
+                    200,
+                    &Receipt {
+                        version: ProtocolVersion,
+                        transaction_id: operation.transaction_id().clone(),
+                        authority: operation.authority().clone(),
+                        effect_digest: operation.effect_digest(),
+                        event: Event {
+                            database: scope().database,
+                            shard: scope().shard,
+                            replica: "50000000-0000-0000-0000-000000000001".parse().unwrap(),
+                            incarnation: Incarnation::from_bytes([2; 16]),
+                            sequence: DecimalU64(1),
+                        },
+                        commit_sequence: DecimalU64(1),
+                        durability: Durability::ObjectDurable,
+                    },
+                )
+            } else {
+                Response::json(
+                    200,
+                    &Point {
+                        version: ProtocolVersion,
+                        state: PointState::Absent,
+                        context: vec![],
+                        siblings: vec![],
+                        state_version: None,
+                    },
+                )
+            };
+            let call = async {
+                if commit {
+                    match client.transactions().commit(&operation).await? {
+                        CommitOutcome::Committed(_) => Ok(()),
+                        CommitOutcome::Uncertain(uncertain) => {
+                            assert_eq!(uncertain.operation.body(), operation.body());
+                            assert_eq!(
+                                uncertain.operation.transaction_id(),
+                                operation.transaction_id()
+                            );
+                            Err(uncertain.cause)
+                        }
+                    }
+                } else {
+                    default_point(&client).await.map(|_| ())
+                }
+            };
+            let mut call = Box::pin(call);
+            lifecycle_dispatch(call.as_mut(), &transport).await;
+            // Leave the ready response unpolled until after the original
+            // deadline; timeout_at otherwise accepts the inner Ready first.
+            reply.send(Ok(response)).unwrap();
+            tokio::time::advance(Duration::from_secs(if expired { 31 } else { 29 })).await;
+            let result = call.await;
+            if expired {
+                let error = result.unwrap_err();
+                assert_eq!(error.kind, ErrorKind::Transport);
+                assert_eq!(error.message, "Native operation deadline exceeded.");
+            } else {
+                result.unwrap();
+            }
+            let requests = transport.requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            if commit {
+                assert_eq!(requests[0].body.as_deref(), Some(operation.body()));
+            }
+            assert_eq!(transport.active.load(Ordering::SeqCst), 0);
+            assert_eq!(transport.released.load(Ordering::SeqCst), 1);
+        }
     }
 }
 
