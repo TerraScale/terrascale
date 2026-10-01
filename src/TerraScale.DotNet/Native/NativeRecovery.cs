@@ -56,7 +56,7 @@ public static class NativeOperationStore
         var root = document.RootElement;
         Exact(root, ["local_version", "scope", "explicit_origin", "request_body"]);
         var version = root.GetProperty("local_version");
-        if (!version.TryGetInt32(out var number) || number != 1) throw new InvalidDataException("Unsupported local operation format.");
+        if (version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var number) || number != 1) throw new InvalidDataException("Unsupported local operation format.");
         var rawScope = root.GetProperty("scope");
         Exact(rawScope, ["tenant", "database", "shard"]);
         var shard = RetainedString(rawScope.GetProperty("shard"), "shard");

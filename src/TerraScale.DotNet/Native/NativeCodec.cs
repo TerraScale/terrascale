@@ -401,6 +401,7 @@ public static class NativeCodec
 
     internal static NativeQueryPage DecodeQueryPage(JsonElement root, int limit)
     {
+        if (limit is < 1 or > 128) throw Invalid("Query limit must be between 1 and 128.");
         Fields(root, ["version", "rows"], ["next_cursor"]);
         Version(root);
         var rows = ImmutableArray.CreateBuilder<NativeQueryRow>();

@@ -7,6 +7,33 @@ namespace TerraScale.DotNet.Tests.Native;
 public sealed class NativeRecoveryTests
 {
     [Test]
+    [Arguments("\"1\"")]
+    [Arguments("{}")]
+    [Arguments("[]")]
+    [Arguments("null")]
+    [Arguments("true")]
+    [Arguments("1.5")]
+    [Arguments("2147483648")]
+    [Arguments("0")]
+    [Arguments("2")]
+    public async Task MalformedLocalVersionsHaveAConsistentValidationFailure(string version)
+    {
+        var directory = Directory.CreateTempSubdirectory("terrascale-native-version-");
+        try
+        {
+            using var client = NativeClientTests.Client(new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected.")));
+            var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+            var path = Path.Combine(directory.FullName, "operation.json");
+            await NativeOperationStore.SaveAsync(prepared, path);
+            var valid = await File.ReadAllTextAsync(path);
+            await File.WriteAllTextAsync(path, valid.Replace("\"local_version\":1", "\"local_version\":" + version, StringComparison.Ordinal));
+            var failure = await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(path));
+            await Assert.That(failure!.Message).IsEqualTo("Unsupported local operation format.");
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Test]
     public async Task RecoveryPollsOnlyTheOriginalStatusAndReturnsItsReceipt()
     {
         var calls = 0;

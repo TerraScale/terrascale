@@ -146,6 +146,29 @@ public sealed class NativeResponseBoundaryTests
             method.GetParameters().Any(parameter => parameter.ParameterType == typeof(JsonElement)))).IsFalse();
     }
 
+    [Test]
+    [Arguments(-1)]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(128)]
+    [Arguments(129)]
+    [Arguments(int.MaxValue)]
+    public async Task PublicQueryPageDecoderRequiresAValidRequestedLimit(int limit)
+    {
+        const string page = "{\"version\":1,\"rows\":[]}";
+        if (limit is >= 1 and <= 128)
+            await Assert.That(NativeCodec.DecodeQueryPage(page, limit).Rows.Length).IsEqualTo(0);
+        else
+        {
+            var failure = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            {
+                NativeCodec.DecodeQueryPage(page, limit);
+                return Task.CompletedTask;
+            });
+            await Assert.That(failure!.Message).IsEqualTo("Query limit must be between 1 and 128.");
+        }
+    }
+
     private sealed class ManualDeadlineClock : TimeProvider
     {
         private ManualTimer? timer;

@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\TerraScale.DotNet\TerraScale.DotNet.csproj" />
+    <ProjectReference Include="../TerraScale.DotNet.FifoProbe/TerraScale.DotNet.FifoProbe.csproj" ReferenceOutputAssembly="false" />
     <Compile Include="../TerraScale.DotNet.Qualification/NativeChecks.cs" Link="Native/NativeChecks.cs" />
   </ItemGroup>
 </Project>

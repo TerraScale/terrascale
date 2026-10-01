@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <TargetFrameworks Condition="$([MSBuild]::VersionGreaterThanOrEquals('$(BundledNETCoreAppTargetFrameworkVersion)', '11.0'))">net10.0;net11.0</TargetFrameworks>
+    <TargetFrameworks Condition="'$(TargetFrameworks)' == ''">net10.0</TargetFrameworks>
+    <TargetFramework />
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
+  </ItemGroup>
+</Project>

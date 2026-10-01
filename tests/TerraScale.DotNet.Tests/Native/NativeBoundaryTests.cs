@@ -335,7 +335,14 @@ public sealed class NativeBoundaryTests
     {
         var context = Enumerable.Range(0, 250_000).Select(index =>
             new NativeObserved($"018f0000-0000-7000-8000-{index:x12}", new string('1', 32), 1)).ToImmutableArray();
-        var point = new NativePoint(NativePointState.Absent, null, context, []);
+        var point = new NativePoint(NativePointState.Deleted, new string('d', 64), context,
+            [new NativeSibling(new NativeEvent(NativeCodecTests.Database, 0, context[0].Replica, context[0].Incarnation, 1),
+                1, NativeCodecTests.SchemaDigest, new NativeWriteValue.Tombstone())]);
+        var smaller = point with { Context = context.Take(16).ToImmutableArray() };
+        var validBody = queryPage
+            ? NativeCodec.EncodeQueryPage(new NativeQueryPage([new NativeQueryRow(NativeCodecTests.Document, smaller)], null))
+            : NativeCodec.EncodePoint(smaller);
+        await Assert.That(validBody.Length).IsGreaterThan(0);
         var before = GC.GetAllocatedBytesForCurrentThread();
         try
         {
@@ -343,7 +350,11 @@ public sealed class NativeBoundaryTests
             else NativeCodec.EncodePoint(point);
             throw new InvalidOperationException("Oversized point context was accepted.");
         }
-        catch (InvalidDataException) { }
+        catch (InvalidDataException exception)
+        {
+            // A semantic rejection must not satisfy this budget regression.
+            if (exception.Message != "Native request exceeds the 4 MiB limit.") throw;
+        }
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         await Assert.That(allocated).IsLessThan(64L * 1024 * 1024);
     }
@@ -352,12 +363,6 @@ public sealed class NativeBoundaryTests
     public async Task RecoveryLoadRejectsOwnerPrivateFifosAndDirectories()
     {
         if (OperatingSystem.IsWindows()) return;
-        const string probeVariable = "TERRASCALE_NATIVE_FIFO_PROBE_PATH";
-        if (Environment.GetEnvironmentVariable(probeVariable) is { } probePath)
-        {
-            await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(probePath));
-            return;
-        }
         var directory = Directory.CreateTempSubdirectory("terrascale-native-type-");
         try
         {
@@ -370,19 +375,18 @@ public sealed class NativeBoundaryTests
             File.SetUnixFileMode(fifo, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             // A blocking FIFO open cannot be interrupted by an async wait in
             // this process. Run the real SDK load in an independently killable
-            // test process so loss of O_NONBLOCK produces a targeted failure.
-            var host = Environment.ProcessPath!;
+            // probe process so loss of O_NONBLOCK produces a targeted failure.
+            // A dedicated probe avoids starting another TUnit engine under CI.
+            var host = Path.GetFullPath(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "../../..", "dotnet"));
+            var output = new DirectoryInfo(AppContext.BaseDirectory);
+            var probeAssembly = Path.GetFullPath(Path.Combine(output.FullName, "../../../../TerraScale.DotNet.FifoProbe/bin",
+                output.Parent!.Name, output.Name, "TerraScale.DotNet.FifoProbe.dll"));
             var probeStart = new System.Diagnostics.ProcessStartInfo(host)
             {
                 UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true
             };
-            if (Path.GetFileNameWithoutExtension(host) == "dotnet")
-                probeStart.ArgumentList.Add(typeof(NativeBoundaryTests).Assembly.Location);
-            probeStart.ArgumentList.Add("--treenode-filter");
-            probeStart.ArgumentList.Add("/*/*/NativeBoundaryTests/RecoveryLoadRejectsOwnerPrivateFifosAndDirectories");
-            probeStart.ArgumentList.Add("--minimum-expected-tests");
-            probeStart.ArgumentList.Add("1");
-            probeStart.Environment[probeVariable] = fifo;
+            probeStart.ArgumentList.Add(probeAssembly);
+            probeStart.ArgumentList.Add(fifo);
             using var probe = System.Diagnostics.Process.Start(probeStart)!;
             var stdout = probe.StandardOutput.ReadToEndAsync();
             var stderr = probe.StandardError.ReadToEndAsync();
@@ -392,10 +396,12 @@ public sealed class NativeBoundaryTests
             {
                 probe.Kill(entireProcessTree: true);
                 await probe.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
-                throw new TimeoutException("FIFO recovery load blocked; the isolated probe was terminated.");
+                var diagnostics = await Task.WhenAll(stdout, stderr).WaitAsync(TimeSpan.FromSeconds(5));
+                throw new TimeoutException("FIFO recovery probe timed out and was terminated: " + string.Join(Environment.NewLine, diagnostics));
             }
             var report = await stdout + await stderr;
-            if (probe.ExitCode != 0) throw new InvalidOperationException("FIFO recovery probe failed: " + report);
+            if (probe.ExitCode != 0 || !report.Contains("FIFO_PROBE_READY", StringComparison.Ordinal))
+                throw new InvalidOperationException("FIFO recovery probe failed: " + report);
             await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(directory.FullName));
         }
         finally { directory.Delete(recursive: true); }
