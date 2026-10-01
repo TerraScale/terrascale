@@ -198,6 +198,23 @@ func TestDeviceApprovalRequiresCSRFPasswordAndLiveSession(t *testing.T) {
 	}
 }
 
+func TestDeviceDenialDoesNotResetPasswordGuessingBudget(t *testing.T) {
+	f := newDeviceFixture(t)
+	limiter := throttle.New(throttle.Options{Client: throttle.Budget{Burst: 100, Interval: time.Hour}, Account: throttle.Budget{Burst: 2, Interval: time.Hour}})
+	f.d.deps.Throttle = limiter
+	_, code := f.issue(t)
+	if w := f.decide(code, "approve", "wrong-password"); !strings.Contains(w.Body.String(), "Current password is incorrect") {
+		t.Fatal("first password attempt unexpectedly rejected")
+	}
+	if w := f.decide(code, "deny", ""); w.Code != 200 {
+		t.Fatalf("denial failed: %d", w.Code)
+	}
+	_, nextCode := f.issue(t)
+	if w := f.decide(nextCode, "approve", "wrong-password"); w.Code != http.StatusTooManyRequests {
+		t.Fatal("denial reset the account's password guessing budget")
+	}
+}
+
 func TestDeviceApprovalInvalidatesOnCredentialChange(t *testing.T) {
 	f := newDeviceFixture(t)
 	device, code := f.issue(t)

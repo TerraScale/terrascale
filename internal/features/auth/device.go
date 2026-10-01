@@ -351,7 +351,9 @@ func (d *DeviceAuthorization) decide(w http.ResponseWriter, r *http.Request) {
 		d.render(w, r, data)
 		return
 	}
-	d.deps.Throttle.Forgive(r, account.User.Email)
+	if action == "approve" {
+		d.deps.Throttle.Forgive(r, account.User.Email)
+	}
 	data.Pending = false
 	data.Result = action
 	d.render(w, r, data)
