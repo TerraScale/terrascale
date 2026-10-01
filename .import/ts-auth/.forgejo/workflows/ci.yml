@@ -4,7 +4,7 @@ name: ts-auth CI
 # dependencies in per-job Cargo target directories on the runner's persistent
 # /cache volume, compiling through the shared kache store there
 # (scripts/ci/cargo-cache.sh). release does the same on pull requests; on
-# protected main it builds the released binary from a clean target directory
+# pushes to protected main it builds the released binary from a clean target directory
 # and Cargo home, without kache, and hands the smoke-checked image to publish
 # (scripts/ci/hand-off-image.sh), which pushes it only after every gate passed.
 # Release binaries are static x86_64 musl executables built with the job
@@ -118,6 +118,7 @@ jobs:
       TS_AUTH_PUBLISH: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     outputs:
       image-archive-sha256: ${{ steps.hand-off.outputs.sha256 }}
+      publish-enabled: ${{ steps.hand-off.outputs.publish-enabled }}
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -132,7 +133,7 @@ jobs:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         run: bash scripts/ci/checkout-sdk.sh
 
-      # The published binary never reads the shared caches: on protected main
+      # The published binary never reads the shared caches: on pushes to protected main
       # it builds from a clean target directory and Cargo home, without kache.
       - name: Build the static release binary
         run: |
@@ -149,13 +150,13 @@ jobs:
 
       - name: Hand the image to publish
         id: hand-off
-        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+        if: env.TS_AUTH_PUBLISH == 'true'
         run: bash scripts/ci/hand-off-image.sh save
 
   publish:
     name: Publish the immutable container on protected main
     needs: [lint, fast, release]
-    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+    if: needs.release.outputs.publish-enabled == 'true'
     runs-on: terrascale-builder
     timeout-minutes: 60
     steps:
@@ -179,7 +180,7 @@ jobs:
         run: |
           set -euo pipefail
           source_commit="${FORGEJO_SHA:?event SHA is required}"
-          local_image="localhost/terrascale/ts-auth:${source_commit}"
+          local_image="$(bash scripts/ci/image-ref.sh)"
           remote_image="git.terrascale.tech/$(printf '%s' "${REPOSITORY_OWNER:?owner is required}" | tr '[:upper:]' '[:lower:]')/ts-auth:${source_commit}"
           export REGISTRY_AUTH_FILE="${RUNNER_TEMP:-/tmp}/ts-auth-podman-auth.json"
           printf '%s\n' "${REGISTRY_PUSH_TOKEN:?registry push token is required}" | \

@@ -12,7 +12,7 @@ repo=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$repo"
 
 source_commit=$(git rev-parse HEAD)
-image="localhost/terrascale/ts-auth:${source_commit}"
+image="$(bash scripts/ci/image-ref.sh)"
 test -s artifacts/ci/container-publish/ts-auth
 podman build --pull=missing --platform linux/amd64 --tag "$image" --file Containerfile .
 test "$(podman image inspect "$image" --format '{{.Architecture}}')" = amd64
