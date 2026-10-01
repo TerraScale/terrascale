@@ -293,24 +293,49 @@ public sealed class TerraScaleDiscoveryRoutingTests
     }
 
     [Test]
-    public async Task StalledRegionalDiagnosticsCannotPreventAHealthyFailover()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StalledRegionalDiagnosticsCannotPreventAHealthyFailover(bool stalledAsyncDisposal)
     {
         RegionalBodyStream? originalBody = null;
+        Action? expireRetention = null;
         var transport = new ScriptedTransport
         {
             FailRegionalRequests = true,
-            RegionalErrorContent = body => new StreamContent(originalBody = new RegionalBodyStream(Encoding.UTF8.GetBytes(body), false, stall: true)),
+            RegionalErrorContent = body => new StreamContent(originalBody = new RegionalBodyStream(Encoding.UTF8.GetBytes(body), false,
+                stall: true, stalledAsyncDisposal: stalledAsyncDisposal, onStall: () => expireRetention!())),
         };
         var client = CreateClient(transport, new Uri("https://atlas-stalled-error.test"));
-        using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        client.ScheduleRetainedErrorTimeout = retention => expireRetention = retention.Cancel;
+        using var caller = new CancellationTokenSource();
 
-        _ = await client.Documents.GetAsync("orders-stalled-error", "items", "item-1", caller.Token);
+        _ = await client.Documents.GetAsync("orders-stalled-error", "items", "item-1", caller.Token).WaitAsync(TimeSpan.FromSeconds(10));
 
         await Assert.That(caller.IsCancellationRequested).IsFalse();
         await Assert.That(originalBody!.CancellationObserved).IsTrue();
         await Assert.That(originalBody.IsDisposed).IsTrue();
+        await Assert.That(originalBody.AsyncDisposals).IsEqualTo(0);
         await Assert.That(transport.Requests.Count).IsEqualTo(3);
         await Assert.That(transport.Requests[^1]).StartsWith("GET https://gru.api.terrascale.tech/");
+    }
+
+    [Test]
+    public async Task CallerCancellationDuringRegionalRetentionStopsBeforeAnotherRequest()
+    {
+        using var caller = new CancellationTokenSource();
+        RegionalBodyStream? originalBody = null;
+        var transport = new ScriptedTransport
+        {
+            FailRegionalRequests = true,
+            RegionalErrorContent = body => new StreamContent(originalBody = new RegionalBodyStream(Encoding.UTF8.GetBytes(body), false,
+                onRead: caller.Cancel)),
+        };
+        var client = CreateClient(transport, new Uri("https://atlas-cancelled-retention.test"));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => client.Documents.GetAsync("orders-cancelled-retention", "items", "item-1", caller.Token));
+        await Assert.That(originalBody!.IsDisposed).IsTrue();
+        await Assert.That(originalBody.Reads).IsEqualTo(1);
+        await Assert.That(transport.Requests.Count).IsEqualTo(2);
+        await Assert.That(transport.Requests[^1]).StartsWith("GET https://fra.api.terrascale.tech/");
     }
 
     [Test]
@@ -740,15 +765,24 @@ public sealed class TerraScaleDiscoveryRoutingTests
         private readonly byte[] bytes;
         private readonly bool interrupt;
         private readonly bool stall;
+        private readonly bool stalledAsyncDisposal;
+        private readonly Action? onStall;
+        private readonly Action? onRead;
         private CancellationToken stalledToken;
         private int reads;
-        public RegionalBodyStream(byte[] bytes, bool interrupt, bool stall = false) : base(bytes)
+        public RegionalBodyStream(byte[] bytes, bool interrupt, bool stall = false, bool stalledAsyncDisposal = false,
+            Action? onStall = null, Action? onRead = null) : base(bytes)
         {
             this.bytes = bytes;
             this.interrupt = interrupt;
             this.stall = stall;
+            this.stalledAsyncDisposal = stalledAsyncDisposal;
+            this.onStall = onStall;
+            this.onRead = onRead;
         }
         public int BytesRead { get; private set; }
+        public int Reads => reads;
+        public int AsyncDisposals { get; private set; }
         public bool IsDisposed { get; private set; }
         public bool Interrupted { get; private set; }
         public bool CancellationObserved => stalledToken.IsCancellationRequested;
@@ -756,8 +790,10 @@ public sealed class TerraScaleDiscoveryRoutingTests
         public override bool CanSeek => false;
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            onRead?.Invoke();
+            var previousReads = reads++;
             cancellationToken.ThrowIfCancellationRequested();
-            if (reads++ > 0)
+            if (previousReads > 0)
             {
                 if (interrupt)
                 {
@@ -773,8 +809,14 @@ public sealed class TerraScaleDiscoveryRoutingTests
         private async ValueTask<int> StallAsync(CancellationToken cancellationToken)
         {
             stalledToken = cancellationToken;
+            onStall?.Invoke();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return 0;
+        }
+        public override ValueTask DisposeAsync()
+        {
+            AsyncDisposals++;
+            return stalledAsyncDisposal ? new ValueTask(Task.Delay(Timeout.InfiniteTimeSpan)) : base.DisposeAsync();
         }
         protected override void Dispose(bool disposing)
         {

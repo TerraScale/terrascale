@@ -1193,16 +1193,18 @@ public sealed class TerraScaleClient
         }
     }
 
-    private static async Task<HttpResponseMessage> RetainRegionalFailureAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    internal Action<CancellationTokenSource> ScheduleRetainedErrorTimeout { get; set; } = static retention => retention.CancelAfter(RetainedErrorReadTimeout);
+
+    private async Task<HttpResponseMessage> RetainRegionalFailureAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         try
         {
             using var retention = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            retention.CancelAfter(RetainedErrorReadTimeout);
+            ScheduleRetainedErrorTimeout(retention);
             using var body = new MemoryStream();
             try
             {
-                await using var stream = await response.Content.ReadAsStreamAsync(retention.Token)
+                using var stream = await response.Content.ReadAsStreamAsync(retention.Token)
                     .WaitAsync(retention.Token).ConfigureAwait(false);
                 var chunk = new byte[8192];
                 while (body.Length < MaxRetainedErrorBytes)
