@@ -16,14 +16,16 @@ public sealed class NativeStreamingTests
     {
         using var caller = new CancellationTokenSource();
         var pendingResponse = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var pendingBody = new NoncooperativeBodyStream(() => { if (cancelCaller) caller.Cancel(); });
+        var clock = new ManualDeadlineClock();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pendingBody = new NoncooperativeBodyStream(() => entered.TrySetResult());
         var calls = 0;
         using var handler = new NativeClientTests.Handler((_, _) =>
         {
             calls++;
             if (!bodyRead)
             {
-                if (cancelCaller) caller.Cancel();
+                entered.TrySetResult();
                 return pendingResponse.Task;
             }
             var content = new StreamContent(pendingBody);
@@ -31,11 +33,15 @@ public sealed class NativeStreamingTests
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
         });
         using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
-            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2), handler);
+            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(30), handler, clock);
         var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
         try
         {
-            var result = await client.CommitAsync(prepared, caller.Token).WaitAsync(TimeSpan.FromSeconds(10));
+            var pending = client.CommitAsync(prepared, caller.Token);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            if (cancelCaller) caller.Cancel();
+            else clock.Expire();
+            var result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
             var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
             await Assert.That(error.Code).IsEqualTo(cancelCaller ? "cancelled" : "deadline_exceeded");
             await Assert.That(error.Transaction).IsEqualTo(prepared.Identity);
@@ -60,6 +66,7 @@ public sealed class NativeStreamingTests
         }
         finally
         {
+            caller.Cancel();
             if (!bodyRead)
             {
                 var fallback = NativeClientTests.Json("{}");
@@ -106,8 +113,10 @@ public sealed class NativeStreamingTests
     public async Task StreamedCommitFailuresPreserveUncertainIdentityWithoutReplay(string mode)
     {
         using var cancellation = new CancellationTokenSource();
+        var clock = new ManualDeadlineClock();
+        var readEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var body = new BodyStream(mode == "overflow" ? NativeCodec.MaximumBodyBytes + 1 : -1,
-            mode == "cancel" ? cancellation.Cancel : null);
+            () => readEntered.TrySetResult());
         var calls = 0;
         string? sentBody = null;
         using var handler = new NativeClientTests.Handler(async (request, token) =>
@@ -120,9 +129,21 @@ public sealed class NativeStreamingTests
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
         });
         using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
-            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2), handler);
+            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(30), handler, clock);
         var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
-        var result = await client.CommitAsync(prepared, cancellation.Token).WaitAsync(TimeSpan.FromSeconds(10));
+        var pending = client.CommitAsync(prepared, cancellation.Token);
+        NativeResult<NativeCommitReceipt> result;
+        try
+        {
+            if (mode is "cancel" or "deadline")
+            {
+                await readEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                if (mode == "cancel") cancellation.Cancel();
+                else clock.Expire();
+            }
+            result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally { cancellation.Cancel(); }
         var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
         await Assert.That(error.Code).IsEqualTo(mode is "declared" or "overflow" ? "invalid_response"
             : mode == "cancel" ? "cancelled" : "deadline_exceeded");
@@ -138,6 +159,24 @@ public sealed class NativeStreamingTests
         {
             await Assert.That(body.Reads).IsEqualTo(1);
             await Assert.That(body.CancellationObserved).IsTrue();
+        }
+    }
+
+    private sealed class ManualDeadlineClock : TimeProvider
+    {
+        private ManualTimer? timer;
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            timer = new ManualTimer(callback, state);
+        internal void Expire() => timer!.Fire();
+
+        private sealed class ManualTimer(TimerCallback callback, object? state) : ITimer
+        {
+            private readonly object gate = new();
+            private bool disposed;
+            internal void Fire() { lock (gate) { if (!disposed) callback(state); } }
+            public bool Change(TimeSpan dueTime, TimeSpan period) { lock (gate) return !disposed; }
+            public void Dispose() { lock (gate) disposed = true; }
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
         }
     }
 

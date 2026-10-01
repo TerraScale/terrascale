@@ -15,6 +15,7 @@ namespace TerraScale.DotNet.Native;
 /// framework helpers (such as connection callbacks or a custom serializer's own copy loop) must remain nonblocking.
 /// Extensions receive a separate token whose cancellation is dispatched on distinct owned workers; cancellation callbacks
 /// cannot delay the caller-facing signal. Response disposal waits for actual body invocation completion.
+/// Owned transport disposal runs on an owned worker after outstanding operations and cleanup drain.
 /// Cancellation sources introduced by a caller-owned HttpClient (such as its Timeout) run their own registrations;
 /// callbacks registered with those sources must remain nonblocking.
 /// Callbacks that opt out of context capture (for example, with ConfigureAwait(false) or Task.Run) must keep shared-pool
@@ -366,13 +367,12 @@ public sealed class NativeClient : IDisposable
     /// <inheritdoc />
     public override string ToString() => "Native database client";
 
-    /// <summary>Disposes an owned transport once; a caller-owned HttpClient remains usable.</summary>
+    /// <summary>Stops new calls and schedules owned transport disposal after outstanding work drains; a caller-owned HttpClient remains usable.</summary>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref disposed, 1) == 0)
         {
-            isolation.Dispose();
-            if (ownsClient) client.Dispose();
+            isolation.Dispose(ownsClient ? client : null);
         }
     }
 }
@@ -428,16 +428,41 @@ internal static class NativeTransport
         private readonly object gate = new();
         private int active;
         private bool disposed;
+        private IDisposable? ownedTransport;
 
         private void EndOperation()
         {
             lock (gate) { if (--active == 0 && disposed) StopExecutors(); }
         }
-        public void Dispose()
+        public void Dispose() => Dispose(null);
+
+        internal void Dispose(IDisposable? transport)
         {
-            lock (gate) { disposed = true; if (active == 0) StopExecutors(); }
+            lock (gate)
+            {
+                if (disposed) return;
+                disposed = true;
+                ownedTransport = transport;
+                if (active == 0) StopExecutors();
+            }
         }
-        private void StopExecutors() { executor.Dispose(); cancellationExecutor.Dispose(); }
+
+        private void StopExecutors() => _ = DisposeTransportAndStopAsync();
+
+        private async Task DisposeTransportAndStopAsync()
+        {
+            try
+            {
+                if (ownedTransport is { } transport)
+                    await executor.ExecuteAsync(() =>
+                    {
+                        DisposeResource(transport);
+                        return Task.FromResult(true);
+                    }).ConfigureAwait(false);
+            }
+            catch (Exception) { /* Observe shutdown faults; disposal cannot escape onto the caller thread. */ }
+            finally { executor.Dispose(); cancellationExecutor.Dispose(); }
+        }
 
         // Qualification can await every outstanding callback and cleanup,
         // rather than observing only the caller's cancellation return.

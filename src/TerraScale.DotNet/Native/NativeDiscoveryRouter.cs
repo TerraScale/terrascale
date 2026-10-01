@@ -489,13 +489,12 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
             !(document.Authority.Generation == Authority.Generation && document.Authority.Publisher != Authority.Publisher);
     }
 
-    /// <summary>Disposes an owned discovery transport once; a caller-owned HttpClient remains usable.</summary>
+    /// <summary>Stops new calls and schedules owned discovery transport disposal after outstanding work drains; a caller-owned HttpClient remains usable.</summary>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref disposed, 1) == 0)
         {
-            isolation.Dispose();
-            if (ownsClient) client.Dispose();
+            isolation.Dispose(ownsClient ? client : null);
         }
     }
 }

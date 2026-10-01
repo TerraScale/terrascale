@@ -134,7 +134,15 @@ internal static class NativeChecks
             static _ => ValueTask.FromResult(Key), TimeSpan.FromSeconds(1), ownedHandler);
         owned.Dispose();
         owned.Dispose();
+        await ownedHandler.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Require(ownedHandler.Disposals == 1, "Owned native handler was not disposed exactly once.");
+
+        var ownedRouterHandler = new Handler((_, _) => Task.FromResult(Json("{}")));
+        var ownedRouter = new NativeDiscoveryRouter(TimeSpan.FromSeconds(1), ownedRouterHandler);
+        ownedRouter.Dispose();
+        ownedRouter.Dispose();
+        await ownedRouterHandler.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Require(ownedRouterHandler.Disposals == 1, "Owned discovery handler was not disposed exactly once.");
 
         var invalidClientHandler = new Handler((_, _) => Task.FromResult(Json("{}")));
         try
@@ -285,11 +293,13 @@ internal static class NativeChecks
     private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
     {
         public int Disposals { get; private set; }
+        internal TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => send(request, cancellationToken);
         protected override void Dispose(bool disposing)
         {
             if (disposing) Disposals++;
             base.Dispose(disposing);
+            if (disposing) Disposed.TrySetResult();
         }
     }
 }

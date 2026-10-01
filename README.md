@@ -144,6 +144,9 @@ blocking cancellation registrations cannot delay the caller-facing deadline.
 Cancellation callbacks retain operation capacity until completion. Response
 disposal waits for actual body invocation completion, allowing captured read
 continuations to finish before synchronous cleanup runs.
+Owned transport disposal is deferred until all operations, cancellation callbacks
+and response cleanup drain, then runs on an owned worker. `Dispose` stops new
+calls without waiting for noncooperative outstanding work.
 Cancellation sources introduced by a caller-owned `HttpClient`, such as its
 `Timeout`, execute their own registrations; callbacks registered with those
 sources must remain nonblocking.
