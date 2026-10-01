@@ -12,10 +12,14 @@ public sealed class NativeBoundaryTests
         var shared = new NativeWriteValue.Live([new NativeField(1,
             new NativeValue.Bytes(ImmutableArray.Create(new byte[256 * 1024])))]);
         var commit = NativeCodecTests.CreateCommit();
-        commit = commit with { Writes = Enumerable.Range(0, 1024).Select(index => commit.Writes[0] with
+        commit = commit with
         {
-            Document = $"018f0000-0000-7000-8000-{index:x12}", Value = shared
-        }).ToImmutableArray() };
+            Writes = Enumerable.Range(0, 1024).Select(index => commit.Writes[0] with
+            {
+                Document = $"018f0000-0000-7000-8000-{index:x12}",
+                Value = shared
+            }).ToImmutableArray()
+        };
         using var handler = new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected."));
         using var client = NativeClientTests.Client(handler);
         var before = GC.GetAllocatedBytesForCurrentThread();
@@ -31,10 +35,14 @@ public sealed class NativeBoundaryTests
         var shared = new NativeWriteValue.Live(Enumerable.Range(1, 1024)
             .Select(id => new NativeField((uint)id, new NativeValue.Null())).ToImmutableArray());
         var commit = NativeCodecTests.CreateCommit();
-        commit = commit with { Writes = Enumerable.Range(0, 512).Select(index => commit.Writes[0] with
+        commit = commit with
         {
-            Document = $"018f0000-0000-7000-8000-{index:x12}", Value = shared
-        }).ToImmutableArray() };
+            Writes = Enumerable.Range(0, 512).Select(index => commit.Writes[0] with
+            {
+                Document = $"018f0000-0000-7000-8000-{index:x12}",
+                Value = shared
+            }).ToImmutableArray()
+        };
         using var client = NativeClientTests.Client(new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected.")));
         var before = GC.GetAllocatedBytesForCurrentThread();
         try { client.PrepareCommit(commit); throw new InvalidOperationException("Oversized commit was accepted."); }
@@ -47,10 +55,13 @@ public sealed class NativeBoundaryTests
     public async Task JsonEncodingEnforcesWireLimitWhenTextEscapingExpandsAValidEffect()
     {
         var commit = NativeCodecTests.CreateCommit(new string('é', 400_000));
-        commit = commit with { Writes = [commit.Writes[0], commit.Writes[0] with
+        commit = commit with
+        {
+            Writes = [commit.Writes[0], commit.Writes[0] with
         {
             Document = "018f0000-0000-7000-8000-000000000006"
-        }] };
+        }]
+        };
         using var handler = new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected."));
         using var client = NativeClientTests.Client(handler);
         await Assert.ThrowsAsync<InvalidDataException>(() =>
@@ -64,10 +75,13 @@ public sealed class NativeBoundaryTests
     public async Task LiteralUnicodeRetainedBodiesAreValidatedWithoutReplacementSerialization()
     {
         var commit = NativeCodecTests.CreateCommit("marker");
-        commit = commit with { Writes = [commit.Writes[0], commit.Writes[0] with
+        commit = commit with
+        {
+            Writes = [commit.Writes[0], commit.Writes[0] with
         {
             Document = "018f0000-0000-7000-8000-000000000006"
-        }] };
+        }]
+        };
         var small = NativeCodec.EncodeCommit(NativeCodecTests.Scope, commit);
         // Independent TB-DOC-EFFECT-v1 digest for two 400,000-character UTF-8 values.
         const string digest = "aa43ee6d10b4e2564c28483341c731922e7b851d976e8eb1cea389a5b3b96254";
@@ -308,6 +322,26 @@ public sealed class NativeBoundaryTests
             if (queryPage) NativeCodec.EncodeQueryPage(new NativeQueryPage(rows, null));
             else NativeCodec.EncodePoint(point);
             throw new InvalidOperationException("Oversized point/page was accepted.");
+        }
+        catch (InvalidDataException) { }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        await Assert.That(allocated).IsLessThan(64L * 1024 * 1024);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OversizedPointContextsStopBeforeBufferingEveryOrigin(bool queryPage)
+    {
+        var context = Enumerable.Range(0, 250_000).Select(index =>
+            new NativeObserved($"018f0000-0000-7000-8000-{index:x12}", new string('1', 32), 1)).ToImmutableArray();
+        var point = new NativePoint(NativePointState.Absent, null, context, []);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        try
+        {
+            if (queryPage) NativeCodec.EncodeQueryPage(new NativeQueryPage([new NativeQueryRow(NativeCodecTests.Document, point)], null));
+            else NativeCodec.EncodePoint(point);
+            throw new InvalidOperationException("Oversized point context was accepted.");
         }
         catch (InvalidDataException) { }
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;

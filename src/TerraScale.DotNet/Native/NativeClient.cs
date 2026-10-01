@@ -196,32 +196,41 @@ public sealed class NativeClient : IDisposable
         ThrowIfDisposed();
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(timeout);
+        var budgetToken = budget.Token;
+        var dispatchGate = new object();
         var sent = false;
         int? status = null;
         TimeSpan? retryAfter = null;
         var phase = "credential";
         try
         {
-            budget.Token.ThrowIfCancellationRequested();
-            var key = ValidateKey(await keyProvider(budget.Token).AsTask().WaitAsync(budget.Token).ConfigureAwait(false));
+            budgetToken.ThrowIfCancellationRequested();
+            var key = ValidateKey(await NativeTransport.InvokeAsync(() => keyProvider(budgetToken).AsTask(), budgetToken).ConfigureAwait(false));
             phase = "admission";
-            var admission = await admissionProvider.ResolveAsync(Scope, key, capabilities, budget.Token).AsTask()
-                .WaitAsync(budget.Token).ConfigureAwait(false);
-            using var request = new HttpRequestMessage(method, new Uri(admission.Origin, path));
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-            if (body is not null)
+            var admission = await NativeTransport.InvokeAsync(
+                () => admissionProvider.ResolveAsync(Scope, key, capabilities, budgetToken).AsTask(), budgetToken).ConfigureAwait(false);
+            var response = await NativeTransport.InvokeAsync(async () =>
             {
-                request.Content = new ByteArrayContent(Encoding.UTF8.GetBytes(body));
-                request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-            }
-            budget.Token.ThrowIfCancellationRequested();
-            admission.AssertCurrent();
-            budget.Token.ThrowIfCancellationRequested();
-            phase = "response";
-            sent = true;
-            var response = await NativeTransport.AwaitOwnedAsync(client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token),
-                budget.Token, NativeTransport.ReleaseLate).ConfigureAwait(false);
+                admission.AssertCurrent();
+                budgetToken.ThrowIfCancellationRequested();
+                // The transport invocation owns the request until it completes,
+                // even if a synchronous handler outlives the caller's wait.
+                using var request = new HttpRequestMessage(method, new Uri(admission.Origin, path));
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+                if (body is not null)
+                {
+                    request.Content = new ByteArrayContent(Encoding.UTF8.GetBytes(body));
+                    request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+                }
+                lock (dispatchGate)
+                {
+                    budgetToken.ThrowIfCancellationRequested();
+                    phase = "response";
+                    sent = true;
+                }
+                return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budgetToken).ConfigureAwait(false);
+            }, budgetToken, NativeTransport.ReleaseLate).ConfigureAwait(false);
             await using var responseLifetime = NativeTransport.Own(response, budget.Token);
             status = (int)response.StatusCode;
             retryAfter = RetryAfter(response);
@@ -258,17 +267,24 @@ public sealed class NativeClient : IDisposable
         catch (OperationCanceledException)
         {
             return Failure<T>(cancellationToken.IsCancellationRequested ? "cancelled" : "deadline_exceeded", status, retryAfter,
-                identity, mutation && sent ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown);
+                identity, MutationOutcome());
         }
         catch (Exception exception) when (exception is InvalidDataException or JsonException or FormatException)
         {
             return Failure<T>(phase == "credential" ? "invalid_credential" : phase == "admission" ? "invalid_admission" : "invalid_response", status, retryAfter, identity,
-                mutation && sent ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown);
+                MutationOutcome());
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException)
         {
             return Failure<T>("transport_unavailable", status, retryAfter, identity,
-                mutation && sent ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown);
+                MutationOutcome());
+        }
+
+        NativeMutationOutcome MutationOutcome()
+        {
+            // Pair cancellation classification with the worker's dispatch
+            // transition; a queued invocation cannot send after a definite failure.
+            lock (dispatchGate) return mutation && sent ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown;
         }
     }
 
@@ -302,13 +318,13 @@ public sealed class NativeClient : IDisposable
     private static async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         if (response.Content.Headers.ContentLength > NativeCodec.MaximumBodyBytes) throw new InvalidDataException("Native response exceeds the 4 MiB limit.");
-        var stream = await NativeTransport.AwaitOwnedAsync(response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
+        var stream = await NativeTransport.InvokeAsync(() => response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
             NativeTransport.ReleaseLate).ConfigureAwait(false);
         using var output = new MemoryStream();
         var buffer = new byte[81920];
         while (true)
         {
-            var count = await NativeTransport.AwaitOwnedAsync(stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
+            var count = await NativeTransport.InvokeAsync(() => stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
             if (count == 0) break;
             if (output.Length + count > NativeCodec.MaximumBodyBytes) throw new InvalidDataException("Native response exceeds the 4 MiB limit.");
             output.Write(buffer, 0, count);
@@ -360,7 +376,20 @@ internal static class NativeTransport
         }
     }
 
-    internal static async Task<T> AwaitOwnedAsync<T>(Task<T> operation, CancellationToken cancellationToken, Action<T>? releaseLate = null)
+    internal static Task<T> InvokeAsync<T>(Func<Task<T>> invoke, CancellationToken cancellationToken, Action<T>? releaseLate = null)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        // A callback can block before returning its task. Isolate invocation
+        // as well as completion, checking cancellation again on the worker.
+        var operation = Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return invoke();
+        });
+        return AwaitOwnedAsync(operation, cancellationToken, releaseLate);
+    }
+
+    private static async Task<T> AwaitOwnedAsync<T>(Task<T> operation, CancellationToken cancellationToken, Action<T>? releaseLate)
     {
         try
         {
@@ -393,5 +422,6 @@ internal static class NativeTransport
         AllowAutoRedirect = false,
         UseCookies = false,
         AutomaticDecompression = DecompressionMethods.None
-    }, disposeHandler: true) { Timeout = Timeout.InfiniteTimeSpan };
+    }, disposeHandler: true)
+    { Timeout = Timeout.InfiniteTimeSpan };
 }

@@ -155,13 +155,11 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
             query["rev"] = observed.Revision.ToString(CultureInfo.InvariantCulture);
         }
         var encoded = string.Join('&', query.Select(pair => Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value)));
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(atlasOrigin, "/api/v1/discovery?" + encoded));
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        var address = new Uri(atlasOrigin, "/api/v1/discovery?" + encoded);
         var startedAt = clock.GetUtcNow();
         var startedTimestamp = clock.GetTimestamp();
 
-        var response = await SendDiscoveryAsync(request, deadlineToken, cancellationToken).ConfigureAwait(false);
+        var response = await SendDiscoveryAsync(address, apiKey, deadlineToken, cancellationToken).ConfigureAwait(false);
         await using var responseLifetime = NativeTransport.Own(response, deadlineToken);
         var body = await ReadDiscoveryBodyAsync(response, deadlineToken, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode != HttpStatusCode.OK)
@@ -220,15 +218,21 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
     }
 
     private async Task<HttpResponseMessage> SendDiscoveryAsync(
-        HttpRequestMessage request,
+        Uri address,
+        string apiKey,
         CancellationToken deadlineToken,
         CancellationToken cancellationToken)
     {
         try
         {
-            return await NativeTransport.AwaitOwnedAsync(
-                client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadlineToken), deadlineToken,
-                NativeTransport.ReleaseLate).ConfigureAwait(false);
+            return await NativeTransport.InvokeAsync(async () =>
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, address);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                deadlineToken.ThrowIfCancellationRequested();
+                return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadlineToken).ConfigureAwait(false);
+            }, deadlineToken, NativeTransport.ReleaseLate).ConfigureAwait(false);
         }
         catch (HttpRequestException)
         {
@@ -277,13 +281,13 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
     {
         if (response.Content.Headers.ContentLength > BodyLimit)
             throw new NativeAdmissionException("invalid_discovery");
-        var stream = await NativeTransport.AwaitOwnedAsync(response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
+        var stream = await NativeTransport.InvokeAsync(() => response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
             NativeTransport.ReleaseLate).ConfigureAwait(false);
         using var body = new MemoryStream();
         var buffer = new byte[4096];
         while (true)
         {
-            var count = await NativeTransport.AwaitOwnedAsync(stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
+            var count = await NativeTransport.InvokeAsync(() => stream.ReadAsync(buffer, cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
             if (count == 0) return body.ToArray();
             if (body.Length + count > BodyLimit) throw new NativeAdmissionException("invalid_discovery");
             body.Write(buffer, 0, count);

@@ -281,6 +281,7 @@ public static class NativeCodec
             writer.WriteString("incarnation", entry.Incarnation);
             writer.WriteString("sequence", Decimal(entry.Sequence));
             writer.WriteEndObject();
+            writer.Flush();
         }
         writer.WriteEndArray();
         writer.WriteStartArray("siblings");
