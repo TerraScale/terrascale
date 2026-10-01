@@ -290,9 +290,15 @@ public sealed class NativeClient : IDisposable
             budgetToken.ThrowIfCancellationRequested();
             return result;
         }
-        catch (NativeAdmissionException exception)
+        catch (NativeAdmissionException exception) when (phase == "admission")
         {
             return Failure<T>(exception.Code, exception.Status, null, identity, NativeMutationOutcome.Unknown);
+        }
+        catch (NativeAdmissionException) when (phase == "response")
+        {
+            // A supplied transport/content callback is not an admission
+            // authority. Preserve observed HTTP metadata and dispatch identity.
+            return Failure<T>("invalid_response", status, retryAfter, identity, MutationOutcome());
         }
         catch (OperationCanceledException) when (budgetToken.IsCancellationRequested)
         {

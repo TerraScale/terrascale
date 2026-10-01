@@ -12,6 +12,32 @@ public sealed class NativeResponseBoundaryTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task PostDispatchAdmissionExceptionsPreserveActualResponseAndUncertainIdentity(bool bodyFailure)
+    {
+        var calls = 0;
+        using var handler = new NativeClientTests.Handler((_, _) =>
+        {
+            Interlocked.Increment(ref calls);
+            if (!bodyFailure) throw new NativeAdmissionException("discovery_forbidden", 403);
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new AdmissionFailureContent() };
+            response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(7));
+            return Task.FromResult(response);
+        });
+        using var client = NativeClientTests.Client(handler);
+        var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+        var result = await client.CommitAsync(prepared);
+        var failure = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
+        await Assert.That(failure.Code).IsEqualTo("invalid_response");
+        await Assert.That(failure.Status).IsEqualTo(bodyFailure ? 200 : (int?)null);
+        await Assert.That(failure.RetryAfter).IsEqualTo(bodyFailure ? TimeSpan.FromSeconds(7) : (TimeSpan?)null);
+        await Assert.That(failure.Transaction).IsEqualTo(prepared.Identity);
+        await Assert.That(failure.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
+        await Assert.That(calls).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task LargeDecodeRemainsInsideCallerAndDeadlineIsolation(bool cancelCaller)
     {
         var context = Enumerable.Range(1, 10_000).Select(index =>
@@ -216,6 +242,14 @@ public sealed class NativeResponseBoundaryTests
                 BytesWritten += chunk.Length;
             }
         }
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+    }
+
+    private sealed class AdmissionFailureContent : HttpContent
+    {
+        internal AdmissionFailureContent() => Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        protected override Task SerializeToStreamAsync(Stream destination, TransportContext? context) =>
+            Task.FromException(new NativeAdmissionException("discovery_forbidden", 403));
         protected override bool TryComputeLength(out long length) { length = 0; return false; }
     }
 }
