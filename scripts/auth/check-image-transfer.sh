@@ -39,7 +39,7 @@ case "$1" in
       fi
       shift
     done
-    printf '%s\n' "$IMAGE_MANIFEST_DIGEST" > "$RELEASE_MANIFEST" ;;
+    ;;
   list-tags) [[ ${FAIL_LIST_TAGS:-} != 1 ]] || exit 1; cat "$TAGS" ;;
   inspect)
     # The very old run-2 tag aliases a recent run-2 tag and must survive.
@@ -47,7 +47,7 @@ case "$1" in
 esac
 STUB
 chmod +x "$sandbox/bin/"*
-export PATH="$sandbox/bin:$PATH" CALLS="$sandbox/calls" TAGS="$sandbox/tags" RELEASE_MANIFEST="$sandbox/release-manifest"
+export PATH="$sandbox/bin:$PATH" CALLS="$sandbox/calls" TAGS="$sandbox/tags"
 export RUNNER_TEMP="$sandbox/temp" REPOSITORY_OWNER=TerraScale REGISTRY_PUSH_TOKEN=fixture-token
 export GITHUB_RUN_ID=42 GITHUB_RUN_ATTEMPT=1 GITHUB_OUTPUT="$sandbox/output"
 IMAGE_MANIFEST_DIGEST="sha256:$(printf '%064d' 3)"
@@ -82,11 +82,11 @@ awk -v ref="docker://git.terrascale.tech/terrascale/ts-auth:$commit" \
   -v source="docker://git.terrascale.tech/terrascale/ts-auth-ci@$IMAGE_MANIFEST_DIGEST" \
   '$1 == "copy" && $2 == "--all" && $3 == "--preserve-digests" && $(NF-1) == source && $NF == ref {found++} END {exit found != 2}' "$CALLS"
 reject env PUSH_DIGEST=invalid bash "$transfer" stage
-cp "$RELEASE_MANIFEST" "$sandbox/released-before-failure"
 reject env FAIL_COPY=1 bash "$transfer" publish
-cmp "$RELEASE_MANIFEST" "$sandbox/released-before-failure"
+test -z "$(find "$RUNNER_TEMP" -mindepth 1 -print -quit)"
 reject env COPY_DIGEST="sha256:$(printf '%064d' 4)" bash "$transfer" publish
 grep -F 'published manifest digest does not match the staged digest' "$sandbox/rejected" >/dev/null
+test -z "$(find "$RUNNER_TEMP" -mindepth 1 -print -quit)"
 # Single and double underscores are valid registry component separators.
 for owner in org_name org__name; do
   REPOSITORY_OWNER="$owner" bash "$transfer" publish
