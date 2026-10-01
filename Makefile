@@ -17,10 +17,13 @@ check-generated:
 	GOTOOLCHAIN=local GOFLAGS=-mod=vendor $(GO) tool templ generate $(TEMPL_GENERATE_ARGS) -check
 
 # Check that dependencies remain available publicly even though builds use vendor.
+# This includes the public ts-go replacement; Forgejo's go-import metadata points
+# to its own Git repository. Public proxy/sumdb availability is a CI requirement.
+# Clear GONOSUMDB as well as GOPRIVATE so saved exclusions cannot skip verification.
 check-modules:
 	@set -eu; \
 		task_module_cache=$$(mktemp -d); \
-		trap 'task_exit_status=$$?; if [ -n "$${task_module_cache:-}" ]; then GOTOOLCHAIN=local GOMODCACHE="$$task_module_cache" GOFLAGS= $(GO) clean -modcache || :; fi; exit "$$task_exit_status"' EXIT; \
+		trap 'task_exit_status=$$?; if [ -n "$${task_module_cache:-}" ]; then chmod -R u+w -- "$$task_module_cache" && rm -rf -- "$$task_module_cache" || :; fi; exit "$$task_exit_status"' EXIT; \
 		trap 'exit 1' HUP INT TERM; \
 		GOTOOLCHAIN=local GOMODCACHE="$$task_module_cache" GOFLAGS=-mod=readonly \
 		GOPROXY=https://proxy.golang.org,direct GOPRIVATE= GONOPROXY= \

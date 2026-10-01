@@ -14,13 +14,23 @@ alongside their packages.
 
 The vanity import has no Go module metadata, so the versioned replacement
 resolves the source through the public HTTPS repository without credentials,
-an internal proxy, or a sibling checkout. The vendored SDK retains the downstream regional hostname correction
-described below; the module pin still identifies the unpatched upstream archive.
+an internal proxy, or a sibling checkout. The public source version matches
+the dashboard's existing upstream pin. The regional hostname correction below
+remains a downstream vendor patch.
+
+The repository's public `go-import` metadata names
+`https://git.terrascale.tech/TerraScale/ts-go.git`, with no Codeberg mirror.
+`make check-modules` intentionally verifies this replacement alongside all
+other modules through the public proxy and checksum database from an empty
+cache. Public availability of this pinned revision is required for CI.
 
 To refresh, update both SDK versions in `go.mod`, run `GOFLAGS=-mod=mod go mod
 tidy` and `GOFLAGS=-mod=mod go mod vendor`, then restore this file and record
-the new commit and checksums. Run `make check-modules`, lint, and the fast and
-slow tests before shipping. Builds continue to use `GOFLAGS=-mod=vendor`.
+the new commit and checksums. Reapply the regional hostname correction below
+when refreshing the current pin; for SDK upgrades, check whether upstream
+already includes it and update the patch record accordingly. Run
+`make check-modules`, lint, and the fast and slow tests before shipping.
+Builds continue to use `GOFLAGS=-mod=vendor`.
 
 ## Regional API hostname correction
 
