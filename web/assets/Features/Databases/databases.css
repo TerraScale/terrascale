@@ -18,6 +18,11 @@
 
 .ts-db-search > .ts-input {
   flex-basis: 240px;
+  min-width: 6rem;
+}
+
+.ts-db-search > .ts-btn {
+  padding-inline: var(--ts-s1);
 }
 
 .ts-db-name {
