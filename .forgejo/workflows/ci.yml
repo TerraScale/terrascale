@@ -22,7 +22,7 @@ jobs:
     name: verify/static-contracts
     runs-on: terrascale-builder
     container:
-      image: git.terrascale.tech/terrascale/ts-builder@sha256:265dd0079910888f668752f27341065df6228eaa2306fd467b424cd042fe1f60
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:1dadc3d1a395e37143a418e12690cbb6b9692175d77b66e7c1de8f126258b150
     timeout-minutes: 45
     steps:
       - name: Check out the exact event revision
@@ -88,7 +88,7 @@ jobs:
           - node: "24.21.0"
     runs-on: terrascale-builder
     container:
-      image: git.terrascale.tech/terrascale/ts-builder@sha256:265dd0079910888f668752f27341065df6228eaa2306fd467b424cd042fe1f60
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:1dadc3d1a395e37143a418e12690cbb6b9692175d77b66e7c1de8f126258b150
     timeout-minutes: 45
     steps:
       - name: Check out the exact event revision
@@ -164,7 +164,7 @@ jobs:
     name: verify/browser-current-engines
     runs-on: terrascale-builder
     container:
-      image: git.terrascale.tech/terrascale/ts-builder@sha256:265dd0079910888f668752f27341065df6228eaa2306fd467b424cd042fe1f60
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:1dadc3d1a395e37143a418e12690cbb6b9692175d77b66e7c1de8f126258b150
     timeout-minutes: 60
     steps:
       - name: Check out the exact event revision
@@ -207,7 +207,7 @@ jobs:
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     runs-on: terrascale-builder
     container:
-      image: git.terrascale.tech/terrascale/ts-builder@sha256:265dd0079910888f668752f27341065df6228eaa2306fd467b424cd042fe1f60
+      image: git.terrascale.tech/terrascale/ts-builder@sha256:1dadc3d1a395e37143a418e12690cbb6b9692175d77b66e7c1de8f126258b150
     timeout-minutes: 15
     concurrency:
       group: ts-js-npm-publish
