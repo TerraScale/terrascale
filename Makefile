@@ -6,7 +6,7 @@ GO_TEST_FLAGS ?= -race -count=1
 VERSION ?= $(shell git rev-parse HEAD 2>/dev/null || echo dev)
 export GOFLAGS
 
-.PHONY: build check-css check-generated css dev generate js serve lint perf test-fast test-slow
+.PHONY: build check-css check-generated css dev generate js serve lint perf test-fast test-slow test-unit test-browser
 
 TEMPL_GENERATE_ARGS = -path internal -include-version=false -include-timestamp=false
 
@@ -56,9 +56,20 @@ test-fast: js
 	$(GO) test $(GO_TEST_FLAGS) -short -parallel 8 ./internal/...
 	$(GO) test $(GO_TEST_FLAGS) -short -p 1 -parallel 1 ./tests/...
 
-test-slow: js
+test-slow: test-unit test-browser
+
+# test-slow in parts, so CI runs the unit tests and the browser shards as
+# parallel jobs. E2E_SHARD=INDEX/TOTAL runs one round-robin share of the
+# browser tests in its own process, dashboard and Chromium (see
+# scripts/e2e-shard.sh); the default 1/1 runs them all.
+E2E_SHARD ?= 1/1
+
+test-unit: js
 	$(GO) test $(GO_TEST_FLAGS) -parallel 8 ./internal/...
-	$(GO) test $(GO_TEST_FLAGS) -p 1 -parallel 1 ./tests/...
+
+test-browser: js
+	$(GO) test $(GO_TEST_FLAGS) -p 1 -parallel 1 \
+		-run "$$(scripts/e2e-shard.sh $(E2E_SHARD) $(GO_TEST_FLAGS))" ./tests/...
 
 perf: js
 	DASHBOARD_E2E_PERF=1 $(GO) test -count=1 -run TestPerformance -v ./tests/e2e
