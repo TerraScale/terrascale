@@ -3,36 +3,32 @@ set -euo pipefail
 
 : "${GITHUB_ENV:?GITHUB_ENV is required}"
 browser_paths="$(mktemp "${RUNNER_TEMP:-/tmp}/terrascale-branded-browsers.XXXXXX")"
+trap 'rm -f -- "$browser_paths"' EXIT
+script_dir=$(cd "$(dirname "$0")" && pwd)
 # Use actual vendor browsers and their Nix runtime closures. The revision and
 # NAR digest bind the definitions and upstream vendor archive hashes together.
 # fetchTarball is fixed-output, so with a cache the source substitutes by its
 # NAR digest instead of being downloaded and unpacked again.
-nixpkgs='builtins.fetchTarball {
-  url = "https://github.com/NixOS/nixpkgs/archive/b4fd65b198c599cbe814fcb9f42d25d021595ec9.tar.gz";
-  sha256 = "sha256-ilerN1WLSvF+HMjziC/Wv99J5y02maDH+6hZPwsORKg=";
-}'
 # TS_NIX_CACHE names a binary cache that persists between jobs (CI: the
 # runner's shared /cache volume). The pinned closures substitute from it
-# instead of being downloaded from upstream and rebuilt in every job.
+# instead of being downloaded from upstream and rebuilt in every job. Require
+# signatures from the runner's configured public keys for non-content-addressed
+# paths: any job can write the shared cache, so unsigned browser closures must
+# never be trusted. Newly built closures also remain in the runner's /nix store.
 substituters=()
 if [ -n "${TS_NIX_CACHE:-}" ]; then
-  substituters=(--extra-substituters "${TS_NIX_CACHE}?trusted=1&priority=10")
+  substituters=(--extra-substituters "${TS_NIX_CACHE}?priority=10")
 fi
-nix build "${substituters[@]}" --max-jobs 1 --cores 2 --no-link --print-out-paths --expr "
-  let
-    pkgs = import (${nixpkgs}) {
-      system = \"x86_64-linux\";
-      config.allowUnfree = true;
-    };
-  in [ pkgs.google-chrome pkgs.microsoft-edge ]
-" > "${browser_paths}"
+nix build "${substituters[@]}" --option require-sigs true --max-jobs 1 --cores 2 \
+  --no-link --print-out-paths --file "$script_dir/branded-browsers.nix" > "$browser_paths"
 if [ -n "${TS_NIX_CACHE:-}" ]; then
   # Keep the evaluated nixpkgs source and both runtime closures in the cache;
   # paths it already holds are skipped.
-  # shellcheck disable=SC2046 # one store path per word
-  nix copy --to "${TS_NIX_CACHE}?compression=zstd&parallel-compression=true" \
-    "$(nix eval --raw --expr "${nixpkgs}")" \
-    $(nix-store --query --requisites $(cat "${browser_paths}"))
+  mapfile -t browser_roots < "$browser_paths"
+  if ! nix copy --to "${TS_NIX_CACHE}?compression=zstd&parallel-compression=true" \
+    "$(nix eval --raw --file "$script_dir/nixpkgs-pin.nix")" "${browser_roots[@]}"; then
+    echo "warning: could not populate the optional browser cache" >&2
+  fi
 fi
 
 chrome=""
