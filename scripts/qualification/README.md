@@ -1,7 +1,8 @@
 # Native package qualification
 
 `check_native_package.py` consumes one immutable `.nupkg`; it never packs or
-references the SDK project. Supply its exact version, SHA-256 and target:
+references the SDK project. Supply its exact normalized NuGet version (without
+build metadata or leading zeros in numeric components), SHA-256 and target:
 
 ```bash
 python3 scripts/qualification/check_native_package.py \

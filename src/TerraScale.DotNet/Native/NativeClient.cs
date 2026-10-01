@@ -205,7 +205,6 @@ public sealed class NativeClient : IDisposable
             phase = "admission";
             var admission = await admissionProvider.ResolveAsync(Scope, key, capabilities, budget.Token).AsTask()
                 .WaitAsync(budget.Token).ConfigureAwait(false);
-            phase = "response";
             using var request = new HttpRequestMessage(method, new Uri(admission.Origin, path));
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
@@ -217,6 +216,7 @@ public sealed class NativeClient : IDisposable
             budget.Token.ThrowIfCancellationRequested();
             admission.AssertCurrent();
             budget.Token.ThrowIfCancellationRequested();
+            phase = "response";
             sent = true;
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token).ConfigureAwait(false);
             status = (int)response.StatusCode;
@@ -265,7 +265,7 @@ public sealed class NativeClient : IDisposable
 
     private static string ValidateKey(string key)
     {
-        if (string.IsNullOrEmpty(key) || key.Length > 4096 || key.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)))
+        if (string.IsNullOrEmpty(key) || key.Length > 4096 || key.Any(character => !char.IsAscii(character) || char.IsWhiteSpace(character) || char.IsControl(character)))
             throw new InvalidDataException("Native scoped key must be nonblank and bounded.");
         return key;
     }

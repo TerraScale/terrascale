@@ -19,6 +19,8 @@
     <PackageReleaseNotes>Native v1 client replaces TerraScaleClient, its options, AddTerraScaleClient, and the obsolete EF provider; use NativeClient and AddTerraScaleAuthClient. Supports .NET 10 and .NET 11. Producer and release qualification remain external gates recorded against immutable package bytes.</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Deterministic>true</Deterministic>
+    <!-- Required only by source-generated platform file-persistence interop. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IncludeSymbols>false</IncludeSymbols>
   </PropertyGroup>
 

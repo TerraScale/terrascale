@@ -53,7 +53,7 @@ public static class NativeOperationStore
                 stream.Flush(flushToDisk: true);
             }
             cancellationToken.ThrowIfCancellationRequested();
-            File.Move(temporary, destination, overwrite: false);
+            NativeFilePersistence.MoveDurably(temporary, destination, directory);
         }
         finally
         {
@@ -66,13 +66,7 @@ public static class NativeOperationStore
     /// <summary>Loads a private bounded operation file and revalidates its scope and exact native effect.</summary>
     public static async Task<NativeRetainedOperation> LoadAsync(string path, CancellationToken cancellationToken = default)
     {
-        var file = new FileInfo(path);
-        if (file.LinkTarget is not null) throw new InvalidDataException("Native operation file must not be a symbolic link.");
-        if (!OperatingSystem.IsWindows() && (File.GetUnixFileMode(path) &
-            (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
-             UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0)
-            throw new InvalidDataException("Native operation file must be private to its owner.");
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous);
+        await using var stream = NativeFilePersistence.OpenPrivateRead(path);
         if (stream.Length > MaximumRetainedBytes) throw new InvalidDataException("Native operation file exceeds its byte limit.");
         using var buffer = new MemoryStream();
         var chunk = new byte[81920];

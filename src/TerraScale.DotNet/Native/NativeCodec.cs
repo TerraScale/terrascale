@@ -97,6 +97,9 @@ public static class NativeCodec
         var authority = WireAuthority(commit.Authority);
         var transaction = WireTransaction(commit.TransactionId);
         Bounded(commit.Writes, 1024, 1);
+        // Reject oversized aggregate effects before allocating base64 wire
+        // strings for every write. The digest walk uses one bounded buffer.
+        var digest = EffectDigest(scope, commit.Authority, commit.Writes);
         string? previous = null;
         var writes = new List<object>(commit.Writes.Length);
         foreach (var write in commit.Writes)
@@ -108,7 +111,6 @@ public static class NativeCodec
             previous = order;
             writes.Add(wire);
         }
-        var digest = EffectDigest(scope, commit.Authority, commit.Writes);
         var identity = new NativeTransactionIdentity(commit.TransactionId, commit.Authority, digest);
         return (Json(Object(("version", 1), ("transaction_id", transaction), ("authority", authority),
             ("effect_digest", digest), ("writes", writes))), identity);
@@ -125,6 +127,16 @@ public static class NativeCodec
     /// <summary>Encodes a complete native query page and opaque continuation cursor.</summary>
     public static string EncodeQueryPage(NativeQueryPage page)
     {
+        ArgumentNullException.ThrowIfNull(page);
+        Bounded(page.Rows, 128);
+        string? previous = null;
+        foreach (var row in page.Rows)
+        {
+            var document = CanonicalUuid(row.Document, "document");
+            if (previous is not null && string.CompareOrdinal(previous, document) >= 0)
+                throw Invalid("Query documents must be strictly increasing.");
+            previous = document;
+        }
         var root = Object(("version", 1), ("rows", page.Rows.Select(row => Object(
             ("document", CanonicalUuid(row.Document, "document")), ("point", WirePoint(row.Point)))).ToArray()));
         if (page.NextCursor is not null) root["next_cursor"] = Cursor(page.NextCursor);
@@ -752,9 +764,9 @@ public static class NativeCodec
 
     private static string Json(object value)
     {
-        var json = JsonSerializer.Serialize(value);
-        if (Utf8.GetByteCount(json) > MaximumBodyBytes) throw Invalid("Native request exceeds the 4 MiB limit.");
-        return json;
+        using var stream = new BoundedJsonStream(MaximumBodyBytes);
+        JsonSerializer.Serialize(stream, value);
+        return Utf8.GetString(stream.GetBuffer(), 0, checked((int)stream.Length));
     }
 
     private static void Fields(JsonElement value, string[] required, string[]? optional = null)
@@ -789,8 +801,15 @@ public static class NativeCodec
         if (entries.IsDefault || entries.Length < minimum || entries.Length > maximum) throw Invalid("Native array exceeds its bounds.");
     }
 
-    private static string Text(JsonElement value) => value.ValueKind == JsonValueKind.String
-        ? value.GetString()! : throw Invalid("Expected native protocol text.");
+    private static string Text(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.String) throw Invalid("Expected native protocol text.");
+        try { return value.GetString()!; }
+        catch (InvalidOperationException exception)
+        {
+            throw new InvalidDataException("Native protocol text contains invalid Unicode.", exception);
+        }
+    }
 
     private static string ValidateText(string value)
     {
@@ -831,6 +850,25 @@ public static class NativeCodec
     }
 
     private static InvalidDataException Invalid(string message) => new(message);
+
+    private sealed class BoundedJsonStream(int maximum) : MemoryStream
+    {
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (Length + count > maximum) throw Invalid("Native request exceeds the 4 MiB limit.");
+            base.Write(buffer, offset, count);
+        }
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            if (Length + buffer.Length > maximum) throw Invalid("Native request exceeds the 4 MiB limit.");
+            base.Write(buffer);
+        }
+        public override void WriteByte(byte value)
+        {
+            if (Length >= maximum) throw Invalid("Native request exceeds the 4 MiB limit.");
+            base.WriteByte(value);
+        }
+    }
 
     private sealed class Budget
     {

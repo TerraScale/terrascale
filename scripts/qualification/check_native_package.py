@@ -137,8 +137,11 @@ def main() -> None:
     package_sha = hashlib.sha256(package_bytes).hexdigest()
     if package_sha != arguments.sha256 or len(arguments.sha256) != 64:
         raise SystemExit("Native candidate package identity differs.")
-    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", arguments.version) is None:
-        raise SystemExit("An exact native candidate package version is required.")
+    if re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?", arguments.version) is None:
+        raise SystemExit("An exact normalized native candidate package version without build metadata is required.")
+    prerelease = arguments.version.partition("-")[2]
+    if any(part.isdigit() and len(part) > 1 and part.startswith("0") for part in prerelease.split(".")):
+        raise SystemExit("Native candidate prerelease components must be normalized.")
     with zipfile.ZipFile(io.BytesIO(package_bytes)) as archive:
         nuspecs = [name for name in archive.namelist() if name.endswith(".nuspec")]
         if len(nuspecs) != 1 or archive.getinfo(nuspecs[0]).file_size > 1024 * 1024:

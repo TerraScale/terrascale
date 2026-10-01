@@ -137,4 +137,8 @@ scope requests, and retains at most 256 scope observation floors for its lifetim
 Floors survive lease expiry: deployment or cell changes require explicit
 reprovisioning and a new router. The pinned contract rejects future publication
 timestamps and consumes fetch latency from the lease, so clocks must be synchronized.
-On Windows callers must secure retained operation directories with private ACLs.
+Recovery persistence flushes the file and synchronizes its rename before `SaveAsync`
+returns: Linux/macOS use directory fsync, and Windows uses a write-through move.
+Unix recovery loads open without following links and validate permissions on the
+opened file. On Windows callers must secure retained operation directories with
+private ACLs.

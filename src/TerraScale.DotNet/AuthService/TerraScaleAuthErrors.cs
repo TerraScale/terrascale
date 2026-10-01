@@ -15,7 +15,16 @@ internal static class TerraScaleAuthErrors
         HttpResponseMessage response,
         CancellationToken cancellationToken)
     {
-        var code = await ReadErrorCodeAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        string? code;
+        try
+        {
+            code = await ReadErrorCodeAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or HttpRequestException)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            code = null;
+        }
         return new TerraScaleAuthException(
             response.StatusCode,
             $"ts-auth returned HTTP {(int)response.StatusCode}.",
