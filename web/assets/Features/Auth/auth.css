@@ -51,19 +51,45 @@
   background: var(--ts-canvas);
 }
 
+/* The reference places the header in the top 304px and the account link
+   immediately above the locale footer. */
 .ts-login-panel {
   display: grid;
-  align-content: center;
+  grid-template-rows: 1fr auto;
   gap: var(--ts-s5);
-  width: min(22rem, 100%);
+  width: min(384px, calc(100% - 2 * var(--ts-s5)));
   margin-inline: auto;
-  padding: var(--ts-s10) var(--ts-s4);
+  padding-top: var(--ts-s4);
+}
+
+.ts-login-stack {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s5);
+  min-height: 0;
+}
+
+.ts-login-heading {
+  display: grid;
+  align-content: end;
+  gap: var(--ts-s5);
+  min-height: 288px;
+  padding-bottom: var(--ts-s3);
+}
+
+.ts-login-heading .ts-auth-title {
+  font-size: var(--ts-fs-3xl);
 }
 
 .ts-login-logo {
   justify-self: center;
   width: auto;
-  height: 68px;
+  height: 80px;
+  object-fit: contain;
+}
+
+.ts-login-panel .ts-auth-providers .ts-btn {
+  height: var(--ts-control-h-lg);
 }
 
 .ts-login-footer {
@@ -86,7 +112,15 @@
     border-left: 0;
   }
 
+  .ts-login-panel {
+    width: min(384px, calc(100% - 2 * var(--ts-s4)));
+  }
+
   .ts-login-logo {
-    height: 52px;
+    height: 64px;
+  }
+
+  .ts-login-heading {
+    min-height: 0;
   }
 }

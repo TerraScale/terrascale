@@ -78,6 +78,8 @@ make css        # bundle web/assets into web/static/css/terrascale.css
 make js         # bundle web/assets/js into the generated web/static/js/
 make test-fast  # Go browser journeys with -race (skips the SDK journey)
 make test-slow  # full Go browser suite including the account-to-ts-go journey
+make test-unit  # test-slow's package unit tests only
+make test-browser E2E_SHARD=2/4  # one round-robin share of test-slow's browser tests
 make perf       # Core Web Vitals report in test-results/performance.json
 make build      # CSS and script bundles and optimized bin/dashboard-release
 ```
@@ -146,8 +148,8 @@ public dependency resolution and runs in CI before the vendored build checks.
 It uses the installed Go toolchain and a temporary module cache, removed on
 exit, so a warm runner cache cannot hide download failures. The check downloads
 the full module graph, including tool and transitive module dependencies.
-It clears Go's [module privacy settings](https://go.dev/ref/mod#private-modules),
-`GOPRIVATE`, `GONOPROXY`, and `GONOSUMDB`, so local exclusions cannot
+It disables the saved Go environment file with `GOENV=off` and clears Go's [module privacy settings](https://go.dev/ref/mod#private-modules),
+`GOPRIVATE`, `GONOPROXY`, `GONOSUMDB`, and `GOINSECURE`, so inherited exclusions cannot
 bypass the public proxy or checksum database. Cleanup makes the throwaway
 cache writable and removes the directory directly, even if Go fails to start,
 while preserving the download exit status.

@@ -7,10 +7,15 @@ on:
 concurrency:
   group: dashboard-e2e
   cancel-in-progress: false
+# The ts-builder job image supplies the pinned Go and Node.js toolchains, a
+# library-patched Chromium with fonts and a 1777 /tmp, and npm and Go caches on
+# the runner's persistent /cache, so each parallel job sets up in seconds.
+env:
+  E2E_SHARDS: "4"
 jobs:
-  test:
+  lint:
     runs-on: terrascale-builder
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -23,7 +28,36 @@ jobs:
         run: make check-modules
       - name: Check generated Templ and CSS, and lint
         run: make lint check-css
-      # The ts-builder job image supplies the pinned Go and Node.js toolchains
-      # and a library-patched Chromium with fonts and a 1777 /tmp.
-      - name: Run Go browser and account-to-ts-go tests
-        run: make test-slow
+  unit:
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          persist-credentials: false
+      - name: Install dashboard JS dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Run Go unit tests
+        run: make test-unit
+  # Each shard is its own process with an in-process dashboard and Chromium,
+  # still serial inside, so together the shards run make test-slow's browser
+  # half: every test runs in exactly one shard.
+  browser:
+    runs-on: terrascale-builder
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          persist-credentials: false
+      - name: Install dashboard JS dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Run Go browser and account-to-ts-go tests (shard ${{ matrix.shard }}/${{ env.E2E_SHARDS }})
+        run: make test-browser E2E_SHARD=${{ matrix.shard }}/${{ env.E2E_SHARDS }}
