@@ -207,12 +207,25 @@ public sealed class TerraScaleDiscoveryRouter
         }
     }
 
-    internal bool HasAlternative(string database, IReadOnlySet<string> failedRegions, bool needsWrite)
+    internal async Task<bool> HasAlternativeAsync(
+        string database, IReadOnlySet<string> failedRegions, bool needsWrite, CancellationToken cancellationToken)
     {
         var required = needsWrite ? TerraScaleRoutingCapability.Write : TerraScaleRoutingCapability.Read;
-        var document = routingCache.Get(ScopeFor(database));
-        // An expired document must refresh on the next safe attempt. Selection
-        // then excludes every region already failed by this request.
+        var scope = ScopeFor(database);
+        var document = routingCache.Get(scope);
+        if (document is null)
+        {
+            // Refresh before releasing the regional failure. A successful
+            // refresh with no unfailed region is exhaustion, not an outage
+            // that permits falling back to the proxy.
+            if (await ResolveBaseAsync(database, needsWrite, failedRegions, cancellationToken).ConfigureAwait(false) is not null)
+            {
+                return true;
+            }
+
+            document = routingCache.Get(scope);
+        }
+
         return document is null || document.Endpoints.Any(endpoint =>
             !failedRegions.Contains(endpoint.Region) && endpoint.Capabilities.Contains(required));
     }

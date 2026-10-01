@@ -1096,7 +1096,8 @@ public sealed class TerraScaleClient
                 if (response.StatusCode == HttpStatusCode.MisdirectedRequest)
                 {
                     var adopted = !repairedMisdirect && TryAdoptPlacement(response, routing);
-                    var alternative = TryFailover(routing, routedBase, failedRegions);
+                    var alternative = await TryFailoverAsync(routing, routedBase, failedRegions,
+                        CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry), requestCancellationToken, response).ConfigureAwait(false);
                     if (!repairedMisdirect && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) && (alternative || adopted))
                     {
                         repairedMisdirect = true;
@@ -1107,7 +1108,8 @@ public sealed class TerraScaleClient
 
                 if ((int)response.StatusCode >= 500)
                 {
-                    var alternative = TryFailover(routing, routedBase, failedRegions);
+                    var alternative = await TryFailoverAsync(routing, routedBase, failedRegions,
+                        CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry), requestCancellationToken, response).ConfigureAwait(false);
                     if (alternative && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) &&
                         (GetRetryAfter(response) ?? TimeSpan.Zero) <= MaxRetryAfter)
                     {
@@ -1115,6 +1117,11 @@ public sealed class TerraScaleClient
                         response.Dispose();
                         await DelayRetryAsync(failoverDelay, requestCancellationToken).ConfigureAwait(false);
                         continue;
+                    }
+
+                    if (!alternative && routedBase?.Region is not null)
+                    {
+                        return response;
                     }
                 }
 
@@ -1137,13 +1144,14 @@ public sealed class TerraScaleClient
             catch (Exception exception) when (exception is HttpRequestException ||
                 exception is OperationCanceledException && !requestCancellationToken.IsCancellationRequested)
             {
-                var alternative = TryFailover(routing, routedBase, failedRegions);
+                var alternative = await TryFailoverAsync(routing, routedBase, failedRegions,
+                        CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry), requestCancellationToken).ConfigureAwait(false);
                 if (alternative && CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry))
                 {
                     continue;
                 }
 
-                if (!CanRetry(method, idempotencyKey, attempt, allowUnkeyedPutRetry))
+                if (routedBase?.Region is not null || !CanRetry(method, idempotencyKey, attempt, allowUnkeyedPutRetry))
                 {
                     throw;
                 }
@@ -1232,7 +1240,9 @@ public sealed class TerraScaleClient
         }
     }
 
-    private bool TryFailover(TerraScaleRequestRouting routing, (Uri BaseAddress, string? Region)? routedBase, HashSet<string> failedRegions)
+    private async Task<bool> TryFailoverAsync(
+        TerraScaleRequestRouting routing, (Uri BaseAddress, string? Region)? routedBase,
+        HashSet<string> failedRegions, bool allowFailover, CancellationToken cancellationToken, HttpResponseMessage? response = null)
     {
         if (router is null || routing.Database is null || routedBase is not ({ }, { } region) ||
             !failedRegions.Add(region))
@@ -1241,7 +1251,16 @@ public sealed class TerraScaleClient
         }
 
         router.ReportRegionFailure(routing.Database, region);
-        return router.HasAlternative(routing.Database, failedRegions, routing.NeedsWrite);
+        try
+        {
+            return allowFailover && await router.HasAlternativeAsync(
+                routing.Database, failedRegions, routing.NeedsWrite, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            response?.Dispose();
+            throw;
+        }
     }
 
     private async ValueTask<HttpRequestMessage> CreateRequestAsync(
