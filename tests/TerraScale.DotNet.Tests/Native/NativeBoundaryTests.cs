@@ -382,6 +382,51 @@ public sealed class NativeBoundaryTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RecoveryRejectsPrivateLeavesBeneathReplaceableAncestors(bool load)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Directory.CreateTempSubdirectory("terrascale-native-hierarchy-");
+        try
+        {
+            var ancestor = Directory.CreateDirectory(Path.Combine(root.FullName, "replaceable"));
+            var leaf = Directory.CreateDirectory(Path.Combine(ancestor.FullName, "private"));
+            using var client = NativeClientTests.Client(new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected.")));
+            var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+            var path = Path.Combine(leaf.FullName, "operation.json");
+            if (load) await NativeOperationStore.SaveAsync(prepared, path);
+            File.SetUnixFileMode(ancestor.FullName, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.OtherWrite);
+            var error = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            {
+                if (load) await NativeOperationStore.LoadAsync(path);
+                else await NativeOperationStore.SaveAsync(prepared, path);
+            });
+            await Assert.That(error!.Message).IsEqualTo("Native operation directory must prevent changes by other users.");
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Test]
+    public async Task RecoveryAllowsIntermediateLinksControlledByProtectedDirectories()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Directory.CreateTempSubdirectory("terrascale-native-trusted-link-");
+        try
+        {
+            var real = Directory.CreateDirectory(Path.Combine(root.FullName, "real"));
+            Directory.CreateDirectory(Path.Combine(real.FullName, "private"));
+            Directory.CreateSymbolicLink(Path.Combine(root.FullName, "alias"), "real");
+            var path = Path.Combine(root.FullName, "alias", "private", "operation.json");
+            using var client = NativeClientTests.Client(new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("No dispatch expected.")));
+            var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+            await NativeOperationStore.SaveAsync(prepared, path);
+            await Assert.That((await NativeOperationStore.LoadAsync(path)).Identity).IsEqualTo(prepared.Identity);
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Test]
     public async Task RecoveryReadRemainsBoundToTheValidatedDirectoryAfterPathReplacement()
     {
         if (OperatingSystem.IsWindows()) return;
@@ -423,9 +468,7 @@ public sealed class NativeBoundaryTests
             // probe process so loss of O_NONBLOCK produces a targeted failure.
             // A dedicated probe avoids starting another TUnit engine under CI.
             var host = Path.GetFullPath(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "../../..", "dotnet"));
-            var output = new DirectoryInfo(AppContext.BaseDirectory);
-            var probeAssembly = Path.GetFullPath(Path.Combine(output.FullName, "../../../../TerraScale.DotNet.FifoProbe/bin",
-                output.Parent!.Name, output.Name, "TerraScale.DotNet.FifoProbe.dll"));
+            var probeAssembly = Path.Combine(AppContext.BaseDirectory, "FifoProbe", "TerraScale.DotNet.FifoProbe.dll");
             var probeStart = new System.Diagnostics.ProcessStartInfo(host)
             {
                 UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true

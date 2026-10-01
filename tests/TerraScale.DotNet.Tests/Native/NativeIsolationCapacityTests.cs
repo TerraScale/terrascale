@@ -64,6 +64,80 @@ public sealed class NativeIsolationCapacityTests
         await Assert.That(credentialCalls).IsEqualTo(capacity + 1);
     }
 
+    [Test]
+    public async Task ConcurrentClientDeadlinesDoNotDependOnWorkersBlockedByProviders()
+    {
+        ThreadPool.GetMinThreads(out var minimum, out _);
+        var instances = Math.Clamp((minimum + 31) / 16, 4, 16);
+        using var release = new ManualResetEventSlim();
+        using var started = new SemaphoreSlim(0);
+        using var stopWatchdog = new ManualResetEventSlim();
+        using var clock = new ArmedDeadlineClock();
+        var clients = new List<NativeClient>();
+        var requests = new List<Task<NativeResult<NativePoint>>>();
+        var watchdogReleased = false;
+        var watchdog = new Thread(() =>
+        {
+            // The test's own failure guard must survive thread-pool starvation.
+            if (!stopWatchdog.Wait(TimeSpan.FromSeconds(15))) { watchdogReleased = true; release.Set(); }
+        }) { IsBackground = true };
+        watchdog.Start();
+        try
+        {
+            for (var index = 0; index < instances; index++)
+            {
+                var handler = new NativeClientTests.Handler((_, _) => throw new InvalidOperationException("Cancelled providers must never dispatch."));
+                var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
+                    _ =>
+                    {
+                        started.Release();
+                        if (!release.Wait(TimeSpan.FromSeconds(30))) throw new TimeoutException("Provider was not released.");
+                        return ValueTask.FromResult("tbk1.fixture-key");
+                    }, TimeSpan.FromSeconds(30), handler, clock);
+                clients.Add(client);
+                for (var operation = 0; operation < NativeTransport.MaximumOutstandingOperations; operation++)
+                    requests.Add(client.ReadAsync(NativeCodecTests.Collection, NativeCodecTests.Document));
+            }
+            for (var index = 0; index < requests.Count; index++)
+                if (!await started.WaitAsync(TimeSpan.FromSeconds(10))) throw new TimeoutException("Concurrent provider did not start.");
+            var beginning = System.Diagnostics.Stopwatch.GetTimestamp();
+            // These are real shared-pool deadline timers, armed only after all
+            // providers start. No ThreadPool minimum or maximum is changed.
+            clock.Arm(TimeSpan.FromMilliseconds(100));
+            var results = await Task.WhenAll(requests).WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(beginning)).IsLessThan(TimeSpan.FromSeconds(5));
+            await Assert.That(watchdogReleased).IsFalse();
+            foreach (var result in results)
+                await Assert.That(((NativeResult<NativePoint>.Failure)result).Error.Code).IsEqualTo("deadline_exceeded");
+        }
+        finally
+        {
+            release.Set();
+            stopWatchdog.Set();
+            if (!watchdog.Join(TimeSpan.FromSeconds(5))) throw new TimeoutException("Test watchdog did not finish.");
+            using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            foreach (var client in clients)
+            {
+                try { await client.WaitForIdleAsync(drain.Token); }
+                finally { client.Dispose(); }
+            }
+        }
+    }
+
+    private sealed class ArmedDeadlineClock : TimeProvider, IDisposable
+    {
+        private readonly List<ITimer> timers = [];
+        private readonly object gate = new();
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = System.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            lock (gate) timers.Add(timer);
+            return timer;
+        }
+        internal void Arm(TimeSpan delay) { lock (gate) foreach (var timer in timers) timer.Change(delay, Timeout.InfiniteTimeSpan); }
+        public void Dispose() { lock (gate) foreach (var timer in timers) timer.Dispose(); }
+    }
+
     private sealed class Blocker(int capacity) : IDisposable
     {
         private int completed;

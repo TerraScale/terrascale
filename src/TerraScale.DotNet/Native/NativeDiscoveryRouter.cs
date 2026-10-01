@@ -481,6 +481,10 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
     /// <summary>Disposes an owned discovery transport once; a caller-owned HttpClient remains usable.</summary>
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref disposed, 1) == 0 && ownsClient) client.Dispose();
+        if (Interlocked.Exchange(ref disposed, 1) == 0)
+        {
+            isolation.Dispose();
+            if (ownsClient) client.Dispose();
+        }
     }
 }

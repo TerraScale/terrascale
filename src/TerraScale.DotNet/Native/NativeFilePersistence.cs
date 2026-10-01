@@ -79,13 +79,15 @@ internal static partial class NativeFilePersistence
         }
     }
 
-    internal static void ValidateDirectory(SafeFileHandle parent)
+    internal static void ValidateDirectory(SafeFileHandle parent, bool allowRootSticky = false)
     {
         if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Directory-descriptor persistence requires Unix.");
         if (FStat(parent, out var status) != 0) throw IoError("Cannot inspect native operation directory owner.");
         if (status.Uid != 0 && status.Uid != GetEffectiveUid())
             throw new InvalidDataException("Native operation directory must have a trusted owner.");
-        if ((File.GetUnixFileMode(parent) & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0)
+        var mode = File.GetUnixFileMode(parent);
+        if ((mode & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0 &&
+            !(allowRootSticky && status.Uid == 0 && (mode & UnixFileMode.StickyBit) != 0))
             throw new InvalidDataException("Native operation directory must prevent changes by other users.");
     }
 
@@ -163,7 +165,7 @@ internal sealed partial class NativeOperationDirectory : IDisposable
     internal static NativeOperationDirectory Open(string path)
     {
         if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Directory-descriptor persistence requires Unix.");
-        var parent = NativeFilePersistence.OpenUnix(path, directory: true);
+        var parent = NativeDirectoryPath.Open(path);
         try
         {
             NativeFilePersistence.ValidateDirectory(parent);

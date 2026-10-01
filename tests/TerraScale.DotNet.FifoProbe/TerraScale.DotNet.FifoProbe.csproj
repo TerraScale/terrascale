@@ -9,4 +9,9 @@
   <ItemGroup>
     <ProjectReference Include="../../src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
   </ItemGroup>
+  <Target Name="GetFifoProbeArtifacts" DependsOnTargets="ResolveReferences;GetTargetPath" Returns="@(FifoProbeArtifact)">
+    <ItemGroup>
+      <FifoProbeArtifact Include="$(TargetPath);$(TargetDir)$(AssemblyName).runtimeconfig.json;$(TargetDir)$(AssemblyName).deps.json;@(ReferenceCopyLocalPaths)" />
+    </ItemGroup>
+  </Target>
 </Project>

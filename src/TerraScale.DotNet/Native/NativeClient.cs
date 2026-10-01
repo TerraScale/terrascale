@@ -350,7 +350,11 @@ public sealed class NativeClient : IDisposable
     /// <summary>Disposes an owned transport once; a caller-owned HttpClient remains usable.</summary>
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref disposed, 1) == 0 && ownsClient) client.Dispose();
+        if (Interlocked.Exchange(ref disposed, 1) == 0)
+        {
+            isolation.Dispose();
+            if (ownsClient) client.Dispose();
+        }
     }
 }
 
@@ -379,9 +383,22 @@ internal static class NativeTransport
     // Capacity belongs to the client/router, not process-wide state. A timed-out
     // caller releases its own reference, while callbacks and cleanup retain
     // theirs until actual completion. Queued callers use no blocking worker.
-    internal sealed class Isolation
+    internal sealed class Isolation : IDisposable
     {
         private readonly SemaphoreSlim capacity = new(MaximumOutstandingOperations, MaximumOutstandingOperations);
+        private readonly NativeInvocationExecutor executor = new(MaximumOutstandingOperations);
+        private readonly object gate = new();
+        private int active;
+        private bool disposed;
+
+        private void EndOperation()
+        {
+            lock (gate) { if (--active == 0 && disposed) executor.Dispose(); }
+        }
+        public void Dispose()
+        {
+            lock (gate) { disposed = true; if (active == 0) executor.Dispose(); }
+        }
 
         // Qualification can await every outstanding callback and cleanup,
         // rather than observing only the caller's cancellation return.
@@ -402,14 +419,20 @@ internal static class NativeTransport
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                return new Operation(capacity);
+                lock (gate)
+                {
+                    ObjectDisposedException.ThrowIf(disposed, this);
+                    active++;
+                    return new Operation(capacity, executor, EndOperation);
+                }
             }
             catch { capacity.Release(); throw; }
         }
     }
 
-    internal sealed class Operation(SemaphoreSlim capacity) : IDisposable
+    internal sealed class Operation(SemaphoreSlim capacity, NativeInvocationExecutor executor, Action completed) : IDisposable
     {
+        private NativeInvocationExecutor Executor => executor;
         private int references = 1;
         private int disposed;
 
@@ -428,7 +451,7 @@ internal static class NativeTransport
             try
             {
                 // Isolation bounds invocation as well as the returned task.
-                operation = Task.Run(() =>
+                operation = executor.ExecuteAsync(() =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     return invoke();
@@ -452,7 +475,11 @@ internal static class NativeTransport
             {
                 var result = await pending.ConfigureAwait(false);
                 if (releaseLate is not null)
-                    await Task.Run(() => releaseLate(result)).ConfigureAwait(false);
+                    await executor.ExecuteAsync(() =>
+                    {
+                        releaseLate(result);
+                        return Task.FromResult(true);
+                    }).ConfigureAwait(false);
             }
             catch (Exception) { /* Observe late faults without replacing the caller's outcome. */ }
             finally { ReleaseReference(); }
@@ -461,7 +488,11 @@ internal static class NativeTransport
         private void AddReference() => Interlocked.Increment(ref references);
         private void ReleaseReference()
         {
-            if (Interlocked.Decrement(ref references) == 0) capacity.Release();
+            if (Interlocked.Decrement(ref references) == 0)
+            {
+                capacity.Release();
+                completed();
+            }
         }
 
         public void Dispose()
@@ -477,10 +508,11 @@ internal static class NativeTransport
             {
                 var original = Interlocked.Exchange(ref owned, null);
                 if (original is null) return;
-                var cleanup = Task.Run(() =>
+                var cleanup = operation.Executor.ExecuteAsync(() =>
                 {
                     try { DisposeResource(original); }
                     finally { operation.ReleaseReference(); }
+                    return Task.FromResult(true);
                 });
                 try { await cleanup.WaitAsync(cancellationToken).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
