@@ -57,6 +57,24 @@
   min-width: 0;
 }
 
+/* Opt-in header: compact actions share the title row; wider actions wrap. */
+.ts-card-head-title-actions {
+  align-items: center;
+  gap: 2px var(--ts-s3);
+}
+
+.ts-card-head-title-actions > .ts-card-heading {
+  flex-basis: max-content;
+}
+
+.ts-card-head-title-actions > .ts-card-actions {
+  margin-left: auto;
+}
+
+.ts-card-head-title-actions > .ts-card-description {
+  flex: 0 0 100%;
+}
+
 .ts-card-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

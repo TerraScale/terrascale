@@ -6,6 +6,8 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
 COPY scripts/build-css.mjs scripts/build-js.mjs ./scripts/
 COPY web/assets ./web/assets
+# The JS build checks Datastar against the pinned release hashes.
+COPY internal/ui/datastar_pins.go ./internal/ui/datastar_pins.go
 # The stylesheet links the fonts by content hash.
 COPY web/static/fonts ./web/static/fonts
 # Release bundles ship brotli-precompressed siblings served in their place.

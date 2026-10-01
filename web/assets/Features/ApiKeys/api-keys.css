@@ -1,5 +1,10 @@
 /* API keys: one-time secret banner, credential type badges, and filters. */
 
+/* Keep the create action right-aligned when the card header wraps. */
+.ts-apikeys-page .ts-card-actions {
+  margin-left: auto;
+}
+
 /* Credential type badge: the icon keeps its size in narrow table cells. */
 .ts-apikeys-type > svg {
   flex: none;

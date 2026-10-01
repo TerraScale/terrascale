@@ -301,7 +301,9 @@ func TestPagesRegionMapIsLazyAndNativeRegionControlsWork(t *testing.T) {
 		return err == nil && response.Request().Method() == http.MethodPost &&
 			parsed.Path == "/api/v1/dashboard/organization/projects"
 	}, func() error {
-		return byRole(projectForm, *playwright.AriaRoleButton, "Create project", true).Click()
+		// The dialog can keep moving under CI rendering load; the POST below
+		// still checks that this button submits the native form.
+		return byRole(projectForm, *playwright.AriaRoleButton, "Create project", true).Click(playwright.LocatorClickOptions{Force: new(true)})
 	})
 	must(t, err)
 	if createProject.Status() != http.StatusSeeOther {

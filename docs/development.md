@@ -37,9 +37,15 @@ bootstrap needs access to the Go module proxy. The dashboard and templ
 generator build from vendored modules. Stopping the foreground `make dev`
 process with Ctrl+C terminates Air, its app child, and both asset watchers.
 
-Page behavior uses the official Datastar v1.0.4 bundle, loaded from the
-jsDelivr CDN with a pinned Subresource Integrity hash (`datastarURL` and
-`datastarIntegrity` in `internal/ui/layout_helpers.go`; update both together).
+Page behavior uses the official Datastar v1.0.4 bundle, vendored with its
+source map and license under `web/assets/js/vendor/`. `scripts/build-js.mjs`
+checks the bundle and source map against the hashes in `internal/ui/datastar_pins.go`,
+rejects remote dynamic imports, and copies these files into `web/static/js/`.
+Pages load it from the dashboard using a content-hashed URL, without a CDN
+request. When upgrading, replace the official bundle, source map and license
+together and update both hashes in `internal/ui/datastar_pins.go` from the
+official release. Git
+preserves the bundle's bytes without normalizing line endings.
 Behavior lives in Go handlers, templ components, native HTML (`<details>`,
 `<dialog>` with `command`/`commandfor`) and Datastar attributes. The one custom
 script is the code editor (`web/assets/js/code-editor/`): `ui.CodeEditor`
@@ -89,8 +95,10 @@ using the `playwright-core` driver pinned in `package.json`; no driver is
 downloaded at test time. When the driver's own Chromium revision is not installed, the suite
 falls back to the newest headless shell under `PLAYWRIGHT_BROWSERS_PATH`
 (the CI image ships one). Each test uses its own browser context and account,
-so tests run in parallel. The accessibility tests inject axe-core, pinned in
-`package.json`, into the signed-out, onboarding, member and admin pages and
+but Chromium journeys run serially to avoid timeouts under the race detector.
+Use `-parallel 1` when running `go test ./tests/e2e` directly. The accessibility
+tests inject axe-core, pinned in `package.json`, into the signed-out,
+onboarding, member and admin pages and
 their dialogs and menus, and fail on any WCAG 2.2 level A or AA violation.
 Set `DASHBOARD_E2E_SCREENSHOTS=<dir>` to capture desktop and mobile
 screenshots.
