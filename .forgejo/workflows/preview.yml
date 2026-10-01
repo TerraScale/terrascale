@@ -48,7 +48,9 @@ jobs:
           fly machine list -a "$PR_APP" --json > "$machines_json"
           fly volumes list -a "$PR_APP" --json > "$volumes_json"
           node scripts/check-fly-deployment.mjs preview "$machines_json" "$volumes_json"
-          curl -fsS --retry 6 --retry-delay 2 --retry-connrefused \
+          # A newly provisioned Fly hostname can close the first TLS handshake.
+          curl -fsS --retry 6 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 10 --max-time 20 --retry-max-time 90 \
             "https://${PR_APP}.fly.dev/health/ready"
       - name: Comment preview URL
         if: success()

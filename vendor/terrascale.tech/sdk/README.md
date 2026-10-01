@@ -13,7 +13,7 @@ Routing follows the ADR 0050 discovery-first flow:
 - **Database-scoped requests** (`/api/v1/databases/{name}/…`) first resolve
   the database's eligible regional endpoints with one metadata GET,
   `https://atlas.terrascale.tech/api/v1/discovery?database=…&branch=main`,
-  then connect directly to the selected `<region>.terrascale.tech`
+  then connect directly to the selected `<region>.api.terrascale.tech`
   member. Documents are cached per routing scope (origin, database, branch,
   project, tenant) for the document's `refreshSeconds` (clamped to 60–3600s);
   concurrent lookups for one scope share a single request. The selected

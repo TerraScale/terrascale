@@ -31,7 +31,7 @@ const DefaultDiscoveryBaseURL = "https://atlas.terrascale.tech"
 const publicAPIHostname = "api.terrascale.tech"
 
 // regionalHostSuffix is the public regional API hostname contract.
-const regionalHostSuffix = ".terrascale.tech"
+const regionalHostSuffix = ".api.terrascale.tech"
 
 const (
 	discoveryPath       = "/api/v1/discovery"

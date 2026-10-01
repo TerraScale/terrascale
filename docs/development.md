@@ -132,7 +132,12 @@ To upgrade the SDK, update both its `require` version and the public repository
 version in `replace`, then run `GOFLAGS=-mod=mod go mod tidy` and
 `GOFLAGS=-mod=mod go mod vendor`. Third-party module updates use those same
 commands. `go mod vendor` deletes `vendor/PROVENANCE.md`; restore it and update
-its source commit and checksums for SDK upgrades. `make check-modules` verifies
+its source commit and checksums for SDK upgrades.
+
+The vendored SDK includes the regional API hostname correction documented in
+`vendor/PROVENANCE.md`. Reapply it after vendoring the current pin; for upgrades,
+check whether the chosen upstream revision already contains the correction.
+`make check-modules` verifies
 public dependency resolution and runs in CI before the vendored build checks.
 It uses the installed Go toolchain and a temporary module cache, removed on
 exit, so a warm runner cache cannot hide download failures. The check downloads
