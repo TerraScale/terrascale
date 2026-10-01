@@ -107,6 +107,8 @@ impl HttpTransport for Mock {
             .expect("unexpected transport call");
         if let Some(clock) = &self.clock {
             clock.advance(advance);
+        } else if advance > 0 {
+            tokio::time::sleep(Duration::from_millis(advance)).await;
         }
         response
     }
@@ -1873,8 +1875,9 @@ async fn default_client_selects_authenticated_native_origin_and_status_after_dow
 }
 #[tokio::test]
 async fn default_point_routes_discovery_then_native_and_transport_loss_never_replays_commit() {
-    let mock = Arc::new(Mock::default());
-    let client = TerraScaleClient::with_transport(
+    let clock = Clock::new();
+    let mock = Mock::new(clock.clone());
+    let client = TerraScaleClient::with_transport_and_clock(
         ClientConfig::builder()
             .api_key(native_key())
             .max_retry_attempts(3)
@@ -1882,8 +1885,11 @@ async fn default_point_routes_discovery_then_native_and_transport_loss_never_rep
             .build()
             .unwrap(),
         mock.clone(),
+        clock,
     );
-    mock.response(200, &current_fixture());
+    let mut discovery = fixture();
+    discovery["refreshSeconds"] = json!(1);
+    mock.response(200, &discovery);
     mock.response(
         200,
         &json!({"version":1,"state":"absent","context":[],"siblings":[],"state_version":null}),
@@ -1917,7 +1923,7 @@ async fn default_point_routes_discovery_then_native_and_transport_loss_never_rep
     mock.replies
         .lock()
         .unwrap()
-        .push_back((Err(Error::transport("after body send")), 0));
+        .push_back((Err(Error::transport("after body send")), 1100));
     assert!(matches!(
         client.transactions().commit(&operation).await.unwrap(),
         CommitOutcome::Uncertain(_)

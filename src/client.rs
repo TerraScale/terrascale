@@ -3,7 +3,7 @@
 use crate::auth_idp::AuthIdpClient;
 use crate::auth_routing::AuthRouter;
 use crate::config::ClientConfig;
-use crate::discovery::{AtlasDiscovery, NativeRequirement};
+use crate::discovery::{AtlasDiscovery, DiscoveryClock, NativeRequirement};
 use crate::documents::{DatabaseScope, DocumentsClient};
 use crate::error::{Error, ErrorKind, Result};
 use crate::subscriptions::SubscriptionsClient;
@@ -57,14 +57,18 @@ pub(crate) struct Shared {
 pub(crate) type SharedClient = Arc<Shared>;
 
 impl Shared {
-    fn new(config: ClientConfig, transport: Arc<dyn HttpTransport>) -> Self {
+    fn new(
+        config: ClientConfig,
+        transport: Arc<dyn HttpTransport>,
+        native_router: AtlasDiscovery,
+    ) -> Self {
         let auth_router = AuthRouter::for_config(
             config.auth_base_url(),
             config.auth_reverse_proxy(),
             config.atlas_base_url(),
         );
         Self {
-            native_router: AtlasDiscovery::new(config.clone(), transport.clone()),
+            native_router,
             transport,
             config,
             auth_router,
@@ -412,8 +416,22 @@ impl TerraScaleClient {
         Self::with_transport(config, Arc::new(ReqwestTransport::new()))
     }
     pub fn with_transport(config: ClientConfig, transport: Arc<dyn HttpTransport>) -> Self {
+        let router = AtlasDiscovery::new(config.clone(), transport.clone());
         Self {
-            shared: Arc::new(Shared::new(config, transport)),
+            shared: Arc::new(Shared::new(config, transport, router)),
+        }
+    }
+    /// Use a caller-owned transport and discovery clock. The clock must advance
+    /// consistently in both wall and monotonic time; injection alone does not
+    /// establish healthy-clock provenance for a deployed client.
+    pub fn with_transport_and_clock(
+        config: ClientConfig,
+        transport: Arc<dyn HttpTransport>,
+        clock: Arc<dyn DiscoveryClock>,
+    ) -> Self {
+        let router = AtlasDiscovery::with_clock(config.clone(), transport.clone(), clock);
+        Self {
+            shared: Arc::new(Shared::new(config, transport, router)),
         }
     }
     #[must_use]
