@@ -220,8 +220,9 @@ public sealed class NativeClient : IDisposable
             budget.Token.ThrowIfCancellationRequested();
             phase = "response";
             sent = true;
-            using var response = await NativeTransport.AwaitOwnedAsync(client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token),
-                budget.Token, static lateResponse => lateResponse.Dispose()).ConfigureAwait(false);
+            var response = await NativeTransport.AwaitOwnedAsync(client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token),
+                budget.Token, NativeTransport.ReleaseLate).ConfigureAwait(false);
+            await using var responseLifetime = NativeTransport.Own(response, budget.Token);
             status = (int)response.StatusCode;
             retryAfter = RetryAfter(response);
             if (response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.OK)
@@ -241,9 +242,12 @@ public sealed class NativeClient : IDisposable
                         : code == "commit_uncertain" ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown
                     : NativeMutationOutcome.Unknown;
                 if (code.Contains(key, StringComparison.Ordinal)) code = "invalid_response";
+                await responseLifetime.DisposeAsync().ConfigureAwait(false);
+                budget.Token.ThrowIfCancellationRequested();
                 return Failure<T>(code, status, retryAfter, identity, outcome);
             }
             var decoded = decode(document.RootElement);
+            await responseLifetime.DisposeAsync().ConfigureAwait(false);
             budget.Token.ThrowIfCancellationRequested();
             return new NativeResult<T>.Success(decoded);
         }
@@ -298,8 +302,8 @@ public sealed class NativeClient : IDisposable
     private static async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         if (response.Content.Headers.ContentLength > NativeCodec.MaximumBodyBytes) throw new InvalidDataException("Native response exceeds the 4 MiB limit.");
-        using var stream = await NativeTransport.AwaitOwnedAsync(response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
-            static lateStream => lateStream.Dispose()).ConfigureAwait(false);
+        var stream = await NativeTransport.AwaitOwnedAsync(response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
+            NativeTransport.ReleaseLate).ConfigureAwait(false);
         using var output = new MemoryStream();
         var buffer = new byte[81920];
         while (true)
@@ -326,6 +330,36 @@ public sealed class NativeClient : IDisposable
 
 internal static class NativeTransport
 {
+    internal static IAsyncDisposable Own(IDisposable resource, CancellationToken cancellationToken) =>
+        new ResourceLifetime(resource, cancellationToken);
+
+    // Caller streams may block in synchronous Dispose. Cleanup owns the
+    // original resource on a worker; a cancelled caller never waits for it.
+    internal static void ReleaseLate(IDisposable resource) => _ = Task.Run(() => DisposeResource(resource));
+
+    private static void DisposeResource(IDisposable resource)
+    {
+        try { resource.Dispose(); }
+        catch (Exception) { /* Cleanup cannot replace the protocol outcome or expose transport diagnostics. */ }
+    }
+
+    private sealed class ResourceLifetime(IDisposable resource, CancellationToken cancellationToken) : IAsyncDisposable
+    {
+        private IDisposable? owned = resource;
+
+        public async ValueTask DisposeAsync()
+        {
+            var original = Interlocked.Exchange(ref owned, null);
+            if (original is null) return;
+            var cleanup = Task.Run(() => DisposeResource(original));
+            try { await cleanup.WaitAsync(cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // The existing cleanup still owns eventual release and observes its own faults.
+            }
+        }
+    }
+
     internal static async Task<T> AwaitOwnedAsync<T>(Task<T> operation, CancellationToken cancellationToken, Action<T>? releaseLate = null)
     {
         try

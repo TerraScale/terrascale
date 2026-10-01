@@ -138,7 +138,7 @@ public sealed class NativeDiscoveryRouterTests
             await Assert.That(calls).IsEqualTo(2);
             if (bodyRead)
             {
-                await Assert.That(pendingBody.Disposed.Task.IsCompleted).IsTrue();
+                await pendingBody.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 await Assert.That(pendingBody.Reads).IsEqualTo(1);
                 pendingBody.Completion.TrySetResult(0);
             }
@@ -157,13 +157,19 @@ public sealed class NativeDiscoveryRouterTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task MalformedDiscoveryUnicodeCannotEscapeTheAdmissionFailureBoundary(bool propertyName)
+    [Arguments("name")]
+    [Arguments("publisher")]
+    [Arguments("residency")]
+    public async Task MalformedDiscoveryUnicodeCannotEscapeTheAdmissionFailureBoundary(string member)
     {
         var clock = new TestClock();
-        var body = Body(clock, Endpoint("GRU")).Replace(propertyName ? "\"authority\"" : "publisher-a",
-            propertyName ? "\"\\uD800\"" : "\\uD800", StringComparison.Ordinal);
+        var body = Body(clock, Endpoint("GRU"));
+        body = member switch
+        {
+            "name" => body.Replace("\"authority\"", "\"\\uD800\"", StringComparison.Ordinal),
+            "publisher" => body.Replace("publisher-a", "\\uD800", StringComparison.Ordinal),
+            _ => body.Replace("\"residency\":null", "\"residency\":[\"\\uD800\"]", StringComparison.Ordinal)
+        };
         using var router = new NativeDiscoveryRouter(TimeSpan.FromSeconds(3), new Transport(body), clock);
         var failure = await CaptureAsync(() => router.ResolveAsync(Scope, Credential, ["read"], CancellationToken.None));
         await Assert.That(failure.Code).IsEqualTo("invalid_discovery");

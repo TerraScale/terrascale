@@ -44,7 +44,7 @@ public sealed class NativeStreamingTests
             if (bodyRead)
             {
                 await Assert.That(error.Status).IsEqualTo(200);
-                await Assert.That(pendingBody.Disposed.Task.IsCompleted).IsTrue();
+                await pendingBody.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 await Assert.That(pendingBody.Reads).IsEqualTo(1);
                 await Assert.That(pendingBody.AsyncDisposals).IsEqualTo(0);
                 pendingBody.Completion.TrySetResult(0);
@@ -89,7 +89,7 @@ public sealed class NativeStreamingTests
         await Assert.That(error.Status).IsEqualTo(200);
         await Assert.That(error.Transaction).IsEqualTo(prepared.Identity);
         await Assert.That(error.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
-        await Assert.That(original!.Disposed).IsTrue();
+        await original!.DisposalCompleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(calls).IsEqualTo(1);
     }
 
@@ -126,7 +126,7 @@ public sealed class NativeStreamingTests
         await Assert.That(error.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
         await Assert.That(sentBody).IsEqualTo(prepared.RequestBody);
         await Assert.That(calls).IsEqualTo(1);
-        await Assert.That(body.Disposed).IsTrue();
+        await body.DisposalCompleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
         if (mode == "declared") await Assert.That(body.Reads).IsEqualTo(0);
         if (mode == "overflow") await Assert.That(body.BytesRead).IsEqualTo(NativeCodec.MaximumBodyBytes + 1);
         if (mode is "cancel" or "deadline")
@@ -170,7 +170,7 @@ public sealed class NativeStreamingTests
 
     private sealed class EofCancellingStream(byte[] bytes, Action cancel) : MemoryStream(bytes)
     {
-        public bool Disposed { get; private set; }
+        public TaskCompletionSource DisposalCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public override bool CanSeek => false;
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -178,7 +178,7 @@ public sealed class NativeStreamingTests
             if (count == 0) cancel();
             return ValueTask.FromResult(count);
         }
-        protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+        protected override void Dispose(bool disposing) { base.Dispose(disposing); if (disposing) DisposalCompleted.TrySetResult(); }
     }
 
     private sealed class BodyStream(int remaining, Action? cancel) : Stream
@@ -187,7 +187,7 @@ public sealed class NativeStreamingTests
         public int Reads { get; private set; }
         public int BytesRead { get; private set; }
         public bool CancellationObserved => readToken.IsCancellationRequested;
-        public bool Disposed { get; private set; }
+        public TaskCompletionSource DisposalCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
@@ -211,7 +211,7 @@ public sealed class NativeStreamingTests
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return 0;
         }
-        protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+        protected override void Dispose(bool disposing) { base.Dispose(disposing); if (disposing) DisposalCompleted.TrySetResult(); }
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();

@@ -161,7 +161,8 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         var startedAt = clock.GetUtcNow();
         var startedTimestamp = clock.GetTimestamp();
 
-        using var response = await SendDiscoveryAsync(request, deadlineToken, cancellationToken).ConfigureAwait(false);
+        var response = await SendDiscoveryAsync(request, deadlineToken, cancellationToken).ConfigureAwait(false);
+        await using var responseLifetime = NativeTransport.Own(response, deadlineToken);
         var body = await ReadDiscoveryBodyAsync(response, deadlineToken, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode != HttpStatusCode.OK)
             throw new NativeAdmissionException(ReadErrorCode(body), (int)response.StatusCode);
@@ -179,6 +180,8 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
             throw new NativeAdmissionException("invalid_discovery");
         }
 
+        await responseLifetime.DisposeAsync().ConfigureAwait(false);
+        deadlineToken.ThrowIfCancellationRequested();
         var lifetime = TimeSpan.FromSeconds(document.RefreshSeconds);
         var remainder = DateTimeOffset.FromUnixTimeSeconds(document.ExpiresAt) - startedAt;
         if (remainder < lifetime) lifetime = remainder;
@@ -225,7 +228,7 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
         {
             return await NativeTransport.AwaitOwnedAsync(
                 client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadlineToken), deadlineToken,
-                static lateResponse => lateResponse.Dispose()).ConfigureAwait(false);
+                NativeTransport.ReleaseLate).ConfigureAwait(false);
         }
         catch (HttpRequestException)
         {
@@ -274,8 +277,8 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
     {
         if (response.Content.Headers.ContentLength > BodyLimit)
             throw new NativeAdmissionException("invalid_discovery");
-        using var stream = await NativeTransport.AwaitOwnedAsync(response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
-            static lateStream => lateStream.Dispose()).ConfigureAwait(false);
+        var stream = await NativeTransport.AwaitOwnedAsync(response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken,
+            NativeTransport.ReleaseLate).ConfigureAwait(false);
         using var body = new MemoryStream();
         var buffer = new byte[4096];
         while (true)
@@ -316,7 +319,7 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
             residency = new HashSet<string>(StringComparer.Ordinal);
             foreach (var item in residencyValue.EnumerateArray())
             {
-                var region = item.ValueKind == JsonValueKind.String ? item.GetString()! : "";
+                var region = item.ValueKind == JsonValueKind.String ? ReadStringValue(item) : "";
                 if (!NativeRegionalOrigin.IsRegionCode(region) || !residency.Add(region)) Invalid();
             }
         }
@@ -420,7 +423,12 @@ public sealed class NativeDiscoveryRouter : INativeAdmissionProvider, IDisposabl
     {
         var property = value.GetProperty(name);
         if (property.ValueKind != JsonValueKind.String) Invalid();
-        try { return property.GetString()!; }
+        return ReadStringValue(property);
+    }
+
+    private static string ReadStringValue(JsonElement value)
+    {
+        try { return value.GetString()!; }
         catch (InvalidOperationException) { throw new NativeAdmissionException("invalid_discovery"); }
     }
 
