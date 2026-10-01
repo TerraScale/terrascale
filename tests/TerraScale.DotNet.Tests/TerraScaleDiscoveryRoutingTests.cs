@@ -293,6 +293,27 @@ public sealed class TerraScaleDiscoveryRoutingTests
     }
 
     [Test]
+    public async Task DefaultDiagnosticTimeoutPermitsHealthyFailover()
+    {
+        RegionalBodyStream? originalBody = null;
+        var transport = new ScriptedTransport
+        {
+            FailRegionalRequests = true,
+            RegionalErrorContent = body => new StreamContent(originalBody = new RegionalBodyStream(Encoding.UTF8.GetBytes(body), false, stall: true)),
+        };
+        var client = CreateClient(transport, new Uri("https://atlas-default-retention-timeout.test"));
+
+        // Independent watchdog: production diagnostic retention must finish
+        // well before the overall 30-second operation deadline.
+        _ = await client.Documents.GetAsync("orders-default-retention-timeout", "items", "item-1").WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.That(originalBody!.CancellationObserved).IsTrue();
+        await Assert.That(originalBody.IsDisposed).IsTrue();
+        await Assert.That(transport.Requests.Count).IsEqualTo(3);
+        await Assert.That(transport.Requests[^1]).StartsWith("GET https://gru.api.terrascale.tech/");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task StalledRegionalDiagnosticsCannotPreventAHealthyFailover(bool stalledAsyncDisposal)
