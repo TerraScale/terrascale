@@ -125,7 +125,7 @@ func (d *DeviceAuthorization) issue(w http.ResponseWriter, r *http.Request) {
 			scheme = "https"
 		}
 		origin, err := url.Parse(scheme + "://" + r.Host)
-		if err != nil || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+		if err != nil || origin.User != nil || origin.Path != "" || strings.ContainsAny(r.Host, "?#") {
 			deviceError(w, 400, "invalid_request")
 			return
 		}

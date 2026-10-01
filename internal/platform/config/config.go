@@ -49,7 +49,7 @@ func Load() (Config, error) {
 	}
 	if c.PublicURL != "" {
 		u, err := url.Parse(c.PublicURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Path != "" || strings.ContainsAny(c.PublicURL, "?#") {
 			return Config{}, errors.New("DASHBOARD_PUBLIC_URL must be an HTTP(S) origin")
 		}
 	}

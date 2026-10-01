@@ -23,7 +23,9 @@ func TestPublicURLConfiguration(t *testing.T) {
 		{"https://user:password@dashboard.example", "", true},
 		{"https://dashboard.example/path", "", true},
 		{"https://dashboard.example?redirect=evil", "", true},
+		{"https://dashboard.example?", "", true},
 		{"https://dashboard.example#fragment", "", true},
+		{"https://dashboard.example#", "", true},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
 			t.Setenv("DASHBOARD_PUBLIC_URL", tc.input)
