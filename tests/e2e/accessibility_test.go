@@ -16,12 +16,9 @@ import (
 // in package.json, against the WCAG 2.0, 2.1 and 2.2 level A and AA rules on
 // the dashboard's pages, dialogs and menus.
 
-// memberAccessibilityPaths are the signed-in pages of the populated sample
-// account. {database} stands for the core-primary database page.
+// memberAccessibilityPaths are the signed-in account pages of the populated
+// sample account.
 var memberAccessibilityPaths = []string{
-	"/", "/?tab=connect", "/databases",
-	"{database}", "{database}/documents", "{database}/sql", "{database}/schema",
-	"{database}/indexes", "{database}/backups", "{database}/branches", "{database}/import",
 	"/api-keys", "/access", "/access?tab=members", "/access?tab=projects", "/access?tab=invitations",
 	"/audit", "/usage", "/usage?tab=billing", "/subscriptions", "/billing",
 	"/organization", "/organization?newOrganization=organization",
@@ -31,9 +28,16 @@ var memberAccessibilityPaths = []string{
 	"/cli/approve", "/agent/approve",
 }
 
+// databaseAccessibilityPaths are the sample account's home and database
+// pages. {database} stands for the core-primary database page.
+var databaseAccessibilityPaths = []string{
+	"/", "/?tab=connect", "/databases",
+	"{database}", "{database}/documents", "{database}/sql", "{database}/schema",
+	"{database}/indexes", "{database}/backups", "{database}/branches", "{database}/import",
+}
+
 // authAccessibilityPaths are the sample account's authentication console
-// pages, checked by their own test so the browser shards share the member
-// pages' cost.
+// pages.
 var authAccessibilityPaths = []string{
 	"/auth", "/auth/quickstart", "/auth/users", "/auth/organizations", "/auth/memberships",
 	"/auth/invitations", "/auth/domains", "/auth/sign-in", "/auth/connections", "/auth/mfa",
@@ -83,10 +87,7 @@ func TestAccessibilityOnboardingAndEmptyStates(t *testing.T) {
 func TestAccessibilityMemberPagesDialogsAndMenus(t *testing.T) {
 	t.Parallel()
 	context := newContext(t, baseURL)
-	setup := watchedPage(t, context)
-	login(t, setup, sampleAccount.Email, sampleAccount.Password)
-	goToOK(t, setup, "/databases")
-	database := linkPath(t, setup, pageByRole(setup, *playwright.AriaRoleLink, "core-primary"))
+	login(t, watchedPage(t, context), sampleAccount.Email, sampleAccount.Password)
 
 	t.Run("menus", func(t *testing.T) {
 		t.Parallel()
@@ -110,6 +111,18 @@ func TestAccessibilityMemberPagesDialogsAndMenus(t *testing.T) {
 		expectAccessible(t, page, "mobile navigation drawer", "")
 	})
 	for _, path := range memberAccessibilityPaths {
+		expectPageAndDialogsAccessible(t, context, path)
+	}
+}
+
+func TestAccessibilityDatabasePagesAndDialogs(t *testing.T) {
+	t.Parallel()
+	context := newContext(t, baseURL)
+	setup := watchedPage(t, context)
+	login(t, setup, sampleAccount.Email, sampleAccount.Password)
+	goToOK(t, setup, "/databases")
+	database := linkPath(t, setup, pageByRole(setup, *playwright.AriaRoleLink, "core-primary"))
+	for _, path := range databaseAccessibilityPaths {
 		expectPageAndDialogsAccessible(t, context, strings.ReplaceAll(path, "{database}", database))
 	}
 }
