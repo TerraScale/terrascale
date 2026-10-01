@@ -82,11 +82,11 @@
 .ts-auth-providers {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--ts-s2);
+  gap: var(--ts-s5);
 }
 
 .ts-auth-providers .ts-btn {
-  flex: 1 1 calc((100% - 2 * var(--ts-s2)) / 3);
+  flex: 1 1 calc((100% - 2 * var(--ts-s5)) / 3);
 }
 
 .ts-auth-locale .ts-select {
