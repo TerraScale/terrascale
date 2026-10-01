@@ -21,8 +21,9 @@ public sealed class NativeResponseBoundaryTests
                 1, NativeCodecTests.SchemaDigest, new NativeWriteValue.Tombstone())]);
         var body = NativeCodec.EncodePoint(point);
         using var handler = new NativeClientTests.Handler((_, _) => Task.FromResult(NativeClientTests.Json(body)));
+        var clock = new ManualDeadlineClock();
         using var client = new NativeClient(NativeCodecTests.Scope, new NativeDirectAdmissionProvider("https://gru.api.terrascale.tech"),
-            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(2), handler);
+            _ => ValueTask.FromResult("tbk1.fixture-key"), TimeSpan.FromSeconds(30), handler, clock);
         using var caller = new CancellationTokenSource();
         using var release = new ManualResetEventSlim();
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -42,6 +43,7 @@ public sealed class NativeResponseBoundaryTests
         {
             await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
             if (cancelCaller) caller.Cancel();
+            else clock.Expire();
             var result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
             await Assert.That(((NativeResult<NativePoint>.Failure)result).Error.Code)
                 .IsEqualTo(cancelCaller ? "cancelled" : "deadline_exceeded");
@@ -142,6 +144,24 @@ public sealed class NativeResponseBoundaryTests
         await Assert.That(failure!.Message).IsEqualTo("Native JSON exceeds its byte limit.");
         await Assert.That(typeof(NativeCodec).GetMethods().Any(method => method.Name.StartsWith("Decode", StringComparison.Ordinal) &&
             method.GetParameters().Any(parameter => parameter.ParameterType == typeof(JsonElement)))).IsFalse();
+    }
+
+    private sealed class ManualDeadlineClock : TimeProvider
+    {
+        private ManualTimer? timer;
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            timer = new ManualTimer(callback, state);
+        internal void Expire() => timer!.Fire();
+
+        private sealed class ManualTimer(TimerCallback callback, object? state) : ITimer
+        {
+            private readonly object gate = new();
+            private bool disposed;
+            internal void Fire() { lock (gate) { if (!disposed) callback(state); } }
+            public bool Change(TimeSpan dueTime, TimeSpan period) { lock (gate) return !disposed; }
+            public void Dispose() { lock (gate) disposed = true; }
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
     }
 
     private sealed class CancellingProvider(string stage, CancellationToken unrelated) : INativeAdmissionProvider

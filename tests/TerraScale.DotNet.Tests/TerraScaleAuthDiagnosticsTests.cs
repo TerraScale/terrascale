@@ -97,7 +97,7 @@ public sealed class TerraScaleAuthDiagnosticsTests
     {
         const string prefix = "{\"error\":\"invalid_client\",\"extra\":\"";
         const string suffix = "\"}";
-        var length = overflow ? 128 * 1024 : 64 * 1024;
+        var length = overflow ? 512 * 1024 : 64 * 1024;
         var body = Encoding.UTF8.GetBytes(prefix + new string('x', length - prefix.Length - suffix.Length) + suffix);
         using var stream = new CountingBodyStream(body);
         using var content = new StreamContent(stream);
@@ -109,7 +109,8 @@ public sealed class TerraScaleAuthDiagnosticsTests
 
         await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(error.ErrorCode).IsEqualTo(overflow ? null : "invalid_client");
-        await Assert.That(stream.BytesRead).IsEqualTo(overflow ? 65_537 : 65_536);
+        if (overflow) await Assert.That(stream.BytesRead > 65_536 && stream.BytesRead < length).IsTrue();
+        else await Assert.That(stream.BytesRead).IsEqualTo(65_536);
         await Assert.That(stream.Disposed).IsTrue();
     }
 

@@ -352,6 +352,12 @@ public sealed class NativeBoundaryTests
     public async Task RecoveryLoadRejectsOwnerPrivateFifosAndDirectories()
     {
         if (OperatingSystem.IsWindows()) return;
+        const string probeVariable = "TERRASCALE_NATIVE_FIFO_PROBE_PATH";
+        if (Environment.GetEnvironmentVariable(probeVariable) is { } probePath)
+        {
+            await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(probePath));
+            return;
+        }
         var directory = Directory.CreateTempSubdirectory("terrascale-native-type-");
         try
         {
@@ -362,7 +368,34 @@ public sealed class NativeBoundaryTests
             await process.WaitForExitAsync();
             await Assert.That(process.ExitCode).IsEqualTo(0);
             File.SetUnixFileMode(fifo, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(fifo));
+            // A blocking FIFO open cannot be interrupted by an async wait in
+            // this process. Run the real SDK load in an independently killable
+            // test process so loss of O_NONBLOCK produces a targeted failure.
+            var host = Environment.ProcessPath!;
+            var probeStart = new System.Diagnostics.ProcessStartInfo(host)
+            {
+                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true
+            };
+            if (Path.GetFileNameWithoutExtension(host) == "dotnet")
+                probeStart.ArgumentList.Add(typeof(NativeBoundaryTests).Assembly.Location);
+            probeStart.ArgumentList.Add("--treenode-filter");
+            probeStart.ArgumentList.Add("/*/*/NativeBoundaryTests/RecoveryLoadRejectsOwnerPrivateFifosAndDirectories");
+            probeStart.ArgumentList.Add("--minimum-expected-tests");
+            probeStart.ArgumentList.Add("1");
+            probeStart.Environment[probeVariable] = fifo;
+            using var probe = System.Diagnostics.Process.Start(probeStart)!;
+            var stdout = probe.StandardOutput.ReadToEndAsync();
+            var stderr = probe.StandardError.ReadToEndAsync();
+            using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            try { await probe.WaitForExitAsync(guard.Token); }
+            catch (OperationCanceledException)
+            {
+                probe.Kill(entireProcessTree: true);
+                await probe.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                throw new TimeoutException("FIFO recovery load blocked; the isolated probe was terminated.");
+            }
+            var report = await stdout + await stderr;
+            if (probe.ExitCode != 0) throw new InvalidOperationException("FIFO recovery probe failed: " + report);
             await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(directory.FullName));
         }
         finally { directory.Delete(recursive: true); }

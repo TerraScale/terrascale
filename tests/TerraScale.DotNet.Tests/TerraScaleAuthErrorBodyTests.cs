@@ -32,6 +32,45 @@ public sealed class TerraScaleAuthErrorBodyTests
         await Assert.That(error.ErrorCode).IsNull();
     }
 
+    [Test]
+    public async Task UndeclaredSerializingAuthErrorStopsAtTheBodyLimit()
+    {
+        using var content = new OversizedContent();
+        using var handler = new NativeClientTests.Handler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Content = content,
+            Headers = { RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(2)) }
+        }));
+        using var http = new HttpClient(handler);
+        var client = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions
+        {
+            BaseAddress = new Uri("https://auth.example.test"), ApiKey = "auth-test-key", InstanceSlug = "test", MaxRetryAttempts = 0
+        });
+        var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
+        await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+        await Assert.That(error.RetryAfter).IsEqualTo(TimeSpan.FromSeconds(2));
+        await Assert.That(error.ErrorCode).IsNull();
+        await Assert.That(content.BytesWritten).IsEqualTo(64 * 1024);
+        await Assert.That(content.AttemptedBytes).IsEqualTo(72 * 1024);
+    }
+
+    private sealed class OversizedContent : HttpContent
+    {
+        internal int BytesWritten { get; private set; }
+        internal int AttemptedBytes { get; private set; }
+        protected override async Task SerializeToStreamAsync(Stream destination, TransportContext? context)
+        {
+            var chunk = new byte[8192];
+            for (var index = 0; index < 1024; index++)
+            {
+                AttemptedBytes += chunk.Length;
+                await destination.WriteAsync(chunk);
+                BytesWritten += chunk.Length;
+            }
+        }
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+    }
+
     private sealed class BrokenContent : HttpContent
     {
         protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => throw new HttpRequestException("Body acquisition interrupted.");

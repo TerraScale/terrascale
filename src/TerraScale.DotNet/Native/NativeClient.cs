@@ -16,6 +16,7 @@ public sealed class NativeClient : IDisposable
     private readonly INativeAdmissionProvider admissionProvider;
     private readonly Func<CancellationToken, ValueTask<string>> keyProvider;
     private readonly TimeSpan timeout;
+    private readonly TimeProvider deadlineClock;
     private readonly string? explicitOrigin;
     private readonly bool ownsClient;
     private int disposed;
@@ -62,8 +63,16 @@ public sealed class NativeClient : IDisposable
     {
     }
 
+    internal NativeClient(NativeScope scope, INativeAdmissionProvider admissionProvider,
+        Func<CancellationToken, ValueTask<string>> keyProvider, TimeSpan timeout, HttpMessageHandler handler, TimeProvider deadlineClock)
+        : this(scope, admissionProvider, keyProvider, timeout, NativeTransport.CreateClient(handler), ownsClient: true, deadlineClock)
+    {
+    }
+
+    internal Task WaitForIdleAsync(CancellationToken cancellationToken) => isolation.WaitForIdleAsync(cancellationToken);
+
     private NativeClient(NativeScope scope, INativeAdmissionProvider admissionProvider,
-        Func<CancellationToken, ValueTask<string>> keyProvider, TimeSpan timeout, HttpClient httpClient, bool ownsClient)
+        Func<CancellationToken, ValueTask<string>> keyProvider, TimeSpan timeout, HttpClient httpClient, bool ownsClient, TimeProvider? deadlineClock = null)
     {
         try
         {
@@ -72,6 +81,7 @@ public sealed class NativeClient : IDisposable
             this.keyProvider = keyProvider ?? throw new ArgumentNullException(nameof(keyProvider));
             if (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromMinutes(5)) throw new ArgumentOutOfRangeException(nameof(timeout));
             this.timeout = timeout;
+            this.deadlineClock = deadlineClock ?? TimeProvider.System;
             explicitOrigin = (admissionProvider as NativeDirectAdmissionProvider)?.Origin;
             client = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
             this.ownsClient = ownsClient;
@@ -195,8 +205,8 @@ public sealed class NativeClient : IDisposable
         NativeTransactionIdentity? identity = null, bool mutation = false)
     {
         ThrowIfDisposed();
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(timeout);
+        using var deadline = new CancellationTokenSource(timeout, deadlineClock);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         var budgetToken = budget.Token;
         var dispatchGate = new object();
         var sent = false;
@@ -359,60 +369,12 @@ internal static class NativeTransport
             if (content.Headers.ContentLength > limit) throw overflow();
             // Copy directly into a bounded destination. ReadAsStreamAsync can
             // materialize an undeclared custom content body before any check.
-            using var destination = new BoundedBodyStream(limit, overflow, cancellationToken);
+            using var destination = new BoundedHttpBodyStream(limit, overflow, cancellationToken);
             await content.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             return destination.ToArray();
         }, cancellationToken);
     }
-
-    private sealed class BoundedBodyStream(int limit, Func<Exception> overflow, CancellationToken token) : Stream
-    {
-        private readonly MemoryStream body = new();
-        public override bool CanRead => false;
-        public override bool CanSeek => false;
-        public override bool CanWrite => true;
-        public override long Length => body.Length;
-        public override long Position { get => body.Position; set => throw new NotSupportedException(); }
-        internal byte[] ToArray() => body.ToArray();
-        public override void Write(ReadOnlySpan<byte> buffer)
-        {
-            token.ThrowIfCancellationRequested();
-            if (buffer.Length > limit - body.Length) throw overflow();
-            body.Write(buffer);
-        }
-        public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
-        public override void WriteByte(byte value)
-        {
-            Span<byte> buffer = stackalloc byte[1];
-            buffer[0] = value;
-            Write(buffer);
-        }
-        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            Write(buffer.Span);
-            return ValueTask.CompletedTask;
-        }
-        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
-            WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
-        public override void Flush() => token.ThrowIfCancellationRequested();
-        public override Task FlushAsync(CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            Flush();
-            return Task.CompletedTask;
-        }
-        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing) body.Dispose();
-            base.Dispose(disposing);
-        }
-    }
-
 
     // Capacity belongs to the client/router, not process-wide state. A timed-out
     // caller releases its own reference, while callbacks and cleanup retain
@@ -420,6 +382,19 @@ internal static class NativeTransport
     internal sealed class Isolation
     {
         private readonly SemaphoreSlim capacity = new(MaximumOutstandingOperations, MaximumOutstandingOperations);
+
+        // Qualification can await every outstanding callback and cleanup,
+        // rather than observing only the caller's cancellation return.
+        internal async Task WaitForIdleAsync(CancellationToken cancellationToken)
+        {
+            var acquired = 0;
+            try
+            {
+                for (; acquired < MaximumOutstandingOperations; acquired++)
+                    await capacity.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally { if (acquired > 0) capacity.Release(acquired); }
+        }
 
         internal async Task<Operation> StartAsync(CancellationToken cancellationToken)
         {

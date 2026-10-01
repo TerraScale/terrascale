@@ -55,20 +55,18 @@ internal static class TerraScaleAuthErrors
     private static async Task<string?> ReadErrorCodeAsync(HttpContent? content, CancellationToken cancellationToken)
     {
         if (content is null || content.Headers.ContentLength > MaximumErrorBytes) return null;
-        await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        var buffer = new byte[MaximumErrorBytes + 1];
-        var length = 0;
-        while (length < buffer.Length)
+        using var destination = new BoundedHttpBodyStream(MaximumErrorBytes, () => new ErrorBodyLimitException(), cancellationToken);
+        try
         {
-            var count = await stream.ReadAsync(buffer.AsMemory(length), cancellationToken).ConfigureAwait(false);
-            if (count == 0) break;
-            length += count;
+            await content.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
         }
-        if (length > MaximumErrorBytes) return null;
+        catch (ErrorBodyLimitException) { return null; }
+        var buffer = destination.ToArray();
 
         try
         {
-            using var document = JsonDocument.Parse(buffer.AsMemory(0, length));
+            using var document = JsonDocument.Parse(buffer);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("error", out var error)) return null;
             var code = error.ValueKind == JsonValueKind.String ? error.GetString()
@@ -81,6 +79,8 @@ internal static class TerraScaleAuthErrors
             return null;
         }
     }
+
+    private sealed class ErrorBodyLimitException : Exception;
 
     // Fixed error identities from ts-auth management/feature contracts and
     // the OAuth error vocabulary. No producer-supplied free text is retained.

@@ -62,6 +62,8 @@ public sealed class NativeBlockingInvocationTests
             blocker.Release.Set();
             await blocker.Finished.Task.WaitAsync(TimeSpan.FromSeconds(10));
         }
+        using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await client.WaitForIdleAsync(drain.Token);
         if (stage is "send" or "length" or "serialize" or "read")
         {
             await content.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
