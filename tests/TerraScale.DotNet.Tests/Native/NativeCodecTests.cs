@@ -135,7 +135,7 @@ public sealed class NativeCodecTests
         await Assert.That(NativeCodec.ScopePath(Scope)).Contains("/shards/0");
         await Assert.ThrowsAsync<InvalidDataException>(() =>
         {
-            NativeCodec.ScopePath(Scope with { Tenant = Tenant.ToUpperInvariant() });
+            NativeCodec.ScopePath(Scope with { Tenant = "ABCDEF00-0000-7000-8000-000000000001" });
             return Task.CompletedTask;
         });
         var commit = CreateCommit() with { TransactionId = new NativeTransactionId(ulong.MaxValue, new string('1', 32)) };

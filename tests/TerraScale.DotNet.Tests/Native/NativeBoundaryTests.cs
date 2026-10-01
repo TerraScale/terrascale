@@ -249,6 +249,51 @@ public sealed class NativeBoundaryTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OversizedPointsAndQueryPagesStopBeforeAggregateSiblingAllocation(bool queryPage)
+    {
+        var value = new NativeWriteValue.Live([new NativeField(1, new NativeValue.Bytes(ImmutableArray.Create(new byte[256 * 1024])))]);
+        var siblings = Enumerable.Range(0, queryPage ? 1 : 128).Select(index => new NativeSibling(
+            new NativeEvent(NativeCodecTests.Database, 0, $"018f0000-0000-7000-8000-{index:x12}", new string('1', 32), 1),
+            1, NativeCodecTests.SchemaDigest, value)).ToImmutableArray();
+        var context = siblings.Select(sibling => new NativeObserved(sibling.Event.Replica, sibling.Event.Incarnation, 1)).ToImmutableArray();
+        var point = new NativePoint(queryPage ? NativePointState.Value : NativePointState.Conflict,
+            queryPage ? new string('d', 64) : null, context, siblings);
+        var rows = Enumerable.Range(0, 128).Select(index => new NativeQueryRow($"018f0000-0000-7000-8000-{index:x12}", point)).ToImmutableArray();
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        try
+        {
+            if (queryPage) NativeCodec.EncodeQueryPage(new NativeQueryPage(rows, null));
+            else NativeCodec.EncodePoint(point);
+            throw new InvalidOperationException("Oversized point/page was accepted.");
+        }
+        catch (InvalidDataException) { }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        await Assert.That(allocated).IsLessThan(64L * 1024 * 1024);
+    }
+
+    [Test]
+    public async Task RecoveryLoadRejectsOwnerPrivateFifosAndDirectories()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var directory = Directory.CreateTempSubdirectory("terrascale-native-type-");
+        try
+        {
+            var fifo = Path.Combine(directory.FullName, "operation.fifo");
+            var start = new System.Diagnostics.ProcessStartInfo("mkfifo") { UseShellExecute = false };
+            start.ArgumentList.Add(fifo);
+            using var process = System.Diagnostics.Process.Start(start)!;
+            await process.WaitForExitAsync();
+            await Assert.That(process.ExitCode).IsEqualTo(0);
+            File.SetUnixFileMode(fifo, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(fifo));
+            await Assert.ThrowsAsync<InvalidDataException>(() => NativeOperationStore.LoadAsync(directory.FullName));
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Test]
     public async Task RecoveryLoadRejectsLinksAndChecksTheOpenedFilesPermissions()
     {
         if (OperatingSystem.IsWindows()) return;

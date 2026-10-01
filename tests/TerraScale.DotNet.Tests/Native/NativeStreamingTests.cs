@@ -8,6 +8,34 @@ namespace TerraScale.DotNet.Tests.Native;
 public sealed class NativeStreamingTests
 {
     [Test]
+    public async Task CancellationOnEofCannotPublishAValidCommitReceipt()
+    {
+        using var caller = new CancellationTokenSource();
+        NativeTransactionIdentity? identity = null;
+        EofCancellingStream? original = null;
+        var calls = 0;
+        using var handler = new NativeClientTests.Handler((_, _) =>
+        {
+            calls++;
+            original = new EofCancellingStream(System.Text.Encoding.UTF8.GetBytes(NativeClientTests.Receipt(identity!)), caller.Cancel);
+            var content = new StreamContent(original);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        });
+        using var client = NativeClientTests.Client(handler);
+        var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+        identity = prepared.Identity;
+        var result = await client.CommitAsync(prepared, caller.Token);
+        var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
+        await Assert.That(error.Code).IsEqualTo("cancelled");
+        await Assert.That(error.Status).IsEqualTo(200);
+        await Assert.That(error.Transaction).IsEqualTo(prepared.Identity);
+        await Assert.That(error.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
+        await Assert.That(original!.Disposed).IsTrue();
+        await Assert.That(calls).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments("declared")]
     [Arguments("overflow")]
     [Arguments("cancel")]
@@ -48,6 +76,19 @@ public sealed class NativeStreamingTests
             await Assert.That(body.Reads).IsEqualTo(1);
             await Assert.That(body.CancellationObserved).IsTrue();
         }
+    }
+
+    private sealed class EofCancellingStream(byte[] bytes, Action cancel) : MemoryStream(bytes)
+    {
+        public bool Disposed { get; private set; }
+        public override bool CanSeek => false;
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var count = Read(buffer.Span);
+            if (count == 0) cancel();
+            return ValueTask.FromResult(count);
+        }
+        protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
     }
 
     private sealed class BodyStream(int remaining, Action? cancel) : Stream

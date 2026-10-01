@@ -58,6 +58,9 @@ internal static partial class NativeFilePersistence
         {
             // Inspect the opened inode, never a pathname that can be replaced
             // between permission validation and opening the file.
+            if (FStat(handle, out var status) != 0) throw IoError("Cannot inspect native operation file type.");
+            if ((status.Mode & 0xF000) != 0x8000)
+                throw new InvalidDataException("Native operation file must be a regular file.");
             var mode = File.GetUnixFileMode(handle);
             if ((mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
                 UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0)
@@ -97,6 +100,33 @@ internal static partial class NativeFilePersistence
 
     [LibraryImport("libc", EntryPoint = "fsync", SetLastError = true)]
     private static partial int Fsync(SafeFileHandle descriptor);
+
+    // .NET's System.Native normalizes stat layouts across Linux/macOS and
+    // architectures. FileStatus matches the runtime's portable pal_io.h ABI.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeFileStatus
+    {
+        internal int Flags;
+        internal int Mode;
+        internal uint Uid;
+        internal uint Gid;
+        internal long Size;
+        internal long ATime;
+        internal long ATimeNsec;
+        internal long MTime;
+        internal long MTimeNsec;
+        internal long CTime;
+        internal long CTimeNsec;
+        internal long BirthTime;
+        internal long BirthTimeNsec;
+        internal long Dev;
+        internal long RDev;
+        internal long Ino;
+        internal uint UserFlags;
+    }
+
+    [LibraryImport("System.Native", EntryPoint = "SystemNative_FStat", SetLastError = true)]
+    private static partial int FStat(SafeFileHandle descriptor, out NativeFileStatus status);
 
     [LibraryImport("kernel32.dll", EntryPoint = "MoveFileExW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

@@ -104,7 +104,8 @@ internal static class NativeOriginValidation
         var host = uri.IdnHost.TrimEnd('.').ToLowerInvariant();
 
         var loopback = host == "localhost" || host.EndsWith(".localhost", StringComparison.Ordinal) ||
-            (IPAddress.TryParse(host.Trim('[', ']'), out var address) && IPAddress.IsLoopback(address));
+            (IPAddress.TryParse(host.Trim('[', ']'), out var address) &&
+                IPAddress.IsLoopback(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address));
         if (uri.Scheme != Uri.UriSchemeHttps && !(development && loopback && uri.Scheme == Uri.UriSchemeHttp))
             throw new ArgumentException("Native origins require HTTPS; HTTP loopback requires explicit development mode.", nameof(origin));
         if (!development && loopback)

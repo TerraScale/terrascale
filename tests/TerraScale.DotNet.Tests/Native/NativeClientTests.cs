@@ -19,13 +19,42 @@ public sealed class NativeClientTests
         NativeDurability.LocalDurable, identity, new NativeEvent(NativeCodecTests.Database, 0, NativeCodecTests.Replica, new string('1', 32), 1), 1));
 
     [Test]
+    [Arguments("Application/JSON", false)]
+    [Arguments("application/not-json", false)]
+    [Arguments("Application/JSON", true)]
+    public async Task ResponseMediaTypesAreCaseInsensitiveAndEncodingsRemainRejected(string mediaType, bool encoded)
+    {
+        NativeTransactionIdentity? identity = null;
+        using var handler = new Handler((_, _) =>
+        {
+            var response = Json(Receipt(identity!));
+            response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mediaType);
+            if (encoded) response.Content.Headers.ContentEncoding.Add("gzip");
+            return Task.FromResult(response);
+        });
+        using var client = Client(handler);
+        var prepared = client.PrepareCommit(NativeCodecTests.CreateCommit());
+        identity = prepared.Identity;
+        var result = await client.CommitAsync(prepared);
+        if (!encoded && mediaType == "Application/JSON")
+            await Assert.That(result is NativeResult<NativeCommitReceipt>.Success).IsTrue();
+        else
+        {
+            var error = ((NativeResult<NativeCommitReceipt>.Failure)result).Error;
+            await Assert.That(error.Code).IsEqualTo("invalid_response");
+            await Assert.That(error.MutationOutcome).IsEqualTo(NativeMutationOutcome.Uncertain);
+        }
+    }
+
+    [Test]
     public async Task QueryContinuationKeepsPredicateLimitAndOpaqueCursorAndReauthenticates()
     {
         var bodies = new List<string>();
         var credentials = new List<string>();
         using var handler = new Handler(async (request, token) =>
         {
-            await Assert.That(request.RequestUri!.AbsolutePath).EndsWith("/shards/0/collections/" + NativeCodecTests.Collection + "/documents/query");
+            await Assert.That(request.Method).IsEqualTo(HttpMethod.Post);
+            await Assert.That(request.RequestUri!.AbsolutePath).IsEqualTo($"/v1/tenants/{NativeCodecTests.Tenant}/databases/{NativeCodecTests.Database}/shards/0/collections/{NativeCodecTests.Collection}/documents/query");
             await Assert.That(request.Content!.Headers.ContentType!.ToString()).IsEqualTo("application/json");
             bodies.Add(await request.Content.ReadAsStringAsync(token));
             credentials.Add(request.Headers.Authorization!.Parameter!);
@@ -65,7 +94,8 @@ public sealed class NativeClientTests
         NativeTransactionIdentity? identity = null;
         using var handler = new Handler(async (request, token) =>
         {
-            await Assert.That(request.RequestUri!.AbsolutePath).EndsWith("/transactions");
+            await Assert.That(request.Method).IsEqualTo(HttpMethod.Post);
+            await Assert.That(request.RequestUri!.AbsolutePath).IsEqualTo($"/v1/tenants/{NativeCodecTests.Tenant}/databases/{NativeCodecTests.Database}/shards/0/transactions");
             await Assert.That(request.Headers.Contains("Idempotency-Key")).IsFalse();
             bodies.Add(await request.Content!.ReadAsStringAsync(token));
             if (bodies.Count == 1) throw new HttpRequestException("producer fixture interrupted");

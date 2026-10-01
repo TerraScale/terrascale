@@ -128,7 +128,13 @@ public static class NativeCodec
         ("authority", WireAuthority(identity.Authority)), ("effect_digest", Hex(identity.EffectDigest, 32, "effect digest"))));
 
     /// <summary>Encodes every state, sibling, schema and causal context in a native Point.</summary>
-    public static string EncodePoint(NativePoint point) => Json(WirePoint(point));
+    public static string EncodePoint(NativePoint point)
+    {
+        var body = Json(writer => WritePoint(writer, point));
+        using var document = Parse(body);
+        DecodePoint(document.RootElement);
+        return body;
+    }
 
     /// <summary>Encodes a complete native query page and opaque continuation cursor.</summary>
     public static string EncodeQueryPage(NativeQueryPage page)
@@ -143,10 +149,26 @@ public static class NativeCodec
                 throw Invalid("Query documents must be strictly increasing.");
             previous = document;
         }
-        var root = Object(("version", 1), ("rows", page.Rows.Select(row => Object(
-            ("document", CanonicalUuid(row.Document, "document")), ("point", WirePoint(row.Point)))).ToArray()));
-        if (page.NextCursor is not null) root["next_cursor"] = Cursor(page.NextCursor);
-        return Json(root);
+        var body = Json(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("version", 1);
+            writer.WriteStartArray("rows");
+            foreach (var row in page.Rows)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("document", row.Document);
+                writer.WritePropertyName("point");
+                WritePoint(writer, row.Point);
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            if (page.NextCursor is not null) writer.WriteString("next_cursor", Cursor(page.NextCursor));
+            writer.WriteEndObject();
+        });
+        using var encoded = Parse(body);
+        DecodeQueryPage(encoded.RootElement, 128);
+        return body;
     }
 
     /// <summary>Encodes an identity-bound native commit receipt.</summary>
@@ -199,26 +221,47 @@ public static class NativeCodec
             ("sequence", Decimal(occurrence.Sequence)));
     }
 
-    private static object WirePoint(NativePoint point)
+    private static void WritePoint(Utf8JsonWriter writer, NativePoint point)
     {
-        var root = Object(("version", 1), ("state", point.State.ToString().ToLowerInvariant()),
-            ("state_version", point.StateVersion), ("context", WireObserved(point.Context, int.MaxValue)),
-            ("siblings", point.Siblings.Select(sibling =>
+        ArgumentNullException.ThrowIfNull(point);
+        Bounded(point.Context, int.MaxValue);
+        Bounded(point.Siblings, int.MaxValue);
+        writer.WriteStartObject();
+        writer.WriteNumber("version", 1);
+        writer.WriteString("state", point.State.ToString().ToLowerInvariant());
+        writer.WriteString("state_version", point.StateVersion);
+        writer.WriteStartArray("context");
+        string? previous = null;
+        foreach (var entry in point.Context)
+        {
+            var order = CanonicalUuid(entry.Replica, "replica") + Hex(entry.Incarnation, 16, "incarnation");
+            if (entry.Sequence == 0 || previous is not null && string.CompareOrdinal(previous, order) >= 0)
+                throw Invalid("Observed origins must be strictly increasing with positive sequence.");
+            previous = order;
+            writer.WriteStartObject();
+            writer.WriteString("replica", entry.Replica);
+            writer.WriteString("incarnation", entry.Incarnation);
+            writer.WriteString("sequence", Decimal(entry.Sequence));
+            writer.WriteEndObject();
+        }
+        writer.WriteEndArray();
+        writer.WriteStartArray("siblings");
+        foreach (var sibling in point.Siblings)
+        {
+            var fields = Object(("event", WireEvent(sibling.Event)), ("schema_generation", Decimal(sibling.SchemaGeneration)),
+                ("schema_digest", Hex(sibling.SchemaDigest, 32, "schema digest")));
+            if (sibling.Value is NativeWriteValue.Live live)
             {
-                var fields = Object(("event", WireEvent(sibling.Event)), ("schema_generation", Decimal(sibling.SchemaGeneration)),
-                    ("schema_digest", Hex(sibling.SchemaDigest, 32, "schema digest")));
-                if (sibling.Value is NativeWriteValue.Live live)
-                {
-                    fields["kind"] = "live";
-                    fields["fields"] = WireFields(live.Fields, 1, new Budget());
-                }
-                else if (sibling.Value is NativeWriteValue.Tombstone) fields["kind"] = "tombstone";
-                else throw Invalid("Unsupported native sibling.");
-                return fields;
-            }).ToArray()));
-        using var document = Parse(Json(root));
-        DecodePoint(document.RootElement);
-        return root;
+                ValidateDocument(live.Fields);
+                fields["kind"] = "live";
+                fields["fields"] = WireFields(live.Fields, 1, new Budget());
+            }
+            else if (sibling.Value is NativeWriteValue.Tombstone) fields["kind"] = "tombstone";
+            else throw Invalid("Unsupported native sibling.");
+            JsonSerializer.Serialize(writer, fields);
+        }
+        writer.WriteEndArray();
+        writer.WriteEndObject();
     }
 
     /// <summary>Validates and encodes a typed native query with a fixed page limit.</summary>
@@ -811,6 +854,17 @@ public static class NativeCodec
     {
         using var stream = new BoundedJsonStream(MaximumBodyBytes);
         JsonSerializer.Serialize(stream, value);
+        return Utf8.GetString(stream.GetBuffer(), 0, checked((int)stream.Length));
+    }
+
+    private static string Json(Action<Utf8JsonWriter> write)
+    {
+        using var stream = new BoundedJsonStream(MaximumBodyBytes);
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            write(writer);
+            writer.Flush();
+        }
         return Utf8.GetString(stream.GetBuffer(), 0, checked((int)stream.Length));
     }
 

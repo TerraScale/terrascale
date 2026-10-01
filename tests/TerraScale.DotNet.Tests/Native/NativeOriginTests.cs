@@ -60,6 +60,16 @@ public sealed class NativeOriginTests
     }
 
     [Test]
+    [Arguments("https://[::ffff:127.0.0.1]")]
+    [Arguments("http://[::ffff:127.0.0.2]:12345")]
+    public async Task MappedLoopbackRequiresDevelopmentAndCannotBeAnAtlasAuthority(string origin)
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => { NativeOrigin.Validate(origin); return Task.CompletedTask; });
+        await Assert.That(NativeOrigin.Validate(origin, development: true).GetLeftPart(UriPartial.Authority)).IsEqualTo(new Uri(origin).GetLeftPart(UriPartial.Authority));
+        await Assert.ThrowsAsync<ArgumentException>(() => { NativeAtlasOrigin.Validate(new Uri(origin)); return Task.CompletedTask; });
+    }
+
+    [Test]
     public async Task TrustedAtlasAuthorityIsSeparateFromDataOriginAdmission()
     {
         var requested = new List<string>();

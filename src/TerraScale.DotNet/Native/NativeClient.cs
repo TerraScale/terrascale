@@ -225,13 +225,16 @@ public sealed class NativeClient : IDisposable
             retryAfter = RetryAfter(response);
             if (response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.OK)
                 throw new InvalidDataException("Native protocol requires HTTP 200 success.");
-            if (response.Content.Headers.ContentType?.MediaType != "application/json" || response.Content.Headers.ContentEncoding.Count > 0)
+            if (!string.Equals(response.Content.Headers.ContentType?.MediaType, "application/json", StringComparison.OrdinalIgnoreCase) ||
+                response.Content.Headers.ContentEncoding.Count > 0)
                 throw new InvalidDataException("Native response has unsupported media type or encoding.");
             var bytes = await ReadBodyAsync(response, budget.Token).ConfigureAwait(false);
+            budget.Token.ThrowIfCancellationRequested();
             using var document = NativeCodec.Parse(bytes);
             if (!response.IsSuccessStatusCode)
             {
                 var code = NativeCodec.DecodeError(document.RootElement);
+                budget.Token.ThrowIfCancellationRequested();
                 var outcome = mutation
                     ? code == "precondition_failed" && status == 412 ? NativeMutationOutcome.Rejected
                         : code == "commit_uncertain" ? NativeMutationOutcome.Uncertain : NativeMutationOutcome.Unknown
@@ -239,7 +242,9 @@ public sealed class NativeClient : IDisposable
                 if (code.Contains(key, StringComparison.Ordinal)) code = "invalid_response";
                 return Failure<T>(code, status, retryAfter, identity, outcome);
             }
-            return new NativeResult<T>.Success(decode(document.RootElement));
+            var decoded = decode(document.RootElement);
+            budget.Token.ThrowIfCancellationRequested();
+            return new NativeResult<T>.Success(decoded);
         }
         catch (NativeAdmissionException exception)
         {

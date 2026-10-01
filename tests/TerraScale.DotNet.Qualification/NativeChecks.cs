@@ -163,25 +163,44 @@ internal static class NativeChecks
         var paths = new List<string>();
         NativeTransactionIdentity? identity = null;
         NativeCommitReceipt? receipt = null;
+        var scopePath = $"/v1/tenants/{Scope.Tenant}/databases/{Scope.Database}/shards/{Scope.Shard.ToString(CultureInfo.InvariantCulture)}";
+        var readPath = $"{scopePath}/collections/{Collection}/documents/{Document}";
+        var queryPath = $"{scopePath}/collections/{Collection}/documents/query";
+        var commitPath = scopePath + "/transactions";
+        var statusPath = scopePath + "/transactions/status";
         var handler = new Handler(async (request, token) =>
         {
             Require(request.Headers.Authorization?.Parameter == Key, "Current scoped credential was not supplied.");
             Require(request.Headers.Contains("Idempotency-Key") == false, "An unrelated idempotency header was introduced.");
             paths.Add(request.RequestUri!.AbsolutePath);
-            if (request.RequestUri.Host == "atlas.terrascale.tech") return Json(discovery);
+            if (request.RequestUri.Host == "atlas.terrascale.tech")
+            {
+                Require(request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath == "/api/v1/discovery", "Unexpected Atlas route or method.");
+                var parameters = request.RequestUri.Query.TrimStart('?').Split('&').Select(pair => pair.Split('=', 2))
+                    .ToDictionary(pair => Uri.UnescapeDataString(pair[0]), pair => Uri.UnescapeDataString(pair[1]), StringComparer.Ordinal);
+                Require(parameters.Count == 3 && parameters.GetValueOrDefault("tenant_id") == Scope.Tenant &&
+                    parameters.GetValueOrDefault("database_id") == Scope.Database &&
+                    parameters.GetValueOrDefault("shard_id") == Scope.Shard.ToString(CultureInfo.InvariantCulture), "Atlas discovery addressed another native scope.");
+                return Json(discovery);
+            }
             Require(request.RequestUri.Host == "gru.api.terrascale.tech", "Native request used a fallback or another origin.");
-            if (request.Method == HttpMethod.Get)
+            if (request.RequestUri.AbsolutePath == readPath)
+            {
+                Require(request.Method == HttpMethod.Get, "Native read method changed.");
                 return Json("{\"version\":1,\"state\":\"absent\",\"state_version\":null,\"context\":[],\"siblings\":[]}");
+            }
+            Require(request.Method == HttpMethod.Post && new[] { queryPath, commitPath, statusPath }.Contains(request.RequestUri.AbsolutePath),
+                "Unexpected native scope, resource, route or HTTP method.");
             Require(request.Content!.Headers.ContentType!.ToString() == "application/json", "Native request media type changed.");
             using var body = NativeCodec.Parse(await request.Content.ReadAsStringAsync(token));
-            if (request.RequestUri.AbsolutePath.EndsWith("/documents/query", StringComparison.Ordinal))
+            if (request.RequestUri.AbsolutePath == queryPath)
                 return Json("{\"version\":1,\"rows\":[]}");
-            if (request.RequestUri.AbsolutePath.EndsWith("/transactions/status", StringComparison.Ordinal))
+            if (request.RequestUri.AbsolutePath == statusPath)
             {
                 Require(body.RootElement.GetProperty("effect_digest").GetString() == identity!.EffectDigest, "Status looked up another identity.");
                 return Json(NativeCodec.EncodeTransactionStatus(new NativeTransactionStatus(identity!, NativeTransactionState.Committed, receipt)));
             }
-            Require(request.RequestUri.AbsolutePath.EndsWith("/transactions", StringComparison.Ordinal), "Public client used an undocumented route.");
+            Require(request.RequestUri.AbsolutePath == commitPath, "Public client used an undocumented route.");
             var commit = NativeCodec.DecodeCommit(Scope, body.RootElement);
             identity = NativeCodec.EncodeCommit(Scope, commit).Identity;
             receipt = new NativeCommitReceipt(NativeDurability.LocalDurable, identity,
@@ -211,7 +230,7 @@ internal static class NativeChecks
             Require(await client.CommitAsync(prepared, safety.Token) is NativeResult<NativeCommitReceipt>.Success, "Public native commit failed.");
             var recovered = await NativeRecovery.ResolveAsync(client, prepared, TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(100), safety.Token);
             Require(recovered.IsResolved && recovered.Receipt!.Identity == prepared.Identity, "Public native status did not preserve the original receipt.");
-            Require(paths.Count(path => path.EndsWith("/transactions", StringComparison.Ordinal)) == 1, "Recovery replayed a mutation.");
+            Require(paths.Count(path => path == commitPath) == 1, "Recovery replayed a mutation.");
             Require(paths.Count(path => path == "/api/v1/discovery") == 1, "Public requests did not reuse their matching authenticated lease.");
         }
         finally
