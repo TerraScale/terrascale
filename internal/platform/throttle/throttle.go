@@ -74,7 +74,7 @@ func New(opts Options) *Limiter {
 // not empty, for that account. When either budget is spent it reserves
 // nothing and reports how long to wait.
 func (l *Limiter) Allow(r *http.Request, account string) (time.Duration, bool) {
-	client := l.clientKey(r)
+	client := l.ClientKey(r)
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -95,7 +95,7 @@ func (l *Limiter) Allow(r *http.Request, account string) (time.Duration, bool) {
 // Forgive returns the client's reservation and clears the account's budget
 // after a correct password, so only failed attempts count against either.
 func (l *Limiter) Forgive(r *http.Request, account string) {
-	client := l.clientKey(r)
+	client := l.ClientKey(r)
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -146,10 +146,10 @@ func (l *Limiter) pruneLocked(now time.Time) bool {
 	return len(l.due) < maxKeys
 }
 
-// clientKey identifies the request's client by the address the trusted
+// ClientKey identifies the request's client by the address the trusted
 // proxy header reports, or else by the connection's remote address. IPv6
 // clients are grouped by /64, the block one subscriber usually holds.
-func (l *Limiter) clientKey(r *http.Request) string {
+func (l *Limiter) ClientKey(r *http.Request) string {
 	addr, ok := netip.Addr{}, false
 	if l.opts.ClientHeader != "" {
 		addr, ok = parseAddr(r.Header.Get(l.opts.ClientHeader))

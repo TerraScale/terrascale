@@ -414,6 +414,7 @@ type CLIGrantSessions interface {
 // reports how long to wait once either budget is spent. Forgive returns the
 // reservation after a correct password, so only failures count.
 type Throttle interface {
+	ClientKey(r *http.Request) string
 	Allow(r *http.Request, account string) (time.Duration, bool)
 	Forgive(r *http.Request, account string)
 }

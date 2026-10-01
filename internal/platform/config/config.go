@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -11,6 +12,7 @@ import (
 const defaultStatusURL = "https://status.terrascale.tech/api/v2/summary.json"
 
 type Config struct {
+	PublicURL      string
 	Addr           string
 	Demo           bool
 	Dev            bool
@@ -30,6 +32,7 @@ type Config struct {
 
 func Load() (Config, error) {
 	c := Config{
+		PublicURL:      strings.TrimRight(strings.TrimSpace(os.Getenv("DASHBOARD_PUBLIC_URL")), "/"),
 		Addr:           strings.TrimSpace(os.Getenv("DASHBOARD_ADDR")),
 		Demo:           os.Getenv("TS_DASHBOARD_PRODUCTION_DEMO") == "1",
 		Dev:            os.Getenv("DASHBOARD_DEV") == "1",
@@ -40,6 +43,15 @@ func Load() (Config, error) {
 	}
 	if c.Addr == "" {
 		c.Addr = ":8080"
+	}
+	if c.PublicURL == "" && os.Getenv("FLY_APP_NAME") != "" {
+		c.PublicURL = "https://" + os.Getenv("FLY_APP_NAME") + ".fly.dev"
+	}
+	if c.PublicURL != "" {
+		u, err := url.Parse(c.PublicURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			return Config{}, errors.New("DASHBOARD_PUBLIC_URL must be an HTTP(S) origin")
+		}
 	}
 	// Set DASHBOARD_STATUS_SUMMARY_URL to another summary, or to an empty
 	// value to disable the status banner.
@@ -52,7 +64,7 @@ func Load() (Config, error) {
 	}
 	c.SecureCookies = os.Getenv("DASHBOARD_SECURE_COOKIES") == "1" ||
 		(os.Getenv("DASHBOARD_SECURE_COOKIES") != "0" && !c.Dev &&
-			(strings.HasPrefix(os.Getenv("DASHBOARD_PUBLIC_URL"), "https://") || os.Getenv("FLY_APP_NAME") != ""))
+			(strings.HasPrefix(c.PublicURL, "https://") || os.Getenv("FLY_APP_NAME") != ""))
 	// On Fly.io every request arrives through Fly Proxy, which reports the
 	// client address in Fly-Client-IP.
 	if os.Getenv("FLY_APP_NAME") != "" {
