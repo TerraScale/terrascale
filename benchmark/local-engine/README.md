@@ -41,7 +41,9 @@ exactly as TerraBase compiles it: the gitlink plus TerraBase's ordered
 The SQLite library version and Turso's reported SQLite compatibility version
 are recorded separately; they are not the same engine or release version.
 The build script hashes the whole Turso checkout, including files the patch
-series adds, through a scratch Git index and rejects any tree other than
+series adds, through a fresh scratch Git index. Only the pinned tree's own
+`.gitattributes` apply; global, system, and `info/attributes` settings are
+ignored, and a configured filter driver is refused. It rejects any tree other than
 `4da45c6e8290634cff70f371d123b0564206e4b0` (the tree `prepare-turso.sh --tree`
 prints for that TerraBase revision). It embeds that tree, the SHA-256 of the
 patch diff, and the SHA-256 of each patched file in every receipt. Run
