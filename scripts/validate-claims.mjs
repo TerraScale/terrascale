@@ -59,7 +59,7 @@ export const prohibitedClaims = [
   { id: 'deferred-queue-product-localized', pattern: /\b(?:filas?|fila)\b/i, reason: 'Do not advertise deferred queue products.' },
   { id: 'positive-paid-overages', pattern: /\b(?:(?:paid\s+overages?|overages?)\s+(?:are|remain|supported|available|included|offered)|excedentes?\s+(?:pagados?|pagos?)\s+(?:est[aá]\s+)?(?:disponibles?|dispon[ií]ve(?:l|is)))\b/i, reason: 'Paid overages are not available during Public Alpha.' },
   { id: 'positive-enterprise-availability', pattern: /\bEnterprise\b[\s:;,–—-]*(?:(?:is|remains|est[aá])\s+)?(?:available|disponibles?|dispon[ií]ve(?:l|is))\b/i, reason: 'Enterprise is not available during Public Alpha.' },
-  { id: 'draft-legal-link', pattern: /docs\.terrascale\.tech\/legal\//i, reason: 'Legal policies are unpublished drafts; do not link them until they are approved.' },
+  { id: 'draft-legal-link', pattern: null, reason: 'Legal policies are unpublished drafts; do not link them until they are approved.' },
   { id: 'unpublished-terms-route', pattern: /href=["']\/terms["']/i, reason: 'The terms route must remain unpublished until approved.' },
 ]
 
@@ -130,6 +130,21 @@ const canonicalizeDraftLegalHref = (value) => {
     return null
   }
   return pathname === '/legal' || pathname.startsWith('/legal/') ? url : null
+}
+
+// Extract every absolute or protocol-relative URL candidate (attributes, meta
+// content, JSON-LD, source string literals) so the draft legal guard checks
+// the normalized destination rather than a raw substring.
+const urlCandidates = (text) => {
+  const corpus = normalizeClaimText(text).replace(/\\\//g, '/')
+  return [...corpus.matchAll(/(?:https?:)?\/\/[^\s"'`<>()[\]{}\\]+/gi)].map(([candidate]) => (candidate.startsWith('//') ? `https:${candidate}` : candidate))
+}
+
+const findDraftLegalLink = (values) => {
+  for (const value of values) {
+    if (canonicalizeDraftLegalHref(value)) return [value]
+  }
+  return null
 }
 
 const sourceStartTags = (html) => {
@@ -296,8 +311,7 @@ const findRenderedClaimMatch = (rendered, claim) => {
     return null
   }
   if (claim.id === 'draft-legal-link') {
-    const href = rendered.hrefs.find((value) => canonicalizeDraftLegalHref(value))
-    if (href) return [`href="${href}"`]
+    return findDraftLegalLink([...rendered.hrefs, ...urlCandidates(rendered.raw), ...rendered.jsonLdValues.flatMap(urlCandidates)])
   }
   const values = [
     [rendered.raw, false],
@@ -319,8 +333,7 @@ const findClaimMatch = (corpus, claim) => {
     return href ? [`href="${href}"`] : null
   }
   if (claim.id === 'draft-legal-link') {
-    const href = sourceHrefValues(corpus).find((value) => canonicalizeDraftLegalHref(value))
-    if (href) return [`href="${href}"`]
+    return findDraftLegalLink([...sourceHrefValues(corpus), ...urlCandidates(corpus)])
   }
   return normalizeClaimText(corpus).match(claim.pattern)
 }
