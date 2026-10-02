@@ -1,0 +1,875 @@
+#!/usr/bin/env bash
+# One-command local TerraScale platform: TerraBase + ts-auth + dashboard +
+# Mailpit, served over HTTPS by Caddy with a stack-local mkcert CA.
+#
+#   stack up [process...]   build what is missing, bootstrap, start, wait
+#   stack down              stop every process
+#   stack reset             stop and delete .stack (certs, keys, data, env)
+#   stack env [--export]    show the .stack/env contract (masked unless --export)
+#   stack check             probe TerraBase, OIDC discovery + JWKS, dashboard, Mailpit
+#   stack bootstrap         re-run the bootstrap steps against a running stack
+#   stack preview [off]     publish ts-auth and the dashboard on the tailnet
+#   stack status | logs <process> [-f] | build [tb|auth|dashboard] | config
+#
+# See stack/README.md for the configuration variables and the .stack/env
+# contract. Internal: `stack run <process>` and `stack probe <process>` are what
+# stack/process-compose.yaml executes.
+set -Eeuo pipefail
+
+stack_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# ---------------------------------------------------------------------------
+# Tools: re-run under `mise exec` so process-compose, caddy, mkcert, mailpit
+# and jq come from stack/mise.toml without a global install.
+# ---------------------------------------------------------------------------
+if [[ "${STACK_IN_MISE:-}" != 1 ]]; then
+  export STACK_IN_MISE=1
+  if command -v mise >/dev/null 2>&1; then
+    # Both mise files belong to this checkout: stack/mise.toml and the repo's
+    # .mise.toml (Go). The ceiling stops mise from reading files above the
+    # checkout (worktrees live inside the main checkout).
+    MISE_CEILING_PATHS="$(dirname "$(dirname "$stack_dir")")" \
+      MISE_TRUSTED_CONFIG_PATHS="$(dirname "$stack_dir")${MISE_TRUSTED_CONFIG_PATHS:+:$MISE_TRUSTED_CONFIG_PATHS}" \
+      exec mise exec -C "$stack_dir" -- "$stack_dir/bin/stack" "$@"
+  fi
+fi
+
+say() { printf 'stack: %s\n' "$*" >&2; }
+die() { printf 'stack: error: %s\n' "$*" >&2; exit 1; }
+# waiting <workstream> <what>: a prerequisite from another workstream is missing.
+waiting() { printf 'stack: waiting on %s: %s\n' "$1" "$2" >&2; exit 3; }
+
+require_tools() {
+  local tool missing=()
+  for tool in "$@"; do
+    command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+  done
+  ((${#missing[@]} == 0)) ||
+    die "missing tools: ${missing[*]} (install mise, or put them on PATH; see stack/mise.toml)"
+}
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+load_config() {
+  repo_root="$(git -C "$stack_dir" rev-parse --show-toplevel)"
+  export STACK_STATE="${STACK_STATE:-$repo_root/.stack}"
+  stack_conf="$STACK_STATE/stack.conf"
+  # Settings chosen at `stack up` persist so later commands use the same ports.
+  if [[ -f "$stack_conf" ]]; then
+    local key value
+    while IFS='=' read -r key value; do
+      case "$key" in
+        STACK_PORT_OFFSET | TB_BACKEND | STACK_PREVIEW_HOST)
+          [[ -n "${!key+x}" ]] || export "$key=$value"
+          ;;
+      esac
+    done <"$stack_conf"
+  fi
+
+  local common_dir
+  common_dir="$(git -C "$stack_dir" rev-parse --path-format=absolute --git-common-dir)"
+  export STACK_SRC="${STACK_SRC:-$(dirname "$(dirname "$common_dir")")}"
+  export DASHBOARD_SRC="${DASHBOARD_SRC:-$repo_root}"
+  export TS_AUTH_SRC="${TS_AUTH_SRC:-$STACK_SRC/ts-auth}"
+  export TERRABASE_SRC="${TERRABASE_SRC:-$STACK_SRC/terrabase}"
+  export TS_GO_SRC="${TS_GO_SRC:-$STACK_SRC/ts-go}"
+
+  export TB_BACKEND="${TB_BACKEND:-fake}"
+  [[ "$TB_BACKEND" == fake || "$TB_BACKEND" == real ]] || die "TB_BACKEND must be fake or real"
+  export STACK_PORT_OFFSET="${STACK_PORT_OFFSET:-0}"
+  [[ "$STACK_PORT_OFFSET" =~ ^[0-9]+$ ]] || die "STACK_PORT_OFFSET must be a non-negative integer"
+  local o=$STACK_PORT_OFFSET
+  export TB_ADMIN_PORT=$((9464 + o)) TB_CLIENT_PORT=$((9465 + o))
+  export MAILPIT_SMTP_PORT=$((1025 + o)) MAILPIT_UI_PORT=$((8025 + o))
+  export AUTH_PORT=$((18455 + o)) AUTH_HTTPS_PORT=$((18445 + o))
+  export DASHBOARD_PORT=$((18456 + o)) DASHBOARD_HTTPS_PORT=$((18446 + o))
+  export PREVIEW_AUTH_PORT=$((18545 + o)) PREVIEW_DASHBOARD_PORT=$((18546 + o))
+  ((DASHBOARD_HTTPS_PORT < 65536)) || die "STACK_PORT_OFFSET is too large"
+
+  export STACK_BIN="$stack_dir/bin/stack"
+  export STACK_CA_FILE="$STACK_STATE/ca/rootCA.pem"
+  export STACK_CERT_FILE="$STACK_STATE/certs/localhost.pem"
+  export STACK_KEY_FILE="$STACK_STATE/certs/localhost-key.pem"
+  bin_dir="$STACK_STATE/bin"
+  secrets_dir="$STACK_STATE/secrets"
+  tb_dir="$STACK_STATE/tb"
+  export TB_CERT_DIR="$tb_dir/certs"
+  export TB_CA_FILE="$TB_CERT_DIR/ca.pem"
+  export TB_CONTROL_KEY_FILE="$tb_dir/control-key"
+  export TB_URL="https://127.0.0.1:$TB_CLIENT_PORT"
+  provision_file="$STACK_STATE/auth-provision.json"
+  platform_file="$STACK_STATE/auth-platform.json"
+  env_file="$STACK_STATE/env"
+  socket="$STACK_STATE/process-compose.sock"
+
+  if [[ -n "${STACK_PREVIEW_HOST:-}" ]]; then
+    export AUTH_PUBLIC_URL="https://$STACK_PREVIEW_HOST:$PREVIEW_AUTH_PORT"
+    export DASHBOARD_PUBLIC_URL="https://$STACK_PREVIEW_HOST:$PREVIEW_DASHBOARD_PORT"
+  else
+    export AUTH_PUBLIC_URL="https://localhost:$AUTH_HTTPS_PORT"
+    export DASHBOARD_PUBLIC_URL="https://localhost:$DASHBOARD_HTTPS_PORT"
+  fi
+  export MAILPIT_URL="http://127.0.0.1:$MAILPIT_UI_PORT"
+
+  export TB_SERVER_BIN="${TB_SERVER_BIN:-$bin_dir/tb-server}"
+  export TB_INIT_BIN="${TB_INIT_BIN:-$bin_dir/terrabase-init}"
+  export TBV1_FAKE_BIN="${TBV1_FAKE_BIN:-$bin_dir/tbv1-fake}"
+  export AUTH_APP_BIN="${AUTH_APP_BIN:-$bin_dir/auth-app}"
+  export DASHBOARD_BIN="${DASHBOARD_BIN:-$bin_dir/dashboard}"
+}
+
+save_config() {
+  mkdir -p "$STACK_STATE"
+  {
+    printf 'STACK_PORT_OFFSET=%s\n' "$STACK_PORT_OFFSET"
+    printf 'TB_BACKEND=%s\n' "$TB_BACKEND"
+    printf 'STACK_PREVIEW_HOST=%s\n' "${STACK_PREVIEW_HOST:-}"
+  } >"$stack_conf"
+}
+
+# ---------------------------------------------------------------------------
+# Certificates and generated secrets
+# ---------------------------------------------------------------------------
+ensure_certs() {
+  require_tools mkcert
+  mkdir -p "$STACK_STATE/ca" "$STACK_STATE/certs" "$TB_CERT_DIR"
+  chmod 700 "$STACK_STATE/ca"
+  if [[ ! -s "$STACK_CA_FILE" ]]; then
+    say "creating the stack-local mkcert CA in $STACK_STATE/ca"
+    # A stack-local CAROOT, created by the first issuance below. Nothing is
+    # added to the system or browser trust stores; `CAROOT=.stack/ca mkcert
+    # -install` does that on request.
+    rm -f "$STACK_CERT_FILE"
+  fi
+  if [[ ! -s "$STACK_CERT_FILE" || "$STACK_CA_FILE" -nt "$STACK_CERT_FILE" ]]; then
+    say "issuing the localhost certificate"
+    CAROOT="$STACK_STATE/ca" mkcert -cert-file "$STACK_CERT_FILE" -key-file "$STACK_KEY_FILE" \
+      localhost 127.0.0.1 ::1 >/dev/null 2>&1
+    chmod 600 "$STACK_KEY_FILE"
+  fi
+  [[ -s "$STACK_CA_FILE" && -s "$STACK_CERT_FILE" ]] || die "mkcert did not produce the CA and certificate"
+  # TerraBase serves the same leaf; the fake backend may replace these files
+  # with its own pair, so the TerraBase CA is always read from $TB_CA_FILE.
+  if [[ ! -s "$TB_CERT_DIR/cert.pem" ]]; then
+    install -m 0644 "$STACK_CERT_FILE" "$TB_CERT_DIR/cert.pem"
+    install -m 0600 "$STACK_KEY_FILE" "$TB_CERT_DIR/key.pem"
+    install -m 0644 "$STACK_CA_FILE" "$TB_CA_FILE"
+  fi
+}
+
+secret() { # secret <name> <generator...>: create once, 0600, reuse after.
+  local name=$1 file="$secrets_dir/$1"
+  shift
+  if [[ ! -s "$file" ]]; then
+    mkdir -p "$secrets_dir"
+    chmod 700 "$secrets_dir"
+    (umask 077 && "$@" >"$file")
+  fi
+}
+
+random_b64_32() { head -c 32 /dev/urandom | base64 -w0; }
+random_token() { printf '%s_%s' "$1" "$(head -c 24 /dev/urandom | base64 -w0 | tr '+/' '-_' | tr -d '=')"; }
+
+ensure_secrets() {
+  secret auth-master-key random_b64_32
+  secret auth-audit-signing-key random_b64_32
+  secret auth-operator-key random_token stackop
+  secret auth-metrics-key random_token stackmetrics
+}
+
+read_secret() { tr -d '\n' <"$secrets_dir/$1"; }
+
+# ---------------------------------------------------------------------------
+# Binaries: prebuilt via *_BIN, or built from STACK_SRC into .stack/bin
+# ---------------------------------------------------------------------------
+build_dashboard() {
+  [[ "$DASHBOARD_BIN" == "$bin_dir/dashboard" ]] || return 0
+  say "building dashboard from $DASHBOARD_SRC"
+  (
+    cd "$DASHBOARD_SRC"
+    [[ -d node_modules ]] || npm ci --no-audit --no-fund
+    npm run --silent build:js
+    GOFLAGS=-mod=vendor go build -o "$bin_dir/dashboard" ./cmd/dashboard
+  )
+}
+
+build_auth() {
+  [[ "$AUTH_APP_BIN" == "$bin_dir/auth-app" ]] || return 0
+  [[ -f "$TS_AUTH_SRC/Cargo.toml" ]] || die "ts-auth source not found at $TS_AUTH_SRC (set TS_AUTH_SRC, STACK_SRC or AUTH_APP_BIN)"
+  say "building auth-app from $TS_AUTH_SRC (release)"
+  CARGO_TARGET_DIR="$STACK_STATE/target/ts-auth" \
+    cargo build --manifest-path "$TS_AUTH_SRC/Cargo.toml" --release --locked -p auth-app
+  install -m 0755 "$STACK_STATE/target/ts-auth/release/auth-app" "$bin_dir/auth-app"
+}
+
+build_terrabase() {
+  [[ "$TB_SERVER_BIN" == "$bin_dir/tb-server" || "$TB_INIT_BIN" == "$bin_dir/terrabase-init" ]] || return 0
+  [[ -f "$TERRABASE_SRC/Cargo.toml" ]] || die "terrabase source not found at $TERRABASE_SRC (set TERRABASE_SRC, STACK_SRC or TB_SERVER_BIN/TB_INIT_BIN)"
+  say "building tb-server and terrabase-init from $TERRABASE_SRC (release)"
+  CARGO_TARGET_DIR="$STACK_STATE/target/terrabase" \
+    cargo build --manifest-path "$TERRABASE_SRC/Cargo.toml" --release --locked -p tb-server --bins
+  [[ "$TB_SERVER_BIN" != "$bin_dir/tb-server" ]] ||
+    install -m 0755 "$STACK_STATE/target/terrabase/release/tb-server" "$bin_dir/tb-server"
+  [[ "$TB_INIT_BIN" != "$bin_dir/terrabase-init" ]] ||
+    install -m 0755 "$STACK_STATE/target/terrabase/release/terrabase-init" "$bin_dir/terrabase-init"
+}
+
+build_fake() {
+  [[ "$TBV1_FAKE_BIN" == "$bin_dir/tbv1-fake" ]] || return 0
+  [[ -d "$TS_GO_SRC/cmd/tbv1-fake" ]] ||
+    waiting GO-b "no cmd/tbv1-fake in $TS_GO_SRC (ts-go branch feat/v1-fake); set TS_GO_SRC to a checkout of it or TBV1_FAKE_BIN"
+  say "building tbv1-fake from $TS_GO_SRC"
+  (cd "$TS_GO_SRC" && go build -o "$bin_dir/tbv1-fake" ./cmd/tbv1-fake)
+}
+
+# needs <component> [process...]: whether starting these processes (all when
+# none are named) runs the component; process-compose adds dependencies.
+needs() {
+  local component=$1 process
+  shift
+  (($#)) || return 0
+  for process in "$@"; do
+    case "$component:$process" in
+      tb:tb-* | tb:stack-env | tb:auth-* | tb:ts-auth | tb:dashboard*) return 0 ;;
+      auth:auth-* | auth:ts-auth | auth:dashboard) return 0 ;;
+      dashboard:dashboard*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+build_all() {
+  mkdir -p "$bin_dir"
+  if needs tb "$@"; then
+    if [[ "$TB_BACKEND" == fake ]]; then build_fake; else build_terrabase; fi
+  fi
+  if needs auth "$@"; then
+    build_auth
+    [[ -x "$AUTH_APP_BIN" ]] || die "not executable: $AUTH_APP_BIN"
+  fi
+  if needs dashboard "$@"; then
+    build_dashboard
+    [[ -x "$DASHBOARD_BIN" ]] || die "not executable: $DASHBOARD_BIN"
+  fi
+}
+
+cmd_build() { # stack build [tb|auth|dashboard...]: all when none are named.
+  load_config
+  mkdir -p "$bin_dir"
+  (($#)) || set -- tb auth dashboard
+  local component
+  for component in "$@"; do
+    case "$component" in
+      tb) if [[ "$TB_BACKEND" == fake ]]; then build_fake; else build_terrabase; fi ;;
+      auth) build_auth ;;
+      dashboard) build_dashboard ;;
+      *) die "unknown component: $component (tb, auth or dashboard)" ;;
+    esac
+  done
+}
+
+# has_subcommand <binary> <subcommand>: the subcommand exists when
+# `<binary> <subcommand> --help` exits 0 and names it. Binaries without it
+# either reject the argument or try to start their server, which fails or times
+# out under an empty environment.
+has_subcommand() {
+  local output
+  output="$(timeout 10 env -i PATH="$PATH" HOME="$STACK_STATE" "$1" "$2" --help 2>&1)" || return 1
+  grep -q -- "$2" <<<"$output"
+}
+
+# ---------------------------------------------------------------------------
+# .stack/env contract
+# ---------------------------------------------------------------------------
+json_field() { # json_field <file> <jq alternatives...>: first non-empty match.
+  local file=$1 expr
+  shift
+  [[ -s "$file" ]] || return 0
+  for expr in "$@"; do
+    local value
+    value="$(jq -r "($expr) // empty" "$file" 2>/dev/null || true)"
+    if [[ -n "$value" ]]; then printf '%s' "$value"; return 0; fi
+  done
+}
+
+auth_issuer() { json_field "$platform_file" .issuer .instance.issuer; }
+auth_client_id() { json_field "$platform_file" .client_id .client.client_id .client.id; }
+auth_client_secret() { json_field "$platform_file" .client_secret .client.client_secret; }
+auth_database() { json_field "$provision_file" .database .database_name .database_id .database.id; }
+auth_data_key() { json_field "$provision_file" .key .data_key .api_key .token .key.token; }
+control_key() { [[ -s "$TB_CONTROL_KEY_FILE" ]] && tr -d '\n' <"$TB_CONTROL_KEY_FILE"; }
+
+write_env() {
+  local tmp missing=()
+  tmp="$(mktemp "$STACK_STATE/env.XXXXXX")"
+  chmod 600 "$tmp"
+  emit() { # emit <name> <value> <waiting-on>
+    if [[ -n "$2" ]]; then
+      [[ "$2" != *[[:space:]\'\"\\]* ]] || die "refusing to write $1: value has whitespace or quotes"
+      printf '%s=%s\n' "$1" "$2" >>"$tmp"
+    else
+      printf '# %s= (waiting on %s)\n' "$1" "$3" >>"$tmp"
+      missing+=("$1")
+    fi
+  }
+  {
+    printf '# Written by stack/bin/stack; do not edit. Backend: %s.\n' "$TB_BACKEND"
+  } >>"$tmp"
+  local key issuer
+  key="$(control_key || true)"
+  issuer="$(auth_issuer)"
+  emit TS_TERRABASE_URL "$TB_URL" -
+  emit TS_TERRABASE_CA_FILE "$TB_CA_FILE" -
+  emit TS_TERRABASE_CONTROL_KEY "$key" "tb-server (TB_BACKEND=$TB_BACKEND)"
+  emit TB_V1_URL "$TB_URL" -
+  emit TB_V1_CA_FILE "$TB_CA_FILE" -
+  emit TB_V1_CONTROL_KEY "$key" "tb-server (TB_BACKEND=$TB_BACKEND)"
+  emit TS_AUTH_URL "$AUTH_PUBLIC_URL" -
+  emit TS_AUTH_ISSUER "$issuer" "AUTH-2a (auth-app bootstrap-platform)"
+  emit TS_AUTH_CA_FILE "$STACK_CA_FILE" -
+  emit TS_AUTH_CLIENT_ID "$(auth_client_id)" "AUTH-2a (auth-app bootstrap-platform)"
+  emit TS_AUTH_CLIENT_SECRET "$(auth_client_secret)" "AUTH-2a (auth-app bootstrap-platform)"
+  emit TS_AUTH_OPERATOR_KEY "$(read_secret auth-operator-key)" -
+  emit MAILPIT_URL "$MAILPIT_URL" -
+  emit MAILPIT_SMTP_ADDR "127.0.0.1:$MAILPIT_SMTP_PORT" -
+  emit DASHBOARD_URL "$DASHBOARD_PUBLIC_URL" -
+  emit STACK_CA_FILE "$STACK_CA_FILE" -
+  mv -f "$tmp" "$env_file"
+  unset -f emit
+  if ((${#missing[@]})); then
+    say "wrote $env_file (pending: ${missing[*]})"
+  else
+    say "wrote $env_file"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Process environments
+# ---------------------------------------------------------------------------
+auth_env() {
+  local db key
+  db="$(auth_database)"
+  key="$(auth_data_key)"
+  [[ -n "$db" && -n "$key" ]] ||
+    die "auth-provision output $provision_file lacks a database or data key (keys: $(jq -c 'keys' "$provision_file" 2>/dev/null || echo none))"
+  export TS_AUTH_ENVIRONMENT=Development
+  export TS_AUTH_LISTEN="http://127.0.0.1:$AUTH_PORT"
+  export TS_AUTH_PUBLIC_ORIGIN="$AUTH_PUBLIC_URL"
+  # AUTH-1c names, plus the names auth-app main reads today.
+  export TS_AUTH_TERRABASE_URL="$TB_URL"
+  export TS_AUTH_TERRABASE_CA_FILE="$TB_CA_FILE"
+  export TS_AUTH_TERRABASE_KEY="$key"
+  export TS_AUTH_TERRASCALE_API_URL="$TB_URL"
+  export TS_AUTH_TERRASCALE_API_KEY="$key"
+  export TS_AUTH_DATABASE="$db"
+  TS_AUTH_MASTER_KEY="$(read_secret auth-master-key)"
+  TS_AUTH_AUDIT_SIGNING_KEY="$(read_secret auth-audit-signing-key)"
+  TS_AUTH_OPERATOR_KEY="$(read_secret auth-operator-key)"
+  TS_AUTH_METRICS_KEY="$(read_secret auth-metrics-key)"
+  export TS_AUTH_MASTER_KEY TS_AUTH_AUDIT_SIGNING_KEY TS_AUTH_OPERATOR_KEY TS_AUTH_METRICS_KEY
+  # Mailpit offers STARTTLS with the stack certificate and accepts any login.
+  export TS_AUTH_SMTP_HOST=localhost
+  export TS_AUTH_SMTP_PORT="$MAILPIT_SMTP_PORT"
+  export TS_AUTH_SMTP_USERNAME=stack
+  export TS_AUTH_SMTP_PASSWORD=stack
+  export TS_AUTH_SMTP_FROM_ADDRESS=auth@stack.localhost
+  export TS_AUTH_SMTP_CA_FILE="$STACK_CA_FILE"
+  export RUST_LOG="${RUST_LOG:-info}"
+}
+
+dashboard_env() {
+  export TS_DASHBOARD_LIVE=1
+  unset TS_DASHBOARD_PRODUCTION_DEMO
+  export DASHBOARD_ADDR="127.0.0.1:$DASHBOARD_PORT"
+  export DASHBOARD_PUBLIC_URL DASHBOARD_SECURE_COOKIES=1
+  export TS_TERRABASE_URL="$TB_URL" TS_TERRABASE_CA_FILE="$TB_CA_FILE"
+  TS_TERRABASE_CONTROL_KEY="$(control_key)" || die "no TerraBase control key at $TB_CONTROL_KEY_FILE"
+  export TS_TERRABASE_CONTROL_KEY
+  TS_AUTH_ISSUER="$(auth_issuer)"
+  TS_AUTH_CLIENT_ID="$(auth_client_id)"
+  TS_AUTH_CLIENT_SECRET="$(auth_client_secret)"
+  TS_AUTH_OPERATOR_KEY="$(read_secret auth-operator-key)"
+  export TS_AUTH_ISSUER TS_AUTH_CLIENT_ID TS_AUTH_CLIENT_SECRET TS_AUTH_OPERATOR_KEY
+  export TS_AUTH_URL="$AUTH_PUBLIC_URL" TS_AUTH_CA_FILE="$STACK_CA_FILE"
+}
+
+# ---------------------------------------------------------------------------
+# stack run <process>: what process-compose executes
+# ---------------------------------------------------------------------------
+run_mailpit() {
+  mkdir -p "$STACK_STATE/mailpit"
+  exec mailpit \
+    --listen "127.0.0.1:$MAILPIT_UI_PORT" \
+    --smtp "127.0.0.1:$MAILPIT_SMTP_PORT" \
+    --smtp-tls-cert "$STACK_CERT_FILE" --smtp-tls-key "$STACK_KEY_FILE" \
+    --smtp-auth-accept-any \
+    --database "$STACK_STATE/mailpit/mailpit.db"
+}
+
+run_caddy() {
+  mkdir -p "$STACK_STATE/caddy"
+  export XDG_DATA_HOME="$STACK_STATE/caddy/data" XDG_CONFIG_HOME="$STACK_STATE/caddy/config"
+  exec caddy run --adapter caddyfile --config "$stack_dir/Caddyfile"
+}
+
+run_tb_init() {
+  if [[ "$TB_BACKEND" == fake ]]; then
+    say "TB_BACKEND=fake: tbv1-fake creates its control key at startup; no init step"
+    return 0
+  fi
+  [[ -x "$TB_INIT_BIN" ]] || die "terrabase-init not found at $TB_INIT_BIN"
+  local data="$tb_dir/data"
+  if [[ -d "$data" && -s "$TB_CONTROL_KEY_FILE" ]]; then
+    say "TerraBase already initialized at $data"
+  else
+    "$TB_INIT_BIN" --help 2>&1 | grep -q -- --bootstrap-control-key ||
+      waiting TB-1 "terrabase-init has no --bootstrap-control-key (terrabase feat/v1-openapi-seams, docs/local-dev.md)"
+    rm -rf "$data"
+    # shellcheck disable=SC2086 # TB_INIT_ARGS is a word list by design.
+    (umask 077 && "$TB_INIT_BIN" --data-dir "$data" --bootstrap-control-key \
+      --control-key-out "$TB_CONTROL_KEY_FILE" ${TB_INIT_ARGS:-})
+    [[ -s "$TB_CONTROL_KEY_FILE" ]] || die "terrabase-init wrote no control key"
+  fi
+  jq -n --arg listen "127.0.0.1:$TB_CLIENT_PORT" \
+    --arg cert "$TB_CERT_DIR/cert.pem" --arg key "$TB_CERT_DIR/key.pem" \
+    '{version: 1, listen_addr: $listen, certificate_chain: $cert,
+      private_key: $key, handshake_timeout_ms: 5000}' >"$tb_dir/client.json"
+  chmod 600 "$tb_dir/client.json"
+}
+
+run_tb_server() {
+  mkdir -p "$tb_dir"
+  if [[ "$TB_BACKEND" == fake ]]; then
+    [[ -x "$TBV1_FAKE_BIN" ]] || waiting GO-b "tbv1-fake not found at $TBV1_FAKE_BIN"
+    exec "$TBV1_FAKE_BIN" --listen "127.0.0.1:$TB_CLIENT_PORT" \
+      --cert-dir "$TB_CERT_DIR" --control-key-out "$TB_CONTROL_KEY_FILE"
+  fi
+  [[ -x "$TB_SERVER_BIN" ]] || die "tb-server not found at $TB_SERVER_BIN"
+  # shellcheck disable=SC2086 # TB_SERVER_ARGS is a word list by design.
+  exec "$TB_SERVER_BIN" --data-dir "$tb_dir/data" --port "$TB_ADMIN_PORT" \
+    --memory-limit-bytes "${TB_MEMORY_LIMIT_BYTES:-536870912}" \
+    --memory-headroom-bytes "${TB_MEMORY_HEADROOM_BYTES:-33554432}" \
+    --client-config "$tb_dir/client.json" ${TB_SERVER_ARGS:-}
+}
+
+run_auth_provision() {
+  [[ -x "$AUTH_APP_BIN" ]] || die "auth-app not found at $AUTH_APP_BIN"
+  has_subcommand "$AUTH_APP_BIN" provision ||
+    waiting AUTH-1c "auth-app has no 'provision' subcommand (ts-auth: control key -> tenant, database, collections, data key)"
+  local key
+  key="$(control_key)" || die "no TerraBase control key at $TB_CONTROL_KEY_FILE"
+  local tmp="$provision_file.tmp"
+  (umask 077 && TS_AUTH_TERRABASE_URL="$TB_URL" TS_AUTH_TERRABASE_CA_FILE="$TB_CA_FILE" \
+    TS_AUTH_TERRABASE_CONTROL_KEY="$key" TS_AUTH_TERRABASE_KEY="$key" \
+    TS_AUTH_DATABASE="${TS_AUTH_STACK_DATABASE:-ts-auth}" \
+    "$AUTH_APP_BIN" provision --output "$tmp")
+  jq -e 'type == "object"' "$tmp" >/dev/null || die "auth-app provision did not write a JSON object"
+  mv -f "$tmp" "$provision_file"
+  [[ -n "$(auth_database)" && -n "$(auth_data_key)" ]] ||
+    die "auth-app provision output lacks a database or data key (keys: $(jq -c keys "$provision_file"))"
+  say "auth provisioned (database $(auth_database))"
+  write_env
+}
+
+run_ts_auth() {
+  [[ -x "$AUTH_APP_BIN" ]] || die "auth-app not found at $AUTH_APP_BIN"
+  auth_env
+  exec "$AUTH_APP_BIN"
+}
+
+run_auth_bootstrap_platform() {
+  has_subcommand "$AUTH_APP_BIN" bootstrap-platform ||
+    waiting AUTH-2a "auth-app has no 'bootstrap-platform' subcommand (ts-auth feat/platform-bootstrap)"
+  auth_env
+  local tmp="$platform_file.tmp"
+  (umask 077 && "$AUTH_APP_BIN" bootstrap-platform \
+    --redirect-uri "$DASHBOARD_PUBLIC_URL/auth/callback" \
+    --post-logout-redirect-uri "$DASHBOARD_PUBLIC_URL/" \
+    --output "$tmp")
+  jq -e 'type == "object"' "$tmp" >/dev/null || die "bootstrap-platform did not write a JSON object"
+  mv -f "$tmp" "$platform_file"
+  [[ -n "$(auth_issuer)" && -n "$(auth_client_id)" && -n "$(auth_client_secret)" ]] ||
+    die "bootstrap-platform output lacks issuer, client_id or client_secret (keys: $(jq -c keys "$platform_file"))"
+  say "platform client $(auth_client_id) registered at $(auth_issuer)"
+  write_env
+}
+
+run_dashboard_migrate() {
+  [[ -x "$DASHBOARD_BIN" ]] || die "dashboard not found at $DASHBOARD_BIN"
+  has_subcommand "$DASHBOARD_BIN" migrate ||
+    waiting DASH-1a "dashboard has no 'migrate' subcommand (ts-dashboard cmd/dashboard migrate)"
+  dashboard_env
+  "$DASHBOARD_BIN" migrate
+}
+
+run_dashboard() {
+  [[ -x "$DASHBOARD_BIN" ]] || die "dashboard not found at $DASHBOARD_BIN"
+  dashboard_env
+  exec "$DASHBOARD_BIN"
+}
+
+cmd_run() {
+  load_config
+  case "${1:-}" in
+    mailpit) run_mailpit ;;
+    caddy) run_caddy ;;
+    tb-init) run_tb_init ;;
+    tb-server) run_tb_server ;;
+    stack-env) write_env ;;
+    auth-provision) run_auth_provision ;;
+    ts-auth) run_ts_auth ;;
+    auth-bootstrap-platform) run_auth_bootstrap_platform ;;
+    dashboard-migrate) run_dashboard_migrate ;;
+    dashboard) run_dashboard ;;
+    *) die "unknown process: ${1:-}" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Probes
+# ---------------------------------------------------------------------------
+http_code() { curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$@" || true; }
+
+probe_tb() {
+  if [[ "$TB_BACKEND" == real ]]; then
+    [[ "$(http_code "http://127.0.0.1:$TB_ADMIN_PORT/readyz")" == 200 ]]
+  else
+    [[ -s "$TB_CONTROL_KEY_FILE" ]] && [[ "$(http_code --cacert "$TB_CA_FILE" "$TB_URL/")" != 000 ]]
+  fi
+}
+
+cmd_probe() {
+  load_config
+  case "${1:-}" in
+    mailpit) [[ "$(http_code "$MAILPIT_URL/readyz")" == 200 ]] ;;
+    caddy) [[ "$(http_code --cacert "$STACK_CA_FILE" "https://localhost:$AUTH_HTTPS_PORT/")" != 000 ]] ;;
+    tb-server) probe_tb ;;
+    ts-auth) [[ "$(http_code "http://127.0.0.1:$AUTH_PORT/readyz")" == 200 ]] ;;
+    dashboard) [[ "$(http_code "http://127.0.0.1:$DASHBOARD_PORT/health/ready")" == 200 ]] ;;
+    *) die "unknown probe: ${1:-}" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# process-compose
+# ---------------------------------------------------------------------------
+# process-compose logs a debug line on stderr when it has no user config dir.
+pc_quiet() { process-compose "$@" 2> >(grep -v '"level":"debug"' >&2); }
+pc() { pc_quiet -U -u "$socket" "$@"; }
+
+pc_running() { [[ -S "$socket" ]] && pc process list -o json >/dev/null 2>&1; }
+
+check_ports_free() {
+  local port busy=()
+  for port in "$TB_ADMIN_PORT" "$TB_CLIENT_PORT" "$MAILPIT_SMTP_PORT" "$MAILPIT_UI_PORT" \
+    "$AUTH_PORT" "$AUTH_HTTPS_PORT" "$DASHBOARD_PORT" "$DASHBOARD_HTTPS_PORT"; do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then busy+=("$port"); fi
+  done
+  ((${#busy[@]} == 0)) ||
+    die "ports already in use on 127.0.0.1: ${busy[*]} (another worktree's stack? set STACK_PORT_OFFSET, e.g. 100)"
+}
+
+print_status() {
+  pc process list -o json 2>/dev/null |
+    jq -r '.[] | [.name, .status, (if .has_ready_probe then .is_ready else "-" end), (.exit_code | tostring)] | @tsv' |
+    sort | awk -F'\t' 'BEGIN { printf "%-26s %-12s %-10s %s\n", "PROCESS", "STATUS", "READY", "EXIT" }
+      { printf "%-26s %-12s %-10s %s\n", $1, $2, $3, $4 }'
+}
+
+wait_for_stack() {
+  local deadline=$((SECONDS + ${STACK_UP_TIMEOUT:-300})) list failed pending
+  while :; do
+    list="$(pc process list -o json 2>/dev/null || echo '[]')"
+    failed="$(jq -r '.[] | select((.status == "Completed" and .exit_code != 0) or .status == "Error" or .status == "Skipped" or (.status == "Completed" and .has_ready_probe)) | .name' <<<"$list")"
+    pending="$(jq -r '.[] | select(.status != "Disabled") | select(
+        (.has_ready_probe and .is_ready != "Ready") or
+        ((.has_ready_probe | not) and .status != "Completed")) | .name' <<<"$list")"
+    pending="$(comm -23 <(sort <<<"$pending") <(sort <<<"$failed") | sed '/^$/d')"
+    if [[ -z "$pending" ]]; then break; fi
+    if ((SECONDS >= deadline)); then
+      say "timed out waiting for: $(tr '\n' ' ' <<<"$pending")"
+      break
+    fi
+    sleep 2
+  done
+  print_status >&2
+  if [[ -n "$failed" || -n "$pending" ]]; then
+    local name
+    for name in $(jq -r '.[] | select(.status == "Completed" and .exit_code != 0) | .name' <<<"$list") $pending; do
+      [[ -s "$STACK_STATE/logs/$name.log" ]] || continue
+      printf '\n--- %s (last lines of .stack/logs/%s.log) ---\n' "$name" "$name" >&2
+      tail -n 8 "$STACK_STATE/logs/$name.log" | jq -r '.message // .' 2>/dev/null >&2 ||
+        tail -n 8 "$STACK_STATE/logs/$name.log" >&2
+    done
+    printf '\n' >&2
+    say "stack is partially up; Skipped processes wait on a failed prerequisite above."
+    say "inspect: stack status | stack logs <process>; stop: stack down"
+    return 1
+  fi
+  say "stack is up"
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+cmd_up() {
+  load_config
+  require_tools process-compose caddy mkcert mailpit jq curl
+  if pc_running; then die "stack already running in $STACK_STATE (stack down first)"; fi
+  check_ports_free
+  mkdir -p "$STACK_STATE/logs"
+  [[ -f "$repo_root/.gitignore" ]] && ! git -C "$repo_root" check-ignore -q "$STACK_STATE/env" &&
+    die "$STACK_STATE is not gitignored"
+  save_config
+  ensure_certs
+  ensure_secrets
+  if [[ "${STACK_SKIP_BUILD:-}" != 1 ]]; then build_all "$@"; fi
+  rm -f "$STACK_STATE"/logs/*.log
+  say "starting (backend $TB_BACKEND, port offset $STACK_PORT_OFFSET)"
+  # The detached server inherits our descriptors; give it none of them.
+  process-compose up -D -U -u "$socket" -f "$stack_dir/process-compose.yaml" \
+    --disable-dotenv --no-watch -L "$STACK_STATE/logs/process-compose-server.log" "$@" \
+    </dev/null >>"$STACK_STATE/logs/process-compose-server.log" 2>&1
+  local tries=0
+  until pc_running; do
+    ((++tries < 50)) || die "process-compose did not start; see $STACK_STATE/logs/process-compose-server.log"
+    sleep 0.2
+  done
+  local rc=0
+  wait_for_stack || rc=$?
+  print_urls
+  return "$rc"
+}
+
+print_urls() {
+  cat >&2 <<EOF
+
+  dashboard   $DASHBOARD_PUBLIC_URL
+  ts-auth     $AUTH_PUBLIC_URL
+  mailpit     $MAILPIT_URL
+  terrabase   $TB_URL (CA $TB_CA_FILE)
+  env         $env_file
+  CA          $STACK_CA_FILE
+EOF
+}
+
+cmd_down() {
+  load_config
+  if pc_running; then
+    pc down >/dev/null 2>&1 || true
+    say "stopped"
+  else
+    say "not running"
+  fi
+  rm -f "$socket"
+}
+
+cmd_reset() {
+  load_config
+  cmd_down
+  if [[ -n "$(cat "$STACK_STATE/preview.serve" 2>/dev/null)" ]]; then preview_off; fi
+  [[ "$STACK_STATE" == */.stack ]] || die "refusing to delete unexpected STACK_STATE $STACK_STATE"
+  # Keep the build cache; everything else (CA, keys, data, env) goes.
+  find "$STACK_STATE" -mindepth 1 -maxdepth 1 ! -name target ! -name bin -exec rm -rf {} +
+  say "reset $STACK_STATE (build cache kept; rm -rf it for a full wipe)"
+}
+
+cmd_env() {
+  load_config
+  [[ -s "$env_file" ]] || die "no $env_file yet (stack up)"
+  case "${1:-}" in
+    --export) sed -n 's/^\([A-Z_0-9]*\)=/export \1=/p' "$env_file" ;;
+    --path) printf '%s\n' "$env_file" ;;
+    "")
+      printf '# %s\n' "$env_file"
+      awk -F= '/^#/ { print; next }
+        $1 ~ /(KEY|SECRET)$/ { printf "%s=%s…(%d chars)\n", $1, substr($2, 1, 6), length($2); next }
+        { print }' "$env_file"
+      ;;
+    *) die "usage: stack env [--export|--path]" ;;
+  esac
+}
+
+cmd_check() {
+  load_config
+  require_tools jq curl
+  local fails=0 code tmp
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  pass() { printf 'PASS  %s\n' "$1"; }
+  fail() { printf 'FAIL  %s\n' "$1"; fails=$((fails + 1)); }
+  expect() { # expect <ok?> <label> <detail-on-failure>
+    if [[ "$1" == yes ]]; then pass "$2"; else fail "$2 ($3)"; fi
+  }
+  yes_if() { if "$@" >/dev/null 2>&1; then echo yes; else echo no; fi; }
+
+  if [[ "$TB_BACKEND" == real ]]; then
+    code="$(http_code "http://127.0.0.1:$TB_ADMIN_PORT/readyz")"
+    expect "$(yes_if test "$code" = 200)" "terrabase admin /readyz" "HTTP $code"
+  fi
+  local key
+  if key="$(control_key)"; then
+    code="$(curl -s -o "$tmp/tenants" -w '%{http_code}' --max-time 5 --cacert "$TB_CA_FILE" \
+      --config <(printf 'header = "Authorization: Bearer %s"\n' "$key") \
+      "$TB_URL/v1/dashboard/tenants?limit=1" || true)"
+    if [[ "$code" == 200 ]] && jq -e '.items | type == "array"' "$tmp/tenants" >/dev/null 2>&1; then
+      pass "terrabase TLS + control key: GET /v1/dashboard/tenants"
+    else
+      fail "terrabase TLS + control key: GET /v1/dashboard/tenants (HTTP $code)"
+    fi
+  else
+    fail "terrabase control key missing ($TB_CONTROL_KEY_FILE)"
+  fi
+
+  local issuer
+  issuer="$(auth_issuer)"
+  if [[ -z "$issuer" ]]; then
+    fail "OIDC discovery: no issuer yet (waiting on AUTH-2a bootstrap-platform)"
+  else
+    code="$(curl -s -o "$tmp/discovery" -w '%{http_code}' --max-time 5 --cacert "$STACK_CA_FILE" \
+      "$issuer/.well-known/openid-configuration" || true)"
+    if [[ "$code" == 200 ]] && [[ "$(jq -r .issuer "$tmp/discovery")" == "$issuer" ]]; then
+      pass "OIDC discovery at $issuer"
+      local jwks
+      jwks="$(jq -r .jwks_uri "$tmp/discovery")"
+      code="$(curl -s -o "$tmp/jwks" -w '%{http_code}' --max-time 5 --cacert "$STACK_CA_FILE" "$jwks" || true)"
+      if [[ "$code" == 200 ]] && jq -e '.keys | length > 0' "$tmp/jwks" >/dev/null 2>&1; then
+        pass "JWKS at $jwks"
+      else
+        fail "JWKS at $jwks (HTTP $code)"
+      fi
+    else
+      fail "OIDC discovery at $issuer (HTTP $code or issuer mismatch)"
+    fi
+  fi
+
+  code="$(http_code --cacert "$STACK_CA_FILE" "$DASHBOARD_PUBLIC_URL/health/ready")"
+  expect "$(yes_if test "$code" = 200)" "dashboard $DASHBOARD_PUBLIC_URL/health/ready" "HTTP $code"
+
+  code="$(curl -s -o "$tmp/mailpit" -w '%{http_code}' --max-time 5 "$MAILPIT_URL/api/v1/info" || true)"
+  # shellcheck disable=SC2016 # $code is a jq variable.
+  expect "$(yes_if jq -e --arg code "$code" '$code == "200" and .Version' "$tmp/mailpit")" \
+    "mailpit API $MAILPIT_URL" "HTTP $code"
+  if (exec 3<>"/dev/tcp/127.0.0.1/$MAILPIT_SMTP_PORT") 2>/dev/null; then
+    pass "mailpit SMTP 127.0.0.1:$MAILPIT_SMTP_PORT"
+  else
+    fail "mailpit SMTP 127.0.0.1:$MAILPIT_SMTP_PORT"
+  fi
+  unset -f pass fail expect yes_if
+  ((fails == 0)) || { say "$fails check(s) failed"; return 1; }
+}
+
+cmd_bootstrap() {
+  load_config
+  require_tools mkcert jq curl
+  ensure_certs
+  ensure_secrets
+  probe_tb || die "TerraBase is not up (stack up)"
+  local rc=0
+  (cmd_run_step auth-provision) || rc=1
+  (cmd_run_step dashboard-migrate) || rc=1
+  if ((rc == 0)); then
+    [[ "$(http_code "http://127.0.0.1:$AUTH_PORT/readyz")" == 200 ]] || die "ts-auth is not up"
+    (cmd_run_step auth-bootstrap-platform) || rc=1
+  fi
+  write_env
+  return "$rc"
+}
+
+cmd_run_step() { say "bootstrap: $1"; cmd_run "$1"; }
+
+preview_off() {
+  local ports port
+  read -r -a ports <"$STACK_STATE/preview.serve" 2>/dev/null || ports=()
+  for port in "${ports[@]}"; do
+    tailscale serve --https="$port" off >/dev/null 2>&1 || true
+  done
+  rm -f "$STACK_STATE/preview.serve"
+}
+
+cmd_preview() {
+  load_config
+  require_tools tailscale jq
+  if [[ "${1:-}" == off ]]; then
+    preview_off
+    STACK_PREVIEW_HOST="" save_config
+    say "preview off; run stack down && stack up to return to localhost URLs"
+    return 0
+  fi
+  local host status port target
+  host="$(tailscale status --json | jq -r '.Self.DNSName | rtrimstr(".")')"
+  [[ -n "$host" && "$host" != null ]] || die "tailscale is not connected"
+  status="$(tailscale serve status --json 2>/dev/null || echo '{}')"
+  for port in "$PREVIEW_AUTH_PORT" "$PREVIEW_DASHBOARD_PORT"; do
+    target="$(jq -r --arg hp "$host:$port" '.Web[$hp].Handlers["/"].Proxy // empty' <<<"$status")"
+    case "$target" in
+      "" | "http://127.0.0.1:$AUTH_PORT" | "http://127.0.0.1:$DASHBOARD_PORT") ;;
+      *) die "tailnet port $port already serves $target (pick another STACK_PORT_OFFSET)" ;;
+    esac
+  done
+  # Public URLs (OIDC issuer, redirect URIs, cookies) move to the tailnet name,
+  # so the stack restarts with them before the serve rules are added.
+  export STACK_PREVIEW_HOST="$host"
+  save_config
+  pc_running && cmd_down
+  load_config
+  tailscale serve --bg --https="$PREVIEW_AUTH_PORT" "http://127.0.0.1:$AUTH_PORT" >/dev/null
+  tailscale serve --bg --https="$PREVIEW_DASHBOARD_PORT" "http://127.0.0.1:$DASHBOARD_PORT" >/dev/null
+  printf '%s %s\n' "$PREVIEW_AUTH_PORT" "$PREVIEW_DASHBOARD_PORT" >"$STACK_STATE/preview.serve"
+  local rc=0
+  cmd_up "$@" || rc=$?
+  say "preview: dashboard $DASHBOARD_PUBLIC_URL, ts-auth $AUTH_PUBLIC_URL (tailnet only)"
+  return "$rc"
+}
+
+cmd_status() {
+  load_config
+  pc_running || die "not running"
+  print_status
+}
+
+cmd_logs() {
+  load_config
+  [[ -n "${1:-}" ]] || die "usage: stack logs <process>"
+  local file="$STACK_STATE/logs/$1.log"
+  [[ -f "$file" ]] || die "no log for $1"
+  if [[ "${2:-}" == -f ]]; then tail -n 50 -F "$file"; else tail -n "${2:-80}" "$file"; fi
+}
+
+cmd_config() {
+  load_config
+  require_tools process-compose
+  require_tools caddy jq
+  pc_quiet -f "$stack_dir/process-compose.yaml" --disable-dotenv --dry-run "$@"
+  caddy adapt --adapter caddyfile --config "$stack_dir/Caddyfile" 2>/dev/null |
+    jq -e '.apps.http.servers | length == 2' >/dev/null || die "Caddyfile does not adapt"
+  printf 'Caddyfile adapts (auth %s -> %s, dashboard %s -> %s)\n' \
+    "$AUTH_HTTPS_PORT" "$AUTH_PORT" "$DASHBOARD_HTTPS_PORT" "$DASHBOARD_PORT"
+}
+
+usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; }
+
+main() {
+  local command="${1:-}"
+  shift || true
+  case "$command" in
+    up) cmd_up "$@" ;;
+    down) cmd_down ;;
+    reset) cmd_reset ;;
+    env) cmd_env "$@" ;;
+    check) cmd_check ;;
+    bootstrap) cmd_bootstrap ;;
+    preview) cmd_preview "$@" ;;
+    status) cmd_status ;;
+    logs) cmd_logs "$@" ;;
+    build) cmd_build "$@" ;;
+    config) cmd_config "$@" ;;
+    run) cmd_run "$@" ;;
+    probe) cmd_probe "$@" ;;
+    -h | --help | help | "") usage ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
+main "$@"

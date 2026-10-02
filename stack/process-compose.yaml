@@ -1,0 +1,136 @@
+# Local platform stack: TerraBase + ts-auth + dashboard + Mailpit behind Caddy.
+# Start it with stack/bin/stack up, which exports every variable used here
+# (ports, paths, STACK_BIN) and runs process-compose detached on a per-worktree
+# unix socket. Each command and probe delegates to `stack run|probe <name>`, so
+# this file only holds the dependency graph and health ordering.
+#
+# One-shot steps (tb-init, auth-provision, dashboard-migrate,
+# auth-bootstrap-platform, stack-env) exit non-zero with "waiting on <WS>" when
+# the subcommand they need has not landed yet; everything that depends on them
+# is then reported as Skipped, never started without its prerequisite.
+version: "0.5"
+
+log_location: ${STACK_STATE}/logs/process-compose.log
+log_level: info
+is_strict: true
+
+x-oneshot: &oneshot
+  availability:
+    restart: "no"
+
+x-probe: &probe
+  initial_delay_seconds: 1
+  period_seconds: 2
+  timeout_seconds: 5
+  success_threshold: 1
+  failure_threshold: 600
+
+processes:
+  mailpit:
+    command: '"$STACK_BIN" run mailpit'
+    log_location: ${STACK_STATE}/logs/mailpit.log
+    readiness_probe:
+      <<: *probe
+      exec:
+        command: '"$STACK_BIN" probe mailpit'
+    availability:
+      restart: on_failure
+      max_restarts: 3
+
+  caddy:
+    command: '"$STACK_BIN" run caddy'
+    log_location: ${STACK_STATE}/logs/caddy.log
+    readiness_probe:
+      <<: *probe
+      exec:
+        command: '"$STACK_BIN" probe caddy'
+    availability:
+      restart: on_failure
+      max_restarts: 3
+
+  tb-init:
+    <<: *oneshot
+    command: '"$STACK_BIN" run tb-init'
+    log_location: ${STACK_STATE}/logs/tb-init.log
+
+  tb-server:
+    command: '"$STACK_BIN" run tb-server'
+    log_location: ${STACK_STATE}/logs/tb-server.log
+    depends_on:
+      tb-init:
+        condition: process_completed_successfully
+    readiness_probe:
+      <<: *probe
+      exec:
+        command: '"$STACK_BIN" probe tb-server'
+    availability:
+      restart: on_failure
+      max_restarts: 3
+
+  stack-env:
+    <<: *oneshot
+    command: '"$STACK_BIN" run stack-env'
+    log_location: ${STACK_STATE}/logs/stack-env.log
+    depends_on:
+      tb-server:
+        condition: process_healthy
+
+  auth-provision:
+    <<: *oneshot
+    command: '"$STACK_BIN" run auth-provision'
+    log_location: ${STACK_STATE}/logs/auth-provision.log
+    depends_on:
+      tb-server:
+        condition: process_healthy
+
+  dashboard-migrate:
+    <<: *oneshot
+    command: '"$STACK_BIN" run dashboard-migrate'
+    log_location: ${STACK_STATE}/logs/dashboard-migrate.log
+    depends_on:
+      tb-server:
+        condition: process_healthy
+
+  ts-auth:
+    command: '"$STACK_BIN" run ts-auth'
+    log_location: ${STACK_STATE}/logs/ts-auth.log
+    depends_on:
+      auth-provision:
+        condition: process_completed_successfully
+      mailpit:
+        condition: process_healthy
+      caddy:
+        condition: process_healthy
+    readiness_probe:
+      <<: *probe
+      exec:
+        command: '"$STACK_BIN" probe ts-auth'
+    availability:
+      restart: on_failure
+      max_restarts: 3
+
+  auth-bootstrap-platform:
+    <<: *oneshot
+    command: '"$STACK_BIN" run auth-bootstrap-platform'
+    log_location: ${STACK_STATE}/logs/auth-bootstrap-platform.log
+    depends_on:
+      ts-auth:
+        condition: process_healthy
+
+  dashboard:
+    command: '"$STACK_BIN" run dashboard'
+    log_location: ${STACK_STATE}/logs/dashboard.log
+    depends_on:
+      dashboard-migrate:
+        condition: process_completed_successfully
+      auth-bootstrap-platform:
+        condition: process_completed_successfully
+      caddy:
+        condition: process_healthy
+    readiness_probe:
+      <<: *probe
+      exec:
+        command: '"$STACK_BIN" probe dashboard'
+    availability:
+      restart: on_failure
+      max_restarts: 3

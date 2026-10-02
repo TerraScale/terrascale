@@ -1,0 +1,24 @@
+# TLS front for ts-auth and the dashboard. Every value comes from the
+# environment stack/bin/stack exports; the certificate is the stack's mkcert
+# leaf for localhost, 127.0.0.1 and ::1.
+{
+	admin off
+	persist_config off
+	skip_install_trust
+	auto_https disable_redirects
+	storage file_system {$STACK_STATE}/caddy/storage
+}
+
+https://localhost:{$AUTH_HTTPS_PORT}, https://127.0.0.1:{$AUTH_HTTPS_PORT} {
+	bind 127.0.0.1 [::1]
+	tls {$STACK_CERT_FILE} {$STACK_KEY_FILE}
+	reverse_proxy 127.0.0.1:{$AUTH_PORT}
+}
+
+https://localhost:{$DASHBOARD_HTTPS_PORT}, https://127.0.0.1:{$DASHBOARD_HTTPS_PORT} {
+	bind 127.0.0.1 [::1]
+	tls {$STACK_CERT_FILE} {$STACK_KEY_FILE}
+	reverse_proxy 127.0.0.1:{$DASHBOARD_PORT} {
+		flush_interval -1
+	}
+}
