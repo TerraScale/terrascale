@@ -272,8 +272,11 @@ impl Tx {
 
     /// The request body.
     pub(crate) fn encode(&self) -> Result<Vec<u8>> {
-        if let Some((op, msg)) = &self.error {
-            return Err(Error::InvalidInput(format!("transaction op {op}: {msg}")));
+        if let Some((op, message)) = &self.error {
+            return Err(Error::InvalidTxOp {
+                op: *op,
+                message: message.clone(),
+            });
         }
         if self.ops.is_empty() || self.ops.len() > MAX_TX_OPS {
             return Err(Error::InvalidInput("a transaction needs 1-1024 ops".into()));

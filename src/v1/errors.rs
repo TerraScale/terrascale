@@ -89,6 +89,14 @@ pub enum Error {
     /// may or may not have been applied.
     #[error("terrabase: transport: {0}")]
     Transport(String),
+    /// A response body exceeded the configured
+    /// [`max_response_bytes`](super::ClientBuilder::max_response_bytes). The
+    /// server answered, so it is not retried.
+    #[error("terrabase: response exceeds {limit} bytes")]
+    ResponseTooLarge { limit: usize },
+    /// Transaction op `op` is invalid; nothing was sent.
+    #[error("terrabase: invalid transaction op {op}: {message}")]
+    InvalidTxOp { op: usize, message: String },
     /// The caller passed an invalid argument; nothing was sent.
     #[error("terrabase: invalid input: {0}")]
     InvalidInput(String),
@@ -125,6 +133,8 @@ impl Error {
             Self::InternalError => 500,
             Self::Api { status, .. } => *status,
             Self::OperationFailed { .. }
+            | Self::ResponseTooLarge { .. }
+            | Self::InvalidTxOp { .. }
             | Self::Transport(_)
             | Self::InvalidInput(_)
             | Self::Decode(_) => return None,
@@ -148,7 +158,11 @@ impl Error {
             Self::InvalidKey => "invalid_key",
             Self::InternalError => "internal_error",
             Self::Api { code, .. } | Self::OperationFailed { code, .. } => code,
-            Self::Transport(_) | Self::InvalidInput(_) | Self::Decode(_) => return None,
+            Self::ResponseTooLarge { .. }
+            | Self::InvalidTxOp { .. }
+            | Self::Transport(_)
+            | Self::InvalidInput(_)
+            | Self::Decode(_) => return None,
         })
     }
 
@@ -162,6 +176,7 @@ impl Error {
             | Self::ConflictUnresolved { op }
             | Self::Forbidden { op }
             | Self::Api { op, .. } => *op,
+            Self::InvalidTxOp { op, .. } => Some(*op),
             _ => None,
         }
     }
@@ -231,7 +246,7 @@ pub(crate) fn from_response(
         (503, "commit_uncertain") => Error::CommitUncertain,
         (409, "idempotency_conflict") => Error::IdempotencyConflict,
         (409, "idempotency_expired") => Error::IdempotencyExpired,
-        (429, _) => Error::RateLimited { retry_after },
+        (429, "rate_limited") => Error::RateLimited { retry_after },
         (403, "forbidden_scope") => Error::Forbidden { op },
         (401, "invalid_key") => Error::InvalidKey,
         (500, "internal_error") => Error::InternalError,

@@ -16,7 +16,10 @@ use super::errors::{Error, Result};
 /// they never pass through `f64`. `Number` serializes as a bare JSON number
 /// (not a string) and deserializes any JSON number without rounding. It works
 /// with `serde_json` only, and must not be used inside `#[serde(flatten)]` or
-/// untagged enums (those buffer values and lose the raw text).
+/// untagged enums (those buffer values and lose the raw text). Do not put it in
+/// a `serde_json::Value` (`json!`, `to_value`) either: without
+/// `arbitrary_precision`, `Value` rounds it through `f64`. Serialize it from a
+/// struct or map instead.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Number(String);
 

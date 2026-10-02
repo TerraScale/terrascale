@@ -36,7 +36,9 @@ TLS 1.3 only; HTTPS only except loopback HTTP; redirects are not followed.
 Retry policy: `429` always (after `Retry-After`, capped); transport errors and
 the transient 503s (`capacity`, `storage_unavailable`,
 `dependencies_unavailable`, `commit_uncertain`) only for reads, queries and
-requests with an `Idempotency-Key`; `500 internal_error` only with a key.
+requests with an `Idempotency-Key`; `500 internal_error` only with a key. Only `429` with code `rate_limited` is
+retried; other 429s surface as `Error::Api`. Oversized responses are never
+retried. Plain-HTTP and loopback base URLs ignore environment proxies.
 
 ## Documents
 
@@ -74,7 +76,8 @@ db.commit(&tx) -> Result<TxResult { offset, durability, results: Vec<OpResult> }
 enum OpResult { Write { id, version }, Asserted { count: Option<u64> } }
 ```
 
-Failures carry the op index: `err.op() -> Option<usize>`.
+Failures carry the op index: `err.op() -> Option<usize>`, for server errors and
+for local validation (`Error::InvalidTxOp`).
 
 ## Queries
 
@@ -105,6 +108,8 @@ enum Error {
     IdempotencyExpired, RateLimited { retry_after }, Forbidden { op }, InvalidKey,
     InternalError, Api { status, code, message, op, details },
     OperationFailed { id, code, message },   // ControlClient::wait_operation
+    ResponseTooLarge { limit },              // not retried
+    InvalidTxOp { op, message },             // local Tx validation; err.op() == Some(op)
     Transport(String), InvalidInput(String), Decode(String),
 }
 err.status() / err.code() / err.op() / err.is_not_found() / err.is_uncertain()
