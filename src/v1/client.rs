@@ -162,6 +162,10 @@ impl ClientBuilder {
         let mut auth = HeaderValue::from_str(&format!("Bearer {}", self.token))
             .map_err(|_| Error::InvalidInput("token is not a valid header value".into()))?;
         auth.set_sensitive(true);
+        // Never send a bearer key over plain HTTP through a proxy taken from
+        // the environment (HTTP_PROXY/ALL_PROXY): loopback HTTP and loopback
+        // hosts always connect directly.
+        let direct = base.scheme() == "http" || is_loopback(&base);
         let mut http = reqwest::Client::builder()
             .use_rustls_tls()
             .min_tls_version(reqwest::tls::Version::TLS_1_3)
@@ -170,6 +174,9 @@ impl ClientBuilder {
                 self.user_agent
                     .unwrap_or_else(|| format!("terrascale-rust/{} v1", env!("CARGO_PKG_VERSION"))),
             );
+        if direct {
+            http = http.no_proxy();
+        }
         if let Some(t) = self.timeout {
             http = http.timeout(t);
         }
@@ -221,6 +228,15 @@ fn valid_token(token: &str) -> bool {
     )
 }
 
+fn is_loopback(url: &Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(d)) => d == "localhost",
+        Some(url::Host::Ipv4(ip)) => IpAddr::V4(ip).is_loopback(),
+        Some(url::Host::Ipv6(ip)) => IpAddr::V6(ip).is_loopback(),
+        None => false,
+    }
+}
+
 fn parse_base_url(raw: &str) -> Result<Url> {
     let mut url =
         Url::parse(raw).map_err(|e| Error::InvalidInput(format!("base URL {raw:?}: {e}")))?;
@@ -236,13 +252,7 @@ fn parse_base_url(raw: &str) -> Result<Url> {
     match url.scheme() {
         "https" => {}
         "http" => {
-            let loopback = match url.host() {
-                Some(url::Host::Domain(d)) => d == "localhost",
-                Some(url::Host::Ipv4(ip)) => IpAddr::V4(ip).is_loopback(),
-                Some(url::Host::Ipv6(ip)) => IpAddr::V6(ip).is_loopback(),
-                None => false,
-            };
-            if !loopback {
+            if !is_loopback(&url) {
                 return Err(Error::InvalidInput(
                     "plain HTTP base URL is allowed only for loopback hosts".into(),
                 ));
@@ -474,10 +484,9 @@ impl Client {
                 Ok(chunk) => {
                     if body.len() + chunk.len() > self.inner.max_response {
                         return Attempt::Failed(
-                            Error::Transport(format!(
-                                "response exceeds {} bytes",
-                                self.inner.max_response
-                            )),
+                            Error::ResponseTooLarge {
+                                limit: self.inner.max_response,
+                            },
                             None,
                         );
                     }
@@ -517,14 +526,70 @@ fn describe(e: &reqwest::Error) -> String {
 }
 
 fn backoff(policy: &RetryPolicy, attempt: u32) -> Duration {
+    backoff_with(policy, attempt, uuid::Uuid::new_v4().as_u128())
+}
+
+/// Equal-jitter backoff: half of the capped exponential delay is fixed, half
+/// random. Overflow-safe for any `Duration` policy values.
+fn backoff_with(policy: &RetryPolicy, attempt: u32, random: u128) -> Duration {
     let full = policy
         .base_delay
         .saturating_mul(1u32 << attempt.min(16))
         .min(policy.max_delay);
-    // Equal jitter: half fixed, half random.
     let half = full / 2;
-    let random = uuid::Uuid::new_v4().as_u128() as u64;
-    let nanos = half.as_nanos() as u64;
-    let jitter = if nanos == 0 { 0 } else { random % (nanos + 1) };
-    half + Duration::from_nanos(jitter)
+    // A Duration has fewer than 2^94 nanoseconds, so `span + 1` cannot overflow.
+    let span = half.as_nanos();
+    let jitter = if span == 0 { 0 } else { random % (span + 1) };
+    // jitter <= span, so its whole seconds fit in u64.
+    let jitter = Duration::new(
+        (jitter / 1_000_000_000) as u64,
+        (jitter % 1_000_000_000) as u32,
+    );
+    half.saturating_add(jitter)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_is_bounded_and_overflow_safe() {
+        let huge = RetryPolicy {
+            max_retries: 3,
+            base_delay: Duration::MAX,
+            max_delay: Duration::MAX,
+            max_retry_after: Duration::MAX,
+        };
+        for random in [0, 1, u64::MAX as u128, u128::MAX] {
+            for attempt in [0, 1, 16, u32::MAX] {
+                let d = backoff_with(&huge, attempt, random);
+                assert!(d >= Duration::MAX / 2, "{d:?}");
+            }
+        }
+        let normal = RetryPolicy::default();
+        for random in [0, u128::MAX] {
+            for attempt in 0..40 {
+                let d = backoff_with(&normal, attempt, random);
+                assert!(d <= normal.max_delay, "{d:?}");
+                assert!(
+                    d >= normal
+                        .base_delay
+                        .saturating_mul(1 << attempt.min(16))
+                        .min(normal.max_delay)
+                        / 2
+                );
+            }
+        }
+        assert_eq!(
+            backoff_with(
+                &RetryPolicy {
+                    base_delay: Duration::ZERO,
+                    ..normal
+                },
+                3,
+                7
+            ),
+            Duration::ZERO
+        );
+    }
 }
