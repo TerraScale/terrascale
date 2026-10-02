@@ -176,22 +176,17 @@ test('published routes expose canonical metadata and basic accessible structure'
   }
 })
 
-test('published routes keep registration, login, status, and policy links canonical', async ({ page }) => {
+test('published routes keep registration, login, and status links canonical and omit draft legal links', async ({ page }) => {
   const requiredLinks = [
     registrationUrl,
     'https://dash.terrascale.tech/login',
     'https://status.terrascale.tech',
-    'https://docs.terrascale.tech/legal/security/',
-    'https://docs.terrascale.tech/legal/terms/',
-    'https://docs.terrascale.tech/legal/terms/#acceptable-use',
-    'https://docs.terrascale.tech/legal/privacy/',
-    'https://docs.terrascale.tech/legal/dpa/',
-    'https://docs.terrascale.tech/legal/support/',
   ]
 
   for (const route of publishedRoutes) {
     await page.goto(route.path)
     for (const href of requiredLinks) await expect(page.locator(`a[href="${href}"]`).first()).toBeAttached()
+    await expect(page.locator('a[href*="docs.terrascale.tech/legal/"]')).toHaveCount(0)
 
     const registrationLinks = page.locator(`a[href^="${registrationUrl}"]`)
     if ((await registrationLinks.count()) === 0) {
@@ -310,8 +305,8 @@ test('Public Alpha claims and customer links stay within the launch contract', a
 
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Public Alpha')
   await expect(page.getByText(/São Paulo/).first()).toBeVisible()
-  await expect(page.getByText(/San Francisco/).first()).toBeVisible()
-  await expect(page.getByText(/Falkenstein/).first()).toBeVisible()
+  await expect(page.getByText(/San Jose/).first()).toBeVisible()
+  await expect(page.getByText(/Frankfurt/).first()).toBeVisible()
   await expect(page.getByText(/asynchronous replication/i).first()).toBeVisible()
   await expect(page.getByText(/no uptime percentage or SLA/i).first()).toBeVisible()
   await expect(page.getByText(/Customer content stays in selected regions/i)).toBeVisible()
@@ -322,6 +317,7 @@ test('Public Alpha claims and customer links stay within the launch contract', a
   expect(body).not.toMatch(/zero[- ]latency|instant replication|bounded lag|majority write|serve from any region/i)
   expect(body).not.toMatch(/\b(?:queue|queues|authentication product|backup|backups|annual billing)\b/i)
   expect(body).not.toMatch(/paid overages? (?:are|remain|supported|available)/i)
+  expect(body).not.toMatch(/\b(?:Falkenstein|San Francisco)\b/)
 
   if ((await page.locator('a[href="https://dash.terrascale.tech/login"]:visible').count()) === 0) {
     await page.getByRole('button', { name: /toggle navigation/i }).click()
@@ -331,29 +327,14 @@ test('Public Alpha claims and customer links stay within the launch contract', a
     registrationUrl,
     'https://dash.terrascale.tech/login',
     'https://status.terrascale.tech',
-    'https://docs.terrascale.tech/legal/security/',
-    'https://docs.terrascale.tech/legal/terms/',
-    'https://docs.terrascale.tech/legal/terms/#acceptable-use',
-    'https://docs.terrascale.tech/legal/privacy/',
-    'https://docs.terrascale.tech/legal/dpa/',
-    'https://docs.terrascale.tech/legal/support/',
   ]
 
   for (const href of expectedLinks) {
     await expect(page.locator(`a[href="${href}"]:visible`).first()).toBeVisible()
   }
 
-  const policyLinks = [
-    'https://docs.terrascale.tech/legal/terms/',
-    'https://docs.terrascale.tech/legal/privacy/',
-    'https://docs.terrascale.tech/legal/terms/#acceptable-use',
-    'https://docs.terrascale.tech/legal/dpa/',
-  ]
-  expect(new Set(policyLinks).size).toBe(policyLinks.length)
-  for (const href of policyLinks) {
-    await expect(page.locator(`nav[aria-label="Registration policies"] a[href="${href}"]`)).toBeVisible()
-  }
-  await expect(page.locator('a[href="https://docs.terrascale.tech/legal/terms/#acceptable-use"]')).toHaveCount(1)
+  await expect(page.locator('a[href*="docs.terrascale.tech/legal/"]')).toHaveCount(0)
+  await expect(page.locator('nav[aria-label="Registration policies"]')).toHaveCount(0)
 })
 
 test('footer changelog and API reference links keep their canonical documentation targets', async ({ page }) => {
