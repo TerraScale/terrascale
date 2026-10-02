@@ -85,9 +85,9 @@ func TestShapeSubscriptions(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			t.Parallel()
 			f := newFixture(t)
-			f.snapPage = 2
+			f.SetSnapshotPageSize(2)
 			if mode.name == "edge" {
-				f.tokenTTL = 400 * time.Millisecond
+				f.SetShapeTokenTTL(400 * time.Millisecond)
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 			defer cancel()
@@ -166,9 +166,7 @@ func TestShapeSubscriptions(t *testing.T) {
 				t.Fatalf("%s mode made %d SSE requests", mode.name, sse)
 			}
 			if mode.name != "sse" {
-				f.mu.Lock()
-				log := strings.Join(f.shapeLog, "\n")
-				f.mu.Unlock()
+				log := strings.Join(f.ShapeReadLog(), "\n")
 				for _, want := range []string{"offset=-1", "offset=snap.", "&live=true&cursor="} {
 					if !strings.Contains(log, want) {
 						t.Fatalf("shape requests lack %q:\n%s", want, log)

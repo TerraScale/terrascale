@@ -275,9 +275,7 @@ func TestTransactionAssertCount(t *testing.T) {
 	}
 
 	// Too many documents to examine without an index.
-	f.mu.Lock()
-	f.maxCount = 2
-	f.mu.Unlock()
+	f.SetAssertCountLimit(2)
 	_, err = db.Tx().AssertCount("sessions", mine, v1.CountBounds{Lte: n(10)}).Commit(ctx)
 	requireCode(t, err, v1.ErrAssertRequiresIndex)
 
@@ -285,9 +283,7 @@ func TestTransactionAssertCount(t *testing.T) {
 	if _, err := db.Tx().AssertCount("sessions", mine, v1.CountBounds{}).Commit(ctx); err == nil || !strings.Contains(err.Error(), "Gte or Lte") {
 		t.Fatalf("missing bounds: %v", err)
 	}
-	f.mu.Lock()
-	f.maxCount = 10000
-	f.mu.Unlock()
+	f.SetAssertCountLimit(10000)
 	many := db.Tx()
 	for range 17 {
 		many.AssertCount("sessions", mine, v1.CountBounds{Gte: n(0)})
