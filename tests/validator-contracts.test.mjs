@@ -51,7 +51,7 @@ test('claim validator requires the confirmed launch region names', () => {
 
 test('claim validator rejects links to draft legal policies', () => {
   for (const mode of ['source', 'rendered']) {
-    for (const href of ['https://docs.terrascale.tech/legal/terms/', 'https://docs.terrascale.tech/legal/dpa/']) {
+    for (const href of ['https://docs.terrascale.tech/legal/terms/', 'https://docs.terrascale.tech/legal/dpa/', 'https://docs.terrascale.tech:443/legal/terms/', 'https://docs.terrascale.tech/guides/../legal/terms/', 'https://DOCS.terrascale.tech./%6Cegal/privacy/']) {
       assert.ok(
         findProhibitedClaims(`<a href="${href}">Policy</a>`, { mode }).some(({ id }) => id === 'draft-legal-link'),
         `${mode} validator did not reject ${href}`,

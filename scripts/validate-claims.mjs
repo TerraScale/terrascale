@@ -111,6 +111,27 @@ const canonicalizeTermsHref = (value) => {
   return pathname === '/terms' || pathname === '/terms/' ? url : null
 }
 
+const draftLegalHost = 'docs.terrascale.tech'
+
+const canonicalizeDraftLegalHref = (value) => {
+  const decoded = normalizeClaimText(value).trim()
+  let url
+  try {
+    url = new URL(decoded, `${canonicalSiteOrigin}/`)
+  } catch {
+    return null
+  }
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, '')
+  if (hostname !== draftLegalHost) return null
+  let pathname
+  try {
+    pathname = normalizeRoutePath(url.pathname).toLowerCase()
+  } catch {
+    return null
+  }
+  return pathname === '/legal' || pathname.startsWith('/legal/') ? url : null
+}
+
 const sourceStartTags = (html) => {
   const tags = []
   for (let start = 0; start < html.length; start += 1) {
@@ -274,6 +295,10 @@ const findRenderedClaimMatch = (rendered, claim) => {
     if (href) return [`href="${href}"`]
     return null
   }
+  if (claim.id === 'draft-legal-link') {
+    const href = rendered.hrefs.find((value) => canonicalizeDraftLegalHref(value))
+    if (href) return [`href="${href}"`]
+  }
   const values = [
     [rendered.raw, false],
     [rendered.text, true],
@@ -292,6 +317,10 @@ const findClaimMatch = (corpus, claim) => {
   if (claim.id === 'unpublished-terms-route') {
     const href = sourceHrefValues(corpus).find((value) => canonicalizeTermsHref(value))
     return href ? [`href="${href}"`] : null
+  }
+  if (claim.id === 'draft-legal-link') {
+    const href = sourceHrefValues(corpus).find((value) => canonicalizeDraftLegalHref(value))
+    if (href) return [`href="${href}"`]
   }
   return normalizeClaimText(corpus).match(claim.pattern)
 }
