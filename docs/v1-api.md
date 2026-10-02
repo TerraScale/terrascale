@@ -38,7 +38,9 @@ the transient 503s (`capacity`, `storage_unavailable`,
 `dependencies_unavailable`, `commit_uncertain`) only for reads, queries and
 requests with an `Idempotency-Key`; `500 internal_error` only with a key. Only `429` with code `rate_limited` is
 retried; other 429s surface as `Error::Api`. Oversized responses are never
-retried. Plain-HTTP and loopback base URLs ignore environment proxies.
+retried; for a mutation answered with a non-4xx status they are uncertain
+(`is_uncertain()`), since the write may have applied. `Retry-After` accepts
+delay-seconds and HTTP-dates. Plain-HTTP and loopback base URLs ignore environment proxies.
 
 ## Documents
 
@@ -108,7 +110,7 @@ enum Error {
     IdempotencyExpired, RateLimited { retry_after }, Forbidden { op }, InvalidKey,
     InternalError, Api { status, code, message, op, details },
     OperationFailed { id, code, message },   // ControlClient::wait_operation
-    ResponseTooLarge { limit },              // not retried
+    ResponseTooLarge { limit, status, may_have_applied }, // not retried; uncertain when may_have_applied
     InvalidTxOp { op, message },             // local Tx validation; err.op() == Some(op)
     Transport(String), InvalidInput(String), Decode(String),
 }

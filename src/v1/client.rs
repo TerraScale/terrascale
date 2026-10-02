@@ -486,6 +486,10 @@ impl Client {
                         return Attempt::Failed(
                             Error::ResponseTooLarge {
                                 limit: self.inner.max_response,
+                                status: status.as_u16(),
+                                // A mutation answered with anything but a
+                                // client error may have been applied.
+                                may_have_applied: !req.replay_safe && !status.is_client_error(),
                             },
                             None,
                         );
@@ -505,12 +509,22 @@ impl Client {
         let retry_after = headers
             .get(RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.trim().parse::<u64>().ok())
-            .map(Duration::from_secs);
+            .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()));
         let etag = headers.get(ETAG).and_then(|v| v.to_str().ok());
         let err = errors::from_response(status.as_u16(), etag, retry_after, &body);
         Attempt::Failed(err, retry_after)
     }
+}
+
+/// Parses `Retry-After` as delay-seconds or an HTTP-date; a past date is
+/// zero. The caller caps it at `max_retry_after`.
+fn parse_retry_after(value: &str, now: std::time::SystemTime) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(secs) = value.parse::<u64>() {
+        return Some(Duration::from_secs(secs));
+    }
+    let at = httpdate::parse_http_date(value).ok()?;
+    Some(at.duration_since(now).unwrap_or(Duration::ZERO))
 }
 
 fn describe(e: &reqwest::Error) -> String {
@@ -551,6 +565,24 @@ fn backoff_with(policy: &RetryPolicy, attempt: u32, random: u128) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_after_accepts_seconds_and_http_dates() {
+        let now = httpdate::parse_http_date("Wed, 21 Oct 2015 07:28:00 GMT").unwrap();
+        let p = |v| parse_retry_after(v, now);
+        assert_eq!(p(" 7 "), Some(Duration::from_secs(7)));
+        assert_eq!(
+            p("Wed, 21 Oct 2015 07:28:30 GMT"),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(p("Wed, 21 Oct 2015 07:27:00 GMT"), Some(Duration::ZERO));
+        assert_eq!(
+            p("Wednesday, 21-Oct-15 07:29:00 GMT"),
+            Some(Duration::from_secs(60))
+        );
+        assert_eq!(p("soon"), None);
+        assert_eq!(p("-1"), None);
+    }
 
     #[test]
     fn backoff_is_bounded_and_overflow_safe() {

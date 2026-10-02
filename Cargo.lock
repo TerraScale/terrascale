@@ -1413,6 +1413,7 @@ dependencies = [
  "caseless",
  "futures-util",
  "http-body-util",
+ "httpdate",
  "hyper",
  "hyper-util",
  "rcgen",

@@ -91,9 +91,17 @@ pub enum Error {
     Transport(String),
     /// A response body exceeded the configured
     /// [`max_response_bytes`](super::ClientBuilder::max_response_bytes). The
-    /// server answered, so it is not retried.
-    #[error("terrabase: response exceeds {limit} bytes")]
-    ResponseTooLarge { limit: usize },
+    /// server answered, so it is not retried. `may_have_applied` is true for
+    /// a mutation whose status was not a 4xx (a success or a server error such
+    /// as `commit_uncertain`): the write may have taken effect, so
+    /// [`Error::is_uncertain`] is true; retry with the same `Idempotency-Key`
+    /// to learn the outcome.
+    #[error("terrabase: {status} response exceeds {limit} bytes")]
+    ResponseTooLarge {
+        limit: usize,
+        status: u16,
+        may_have_applied: bool,
+    },
     /// Transaction op `op` is invalid; nothing was sent.
     #[error("terrabase: invalid transaction op {op}: {message}")]
     InvalidTxOp { op: usize, message: String },
@@ -188,13 +196,20 @@ impl Error {
     }
 
     /// True when the outcome of a mutation is unknown: `commit_uncertain`,
-    /// `internal_error` or a transport failure. Retry with the same
+    /// `internal_error`, a transport failure, or an oversized response to a
+    /// mutation that may have been applied. Retry with the same
     /// `Idempotency-Key` to learn the outcome.
     #[must_use]
     pub fn is_uncertain(&self) -> bool {
         matches!(
             self,
-            Self::CommitUncertain | Self::InternalError | Self::Transport(_)
+            Self::CommitUncertain
+                | Self::InternalError
+                | Self::Transport(_)
+                | Self::ResponseTooLarge {
+                    may_have_applied: true,
+                    ..
+                }
         )
     }
 }
