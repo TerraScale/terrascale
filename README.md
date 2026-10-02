@@ -1,5 +1,7 @@
 # TerraScale Rust SDK
 
+`terrascale::v1` is the name-based TerraBase v1 client: documents, transactions, queries and the `/v1/dashboard` control plane. See [docs/v1-api.md](docs/v1-api.md). The native UUID/shard API described below is deprecated and will be removed with those routes.
+
 The SDK speaks TerraBase's native JSON document protocol. Native paths carry UUID tenant, database, collection and document identities and a canonical full-range decimal shard. Numeric field IDs and tagged values preserve missing/null, signed 64-bit integers, bytes, maps and arrays. Point reads retain observed context, tombstones and all concurrent siblings. Native values have at most 16 levels, arrays cannot occur under an ancestor array, and the entire encoded document is capped at 1 MiB.
 
 ```rust,no_run

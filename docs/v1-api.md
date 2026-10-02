@@ -103,8 +103,9 @@ enum Error {
     PreconditionFailed { op }, UniqueViolation { constraint, op }, NotFound { etag, op },
     ConflictUnresolved { op }, HomeRegionRequired, CommitUncertain, IdempotencyConflict,
     IdempotencyExpired, RateLimited { retry_after }, Forbidden { op }, InvalidKey,
-    InternalError, Api { status, code, message, op, details }, Transport(String),
-    InvalidInput(String), Decode(String),
+    InternalError, Api { status, code, message, op, details },
+    OperationFailed { id, code, message },   // ControlClient::wait_operation
+    Transport(String), InvalidInput(String), Decode(String),
 }
 err.status() / err.code() / err.op() / err.is_not_found() / err.is_uncertain()
 ```
@@ -120,7 +121,7 @@ ctl.find_tenant(external_ref) -> Option<Tenant>
 ctl.get_tenant(id) / update_tenant(&key, id, &UpdateTenant) / delete_tenant(&key, id) -> Operation
 ctl.create_database(&key, tenant, &CreateDatabase { name, home_region, durability, retention }) -> DatabaseInfo
 ctl.list_databases(tenant, &ListOptions) / get_database(tenant, db) / delete_database(&key, tenant, db)
-ctl.get_operation(id) / wait_operation(id, interval)
+ctl.get_operation(id) / wait_operation(id, interval)   // failed -> Error::OperationFailed
 ctl.create_collection(&key, tenant, db, &CreateCollection { name, schema, ttl_path, unique, indexes, advisor }) -> CollectionInfo
 ctl.list_collections / get_collection / update_collection(&key, .., &UpdateCollection) / delete_collection
 ctl.create_key(&key, tenant, &CreateKey { name, grants, row_filter, rate, ttl_seconds }) -> KeyWithToken { key, token }
@@ -130,7 +131,24 @@ ctl.list_regions(&ListOptions)
 
 ## Tests
 
-`tests/v1_*.rs` run against an in-process HTTPS v1 fixture in
-`tests/support/v1_fixture.rs`. `tests/v1_live.rs` runs against a real server
-when `TB_V1_URL` and `TB_V1_CONTROL_KEY` are set (`TB_V1_CA_FILE` optionally
-names a PEM root CA); otherwise it is skipped.
+Fast suite (`cargo test --test v1_fast`): the client against an in-process
+HTTPS (TLS 1.3, throwaway CA) contract fixture in `tests/support/v1_fixture.rs`,
+ported from ts-go `v1/fixture_*_test.go`. It covers CRUD, 412, 304, 404 with
+the tombstone ETag, the `If-None-Match: *` create race (one winner), unique
+409, conflicts, merge and ops patches, transactions with op-indexed errors,
+idempotent replay and uncertain commits, the retry policy, query paging,
+counts and projection, grants, and control-plane provisioning, rotation and
+revocation.
+
+Slow suite (`cargo test --test v1_live`): runs against a real server when
+`TB_V1_URL` and `TB_V1_CONTROL_KEY` (a token, or a file holding one) are set;
+`TB_V1_CA_FILE` optionally names a PEM root CA. Without them it is skipped.
+It provisions its own tenant, database, collection and key, then exercises
+documents, transactions, queries and revocation. For local development it
+also runs against ts-go's `tbv1-fake` (branch `feat/v1-fake`):
+
+```sh
+tbv1-fake --listen 127.0.0.1:9465 --cert-dir .tbv1 --control-key-out .tbv1/control.key &
+TB_V1_URL=https://localhost:9465 TB_V1_CONTROL_KEY=.tbv1/control.key \
+TB_V1_CA_FILE=.tbv1/ca.pem cargo test --test v1_live
+```
