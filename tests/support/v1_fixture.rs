@@ -27,6 +27,8 @@ use hyper::body::{Bytes, Incoming};
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use serde_json::{json, Map, Value};
+
+use super::exact_json::{fold, Dec, Obj, J};
 use sha2::{Digest, Sha256};
 
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -163,6 +165,8 @@ pub struct Fault {
     pub status: u16,
     pub code: &'static str,
     pub retry_after: Option<&'static str>,
+    /// A raw response body replacing the JSON error object.
+    pub body: Option<&'static str>,
     /// Apply the request, then answer with the fault.
     pub after_commit: bool,
     pub remaining: u32,
@@ -176,6 +180,7 @@ impl Fault {
             status,
             code,
             retry_after: None,
+            body: None,
             after_commit: false,
             remaining: 1,
         }
@@ -278,6 +283,9 @@ impl State {
         })?;
         f.remaining -= 1;
         let mut r = err(f.status, f.code);
+        if let Some(body) = f.body {
+            r.body = Some(body.to_owned());
+        }
         if let Some(ra) = f.retry_after {
             r.headers.push(("Retry-After".into(), ra.into()));
         }
@@ -827,7 +835,7 @@ fn doc_json(id: &str, d: &Doc, project: &[String]) -> String {
             let raw = if project.is_empty() {
                 raw
             } else {
-                project_doc(&serde_json::from_str(&raw).unwrap(), project).to_string()
+                project_doc(&J::parse(&raw).unwrap(), project).to_json()
             };
             format!(
                 r#"{{"id":"{id}","version":"{}","state":"value","document":{raw}}}"#,
@@ -841,9 +849,9 @@ fn write_result(id: &str, version: &str, offset: u64) -> Value {
     json!({"id": id, "version": version, "offset": offset.to_string(), "durability": "local_durable"})
 }
 
-fn parse_object(raw: &[u8]) -> Option<Map<String, Value>> {
-    match serde_json::from_slice::<Value>(raw) {
-        Ok(Value::Object(m)) => Some(m),
+fn parse_object(raw: &[u8]) -> Option<Obj> {
+    match J::parse_bytes(raw) {
+        Some(J::Obj(m)) => Some(m),
         _ => None,
     }
 }
@@ -863,13 +871,7 @@ impl Staged {
             .or_else(|| db.colls.get(coll).and_then(|c| c.docs.get(id)))
     }
 
-    fn unique_violation(
-        &self,
-        db: &Db,
-        coll: &str,
-        id: &str,
-        obj: &Map<String, Value>,
-    ) -> Option<String> {
+    fn unique_violation(&self, db: &Db, coll: &str, id: &str, obj: &Obj) -> Option<String> {
         let c = db.colls.get(coll)?;
         for u in &c.unique {
             let Some(key) = unique_key(u, obj) else {
@@ -904,7 +906,7 @@ impl Staged {
     }
 }
 
-fn unique_key(u: &Unique, obj: &Map<String, Value>) -> Option<String> {
+fn unique_key(u: &Unique, obj: &Obj) -> Option<String> {
     let mut parts = Vec::new();
     for p in &u.paths {
         let v = lookup(obj, p)?;
@@ -912,16 +914,17 @@ fn unique_key(u: &Unique, obj: &Map<String, Value>) -> Option<String> {
             return None;
         }
         let v = match (v, u.lower) {
-            (Value::String(s), true) => Value::String(s.to_lowercase()),
+            (J::Str(s), true) => J::Str(fold(s)),
+            (J::Num(n), _) => J::Num(Dec::parse(n)?.to_plain()),
             (v, _) => v.clone(),
         };
-        parts.push(v.to_string());
+        parts.push(v.to_json());
     }
     Some(parts.join("\u{0}"))
 }
 
-type PatchBox = dyn Fn(&mut Map<String, Value>) -> Result<(), Reply>;
-type PatchFn<'a> = &'a dyn Fn(&mut Map<String, Value>) -> Result<(), Reply>;
+type PatchBox = dyn Fn(&mut Obj) -> Result<(), Reply>;
+type PatchFn<'a> = &'a dyn Fn(&mut Obj) -> Result<(), Reply>;
 
 /// Applies one write to the staged view. `kind` is put, patch or delete.
 #[allow(clippy::too_many_arguments)]
@@ -976,7 +979,7 @@ fn write_doc(
             }
             let mut obj = parse_object(cur.raw.as_ref().unwrap().as_bytes()).unwrap();
             (patch.unwrap())(&mut obj)?;
-            serde_json::to_vec(&obj).unwrap()
+            J::Obj(obj).to_json().into_bytes()
         }
         _ => raw.unwrap_or_default().to_vec(),
     };
@@ -1167,7 +1170,7 @@ fn patch_doc(
             let Some(p) = parse_object(body) else {
                 return err(400, "invalid_patch");
             };
-            let Some(ops) = p.get("ops").and_then(Value::as_array).cloned() else {
+            let Some(ops) = p.get("ops").and_then(J::as_array).cloned() else {
                 return err(400, "invalid_patch");
             };
             if p.len() != 1 || ops.is_empty() || ops.len() > 256 {
@@ -1207,16 +1210,16 @@ fn delete_doc(st: &mut State, key: &Key, db: &str, coll: &str, id: &str, ctx: &C
     }
 }
 
-fn merge_patch(target: &mut Map<String, Value>, patch: &Map<String, Value>) {
+fn merge_patch(target: &mut Obj, patch: &Obj) {
     for (k, v) in patch {
         match v {
-            Value::Null => {
+            J::Null => {
                 target.remove(k);
             }
-            Value::Object(p) => {
-                let entry = target.entry(k.clone()).or_insert_with(|| json!({}));
-                if !entry.is_object() {
-                    *entry = json!({});
+            J::Obj(p) => {
+                let entry = target.entry(k.clone()).or_insert_with(J::obj);
+                if entry.as_object().is_none() {
+                    *entry = J::obj();
                 }
                 merge_patch(entry.as_object_mut().unwrap(), p);
             }
@@ -1236,7 +1239,7 @@ fn split_pointer(p: &str) -> Option<Vec<String>> {
     )
 }
 
-fn lookup<'a>(obj: &'a Map<String, Value>, pointer: &str) -> Option<&'a Value> {
+fn lookup<'a>(obj: &'a Obj, pointer: &str) -> Option<&'a J> {
     let segs = split_pointer(pointer)?;
     let mut cur = obj.get(&segs[0])?;
     for s in &segs[1..] {
@@ -1245,11 +1248,7 @@ fn lookup<'a>(obj: &'a Map<String, Value>, pointer: &str) -> Option<&'a Value> {
     Some(cur)
 }
 
-fn parent_mut<'a>(
-    obj: &'a mut Map<String, Value>,
-    pointer: &str,
-    create: bool,
-) -> Option<(&'a mut Map<String, Value>, String)> {
+fn parent_mut<'a>(obj: &'a mut Obj, pointer: &str, create: bool) -> Option<(&'a mut Obj, String)> {
     let segs = split_pointer(pointer)?;
     let (last, init) = segs.split_last()?;
     let mut cur = obj;
@@ -1258,20 +1257,20 @@ fn parent_mut<'a>(
             if !create {
                 return None;
             }
-            cur.insert(s.clone(), json!({}));
+            cur.insert(s.clone(), J::obj());
         }
         cur = cur.get_mut(s)?.as_object_mut()?;
     }
     Some((cur, last.clone()))
 }
 
-fn apply_ops(obj: &mut Map<String, Value>, ops: &[Value]) -> Result<(), Reply> {
+fn apply_ops(obj: &mut Obj, ops: &[J]) -> Result<(), Reply> {
     for op in ops {
         let Some(o) = op.as_object() else {
             return Err(err(400, "invalid_patch"));
         };
-        let kind = o.get("op").and_then(Value::as_str).unwrap_or("");
-        let path = o.get("path").and_then(Value::as_str).unwrap_or("");
+        let kind = o.get("op").and_then(J::as_str).unwrap_or("");
+        let path = o.get("path").and_then(J::as_str).unwrap_or("");
         let allowed: &[&str] = match kind {
             "set" | "append" => &["op", "path", "value"],
             "unset" => &["op", "path"],
@@ -1298,17 +1297,24 @@ fn apply_ops(obj: &mut Map<String, Value>, ops: &[Value]) -> Result<(), Reply> {
                 parent.remove(&last);
             }
             "inc" => {
-                let Some(by) = o.get("by").and_then(Value::as_i64) else {
+                // Exact decimal addition. A result outside the contract's
+                // number range (128 significant digits, scale within
+                // ±1024) cannot be stored and fails with patch_conflict.
+                let Some(by) = (match o.get("by") {
+                    Some(J::Num(n)) => Dec::parse(n),
+                    _ => None,
+                }) else {
                     return Err(err(400, "invalid_patch"));
                 };
                 let cur = match parent.get(&last) {
-                    None => 0,
-                    Some(v) => match v.as_i64() {
-                        Some(n) => n,
-                        None => return Err(err(409, "patch_conflict")),
-                    },
+                    None => Dec::parse("0").unwrap(),
+                    Some(J::Num(n)) => Dec::parse(n).unwrap(),
+                    Some(_) => return Err(err(409, "patch_conflict")),
                 };
-                parent.insert(last, json!(cur + by));
+                let Some(sum) = cur.add(&by) else {
+                    return Err(err(409, "patch_conflict"));
+                };
+                parent.insert(last, J::Num(sum.to_plain()));
             }
             "append" => {
                 let Some(v) = o.get("value") else {
@@ -1316,9 +1322,9 @@ fn apply_ops(obj: &mut Map<String, Value>, ops: &[Value]) -> Result<(), Reply> {
                 };
                 match parent.get_mut(&last) {
                     None => {
-                        parent.insert(last, json!([v.clone()]));
+                        parent.insert(last, J::Arr(vec![v.clone()]));
                     }
-                    Some(Value::Array(a)) => a.push(v.clone()),
+                    Some(J::Arr(a)) => a.push(v.clone()),
                     Some(_) => return Err(err(409, "patch_conflict")),
                 }
             }
@@ -1332,7 +1338,7 @@ fn transaction(st: &mut State, key: &Key, db: &str, body: &[u8]) -> Reply {
     let Some(req) = parse_object(body) else {
         return err(400, "invalid_request");
     };
-    let Some(ops) = req.get("ops").and_then(Value::as_array).cloned() else {
+    let Some(ops) = req.get("ops").and_then(J::as_array).cloned() else {
         return err(400, "invalid_request");
     };
     if req.len() != 1 || ops.is_empty() || ops.len() > 1024 {
@@ -1361,14 +1367,14 @@ fn transaction(st: &mut State, key: &Key, db: &str, body: &[u8]) -> Reply {
             return err_op(400, "invalid_request", i);
         }
         let perm = if matches!(
-            o.get("op").and_then(Value::as_str),
+            o.get("op").and_then(J::as_str),
             Some("assert" | "assert_count")
         ) {
             "read"
         } else {
             "write"
         };
-        let coll = o.get("collection").and_then(Value::as_str).unwrap_or("");
+        let coll = o.get("collection").and_then(J::as_str).unwrap_or("");
         if let Err(r) = tenant_db(st, key, db, coll, perm) {
             return set_op(r, i);
         }
@@ -1387,18 +1393,18 @@ fn transaction(st: &mut State, key: &Key, db: &str, body: &[u8]) -> Reply {
     let mut count_ops = 0;
     for (i, op) in ops.iter().enumerate() {
         let o = op.as_object().unwrap();
-        let kind = o.get("op").and_then(Value::as_str).unwrap_or("");
+        let kind = o.get("op").and_then(J::as_str).unwrap_or("");
         let coll = o
             .get("collection")
-            .and_then(Value::as_str)
+            .and_then(J::as_str)
             .unwrap_or("")
             .to_owned();
-        let s = |k: &str| o.get(k).and_then(Value::as_str).map(String::from);
+        let s = |k: &str| o.get(k).and_then(J::as_str).map(String::from);
         if kind == "assert_count" {
             count_ops += 1;
-            let gte = o.get("gte").and_then(Value::as_u64);
-            let lte = o.get("lte").and_then(Value::as_u64);
-            let Ok(filter) = Filter::parse(o.get("filter").unwrap_or(&Value::Null)) else {
+            let gte = o.get("gte").and_then(J::as_u64);
+            let lte = o.get("lte").and_then(J::as_u64);
+            let Ok(filter) = Filter::parse(o.get("filter").unwrap_or(&J::Null)) else {
                 return err_op(400, "invalid_query", i);
             };
             if o.contains_key("id") || (gte.is_none() && lte.is_none()) || count_ops > 16 {
@@ -1433,7 +1439,7 @@ fn transaction(st: &mut State, key: &Key, db: &str, body: &[u8]) -> Reply {
         if !is_uuid(&id) || !targets.insert(format!("{coll}/{id}")) {
             return err_op(400, "invalid_request", i);
         }
-        let raw_doc = o.get("document").map(|v| serde_json::to_vec(v).unwrap());
+        let raw_doc = o.get("document").map(|v| v.to_json().into_bytes());
         let res = match kind {
             "create" => write_doc(
                 &mut seq,
@@ -1472,12 +1478,12 @@ fn transaction(st: &mut State, key: &Key, db: &str, body: &[u8]) -> Reply {
                 None,
             ),
             "patch" => {
-                let merge = o.get("merge").and_then(Value::as_object).cloned();
-                let pops = o.get("ops").and_then(Value::as_array).cloned();
+                let merge = o.get("merge").and_then(J::as_object).cloned();
+                let pops = o.get("ops").and_then(J::as_array).cloned();
                 if merge.is_some() == pops.is_some() {
                     return err_op(400, "invalid_patch", i);
                 }
-                let apply = move |obj: &mut Map<String, Value>| match (&merge, &pops) {
+                let apply = move |obj: &mut Obj| match (&merge, &pops) {
                     (Some(m), _) => {
                         merge_patch(obj, m);
                         Ok(())
@@ -1500,10 +1506,10 @@ fn transaction(st: &mut State, key: &Key, db: &str, body: &[u8]) -> Reply {
             }
             "assert" => {
                 let cur = staged.get(d, &coll, &id);
-                let ok = if o.get("absent") == Some(&json!(true)) {
+                let ok = if o.get("absent") == Some(&J::Bool(true)) {
                     !Doc::live(cur)
                 } else {
-                    let Ok(filter) = Filter::parse(o.get("filter").unwrap_or(&Value::Null)) else {
+                    let Ok(filter) = Filter::parse(o.get("filter").unwrap_or(&J::Null)) else {
                         return err_op(400, "invalid_query", i);
                     };
                     cur.is_some_and(|c| {
@@ -1549,14 +1555,14 @@ struct QPath {
 }
 
 impl QPath {
-    fn parse(v: &Value) -> Result<Self, ()> {
+    fn parse(v: &J) -> Result<Self, ()> {
         match v {
-            Value::String(s) if s == "$id" => Ok(Self {
+            J::Str(s) if s == "$id" => Ok(Self {
                 pointer: String::new(),
                 lower: false,
                 id: true,
             }),
-            Value::String(s) => {
+            J::Str(s) => {
                 let n = split_pointer(s).ok_or(())?.len();
                 if !(1..=16).contains(&n) {
                     return Err(());
@@ -1567,7 +1573,7 @@ impl QPath {
                     id: false,
                 })
             }
-            Value::Object(m) if m.len() == 1 => {
+            J::Obj(m) if m.len() == 1 => {
                 let mut p = Self::parse(m.get("lower").ok_or(())?)?;
                 p.lower = true;
                 Ok(p)
@@ -1576,14 +1582,14 @@ impl QPath {
         }
     }
 
-    fn get(&self, id: &str, obj: &Map<String, Value>) -> Option<Value> {
+    fn get(&self, id: &str, obj: &Obj) -> Option<J> {
         let v = if self.id {
-            Value::String(id.into())
+            J::Str(id.into())
         } else {
             lookup(obj, &self.pointer)?.clone()
         };
         Some(match (v, self.lower) {
-            (Value::String(s), true) => Value::String(s.to_lowercase()),
+            (J::Str(s), true) => J::Str(fold(&s)),
             (v, _) => v,
         })
     }
@@ -1594,65 +1600,61 @@ pub(crate) struct Filter {
     op: String,
     children: Vec<Filter>,
     path: Option<QPath>,
-    value: Value,
-    values: Vec<Value>,
+    value: J,
+    values: Vec<J>,
 }
 
-fn rank(v: &Value) -> u8 {
+fn rank(v: &J) -> u8 {
     match v {
-        Value::Null => 1,
-        Value::Bool(false) => 2,
-        Value::Bool(true) => 3,
-        Value::Number(_) => 4,
-        Value::String(_) => 5,
+        J::Null => 1,
+        J::Bool(false) => 2,
+        J::Bool(true) => 3,
+        J::Num(_) => 4,
+        J::Str(_) => 5,
         _ => 6,
     }
 }
 
-fn type_class(v: &Value) -> u8 {
+fn type_class(v: &J) -> u8 {
     match rank(v) {
         3 => 2,
         r => r,
     }
 }
 
-fn scalar(v: &Value) -> bool {
-    !matches!(v, Value::Array(_) | Value::Object(_))
+fn scalar(v: &J) -> bool {
+    !matches!(v, J::Arr(_) | J::Obj(_))
 }
 
-fn cmp_values(a: &Value, b: &Value) -> std::cmp::Ordering {
+fn cmp_values(a: &J, b: &J) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let (ra, rb) = (rank(a), rank(b));
     if ra != rb {
         return ra.cmp(&rb);
     }
     match (a, b) {
-        (Value::Number(x), Value::Number(y)) => x
-            .as_f64()
-            .unwrap()
-            .partial_cmp(&y.as_f64().unwrap())
-            .unwrap_or(Ordering::Equal),
-        (Value::String(x), Value::String(y)) => x.as_bytes().cmp(y.as_bytes()),
+        (J::Num(x), J::Num(y)) => Dec::parse(x).unwrap().cmp(&Dec::parse(y).unwrap()),
+        (J::Str(x), J::Str(y)) => x.as_bytes().cmp(y.as_bytes()),
         _ => Ordering::Equal,
     }
 }
 
-fn lowered(v: Value, lower: bool) -> Value {
+fn lowered(v: J, lower: bool) -> J {
     match (v, lower) {
-        (Value::String(s), true) => Value::String(s.to_lowercase()),
+        (J::Str(s), true) => J::Str(fold(&s)),
         (v, _) => v,
     }
 }
 
 impl Filter {
-    fn parse(v: &Value) -> Result<Option<Filter>, ()> {
+    fn parse(v: &J) -> Result<Option<Filter>, ()> {
         if v.is_null() {
             return Ok(None);
         }
         Self::build(v, 0).map(Some)
     }
 
-    fn build(v: &Value, depth: usize) -> Result<Filter, ()> {
+    fn build(v: &J, depth: usize) -> Result<Filter, ()> {
         let m = v.as_object().ok_or(())?;
         if m.len() != 1 || depth > 8 {
             return Err(());
@@ -1662,7 +1664,7 @@ impl Filter {
             op: op.clone(),
             children: Vec::new(),
             path: None,
-            value: Value::Null,
+            value: J::Null,
             values: Vec::new(),
         };
         match op.as_str() {
@@ -1711,17 +1713,17 @@ impl Filter {
 }
 
 trait Matches {
-    fn matches(&self, id: &str, obj: &Map<String, Value>) -> bool;
+    fn matches(&self, id: &str, obj: &Obj) -> bool;
 }
 
 impl Matches for Option<Filter> {
-    fn matches(&self, id: &str, obj: &Map<String, Value>) -> bool {
+    fn matches(&self, id: &str, obj: &Obj) -> bool {
         self.as_ref().is_none_or(|f| f.matches(id, obj))
     }
 }
 
 impl Filter {
-    fn matches(&self, id: &str, obj: &Map<String, Value>) -> bool {
+    fn matches(&self, id: &str, obj: &Obj) -> bool {
         use std::cmp::Ordering::*;
         match self.op.as_str() {
             "and" => return self.children.iter().all(|c| c.matches(id, obj)),
@@ -1752,8 +1754,8 @@ impl Filter {
             ("nin", Some(v)) => {
                 !scalar(&v) || !self.values.iter().any(|x| cmp_values(&v, x) == Equal)
             }
-            ("prefix", Some(Value::String(s))) => s.starts_with(self.value.as_str().unwrap()),
-            ("contains", Some(Value::Array(a))) => a
+            ("prefix", Some(J::Str(s))) => s.starts_with(self.value.as_str().unwrap()),
+            ("contains", Some(J::Arr(a))) => a
                 .iter()
                 .any(|e| scalar(e) && cmp_values(e, &self.value) == Equal),
             _ => false,
@@ -1761,8 +1763,8 @@ impl Filter {
     }
 }
 
-fn project_doc(obj: &Value, paths: &[String]) -> Value {
-    let mut out = Map::new();
+fn project_doc(obj: &J, paths: &[String]) -> J {
+    let mut out = Obj::new();
     let src = obj.as_object().unwrap();
     for p in paths {
         if let Some(v) = lookup(src, p) {
@@ -1771,7 +1773,7 @@ fn project_doc(obj: &Value, paths: &[String]) -> Value {
             }
         }
     }
-    Value::Object(out)
+    J::Obj(out)
 }
 
 fn query(st: &mut State, key: &Key, db: &str, coll: &str, body: &[u8]) -> Reply {
@@ -1788,15 +1790,15 @@ fn query(st: &mut State, key: &Key, db: &str, coll: &str, body: &[u8]) -> Reply 
     if q.keys().any(|k| !known.contains(&k.as_str())) {
         return err(400, "invalid_query");
     }
-    let limit = q.get("limit").map_or(Some(50), Value::as_u64).unwrap_or(0) as usize;
+    let limit = q.get("limit").map_or(Some(50), J::as_u64).unwrap_or(0) as usize;
     let sort = q
         .get("sort")
-        .and_then(Value::as_array)
+        .and_then(J::as_array)
         .cloned()
         .unwrap_or_default();
     let project: Vec<String> = q
         .get("project")
-        .and_then(Value::as_array)
+        .and_then(J::as_array)
         .map(|a| {
             a.iter()
                 .filter_map(|v| v.as_str().map(String::from))
@@ -1806,7 +1808,7 @@ fn query(st: &mut State, key: &Key, db: &str, coll: &str, body: &[u8]) -> Reply 
     if !(1..=1000).contains(&limit) || sort.len() > 4 || project.len() > 64 {
         return err(400, "invalid_query");
     }
-    let Ok(filter) = Filter::parse(q.get("filter").unwrap_or(&Value::Null)) else {
+    let Ok(filter) = Filter::parse(q.get("filter").unwrap_or(&J::Null)) else {
         return err(400, "invalid_query");
     };
     let mut paths = Vec::new();
@@ -1823,19 +1825,25 @@ fn query(st: &mut State, key: &Key, db: &str, coll: &str, body: &[u8]) -> Reply 
         desc.push(order == "desc");
     }
     desc.push(false);
-    let cursor = q.get("cursor").and_then(Value::as_str);
-    let count = cursor.is_none() && q.get("count") == Some(&json!(true));
-    let digest_src = json!([coll, q.get("filter"), q.get("sort"), q.get("project")]).to_string();
+    let cursor = q.get("cursor").and_then(J::as_str);
+    let count = cursor.is_none() && q.get("count") == Some(&J::Bool(true));
+    let part = |k: &str| q.get(k).map_or_else(|| "null".to_owned(), J::to_json);
+    let digest_src = format!(
+        "{coll}|{}|{}|{}",
+        part("filter"),
+        part("sort"),
+        part("project")
+    );
     let digest = hex(&Sha256::digest(digest_src.as_bytes())[..8]);
 
     // Each row: sort keys (None = missing) plus the ID.
     let c = &d.colls[coll];
-    let mut rows: Vec<(Vec<Option<Value>>, &String, &Doc)> = Vec::new();
+    let mut rows: Vec<(Vec<Option<J>>, &String, &Doc)> = Vec::new();
     for (id, doc) in &c.docs {
         if doc.deleted {
             continue;
         }
-        let objs: Vec<Map<String, Value>> = match &doc.siblings {
+        let objs: Vec<Obj> = match &doc.siblings {
             Some(s) => s
                 .iter()
                 .filter(|s| !s.deleted)
@@ -1846,11 +1854,11 @@ fn query(st: &mut State, key: &Key, db: &str, coll: &str, body: &[u8]) -> Reply 
         if !objs.iter().any(|o| filter.matches(id, o)) {
             continue;
         }
-        let mut keys: Vec<Option<Value>> = paths.iter().map(|p| p.get(id, &objs[0])).collect();
-        keys.push(Some(Value::String(id.clone())));
+        let mut keys: Vec<Option<J>> = paths.iter().map(|p| p.get(id, &objs[0])).collect();
+        keys.push(Some(J::Str(id.clone())));
         rows.push((keys, id, doc));
     }
-    let cmp = |a: &[Option<Value>], b: &[Option<Value>]| {
+    let cmp = |a: &[Option<J>], b: &[Option<J>]| {
         for i in 0..a.len() {
             let c = match (&a[i], &b[i]) {
                 (None, None) => std::cmp::Ordering::Equal,
@@ -1869,19 +1877,16 @@ fn query(st: &mut State, key: &Key, db: &str, coll: &str, body: &[u8]) -> Reply 
     let total = rows.len();
     let mut start = 0;
     if let Some(cur) = cursor {
-        let parsed = B64
-            .decode(cur)
-            .ok()
-            .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok());
-        let Some(cv) = parsed.filter(|v| v["d"] == digest.as_str()) else {
+        let parsed = B64.decode(cur).ok().and_then(|raw| J::parse_bytes(&raw));
+        let Some(cv) = parsed.filter(|v| v["d"].as_str() == Some(digest.as_str())) else {
             return err(400, "invalid_cursor");
         };
-        let pos: Vec<Option<Value>> = cv["k"]
+        let pos: Vec<Option<J>> = cv["k"]
             .as_array()
             .cloned()
             .unwrap_or_default()
             .into_iter()
-            .map(|v| if v == json!({"m":1}) { None } else { Some(v) })
+            .map(|v| if v == missing_marker() { None } else { Some(v) })
             .chain(std::iter::once(Some(cv["id"].clone())))
             .collect();
         if pos.len() != paths.len() + 1 {
@@ -1899,13 +1904,18 @@ fn query(st: &mut State, key: &Key, db: &str, coll: &str, body: &[u8]) -> Reply 
         .collect();
     let next = if end < rows.len() {
         let (keys, id, _) = &rows[end - 1];
-        let k: Vec<Value> = keys[..paths.len()]
+        let k: Vec<J> = keys[..paths.len()]
             .iter()
-            .map(|v| v.clone().unwrap_or(json!({"m":1})))
+            .map(|v| v.clone().unwrap_or_else(missing_marker))
             .collect();
-        json!(B64.encode(json!({"d": digest, "k": k, "id": id}).to_string()))
+        let cursor = J::Obj(Obj::from([
+            ("d".to_owned(), J::Str(digest.clone())),
+            ("k".to_owned(), J::Arr(k)),
+            ("id".to_owned(), J::Str((*id).clone())),
+        ]));
+        format!("\"{}\"", B64.encode(cursor.to_json()))
     } else {
-        Value::Null
+        "null".to_owned()
     };
     let mut out = format!(r#"{{"items":[{}],"next_cursor":{next}"#, items.join(","));
     if count {
@@ -1917,6 +1927,11 @@ fn query(st: &mut State, key: &Key, db: &str, coll: &str, body: &[u8]) -> Reply 
         headers: Vec::new(),
         body: Some(out),
     }
+}
+
+/// Encodes a missing sort key in a cursor.
+fn missing_marker() -> J {
+    J::Obj(Obj::from([("m".to_owned(), J::Num("1".into()))]))
 }
 
 // ---- control plane ----------------------------------------------------------
@@ -2020,7 +2035,9 @@ fn start_op(st: &mut State, kind: &str, resource: &str) -> Reply {
 }
 
 fn strict(body: &[u8], allowed: &[&str]) -> Option<Map<String, Value>> {
-    let m = parse_object(body)?;
+    let Ok(Value::Object(m)) = serde_json::from_slice::<Value>(body) else {
+        return None;
+    };
     m.keys().all(|k| allowed.contains(&k.as_str())).then_some(m)
 }
 
@@ -2084,20 +2101,47 @@ fn dashboard(st: &mut State, ctx: &Ctx, _key: &Key, rest: &[&str], body: &[u8]) 
             let Some(b) = strict(body, &["name", "status", "limits", "advisor_external"]) else {
                 return err(400, "invalid_request");
             };
+            // Validate the whole update before changing anything.
+            let name = match b.get("name") {
+                None => None,
+                Some(Value::String(n)) if !n.is_empty() => Some(n.clone()),
+                Some(_) => return err(400, "invalid_request"),
+            };
+            let status = match b.get("status") {
+                None => None,
+                Some(Value::String(s)) if s == "active" || s == "suspended" => Some(s.clone()),
+                Some(_) => return err(400, "invalid_request"),
+            };
+            let limits = match b.get("limits") {
+                None => None,
+                Some(l @ Value::Object(m))
+                    if m.get("max_databases").is_some_and(Value::is_u64)
+                        && m.get("max_storage_bytes").is_some_and(Value::is_string)
+                        && m.get("max_rate_per_second").is_some_and(Value::is_u64) =>
+                {
+                    Some(l.clone())
+                }
+                Some(_) => return err(400, "invalid_request"),
+            };
+            let advisor_external = match b.get("advisor_external") {
+                None => None,
+                Some(Value::Bool(v)) => Some(*v),
+                Some(_) => return err(400, "invalid_request"),
+            };
             let Some(t) = st.tenants.get_mut(*t) else {
                 return not_found();
             };
-            if let Some(n) = b.get("name").and_then(Value::as_str) {
-                t.name = n.into();
+            if let Some(n) = name {
+                t.name = n;
             }
-            if let Some(s) = b.get("status").and_then(Value::as_str) {
-                if s != "active" && s != "suspended" {
-                    return err(400, "invalid_request");
-                }
-                t.status = s.into();
+            if let Some(s) = status {
+                t.status = s;
             }
-            if let Some(l) = b.get("limits") {
-                t.limits = l.clone();
+            if let Some(l) = limits {
+                t.limits = l;
+            }
+            if let Some(a) = advisor_external {
+                t.advisor_external = a;
             }
             reply(200, tenant_json(t))
         }
@@ -2283,10 +2327,18 @@ fn dashboard(st: &mut State, ctx: &Ctx, _key: &Key, rest: &[&str], body: &[u8]) 
             ) else {
                 return err(400, "invalid_request");
             };
-            let expires_at = b
-                .get("ttl_seconds")
-                .and_then(Value::as_u64)
-                .map(|s| now_ms() + s * 1000);
+            let expires_at = match b.get("ttl_seconds") {
+                None | Some(Value::Null) => None,
+                Some(v) => match v
+                    .as_u64()
+                    .filter(|s| *s > 0)
+                    .and_then(|s| s.checked_mul(1000))
+                    .and_then(|ms| now_ms().checked_add(ms))
+                {
+                    Some(at) => Some(at),
+                    None => return err(400, "invalid_request"),
+                },
+            };
             let token = st.add_key(Key {
                 id: String::new(),
                 token: String::new(),

@@ -41,6 +41,7 @@ tokio-rustls = { version = "=0.26.6", default-features = false, features = ["rin
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }
 http-body-util = "0.1"
+caseless = "0.2"
 base64 = "0.22"
 sha2 = "0.10"
 

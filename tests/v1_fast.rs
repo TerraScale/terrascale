@@ -590,18 +590,33 @@ async fn transactions_commit_atomically_with_op_indexed_errors() {
     let mut tx = Tx::new();
     tx.delete("orgs", org, None)
         .create("Bad Name", None, &json!({}));
+    let tx_path = "/v1/databases/main/transactions";
+    let sent = f.count("POST", tx_path);
     let local = db.commit(&tx).await.unwrap_err();
     assert!(
-        matches!(&local, Error::InvalidInput(m) if m.contains("op 1")),
+        matches!(&local, Error::InvalidTxOp { op: 1, message } if message.contains("collection")),
         "{local:?}"
     );
+    assert_eq!(local.op(), Some(1));
+    assert_eq!((local.status(), local.code()), (None, None));
     assert!(matches!(
         db.commit(&Tx::new()).await,
         Err(Error::InvalidInput(_))
     ));
     let mut tx = Tx::new();
+    tx.delete("orgs", org, None)
+        .patch("orgs", uuidv5_for("orgs", "p"), Patch::ops(vec![]), None)
+        .assert_count("orgs", Filter::exists("/a"), CountBounds::default());
+    let first_bad = db.commit(&tx).await.unwrap_err();
+    assert_eq!(first_bad.op(), Some(1), "{first_bad:?}");
+    let mut tx = Tx::new();
     tx.assert_count("orgs", Filter::exists("/a"), CountBounds::default());
-    assert!(matches!(db.commit(&tx).await, Err(Error::InvalidInput(_))));
+    assert_eq!(db.commit(&tx).await.unwrap_err().op(), Some(0));
+    assert_eq!(
+        f.count("POST", tx_path),
+        sent,
+        "invalid transactions are not sent"
+    );
 }
 
 #[tokio::test]
@@ -1229,4 +1244,395 @@ async fn grants_scope_data_keys() {
             .await,
         Err(Error::InvalidKey)
     ));
+}
+
+#[tokio::test]
+async fn oversized_responses_are_not_retried() {
+    let f = Fixture::start().await;
+    let items = data(&f).database("main").collection("items");
+    let id = uuidv5_for("items", "big");
+    items
+        .put(id, &json!({"pad": "x".repeat(4096)}), WriteOptions::new())
+        .await
+        .unwrap();
+    let small = Client::builder(&f.url, &f.data_token)
+        .add_root_ca_pem(&f.ca_pem)
+        .max_response_bytes(1024)
+        .build()
+        .unwrap();
+    let path = format!("/v1/databases/main/collections/items/documents/{id}");
+    let before = f.count("GET", &path);
+    let err = small
+        .database("main")
+        .collection("items")
+        .get::<Box<RawValue>>(id)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::ResponseTooLarge { limit: 1024 }),
+        "{err:?}"
+    );
+    assert!(!err.is_uncertain());
+    assert_eq!(f.count("GET", &path) - before, 1, "sent exactly once");
+}
+
+#[tokio::test]
+async fn only_rate_limited_429s_are_retried() {
+    let f = Fixture::start().await;
+    let items = data(&f).database("main").collection("items");
+    let docs = "/v1/databases/main/collections/items/documents";
+    let id = uuidv5_for("items", "429");
+    let path = format!("{docs}/{id}");
+
+    let mut unknown = Fault::new("PUT", docs, 429, "slow_down");
+    unknown.retry_after = Some("0");
+    f.inject(unknown);
+    let before = f.count("PUT", &path);
+    let err = items
+        .put(id, &json!({}), WriteOptions::new())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Api { status: 429, code, .. } if code == "slow_down"),
+        "{err:?}"
+    );
+    assert_eq!(f.count("PUT", &path) - before, 1);
+
+    let mut malformed = Fault::new("PUT", docs, 429, "rate_limited");
+    malformed.body = Some("busy");
+    f.inject(malformed);
+    let before = f.count("PUT", &path);
+    let err = items
+        .put(id, &json!({}), WriteOptions::new())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Api { status: 429, code, .. } if code == "http_429"),
+        "{err:?}"
+    );
+    assert_eq!(f.count("PUT", &path) - before, 1);
+    assert_eq!(f.faults_left(), 0);
+}
+
+#[tokio::test]
+async fn lower_uses_unicode_default_case_folding() {
+    let f = Fixture::start().await;
+    let users = data(&f).database("main").collection("users");
+    users
+        .create(
+            &json!({"email": "straße@example.com", "name": "Straße"}),
+            WriteOptions::new(),
+        )
+        .await
+        .unwrap();
+    match users
+        .create(
+            &json!({"email": "STRASSE@example.com", "name": "x"}),
+            WriteOptions::new(),
+        )
+        .await
+        .unwrap_err()
+    {
+        Error::UniqueViolation { constraint, .. } => assert_eq!(constraint, "email"),
+        other => panic!("{other:?}"),
+    }
+    let count = |filter: Filter| {
+        let users = users.clone();
+        async move {
+            users
+                .query::<Box<RawValue>>(&Query::new().filter(filter).count(true))
+                .await
+                .unwrap()
+                .count
+                .unwrap()
+                .value
+        }
+    };
+    assert_eq!(count(Filter::eq(Path::lower("/name"), "STRASSE")).await, 1);
+    assert_eq!(count(Filter::eq(Path::lower("/name"), "strasse")).await, 1);
+    assert_eq!(count(Filter::eq("/name", "STRASSE")).await, 0);
+    assert_eq!(
+        count(Filter::prefix(Path::lower("/name"), "STRAS")).await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn numbers_compare_and_round_trip_exactly() {
+    let f = Fixture::start().await;
+    let db = data(&f).database("main");
+    let items = db.collection("items");
+    let big = "123456789012345678901234567890.000000000000000000001";
+    let n = |s: &str| s.parse::<Number>().unwrap();
+    // Adjacent integers above 2^53 are distinct; 1 and 1.0 are equal.
+    let mut tx = Tx::new();
+    for (key, value) in [
+        ("a", "9007199254740992"),
+        ("b", "9007199254740993"),
+        ("c", "9007199254740994"),
+    ] {
+        tx.create(
+            "items",
+            Some(uuidv5_for("items", key)),
+            &std::collections::BTreeMap::from([("n", n(value)), ("one", n("1.0"))]),
+        );
+    }
+    let raw = RawValue::from_string(format!(r#"{{"big":{big},"tiny":-1.5e-30}}"#)).unwrap();
+    let big_id = uuidv5_for("items", "big");
+    tx.create("items", Some(big_id), &raw);
+    db.commit(&tx).await.unwrap();
+
+    let count = |filter: Filter| {
+        let items = items.clone();
+        async move {
+            items
+                .query::<Box<RawValue>>(&Query::new().filter(filter).count(true))
+                .await
+                .unwrap()
+                .count
+                .unwrap()
+                .value
+        }
+    };
+    assert_eq!(count(Filter::eq("/n", n("9007199254740993"))).await, 1);
+    assert_eq!(count(Filter::gt("/n", n("9007199254740992"))).await, 2);
+    assert_eq!(count(Filter::lt("/n", n("9007199254740994"))).await, 2);
+    assert_eq!(count(Filter::eq("/one", 1)).await, 3);
+    assert_eq!(count(Filter::eq("/big", n(big))).await, 1);
+    assert_eq!(
+        count(Filter::lt(
+            "/big",
+            n("123456789012345678901234567890.000000000000000000002")
+        ))
+        .await,
+        1
+    );
+    let sorted = items
+        .query::<serde_json::Value>(
+            &Query::new()
+                .filter(Filter::exists("/n"))
+                .sort(SortKey::desc("/n"))
+                .project(["/n"]),
+        )
+        .await
+        .unwrap();
+    let ns: Vec<String> = sorted
+        .items
+        .into_iter()
+        .map(|d| d.into_value().unwrap()["n"].to_string())
+        .collect();
+    assert_eq!(
+        ns,
+        ["9007199254740994", "9007199254740993", "9007199254740992"]
+    );
+
+    // Transaction, patch and projection keep the exact tokens.
+    #[derive(Deserialize)]
+    struct Exact {
+        big: Number,
+        tiny: Number,
+        #[serde(default)]
+        more: Option<Number>,
+    }
+    let got = items
+        .get::<Exact>(big_id)
+        .await
+        .unwrap()
+        .into_value()
+        .unwrap();
+    assert_eq!((got.big.as_str(), got.tiny.as_str()), (big, "-1.5e-30"));
+    let more = "98765432109876543210987654321.123456789";
+    items
+        .patch(
+            big_id,
+            // Not json!: serde_json::Value would round a Number through f64.
+            &Patch::merge(&std::collections::BTreeMap::from([("more", n(more))])).unwrap(),
+            WriteOptions::new(),
+        )
+        .await
+        .unwrap();
+    let mut tx = Tx::new();
+    tx.patch(
+        "items",
+        big_id,
+        Patch::ops(vec![PatchOp::set("/nested/v", &n(big)).unwrap()]),
+        None,
+    );
+    db.commit(&tx).await.unwrap();
+    let got = items
+        .get::<Exact>(big_id)
+        .await
+        .unwrap()
+        .into_value()
+        .unwrap();
+    assert_eq!(
+        (
+            got.big.as_str(),
+            got.tiny.as_str(),
+            got.more.unwrap().as_str()
+        ),
+        (big, "-1.5e-30", more)
+    );
+    let projected = items
+        .query::<Exact>(
+            &Query::new()
+                .filter(Filter::eq("$id", big_id))
+                .project(["/big", "/tiny"]),
+        )
+        .await
+        .unwrap();
+    let p = projected.items[0].value().unwrap();
+    assert_eq!(
+        (p.big.as_str(), p.tiny.as_str(), p.more.is_none()),
+        (big, "-1.5e-30", true)
+    );
+    let nested = items
+        .query::<Box<RawValue>>(
+            &Query::new()
+                .filter(Filter::eq("/nested/v", n(big)))
+                .project(["/nested/v"]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        nested.items[0].value().unwrap().get(),
+        format!(r#"{{"nested":{{"v":{big}}}}}"#)
+    );
+}
+
+#[tokio::test]
+async fn inc_is_exact_across_decimals_and_the_i64_boundary() {
+    let f = Fixture::start().await;
+    let items = data(&f).database("main").collection("items");
+    let id = uuidv5_for("items", "inc");
+    let raw = RawValue::from_string(
+        r#"{"frac":0.1,"max":9223372036854775807,"min":-9223372036854775808,"big":1e20}"#.into(),
+    )
+    .unwrap();
+    items.put(id, &raw, WriteOptions::new()).await.unwrap();
+    let n = |s: &str| s.parse::<Number>().unwrap();
+    items
+        .patch(
+            id,
+            &Patch::ops(vec![
+                PatchOp::inc("/frac", n("0.2")),
+                PatchOp::inc("/max", 1),
+                PatchOp::inc("/min", -1),
+                PatchOp::inc("/big", n("0.5")),
+                PatchOp::inc("/fresh", n("-2.50")),
+            ]),
+            WriteOptions::new(),
+        )
+        .await
+        .unwrap();
+
+    #[derive(Deserialize)]
+    struct Counters {
+        frac: Number,
+        max: Number,
+        min: Number,
+        big: Number,
+        fresh: Number,
+    }
+    let c = items
+        .get::<Counters>(id)
+        .await
+        .unwrap()
+        .into_value()
+        .unwrap();
+    assert_eq!(
+        [
+            c.frac.as_str(),
+            c.max.as_str(),
+            c.min.as_str(),
+            c.big.as_str(),
+            c.fresh.as_str()
+        ],
+        [
+            "0.3",
+            "9223372036854775808",
+            "-9223372036854775809",
+            "100000000000000000000.5",
+            "-2.5"
+        ]
+    );
+    // A result beyond 128 significant digits cannot be stored.
+    let err = items
+        .patch(
+            id,
+            &Patch::ops(vec![PatchOp::inc(
+                "/big",
+                n(&format!("0.{}1", "0".repeat(120))),
+            )]),
+            WriteOptions::new(),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Api { status: 409, code, .. } if code == "patch_conflict"),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn tenant_updates_validate_before_applying() {
+    let f = Fixture::start().await;
+    let ctl = control(&f);
+    let t = ctl.get_tenant(&f.tenant_id).await.unwrap();
+    assert!(!t.advisor_external);
+    let updated = ctl
+        .update_tenant(
+            &key("adv-on"),
+            &t.id,
+            &UpdateTenant {
+                advisor_external: Some(true),
+                ..UpdateTenant::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(updated.advisor_external);
+    assert!(ctl.get_tenant(&t.id).await.unwrap().advisor_external);
+
+    let rejected = ctl
+        .update_tenant(
+            &key("bad-status"),
+            &t.id,
+            &UpdateTenant {
+                name: Some("Renamed".into()),
+                status: Some("frozen".into()),
+                advisor_external: Some(false),
+                ..UpdateTenant::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&rejected, Error::Api { status: 400, code, .. } if code == "invalid_request"),
+        "{rejected:?}"
+    );
+    let after = ctl.get_tenant(&t.id).await.unwrap();
+    assert_eq!(after, updated, "a rejected update changes nothing");
+
+    let err = ctl
+        .create_key(
+            &key("ttl-overflow"),
+            &t.id,
+            &CreateKey {
+                name: "x".into(),
+                grants: vec![Grant {
+                    database: "main".into(),
+                    collections: vec!["*".into()],
+                    permissions: vec!["read".into()],
+                }],
+                ttl_seconds: Some(u64::MAX),
+                ..CreateKey::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Api { status: 400, code, .. } if code == "invalid_request"),
+        "{err:?}"
+    );
 }
