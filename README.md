@@ -39,9 +39,11 @@ and every error code is also an error value for `errors.Is`, for example
 `tb.ErrMustRefetch`. A 404 for a deleted document carries the tombstone version
 in `ETag`, which recreates it with `IfMatch`.
 
-Retries: 429 is retried after `Retry-After`; `503 commit_uncertain` and
-transport errors are retried only for reads, queries and mutations that carry
-an `Idempotency-Key` (the retry then returns the original response). Set
+Retries: 429 is retried after `Retry-After`. Transport errors and the
+transient 503s (`capacity`, `storage_unavailable`, `dependencies_unavailable`,
+`commit_uncertain`) are retried with backoff only for reads, queries, shape
+reads and mutations that carry an `Idempotency-Key` (a keyed retry returns the
+original response); `stored_corruption` is never retried. Set
 `Config.MaxRetries` to change the budget.
 
 Transactions apply up to 1024 ops atomically; failures name the op index:
@@ -103,8 +105,11 @@ op, err := d.DeleteDatabase(ctx, tb.NewIdempotencyKey(), t.ID, "old")
 op, err = d.WaitOperation(ctx, op.ID, time.Second)
 ```
 
-It also covers usage, collections and stats, indexes and index decisions, key
-rotation and revocation, edge keys, advisors, regions and audit.
+It also covers usage, collections and stats, indexes and typed index decision
+records, key rotation and revocation, edge keys, advisors, regions and audit.
+In `PATCH` requests nullable members use `tb.Optional`: the zero value leaves
+the member unchanged, `tb.Value(v)` sets it and `tb.Null[T]()` clears it, for
+example `tb.UpdateCollectionRequest{TTLPath: tb.Null[string]()}`.
 
 The v1 tests run in the normal `go test -race ./...` suite against an in-test
 HTTPS contract fixture (`v1/fixture_*_test.go`) that implements the contract's

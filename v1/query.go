@@ -190,10 +190,12 @@ type Query struct {
 	Project []string `json:"project,omitempty"`
 	// Limit is 1-1000; zero uses the server default of 50.
 	Limit int `json:"limit,omitempty"`
-	// Cursor continues from a previous page's NextCursor.
+	// Cursor continues from a previous page's NextCursor. It is bound to
+	// Filter, Sort and Project; Limit may change between pages.
 	Cursor string `json:"cursor,omitempty"`
-	// Count requests the total match count.
-	Count   bool        `json:"count,omitempty"`
+	// Count requests the total match count; ignored when Cursor is set.
+	Count bool `json:"count,omitempty"`
+	// Explain requests the plan; ignored when Cursor is set.
 	Explain ExplainMode `json:"explain,omitempty"`
 }
 
@@ -236,7 +238,8 @@ func (col *Collection) Query(ctx context.Context, q Query) (*QueryResult, error)
 }
 
 // Pages iterates over every page of q, starting at q.Cursor, until a page has
-// no NextCursor. Iteration stops after the first error.
+// no NextCursor. Iteration stops after the first error. Count and Explain are
+// evaluated only without a cursor, so they are sent with the first page only.
 func (col *Collection) Pages(ctx context.Context, q Query) iter.Seq2[*QueryResult, error] {
 	return func(yield func(*QueryResult, error) bool) {
 		for {
@@ -244,7 +247,7 @@ func (col *Collection) Pages(ctx context.Context, q Query) iter.Seq2[*QueryResul
 			if !yield(page, err) || err != nil || page.NextCursor == "" {
 				return
 			}
-			q.Cursor = page.NextCursor
+			q.Cursor, q.Count, q.Explain = page.NextCursor, false, ""
 		}
 	}
 }

@@ -329,22 +329,24 @@ func (s *Subscription) Next(ctx context.Context) (ShapeEvent, error) {
 	}
 }
 
+// transientDelay classifies shape read failures: transport errors, 429,
+// the transient 503s and the edge's 502/504 are retried; stored_corruption
+// and every other status are returned.
 func transientDelay(err error, attempt int) (time.Duration, bool) {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		return backoff(attempt), true
 	}
-	switch apiErr.Status {
-	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		if apiErr.Code == ErrStoredCorruption {
-			return 0, false
-		}
-		if apiErr.retryAfterSet {
-			return min(apiErr.RetryAfter, MaxRetryWait), true
-		}
-		return backoff(attempt), true
+	switch {
+	case apiErr.Status == http.StatusTooManyRequests, isTransient503(apiErr),
+		apiErr.Status == http.StatusBadGateway, apiErr.Status == http.StatusGatewayTimeout:
+	default:
+		return 0, false
 	}
-	return 0, false
+	if apiErr.retryAfterSet {
+		return min(apiErr.RetryAfter, MaxRetryWait), true
+	}
+	return backoff(attempt), true
 }
 
 func isLogOffset(o string) bool {
@@ -535,9 +537,6 @@ func (s *Subscription) stepSSE(ctx context.Context) (ShapeEvent, bool, error) {
 			body, _ := io.ReadAll(io.LimitReader(res.Body, s.db.c.maxResponse))
 			res.Body.Close()
 			scancel()
-			if res.StatusCode == http.StatusTemporaryRedirect {
-				return ShapeEvent{}, false, s.follow307(target, res.Header)
-			}
 			apiErr := parseAPIError(res.StatusCode, res.Header, body)
 			if apiErr.Code == ErrMustRefetch {
 				return s.reset(apiErr.Handle), true, nil
@@ -563,25 +562,24 @@ func (s *Subscription) stepSSE(ctx context.Context) (ShapeEvent, bool, error) {
 		}
 		return s.apply(b)
 	case "up-to-date":
-		var b shapeBody
-		if len(bytes.TrimSpace(data)) > 0 && decodeExact(data, &b) == nil && b.NextOffset != "" {
-			b.UpToDate = true
-			return s.apply(b)
+		var b struct {
+			NextOffset string `json:"next_offset"`
 		}
+		if err := decodeExact(data, &b); err != nil || b.NextOffset == "" {
+			return ShapeEvent{}, false, fmt.Errorf("terrabase: malformed up-to-date event %q", data)
+		}
+		s.offset = b.NextOffset
 		wasUpToDate := s.upToDate
 		s.upToDate = true
-		return ShapeEvent{Type: EventUpToDate, Handle: s.handle, NextOffset: s.offset, UpToDate: true}, !wasUpToDate, nil
+		return ShapeEvent{Type: EventUpToDate, Handle: s.handle, Offset: b.NextOffset, NextOffset: b.NextOffset, UpToDate: true}, !wasUpToDate, nil
 	case "must-refetch":
-		e := parseAPIError(http.StatusConflict, http.Header{}, data)
-		handle := e.Handle
-		if handle == "" {
-			var direct struct {
-				Handle string `json:"handle"`
-			}
-			_ = decodeExact(data, &direct)
-			handle = direct.Handle
+		var b struct {
+			Handle string `json:"handle"`
 		}
-		return s.reset(handle), true, nil
+		if err := decodeExact(data, &b); err != nil {
+			return ShapeEvent{}, false, fmt.Errorf("terrabase: malformed must-refetch event %q", data)
+		}
+		return s.reset(b.Handle), true, nil
 	}
 	return ShapeEvent{}, false, nil
 }

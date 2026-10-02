@@ -63,9 +63,11 @@ type Config struct {
 	// bearer token is never forwarded to a redirect target.
 	HTTPClient *http.Client
 	// MaxRetries bounds retries. 429 rate_limited is retried after
-	// Retry-After; 503 commit_uncertain and transport errors are retried only
-	// when the request is safe to replay (reads, queries and mutations with an
-	// Idempotency-Key). Zero means DefaultMaxRetries; negative disables retries.
+	// Retry-After. Transport errors and the transient 503s (capacity,
+	// storage_unavailable, dependencies_unavailable, commit_uncertain) are
+	// retried with backoff only when the request is safe to replay: reads,
+	// queries and mutations with an Idempotency-Key. stored_corruption is never
+	// retried. Zero means DefaultMaxRetries; negative disables retries.
 	MaxRetries int
 	// MaxResponseBytes bounds one response body. Zero means
 	// DefaultMaxResponseBytes.
@@ -205,7 +207,7 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 			return resp, nil
 		}
 		apiErr := parseAPIError(resp.status, resp.header, resp.body)
-		if delay, ok := retryDelay(apiErr, attempt, req.idemKey != ""); ok && attempt < c.maxRetries {
+		if delay, ok := retryDelay(apiErr, attempt, req.replaySafe); ok && attempt < c.maxRetries {
 			if err := sleep(ctx, delay); err != nil {
 				return nil, err
 			}
@@ -216,12 +218,15 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 }
 
 // retryDelay implements the retry policy: 429 is always retried (the request
-// was not admitted); 503 commit_uncertain is retried only with the same
-// Idempotency-Key, which makes the retry return the original outcome.
-func retryDelay(e *APIError, attempt int, keyed bool) (time.Duration, bool) {
+// was not admitted); the transient 503s capacity, storage_unavailable,
+// dependencies_unavailable and commit_uncertain are retried only for requests
+// that are safe to replay (reads, queries and writes with an Idempotency-Key,
+// which make a retry return the original outcome). stored_corruption is never
+// retried.
+func retryDelay(e *APIError, attempt int, replaySafe bool) (time.Duration, bool) {
 	switch {
 	case e.Status == http.StatusTooManyRequests:
-	case e.Status == http.StatusServiceUnavailable && e.Code == ErrCommitUncertain && keyed:
+	case replaySafe && isTransient503(e):
 	default:
 		return 0, false
 	}
@@ -229,6 +234,17 @@ func retryDelay(e *APIError, attempt int, keyed bool) (time.Duration, bool) {
 		return min(e.RetryAfter, MaxRetryWait), true
 	}
 	return backoff(attempt), true
+}
+
+func isTransient503(e *APIError) bool {
+	if e.Status != http.StatusServiceUnavailable {
+		return false
+	}
+	switch e.Code {
+	case ErrCapacity, ErrStorageUnavailable, ErrDependenciesUnavail, ErrCommitUncertain:
+		return true
+	}
+	return false
 }
 
 func backoff(attempt int) time.Duration {

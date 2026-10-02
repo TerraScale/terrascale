@@ -70,24 +70,32 @@ func (f *fixture) signToken(claims map[string]any) string {
 	return signing + "." + enc.EncodeToString(ed25519.Sign(f.signer, []byte(signing)))
 }
 
-// verifyToken checks a shape token's signature, audience, expiry and shape.
-func (f *fixture) verifyToken(token, shapeID string) bool {
+// verifyToken checks a shape token: an invalid or expired token is
+// 401 invalid_token, a valid token for another shape 403 forbidden_scope.
+func (f *fixture) verifyToken(token, shapeID string) *fxReply {
+	invalid, forbidden := fxErr(401, "invalid_token"), fxErr(403, "forbidden_scope")
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return false
+		return &invalid
 	}
 	enc := base64.RawURLEncoding
 	sig, err1 := enc.DecodeString(parts[2])
 	payload, err2 := enc.DecodeString(parts[1])
 	if err1 != nil || err2 != nil || !ed25519.Verify(f.signer.Public().(ed25519.PublicKey), []byte(parts[0]+"."+parts[1]), sig) {
-		return false
+		return &invalid
 	}
 	var c struct {
 		Aud string `json:"aud"`
 		Exp int64  `json:"exp"`
 		Shp string `json:"shp"`
 	}
-	return json.Unmarshal(payload, &c) == nil && c.Aud == "terrabase-edge" && c.Shp == shapeID && time.Now().UnixMilli() <= c.Exp*1000
+	switch {
+	case json.Unmarshal(payload, &c) != nil || c.Aud != "terrabase-edge" || time.Now().UnixMilli() > c.Exp*1000:
+		return &invalid
+	case c.Shp != shapeID:
+		return &forbidden
+	}
+	return nil
 }
 
 // rotateHandle simulates a new lineage (generation change / retention).
@@ -133,9 +141,8 @@ func (f *fixture) shapeAuth(r *http.Request, shapeID string, allowEdge bool) (*f
 		rep := fxErr(404, "not_found")
 		return nil, &rep
 	case k.role == "edge" && allowEdge:
-		if !f.verifyToken(r.Header.Get("TB-Shape-Token"), shapeID) {
-			rep := fxErr(401, "invalid_token")
-			return nil, &rep
+		if rep := f.verifyToken(r.Header.Get("TB-Shape-Token"), shapeID); rep != nil {
+			return nil, rep
 		}
 		return shape, nil
 	case k.role == "data" && k.tenantID == shape.tenantID:
@@ -368,6 +375,10 @@ func (f *fixture) streamShape(w http.ResponseWriter, r *http.Request) {
 		e := fxErr(400, "invalid_request")
 		rep = &e
 	}
+	if rep == nil && (q["offset"] == "" || (q["offset"] != "-1" && q["handle"] == "")) {
+		e := fxErr(400, "invalid_request", "message", "offset is required, and handle unless offset=-1")
+		rep = &e
+	}
 	if rep == nil && q["offset"] != "-1" && q["handle"] != shape.handle {
 		e := fxErr(409, "must_refetch", "handle", shape.handle)
 		rep = &e
@@ -406,7 +417,7 @@ func (f *fixture) streamShape(w http.ResponseWriter, r *http.Request) {
 		if shape.handle != handle {
 			h := shape.handle
 			f.mu.Unlock()
-			send("must-refetch", "", map[string]any{"error": map[string]any{"code": "must_refetch", "handle": h}})
+			send("must-refetch", "", map[string]any{"handle": h})
 			return
 		}
 		var body fxShapeBody
@@ -432,9 +443,7 @@ func (f *fixture) streamShape(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if lastUpToDate != next {
-			body["changes"] = []any{}
-			body["offset"] = next
-			send("up-to-date", "", body)
+			send("up-to-date", "", map[string]any{"next_offset": next})
 			lastUpToDate = next
 		}
 		t := time.NewTimer(f.sseBeat)
@@ -466,11 +475,11 @@ func (f *fixture) serveEdge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !f.verifyToken(token, shapeID) {
+	if rep := f.verifyToken(token, shapeID); rep != nil {
 		f.mu.Lock()
-		f.requests["EDGE 401"]++
+		f.requests["EDGE "+strconv.Itoa(rep.status)]++
 		f.mu.Unlock()
-		writeReply(w, fxErr(401, "invalid_token"))
+		writeReply(w, *rep)
 		return
 	}
 	q, ok := shapeQuery(r.URL.RawQuery, "handle", "offset", "live", "cursor")

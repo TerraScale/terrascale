@@ -1,7 +1,6 @@
 package v1
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -246,10 +245,16 @@ type Operation struct {
 	Kind     string `json:"kind"`
 	Status   string `json:"status"` // running, succeeded or failed
 	Resource string `json:"resource"`
-	// Error is the raw failure description (null unless failed).
-	Error      json.RawMessage `json:"error"`
-	CreatedAt  Timestamp       `json:"created_at"`
-	FinishedAt *Timestamp      `json:"finished_at"`
+	// Error is set when Status is failed.
+	Error      *OperationFailure `json:"error"`
+	CreatedAt  Timestamp         `json:"created_at"`
+	FinishedAt *Timestamp        `json:"finished_at"`
+}
+
+// OperationFailure describes why an operation failed.
+type OperationFailure struct {
+	Code    ErrorCode `json:"code"`
+	Message string    `json:"message"`
 }
 
 // Operation status values.
@@ -260,10 +265,21 @@ const (
 )
 
 // OperationError reports an operation that finished with status failed.
+// errors.Is matches its failure code.
 type OperationError struct{ Operation *Operation }
 
 func (e *OperationError) Error() string {
-	return fmt.Sprintf("terrabase: operation %s (%s) failed: %s", e.Operation.ID, e.Operation.Kind, e.Operation.Error)
+	msg := "unknown failure"
+	if f := e.Operation.Error; f != nil {
+		msg = string(f.Code) + ": " + f.Message
+	}
+	return fmt.Sprintf("terrabase: operation %s (%s) failed: %s", e.Operation.ID, e.Operation.Kind, msg)
+}
+
+// Is reports whether target is the operation's failure code.
+func (e *OperationError) Is(target error) bool {
+	code, ok := target.(ErrorCode)
+	return ok && e.Operation.Error != nil && e.Operation.Error.Code == code
 }
 
 // GetOperation reads an operation.
@@ -360,10 +376,11 @@ type CreateCollectionRequest struct {
 	Advisor string             `json:"advisor,omitempty"`
 }
 
-// UpdateCollectionRequest is the body of UpdateCollection; nil members are unchanged.
+// UpdateCollectionRequest is the body of UpdateCollection; nil and zero
+// members are unchanged. TTLPath is nullable: Null[string]() removes the TTL.
 type UpdateCollectionRequest struct {
 	Schema  *Schema             `json:"schema,omitempty"`
-	TTLPath *string             `json:"ttl_path,omitempty"`
+	TTLPath Optional[string]    `json:"ttl_path,omitzero"`
 	Unique  *[]UniqueConstraint `json:"unique,omitempty"`
 	Advisor *string             `json:"advisor,omitempty"`
 }
@@ -468,17 +485,51 @@ func (d *Dashboard) PinIndex(ctx context.Context, idempotencyKey, tenant, databa
 	return dmut[Index](ctx, d, http.MethodPatch, idempotencyKey, collPath(tenant, database, collection, "indexes", index), body)
 }
 
-// DeleteIndex drops an index; constraint and TTL indexes fail with
-// ErrIndexProtected. The response body is returned raw (not specified).
-func (d *Dashboard) DeleteIndex(ctx context.Context, idempotencyKey, tenant, database, collection, index string) (json.RawMessage, error) {
-	var raw json.RawMessage
-	err := d.mutate(ctx, http.MethodDelete, idempotencyKey, collPath(tenant, database, collection, "indexes", index), nil, &raw)
-	return raw, err
+// DeleteIndex drops an index and returns it in state dropped or retiring;
+// constraint and TTL indexes fail with ErrIndexProtected.
+func (d *Dashboard) DeleteIndex(ctx context.Context, idempotencyKey, tenant, database, collection, index string) (*Index, error) {
+	return dmut[Index](ctx, d, http.MethodDelete, idempotencyKey, collPath(tenant, database, collection, "indexes", index), nil)
 }
 
-// IndexDecisions lists index decision records (see auto-index.md), raw.
-func (d *Dashboard) IndexDecisions(ctx context.Context, tenant, database, collection string, opts ListOptions) (*Page[json.RawMessage], error) {
-	return list[json.RawMessage](ctx, d, collPath(tenant, database, collection, "index-decisions"), opts.values())
+// IndexDecision is a collection generation's initial index decision.
+type IndexDecision struct {
+	Collection string      `json:"collection"`
+	Generation Uint64      `json:"generation"`
+	Status     string      `json:"status"` // pending or decided
+	Decider    Decider     `json:"decider"`
+	Candidates []Candidate `json:"candidates"`
+	// FallbackReason is nil or one of not_opted_in, timeout, unavailable,
+	// invalid_answer, abstained and resting.
+	FallbackReason *string    `json:"fallback_reason"`
+	RequestDigest  string     `json:"request_digest"`
+	DecidedAt      *Timestamp `json:"decided_at"`
+}
+
+// Decider is the decider that answered an index decision.
+type Decider struct {
+	Name  string        `json:"name"`
+	Kind  string        `json:"kind"` // systemone, llm or deterministic
+	Model string        `json:"model"`
+	Usage *DeciderUsage `json:"usage"`
+}
+
+// DeciderUsage is a model decider's token usage.
+type DeciderUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
+// Candidate is one candidate index of a decision.
+type Candidate struct {
+	ID       string     `json:"id"`
+	Keys     []IndexKey `json:"keys"`
+	Score    float64    `json:"score"`
+	Selected bool       `json:"selected"`
+}
+
+// IndexDecisions lists a collection's index decision records.
+func (d *Dashboard) IndexDecisions(ctx context.Context, tenant, database, collection string, opts ListOptions) (*Page[IndexDecision], error) {
+	return list[IndexDecision](ctx, d, collPath(tenant, database, collection, "index-decisions"), opts.values())
 }
 
 // Keys.
@@ -570,11 +621,9 @@ func (d *Dashboard) ListEdgeKeys(ctx context.Context, opts ListOptions) (*Page[K
 	return list[Key](ctx, d, dash("edge-keys"), opts.values())
 }
 
-// DeleteEdgeKey revokes an edge key. The response body is returned raw (not specified).
-func (d *Dashboard) DeleteEdgeKey(ctx context.Context, idempotencyKey, key string) (json.RawMessage, error) {
-	var raw json.RawMessage
-	err := d.mutate(ctx, http.MethodDelete, idempotencyKey, dash("edge-keys", key), nil, &raw)
-	return raw, err
+// DeleteEdgeKey revokes an edge key and returns it with RevokedAt set.
+func (d *Dashboard) DeleteEdgeKey(ctx context.Context, idempotencyKey, key string) (*Key, error) {
+	return dmut[Key](ctx, d, http.MethodDelete, idempotencyKey, dash("edge-keys", key), nil)
 }
 
 // Advisors, regions and audit.
@@ -608,35 +657,17 @@ type AuditEvent struct {
 	Outcome        string    `json:"outcome"`
 }
 
-// bareOrPage decodes either a bare JSON array (as documented for /advisors
-// and /regions) or a {"items":[…]} page.
-func bareOrPage[T any](ctx context.Context, d *Dashboard, path []string) ([]T, error) {
-	var raw json.RawMessage
-	if err := d.get(ctx, path, nil, &raw); err != nil {
-		return nil, err
-	}
-	var items []T
-	if t := bytes.TrimSpace(raw); len(t) > 0 && t[0] == '[' {
-		return items, decodeExact(raw, &items)
-	}
-	var p Page[T]
-	if err := decodeExact(raw, &p); err != nil {
-		return nil, err
-	}
-	return p.Items, nil
-}
-
 // ListAdvisors lists the configured index deciders.
-func (d *Dashboard) ListAdvisors(ctx context.Context) ([]Advisor, error) {
-	return bareOrPage[Advisor](ctx, d, dash("advisors"))
+func (d *Dashboard) ListAdvisors(ctx context.Context, opts ListOptions) (*Page[Advisor], error) {
+	return list[Advisor](ctx, d, dash("advisors"), opts.values())
 }
 
 // ListRegions lists regions.
-func (d *Dashboard) ListRegions(ctx context.Context) ([]Region, error) {
-	return bareOrPage[Region](ctx, d, dash("regions"))
+func (d *Dashboard) ListRegions(ctx context.Context, opts ListOptions) (*Page[Region], error) {
+	return list[Region](ctx, d, dash("regions"), opts.values())
 }
 
-// ListAudit lists audit events newest first; tenant may be empty.
+// ListAudit lists audit events newest first; an empty tenant lists all tenants.
 func (d *Dashboard) ListAudit(ctx context.Context, tenant string, opts ListOptions) (*Page[AuditEvent], error) {
 	q := opts.values()
 	if tenant != "" {

@@ -87,6 +87,15 @@ func TestTransactions(t *testing.T) {
 	if _, err := db.Collection("items").Get(ctx, id("items", "a")); !errors.Is(err, v1.ErrNotFound) {
 		t.Fatalf("aborted write is visible: %v", err)
 	}
+	// Duplicate targets and preconditions on create are rejected by op index.
+	for _, tx := range []*v1.Tx{
+		db.Tx().Put("items", id("items", "d"), map[string]any{}).Delete("items", id("items", "d")),
+	} {
+		_, err := tx.Commit(ctx)
+		if op, ok := requireCode(t, err, v1.ErrInvalidRequest).OpIndex(); !ok || op != 1 {
+			t.Fatalf("duplicate target op = %v", op)
+		}
+	}
 	// Builder errors are reported locally with the op index.
 	_, err = db.Tx().Put("items", "not-a-uuid", map[string]any{}).Commit(ctx)
 	if err == nil || !strings.Contains(err.Error(), "op 0") {
@@ -169,8 +178,9 @@ func TestQueries(t *testing.T) {
 			t.Fatal(err)
 		}
 		pages++
-		if page.Count == nil || page.Count.Value != 5 || !page.Count.Exact {
-			t.Fatalf("count: %+v", page.Count)
+		// count is evaluated on the first page only (not with a cursor).
+		if (pages == 1) != (page.Count != nil) || (page.Count != nil && (page.Count.Value != 5 || !page.Count.Exact)) {
+			t.Fatalf("page %d count: %+v", pages, page.Count)
 		}
 		for _, d := range page.Items {
 			var body map[string]any
@@ -187,6 +197,13 @@ func TestQueries(t *testing.T) {
 	first, err := items.Query(ctx, q)
 	if err != nil || first.NextCursor == "" {
 		t.Fatalf("first page: %+v %v", first, err)
+	}
+	// The cursor binds filter, sort and project; limit may change.
+	wider := q
+	wider.Limit, wider.Cursor = 10, first.NextCursor
+	rest, err := items.Query(ctx, wider)
+	if err != nil || len(rest.Items) != 3 || rest.NextCursor != "" || rest.Count != nil {
+		t.Fatalf("cursor with a new limit: %+v %v", rest, err)
 	}
 	other := q
 	other.Filter, other.Cursor = v1.Exists("/name"), first.NextCursor

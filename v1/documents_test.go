@@ -154,13 +154,19 @@ func TestNaturalKeyIDsAndConflicts(t *testing.T) {
 	if v1.DocumentIDFor("users", "ana@example.com") != "b85e5c40-9a0a-517f-ba69-779a0cd2b159" {
 		t.Fatal("users namespace vector")
 	}
+	// Reads are replay-safe, so a transient 503 on GET is retried.
+	f.inject(fxFault{method: "GET", pathPrefix: "/v1/databases/main/collections/orgs/documents/", status: 503, code: "storage_unavailable"})
+	if _, err := orgs.Get(ctx, acme); err != nil || f.faultsLeft() != 0 {
+		t.Fatalf("retried read: %v", err)
+	}
 
 	version := f.seedConflict("main", "orgs", acme, `{"name":"Acme A"}`, `{"name":"Acme B"}`)
 	doc, err := orgs.Get(ctx, acme)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc.State != v1.StateConflict || len(doc.Siblings) != 2 || doc.Siblings[1].Event.Sequence != 14 || doc.Version != version {
+	if ev := doc.Siblings[1].Event; doc.State != v1.StateConflict || len(doc.Siblings) != 2 || ev.Sequence != 14 || doc.Version != version ||
+		len(ev.Replica) != 36 || len(ev.Incarnation) != 32 {
 		t.Fatalf("conflict: %+v", doc)
 	}
 	if _, err := orgs.Patch(ctx, acme, v1.MergePatch(map[string]any{"x": 1})); !errors.Is(err, v1.ErrConflictUnresolved) {
@@ -189,7 +195,10 @@ func TestRetriesAndIdempotency(t *testing.T) {
 		{"429 retries are bounded", fxFault{method: "POST", status: 429, code: "rate_limited", retryAfter: "0", remaining: 5}, "", 2, v1.ErrRateLimited, 3},
 		{"commit_uncertain with a key replays the original", fxFault{method: "POST", status: 503, code: "commit_uncertain", afterCommit: true}, "create-1", 0, "", 2},
 		{"commit_uncertain without a key is not retried", fxFault{method: "POST", status: 503, code: "commit_uncertain", afterCommit: true}, "", 0, v1.ErrCommitUncertain, 1},
-		{"other 503s are not retried", fxFault{method: "POST", status: 503, code: "capacity", retryAfter: "0"}, "k", 0, v1.ErrCapacity, 1},
+		{"transient 503 with a key is retried", fxFault{method: "POST", status: 503, code: "capacity"}, "k", 0, "", 2},
+		{"dependencies_unavailable with a key is retried", fxFault{method: "POST", status: 503, code: "dependencies_unavailable", retryAfter: "0"}, "k", 0, "", 2},
+		{"transient 503 without a key is not retried", fxFault{method: "POST", status: 503, code: "storage_unavailable"}, "", 0, v1.ErrStorageUnavailable, 1},
+		{"stored_corruption is never retried", fxFault{method: "POST", status: 503, code: "stored_corruption"}, "k", 0, v1.ErrStoredCorruption, 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -216,7 +225,7 @@ func TestRetriesAndIdempotency(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.key != "" {
+			if tc.key == "create-1" {
 				// The retry returned the original commit: one write, same ID.
 				again, err := items.Create(t.Context(), map[string]any{"n": 1}, opts...)
 				if err != nil || again.ID != res.ID || again.Offset != res.Offset || again.Offset != 1 {

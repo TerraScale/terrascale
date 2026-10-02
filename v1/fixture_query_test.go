@@ -347,7 +347,12 @@ func (f *fixture) query(r *http.Request, k *fxKey, body []byte) fxReply {
 		}
 		desc[i] = s.Order == "desc"
 	}
-	digestSrc, _ := json.Marshal([]any{coll.name, q.Filter, q.Sort, q.Project, limit, q.Count, q.Explain})
+	// Cursors bind filter, sort and project; limit may vary, and count and
+	// explain are evaluated only without a cursor.
+	digestSrc, _ := json.Marshal([]any{coll.name, q.Filter, q.Sort, q.Project})
+	if q.Cursor != nil {
+		q.Count, q.Explain = false, ""
+	}
 	sum := sha256.Sum256(digestSrc)
 	digest := hex.EncodeToString(sum[:8])
 

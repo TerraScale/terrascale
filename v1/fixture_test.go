@@ -562,7 +562,7 @@ func docJSON(id string, d *fxDoc) map[string]any {
 		out["state"] = "conflict"
 		sibs := make([]any, 0, len(d.siblings))
 		for _, s := range d.siblings {
-			e := map[string]any{"event": map[string]any{"replica": "r1", "incarnation": "1", "sequence": strconv.FormatUint(s.sequence, 10)}, "deleted": s.deleted}
+			e := map[string]any{"event": map[string]any{"replica": "0192f0c4-7a1e-7c3d-9b2a-5e8f1d2c3b4a", "incarnation": "8f14e45fceea167a5a36dedd4bea2543", "sequence": strconv.FormatUint(s.sequence, 10)}, "deleted": s.deleted}
 			if !s.deleted {
 				e["document"] = s.raw
 			}
@@ -1058,6 +1058,9 @@ func (f *fixture) transaction(r *http.Request, k *fxKey, body []byte) fxReply {
 		}
 		if s == nil {
 			s = newStaged(db)
+		}
+		if o.Op == "create" && (o.IfMatch != "" || o.IfNoneMatch != "") {
+			return fxErr(400, "invalid_request", "op", i, "message", "create takes no preconditions")
 		}
 		if o.ID == "" && o.Op == "create" {
 			o.ID = fxUUID()

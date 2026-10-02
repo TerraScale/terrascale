@@ -4,7 +4,6 @@ package v1_test
 // against the contract fixture (fixture_test.go).
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -86,13 +85,23 @@ func TestDashboardProvisioningWorkflow(t *testing.T) {
 	if err != nil || users.Generation != 1 || users.Schema == nil || len(users.Unique) != 1 || users.Advisor != "auto" {
 		t.Fatalf("collection: %+v %v", users, err)
 	}
+	// Nullable PATCH members: zero leaves them, Value sets, Null clears.
 	ttl := "/expires_at"
-	_, err = d.UpdateCollection(ctx, v1.NewIdempotencyKey(), tenant.ID, "main", "users", v1.UpdateCollectionRequest{TTLPath: &ttl})
-	must(err)
-	got, err := d.GetCollection(ctx, tenant.ID, "main", "users")
-	if err != nil || got.TTLPath == nil || *got.TTLPath != ttl {
-		t.Fatalf("ttl update: %+v %v", got, err)
+	for _, step := range []struct {
+		patch v1.UpdateCollectionRequest
+		want  *string
+	}{
+		{v1.UpdateCollectionRequest{TTLPath: v1.Value(ttl)}, &ttl},
+		{v1.UpdateCollectionRequest{Advisor: ptr("manual")}, &ttl},
+		{v1.UpdateCollectionRequest{TTLPath: v1.Null[string]()}, nil},
+	} {
+		got, err := d.UpdateCollection(ctx, v1.NewIdempotencyKey(), tenant.ID, "main", "users", step.patch)
+		if err != nil || (got.TTLPath == nil) != (step.want == nil) || (got.TTLPath != nil && *got.TTLPath != *step.want) {
+			t.Fatalf("ttl patch %+v: %+v %v", step.patch, got, err)
+		}
 	}
+	_, err = d.UpdateCollection(ctx, v1.NewIdempotencyKey(), tenant.ID, "main", "users", v1.UpdateCollectionRequest{})
+	must(err)
 	stats, err := d.CollectionStats(ctx, tenant.ID, "main", "users")
 	if err != nil || len(stats.Paths) != 1 || stats.Paths[0].Types["utf8"] != 0.99 {
 		t.Fatalf("stats: %+v %v", stats, err)
@@ -116,13 +125,19 @@ func TestDashboardProvisioningWorkflow(t *testing.T) {
 	}
 	_, err = d.DeleteIndex(ctx, v1.NewIdempotencyKey(), tenant.ID, "main", "users", "unique_email")
 	requireCode(t, err, v1.ErrIndexProtected)
-	_, err = d.DeleteIndex(ctx, v1.NewIdempotencyKey(), tenant.ID, "main", "users", "by_name")
-	must(err)
+	dropped, err := d.DeleteIndex(ctx, v1.NewIdempotencyKey(), tenant.ID, "main", "users", "by_name")
+	if err != nil || dropped.State != "dropped" || dropped.Name != "by_name" {
+		t.Fatalf("drop index: %+v %v", dropped, err)
+	}
 	_, err = d.GetIndex(ctx, tenant.ID, "main", "users", "by_name")
 	requireCode(t, err, v1.ErrNotFound)
 	decisions, err := d.IndexDecisions(ctx, tenant.ID, "main", "users", v1.ListOptions{})
-	if err != nil || len(decisions.Items) != 1 || !json.Valid(decisions.Items[0]) {
+	if err != nil || len(decisions.Items) != 1 {
 		t.Fatalf("index decisions: %+v %v", decisions, err)
+	}
+	if dec := decisions.Items[0]; dec.Status != "decided" || dec.Generation != 1 || dec.Decider.Usage == nil || dec.Decider.Usage.InputTokens != 812 ||
+		len(dec.Candidates) != 1 || len(dec.Candidates[0].Keys) != 1 || !dec.Candidates[0].Selected || dec.FallbackReason != nil || len(dec.RequestDigest) != 64 {
+		t.Fatalf("index decision: %+v", dec)
 	}
 
 	// A data key created here works on the data plane; rotation issues a
@@ -172,15 +187,21 @@ func TestDashboardProvisioningWorkflow(t *testing.T) {
 	if err != nil || len(edges.Items) != 2 { // the fixture's own edge key plus this one
 		t.Fatalf("edge keys: %+v %v", edges, err)
 	}
-	_, err = d.DeleteEdgeKey(ctx, v1.NewIdempotencyKey(), edge.Key.ID)
-	must(err)
+	revokedEdge, err := d.DeleteEdgeKey(ctx, v1.NewIdempotencyKey(), edge.Key.ID)
+	if err != nil || revokedEdge.RevokedAt == nil || revokedEdge.ID != edge.Key.ID {
+		t.Fatalf("delete edge key: %+v %v", revokedEdge, err)
+	}
 
-	advisors, err := d.ListAdvisors(ctx)
-	if err != nil || len(advisors) != 2 || advisors[1].RestUntil == nil || advisors[0].LastLatencyMS != 420 {
+	advisors, err := d.ListAdvisors(ctx, v1.ListOptions{Limit: 1})
+	if err != nil || len(advisors.Items) != 1 || advisors.NextCursor == nil || advisors.Items[0].LastLatencyMS != 420 {
 		t.Fatalf("advisors: %+v %v", advisors, err)
 	}
-	regions, err := d.ListRegions(ctx)
-	if err != nil || len(regions) != 1 || regions[0].Name != "São Paulo" {
+	rest, err := d.ListAdvisors(ctx, v1.ListOptions{Cursor: *advisors.NextCursor})
+	if err != nil || len(rest.Items) != 1 || rest.Items[0].RestUntil == nil || rest.Items[0].ConsecutiveFailures != 3 {
+		t.Fatalf("advisors page 2: %+v %v", rest, err)
+	}
+	regions, err := d.ListRegions(ctx, v1.ListOptions{})
+	if err != nil || len(regions.Items) != 1 || regions.Items[0].Name != "São Paulo" {
 		t.Fatalf("regions: %+v %v", regions, err)
 	}
 	usage, err := d.Usage(ctx, tenant.ID)
@@ -198,9 +219,15 @@ func TestDashboardProvisioningWorkflow(t *testing.T) {
 		t.Fatalf("wait: %+v %v", done, err)
 	}
 
+	// A failed operation carries {code, message} and fails WaitOperation.
 	op, err = d.DeleteCollection(ctx, v1.NewIdempotencyKey(), tenant.ID, "main", "users")
 	if err != nil || op.Kind != "delete_collection" {
 		t.Fatalf("delete collection: %+v %v", op, err)
+	}
+	failed, err := d.WaitOperation(ctx, op.ID, 10*time.Millisecond)
+	var opErr *v1.OperationError
+	if !errors.As(err, &opErr) || !errors.Is(err, v1.ErrStorageUnavailable) || failed.Error == nil || failed.Error.Message == "" {
+		t.Fatalf("failed operation: %+v %v", failed, err)
 	}
 
 	audit, err := d.ListAudit(ctx, tenant.ID, v1.ListOptions{Limit: 200})
@@ -211,10 +238,12 @@ func TestDashboardProvisioningWorkflow(t *testing.T) {
 	// The data key cannot use the control plane, and vice versa.
 	dataDash, err := v1.NewDashboard(v1.Config{BaseURL: f.origin.URL, Token: f.dataToken, HTTPClient: f.httpClient()})
 	must(err)
-	_, err = dataDash.ListRegions(ctx)
+	_, err = dataDash.ListRegions(ctx, v1.ListOptions{})
 	requireCode(t, err, v1.ErrForbiddenScope)
 	var apiErr *v1.APIError
 	if _, err := d.GetTenant(ctx, "../operations"); err == nil || errors.As(err, &apiErr) {
 		t.Fatalf("path parameters must be validated locally: %v", err)
 	}
 }
+
+func ptr[T any](v T) *T { return &v }

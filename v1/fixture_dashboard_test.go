@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -184,9 +185,16 @@ func (f *fixture) startOperation(kind, resource string) fxReply {
 	return fxOK(202, f.operationJSON(op))
 }
 
+// operationJSON finishes an operation on its second poll. Collection
+// deletions fail, to exercise the failed-operation shape.
 func (f *fixture) operationJSON(op *fxOperation) map[string]any {
 	out := map[string]any{"id": op.id, "kind": op.kind, "status": "running", "resource": op.resource, "error": nil, "created_at": op.createdAt, "finished_at": nil}
-	if op.polls >= 2 {
+	switch {
+	case op.polls < 2:
+	case op.kind == "delete_collection":
+		out["status"], out["finished_at"] = "failed", op.createdAt
+		out["error"] = map[string]any{"code": "storage_unavailable", "message": "object store unreachable"}
+	default:
 		out["status"], out["finished_at"] = "succeeded", op.createdAt
 	}
 	return out
@@ -446,23 +454,27 @@ func (f *fixture) updateCollection(r *http.Request, _ *fxKey, body []byte) fxRep
 	if rep != nil {
 		return *rep
 	}
+	// Absent members are unchanged; null clears nullable members.
+	var members map[string]json.RawMessage
 	var req struct {
 		Schema  json.RawMessage `json:"schema"`
 		TTLPath *string         `json:"ttl_path"`
 		Unique  *[]fxUnique     `json:"unique"`
 		Advisor *string         `json:"advisor"`
 	}
-	if strictDecode(body, &req) != nil {
+	if strictDecode(body, &req) != nil || json.Unmarshal(body, &members) != nil {
 		return fxErr(400, "invalid_request")
 	}
-	if req.Schema != nil {
-		if c.schema == nil {
-			return fxErr(400, "invalid_schema", "message", "schemaless collections cannot convert")
+	if raw, ok := members["schema"]; ok {
+		if (string(raw) == "null") != (c.schema == nil) {
+			return fxErr(409, "invalid_schema", "message", "schemaless and enforced collections cannot convert")
 		}
-		c.schema = req.Schema
-		c.generation++
+		if c.schema != nil {
+			c.schema = req.Schema
+			c.generation++
+		}
 	}
-	if req.TTLPath != nil {
+	if _, ok := members["ttl_path"]; ok {
 		c.ttlPath = req.TTLPath
 	}
 	if req.Unique != nil {
@@ -583,7 +595,10 @@ func (f *fixture) indexDecisions(r *http.Request, _ *fxKey, _ []byte) fxReply {
 	if rep != nil {
 		return *rep
 	}
-	return page(r, []any{map[string]any{"collection_id": c.id, "generation": "1", "decider": "deterministic", "selected": []any{"c01"}, "decided_at": fxNow()}})
+	return page(r, []any{map[string]any{"collection": c.name, "generation": strconv.FormatUint(c.generation, 10), "status": "decided",
+		"decider":         map[string]any{"name": "jev", "kind": "systemone", "model": "jev-latest", "usage": map[string]any{"input_tokens": 812, "output_tokens": 64}},
+		"candidates":      []any{map[string]any{"id": "c01", "keys": []any{map[string]any{"path": "/org_id", "order": "asc"}}, "score": 0.82, "selected": true}},
+		"fallback_reason": nil, "request_digest": strings.Repeat("ab", 32), "decided_at": fxNow()}})
 }
 
 func keyJSON(k *fxKey) map[string]any {
@@ -737,15 +752,15 @@ func (f *fixture) deleteEdgeKey(r *http.Request, _ *fxKey, _ []byte) fxReply {
 	return fxOK(200, keyJSON(k))
 }
 
-func (f *fixture) advisors(*http.Request, *fxKey, []byte) fxReply {
-	return fxOK(200, []any{
+func (f *fixture) advisors(r *http.Request, _ *fxKey, _ []byte) fxReply {
+	return page(r, []any{
 		map[string]any{"name": "jev", "kind": "systemone", "model": "jev-latest", "state": "healthy", "consecutive_failures": 0, "rest_until": nil, "last_latency_ms": 420},
 		map[string]any{"name": "deterministic", "kind": "deterministic", "model": "", "state": "resting", "consecutive_failures": 3, "rest_until": "1759364100000", "last_latency_ms": 1},
 	})
 }
 
-func (f *fixture) regions(*http.Request, *fxKey, []byte) fxReply {
-	return fxOK(200, []any{map[string]any{"code": "gru", "name": "São Paulo", "status": "available"}})
+func (f *fixture) regions(r *http.Request, _ *fxKey, _ []byte) fxReply {
+	return page(r, []any{map[string]any{"code": "gru", "name": "São Paulo", "status": "available"}})
 }
 
 func (f *fixture) listAudit(r *http.Request, _ *fxKey, _ []byte) fxReply {
