@@ -1,6 +1,7 @@
 // TerraBase v1 shapes through a real HTTP boundary (long-poll, SSE and the
 // edge) against the in-test contract fixture, a stand-in until a packaged
 // tb-server serves v1.
+import { getEventListeners } from "node:events";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { createTerraBaseV1Client, documentIdFor, v1Filter } from "../src/index.js";
 import { startTerraBaseV1Fixture } from "./support/terrabase-v1-fixture.js";
@@ -134,10 +135,20 @@ describe("TerraBase v1 shapes", () => {
     fixture.rotateShapeHandle(subscription.info.shapeId);
     const reset = await until(iterator, (event) => event.type === "reset");
     expect(reset.handle).not.toBe(subscription.info.handle);
+    // The consumer discarded its state: earlier progress no longer counts
+    // until the replacement snapshot has been handled.
+    const acknowledged = BigInt(fixture.requests.filter((entry) => entry.query.live === "true").at(-1)?.query.offset ?? "1");
+    expect(subscription.position).toBe("0");
+    let barrier = false;
+    const waiting = subscription.waitFor(acknowledged).then(() => { barrier = true; });
     /** @type {V1ShapeEvent[]} */
     const again = [];
     await until(iterator, (event) => event.upToDate, again);
+    expect(barrier).toBe(false);
     expect(new Set(upserted(again)).size).toBe(2);
+    const pending = iterator.next();
+    await within(waiting);
+    void pending;
     const restart = fixture.requests.slice(before).find((entry) => entry.query.offset === "-1");
     expect(restart?.query).toEqual({ offset: "-1" });
   });
@@ -186,7 +197,11 @@ describe("TerraBase v1 shapes", () => {
       const edgeClient = createTerraBaseV1Client({ baseUrl: edgeFixture.baseUrl, token: edgeFixture.token });
       const notifications = edgeClient.database("edge").collection("notifications");
       await notifications.put(await documentIdFor("notifications", "a"), { user_id: "u1", title: "a" });
-      const subscription = await edgeClient.database("edge").subscribe({ collection: "notifications" }, { edge: true });
+      const request = { collection: "notifications", project: ["/title", "/user_id"] };
+      const subscription = await edgeClient.database("edge").subscribe(request, { edge: true });
+      // Later changes to the caller's object do not change the shape being renewed.
+      request.collection = "other";
+      request.project.push("/secret");
       open.push(subscription);
       expect(subscription.info.url.startsWith(edgeFixture.edgeUrl)).toBe(true);
       const iterator = subscription[Symbol.asyncIterator]();
@@ -209,6 +224,8 @@ describe("TerraBase v1 shapes", () => {
       const event = await pending;
       expect(event.changes[0]?.ops[0]).toMatchObject({ op: "upsert", id: write.id });
       expect(edgeFixture.gatekeeperCalls()).toBeGreaterThan(calls);
+      const gatekeeper = edgeFixture.requests.filter((entry) => entry.path === "/v1/databases/edge/shapes").map((entry) => entry.body);
+      expect(new Set(gatekeeper)).toEqual(new Set(['{"collection":"notifications","project":["/title","/user_id"]}']));
       expect(edgeFixture.requests.some((entry) => entry.server === "edge" && entry.headers.authorization === `Bearer ${edgeFixture.token}`)).toBe(false);
     } finally {
       for (const subscription of open.splice(0)) subscription.close();
@@ -236,15 +253,89 @@ describe("TerraBase v1 shapes", () => {
     expect(live.changes[0]?.ops[0]).toMatchObject({ op: "upsert", id: write.id });
   });
 
-  test("shape reads do not retry 502 upstream_unavailable", async () => {
+  test("502 upstream_unavailable is retried within the budget; a terminal failure closes the subscription", async () => {
     await seed("upstream", "u1", 1);
     const subscription = await client.database("upstream").subscribe({ collection: "notifications" });
     open.push(subscription);
     const shapePath = `/v1/shapes/${subscription.info.shapeId}`;
-    fixture.failNext({ match: (request) => request.path === shapePath, status: 502, code: "upstream_unavailable" });
+    const reads = () => fixture.requests.filter((request) => request.path === shapePath).length;
+    const onShape = (/** @type {{ path: string }} */ request) => request.path === shapePath;
+    fixture.failNext({ match: onShape, status: 502, code: "upstream_unavailable", retryAfter: 0 });
     const iterator = subscription[Symbol.asyncIterator]();
+    await until(iterator, (event) => event.upToDate);
+    expect(reads()).toBe(3); // the 502, its retry (307) and the single snapshot page
+
+    // More consecutive failures than maxRetries (5) end iteration with the error,
+    // close the subscription and reject pending waitFor with that error.
+    for (let index = 0; index < 6; index++) fixture.failNext({ match: onShape, status: 502, code: "upstream_unavailable", retryAfter: 0 });
+    const waiting = subscription.waitFor("999999");
     await expect(within(iterator.next())).rejects.toMatchObject({ status: 502, code: "upstream_unavailable" });
-    expect(fixture.requests.filter((request) => request.path === shapePath)).toHaveLength(1);
+    await expect(within(waiting)).rejects.toMatchObject({ status: 502 });
+    expect(subscription.closed).toBe(true);
+  });
+
+  test("SSE: an unappliable changes event reconnects from the last applied offset instead of skipping it", async () => {
+    const notifications = await seed("sse-corrupt", "u1", 1);
+    const subscription = await client.database("sse-corrupt").subscribe(
+      { collection: "notifications", filter: v1Filter.eq("/user_id", "u1") }, { mode: "sse" });
+    open.push(subscription);
+    const iterator = subscription[Symbol.asyncIterator]();
+    await until(iterator, (event) => event.upToDate);
+    const applied = subscription.resumePoint.offset;
+    fixture.corruptNextSseChanges();
+    const first = await notifications.put(await documentIdFor("notifications", "u1-first"), { user_id: "u1", title: "first" });
+    const second = await notifications.put(await documentIdFor("notifications", "u1-second"), { user_id: "u1", title: "second" });
+    /** @type {V1ShapeEvent[]} */
+    const seen = [];
+    await until(iterator, (event) => upserted(seen.concat(event)).includes(second.id), seen);
+    expect(upserted(seen)).toContain(first.id);
+    const streams = fixture.requests.filter((entry) => entry.path === `/v1/shapes/${subscription.info.shapeId}/sse`);
+    expect(streams.at(-1)?.headers["last-event-id"]).toBe(applied);
+  });
+
+  test("SSE resumes inside a multi-page snapshot and announces offsets past non-matching commits", async () => {
+    const notifications = await seed("sse-resume", "u1", 5);
+    const request = { collection: "notifications", filter: v1Filter.eq("/user_id", "u1") };
+    const first = await client.database("sse-resume").subscribe(request);
+    const firstIterator = first[Symbol.asyncIterator]();
+    const page = await until(firstIterator, (event) => event.snapshot);
+    expect(page.nextOffset).toMatch(/^snap\.\d+\.1$/u);
+    first.close();
+
+    const resumed = await client.database("sse-resume").subscribe(request, { mode: "sse", resume: { handle: page.handle, offset: page.nextOffset } });
+    open.push(resumed);
+    const iterator = resumed[Symbol.asyncIterator]();
+    /** @type {V1ShapeEvent[]} */
+    const rest = [];
+    await until(iterator, (event) => event.upToDate, rest);
+    expect(new Set([...upserted([page]), ...upserted(rest)]).size).toBe(5);
+    expect(fixture.requests.at(-1)?.headers["last-event-id"]).toBe(page.nextOffset);
+
+    // A write outside the shape still advances the subscription's position.
+    const pending = iterator.next();
+    const outside = await notifications.put(await documentIdFor("notifications", "outside"), { user_id: "u9", title: "elsewhere" });
+    await within(resumed.waitFor(outside.offset));
+    void pending;
+  });
+
+  test("SSE accepts lone CR line terminators without waiting for more bytes", async () => {
+    const crFixture = await startTerraBaseV1Fixture({ snapshotPageSize: 2, sseHeartbeatMs: 60_000, sseLineEnding: "\r" });
+    try {
+      const crClient = createTerraBaseV1Client({ baseUrl: crFixture.baseUrl, token: crFixture.token });
+      const notifications = crClient.database("cr").collection("notifications");
+      await notifications.put(await documentIdFor("notifications", "a"), { title: "a" });
+      const subscription = await crClient.database("cr").subscribe({ collection: "notifications" }, { mode: "sse" });
+      open.push(subscription);
+      const iterator = subscription[Symbol.asyncIterator]();
+      await until(iterator, (event) => event.upToDate);
+      const write = await notifications.put(await documentIdFor("notifications", "b"), { title: "b" });
+      // The stream then idles (no heartbeat for 60 s): the event must not wait for another byte.
+      const live = await within(until(iterator, (event) => event.changes.length > 0), 2000);
+      expect(upserted([live])).toEqual([write.id]);
+    } finally {
+      for (const subscription of open.splice(0)) subscription.close();
+      await crFixture.close();
+    }
   });
 
   test("close ends iteration and rejects pending waitFor; SSE cannot use the edge", async () => {
@@ -254,11 +345,21 @@ describe("TerraBase v1 shapes", () => {
     const subscription = await database.subscribe({ collection: "notifications" });
     const iterator = subscription[Symbol.asyncIterator]();
     await until(iterator, (event) => event.upToDate);
+    await expect(subscription.waitFor(1n << 64n)).rejects.toThrow(TypeError);
+    await expect(subscription.waitFor(-1n)).rejects.toThrow(TypeError);
     const waiting = subscription.waitFor("999999");
     const next = iterator.next();
     subscription.close();
     await expect(within(waiting)).rejects.toThrow(/closed/u);
     expect(await within(next)).toEqual({ done: true, value: undefined });
+
+    const shared = new AbortController();
+    const closedEarly = await database.subscribe({ collection: "notifications" }, { signal: shared.signal });
+    // fetch may hold its own listener from the gatekeeper call; the
+    // subscription's listener is removed when it closes.
+    const listening = getEventListeners(shared.signal, "abort").length;
+    closedEarly.close();
+    expect(getEventListeners(shared.signal, "abort")).toHaveLength(listening - 1);
 
     const controller = new AbortController();
     const aborted = await database.subscribe({ collection: "notifications" }, { signal: controller.signal });

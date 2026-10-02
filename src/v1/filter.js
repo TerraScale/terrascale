@@ -33,7 +33,17 @@ import { ExactDecimal } from "./json.js";
  * @returns {pointer is string}
  */
 function isPointer(pointer) {
-  return typeof pointer === "string" && pointer.startsWith("/") && pointer.length <= 4096;
+  return isJsonPointer(pointer) && pointer.split("/").length - 1 <= 16;
+}
+
+/**
+ * An RFC 6901 JSON Pointer of at most 4 KiB with at least one segment: `~`
+ * only as the escapes `~0` and `~1`.
+ * @param {unknown} pointer
+ * @returns {pointer is string}
+ */
+export function isJsonPointer(pointer) {
+  return typeof pointer === "string" && pointer.length <= 4096 && /^(?:\/(?:[^~/]|~[01])*)+$/u.test(pointer);
 }
 
 /**
@@ -44,7 +54,7 @@ export function requirePath(path) {
   if (path === "$id" || isPointer(path)) return path;
   if (typeof path === "object" && path !== null && isPointer(path.lower) && Object.keys(path).length === 1)
     return Object.freeze({ lower: path.lower });
-  throw new TypeError('A TerraBase path is a JSON Pointer starting with "/", "$id", or { lower: pointer }.');
+  throw new TypeError('A TerraBase path is an RFC 6901 JSON Pointer of 1-16 segments, "$id", or { lower: pointer }.');
 }
 
 /**

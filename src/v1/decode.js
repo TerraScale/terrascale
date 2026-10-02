@@ -106,14 +106,17 @@ export function durability(value) {
 function sibling(value) {
   const raw = object(value, "sibling");
   const event = object(raw.event, "sibling event");
+  const deleted = boolean(raw.deleted, "sibling deleted flag");
+  if (deleted && raw.document !== undefined) malformed("deleted sibling with a document");
   return Object.freeze({
     event: Object.freeze({
       replica: string(event.replica, "sibling replica"),
       incarnation: string(event.incarnation, "sibling incarnation"),
       sequence: u64(event.sequence, "sibling sequence"),
     }),
-    deleted: boolean(raw.deleted, "sibling deleted flag"),
-    document: raw.document === undefined ? undefined : object(raw.document, "sibling document"),
+    deleted,
+    // A live sibling carries its document; a deleted one is a tombstone.
+    document: deleted ? undefined : object(raw.document, "live sibling document"),
   });
 }
 

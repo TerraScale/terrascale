@@ -4,10 +4,10 @@
 import {
   array, boolean, decodeDocument, decodeWrite, durability, malformed, object, string, u64,
 } from "./decode.js";
-import { requirePath } from "./filter.js";
+import { isJsonPointer, requirePath } from "./filter.js";
 import { requireDocumentId, requireName, requireVersion } from "./ids.js";
 import { assertJsonObject, ExactDecimal, stringifyExactJson } from "./json.js";
-import { createShape, V1ShapeSubscription } from "./shapes.js";
+import { createShape, encodeShapeRequest, V1ShapeSubscription } from "./shapes.js";
 import { requireIdempotencyKey, V1Transport } from "./transport.js";
 /**
  * @import { V1Document, V1Durability, V1WriteResult } from "./decode.js"
@@ -88,8 +88,7 @@ const queryMembers = new Set(["filter", "sort", "project", "limit", "cursor", "c
  * @returns {string}
  */
 function pointer(path) {
-  if (typeof path !== "string" || !path.startsWith("/"))
-    throw new TypeError("Patch paths are JSON Pointers starting with \"/\".");
+  if (!isJsonPointer(path)) throw new TypeError("Paths are RFC 6901 JSON Pointers (only ~0 and ~1 escapes).");
   return path;
 }
 
@@ -124,13 +123,17 @@ function normalizePatch(patch) {
   const hasMerge = Object.hasOwn(patch, "merge");
   const hasOps = Object.hasOwn(patch, "ops");
   if (hasMerge === hasOps) throw new TypeError("A patch has exactly one of merge or ops.");
-  if ("merge" in patch) {
-    assertJsonObject(patch.merge, "merge patch");
-    return { merge: patch.merge };
+  // Branch on the same own-property test that was validated, never on an
+  // inherited member.
+  if (hasMerge) {
+    const merge = /** @type {{ readonly merge: JsonInputObject }} */ (patch).merge;
+    assertJsonObject(merge, "merge patch");
+    return { merge };
   }
-  if (!Array.isArray(patch.ops) || patch.ops.length < 1 || patch.ops.length > 256)
+  const ops = /** @type {{ readonly ops: readonly V1PatchOp[] }} */ (patch).ops;
+  if (!Array.isArray(ops) || ops.length < 1 || ops.length > 256)
     throw new TypeError("An ops patch has 1-256 ops.");
-  return { ops: patch.ops.map(patchOp) };
+  return { ops: ops.map(patchOp) };
 }
 
 /**
@@ -596,7 +599,7 @@ export class V1Database {
    * @returns {Promise<V1ShapeInfo>}
    */
   createShape(request, options = {}) {
-    return createShape(this.#transport, this.name, request, options.signal);
+    return createShape(this.#transport, this.name, encodeShapeRequest(request), options.signal);
   }
 
   /**
@@ -607,8 +610,9 @@ export class V1Database {
    * @returns {Promise<V1ShapeSubscription>}
    */
   async subscribe(request, options = {}) {
-    const info = await createShape(this.#transport, this.name, request, options.signal);
-    return new V1ShapeSubscription(this.#transport, this.name, request, info, options);
+    const body = encodeShapeRequest(request);
+    const info = await createShape(this.#transport, this.name, body, options.signal);
+    return new V1ShapeSubscription(this.#transport, this.name, body, info, options);
   }
 }
 

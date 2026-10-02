@@ -65,6 +65,19 @@ describe("TerraBase v1 queries", () => {
     expect(() => f.eq("/x", /** @type {any} */ ({ nested: true }))).toThrow(TypeError);
   });
 
+  test("lower() sends {lower: path} and the server compares case-folded values", async () => {
+    const cities = createTerraBaseV1Client({ baseUrl: fixture.baseUrl, token: fixture.token }).database("crm").collection("cities");
+    await cities.put(await documentIdFor("cities", "de"), { name: "Straße" });
+    await cities.put(await documentIdFor("cities", "gr"), { name: "ΟΔΥΣΣΕΥΣ" });
+    /** @param {string} value */
+    const folded = async (value) => (await cities.query({ filter: v1Filter.eq(v1Filter.lower("/name"), value) })).items.length;
+    expect(await folded("strasse")).toBe(1);
+    expect(await folded("οδυσσευσ")).toBe(1);
+    const sent = JSON.parse(fixture.requests.filter((request) => request.path.endsWith("/cities/query")).at(-1)?.body ?? "{}");
+    // The client never folds locally; the operand is sent as given.
+    expect(sent.filter).toEqual({ eq: [{ lower: "/name" }, "οδυσσευσ"] });
+  });
+
   test("sort, projection, count and pagination", async () => {
     const first = await people.query({
       filter: v1Filter.eq("/org", "acme"),

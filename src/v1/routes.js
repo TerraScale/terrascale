@@ -38,7 +38,12 @@ export const v1Routes = Object.freeze(
     { operation: "createShape", method: "POST", pathTemplate: "/v1/databases/{db}/shapes", permission: "shape", requestMediaTypes: ["application/json"], responseMediaType: "application/json", successStatuses: [201], idempotencyKey: "none", replaySafe: true, contract: "shapes-v1.md", contractText: ["`POST /v1/databases/{db}/shapes`", "gatekeeper stores nothing, so clients may retry it like a read"] },
     { operation: "readShape", method: "GET", pathTemplate: "/v1/shapes/{shape_id}", permission: "shape", requestMediaTypes: [], responseMediaType: "application/json", successStatuses: [200, 307], idempotencyKey: "none", replaySafe: true, contract: "shapes-v1.md", contractText: ["`GET /v1/shapes/{shape_id}?handle=…&offset=…[&live=true&cursor=…]`"] },
     { operation: "streamShape", method: "GET", pathTemplate: "/v1/shapes/{shape_id}/sse", permission: "shape", requestMediaTypes: [], responseMediaType: "text/event-stream", successStatuses: [200], idempotencyKey: "none", replaySafe: true, contract: "shapes-v1.md", contractText: ["`GET /v1/shapes/{shape_id}/sse?handle=…&offset=…`"] },
-  ]).map((route) => Object.freeze(route)),
+  ]).map((route) => Object.freeze({
+    ...route,
+    requestMediaTypes: Object.freeze([...route.requestMediaTypes]),
+    successStatuses: Object.freeze([...route.successStatuses]),
+    contractText: Object.freeze([...route.contractText]),
+  })),
 );
 
 /**

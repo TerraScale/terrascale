@@ -147,8 +147,9 @@ export function sleep(ms, signal) {
  * admitted); capacity, storage_unavailable and dependencies_unavailable only
  * for replay-safe requests (reads, queries, the shape gatekeeper, shape reads
  * and keyed writes); commit_uncertain (503) and internal_error (500) only with
- * an Idempotency-Key. Nothing else is retried; in particular the edge's 502
- * and 504 are not.
+ * an Idempotency-Key. Nothing else is retried here. A `Retry-After` longer
+ * than 30 seconds is not shortened: the error is returned with `retryAfter`
+ * so the caller can decide whether to wait that long.
  * @param {TerraBaseV1Error} error
  * @param {number} attempt
  * @param {{ readonly replaySafe: boolean; readonly keyed: boolean }} request
@@ -161,10 +162,29 @@ export function retryDelayMs(error, attempt, request) {
       ((transient503.has(error.code) && (request.replaySafe || request.keyed)) ||
         (error.code === "commit_uncertain" && request.keyed))) ||
     (error.status === 500 && error.code === "internal_error" && request.keyed);
-  if (!retryable) return undefined;
-  return error.retryAfter === undefined
-    ? backoffMs(attempt)
-    : Math.min(error.retryAfter * 1000, maximumRetryWaitMs);
+  return retryable ? retryAfterDelayMs(error, attempt) : undefined;
+}
+
+/**
+ * The delay before retrying a retryable error: its `Retry-After`, or backoff.
+ * A `Retry-After` above 30 seconds is honored by not retrying at all.
+ * @param {TerraBaseV1Error} error
+ * @param {number} attempt
+ * @returns {number | undefined}
+ */
+export function retryAfterDelayMs(error, attempt) {
+  if (error.retryAfter === undefined) return backoffMs(attempt);
+  const requested = error.retryAfter * 1000;
+  return requested > maximumRetryWaitMs ? undefined : requested;
+}
+
+/** A response body that failed in transit after its headers arrived. */
+export class BodyTransportError extends Error {
+  /** @param {unknown} cause */
+  constructor(cause) {
+    super("TerraBase response body failed in transit.", { cause });
+    this.name = "BodyTransportError";
+  }
 }
 
 /** Internal transport bound to one data key. */
@@ -251,7 +271,8 @@ export class V1Transport {
   }
 
   /**
-   * Reads a response body as UTF-8 text within the response byte bound.
+   * Reads a response body as UTF-8 text within the response byte bound. A
+   * connection failure while reading is a BodyTransportError.
    * @param {Response} response
    * @returns {Promise<string>}
    */
@@ -263,7 +284,13 @@ export class V1Transport {
     let size = 0;
     try {
       while (true) {
-        const part = await reader.read();
+        /** @type {ReadableStreamReadResult<Uint8Array>} */
+        let part;
+        try {
+          part = await reader.read();
+        } catch (error) {
+          throw new BodyTransportError(error);
+        }
         if (part.done) break;
         size += part.value.byteLength;
         if (size > this.#maxResponseBytes)
@@ -291,7 +318,15 @@ export class V1Transport {
    * @returns {Promise<JsonValue | undefined>}
    */
   async readJson(response) {
-    const text = await this.readText(response);
+    return V1Transport.#decodeJson(response, await this.readText(response));
+  }
+
+  /**
+   * @param {Response} response
+   * @param {string} text
+   * @returns {JsonValue | undefined}
+   */
+  static #decodeJson(response, text) {
     if (text === "") return undefined;
     const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
     if (mediaType !== "application/json")
@@ -349,8 +384,19 @@ export class V1Transport {
         continue;
       }
       if (route.successStatuses.includes(response.status)) {
-        const value = await this.readJson(response);
-        return { status: response.status, headers: response.headers, value };
+        /** @type {string} */
+        let text;
+        try {
+          text = await this.readText(response);
+        } catch (error) {
+          // A body cut off in transit is a transport failure: replay-safe
+          // requests retry it; malformed media or JSON below are not retried.
+          if (options.signal?.aborted) throw options.signal.reason;
+          if (!(error instanceof BodyTransportError) || !replaySafe || attempt >= this.#maxRetries) throw error;
+          await sleep(backoffMs(attempt), options.signal);
+          continue;
+        }
+        return { status: response.status, headers: response.headers, value: V1Transport.#decodeJson(response, text) };
       }
       const failure = await this.error(response);
       const delay = retryDelayMs(failure, attempt, { replaySafe: route.replaySafe, keyed });

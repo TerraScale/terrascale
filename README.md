@@ -196,26 +196,36 @@ await shape.waitFor(written.offset); // read-your-writes, from another task
   `isTerraBaseV1Error(error, code)` narrows one.
 - Queries: `v1Filter` builds `and`, `or`, `not`, `eq`, `ne`, `lt`, `lte`,
   `gt`, `gte`, `in`, `nin`, `exists`, `prefix`, `contains`, `lower` and the
-  `v1Filter.id` (`"$id"`) path. `query` returns one page; `pages` and `items`
+  `v1Filter.id` (`"$id"`) path. `lower` sends `{ "lower": path }`; the server
+  applies Unicode default case folding to the stored values, and the client
+  never folds anything itself. `query` returns one page; `pages` and `items`
   follow `nextCursor`, sending `count` and `explain` with the first page only.
 - Shapes: `createShape` calls the gatekeeper. `subscribe` long-polls by default
   (`offset=-1` → 307 → snapshot pages → log → live, echoing
   `TB-Shape-Cursor`); `{ mode: "sse" }` reads the origin's event stream over
   fetch and reconnects with `Last-Event-ID`; `{ edge: true }` reads through the
   edge URL with the shape token and refreshes it before `expiresAt`.
-  `must_refetch` yields a `reset` event and restarts from the snapshot.
+  `must_refetch` yields a `reset` event and restarts from the snapshot;
+  `position` drops to `"0"` until the replacement snapshot has been handled.
+  When iteration ends for any reason (close, the abort signal, a terminal
+  error, or the consumer stopping), the subscription closes and pending
+  `waitFor` calls reject, with the terminal error when there is one.
 - Exact numbers: responses are parsed with `JSON.parse` source text access. A
   number is a JavaScript `number` only when that number denotes the same
   decimal value as the wire text; otherwise it is an `ExactDecimal` holding the
   exact text (`toString`, `toBigInt`, `equals`, `toNumber`). `ExactDecimal`
   and `bigint` values are written back exactly with `JSON.rawJSON`. This needs
   Node.js 22+ or a current browser.
-- Retries follow the contract: `429` after `Retry-After`; `capacity`,
+- Retries follow the contract: `429` after `Retry-After` (a `Retry-After`
+  above 30 seconds is not shortened: the error is returned with `retryAfter`);
+  a response body cut off in transit is retried like a transport failure for
+  replay-safe requests; `capacity`,
   `storage_unavailable` and `dependencies_unavailable` only for reads,
   queries, the shape gatekeeper, shape reads and writes with an
   `idempotencyKey`; `commit_uncertain` (503) and `internal_error` (500) only
-  with an `idempotencyKey`. Nothing else is retried, including the edge's 502
-  and 504. `createTerraBaseV1Client({ ..., autoIdempotencyKey: true })` gives
+  with an `idempotencyKey`. Shape reads also retry the edge's `502
+  upstream_unavailable` and a 504 within the subscription's bounded
+  consecutive-failure budget (`maxRetries`). Nothing else is retried. `createTerraBaseV1Client({ ..., autoIdempotencyKey: true })` gives
   every unkeyed mutation a fresh key so those outcomes are retried safely.
 
 `sdk-v1-route-manifest.json` is generated from the client's route table and

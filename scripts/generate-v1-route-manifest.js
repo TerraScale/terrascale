@@ -13,9 +13,10 @@
 // - TERRABASE_REPO: absolute path of a terrabase git checkout; the documents
 //   are read with `git show <pinned revision>:docs/<name>`.
 //
-// With either, --check verifies the pinned digests, that every route is
-// declared literally in its contract document, and that the client's error
-// codes equal the api-v1.md error table.
+// With either, --check verifies the pinned digests, that every route's actual
+// method and path are declared in its contract document (scripts/v1-contract.js),
+// that each route's contractText notes appear there, and that the client's
+// error codes equal the api-v1.md error table.
 //
 // TERRABASE_V1_OPENAPI: absolute path of the producer's v1 OpenAPI 3.1
 // document (crates/tb-server/assets/client-openapi.json). When set, --check
@@ -29,6 +30,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { V1ErrorCode } from "../src/v1/errors.js";
 import { v1Routes } from "../src/v1/routes.js";
+import { verifyRouteDeclarations } from "./v1-contract.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const target = path.join(root, "sdk-v1-route-manifest.json");
@@ -150,6 +152,7 @@ if (process.argv.includes("--check")) {
         throw new Error(`${name} differs from the pinned v1 contract digest.`);
       texts[name] = bytes.toString("utf8");
     }
+    verifyRouteDeclarations(v1Routes, texts);
     for (const route of v1Routes)
       for (const literal of route.contractText)
         if (!(texts[route.contract] ?? "").includes(literal))

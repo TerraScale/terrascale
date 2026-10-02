@@ -102,6 +102,53 @@ describe("TerraBase v1 documents", () => {
     expect(recreated.created).toBe(true);
   });
 
+  test("patches branch on own members and paths follow RFC 6901", async () => {
+    const coll = client.database("main").collection("paths");
+    const id = await documentIdFor("paths", "rfc6901");
+    await coll.put(id, { "a/b": 1, "m~n": 2 });
+    // An inherited merge must not replace the own ops.
+    const patch = Object.assign(Object.create({ merge: { wrong: true } }), { ops: [{ op: "inc", path: "/a~1b", by: 1 }, { op: "set", path: "/m~0n", value: 3 }] });
+    await coll.patch(id, patch);
+    expect(requestsTo("PATCH", id).at(-1)?.headers["content-type"]).toBe("application/vnd.terrabase.ops+json");
+    expect(await coll.get(id)).toMatchObject({ document: { "a/b": 2, "m~n": 3 } });
+    expect((await coll.query({ filter: v1Filter.eq("/a~1b", 2) })).items.map((item) => item.id)).toEqual([id]);
+    for (const bad of ["/a~2b", "/a~", "a", ""]) {
+      expect(() => v1Filter.eq(bad, 1)).toThrow(TypeError);
+      await expect(coll.patch(id, { ops: [{ op: "unset", path: bad }] })).rejects.toThrow(TypeError);
+    }
+  });
+
+  test("prototype-sensitive member names stay ordinary data and projections never alias stored data", async () => {
+    const coll = client.database("main").collection("proto");
+    const id = await documentIdFor("proto", "proto");
+    await coll.put(id, /** @type {any} */ (JSON.parse('{"__proto__":{"x":1},"profile":{"name":"Ana"}}')));
+    await coll.patch(id, { merge: /** @type {any} */ (JSON.parse('{"__proto__":{"y":2}}')) });
+    await coll.patch(id, { ops: [{ op: "set", path: "/__proto__/z", value: 3 }] });
+    const projected = await coll.query({ project: ["/__proto__/x", "/profile", "/profile/name/child"] });
+    expect(JSON.stringify(projected.items[0]?.state === "value" && projected.items[0].document))
+      .toBe('{"__proto__":{"x":1},"profile":{"name":"Ana"}}');
+    const read = await coll.get(id);
+    expect(JSON.stringify(read.state === "value" && read.document)).toBe('{"__proto__":{"x":1,"y":2,"z":3},"profile":{"name":"Ana"}}');
+    expect(/** @type {Record<string, unknown>} */ ({}).x).toBeUndefined();
+  });
+
+  test("conflicted documents decode every sibling and reject a live sibling without a document", async () => {
+    const coll = client.database("main").collection("conflicts");
+    const id = await documentIdFor("conflicts", "c");
+    const event = (/** @type {string} */ sequence) => ({ replica: "0192aaaa-0000-7000-8000-000000000001", incarnation: "0".repeat(32), sequence });
+    const conflict = { id, version: `tbv1-${"a".repeat(32)}`, state: "conflict", siblings: [
+      { event: event("12"), deleted: false, document: { n: 1 } },
+      { event: event("14"), deleted: true },
+    ] };
+    const onDocument = (/** @type {{ path: string }} */ request) => request.path.endsWith(id);
+    fixture.failNext({ match: onDocument, status: 200, code: "", body: JSON.stringify(conflict) });
+    const read = await coll.get(id);
+    expect(read).toMatchObject({ state: "conflict", siblings: [{ deleted: false, document: { n: 1 } }, { deleted: true, document: undefined }] });
+    const broken = { ...conflict, siblings: [{ event: event("12"), deleted: false }] };
+    fixture.failNext({ match: onDocument, status: 200, code: "", body: JSON.stringify(broken) });
+    await expect(coll.get(id)).rejects.toThrow(/live sibling document/u);
+  });
+
   test("create returns a server-generated UUIDv7 and its Location", async () => {
     const notes = client.database("main").collection("notes");
     const created = await notes.create({ text: "hello" });
@@ -254,6 +301,29 @@ describe("TerraBase v1 retry policy", () => {
     await coll.create({ n: 3 }, { idempotencyKey: "explicit-key" });
     expect(fixture.requests.filter(match).at(-1)?.headers["idempotency-key"]).toBe("explicit-key");
     expect(() => createTerraBaseV1Client({ baseUrl: fixture.baseUrl, token: fixture.token, autoIdempotencyKey: /** @type {any} */ ("yes") })).toThrow(TypeError);
+  });
+
+  test("a Retry-After above 30 seconds is not shortened: the error is returned with it", async () => {
+    const coll = client.database("main").collection("retry");
+    const id = await documentIdFor("retry", "long-wait");
+    fixture.failNext({ match: onDocument(id), status: 429, code: "rate_limited", retryAfter: 120 });
+    const error = await failure(coll.get(id));
+    expect(error).toMatchObject({ status: 429, code: "rate_limited", retryAfter: 120 });
+    expect(requestsTo("GET", id)).toHaveLength(1);
+  });
+
+  test("a body cut off after the headers is retried for reads, not for unkeyed writes", async () => {
+    const coll = client.database("main").collection("retry");
+    const id = await documentIdFor("retry", "truncated");
+    await coll.put(id, { n: 1 });
+    fixture.failNext({ match: (request) => request.method === "GET" && onDocument(id)(request), status: 200, code: "", truncate: true });
+    expect(await coll.get(id)).toMatchObject({ state: "value", document: { n: 1 } });
+    expect(requestsTo("GET", id)).toHaveLength(2);
+
+    fixture.failNext({ match: (request) => request.method === "PUT" && onDocument(id)(request), status: 200, code: "", truncate: true });
+    const before = requestsTo("PUT", id).length;
+    await expect(coll.put(id, { n: 2 })).rejects.toMatchObject({ name: "BodyTransportError" });
+    expect(requestsTo("PUT", id).length - before).toBe(1);
   });
 
   test("authentication failures are not retried and the key never leaks", async () => {

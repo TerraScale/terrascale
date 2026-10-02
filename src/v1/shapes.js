@@ -6,7 +6,7 @@ import { requirePath } from "./filter.js";
 import { parseU64, requireName } from "./ids.js";
 import { parseExactJson, stringifyExactJson } from "./json.js";
 import { v1Route, v1RoutePath } from "./routes.js";
-import { backoffMs, requireServiceUrl, retryDelayMs, sleep } from "./transport.js";
+import { backoffMs, requireServiceUrl, retryAfterDelayMs, retryDelayMs, sleep } from "./transport.js";
 /**
  * @import { V1Document } from "./decode.js"
  * @import { V1Filter } from "./filter.js"
@@ -74,10 +74,13 @@ import { backoffMs, requireServiceUrl, retryDelayMs, sleep } from "./transport.j
 const shapeIdPattern = /^[0-9a-f]{32}$/u;
 
 /**
+ * Validates and encodes a shape request once; the encoded body is reused for
+ * every later gatekeeper call, so later changes to the caller's object have
+ * no effect.
  * @param {V1ShapeRequest} request
  * @returns {string}
  */
-function encodeShapeRequest(request) {
+export function encodeShapeRequest(request) {
   if (typeof request !== "object" || request === null) throw new TypeError("A shape request is an object.");
   for (const key of Object.keys(request))
     if (key !== "collection" && key !== "filter" && key !== "project") throw new TypeError(`Unknown shape member ${key}.`);
@@ -97,14 +100,12 @@ function encodeShapeRequest(request) {
 /**
  * @param {V1Transport} transport
  * @param {string} database
- * @param {V1ShapeRequest} request
+ * @param {string} body An encoded shape request (encodeShapeRequest).
  * @param {AbortSignal | undefined} signal
  * @returns {Promise<V1ShapeInfo>}
  */
-export async function createShape(transport, database, request, signal) {
-  const response = await transport.call("createShape", { db: requireName("database", database) }, {
-    body: encodeShapeRequest(request), signal,
-  });
+export async function createShape(transport, database, body, signal) {
+  const response = await transport.call("createShape", { db: requireName("database", database) }, { body, signal });
   const raw = object(response.value, "shape");
   const shapeId = string(raw.shape_id, "shape_id");
   if (!shapeIdPattern.test(shapeId)) malformed("shape_id");
@@ -145,15 +146,19 @@ function decodeChanges(value) {
 }
 
 /**
- * Shape reads retry transport failures, 429 and the transient 503s, as the
- * contract allows for reads. Everything else, including the edge's
- * `502 upstream_unavailable` and a 504, is returned to the consumer.
+ * Shape reads retry transport failures, 429, the transient 503s and the
+ * edge's 502/504, as the contract allows for reads, within the bounded
+ * consecutive-failure budget. Everything else is returned to the consumer.
  * @param {unknown} error
  * @param {number} attempt
  * @returns {number | undefined}
  */
 function shapeRetryDelayMs(error, attempt) {
   if (!(error instanceof TerraBaseV1Error)) return backoffMs(attempt);
+  // The edge's 502 upstream_unavailable (and a gateway 504) is transient for a
+  // read; it shares the subscription's bounded consecutive-failure budget.
+  if (error.status === 502 || error.status === 504)
+    return retryAfterDelayMs(error, attempt);
   return retryDelayMs(error, attempt, { replaySafe: true, keyed: false });
 }
 
@@ -165,27 +170,42 @@ class EventStreamReader {
   #controller;
   /** @type {number} */
   #maximum;
+  /** @type {() => void} */
+  #release;
   #decoder = new TextDecoder("utf-8");
   #buffer = "";
+  /** The previous line ended in CR; a following LF belongs to that terminator. */
+  #afterCr = false;
 
   /**
    * @param {ReadableStream<Uint8Array>} body
    * @param {AbortController} controller
    * @param {number} maximum
+   * @param {() => void} release Detaches the connection from the subscription lifetime.
    */
-  constructor(body, controller, maximum) {
+  constructor(body, controller, maximum, release) {
     this.#reader = body.getReader();
     this.#controller = controller;
     this.#maximum = maximum;
+    this.#release = release;
   }
 
-  /** @returns {Promise<string | undefined>} */
+  /**
+   * The next line. CRLF, LF and a lone CR all end a line; a CR ends it at once,
+   * without waiting for the next byte.
+   * @returns {Promise<string | undefined>}
+   */
   async #line() {
     while (true) {
-      const match = /\r\n|\r|\n/u.exec(this.#buffer);
-      if (match !== null && !(match[0] === "\r" && match.index === this.#buffer.length - 1)) {
+      if (this.#afterCr && this.#buffer.length > 0) {
+        if (this.#buffer.startsWith("\n")) this.#buffer = this.#buffer.slice(1);
+        this.#afterCr = false;
+      }
+      const match = /\r|\n/u.exec(this.#buffer);
+      if (match !== null) {
         const line = this.#buffer.slice(0, match.index);
-        this.#buffer = this.#buffer.slice(match.index + match[0].length);
+        this.#buffer = this.#buffer.slice(match.index + 1);
+        this.#afterCr = match[0] === "\r";
         return line;
       }
       if (this.#buffer.length > this.#maximum) throw new TypeError("Shape event exceeds its size limit.");
@@ -224,6 +244,7 @@ class EventStreamReader {
 
   /** @returns {void} */
   cancel() {
+    this.#release();
     this.#controller.abort();
     void this.#reader.cancel().catch(() => undefined);
   }
@@ -241,8 +262,8 @@ export class V1ShapeSubscription {
   #transport;
   /** @type {string} */
   #database;
-  /** @type {V1ShapeRequest} */
-  #request;
+  /** @type {string} The encoded shape request, reused for edge refreshes. */
+  #requestBody;
   /** @type {"long-poll" | "sse"} */
   #mode;
   /** @type {boolean} */
@@ -268,22 +289,24 @@ export class V1ShapeSubscription {
   #iterating = false;
   /** @type {AbortSignal | undefined} */
   #signal;
+  /** @type {(() => void) | undefined} */
+  #onSignalAbort;
 
   /**
    * @param {V1Transport} transport
    * @param {string} database
-   * @param {V1ShapeRequest} request
+   * @param {string} requestBody The encoded shape request (encodeShapeRequest).
    * @param {V1ShapeInfo} info
    * @param {V1SubscribeOptions} options
    */
-  constructor(transport, database, request, info, options) {
+  constructor(transport, database, requestBody, info, options) {
     const mode = options.mode ?? "long-poll";
     if (mode !== "long-poll" && mode !== "sse") throw new TypeError('mode is "long-poll" or "sse".');
     if (mode === "sse" && options.edge === true)
       throw new TypeError("SSE is served by the origin only; do not combine it with edge.");
     this.#transport = transport;
     this.#database = database;
-    this.#request = request;
+    this.#requestBody = requestBody;
     this.#mode = mode;
     this.#edge = options.edge === true;
     this.#info = info;
@@ -298,7 +321,10 @@ export class V1ShapeSubscription {
     this.#signal = options.signal;
     if (options.signal !== undefined) {
       if (options.signal.aborted) this.close();
-      else options.signal.addEventListener("abort", () => this.close(), { once: true });
+      else {
+        this.#onSignalAbort = () => this.close();
+        options.signal.addEventListener("abort", this.#onSignalAbort, { once: true });
+      }
     }
   }
 
@@ -307,7 +333,11 @@ export class V1ShapeSubscription {
     return this.#info;
   }
 
-  /** @returns {string} The highest log offset whose changes the consumer has finished handling. */
+  /**
+   * @returns {string} The highest log offset whose changes the consumer has
+   * finished handling. A reset sets it to "0" until the replacement snapshot
+   * has been handled.
+   */
   get position() {
     return this.#progress.toString();
   }
@@ -324,10 +354,21 @@ export class V1ShapeSubscription {
 
   /** Stops the subscription and cancels any request in flight. */
   close() {
+    this.#shutdown(new Error("TerraBase shape subscription closed."));
+  }
+
+  /**
+   * Closes the subscription and rejects every pending waitFor with `reason`.
+   * @param {unknown} reason
+   * @returns {void}
+   */
+  #shutdown(reason) {
     if (this.#life.signal.aborted) return;
     this.#life.abort();
     this.#closeStream();
-    for (const waiter of this.#waiters) waiter.reject(new Error("TerraBase shape subscription closed."));
+    if (this.#onSignalAbort !== undefined) this.#signal?.removeEventListener("abort", this.#onSignalAbort);
+    this.#onSignalAbort = undefined;
+    for (const waiter of this.#waiters) waiter.reject(reason);
     this.#waiters.clear();
   }
 
@@ -342,8 +383,8 @@ export class V1ShapeSubscription {
    * @returns {Promise<void>}
    */
   waitFor(offset, options = {}) {
-    const target = typeof offset === "bigint" ? offset : parseU64(offset);
-    if (target === undefined || target < 0n) return Promise.reject(new TypeError("waitFor takes a log offset."));
+    const target = parseU64(typeof offset === "bigint" ? offset.toString() : offset);
+    if (target === undefined) return Promise.reject(new TypeError("waitFor takes a u64 log offset."));
     if (this.#progress >= target) return Promise.resolve();
     if (this.closed) return Promise.reject(new Error("TerraBase shape subscription closed."));
     return new Promise((resolve, reject) => {
@@ -385,9 +426,16 @@ export class V1ShapeSubscription {
     return this.events();
   }
 
-  /** @returns {AsyncGenerator<V1ShapeEvent, void, undefined>} */
+  /**
+   * The subscription's events. It has one consumer; when iteration ends for
+   * any reason (close, the abort signal, a terminal error or the consumer
+   * stopping), the subscription is closed and pending waitFor calls reject,
+   * with the terminal error when there is one.
+   * @returns {AsyncGenerator<V1ShapeEvent, void, undefined>}
+   */
   async *events() {
     if (this.#iterating) throw new TypeError("A shape subscription has one consumer.");
+    if (this.closed) return;
     this.#iterating = true;
     try {
       let failures = 0;
@@ -399,7 +447,10 @@ export class V1ShapeSubscription {
         } catch (error) {
           if (this.closed) break;
           const delay = shapeRetryDelayMs(error, failures);
-          if (delay === undefined || failures >= this.#transport.maxRetries) throw error;
+          if (delay === undefined || failures >= this.#transport.maxRetries) {
+            this.#shutdown(error);
+            throw error;
+          }
           failures++;
           try {
             await sleep(delay, this.#life.signal);
@@ -419,7 +470,7 @@ export class V1ShapeSubscription {
       if (this.#signal?.aborted) throw this.#signal.reason;
     } finally {
       this.#iterating = false;
-      this.#closeStream();
+      this.close();
     }
   }
 
@@ -428,6 +479,9 @@ export class V1ShapeSubscription {
    * @returns {V1ShapeEvent}
    */
   #reset(handle) {
+    // The consumer discards its state, so acknowledged progress is void until
+    // the replacement snapshot has been handled.
+    this.#progress = 0n;
     this.#handle = handle ?? "";
     this.#offset = "-1";
     this.#cursor = "";
@@ -478,7 +532,7 @@ export class V1ShapeSubscription {
     const expiresAt = Number(previous.expiresAt);
     const margin = Math.min(60_000, (expiresAt - this.#obtainedAt) / 2);
     if (!force && Date.now() + margin < expiresAt) return undefined;
-    const fresh = await createShape(this.#transport, this.#database, this.#request, this.#life.signal);
+    const fresh = await createShape(this.#transport, this.#database, this.#requestBody, this.#life.signal);
     this.#info = fresh;
     this.#obtainedAt = Date.now();
     return fresh.shapeId === previous.shapeId ? undefined : this.#reset(fresh.handle);
@@ -555,25 +609,33 @@ export class V1ShapeSubscription {
       const { url } = this.#url("streamShape", false);
       const controller = new AbortController();
       const life = this.#life.signal;
+      const onLifeAbort = () => controller.abort();
+      const release = () => life.removeEventListener("abort", onLifeAbort);
       if (life.aborted) controller.abort();
-      else life.addEventListener("abort", () => controller.abort(), { once: true });
-      /** @type {Record<string, string>} */
-      const headers = {};
-      if (this.#offset !== "-1") headers["last-event-id"] = this.#offset;
-      const response = await this.#transport.exchange(url, {
-        method: "GET", accept: "text/event-stream", headers, signal: controller.signal,
-      });
-      if (response.status !== 200) {
-        const error = await this.#transport.error(response);
-        if (error.code === "must_refetch") return this.#reset(error.handle);
-        throw error;
+      else life.addEventListener("abort", onLifeAbort, { once: true });
+      let opened = false;
+      try {
+        /** @type {Record<string, string>} */
+        const headers = {};
+        if (this.#offset !== "-1") headers["last-event-id"] = this.#offset;
+        const response = await this.#transport.exchange(url, {
+          method: "GET", accept: "text/event-stream", headers, signal: controller.signal,
+        });
+        if (response.status !== 200) {
+          const error = await this.#transport.error(response);
+          if (error.code === "must_refetch") return this.#reset(error.handle);
+          throw error;
+        }
+        const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+        if (mediaType !== "text/event-stream" || response.body === null) malformed("shape event stream");
+        this.#stream = new EventStreamReader(response.body, controller, 16 * 1024 * 1024, release);
+        opened = true;
+      } finally {
+        if (!opened) {
+          release();
+          controller.abort();
+        }
       }
-      const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-      if (mediaType !== "text/event-stream" || response.body === null) {
-        controller.abort();
-        malformed("shape event stream");
-      }
-      this.#stream = new EventStreamReader(response.body, controller, 16 * 1024 * 1024);
     }
     /** @type {{ event: string; data: string } | undefined} */
     let message;
@@ -588,6 +650,23 @@ export class V1ShapeSubscription {
       this.#closeStream();
       throw new TypeError("TerraBase shape event stream ended.");
     }
+    try {
+      return this.#applySse(message);
+    } catch (error) {
+      // The message was consumed but not applied: drop the connection and
+      // reconnect from the last validated offset (Last-Event-ID) rather than
+      // reading past it on the same stream.
+      this.#closeStream();
+      throw error;
+    }
+  }
+
+  /**
+   * Applies one SSE message. Every member is validated before any state changes.
+   * @param {{ event: string; data: string }} message
+   * @returns {V1ShapeEvent | undefined}
+   */
+  #applySse(message) {
     switch (message.event) {
       case "changes":
         return this.#apply(parseExactJson(message.data), undefined);

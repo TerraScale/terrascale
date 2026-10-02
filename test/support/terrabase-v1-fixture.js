@@ -37,9 +37,14 @@ class Num {
  * @returns {any}
  */
 function parse(text) {
+  // Objects get null prototypes, so member names such as "__proto__" stay
+  // ordinary JSON data in every later read, merge, patch and projection.
   return JSON.parse(text, /** @type {(key: string, value: any) => any} */ (/** @type {unknown} */ (
-    (/** @type {string} */ _key, /** @type {any} */ value, /** @type {any} */ context) =>
-      typeof value === "number" ? new Num(context.source) : value)));
+    (/** @type {string} */ _key, /** @type {any} */ value, /** @type {any} */ context) => {
+      if (typeof value === "number") return new Num(context.source);
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) return Object.assign(Object.create(null), value);
+      return value;
+    })));
 }
 
 /**
@@ -142,7 +147,7 @@ function resolve(doc, id, path) {
   if (path === "$id") return id;
   if (isObject(path)) {
     const value = resolve(doc, id, path.lower);
-    return typeof value === "string" ? value.toLowerCase() : value;
+    return typeof value === "string" ? caseFold(value) : value;
   }
   let current = doc;
   for (const segment of segments(path)) {
@@ -150,6 +155,21 @@ function resolve(doc, id, path) {
     current = current[segment];
   }
   return current;
+}
+
+/**
+ * Unicode default (full) case folding, approximated without the
+ * CaseFolding.txt table: upper-then-lower casing gives the full folds such as
+ * ß → ss and ligatures; final sigma folds to σ; Cherokee folds to its
+ * uppercase block. Fixture-only; the server owns the real folding.
+ * @param {string} value
+ * @returns {string}
+ */
+function caseFold(value) {
+  return value.toUpperCase().toLowerCase()
+    .replace(/ς/gu, "σ")
+    .replace(/[\uAB70-\uABBF]/gu, (char) => String.fromCharCode(char.charCodeAt(0) - 0xab70 + 0x13a0))
+    .replace(/[\u13F8-\u13FD]/gu, (char) => String.fromCharCode(char.charCodeAt(0) - 8));
 }
 
 /**
@@ -174,10 +194,13 @@ function rank(value) {
 function compareValues(a, b) {
   const ra = rank(a);
   const rb = rank(b);
-  if (ra !== rb) return ra < rb ? -1 : 1;
-  if (ra === 4) return compareNum(a, b);
-  if (ra === 5) return Buffer.compare(Buffer.from(a), Buffer.from(b));
-  return 0;
+  if (ra < rb) return -1;
+  if (ra > rb) return 1;
+  switch (ra) {
+    case 4: return compareNum(a, b);
+    case 5: return Buffer.compare(Buffer.from(a), Buffer.from(b));
+    default: return 0;
+  }
 }
 
 /**
@@ -263,7 +286,12 @@ function matches(filter, doc, id) {
   const sameType = isScalar(value) && (rank(value) === rank(operand) || (typeof value === "boolean" && typeof operand === "boolean"));
   if (!sameType) return false;
   const order = compareValues(value, operand);
-  return op === "lt" ? order < 0 : op === "lte" ? order <= 0 : op === "gt" ? order > 0 : order >= 0;
+  switch (op) {
+    case "lt": return order < 0;
+    case "lte": return order <= 0;
+    case "gt": return order > 0;
+    default: return order >= 0;
+  }
 }
 
 /**
@@ -272,21 +300,24 @@ function matches(filter, doc, id) {
  * @returns {any}
  */
 function projectDocument(doc, project) {
-  if (project === undefined) return doc;
-  /** @type {any} */
-  const out = {};
+  if (project === undefined) return structuredCloneDoc(doc);
+  // Built detached from the source: selected values are cloned, parents are
+  // fresh null-prototype objects, and inherited members are never traversed.
+  const out = Object.create(null);
   for (const pointer of project) {
+    if (resolve(doc, "", pointer) === MISSING) continue;
     const parts = segments(pointer);
     let source = doc;
     let target = out;
     for (const [index, part] of parts.entries()) {
-      if (!isObject(source) || !Object.hasOwn(source, part)) break;
-      if (index === parts.length - 1) target[part] = source[part];
-      else {
-        target[part] = isObject(target[part]) ? target[part] : {};
-        target = target[part];
-        source = source[part];
+      if (index === parts.length - 1) {
+        target[part] = structuredCloneDoc(source[part]);
+        break;
       }
+      if (!Object.hasOwn(target, part)) target[part] = Object.create(null);
+      else if (!isObject(target[part])) break;
+      target = target[part];
+      source = source[part];
     }
   }
   return out;
@@ -298,11 +329,12 @@ function projectDocument(doc, project) {
  * @returns {any}
  */
 function mergePatch(target, patch) {
-  if (!isObject(patch)) return patch;
-  const out = isObject(target) ? { ...target } : {};
+  if (!isObject(patch)) return structuredCloneDoc(patch);
+  const out = Object.create(null);
+  if (isObject(target)) for (const [key, value] of Object.entries(target)) out[key] = value;
   for (const [key, value] of Object.entries(patch)) {
     if (value === null) delete out[key];
-    else out[key] = mergePatch(out[key], value);
+    else out[key] = mergePatch(Object.hasOwn(out, key) ? out[key] : undefined, value);
   }
   return out;
 }
@@ -322,13 +354,13 @@ function applyOps(doc, ops) {
     for (const part of parts) {
       if (!Object.hasOwn(parent, part)) {
         if (op.op === "unset") { parent = undefined; break; }
-        parent[part] = {};
+        parent[part] = Object.create(null);
       }
       if (!isObject(parent[part])) fail(409, "patch_conflict");
       parent = parent[part];
     }
     switch (op.op) {
-      case "set": parent[last] = op.value; break;
+      case "set": parent[last] = structuredCloneDoc(op.value); break;
       case "unset": if (parent !== undefined) delete parent[last]; break;
       case "inc": {
         if (!(op.by instanceof Num)) fail(400, "invalid_patch");
@@ -340,7 +372,7 @@ function applyOps(doc, ops) {
       case "append": {
         const current = Object.hasOwn(parent, last) ? parent[last] : [];
         if (!Array.isArray(current)) fail(409, "patch_conflict");
-        parent[last] = [...current, op.value];
+        parent[last] = [...current, structuredCloneDoc(op.value)];
         break;
       }
       default: fail(400, "invalid_patch");
@@ -355,7 +387,11 @@ function applyOps(doc, ops) {
  */
 function structuredCloneDoc(value) {
   if (Array.isArray(value)) return value.map(structuredCloneDoc);
-  if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, structuredCloneDoc(v)]));
+  if (isObject(value)) {
+    const out = Object.create(null);
+    for (const [key, item] of Object.entries(value)) out[key] = structuredCloneDoc(item);
+    return out;
+  }
   return value;
 }
 
@@ -379,6 +415,7 @@ const namePattern = /^[a-z][a-z0-9_-]{0,62}$/u;
  * @property {number} [snapshotPageSize] Documents per snapshot page (contract: 1000).
  * @property {number} [tokenLifetimeMs] Shape token lifetime (contract: at most 15 min).
  * @property {number} [sseHeartbeatMs] SSE comment interval (contract: 15 s).
+ * @property {"\n" | "\r" | "\r\n"} [sseLineEnding] SSE line terminator (all three are valid).
  * @property {Record<string, { name: string; path: string; lower: boolean }[]>} [unique]
  *   Unique constraints by collection name (default: `email` on `/email`, lowercased, for `users` and `todos`).
  */
@@ -408,6 +445,8 @@ const namePattern = /^[a-z][a-z0-9_-]{0,62}$/u;
  * @property {string} code
  * @property {number} [retryAfter]
  * @property {boolean} [afterCommit] Apply the request, then answer with the failure.
+ * @property {boolean} [truncate] Send 200 headers and part of a body, then drop the connection.
+ * @property {string} [body] Answer with this raw JSON body and `status` instead of an error.
  */
 
 /**
@@ -419,6 +458,7 @@ export async function startTerraBaseV1Fixture(options = {}) {
     snapshotPageSize: options.snapshotPageSize ?? 1000,
     tokenLifetimeMs: options.tokenLifetimeMs ?? 15 * 60_000,
     sseHeartbeatMs: options.sseHeartbeatMs ?? 250,
+    sseLineEnding: options.sseLineEnding ?? "\n",
   };
   /** @type {RecordedRequest[]} */
   const requests = [];
@@ -460,6 +500,7 @@ export async function startTerraBaseV1Fixture(options = {}) {
       !grant.permissions.includes(permission)) fail(403, "forbidden_scope");
   }
   let versionCounter = 0;
+  let corruptSseChanges = 0;
   let gatekeeperCalls = 0;
   let edgeOrigin = "";
 
@@ -658,7 +699,8 @@ export async function startTerraBaseV1Fixture(options = {}) {
     if (query.filter !== undefined) validateFilter(query.filter);
     const sort = /** @type {{ path: any; order: string }[]} */ (query.sort ?? []);
     if (!Array.isArray(sort) || sort.length > 4) fail(400, "invalid_query");
-    const limit = query.limit === undefined ? 50 : query.limit instanceof Num ? Number(query.limit.text) : Number.NaN;
+    let limit = 50;
+    if (query.limit !== undefined) limit = query.limit instanceof Num ? Number(query.limit.text) : Number.NaN;
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail(400, "invalid_query");
     const digest = sha256(stringify([query.filter ?? null, query.sort ?? null, query.project ?? null]));
     const all = [...store.entries()]
@@ -954,51 +996,75 @@ export async function startTerraBaseV1Fixture(options = {}) {
   async function streamShape(shapeId, request, req, res) {
     const shape = shapes.get(shapeId);
     if (shape === undefined) fail(404, "not_found");
-    let offset = request.headers["last-event-id"] ?? request.query.offset;
+    const offset = request.headers["last-event-id"] ?? request.query.offset;
     if (offset === undefined) fail(400, "invalid_request");
     if (offset !== "-1" && request.query.handle === undefined) fail(400, "invalid_request");
+    const snap = /^snap\.(\d+)\.(\d+)$/u.exec(offset);
+    if (offset !== "-1" && snap === null && !/^(?:0|[1-9]\d*)$/u.test(offset)) fail(400, "invalid_request");
     const handle = offset === "-1" ? shape.handle : /** @type {string} */ (request.query.handle);
     const abort = new AbortController();
     req.on("close", () => abort.abort());
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
     sseStreams.add(res);
     res.on("close", () => { sseStreams.delete(res); abort.abort(); });
+    const eol = settings.sseLineEnding;
     /** @param {string} event @param {any} data @param {string} [id] */
-    const send = (event, data, id) => res.write(`event: ${event}\n${id === undefined ? "" : `id: ${id}\n`}data: ${stringify(data)}\n\n`);
-    if (offset === "-1") {
-      const head = materialize(shape);
-      for (let page = 0; ; page++) {
+    const send = (event, data, id) => {
+      let payload = stringify(data);
+      if (event === "changes" && corruptSseChanges > 0) {
+        // The event is consumed by the client but cannot be applied.
+        corruptSseChanges--;
+        payload = stringify({ shape_id: shapeId, handle, offset: data.offset });
+      }
+      res.write(`event: ${event}${eol}${id === undefined ? "" : `id: ${id}${eol}`}data: ${payload}${eol}${eol}`);
+    };
+    const refetch = () => {
+      send("must-refetch", { handle: shape.handle });
+      res.end();
+    };
+    if (shape.handle !== handle) return refetch();
+    /** @type {number} */
+    let from;
+    if (offset === "-1" || snap !== null) {
+      // offset=-1 streams the snapshot directly; a snap.S.P resume point
+      // (Last-Event-ID of a snapshot page) continues from page P of snapshot S.
+      const head = snap === null ? materialize(shape) : Number(snap[1]);
+      if (!snapshots.has(`${shape.handle}:${head}`)) return refetch();
+      for (let page = snap === null ? 0 : Number(snap[2]); ; page++) {
         const body = snapshotPage(shapeId, shape, head, page);
         send("changes", body, body.next_offset);
         if (!body.next_offset.startsWith("snap.")) break;
       }
-      offset = String(head);
-    }
-    let from = Number(offset);
-    let announced = false;
+      from = head;
+    } else from = Number(offset);
+    /** @type {number | undefined} */
+    let announced;
     while (!abort.signal.aborted) {
-      if (shape.handle !== handle) {
-        send("must-refetch", { handle: shape.handle });
-        res.end();
-        return;
-      }
+      if (shape.handle !== handle) return refetch();
       const state = database(shape.db);
       if (state.head > from) {
         const { next, changes } = chunk(shape, from);
         const body = { shape_id: shapeId, handle, offset: String(from), next_offset: String(next), up_to_date: next === state.head, changes };
-        if (changes.length > 0) send("changes", body, String(next));
+        if (changes.length > 0) {
+          send("changes", body, String(next));
+          if (body.up_to_date) announced = next;
+        }
         from = next;
         continue;
       }
-      if (!announced) {
+      // Caught up: announce the head whenever it moved, including past
+      // commits with no change for this shape, so the client's offset advances.
+      if (announced !== from) {
         send("up-to-date", { next_offset: String(from) });
-        announced = true;
+        announced = from;
       }
       const before = state.head;
       await waitForChange(shape.db, settings.sseHeartbeatMs, abort.signal);
-      if (state.head === before && shape.handle === handle && !abort.signal.aborted) res.write(": keepalive\n\n");
+      if (state.head === before && shape.handle === handle && !abort.signal.aborted) res.write(`: keepalive${eol}${eol}`);
     }
+    return undefined;
   }
+
 
   /**
    * @param {"origin" | "edge"} server
@@ -1049,6 +1115,16 @@ export async function startTerraBaseV1Fixture(options = {}) {
       if (duplicate) fail(400, "invalid_request");
       const failureIndex = failures.findIndex((failure) => failure.match(request));
       const failure = failureIndex < 0 ? undefined : failures.splice(failureIndex, 1)[0];
+      if (failure?.truncate === true) {
+        res.writeHead(200, { "content-type": "application/json", "content-length": "4096" });
+        res.write('{"id":"');
+        setTimeout(() => res.destroy(), 10);
+        return;
+      }
+      if (failure?.body !== undefined) {
+        send({ status: failure.status, headers: { "content-type": "application/json" }, body: failure.body });
+        return;
+      }
       const injected = () => new FixtureError(/** @type {InjectedFailure} */ (failure).status, /** @type {InjectedFailure} */ (failure).code,
         failure?.retryAfter === undefined ? {} : { retryAfter: failure.retryAfter });
       if (failure !== undefined && failure.afterCommit !== true) throw injected();
@@ -1179,6 +1255,10 @@ export async function startTerraBaseV1Fixture(options = {}) {
     },
     revokeShapeTokens() {
       for (const token of tokens.values()) token.revoked = true;
+    },
+    /** Replaces the next SSE changes event's data with an unappliable body. */
+    corruptNextSseChanges() {
+      corruptSseChanges++;
     },
     dropSseStreams() {
       for (const stream of sseStreams) stream.destroy();
