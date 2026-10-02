@@ -24,6 +24,7 @@ const expectedRenderedCtaHrefs = {
   '/contact': [registrationUrl],
   '/pricing': [
     registrationUrl,
+    `${registrationUrl}?plan=hobby`,
     `${registrationUrl}?plan=starter`,
     `${registrationUrl}?plan=pro`,
     './contact',
@@ -40,6 +41,7 @@ const expectedRenderedRegistrationHrefs = {
   '/contact': [registrationUrl],
   '/pricing': [
     registrationUrl,
+    `${registrationUrl}?plan=hobby`,
     `${registrationUrl}?plan=starter`,
     `${registrationUrl}?plan=pro`,
     registrationUrl,
@@ -208,9 +210,15 @@ test('pricing matches the Public Alpha plan catalog', async ({ page }) => {
   await page.goto('/pricing')
 
   const cards = page.locator('.pricing-card')
-  await expect(cards).toHaveCount(3)
+  await expect(cards).toHaveCount(4)
 
   const expectedPlans = {
+    hobby: {
+      name: 'Hobby',
+      price: '$0',
+      limits: ['1 project', '1 database', '1 member', '100 MB across regions', '100,000 operation units/month'],
+      href: `${registrationUrl}?plan=hobby`,
+    },
     starter: {
       name: 'Starter',
       price: '$5',
@@ -279,7 +287,8 @@ test('pricing keeps every plan state usable on mobile', async ({ page }) => {
   await page.goto('/pricing')
 
   const cards = page.locator('.pricing-card')
-  await expect(cards).toHaveCount(3)
+  await expect(cards).toHaveCount(4)
+  await expect(page.locator('.pricing-card[data-plan="hobby"] a')).toHaveAttribute('href', `${registrationUrl}?plan=hobby`)
   await expect(page.locator('.pricing-card[data-plan="starter"] a')).toHaveAttribute('href', `${registrationUrl}?plan=starter`)
   await expect(page.locator('.pricing-card[data-plan="pro"] a')).toHaveAttribute('href', `${registrationUrl}?plan=pro`)
   await expect(page.locator('.pricing-card[data-plan="enterprise"] a')).toHaveAttribute('href', '/contact')
@@ -289,6 +298,7 @@ test('pricing presentation metadata stays keyed to each plan slug', async ({ pag
   await page.goto('/pricing')
 
   const metadata = {
+    hobby: { icon: 'zap', popular: 'false' },
     starter: { icon: 'star', popular: 'false' },
     pro: { icon: 'trendingUp', popular: 'true' },
     enterprise: { icon: 'shieldCheck', popular: 'false' },

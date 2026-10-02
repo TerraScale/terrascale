@@ -10,7 +10,12 @@ import {
   checkDeployedRedirects,
   validateRedirectRules,
 } from '../scripts/validate-redirect-contract.mjs'
-import { validateProductFooterLinks } from '../scripts/validate-content.mjs'
+import {
+  validatePricingCatalog,
+  validateProductFooterLinks,
+  validateRegionCatalog,
+  validateRenderedPricing,
+} from '../scripts/validate-content.mjs'
 import { extractAttributes, extractStructuredDataUrls, probeExternalLinks, requiredLinks } from '../scripts/validate-links.mjs'
 import { validateRenderedLinks } from '../scripts/validate-links.mjs'
 import { findProhibitedClaims, scanProhibitedClaims, walk as walkClaimFiles } from '../scripts/validate-claims.mjs'
@@ -35,6 +40,36 @@ test('product footer validator rejects duplicate changelog and documentation des
   `)
   assert.match(failures.join('\n'), /changelog must use https:\/\/docs\.terrascale\.tech\/changelog\//)
   assert.match(failures.join('\n'), /product footer links must point to distinct canonical destinations/)
+})
+
+const canonicalPricing = JSON.parse(readFileSync(new URL('../static/pricing.json', import.meta.url), 'utf8'))
+const canonicalRegions = JSON.parse(readFileSync(new URL('../static/regions.json', import.meta.url), 'utf8'))
+
+test('canonical pricing and region catalogs hold the confirmed plans and regions', () => {
+  assert.deepEqual(validatePricingCatalog(canonicalPricing), [])
+  assert.deepEqual(validateRegionCatalog(canonicalRegions), [])
+  const drifted = structuredClone(canonicalPricing)
+  drifted.plans.find((plan) => plan.id === 'pro').priceMonthlyUsd = 49
+  assert.match(validatePricingCatalog(drifted).join('\n'), /unexpected Pro monthly price 49/)
+  const renamed = structuredClone(canonicalRegions)
+  renamed.regions[1].name = 'San Francisco'
+  assert.equal(validateRegionCatalog(renamed).length, 1)
+})
+
+test('rendered pricing validator rejects prices and allowances that drift from pricing.json', () => {
+  const card = (id, name, price, lines) =>
+    `<div class="pricing-card" data-plan="${id}"><div>${name}</div><div class="pricing-card__price"><span>$</span><span>${price}</span></div><ul>${lines.map((line) => `<li>${line}</li>`).join('')}</ul></div>`
+  const page = (overrides = {}) =>
+    `<!doctype html><html><body>${[
+      card('hobby', 'Hobby', 0, ['1 project', '1 database', '1 member', '100 MB across regions', '100,000 operation units/month']),
+      card('starter', 'Starter', overrides.starterPrice ?? 5, ['5 projects', '5 databases', '5 members', '5 GB across regions', '1,000,000 operation units/month']),
+      card('pro', 'Pro', 50, ['25 projects', '25 databases', '25 members', '25 GB across regions', overrides.proUnits ?? '100,000,000 operation units/month']),
+      ...(overrides.dropEnterprise ? [] : [card('enterprise', 'Enterprise', 500, ['Monthly support base plus metered usage'])]),
+    ].join('')}</body></html>`
+  assert.deepEqual(validateRenderedPricing(page(), canonicalPricing), [])
+  assert.match(validateRenderedPricing(page({ starterPrice: 9 }), canonicalPricing).join('\n'), /Starter must render the monthly price \$5/)
+  assert.match(validateRenderedPricing(page({ proUnits: '10,000,000 operation units/month' }), canonicalPricing).join('\n'), /Pro must render the allowance 100,000,000/)
+  assert.match(validateRenderedPricing(page({ dropEnterprise: true }), canonicalPricing).join('\n'), /rendered plan cards/)
 })
 
 test('claim validator requires the confirmed launch region names', () => {

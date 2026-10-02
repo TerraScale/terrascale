@@ -2,8 +2,10 @@
   import Icon from '@/components/Icon.svelte'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import { dict } from '@/lib/i18n'
+  import { publicAlphaCatalog } from '@/lib/site'
 
-  const rowPrices = ['Included', 'Hard limit', '$500']
+  const enterprisePrice = publicAlphaCatalog.find((plan) => plan.slug === 'enterprise')?.price
+  const rowPrices = ['Included', 'Hard limit', `$${enterprisePrice}`]
   $: rows = $dict.pricing.detailed.rows.map((row, i) => ({
     ...row,
     price: rowPrices[i] ?? '',
