@@ -1,5 +1,5 @@
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use sha2::{Digest, Sha256};
@@ -88,12 +88,16 @@ fn main() {
     // Rerun the validation whenever anything in the validated checkout or the
     // submodule's checked-out revision changes, not only the crates Cargo builds.
     println!("cargo:rerun-if-changed={}", turso.display());
-    let mut watched = vec![
-        "HEAD".to_owned(),
-        "index".to_owned(),
-        "packed-refs".to_owned(),
-    ];
-    // A symbolic HEAD resolves through its branch ref, which can move alone.
+    // Watch the metadata that decides the checked-out revision. Optional
+    // files are watched only when present (a missing path would rerun every
+    // build); the refs directory covers loose branch refs appearing, moving or
+    // being packed away.
+    let git_dir = PathBuf::from(text(git(
+        &turso,
+        None,
+        &["rev-parse", "--path-format=absolute", "--git-dir"],
+    )));
+    let mut watched = vec![git_dir.join("HEAD"), git_dir.join("refs")];
     let head_ref = Command::new("git")
         .arg("-C")
         .arg(&turso)
@@ -101,19 +105,10 @@ fn main() {
         .output()
         .expect("git is required to identify the pinned Turso source");
     if head_ref.status.success() {
-        watched.push(text(head_ref.stdout));
+        watched.push(git_dir.join(text(head_ref.stdout)));
     }
-    for path in &watched {
-        let git_path = text(git(
-            &turso,
-            None,
-            &[
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                path.as_str(),
-            ],
-        ));
-        println!("cargo:rerun-if-changed={git_path}");
+    watched.extend([git_dir.join("index"), git_dir.join("packed-refs")]);
+    for path in watched.iter().filter(|path| path.exists()) {
+        println!("cargo:rerun-if-changed={}", path.display());
     }
 }

@@ -35,5 +35,6 @@ GIT_ASKPASS=$askpass GIT_TERMINAL_PROMPT=0 git -C "$engine" -c credential.helper
 git -C "$engine" checkout -q --detach FETCH_HEAD
 test "$(git -C "$engine" rev-parse HEAD)" = "$rev"
 git -C "$engine" submodule update -q --init --depth 1 crates/turso
-bash "$engine/scripts/ci/prepare-turso.sh"
+# The credential is only for the fetch above; preparation never sees it.
+env -u ORG_READ_TOKEN bash "$engine/scripts/ci/prepare-turso.sh"
 printf 'TerraBase %s, Turso %s\n' "$rev" "$(git -C "$engine/crates/turso" rev-parse HEAD)"

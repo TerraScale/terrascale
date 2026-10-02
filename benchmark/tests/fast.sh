@@ -7,15 +7,18 @@ set -euo pipefail
 command -v jq >/dev/null || { echo 'jq is required' >&2; exit 2; }
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-# Resolve each crate's effective target directory (CARGO_TARGET_DIR or Cargo
-# config) so the suite tests exactly what build-fast produced.
-target_dir() {
-  cargo metadata --locked --no-deps --format-version 1 --manifest-path "$root/$1/Cargo.toml" | jq -er .target_directory
+# Ask Cargo, from each crate's own directory, for the executable it builds.
+# This honours CARGO_TARGET_DIR, an explicit build target and crate-local
+# configuration, and rebuilds a stale binary instead of testing it.
+executable() {
+  (cd "$root/$1" && cargo build --release --locked --bin "$2" --message-format=json-render-diagnostics) |
+    jq -r --arg bin "$2" 'select(.reason == "compiler-artifact" and .target.name == $bin) | .executable // empty' |
+    tail -n 1
 }
-floor="$(target_dir terra-rust)/release/throughput-floor"
-scorecard="$(target_dir local-engine)/release/local-engine-scorecard"
+floor=$(executable terra-rust throughput-floor)
+scorecard=$(executable local-engine local-engine-scorecard)
 for binary in "$floor" "$scorecard"; do
-  test -x "$binary" || { echo "missing $binary; run make build-fast first" >&2; exit 2; }
+  [[ -n $binary && -x $binary ]] || { echo "missing $binary; run make build-fast first" >&2; exit 2; }
 done
 
 work=$(mktemp -d)
