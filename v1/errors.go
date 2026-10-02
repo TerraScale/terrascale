@@ -25,6 +25,7 @@ const (
 	ErrInvalidPatch           ErrorCode = "invalid_patch"
 	ErrTTLInvalid             ErrorCode = "ttl_invalid"
 	ErrSortRequiresIndex      ErrorCode = "sort_requires_index"
+	ErrAssertRequiresIndex    ErrorCode = "assert_requires_index"
 	ErrInvalidKey             ErrorCode = "invalid_key"
 	ErrInvalidToken           ErrorCode = "invalid_token" // shape token rejected by the origin or edge
 	ErrForbiddenScope         ErrorCode = "forbidden_scope"

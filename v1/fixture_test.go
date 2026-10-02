@@ -172,6 +172,7 @@ type fixture struct {
 	tokenTTL time.Duration
 	liveWait time.Duration
 	snapPage int
+	maxCount int // assert_count examination limit
 	maxChunk uint64
 	sseBeat  time.Duration
 
@@ -189,7 +190,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f := &fixture{t: t, keys: map[string]*fxKey{}, tenants: map[string]*fxTenant{}, idem: map[string]fxIdem{},
 		ops: map[string]*fxOperation{}, shapes: map[string]*fxShape{}, commitCh: make(chan struct{}), requests: map[string]int{},
-		signer: signer, tokenTTL: 15 * time.Minute, liveWait: 300 * time.Millisecond, snapPage: 1000, maxChunk: 4096, sseBeat: 15 * time.Second}
+		signer: signer, tokenTTL: 15 * time.Minute, liveWait: 300 * time.Millisecond, snapPage: 1000, maxCount: 10000, maxChunk: 4096, sseBeat: 15 * time.Second}
 	f.origin = startTLS(t, f.originHandler())
 	f.edge = startTLS(t, http.HandlerFunc(f.serveEdge))
 
@@ -1038,7 +1039,10 @@ func (f *fixture) transaction(r *http.Request, k *fxKey, body []byte) fxReply {
 		Ops         []json.RawMessage `json:"ops"`
 		Filter      json.RawMessage   `json:"filter"`
 		Absent      bool              `json:"absent"`
+		Gte         *uint64           `json:"gte"`
+		Lte         *uint64           `json:"lte"`
 	}
+	countOps := 0
 	dbName := r.PathValue("db")
 	var s *staged
 	results := make([]any, 0, len(req.Ops))
@@ -1048,7 +1052,7 @@ func (f *fixture) transaction(r *http.Request, k *fxKey, body []byte) fxReply {
 			return fxErr(400, "invalid_request", "op", i)
 		}
 		perm := "write"
-		if o.Op == "assert" {
+		if o.Op == "assert" || o.Op == "assert_count" {
 			perm = "read"
 		}
 		db, coll, rep := f.scope(k, dbName, o.Collection, perm)
@@ -1058,6 +1062,31 @@ func (f *fixture) transaction(r *http.Request, k *fxKey, body []byte) fxReply {
 		}
 		if s == nil {
 			s = newStaged(db)
+		}
+		if o.Op == "assert_count" {
+			countOps++
+			filter, err := parseFilter(o.Filter)
+			if err != nil || o.ID != "" || (o.Gte == nil && o.Lte == nil) || countOps > 16 {
+				return fxErr(400, "invalid_request", "op", i)
+			}
+			// Evaluated before this transaction's writes.
+			live, n := 0, uint64(0)
+			for id, d := range coll.docs {
+				if !d.live() {
+					continue
+				}
+				if live++; live > f.maxCount {
+					return fxErr(400, "assert_requires_index", "op", i)
+				}
+				if d.siblings == nil && filter.match(id, mustObject(d.raw)) {
+					n++
+				}
+			}
+			if (o.Gte != nil && n < *o.Gte) || (o.Lte != nil && n > *o.Lte) {
+				return fxErr(412, "precondition_failed", "op", i)
+			}
+			results = append(results, map[string]any{"asserted": true, "count": strconv.FormatUint(n, 10)})
+			continue
 		}
 		if o.Op == "create" && (o.IfMatch != "" || o.IfNoneMatch != "") {
 			return fxErr(400, "invalid_request", "op", i, "message", "create takes no preconditions")

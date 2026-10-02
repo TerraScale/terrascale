@@ -28,6 +28,8 @@ type txOp struct {
 	Ops         []PatchOp       `json:"ops,omitempty"`
 	Filter      *Filter         `json:"filter,omitempty"`
 	Absent      bool            `json:"absent,omitempty"`
+	Gte         *uint64         `json:"gte,omitempty"`
+	Lte         *uint64         `json:"lte,omitempty"`
 }
 
 // TxResult is a committed transaction.
@@ -39,11 +41,18 @@ type TxResult struct {
 }
 
 // OpResult is the outcome of one transaction op: ID and Version for writes,
-// Asserted for asserts.
+// Asserted for asserts, and Count for AssertCount.
 type OpResult struct {
-	ID       string `json:"id,omitempty"`
-	Version  string `json:"version,omitempty"`
-	Asserted bool   `json:"asserted,omitempty"`
+	ID       string  `json:"id,omitempty"`
+	Version  string  `json:"version,omitempty"`
+	Asserted bool    `json:"asserted,omitempty"`
+	Count    *Uint64 `json:"count,omitempty"`
+}
+
+// CountBounds bounds an AssertCount: the count must be at least Gte and at
+// most Lte. At least one bound is required.
+type CountBounds struct {
+	Gte, Lte *uint64
 }
 
 // Tx starts a transaction builder.
@@ -133,6 +142,29 @@ func (t *Tx) Assert(collection, id string, filter Filter) *Tx {
 // AssertAbsent requires the document to be absent, deleted or expired.
 func (t *Tx) AssertAbsent(collection, id string) *Tx {
 	return t.add(txOp{Op: "assert", Absent: true}, nil, collection, id, true)
+}
+
+// AssertCount requires the number of documents in collection matching filter
+// to satisfy bounds. It is evaluated inside the commit before this
+// transaction's writes, so it is serializable with every other write to the
+// database (for example "at most 24 tokens per user"). A filter that would
+// examine more than 10000 entries fails with ErrAssertRequiresIndex; a
+// transaction holds at most 16 AssertCount ops.
+func (t *Tx) AssertCount(collection string, filter Filter, bounds CountBounds) *Tx {
+	idx := len(t.ops)
+	if bounds.Gte == nil && bounds.Lte == nil {
+		t.err = errors.Join(t.err, fmt.Errorf("op %d: AssertCount needs Gte or Lte", idx))
+	}
+	op := txOp{Op: "assert_count", Filter: &filter, Gte: bounds.Gte, Lte: bounds.Lte}
+	if filter.IsZero() {
+		op.Filter = nil
+	}
+	if err := checkName("collection", collection); err != nil {
+		t.err = errors.Join(t.err, fmt.Errorf("op %d: %w", idx, err))
+	}
+	op.Collection = collection
+	t.ops = append(t.ops, op)
+	return t
 }
 
 // Commit applies every op atomically. Failures are *APIError values whose Op

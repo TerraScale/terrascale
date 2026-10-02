@@ -224,3 +224,76 @@ func TestQueries(t *testing.T) {
 	_, err = items.Query(ctx, v1.Query{Limit: 5000})
 	requireCode(t, err, v1.ErrInvalidQuery)
 }
+
+func TestTransactionAssertCount(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := t.Context()
+	db := newClient(t, f, f.dataToken).Database("main")
+	n := func(v uint64) *uint64 { return &v }
+	token := func(i int) string { return v1.DocumentIDFor("sessions", fmt.Sprint("t", i)) }
+	for i := range 3 {
+		if _, err := db.Collection("sessions").Put(ctx, token(i), map[string]any{"user_id": "u1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mine := v1.Eq("/user_id", "u1")
+
+	// The count is taken before the transaction's own writes.
+	res, err := db.Tx().
+		AssertCount("sessions", mine, v1.CountBounds{Lte: n(3)}).
+		Create("sessions", token(3), map[string]any{"user_id": "u1"}).
+		AssertCount("sessions", mine, v1.CountBounds{Gte: n(1), Lte: n(3)}).
+		Commit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := res.Results; len(r) != 3 || !r[0].Asserted || r[0].Count == nil || *r[0].Count != 3 || r[2].Count == nil || *r[2].Count != 3 {
+		t.Fatalf("results: %+v", res.Results)
+	}
+
+	failures := []struct {
+		name string
+		tx   *v1.Tx
+		code v1.ErrorCode
+		op   int
+	}{
+		{"upper bound exceeded", db.Tx().
+			Create("sessions", token(9), map[string]any{"user_id": "u1"}).
+			AssertCount("sessions", mine, v1.CountBounds{Lte: n(3)}), v1.ErrPreconditionFailed, 1},
+		{"lower bound not met", db.Tx().
+			AssertCount("sessions", v1.Eq("/user_id", "u2"), v1.CountBounds{Gte: n(1)}), v1.ErrPreconditionFailed, 0},
+	}
+	for _, tc := range failures {
+		_, err := tc.tx.Commit(ctx)
+		if op, ok := requireCode(t, err, tc.code).OpIndex(); !ok || op != tc.op {
+			t.Fatalf("%s: op %d", tc.name, op)
+		}
+	}
+	if _, err := db.Collection("sessions").Get(ctx, token(9)); !errors.Is(err, v1.ErrNotFound) {
+		t.Fatalf("failed assert_count must abort the transaction: %v", err)
+	}
+
+	// Too many documents to examine without an index.
+	f.mu.Lock()
+	f.maxCount = 2
+	f.mu.Unlock()
+	_, err = db.Tx().AssertCount("sessions", mine, v1.CountBounds{Lte: n(10)}).Commit(ctx)
+	requireCode(t, err, v1.ErrAssertRequiresIndex)
+
+	// Bounds are required, and at most 16 assert_count ops are accepted.
+	if _, err := db.Tx().AssertCount("sessions", mine, v1.CountBounds{}).Commit(ctx); err == nil || !strings.Contains(err.Error(), "Gte or Lte") {
+		t.Fatalf("missing bounds: %v", err)
+	}
+	f.mu.Lock()
+	f.maxCount = 10000
+	f.mu.Unlock()
+	many := db.Tx()
+	for range 17 {
+		many.AssertCount("sessions", mine, v1.CountBounds{Gte: n(0)})
+	}
+	_, err = many.Commit(ctx)
+	if op, _ := requireCode(t, err, v1.ErrInvalidRequest).OpIndex(); op != 16 {
+		t.Fatalf("17th assert_count op = %d", op)
+	}
+}
