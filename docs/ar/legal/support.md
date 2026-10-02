@@ -1,12 +1,18 @@
 ---
 title: Support policy
 description: Actual support availability and self-service diagnostics.
+head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
 <!-- i18n:fallback:ar -->
 > **الترجمة قيد المراجعة.** لا تتوفر بعد مراجعة بشرية لهذه الصفحة بالعربية، لذلك يظهر المحتوى الأصلي بالإنجليزية.
 
 # Support policy
+
+::: warning Draft — not yet in effect
+This document is an unpublished draft. It is not yet in effect and does not
+govern your use of TerraScale.
+:::
 
 ::: danger
 DRAFT — owner legal review and confirmation of actual service availability

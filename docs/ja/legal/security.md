@@ -1,12 +1,18 @@
 ---
 title: Security
 description: TerraScale security practices, vulnerability disclosure, and security.txt.
+head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
 <!-- i18n:fallback:ja -->
 > **翻訳レビュー待ち。** このページはまだ日本語の人力レビューがなく、英語の原文を表示しています。
 
 # Security
+
+::: warning Draft — not yet in effect
+This document is an unpublished draft. It is not yet in effect and does not
+govern your use of TerraScale.
+:::
 
 ::: danger
 DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal entity name + jurisdiction).

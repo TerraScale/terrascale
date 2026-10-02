@@ -1,12 +1,18 @@
 ---
 title: Data Processing Addendum
 description: TerraScale Data Processing Addendum (draft).
+head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
 <!-- i18n:fallback:es -->
 > **Traducción pendiente.** Esta página aún no tiene revisión humana en español y muestra el contenido original en inglés.
 
 # Data Processing Addendum
+
+::: warning Draft — not yet in effect
+This document is an unpublished draft. It is not yet in effect and does not
+govern your use of TerraScale.
+:::
 
 ::: danger
 DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal entity name + jurisdiction).

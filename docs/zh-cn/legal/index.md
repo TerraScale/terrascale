@@ -1,12 +1,18 @@
 ---
 title: Legal
 description: Terms of Service, Privacy Policy, DPA, security disclosures, and support policy for TerraScale.
+head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
 <!-- i18n:fallback:zh-cn -->
 > **翻译待审。** 此页面尚无经人工审校的中文译文，暂显示英文原文。
 
 # Legal
+
+::: warning Draft — not yet in effect
+This document is an unpublished draft. It is not yet in effect and does not
+govern your use of TerraScale.
+:::
 
 ::: danger
 DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal entity name + jurisdiction).

@@ -35,7 +35,9 @@ function titleOf(localePrefix: string, link: string): string {
 }
 
 // Shared page trees (English links). Per locale they are prefixed and
-// relabeled from each page's frontmatter.
+// relabeled from each page's frontmatter. The legal pages are unpublished
+// drafts (noindex, Draft banner) and stay out of the nav and sidebar until
+// the legal entity details exist.
 const TREES: Record<string, { groups: { header: string; items: string[] }[] }> = {
   '/getting-started/': { groups: [{ header: 'quickstart', items: ['/getting-started/'] }] },
   '/concepts/': {
@@ -61,21 +63,6 @@ const TREES: Record<string, { groups: { header: string; items: string[] }[] }> =
           '/blog/benchmarks',
           '/blog/replication',
           '/blog/database-per-customer',
-        ],
-      },
-    ],
-  },
-  '/legal/': {
-    groups: [
-      {
-        header: 'legal',
-        items: [
-          '/legal/',
-          '/legal/terms',
-          '/legal/privacy',
-          '/legal/dpa',
-          '/legal/security',
-          '/legal/support',
         ],
       },
     ],
@@ -137,16 +124,6 @@ const EN_NAV = [
       { text: 'A database per customer (draft)', link: '/blog/database-per-customer' },
     ],
   },
-  {
-    text: 'Legal',
-    items: [
-      { text: 'Terms of Service', link: '/legal/terms' },
-      { text: 'Privacy Policy', link: '/legal/privacy' },
-      { text: 'DPA', link: '/legal/dpa' },
-      { text: 'Security', link: '/legal/security' },
-      { text: 'Support', link: '/legal/support' },
-    ],
-  },
   { text: 'Changelog', link: '/changelog' },
 ]
 
@@ -163,7 +140,6 @@ const EN_STRINGS: LocaleStrings = {
     roadmap: 'Roadmap',
     about: 'About',
     drafts: 'Launch posts (drafts)',
-    legal: 'Legal',
     pricingGen: 'Pricing (draft, generated)',
     pricingLimits: 'Pricing & limits',
     limitsGen: 'Limits (generated)',
@@ -190,7 +166,6 @@ const flatNav = (
   { text: t.guides, link: '/guides/' },
   { text: t.pricing, link: '/pricing/' },
   { text: t.snippets, link: '/snippets' },
-  { text: t.legal, link: '/legal/' },
   { text: t.changelog, link: '/changelog' },
 ]
 
@@ -206,7 +181,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       pricing: 'Precios y límites',
       snippets: 'Fragmentos',
       blog: 'Blog',
-      legal: 'Legal',
       changelog: 'Cambios',
       status: 'Estado',
     }),
@@ -221,7 +195,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       roadmap: 'Hoja de ruta',
       about: 'Acerca de',
       drafts: 'Publicaciones de lanzamiento (borradores)',
-      legal: 'Legal',
       pricingGen: 'Precios (borrador, generado)',
       pricingLimits: 'Precios y límites',
       limitsGen: 'Límites (generado)',
@@ -250,7 +223,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       pricing: 'Preços e limites',
       snippets: 'Snippets',
       blog: 'Blog',
-      legal: 'Jurídico',
       changelog: 'Alterações',
       status: 'Status',
     }),
@@ -265,7 +237,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       roadmap: 'Roteiro',
       about: 'Sobre',
       drafts: 'Posts de lançamento (rascunhos)',
-      legal: 'Jurídico',
       pricingGen: 'Preços (rascunho, gerado)',
       pricingLimits: 'Preços e limites',
       limitsGen: 'Limites (gerado)',
@@ -294,7 +265,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       pricing: 'Tarifs et limites',
       snippets: 'Extraits',
       blog: 'Blog',
-      legal: 'Mentions légales',
       changelog: 'Journal',
       status: 'Statut',
     }),
@@ -309,7 +279,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       roadmap: 'Feuille de route',
       about: 'À propos',
       drafts: 'Articles de lancement (brouillons)',
-      legal: 'Mentions légales',
       pricingGen: 'Tarifs (brouillon, généré)',
       pricingLimits: 'Tarifs et limites',
       limitsGen: 'Limites (généré)',
@@ -338,7 +307,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       pricing: 'Preise und Limits',
       snippets: 'Snippets',
       blog: 'Blog',
-      legal: 'Rechtliches',
       changelog: 'Changelog',
       status: 'Status',
     }),
@@ -353,7 +321,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       roadmap: 'Roadmap',
       about: 'Über uns',
       drafts: 'Launch-Beiträge (Entwürfe)',
-      legal: 'Rechtliches',
       pricingGen: 'Preise (Entwurf, generiert)',
       pricingLimits: 'Preise und Limits',
       limitsGen: 'Limits (generiert)',
@@ -382,7 +349,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       pricing: '定价与限额',
       snippets: '代码片段',
       blog: '博客',
-      legal: '法律',
       changelog: '更新日志',
       status: '状态',
     }),
@@ -397,7 +363,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       roadmap: '路线图',
       about: '关于',
       drafts: '发布文章（草稿）',
-      legal: '法律',
       pricingGen: '定价（草稿，生成）',
       pricingLimits: '定价与限额',
       limitsGen: '限额（生成）',
@@ -425,7 +390,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       pricing: 'मूल्य और सीमाएँ',
       snippets: 'स्निपेट',
       blog: 'ब्लॉग',
-      legal: 'कानूनी',
       changelog: 'परिवर्तन-लॉग',
       status: 'स्थिति',
     }),
@@ -440,7 +404,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       roadmap: 'रोडमैप',
       about: 'परिचय',
       drafts: 'लॉन्च लेख (मसौदे)',
-      legal: 'कानूनी',
       pricingGen: 'मूल्य (मसौदा, जनरेटेड)',
       pricingLimits: 'मूल्य और सीमाएँ',
       limitsGen: 'सीमाएँ (जनरेटेड)',
@@ -469,7 +432,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       pricing: 'الأسعار والحدود',
       snippets: 'مقاطع',
       blog: 'المدونة',
-      legal: 'قانوني',
       changelog: 'سجل التغييرات',
       status: 'الحالة',
     }),
@@ -484,7 +446,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       roadmap: 'خارطة الطريق',
       about: 'حول',
       drafts: 'مقالات الإطلاق (مسودات)',
-      legal: 'قانوني',
       pricingGen: 'الأسعار (مسودة، مولّدة)',
       pricingLimits: 'الأسعار والحدود',
       limitsGen: 'الحدود (مولّدة)',
@@ -513,7 +474,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       pricing: 'Цены и лимиты',
       snippets: 'Сниппеты',
       blog: 'Блог',
-      legal: 'Право',
       changelog: 'Изменения',
       status: 'Статус',
     }),
@@ -528,7 +488,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       roadmap: 'Дорожная карта',
       about: 'О проекте',
       drafts: 'Запусковые статьи (черновики)',
-      legal: 'Право',
       pricingGen: 'Цены (черновик, сгенерировано)',
       pricingLimits: 'Цены и лимиты',
       limitsGen: 'Лимиты (сгенерировано)',
@@ -557,7 +516,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       pricing: '料金と制限',
       snippets: 'スニペット',
       blog: 'ブログ',
-      legal: '法務',
       changelog: '変更履歴',
       status: 'ステータス',
     }),
@@ -572,7 +530,6 @@ const STRINGS: Record<string, LocaleStrings> = {
       roadmap: 'ロードマップ',
       about: '概要',
       drafts: 'ローンチ記事（下書き）',
-      legal: '法務',
       pricingGen: '料金（下書き、生成）',
       pricingLimits: '料金と制限',
       limitsGen: '制限（生成）',

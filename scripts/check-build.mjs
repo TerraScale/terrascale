@@ -107,7 +107,6 @@ for (const route of [
   "/concepts/replication", "/concepts/sync", "/concepts/sql", "/concepts/pricing-philosophy",
   "/guides/", "/pricing", "/pricing/", "/limits", "/snippets",
   "/blog/reads-are-free", "/blog/benchmarks", "/blog/replication", "/blog/database-per-customer",
-  "/legal/", "/legal/terms", "/legal/privacy", "/legal/dpa", "/legal/security", "/legal/support",
   "/changelog", "sync.api.terrascale.tech",
 ]) assert.ok(llms.includes(route), `llms.txt lists ${route}`);
 
@@ -117,6 +116,24 @@ for (const retired of ["concepts/engines", "blog/why-sqlite"]) {
   assert.ok(!llms.includes(`/${retired}`), `${retired} is absent from llms navigation`);
 }
 assert.ok(!read("docs/.vitepress/config.ts").includes("https://status.terrascale.tech"), "deferred status page is not advertised in navigation");
+
+// Legal pages are unpublished drafts: kept as files, but out of navigation
+// and llms.txt, marked noindex, and bannered as not yet in effect.
+assert.ok(!/['"]\/legal\//.test(read("docs/.vitepress/config.ts")), "draft legal pages are not linked from the nav or sidebar");
+assert.ok(!llms.includes("/legal"), "draft legal pages are absent from llms navigation");
+const legalPages = ["index", "terms", "privacy", "dpa", "security", "support"];
+const localePrefixes = ["", ...readdirSync(join(root, "docs")).filter((entry) => existsSync(join(root, "docs", entry, "legal", "terms.md")))];
+const distDir = join(root, "docs/.vitepress/dist");
+assert.ok(existsSync(distDir), "run npm run build before npm test");
+for (const prefix of localePrefixes) {
+  for (const page of legalPages) {
+    const source = `docs/${prefix ? `${prefix}/` : ""}legal/${page}.md`;
+    assert.ok(existsSync(join(root, source)), `${source} exists`);
+    const html = readFileSync(join(distDir, prefix, "legal", `${page}.html`), "utf8");
+    assert.match(html, /<meta name="robots" content="noindex">/, `${source} renders a noindex robots meta tag`);
+    assert.ok(html.includes("Draft — not yet in effect"), `${source} renders the draft banner`);
+  }
+}
 assert.ok(read("docs/snippets/backups.ts").includes("Backups are unbilled"), "backup fixture agrees with billing policy");
 
 for (const slug of ["reads-are-free", "benchmarks", "replication", "database-per-customer"]) {

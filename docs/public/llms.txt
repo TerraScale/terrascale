@@ -36,12 +36,6 @@ Base URL: https://docs.terrascale.tech
 - Benchmark publication policy: no measured results published.: https://docs.terrascale.tech/blog/benchmarks
 - Draft: choosing durability across Regions.: https://docs.terrascale.tech/blog/replication
 - Launch post draft: a database per customer.: https://docs.terrascale.tech/blog/database-per-customer
-- Legal overview: ToS, Privacy, DPA, security.txt, Support.: https://docs.terrascale.tech/legal/
-- Terms of Service: https://docs.terrascale.tech/legal/terms
-- Privacy Policy: https://docs.terrascale.tech/legal/privacy
-- Data Processing Addendum: https://docs.terrascale.tech/legal/dpa
-- Security disclosures: https://docs.terrascale.tech/legal/security
-- Support policy: https://docs.terrascale.tech/legal/support
 - Changelog.: https://docs.terrascale.tech/changelog
 
 ## Pricing summary (draft; full tables in /pricing and /pricing/)

@@ -1,12 +1,18 @@
 ---
 title: Privacy Policy
 description: TerraScale Privacy Policy (draft).
+head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
 <!-- i18n:fallback:pt-br -->
 > **Tradução pendente.** Esta página ainda não passou por revisão humana em português e mostra o conteúdo original em inglês.
 
 # Privacy Policy
+
+::: warning Draft — not yet in effect
+This document is an unpublished draft. It is not yet in effect and does not
+govern your use of TerraScale.
+:::
 
 ::: danger
 DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal entity name + jurisdiction).

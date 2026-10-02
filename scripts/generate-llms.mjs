@@ -29,12 +29,6 @@ const routes = [
   ["/blog/benchmarks", "Benchmark publication policy: no measured results published."],
   ["/blog/replication", "Draft: choosing durability across Regions."],
   ["/blog/database-per-customer", "Launch post draft: a database per customer."],
-  ["/legal/", "Legal overview: ToS, Privacy, DPA, security.txt, Support."],
-  ["/legal/terms", "Terms of Service"],
-  ["/legal/privacy", "Privacy Policy"],
-  ["/legal/dpa", "Data Processing Addendum"],
-  ["/legal/security", "Security disclosures"],
-  ["/legal/support", "Support policy"],
   ["/changelog", "Changelog."],
 ];
 
