@@ -6,7 +6,8 @@
 // It is a stand-in until a packaged tb-server serves the v1 routes; it is not
 // evidence of producer behavior. Replace these tests' target with the
 // packaged binary once it is available. It runs over plain HTTP on loopback
-// (the client admits HTTP only for loopback hosts); TLS, grants, row filters,
+// (the client admits HTTP only for loopback hosts). Data keys carry grants
+// (database, collections, permissions) and can be revoked; TLS, row filters,
 // TTL and auto-indexing are not modeled.
 import { createHash, randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -378,6 +379,16 @@ const namePattern = /^[a-z][a-z0-9_-]{0,62}$/u;
  * @property {number} [snapshotPageSize] Documents per snapshot page (contract: 1000).
  * @property {number} [tokenLifetimeMs] Shape token lifetime (contract: at most 15 min).
  * @property {number} [sseHeartbeatMs] SSE comment interval (contract: 15 s).
+ * @property {Record<string, { name: string; path: string; lower: boolean }[]>} [unique]
+ *   Unique constraints by collection name (default: `email` on `/email`, lowercased, for `users` and `todos`).
+ */
+
+/**
+ * A data key grant (api-v1.md): names or `"*"`.
+ * @typedef {object} FixtureGrant
+ * @property {string} database
+ * @property {readonly string[]} collections
+ * @property {readonly ("read" | "write" | "shape")[]} permissions
  */
 
 /**
@@ -429,9 +440,25 @@ export async function startTerraBaseV1Fixture(options = {}) {
   const sseStreams = new Set();
   const events = new EventEmitter();
   events.setMaxListeners(0);
-  const unique = /** @type {Record<string, { name: string; path: string; lower: boolean }[]>} */ ({
+  const unique = options.unique ?? {
     users: [{ name: "email", path: "/email", lower: true }],
-  });
+    todos: [{ name: "email", path: "/email", lower: true }],
+  };
+  /** @type {Map<string, { grant: FixtureGrant; revoked: boolean }>} */
+  const keys = new Map([[fixtureToken, { grant: { database: "*", collections: ["*"], permissions: ["read", "write", "shape"] }, revoked: false }]]);
+  let keyCounter = 0;
+
+  /**
+   * @param {FixtureGrant} grant
+   * @param {string} db
+   * @param {string} collection
+   * @param {"read" | "write" | "shape"} permission
+   */
+  function authorize(grant, db, collection, permission) {
+    if ((grant.database !== "*" && grant.database !== db) ||
+      !(grant.collections.includes("*") || grant.collections.includes(collection)) ||
+      !grant.permissions.includes(permission)) fail(403, "forbidden_scope");
+  }
   let versionCounter = 0;
   let gatekeeperCalls = 0;
   let edgeOrigin = "";
@@ -685,11 +712,13 @@ export async function startTerraBaseV1Fixture(options = {}) {
   /**
    * @param {RecordedRequest} request
    * @param {string[]} match
+   * @param {FixtureGrant} grant
    * @returns {FixtureResponse}
    */
-  function dataRoute(request, match) {
+  function dataRoute(request, match, grant) {
     const [, db = "", collection = "", rest = ""] = match;
     if (!namePattern.test(db) || (collection !== "" && !namePattern.test(collection))) fail(400, "invalid_request");
+    if (collection !== "") authorize(grant, db, collection, request.method === "GET" || rest === "/query" ? "read" : "write");
     const json = { "content-type": "application/json" };
     const ifMatch = unquote(request.headers["if-match"]);
     const ifNoneMatch = request.headers["if-none-match"];
@@ -744,6 +773,8 @@ export async function startTerraBaseV1Fixture(options = {}) {
     if (rest === "/transactions" && request.method === "POST") {
       const body = bodyObject(request.body);
       if (!Array.isArray(body.ops) || body.ops.length < 1 || body.ops.length > 1024) fail(400, "invalid_request");
+      for (const op of body.ops)
+        authorize(grant, db, String(op?.collection), op?.op === "assert" || op?.op === "assert_count" ? "read" : "write");
       if (body.ops.filter((/** @type {any} */ op) => op.op === "assert_count").length > 16) fail(400, "invalid_request");
       /** @type {Set<string>} */
       const targets = new Set();
@@ -763,6 +794,7 @@ export async function startTerraBaseV1Fixture(options = {}) {
       const body = bodyObject(request.body);
       for (const member of Object.keys(body)) if (!["collection", "filter", "project"].includes(member)) fail(400, "invalid_request");
       if (typeof body.collection !== "string" || !namePattern.test(body.collection)) fail(400, "invalid_request");
+      authorize(grant, db, body.collection, "shape");
       if (body.filter !== undefined) validateFilter(body.filter);
       const shapeId = sha256(`TB-SHAPE-V1\0${db}\0${body.collection}\0${stringify(body.filter ?? null)}\0${stringify(body.project ?? null)}`).slice(0, 32);
       const existing = shapes.get(shapeId);
@@ -819,7 +851,8 @@ export async function startTerraBaseV1Fixture(options = {}) {
     return {
       shape_id: shapeId, handle: shape.handle, offset: `snap.${snapshot}.${page}`, next_offset: next,
       up_to_date: next === String(database(shape.db).head),
-      changes: slice.length === 0 ? [] : [{ offset: String(snapshot), ops: slice }],
+      // An empty snapshot is a single page whose change has ops:[] (shapes-v1.md).
+      changes: [{ offset: String(snapshot), ops: slice }],
     };
   }
 
@@ -1030,9 +1063,13 @@ export async function startTerraBaseV1Fixture(options = {}) {
         send(await readShape(/** @type {string} */ (shapeMatch[1]), query, abort.signal));
         return;
       }
-      if (request.headers.authorization !== `Bearer ${fixtureToken}`) fail(401, "invalid_key");
+      const dataKey = keys.get(request.headers.authorization?.replace(/^Bearer /u, "") ?? "");
+      if (dataKey === undefined || dataKey.revoked) fail(401, "invalid_key");
+      const grant = dataKey.grant;
       if (shapeMatch !== null) {
         if (request.method !== "GET") fail(405, "method_not_allowed");
+        const shape = shapes.get(/** @type {string} */ (shapeMatch[1]));
+        if (shape !== undefined) authorize(grant, shape.db, shape.collection, "shape");
         if (shapeMatch[2] !== undefined) {
           await streamShape(/** @type {string} */ (shapeMatch[1]), request, req, res);
           return;
@@ -1058,7 +1095,7 @@ export async function startTerraBaseV1Fixture(options = {}) {
         }
         let response;
         try {
-          response = dataRoute(request, dataMatch);
+          response = dataRoute(request, dataMatch, grant);
         } catch (error) {
           if (error instanceof FixtureError) {
             sendError(error);
@@ -1071,7 +1108,7 @@ export async function startTerraBaseV1Fixture(options = {}) {
         send(response);
         return;
       }
-      const response = dataRoute(request, dataMatch);
+      const response = dataRoute(request, dataMatch, grant);
       if (failure !== undefined) throw injected();
       send(response);
     } catch (error) {
@@ -1081,7 +1118,8 @@ export async function startTerraBaseV1Fixture(options = {}) {
         return;
       }
       if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
-      res.end(stringify({ error: { code: "fixture_failure", message: String(error) } }));
+      // An unexpected fault: api-v1.md's 500 internal_error.
+      res.end(stringify({ error: { code: "internal_error", message: String(error) } }));
     }
   }
 
@@ -1111,6 +1149,26 @@ export async function startTerraBaseV1Fixture(options = {}) {
     /** @param {InjectedFailure} failure */
     failNext(failure) {
       failures.push(failure);
+    },
+    /**
+     * Issues another data key with the given grant.
+     * @param {FixtureGrant} grant
+     * @returns {string}
+     */
+    issueKey(grant) {
+      const id = String(++keyCounter).padStart(22, "k");
+      const token = `tbk1.${id}.${randomBytes(32).toString("base64url").slice(0, 43)}`;
+      keys.set(token, { grant, revoked: false });
+      return token;
+    },
+    /**
+     * Revokes a data key; its next request fails with 401 invalid_key.
+     * @param {string} token
+     */
+    revokeKey(token) {
+      const record = keys.get(token);
+      if (record === undefined) throw new Error("unknown key");
+      record.revoked = true;
     },
     /** @param {string} shapeId */
     rotateShapeHandle(shapeId) {

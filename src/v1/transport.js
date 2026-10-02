@@ -1,6 +1,7 @@
 // Internal typed transport for the TerraBase v1 client. It is not exported
 // from any package entrypoint: callers reach it only through named operations.
 import { parseV1Error } from "./errors.js";
+import { newIdempotencyKey } from "./ids.js";
 import { parseExactJson } from "./json.js";
 import { v1Route, v1RoutePath } from "./routes.js";
 /**
@@ -32,12 +33,17 @@ const transient503 = new Set([
  * - `fetch`: a fetch implementation; defaults to `globalThis.fetch`.
  * - `maxRetries`: retry budget for 429 and retryable 503s (default 3, 0 disables).
  * - `maxResponseBytes`: bound for one response body (default 64 MiB).
+ * - `autoIdempotencyKey`: give every mutation (put, create, patch, delete,
+ *   transaction commit) that has no `idempotencyKey` a fresh random one, so
+ *   transport failures, transient 503s, `commit_uncertain` and
+ *   `internal_error` are retried with the same key (default false).
  * @typedef {object} TerraBaseV1ClientConfig
  * @property {string} baseUrl
  * @property {string} token
- * @property {FetchLike} [fetch]
- * @property {number} [maxRetries]
- * @property {number} [maxResponseBytes]
+ * @property {FetchLike | undefined} [fetch]
+ * @property {number | undefined} [maxRetries]
+ * @property {number | undefined} [maxResponseBytes]
+ * @property {boolean | undefined} [autoIdempotencyKey]
  */
 
 /**
@@ -139,8 +145,10 @@ export function sleep(ms, signal) {
 /**
  * The contract retry policy: 429 is always retried (the request was not
  * admitted); capacity, storage_unavailable and dependencies_unavailable only
- * for replay-safe requests (reads, queries, shape reads and keyed writes);
- * commit_uncertain only with an Idempotency-Key. Nothing else is retried.
+ * for replay-safe requests (reads, queries, the shape gatekeeper, shape reads
+ * and keyed writes); commit_uncertain (503) and internal_error (500) only with
+ * an Idempotency-Key. Nothing else is retried; in particular the edge's 502
+ * and 504 are not.
  * @param {TerraBaseV1Error} error
  * @param {number} attempt
  * @param {{ readonly replaySafe: boolean; readonly keyed: boolean }} request
@@ -151,7 +159,8 @@ export function retryDelayMs(error, attempt, request) {
     error.status === 429 ||
     (error.status === 503 &&
       ((transient503.has(error.code) && (request.replaySafe || request.keyed)) ||
-        (error.code === "commit_uncertain" && request.keyed)));
+        (error.code === "commit_uncertain" && request.keyed))) ||
+    (error.status === 500 && error.code === "internal_error" && request.keyed);
   if (!retryable) return undefined;
   return error.retryAfter === undefined
     ? backoffMs(attempt)
@@ -170,6 +179,8 @@ export class V1Transport {
   #maxRetries;
   /** @type {number} */
   #maxResponseBytes;
+  /** @type {boolean} */
+  #autoIdempotencyKey;
 
   /** @param {TerraBaseV1ClientConfig} config */
   constructor(config) {
@@ -188,6 +199,9 @@ export class V1Transport {
     const maxResponseBytes = config.maxResponseBytes ?? defaultMaximumResponseBytes;
     if (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1)
       throw new TypeError("maxResponseBytes must be a positive integer.");
+    if (config.autoIdempotencyKey !== undefined && typeof config.autoIdempotencyKey !== "boolean")
+      throw new TypeError("autoIdempotencyKey must be a boolean.");
+    this.#autoIdempotencyKey = config.autoIdempotencyKey === true;
     this.#base = `${url.origin}${url.pathname.replace(/\/+$/u, "")}`;
     this.#token = config.token;
     this.#fetch = fetchHandler;
@@ -312,7 +326,8 @@ export class V1Transport {
     const url = `${this.#base}${v1RoutePath(route, params)}`;
     if (options.body !== undefined && new TextEncoder().encode(options.body).byteLength > maximumRequestBytes)
       throw new TypeError(`TerraBase request bodies are limited to ${maximumRequestBytes} bytes.`);
-    const idempotencyKey = requireIdempotencyKey(options.idempotencyKey);
+    const idempotencyKey = requireIdempotencyKey(options.idempotencyKey) ??
+      (this.#autoIdempotencyKey && route.idempotencyKey === "optional" ? newIdempotencyKey() : undefined);
     const keyed = idempotencyKey !== undefined;
     const replaySafe = route.replaySafe || keyed;
     for (let attempt = 0; ; attempt++) {

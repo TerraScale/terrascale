@@ -87,7 +87,16 @@ export {
   V1Transaction,
 } from "./v1/terrabase-v1.js";
 export { V1ShapeSubscription } from "./v1/shapes.js";
-export { TerraBaseV1Error } from "./v1/errors.js";
+export {
+  TerraBaseV1Error,
+  V1PreconditionFailedError,
+  V1UniqueViolationError,
+  V1InvalidKeyError,
+  V1ForbiddenScopeError,
+  V1NotFoundError,
+  V1ErrorCode,
+  isTerraBaseV1Error,
+} from "./v1/errors.js";
 export { v1Filter } from "./v1/filter.js";
 export { documentIdFor, newIdempotencyKey } from "./v1/ids.js";
 export { ExactDecimal } from "./v1/json.js";

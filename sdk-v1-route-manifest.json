@@ -3,12 +3,13 @@
   "contractVersion": "terrabase-documents-v1",
   "contractSource": {
     "producer": "terrabase",
-    "revision": "d477861606d0c504a445d6eff09e053be7897f82",
+    "branch": "feat/v1-contracts",
+    "revision": "7bc74f9d224167ff2dc6b815965305feca210c00",
     "status": "frozen contract documents; producer OpenAPI and runtime qualification pending",
     "documents": {
-      "api-v1.md": "181fe1068a84eca7ae82b2770ebb4027f5de1388a4b942517d020a8b543cf644",
+      "api-v1.md": "04f494248d8f3221675b26e997f8765b957e2b3f1bb19e6fa091f97b499420d5",
       "query-v1.md": "c5b0bdf07bd37b62c954526bc17af7cfbf22ed30f5545c5e23da68d2cb3a3e39",
-      "shapes-v1.md": "816efb41e33eea877a72b1abd52ba1952b4e37691a0c87b4e366dc71daf12914"
+      "shapes-v1.md": "be919ff760e5793eec5b9e249c4b1e18d0b306aecf418d1a3cd6c48b0b244106"
     }
   },
   "routeCount": 10,
@@ -178,10 +179,11 @@
         201
       ],
       "idempotencyKey": "none",
-      "replaySafe": false,
+      "replaySafe": true,
       "contract": "shapes-v1.md",
       "contractText": [
-        "`POST /v1/databases/{db}/shapes`"
+        "`POST /v1/databases/{db}/shapes`",
+        "gatekeeper stores nothing, so clients may retry it like a read"
       ]
     },
     {
@@ -223,5 +225,43 @@
         "`GET /v1/shapes/{shape_id}/sse?handle=…&offset=…`"
       ]
     }
+  ],
+  "errorCodes": [
+    "assert_requires_index",
+    "capacity",
+    "commit_uncertain",
+    "conflict_unresolved",
+    "dependencies_unavailable",
+    "forbidden_scope",
+    "home_region_required",
+    "idempotency_conflict",
+    "idempotency_expired",
+    "index_limit_exceeded",
+    "internal_error",
+    "invalid_cursor",
+    "invalid_key",
+    "invalid_patch",
+    "invalid_query",
+    "invalid_request",
+    "invalid_token",
+    "method_not_allowed",
+    "must_refetch",
+    "not_found",
+    "patch_conflict",
+    "payload_too_large",
+    "precondition_failed",
+    "rate_limited",
+    "schema_changed",
+    "sort_requires_index",
+    "storage_unavailable",
+    "stored_corruption",
+    "transaction_too_large",
+    "ttl_invalid",
+    "unique_violation",
+    "unknown_collection",
+    "unknown_database",
+    "unknown_route",
+    "unsupported_media_type",
+    "upstream_unavailable"
   ]
 }
