@@ -67,6 +67,9 @@ jobs:
       - name: Check the route manifest
         run: npm run check:route-manifest
 
+      - name: Check the v1 route manifest
+        run: npm run check:v1-route-manifest
+
       - name: Check the forbidden SDK surface
         run: npm run check:forbidden-surface
 

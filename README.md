@@ -141,3 +141,76 @@ for example `https://gru.api.terrascale.tech`. The global API host and retired
 root regional hosts cannot serve as native origins. Auth uses its separate
 `.auth.terrascale.tech` namespace. Direct independent origins must use ASCII
 hostnames; percent-encoded and Unicode hostname aliases are rejected.
+
+## TerraBase v1 documents, queries and shapes
+
+`createTerraBaseV1Client` targets the name-based TerraBase v1 Documents API
+(terrabase `docs/api-v1.md`, `docs/query-v1.md`, `docs/shapes-v1.md`). It sits
+beside the UUID/shard native client above, which stays until those routes are
+removed. It needs a `tbk1` data key; the key is held privately and is sent only
+as `Authorization` to `baseUrl` (HTTPS, or HTTP on loopback).
+
+```js
+import { createTerraBaseV1Client, documentIdFor, newIdempotencyKey, v1Filter } from "terrascale";
+
+const tb = createTerraBaseV1Client({ baseUrl: "https://gru.terrabase.example", token: process.env.TERRABASE_KEY });
+const db = tb.database("main");
+const users = db.collection("users");
+
+const id = await documentIdFor("users", "ana@example.com"); // UUIDv5 natural key
+const written = await users.put(id, { email: "ana@example.com", seats: 1 }, { ifNoneMatchAny: true });
+const doc = await users.get(id); // { id, version, state: "value", document }
+await users.patch(id, { ops: [{ op: "inc", path: "/seats", by: 1 }] }, { ifMatch: doc.version });
+
+await db.transaction()
+  .create("orgs", { name: "Acme" })
+  .assertAbsent("invites", id)
+  .assertCount("access_tokens", v1Filter.eq("/user_id", id), { lte: 24 })
+  .commit({ idempotencyKey: newIdempotencyKey() });
+
+for await (const page of users.pages({ filter: v1Filter.prefix(v1Filter.lower("/email"), "ana"), count: true }))
+  console.log(page.count, page.items.length);
+
+const shape = await db.subscribe({ collection: "users", filter: v1Filter.exists("/email") });
+for await (const event of shape) {
+  if (event.type === "reset") { /* discard local state; a snapshot follows */ }
+  for (const change of event.changes) for (const op of change.ops) console.log(op.op, op.id);
+}
+await shape.waitFor(written.offset); // read-your-writes, from another task
+```
+
+- Documents: `get`, `put`, `create`, `patch` (`{ merge }` or `{ ops }` with
+  `set`, `unset`, `inc`, `append`) and `delete`, with `ifMatch`,
+  `ifNoneMatchAny` and `idempotencyKey`. Writes return `{ id, version, offset,
+  durability, created, location }`; `offset` is a decimal u64 string.
+- Transactions: `create`, `put`, `patch`, `delete`, `assert`, `assertAbsent`
+  and `assertCount`, with per-op preconditions. Failures are
+  `TerraBaseV1Error` values with `status`, `code`, `op` and `constraint`
+  (also `handle`, `retryAfter`, `etag` and the raw `details`).
+- Queries: `v1Filter` builds `and`, `or`, `not`, `eq`, `ne`, `lt`, `lte`,
+  `gt`, `gte`, `in`, `nin`, `exists`, `prefix`, `contains`, `lower` and the
+  `v1Filter.id` (`"$id"`) path. `query` returns one page; `pages` and `items`
+  follow `nextCursor`, sending `count` and `explain` with the first page only.
+- Shapes: `createShape` calls the gatekeeper. `subscribe` long-polls by default
+  (`offset=-1` → 307 → snapshot pages → log → live, echoing
+  `TB-Shape-Cursor`); `{ mode: "sse" }` reads the origin's event stream over
+  fetch and reconnects with `Last-Event-ID`; `{ edge: true }` reads through the
+  edge URL with the shape token and refreshes it before `expiresAt`.
+  `must_refetch` yields a `reset` event and restarts from the snapshot.
+- Exact numbers: responses are parsed with `JSON.parse` source text access. A
+  number is a JavaScript `number` only when that number denotes the same
+  decimal value as the wire text; otherwise it is an `ExactDecimal` holding the
+  exact text (`toString`, `toBigInt`, `equals`, `toNumber`). `ExactDecimal`
+  and `bigint` values are written back exactly with `JSON.rawJSON`. This needs
+  Node.js 22+ or a current browser.
+- Retries follow the contract: `429` after `Retry-After`; `capacity`,
+  `storage_unavailable` and `dependencies_unavailable` only for reads,
+  queries, shape reads and writes with an `idempotencyKey`;
+  `commit_uncertain` only with an `idempotencyKey`. Nothing else is retried.
+
+`sdk-v1-route-manifest.json` is generated from the client's route table and
+pins the contract documents by SHA-256 (`npm run check:v1-route-manifest`;
+set `TERRABASE_V1_CONTRACT_DIR` to the terrabase `docs` directory to verify the
+digests). The v1 integration tests (`test/v1-*.test.js`) run against an
+in-test HTTP loopback contract fixture until a packaged tb-server serves v1;
+they are not evidence of producer behavior.
