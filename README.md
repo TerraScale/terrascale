@@ -5,6 +5,112 @@ transaction status, and snapshot/poll subscriptions. Native requests use the
 producer's UUID-scoped `/v1` protocol. Pure schema and SQL builders, product
 clients, and hosted TSAuth clients are separate surfaces.
 
+## TerraBase v1 client (`terrascale.tech/sdk/v1`)
+
+Package `v1` is the name-based client for the frozen TerraBase v1 contracts
+(`api-v1.md`, `query-v1.md`, `shapes-v1.md` and `control-plane-v1.md` in the
+terrabase repository). It addresses databases and collections by name, has no
+capability gate on conditional writes or multi-op transactions, and lives
+beside the UUID/shard native client below, which stays until tb-server removes
+the old routes.
+
+```go
+import tb "terrascale.tech/sdk/v1"
+
+c, err := tb.New(tb.Config{BaseURL: "https://gru.terrabase.example", Token: dataKey})
+users := c.Database("main").Collection("users")
+
+res, err := users.Create(ctx, map[string]any{"email": "ana@example.com"}) // server UUIDv7
+doc, err := users.Get(ctx, res.ID)
+var body map[string]any
+err = doc.Decode(&body) // numbers decode as json.Number, never float64
+
+id := tb.DocumentIDFor("users", "ana@example.com") // deterministic UUIDv5 natural key
+_, err = users.Put(ctx, id, body, tb.IfNoneMatchAny(), tb.IdempotencyKey("signup-ana"))
+_, err = users.Patch(ctx, id, tb.Ops(tb.Inc("/logins", 1), tb.Append("/tags", "beta")), tb.IfMatch(doc.Version))
+_, err = users.Patch(ctx, id, tb.MergePatch(map[string]any{"legacy": nil}))
+_, err = users.Delete(ctx, id, tb.IfMatch(version))
+```
+
+Every write returns `WriteResult{ID, Version, Offset, Durability}`. Errors are
+`*tb.APIError{Status, Code, Message, Op, Constraint, Handle, RetryAfter, ETag}`,
+and every error code is also an error value for `errors.Is`, for example
+`tb.ErrNotFound`, `tb.ErrPreconditionFailed`, `tb.ErrUniqueViolation` or
+`tb.ErrMustRefetch`. A 404 for a deleted document carries the tombstone version
+in `ETag`, which recreates it with `IfMatch`.
+
+Retries: 429 is retried after `Retry-After`; `503 commit_uncertain` and
+transport errors are retried only for reads, queries and mutations that carry
+an `Idempotency-Key` (the retry then returns the original response). Set
+`Config.MaxRetries` to change the budget.
+
+Transactions apply up to 1024 ops atomically; failures name the op index:
+
+```go
+res, err := c.Database("main").Tx().
+	Create("users", "", map[string]any{"email": "bia@example.com"}).
+	Patch("projects", projectID, tb.Ops(tb.Inc("/db_count", 1)), tb.IfMatch(v)).
+	Assert("plans", planID, tb.Eq("/visible", true)).
+	AssertAbsent("invites", inviteID).
+	Commit(ctx, tb.IdempotencyKey("tx-42"))
+var apiErr *tb.APIError
+if errors.As(err, &apiErr) {
+	op, _ := apiErr.OpIndex() // failing op, plus apiErr.Constraint for unique_violation
+}
+```
+
+Queries use filter constructors (`And`, `Or`, `Not`, `Eq`, `Ne`, `Lt`, `Lte`,
+`Gt`, `Gte`, `In`, `Nin`, `Exists`, `Prefix`, `Contains`), paths as JSON
+Pointers, `tb.IDPath` or `tb.Lower(path)`, and page with keyset cursors:
+
+```go
+q := tb.Query{Filter: tb.And(tb.Eq("/org_id", org), tb.Gte("/created_at", json.Number("1759363200000"))),
+	Sort: []tb.SortKey{tb.Desc("/created_at")}, Project: []string{"/email"}, Limit: 50, Count: true}
+for doc, err := range users.Items(ctx, q) { … }     // every match across pages
+for page, err := range users.Pages(ctx, q) { … }    // page.NextCursor, page.Count
+plan, err := users.Query(ctx, tb.Query{Filter: f, Explain: tb.ExplainAnalyze}) // plan.Explain is raw JSON
+```
+
+Shapes are reactive queries. `Subscribe` calls the gatekeeper and follows the
+log: `offset=-1` → 307 → snapshot pages → log chunks → live long-polls echoing
+`TB-Shape-Cursor`. A `409 must_refetch` yields an `EventReset` (discard local
+state) and restarts from a snapshot. `WithSSE()` reads the origin's
+server-sent events instead (resuming with `Last-Event-ID`); `ViaEdge()` reads
+through the edge URL with the shape token and refreshes it through the
+gatekeeper before `expires_at`. `WaitFor` gives read-your-writes:
+
+```go
+sub, err := db.Subscribe(ctx, tb.ShapeRequest{Collection: "notifications", Filter: tb.Eq("/user_id", uid)})
+defer sub.Close()
+go func() {
+	for ev, err := range sub.Events(ctx) { apply(ev) } // EventChanges, EventUpToDate, EventReset
+}()
+res, _ := notifications.Put(ctx, id, doc)
+err = sub.WaitFor(ctx, res.Offset) // the consumer has handled this write
+```
+
+The control plane uses a control key. Every mutation takes an explicit
+idempotency key, which the server requires; keep it to retry the same
+mutation, or generate one with `tb.NewIdempotencyKey()`:
+
+```go
+d, err := tb.NewDashboard(tb.Config{BaseURL: origin, Token: controlKey})
+t, err := d.CreateTenant(ctx, tb.NewIdempotencyKey(), tb.CreateTenantRequest{Name: "Acme", ExternalRef: "proj_123"})
+db, err := d.CreateDatabase(ctx, tb.NewIdempotencyKey(), t.ID, tb.CreateDatabaseRequest{Name: "main"})
+key, err := d.CreateKey(ctx, tb.NewIdempotencyKey(), t.ID, tb.CreateKeyRequest{Name: "server",
+	Grants: []tb.Grant{{Database: "main", Collections: []string{"*"}, Permissions: []string{"read", "write", "shape"}}}})
+op, err := d.DeleteDatabase(ctx, tb.NewIdempotencyKey(), t.ID, "old")
+op, err = d.WaitOperation(ctx, op.ID, time.Second)
+```
+
+It also covers usage, collections and stats, indexes and index decisions, key
+rotation and revocation, edge keys, advisors, regions and audit.
+
+The v1 tests run in the normal `go test -race ./...` suite against an in-test
+HTTPS contract fixture (`v1/fixture_*_test.go`) that implements the contract's
+wire format; it will be replaced by the packaged tb-server once the v1 routes
+ship.
+
 ## Native data client
 
 Configure the provisioned native `tbk1` credential. The SDK asks Atlas for an
