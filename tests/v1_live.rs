@@ -75,13 +75,6 @@ async fn live_provision_crud_query_and_revoke() {
         )
         .await
         .unwrap();
-    assert_eq!(
-        ctl.find_tenant(&tenant.external_ref)
-            .await
-            .unwrap()
-            .map(|t| t.id),
-        Some(tenant.id.clone())
-    );
     // Run the checks in a task so a failure still reaches the cleanup.
     let outcome = tokio::spawn(exercise(l, run.clone(), ctl.clone(), tenant.id.clone())).await;
     cleanup(&ctl, &k, &tenant.id).await;
@@ -127,6 +120,13 @@ async fn cleanup(ctl: &ControlClient, k: &impl Fn(&str) -> IdempotencyKey, tenan
 
 async fn exercise(l: Live, run: IdempotencyKey, ctl: ControlClient, tenant_id: String) {
     let k = |step: &str| IdempotencyKey::derive(&[run.as_str(), step]);
+    assert_eq!(
+        ctl.find_tenant(&format!("tsrust_{run}"))
+            .await
+            .unwrap()
+            .map(|t| t.id),
+        Some(tenant_id.clone())
+    );
     let db = ctl
         .create_database(
             &k("db"),

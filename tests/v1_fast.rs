@@ -1269,7 +1269,14 @@ async fn oversized_responses_are_not_retried() {
         .await
         .unwrap_err();
     assert!(
-        matches!(err, Error::ResponseTooLarge { limit: 1024 }),
+        matches!(
+            err,
+            Error::ResponseTooLarge {
+                limit: 1024,
+                status: 200,
+                may_have_applied: false
+            }
+        ),
         "{err:?}"
     );
     assert!(!err.is_uncertain());
@@ -1635,4 +1642,286 @@ async fn tenant_updates_validate_before_applying() {
         matches!(&err, Error::Api { status: 400, code, .. } if code == "invalid_request"),
         "{err:?}"
     );
+}
+
+async fn raw_post(f: &Fixture, path: &str, body: &str) -> (u16, serde_json::Value) {
+    let http = reqwest::Client::builder()
+        .add_root_certificate(reqwest::Certificate::from_pem(f.ca_pem.as_bytes()).unwrap())
+        .build()
+        .unwrap();
+    let resp = http
+        .post(format!("{}{path}", f.url))
+        .bearer_auth(&f.data_token)
+        .header("content-type", "application/json")
+        .body(body.to_owned())
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status().as_u16();
+    (status, resp.json().await.unwrap_or(serde_json::Value::Null))
+}
+
+#[tokio::test]
+async fn oversized_mutation_responses_are_uncertain() {
+    let f = Fixture::start().await;
+    let small = Client::builder(&f.url, &f.data_token)
+        .add_root_ca_pem(&f.ca_pem)
+        .max_response_bytes(16)
+        .build()
+        .unwrap();
+    let items = small.database("main").collection("items");
+    let docs = "/v1/databases/main/collections/items/documents";
+    let id = uuidv5_for("items", "ack");
+
+    // A committed write whose acknowledgment is too large.
+    let err = items
+        .put(id, &json!({"a": 1}), WriteOptions::new())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::ResponseTooLarge {
+                status: 201,
+                may_have_applied: true,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert!(err.is_uncertain());
+    assert!(data(&f)
+        .database("main")
+        .collection("items")
+        .get::<Box<RawValue>>(id)
+        .await
+        .is_ok());
+
+    // An oversized commit_uncertain body, keyed: still not retried, still uncertain.
+    let mut fault = Fault::new("POST", docs, 503, "commit_uncertain");
+    fault.body =
+        Some(r#"{"error":{"code":"commit_uncertain","message":"xxxxxxxxxxxxxxxxxxxxxxxx"}}"#);
+    f.inject(fault);
+    let before = f.count("POST", docs);
+    let err = items
+        .create(
+            &json!({}),
+            WriteOptions::new().idempotency_key(key("big-503")),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::ResponseTooLarge {
+                status: 503,
+                may_have_applied: true,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert!(err.is_uncertain());
+    assert_eq!(f.count("POST", docs) - before, 1);
+
+    // A 4xx was not applied.
+    let mut fault = Fault::new("PUT", docs, 412, "precondition_failed");
+    fault.body = Some(r#"{"error":{"code":"precondition_failed","message":"xxxxxxxxxxxx"}}"#);
+    f.inject(fault);
+    let err = items
+        .put(id, &json!({}), WriteOptions::new())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::ResponseTooLarge {
+                status: 412,
+                may_have_applied: false,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert!(!err.is_uncertain());
+}
+
+#[tokio::test]
+async fn retry_after_http_dates_are_honoured() {
+    let f = Fixture::start().await;
+    let docs = "/v1/databases/main/collections/items/documents";
+    let mut fault = Fault::new("PUT", docs, 429, "rate_limited");
+    fault.retry_after = Some("Wed, 21 Oct 2015 07:28:00 GMT");
+    f.inject(fault.clone());
+    let id = uuidv5_for("items", "date");
+    let items = data(&f).database("main").collection("items");
+    items
+        .put(id, &json!({}), WriteOptions::new())
+        .await
+        .unwrap();
+    assert_eq!(f.faults_left(), 0);
+    f.inject(fault);
+    let strict = Client::builder(&f.url, &f.data_token)
+        .add_root_ca_pem(&f.ca_pem)
+        .retry_policy(RetryPolicy::none())
+        .build()
+        .unwrap();
+    let err = strict
+        .database("main")
+        .collection("items")
+        .put(id, &json!({}), WriteOptions::new())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::RateLimited { retry_after: Some(d) } if d == Duration::ZERO),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn number_exponents_are_bounded_and_kept_exact() {
+    let f = Fixture::start().await;
+    let items = data(&f).database("main").collection("items");
+    let raw = RawValue::from_string(r#"{"ten":1e0000000001,"zero":0e5}"#.into()).unwrap();
+    let w = items.create(&raw, WriteOptions::new()).await.unwrap();
+    let doc = items.get::<Box<RawValue>>(w.id).await.unwrap();
+    assert_eq!(
+        doc.value().unwrap().get(),
+        r#"{"ten":1e0000000001,"zero":0e5}"#
+    );
+    let users = data(&f).database("main").collection("users");
+    for body in [r#"{"email":1e999999999}"#, r#"{"email":1e1025}"#] {
+        let err = users
+            .create(
+                &RawValue::from_string(body.into()).unwrap(),
+                WriteOptions::new(),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, Error::Api { status: 400, code, .. } if code == "invalid_request"),
+            "{body}: {err:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn control_resources_named_query_stay_idempotent() {
+    let f = Fixture::start().await;
+    let ctl = control(&f);
+    ctl.create_collection(
+        &key("coll-query"),
+        &f.tenant_id,
+        "main",
+        &CreateCollection {
+            name: "query".into(),
+            ..CreateCollection::default()
+        },
+    )
+    .await
+    .unwrap();
+    let a = ctl
+        .delete_collection(&key("del-query"), &f.tenant_id, "main", "query")
+        .await
+        .unwrap();
+    let b = ctl
+        .delete_collection(&key("del-query"), &f.tenant_id, "main", "query")
+        .await
+        .unwrap();
+    assert_eq!(a.id, b.id, "the replay returns the original operation");
+}
+
+#[tokio::test]
+async fn invalid_collections_and_pointers_are_rejected() {
+    let f = Fixture::start().await;
+    let tx = "/v1/databases/main/transactions";
+    for body in [
+        r#"{"ops":[{"op":"assert_count","filter":{"exists":"/a"},"lte":1}]}"#,
+        r#"{"ops":[{"op":"create","collection":"","document":{}}]}"#,
+        r#"{"ops":[{"op":"create","collection":7,"document":{}}]}"#,
+    ] {
+        let (status, e) = raw_post(&f, tx, body).await;
+        assert_eq!(
+            (
+                status,
+                e["error"]["code"].as_str(),
+                e["error"]["op"].as_u64()
+            ),
+            (400, Some("invalid_request"), Some(0)),
+            "{body}"
+        );
+    }
+    // The fixture is still healthy.
+    let items = data(&f).database("main").collection("items");
+    let w = items
+        .create(&json!({"a": 1}), WriteOptions::new())
+        .await
+        .unwrap();
+
+    for op in [
+        PatchOp::unset("name"),
+        PatchOp::set("/a~2", &1).unwrap(),
+        PatchOp::unset("/a~"),
+    ] {
+        let err = items
+            .patch(w.id, &Patch::ops(vec![op]), WriteOptions::new())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, Error::Api { status: 400, code, .. } if code == "invalid_patch"),
+            "{err:?}"
+        );
+    }
+    let err = items
+        .query::<Box<RawValue>>(&Query::new().filter(Filter::eq("/a~", 1)))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Api { status: 400, code, .. } if code == "invalid_query"),
+        "{err:?}"
+    );
+    items
+        .patch(
+            w.id,
+            &Patch::ops(vec![PatchOp::set("/a~1b~0", &2).unwrap()]),
+            WriteOptions::new(),
+        )
+        .await
+        .unwrap();
+    let doc = items
+        .get::<serde_json::Value>(w.id)
+        .await
+        .unwrap()
+        .into_value()
+        .unwrap();
+    assert_eq!(doc, json!({"a": 1, "a/b~": 2}));
+}
+
+#[tokio::test]
+async fn cursors_distinguish_present_values_from_missing_keys() {
+    let f = Fixture::start().await;
+    let items = data(&f).database("main").collection("items");
+    for k in ["x", "y"] {
+        items
+            .put(
+                uuidv5_for("items", k),
+                &json!({"v": {"m": 1}}),
+                WriteOptions::new(),
+            )
+            .await
+            .unwrap();
+    }
+    items
+        .put(uuidv5_for("items", "z"), &json!({}), WriteOptions::new())
+        .await
+        .unwrap();
+    let all = items
+        .query_all::<Box<RawValue>>(Query::new().sort(SortKey::asc("/v")).limit(1), 10)
+        .await
+        .unwrap();
+    let mut ids: Vec<_> = all.iter().map(|d| d.id).collect();
+    assert_eq!(ids.len(), 3, "{ids:?}");
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 3);
 }

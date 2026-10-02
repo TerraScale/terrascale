@@ -650,6 +650,15 @@ fn render(r: Reply) -> hyper::Response<Full<Bytes>> {
     }
 }
 
+fn valid_name(s: &str) -> bool {
+    let b = s.as_bytes();
+    !b.is_empty()
+        && b.len() <= 63
+        && b[0].is_ascii_lowercase()
+        && b.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'_' | b'-'))
+}
+
 fn valid_idem(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
@@ -691,7 +700,11 @@ fn wrap(
     if let Some(f) = st.take_fault(ctx.method, ctx.path, false) {
         return f;
     }
-    let mutation = ctx.method != "GET" && !ctx.path.ends_with("/query");
+    // Only the data-plane POST …/collections/{c}/query is a read; a control
+    // resource may itself be named `query`.
+    let data_query = ctx.method == "POST"
+        && matches!(ctx.segs.as_slice(), [v, d, _, c, _, q] if v == "v1" && d == "databases" && c == "collections" && q == "query");
+    let mutation = ctx.method != "GET" && !data_query;
     let mut slot = None;
     if mutation {
         match idem {
@@ -1230,13 +1243,27 @@ fn merge_patch(target: &mut Obj, patch: &Obj) {
     }
 }
 
+/// Splits an RFC 6901 pointer; `None` for invalid syntax (no leading `/`,
+/// or `~` not followed by `0` or `1`).
 fn split_pointer(p: &str) -> Option<Vec<String>> {
     let rest = p.strip_prefix('/')?;
-    Some(
-        rest.split('/')
-            .map(|s| s.replace("~1", "/").replace("~0", "~"))
-            .collect(),
-    )
+    rest.split('/')
+        .map(|seg| {
+            let mut out = String::with_capacity(seg.len());
+            let mut chars = seg.chars();
+            while let Some(c) = chars.next() {
+                match c {
+                    '~' => match chars.next()? {
+                        '0' => out.push('~'),
+                        '1' => out.push('/'),
+                        _ => return None,
+                    },
+                    c => out.push(c),
+                }
+            }
+            Some(out)
+        })
+        .collect()
 }
 
 fn lookup<'a>(obj: &'a Obj, pointer: &str) -> Option<&'a J> {
@@ -1277,7 +1304,7 @@ fn apply_ops(obj: &mut Obj, ops: &[J]) -> Result<(), Reply> {
             "inc" => &["op", "path", "by"],
             _ => return Err(err(400, "invalid_patch")),
         };
-        if o.keys().any(|k| !allowed.contains(&k.as_str())) {
+        if o.keys().any(|k| !allowed.contains(&k.as_str())) || split_pointer(path).is_none() {
             return Err(err(400, "invalid_patch"));
         }
         let Some((parent, last)) = parent_mut(obj, path, kind != "unset") else {
@@ -1374,7 +1401,13 @@ fn transaction(st: &mut State, key: &Key, db: &str, body: &[u8]) -> Reply {
         } else {
             "write"
         };
-        let coll = o.get("collection").and_then(J::as_str).unwrap_or("");
+        let Some(coll) = o
+            .get("collection")
+            .and_then(J::as_str)
+            .filter(|c| valid_name(c))
+        else {
+            return err_op(400, "invalid_request", i);
+        };
         if let Err(r) = tenant_db(st, key, db, coll, perm) {
             return set_op(r, i);
         }
@@ -1886,7 +1919,10 @@ fn query(st: &mut State, key: &Key, db: &str, coll: &str, body: &[u8]) -> Reply 
             .cloned()
             .unwrap_or_default()
             .into_iter()
-            .map(|v| if v == missing_marker() { None } else { Some(v) })
+            .map(|v| match v {
+                J::Obj(mut m) if m.len() == 1 && m.contains_key("p") => m.remove("p"),
+                _ => None,
+            })
             .chain(std::iter::once(Some(cv["id"].clone())))
             .collect();
         if pos.len() != paths.len() + 1 {
@@ -1906,7 +1942,11 @@ fn query(st: &mut State, key: &Key, db: &str, coll: &str, body: &[u8]) -> Reply 
         let (keys, id, _) = &rows[end - 1];
         let k: Vec<J> = keys[..paths.len()]
             .iter()
-            .map(|v| v.clone().unwrap_or_else(missing_marker))
+            .map(|v| match v {
+                // Tagged so a present value can never read as missing.
+                Some(v) => J::Obj(Obj::from([("p".to_owned(), v.clone())])),
+                None => J::Obj(Obj::from([("m".to_owned(), J::Num("1".into()))])),
+            })
             .collect();
         let cursor = J::Obj(Obj::from([
             ("d".to_owned(), J::Str(digest.clone())),
@@ -1927,11 +1967,6 @@ fn query(st: &mut State, key: &Key, db: &str, coll: &str, body: &[u8]) -> Reply 
         headers: Vec::new(),
         body: Some(out),
     }
-}
-
-/// Encodes a missing sort key in a cursor.
-fn missing_marker() -> J {
-    J::Obj(Obj::from([("m".to_owned(), J::Num("1".into()))]))
 }
 
 // ---- control plane ----------------------------------------------------------

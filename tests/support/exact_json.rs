@@ -64,7 +64,11 @@ impl J {
             b'f' => J::Bool(false),
             b'n' => J::Null,
             _ => {
-                Dec::parse(t)?;
+                // Out-of-range numbers (more than 128 digits or a scale
+                // beyond ±1024) are rejected, so no later step expands them.
+                if !Dec::parse(t)?.in_range() {
+                    return None;
+                }
                 J::Num(t.to_owned())
             }
         })
@@ -222,10 +226,15 @@ impl Dec {
             while i < b.len() && b[i].is_ascii_digit() {
                 i += 1;
             }
-            if s == i || i - s > 9 {
+            if s == i {
                 return None;
             }
-            exp = std::str::from_utf8(&b[s..i]).ok()?.parse().ok()?;
+            // Leading exponent zeros are valid JSON; bound the magnitude only.
+            let sig = std::str::from_utf8(&b[s..i]).ok()?.trim_start_matches('0');
+            if sig.len() > 9 {
+                return None;
+            }
+            exp = if sig.is_empty() { 0 } else { sig.parse().ok()? };
             if eneg {
                 exp = -exp;
             }

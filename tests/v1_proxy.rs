@@ -20,9 +20,19 @@ async fn listener(hits: Arc<AtomicUsize>, seen_auth: Arc<AtomicUsize>) -> u16 {
             hits.fetch_add(1, Ordering::SeqCst);
             let seen_auth = seen_auth.clone();
             tokio::spawn(async move {
-                let mut buf = vec![0u8; 8192];
-                let n = s.read(&mut buf).await.unwrap_or(0);
-                if String::from_utf8_lossy(&buf[..n])
+                // Read through the end of the headers (bounded, with a timeout).
+                let mut head = Vec::new();
+                let mut buf = [0u8; 1024];
+                let read = async {
+                    while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() < 64 * 1024 {
+                        match s.read(&mut buf).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => head.extend_from_slice(&buf[..n]),
+                        }
+                    }
+                };
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), read).await;
+                if String::from_utf8_lossy(&head)
                     .to_ascii_lowercase()
                     .contains("authorization: bearer tbk1.")
                 {
