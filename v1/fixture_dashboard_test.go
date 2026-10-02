@@ -467,7 +467,7 @@ func (f *fixture) updateCollection(r *http.Request, _ *fxKey, body []byte) fxRep
 	}
 	if raw, ok := members["schema"]; ok {
 		if (string(raw) == "null") != (c.schema == nil) {
-			return fxErr(409, "invalid_schema", "message", "schemaless and enforced collections cannot convert")
+			return fxErr(409, "codec_conversion_unsupported", "message", "schemaless and enforced collections cannot convert")
 		}
 		if c.schema != nil {
 			c.schema = req.Schema

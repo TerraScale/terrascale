@@ -102,12 +102,20 @@ func TestDashboardProvisioningWorkflow(t *testing.T) {
 	}
 	_, err = d.UpdateCollection(ctx, v1.NewIdempotencyKey(), tenant.ID, "main", "users", v1.UpdateCollectionRequest{})
 	must(err)
+	// Codecs never convert: an enforced schema on a schemaless collection fails.
+	_, err = d.CreateCollection(ctx, v1.NewIdempotencyKey(), tenant.ID, "main", v1.CreateCollectionRequest{Name: "loose"})
+	must(err)
+	_, err = d.UpdateCollection(ctx, v1.NewIdempotencyKey(), tenant.ID, "main", "loose",
+		v1.UpdateCollectionRequest{Schema: &v1.Schema{Fields: []v1.Field{{Name: "a", Type: "utf8"}}}})
+	if apiErr := requireCode(t, err, v1.ErrCodecConversion); apiErr.Status != 409 {
+		t.Fatalf("conversion status %d", apiErr.Status)
+	}
 	stats, err := d.CollectionStats(ctx, tenant.ID, "main", "users")
 	if err != nil || len(stats.Paths) != 1 || stats.Paths[0].Types["utf8"] != 0.99 {
 		t.Fatalf("stats: %+v %v", stats, err)
 	}
 	colls, err := d.ListCollections(ctx, tenant.ID, "main", v1.ListOptions{})
-	if err != nil || len(colls.Items) != 1 {
+	if err != nil || len(colls.Items) != 2 {
 		t.Fatalf("collections: %+v %v", colls, err)
 	}
 

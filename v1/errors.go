@@ -56,6 +56,7 @@ const (
 	ErrNameTaken              ErrorCode = "name_taken"
 	ErrIndexProtected         ErrorCode = "index_protected"
 	ErrInvalidSchema          ErrorCode = "invalid_schema"
+	ErrCodecConversion        ErrorCode = "codec_conversion_unsupported" // 409: schemaless and enforced collections never convert
 	ErrLimitExceeded          ErrorCode = "limit_exceeded"
 	ErrIdempotencyKeyRequired ErrorCode = "idempotency_key_required"
 )
