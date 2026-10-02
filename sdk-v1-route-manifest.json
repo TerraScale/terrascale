@@ -3,6 +3,7 @@
   "contractVersion": "terrabase-documents-v1",
   "contractSource": {
     "producer": "terrabase",
+    "branch": "feat/v1-contracts",
     "revision": "7bc74f9d224167ff2dc6b815965305feca210c00",
     "status": "frozen contract documents; producer OpenAPI and runtime qualification pending",
     "documents": {
@@ -178,10 +179,11 @@
         201
       ],
       "idempotencyKey": "none",
-      "replaySafe": false,
+      "replaySafe": true,
       "contract": "shapes-v1.md",
       "contractText": [
-        "`POST /v1/databases/{db}/shapes`"
+        "`POST /v1/databases/{db}/shapes`",
+        "gatekeeper stores nothing, so clients may retry it like a read"
       ]
     },
     {
@@ -223,5 +225,43 @@
         "`GET /v1/shapes/{shape_id}/sse?handle=…&offset=…`"
       ]
     }
+  ],
+  "errorCodes": [
+    "assert_requires_index",
+    "capacity",
+    "commit_uncertain",
+    "conflict_unresolved",
+    "dependencies_unavailable",
+    "forbidden_scope",
+    "home_region_required",
+    "idempotency_conflict",
+    "idempotency_expired",
+    "index_limit_exceeded",
+    "internal_error",
+    "invalid_cursor",
+    "invalid_key",
+    "invalid_patch",
+    "invalid_query",
+    "invalid_request",
+    "invalid_token",
+    "method_not_allowed",
+    "must_refetch",
+    "not_found",
+    "patch_conflict",
+    "payload_too_large",
+    "precondition_failed",
+    "rate_limited",
+    "schema_changed",
+    "sort_requires_index",
+    "storage_unavailable",
+    "stored_corruption",
+    "transaction_too_large",
+    "ttl_invalid",
+    "unique_violation",
+    "unknown_collection",
+    "unknown_database",
+    "unknown_route",
+    "unsupported_media_type",
+    "upstream_unavailable"
   ]
 }

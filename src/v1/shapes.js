@@ -145,16 +145,15 @@ function decodeChanges(value) {
 }
 
 /**
- * Shape reads retry transport failures, 429, the transient 503s and the
- * edge's 502/504; everything else is returned to the consumer.
+ * Shape reads retry transport failures, 429 and the transient 503s, as the
+ * contract allows for reads. Everything else, including the edge's
+ * `502 upstream_unavailable` and a 504, is returned to the consumer.
  * @param {unknown} error
  * @param {number} attempt
  * @returns {number | undefined}
  */
 function shapeRetryDelayMs(error, attempt) {
   if (!(error instanceof TerraBaseV1Error)) return backoffMs(attempt);
-  if (error.status === 502 || error.status === 504)
-    return error.retryAfter === undefined ? backoffMs(attempt) : Math.min(error.retryAfter * 1000, 30_000);
   return retryDelayMs(error, attempt, { replaySafe: true, keyed: false });
 }
 
@@ -453,7 +452,9 @@ export class V1ShapeSubscription {
     const offset = string(raw.offset, "shape body offset");
     const nextOffset = string(raw.next_offset, "shape body next_offset");
     const upToDate = boolean(raw.up_to_date, "shape body up_to_date");
-    const changes = decodeChanges(raw.changes);
+    // An empty snapshot is a single page whose change has ops:[]; a change
+    // without ops carries nothing to apply, so events list only changes with ops.
+    const changes = Object.freeze(decodeChanges(raw.changes).filter((change) => change.ops.length > 0));
     this.#handle = handle;
     this.#offset = nextOffset;
     this.#live = upToDate && parseU64(nextOffset) !== undefined;

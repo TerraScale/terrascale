@@ -145,7 +145,8 @@ hostnames; percent-encoded and Unicode hostname aliases are rejected.
 ## TerraBase v1 documents, queries and shapes
 
 `createTerraBaseV1Client` targets the name-based TerraBase v1 Documents API
-(terrabase `docs/api-v1.md`, `docs/query-v1.md`, `docs/shapes-v1.md`). It sits
+(terrabase `docs/api-v1.md`, `docs/query-v1.md`, `docs/shapes-v1.md` on
+`feat/v1-contracts` at `7bc74f9d`). It sits
 beside the UUID/shard native client above, which stays until those routes are
 removed. It needs a `tbk1` data key; the key is held privately and is sent only
 as `Authorization` to `baseUrl` (HTTPS, or HTTP on loopback).
@@ -184,9 +185,15 @@ await shape.waitFor(written.offset); // read-your-writes, from another task
   `ifNoneMatchAny` and `idempotencyKey`. Writes return `{ id, version, offset,
   durability, created, location }`; `offset` is a decimal u64 string.
 - Transactions: `create`, `put`, `patch`, `delete`, `assert`, `assertAbsent`
-  and `assertCount`, with per-op preconditions. Failures are
-  `TerraBaseV1Error` values with `status`, `code`, `op` and `constraint`
-  (also `handle`, `retryAfter`, `etag` and the raw `details`).
+  and `assertCount` (a filter and `gte` and/or `lte` are required), with
+  per-op preconditions (`patch` and `delete` take only `ifMatch`).
+- Errors: every failure is a `TerraBaseV1Error` with `status`, `code`, `op`
+  and `constraint` (also `handle`, `retryAfter`, `etag` and the raw
+  `details`). The common cases are subclasses: `V1PreconditionFailedError`
+  (412), `V1UniqueViolationError` (409, with `constraint`),
+  `V1InvalidKeyError` (401 `invalid_key`), `V1ForbiddenScopeError` (403) and
+  `V1NotFoundError` (404). `V1ErrorCode` lists every contract code and
+  `isTerraBaseV1Error(error, code)` narrows one.
 - Queries: `v1Filter` builds `and`, `or`, `not`, `eq`, `ne`, `lt`, `lte`,
   `gt`, `gte`, `in`, `nin`, `exists`, `prefix`, `contains`, `lower` and the
   `v1Filter.id` (`"$id"`) path. `query` returns one page; `pages` and `items`
@@ -205,12 +212,25 @@ await shape.waitFor(written.offset); // read-your-writes, from another task
   Node.js 22+ or a current browser.
 - Retries follow the contract: `429` after `Retry-After`; `capacity`,
   `storage_unavailable` and `dependencies_unavailable` only for reads,
-  queries, shape reads and writes with an `idempotencyKey`;
-  `commit_uncertain` only with an `idempotencyKey`. Nothing else is retried.
+  queries, the shape gatekeeper, shape reads and writes with an
+  `idempotencyKey`; `commit_uncertain` (503) and `internal_error` (500) only
+  with an `idempotencyKey`. Nothing else is retried, including the edge's 502
+  and 504. `createTerraBaseV1Client({ ..., autoIdempotencyKey: true })` gives
+  every unkeyed mutation a fresh key so those outcomes are retried safely.
 
 `sdk-v1-route-manifest.json` is generated from the client's route table and
 pins the contract documents by SHA-256 (`npm run check:v1-route-manifest`;
-set `TERRABASE_V1_CONTRACT_DIR` to the terrabase `docs` directory to verify the
-digests). The v1 integration tests (`test/v1-*.test.js`) run against an
-in-test HTTP loopback contract fixture until a packaged tb-server serves v1;
-they are not evidence of producer behavior.
+set `TERRABASE_REPO` to a terrabase checkout, or `TERRABASE_V1_CONTRACT_DIR`
+to its `docs` directory, to verify the digests, the route declarations and the
+error-code table). Set `TERRABASE_V1_OPENAPI` to the producer's v1 OpenAPI
+file to also require every route there; terrabase has not published a v1
+OpenAPI yet.
+
+The v1 integration tests (`test/v1-*.test.js`) run against an in-test HTTP
+loopback contract fixture, which is not evidence of producer behavior.
+`test/v1-conformance.test.js` also runs against a real tb-server when
+`TB_V1_URL` and `TB_V1_DATA_KEY` are set (and `NODE_EXTRA_CA_CERTS` for a
+private CA); optional `TB_V1_DATABASE` (default `app`), `TB_V1_COLLECTION`
+(default `todos`, with a unique constraint on `/email`),
+`TB_V1_UNIQUE_CONSTRAINT` (default `email`, `""` for none) and
+`TB_V1_REVOKED_KEY`. Without them the live suite is reported as skipped.

@@ -216,6 +216,37 @@ describe("TerraBase v1 shapes", () => {
     }
   });
 
+  test("the gatekeeper is retried like a read; an empty snapshot is up to date without changes", async () => {
+    const database = client.database("empty");
+    const match = (/** @type {{ method: string; path: string }} */ request) =>
+      request.method === "POST" && request.path === "/v1/databases/empty/shapes";
+    fixture.failNext({ match, status: 503, code: "capacity" });
+    const subscription = await database.subscribe({ collection: "notifications" });
+    open.push(subscription);
+    expect(fixture.requests.filter(match)).toHaveLength(2);
+
+    const iterator = subscription[Symbol.asyncIterator]();
+    /** @type {V1ShapeEvent[]} */
+    const seen = [];
+    const first = await until(iterator, (event) => event.upToDate, seen);
+    expect(seen).toEqual([first]);
+    expect(first).toMatchObject({ type: "up-to-date", snapshot: true, changes: [] });
+    const write = await database.collection("notifications").put(await documentIdFor("notifications", "first"), { title: "x" });
+    const live = await until(iterator, (event) => event.changes.length > 0);
+    expect(live.changes[0]?.ops[0]).toMatchObject({ op: "upsert", id: write.id });
+  });
+
+  test("shape reads do not retry 502 upstream_unavailable", async () => {
+    await seed("upstream", "u1", 1);
+    const subscription = await client.database("upstream").subscribe({ collection: "notifications" });
+    open.push(subscription);
+    const shapePath = `/v1/shapes/${subscription.info.shapeId}`;
+    fixture.failNext({ match: (request) => request.path === shapePath, status: 502, code: "upstream_unavailable" });
+    const iterator = subscription[Symbol.asyncIterator]();
+    await expect(within(iterator.next())).rejects.toMatchObject({ status: 502, code: "upstream_unavailable" });
+    expect(fixture.requests.filter((request) => request.path === shapePath)).toHaveLength(1);
+  });
+
   test("close ends iteration and rejects pending waitFor; SSE cannot use the edge", async () => {
     await seed("close", "u1", 1);
     const database = client.database("close");

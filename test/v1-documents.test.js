@@ -4,7 +4,7 @@
 import { inspect } from "node:util";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
-  createTerraBaseV1Client, documentIdFor, ExactDecimal, newIdempotencyKey, TerraBaseV1Error, v1Filter,
+  createTerraBaseV1Client, documentIdFor, ExactDecimal, newIdempotencyKey, TerraBaseV1Error, V1ErrorCode, v1Filter,
 } from "../src/index.js";
 import { startTerraBaseV1Fixture } from "./support/terrabase-v1-fixture.js";
 
@@ -206,6 +206,56 @@ describe("TerraBase v1 retry policy", () => {
     expect(fixture.requests.filter(match).length - before).toBe(1);
   });
 
+  test("500 internal_error is retried only with an Idempotency-Key", async () => {
+    const coll = client.database("main").collection("retry");
+    const match = (/** @type {{ method: string; path: string }} */ request) =>
+      request.method === "POST" && request.path.endsWith("/retry/documents");
+    fixture.failNext({ match, status: 500, code: "internal_error", afterCommit: true });
+    const key = newIdempotencyKey();
+    const keyed = await coll.create({ n: "internal-keyed" }, { idempotencyKey: key });
+    expect(fixture.requests.filter((request) => request.headers["idempotency-key"] === key)).toHaveLength(2);
+    expect((await coll.get(keyed.id)).state).toBe("value");
+
+    fixture.failNext({ match, status: 500, code: "internal_error" });
+    const before = fixture.requests.filter(match).length;
+    const error = await failure(coll.create({ n: "internal-unkeyed" }));
+    expect(error).toMatchObject({ status: 500, code: V1ErrorCode.internalError });
+    expect(fixture.requests.filter(match).length - before).toBe(1);
+  });
+
+  test("autoIdempotencyKey keys every mutation so commit_uncertain is retried", async () => {
+    const auto = createTerraBaseV1Client({ baseUrl: fixture.baseUrl, token: fixture.token, autoIdempotencyKey: true });
+    const coll = auto.database("main").collection("autokey");
+    const match = (/** @type {{ method: string; path: string }} */ request) =>
+      request.method === "POST" && request.path.endsWith("/autokey/documents");
+    fixture.failNext({ match, status: 503, code: "commit_uncertain", afterCommit: true });
+    const created = await coll.create({ n: 1 });
+    const attempts = fixture.requests.filter(match);
+    expect(attempts).toHaveLength(2);
+    const key = attempts[0]?.headers["idempotency-key"];
+    expect(key).toMatch(/^[A-Za-z0-9_-]{1,64}$/u);
+    expect(attempts[1]?.headers["idempotency-key"]).toBe(key);
+    expect((await coll.get(created.id)).state).toBe("value");
+
+    const txMatch = (/** @type {{ method: string; path: string }} */ request) =>
+      request.method === "POST" && request.path === "/v1/databases/main/transactions";
+    fixture.failNext({ match: txMatch, status: 500, code: "internal_error", afterCommit: true });
+    const result = await auto.database("main").transaction().create("autokey", { n: 2 }).commit();
+    const txAttempts = fixture.requests.filter(txMatch);
+    expect(txAttempts).toHaveLength(2);
+    expect(txAttempts[1]?.headers["idempotency-key"]).toBe(txAttempts[0]?.headers["idempotency-key"]);
+    expect(result.results).toHaveLength(1);
+
+    // Reads and queries never carry one; an explicit key wins.
+    await coll.get(created.id);
+    await coll.query({ limit: 1 });
+    expect(fixture.requests.filter((request) => request.path.includes("/autokey/") && (request.method === "GET" || request.path.endsWith("/query")))
+      .every((request) => request.headers["idempotency-key"] === undefined)).toBe(true);
+    await coll.create({ n: 3 }, { idempotencyKey: "explicit-key" });
+    expect(fixture.requests.filter(match).at(-1)?.headers["idempotency-key"]).toBe("explicit-key");
+    expect(() => createTerraBaseV1Client({ baseUrl: fixture.baseUrl, token: fixture.token, autoIdempotencyKey: /** @type {any} */ ("yes") })).toThrow(TypeError);
+  });
+
   test("authentication failures are not retried and the key never leaks", async () => {
     const intruder = createTerraBaseV1Client({ baseUrl: fixture.baseUrl, token: `tbk1.${"x".repeat(22)}.${"y".repeat(43)}` });
     const error = await failure(intruder.database("main").collection("accounts").get(await documentIdFor("accounts", "z")));
@@ -304,6 +354,8 @@ describe("TerraBase v1 transactions", () => {
     expect(() => tx.delete("users", "00000000-0000-0000-0000-000000000000", /** @type {any} */ ({ ifNoneMatchAny: true }))).toThrow(TypeError);
     expect(() => tx.put("users", "00000000-0000-0000-0000-000000000000", {}, { ifMatch: "nope" })).toThrow(TypeError);
     expect(() => tx.assertCount("users", v1Filter.exists("/email"), {})).toThrow(TypeError);
+    expect(() => tx.assertCount("users", /** @type {any} */ (undefined), { lte: 1 })).toThrow(/filter/u);
+    expect(() => tx.patch("users", "00000000-0000-0000-0000-000000000000", { merge: {} }, /** @type {any} */ ({ ifNoneMatchAny: true }))).toThrow(TypeError);
     expect(tx.size).toBe(0);
     return expect(tx.commit()).rejects.toThrow(TypeError);
   });
