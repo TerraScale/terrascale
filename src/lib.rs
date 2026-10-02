@@ -19,6 +19,7 @@ pub mod serde_base64;
 pub mod subscriptions;
 pub mod transactions;
 pub mod transport;
+pub mod v1;
 pub mod values;
 
 pub use auth_idp::{
