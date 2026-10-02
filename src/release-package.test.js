@@ -153,6 +153,7 @@ test("clean SDK-only build packs and independently installs the current typed pa
       "types/database.d.ts",
       "sdk-current-contract.json",
       "sdk-route-manifest.json",
+      "sdk-v1-route-manifest.json",
     ])
       assert.match(
         listing,
@@ -160,7 +161,7 @@ test("clean SDK-only build packs and independently installs the current typed pa
       );
     assert.doesNotMatch(
       listing,
-      /^package\/(?:node_modules|test|scripts|(?:src|types)\/integration)\/|^package\/(?:src|types)\/.*(?:\.test\.|\.map$|msgpack|sync\/v1|client\.js)/mu,
+      /^package\/(?:node_modules|test|scripts|contracts|(?:src|types)\/integration)\/|^package\/(?:src|types)\/.*(?:\.test\.|\.map$|msgpack|sync\/v1|client\.js)/mu,
     );
     await writeFile(
       path.join(consumer, "package.json"),

@@ -95,6 +95,49 @@ function scalars(op, values) {
   return Object.freeze(values.map(requireScalar));
 }
 
+const binaryOperators = new Set(["eq", "ne", "lt", "lte", "gt", "gte", "contains"]);
+
+/**
+ * Validates a filter against the query-v1 grammar (operators, arity, paths,
+ * scalar operands, depth 8 and 256 nodes), so a malformed filter fails locally
+ * instead of as a server `invalid_query`. The v1Filter builders always pass.
+ * @param {unknown} filter
+ * @returns {V1Filter}
+ */
+export function requireFilter(filter) {
+  let nodes = 0;
+  /**
+   * @param {unknown} node
+   * @param {number} depth
+   * @returns {void}
+   */
+  const visit = (node, depth) => {
+    if (++nodes > 256) throw new TypeError("A filter has at most 256 nodes.");
+    if (depth > 8) throw new TypeError("A filter nests at most 8 levels.");
+    if (typeof node !== "object" || node === null || Array.isArray(node) || Object.keys(node).length !== 1)
+      throw new TypeError("A filter node is an object with exactly one operator.");
+    const [op, args] = /** @type {[string, unknown]} */ (Object.entries(node)[0]);
+    if (op === "and" || op === "or") {
+      if (!Array.isArray(args) || args.length < 1 || args.length > 64) throw new TypeError(`${op} takes 1-64 filters.`);
+      for (const child of args) visit(child, depth + 1);
+    } else if (op === "not") visit(args, depth + 1);
+    else if (op === "exists") requirePath(/** @type {V1Path} */ (args));
+    else if (binaryOperators.has(op) || op === "prefix" || op === "in" || op === "nin") {
+      if (!Array.isArray(args) || args.length !== 2) throw new TypeError(`${op} takes [path, value].`);
+      requirePath(args[0]);
+      if (op === "in" || op === "nin") scalars(op, args[1]);
+      else if (op === "prefix") {
+        if (typeof args[1] !== "string") throw new TypeError("prefix takes a string.");
+      } else {
+        requireScalar(args[1]);
+        if (op !== "eq" && op !== "ne" && op !== "contains" && args[1] === null) throw new TypeError(`${op} does not compare null.`);
+      }
+    } else throw new TypeError(`Unknown filter operator ${op}.`);
+  };
+  visit(filter, 1);
+  return /** @type {V1Filter} */ (filter);
+}
+
 /**
  * Query v1 filter builders. `v1Filter.id` is the `"$id"` pseudo-path.
  */

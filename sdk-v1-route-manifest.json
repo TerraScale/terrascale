@@ -196,8 +196,7 @@
       "requestMediaTypes": [],
       "responseMediaType": "application/json",
       "successStatuses": [
-        200,
-        307
+        200
       ],
       "idempotencyKey": "none",
       "replaySafe": true,

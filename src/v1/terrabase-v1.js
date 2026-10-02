@@ -4,7 +4,7 @@
 import {
   array, boolean, decodeDocument, decodeWrite, durability, malformed, object, string, u64,
 } from "./decode.js";
-import { isJsonPointer, requirePath } from "./filter.js";
+import { isJsonPointer, requireFilter, requirePath } from "./filter.js";
 import { requireDocumentId, requireName, requireVersion } from "./ids.js";
 import { assertJsonObject, ExactDecimal, stringifyExactJson } from "./json.js";
 import { createShape, encodeShapeRequest, V1ShapeSubscription } from "./shapes.js";
@@ -146,7 +146,7 @@ function encodeQuery(query) {
     if (!queryMembers.has(key)) throw new TypeError(`Unknown query member ${key}.`);
   /** @type {Record<string, unknown>} */
   const body = {};
-  if (query.filter !== undefined) body.filter = query.filter;
+  if (query.filter !== undefined) body.filter = requireFilter(query.filter);
   if (query.sort !== undefined) {
     if (!Array.isArray(query.sort) || query.sort.length > 4) throw new TypeError("sort has at most 4 keys.");
     body.sort = query.sort.map((key) => {
@@ -492,8 +492,7 @@ export class V1Transaction {
    * @returns {this}
    */
   assert(collection, id, filter) {
-    if (typeof filter !== "object" || filter === null) throw new TypeError("assert needs a filter.");
-    return this.#add({ op: "assert", collection: requireName("collection", collection), id: requireDocumentId(id), filter });
+    return this.#add({ op: "assert", collection: requireName("collection", collection), id: requireDocumentId(id), filter: requireFilter(filter) });
   }
 
   /**
@@ -517,7 +516,7 @@ export class V1Transaction {
    * @returns {this}
    */
   assertCount(collection, filter, bounds) {
-    if (typeof filter !== "object" || filter === null) throw new TypeError("assertCount needs a filter.");
+    requireFilter(filter);
     /** @type {Record<string, number>} */
     const limits = {};
     for (const name of /** @type {const} */ (["gte", "lte"])) {
@@ -610,6 +609,7 @@ export class V1Database {
    * @returns {Promise<V1ShapeSubscription>}
    */
   async subscribe(request, options = {}) {
+    V1ShapeSubscription.validateOptions(options);
     const body = encodeShapeRequest(request);
     const info = await createShape(this.#transport, this.name, body, options.signal);
     return new V1ShapeSubscription(this.#transport, this.name, body, info, options);

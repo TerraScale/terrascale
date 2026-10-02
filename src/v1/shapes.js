@@ -2,8 +2,8 @@
 // that follows a shape's log by long-poll (origin or edge) or SSE (origin).
 import { array, boolean, decodeDocument, malformed, object, string, u64 } from "./decode.js";
 import { TerraBaseV1Error } from "./errors.js";
-import { requirePath } from "./filter.js";
-import { parseU64, requireName } from "./ids.js";
+import { requireFilter, requirePath } from "./filter.js";
+import { parseU64, requireName, requireU64 } from "./ids.js";
 import { parseExactJson, stringifyExactJson } from "./json.js";
 import { v1Route, v1RoutePath } from "./routes.js";
 import { backoffMs, requireServiceUrl, retryAfterDelayMs, retryDelayMs, sleep } from "./transport.js";
@@ -86,7 +86,7 @@ export function encodeShapeRequest(request) {
     if (key !== "collection" && key !== "filter" && key !== "project") throw new TypeError(`Unknown shape member ${key}.`);
   /** @type {Record<string, unknown>} */
   const body = { collection: requireName("collection", request.collection) };
-  if (request.filter !== undefined) body.filter = request.filter;
+  if (request.filter !== undefined) body.filter = requireFilter(request.filter);
   if (request.project !== undefined) {
     if (!Array.isArray(request.project) || request.project.length > 64) throw new TypeError("project lists at most 64 paths.");
     body.project = request.project.map((path) => {
@@ -300,22 +300,19 @@ export class V1ShapeSubscription {
    * @param {V1SubscribeOptions} options
    */
   constructor(transport, database, requestBody, info, options) {
-    const mode = options.mode ?? "long-poll";
-    if (mode !== "long-poll" && mode !== "sse") throw new TypeError('mode is "long-poll" or "sse".');
-    if (mode === "sse" && options.edge === true)
-      throw new TypeError("SSE is served by the origin only; do not combine it with edge.");
+    const { mode, edge, resume } = V1ShapeSubscription.validateOptions(options);
     this.#transport = transport;
     this.#database = database;
     this.#requestBody = requestBody;
     this.#mode = mode;
-    this.#edge = options.edge === true;
+    this.#edge = edge;
     this.#info = info;
     this.#obtainedAt = Date.now();
     this.#handle = info.handle;
     this.#offset = info.offset;
-    if (options.resume !== undefined) {
-      this.#handle = string(options.resume.handle, "resume handle");
-      this.#offset = string(options.resume.offset, "resume offset");
+    if (resume !== undefined) {
+      this.#handle = resume.handle;
+      this.#offset = resume.offset;
       this.#live = parseU64(this.#offset) !== undefined;
     }
     this.#signal = options.signal;
@@ -326,6 +323,31 @@ export class V1ShapeSubscription {
         options.signal.addEventListener("abort", this.#onSignalAbort, { once: true });
       }
     }
+  }
+
+  /**
+   * Validates subscribe options without I/O, so subscribe() can fail before
+   * calling the gatekeeper.
+   * @param {V1SubscribeOptions} options
+   * @returns {{ mode: "long-poll" | "sse"; edge: boolean; resume: { handle: string; offset: string } | undefined }}
+   */
+  static validateOptions(options) {
+    if (typeof options !== "object" || options === null) throw new TypeError("subscribe options are an object.");
+    const mode = options.mode ?? "long-poll";
+    if (mode !== "long-poll" && mode !== "sse") throw new TypeError('mode is "long-poll" or "sse".');
+    if (options.edge !== undefined && typeof options.edge !== "boolean") throw new TypeError("edge is a boolean.");
+    const edge = options.edge === true;
+    if (mode === "sse" && edge) throw new TypeError("SSE is served by the origin only; do not combine it with edge.");
+    if (options.signal !== undefined && (typeof options.signal !== "object" || options.signal === null || typeof options.signal.addEventListener !== "function"))
+      throw new TypeError("signal is an AbortSignal.");
+    const resume = options.resume;
+    if (resume === undefined) return { mode, edge, resume: undefined };
+    if (typeof resume !== "object" || resume === null || typeof resume.handle !== "string" || resume.handle === "")
+      throw new TypeError("resume.handle is a non-empty shape handle.");
+    if (typeof resume.offset !== "string" ||
+      (parseU64(resume.offset) === undefined && resume.offset !== "-1" && !/^snap\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u.test(resume.offset)))
+      throw new TypeError('resume.offset is a u64 log offset, "-1" or a "snap.S.P" snapshot page.');
+    return { mode, edge, resume: { handle: resume.handle, offset: resume.offset } };
   }
 
   /** @returns {V1ShapeInfo} The current gatekeeper answer (refreshed for the edge). */
@@ -383,8 +405,13 @@ export class V1ShapeSubscription {
    * @returns {Promise<void>}
    */
   waitFor(offset, options = {}) {
-    const target = parseU64(typeof offset === "bigint" ? offset.toString() : offset);
-    if (target === undefined) return Promise.reject(new TypeError("waitFor takes a u64 log offset."));
+    /** @type {bigint} */
+    let target;
+    try {
+      target = requireU64(offset, "waitFor's log offset");
+    } catch (error) {
+      return Promise.reject(error);
+    }
     if (this.#progress >= target) return Promise.resolve();
     if (this.closed) return Promise.reject(new Error("TerraBase shape subscription closed."));
     return new Promise((resolve, reject) => {

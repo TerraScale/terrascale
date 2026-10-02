@@ -55,14 +55,15 @@ export function parseU64(value) {
 }
 
 /**
+ * A caller-supplied u64 (a decimal string or bigint), as a bigint.
  * @param {unknown} value
  * @param {string} what
- * @returns {string}
+ * @returns {bigint}
  */
 export function requireU64(value, what) {
-  if (parseU64(value) === undefined)
-    throw new TypeError(`${what} must be a canonical decimal u64 string.`);
-  return /** @type {string} */ (value);
+  const parsed = parseU64(typeof value === "bigint" ? value.toString() : value);
+  if (parsed === undefined) throw new TypeError(`${what} must be a u64: a canonical decimal string or bigint.`);
+  return parsed;
 }
 
 /**

@@ -578,6 +578,7 @@ function qualifyContents(files, manifest) {
     "package.json",
     "sdk-route-manifest.json",
     "sdk-current-contract.json",
+    "sdk-v1-route-manifest.json",
     "src/index.js",
     "types/index.d.ts",
     "src/admin.js",

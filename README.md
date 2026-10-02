@@ -229,10 +229,13 @@ await shape.waitFor(written.offset); // read-your-writes, from another task
   every unkeyed mutation a fresh key so those outcomes are retried safely.
 
 `sdk-v1-route-manifest.json` is generated from the client's route table and
-pins the contract documents by SHA-256 (`npm run check:v1-route-manifest`;
-set `TERRABASE_REPO` to a terrabase checkout, or `TERRABASE_V1_CONTRACT_DIR`
-to its `docs` directory, to verify the digests, the route declarations and the
-error-code table). Set `TERRABASE_V1_OPENAPI` to the producer's v1 OpenAPI
+pins the contract documents by SHA-256. Copies of the pinned documents are
+vendored in `contracts/terrabase-v1` (not published), so
+`npm run check:v1-route-manifest`, which CI runs, always verifies the digests,
+that every route's method and path are declared in its contract document, and
+the error-code table. Set `TERRABASE_REPO` to a terrabase checkout, or
+`TERRABASE_V1_CONTRACT_DIR` to its `docs` directory, to check against those
+instead. Set `TERRABASE_V1_OPENAPI` to the producer's v1 OpenAPI
 file to also require every route there; terrabase has not published a v1
 OpenAPI yet.
 

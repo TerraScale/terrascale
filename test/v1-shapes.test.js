@@ -341,7 +341,11 @@ describe("TerraBase v1 shapes", () => {
   test("close ends iteration and rejects pending waitFor; SSE cannot use the edge", async () => {
     await seed("close", "u1", 1);
     const database = client.database("close");
-    await expect(database.subscribe({ collection: "notifications" }, { mode: "sse", edge: true })).rejects.toThrow(TypeError);
+    const gatekeeperCalls = fixture.gatekeeperCalls();
+    for (const options of [{ mode: "sse", edge: true }, { mode: "bogus" }, { resume: { handle: "h", offset: "abc" } }, { resume: { handle: "", offset: "1" } }, { resume: { handle: 1, offset: "1" } }])
+      await expect(database.subscribe({ collection: "notifications" }, /** @type {any} */ (options)), JSON.stringify(options)).rejects.toThrow(TypeError);
+    // Options fail before any gatekeeper call.
+    expect(fixture.gatekeeperCalls()).toBe(gatekeeperCalls);
     const subscription = await database.subscribe({ collection: "notifications" });
     const iterator = subscription[Symbol.asyncIterator]();
     await until(iterator, (event) => event.upToDate);

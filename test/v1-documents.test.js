@@ -335,12 +335,29 @@ describe("TerraBase v1 retry policy", () => {
     expect(inspect(client, { depth: 8, showHidden: true })).not.toContain(fixture.token.split(".")[2]);
   });
 
-  test("configuration is validated", () => {
+  test("configuration is validated", async () => {
     expect(() => createTerraBaseV1Client({ baseUrl: "http://example.com", token: fixture.token })).toThrow(/loopback/u);
     expect(() => createTerraBaseV1Client({ baseUrl: "https://user:pw@example.com", token: fixture.token })).toThrow(TypeError);
     expect(() => createTerraBaseV1Client({ baseUrl: "https://example.com", token: "tbk1.short" })).toThrow(/tbk1/u);
     expect(() => client.database("Main")).toThrow(TypeError);
-    expect(() => client.database("main").collection("c").get("not-a-uuid")).rejects.toThrow(TypeError);
+    await expect(client.database("main").collection("c").get("not-a-uuid")).rejects.toThrow(TypeError);
+    // Loopback exemption only for real 127.0.0.0/8 addresses (URL parsing
+    // already refuses these hosts; the client's own check refuses them too).
+    expect(() => createTerraBaseV1Client({ baseUrl: "http://127.0.0.255:1", token: fixture.token })).not.toThrow();
+    for (const host of ["127.999.1.1", "127.0.0.256", "127.0.0.999"])
+      expect(() => createTerraBaseV1Client({ baseUrl: `http://${host}:1`, token: fixture.token }), host).toThrow(TypeError);
+  });
+
+  test("filters are validated locally against the query grammar", async () => {
+    const coll = client.database("main").collection("filters");
+    const before = fixture.requests.length;
+    for (const filter of [{ equals: ["/a", 1] }, { eq: ["/a", { nested: 1 }] }, { eq: ["a", 1] }, { and: [] }, { lt: ["/a", null] }, { eq: ["/a", 1], ne: ["/b", 2] }]) {
+      await expect(coll.query({ filter: /** @type {any} */ (filter) }), JSON.stringify(filter)).rejects.toThrow(TypeError);
+      expect(() => client.database("main").transaction().assert("filters", "00000000-0000-0000-0000-000000000000", /** @type {any} */ (filter))).toThrow(TypeError);
+    }
+    expect(fixture.requests.length).toBe(before);
+    // Hand-written filters in the grammar pass through unchanged.
+    await coll.query({ filter: { and: [{ eq: [{ lower: "/a" }, "x"] }, { not: { exists: "$id" } }] } });
   });
 });
 
@@ -416,6 +433,28 @@ describe("TerraBase v1 transactions", () => {
       .delete("users", fresh)
       .commit());
     expect(duplicate).toMatchObject({ status: 400, code: "invalid_request", op: 1 });
+  });
+
+  test("a read+shape key may create shapes and commit assert-only transactions", async () => {
+    const token = fixture.issueKey({ database: "tx", collections: ["*"], permissions: ["read", "shape"] });
+    const reader = createTerraBaseV1Client({ baseUrl: fixture.baseUrl, token }).database("tx");
+    await reader.createShape({ collection: "plans" });
+    const result = await reader.transaction().assertAbsent("plans", await documentIdFor("plans", "none")).commit();
+    expect(result.results).toEqual([{ asserted: true }]);
+    await expect(reader.transaction().create("plans", { x: 1 }).commit()).rejects.toMatchObject({ status: 403, code: "forbidden_scope" });
+  });
+
+  test("structured values under a unique constraint conflict only when equal", async () => {
+    const constrained = await startTerraBaseV1Fixture({ unique: { teams: [{ name: "members", path: "/members", lower: false }] } });
+    try {
+      const teams = createTerraBaseV1Client({ baseUrl: constrained.baseUrl, token: constrained.token }).database("main").collection("teams");
+      await teams.put(await documentIdFor("teams", "a"), { members: ["ana", "bo"] });
+      await teams.put(await documentIdFor("teams", "b"), { members: ["cy"] });
+      await teams.put(await documentIdFor("teams", "c"), { members: { lead: "ana" } });
+      await expect(teams.put(await documentIdFor("teams", "d"), { members: ["ana", "bo"] })).rejects.toMatchObject({ code: "unique_violation", constraint: "members" });
+    } finally {
+      await constrained.close();
+    }
   });
 
   test("the builder rejects malformed ops before sending", () => {

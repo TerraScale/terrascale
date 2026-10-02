@@ -15,7 +15,8 @@
  * @property {"read" | "write" | "shape"} permission
  * @property {readonly string[]} requestMediaTypes
  * @property {string} responseMediaType
- * @property {readonly number[]} successStatuses
+ * @property {readonly number[]} successStatuses Statuses whose JSON body is the result. The shape
+ *   snapshot redirect (307) is followed by V1ShapeSubscription itself, not by V1Transport.call.
  * @property {"none" | "optional"} idempotencyKey
  * @property {boolean} replaySafe Retried after transport errors and transient 503s without an Idempotency-Key
  *   (reads, queries and the shape gatekeeper, which stores nothing).
@@ -36,7 +37,7 @@ export const v1Routes = Object.freeze(
     { operation: "commitTransaction", method: "POST", pathTemplate: "/v1/databases/{db}/transactions", permission: "write", requestMediaTypes: ["application/json"], responseMediaType: "application/json", successStatuses: [200], idempotencyKey: "optional", replaySafe: false, contract: "api-v1.md", contractText: ["`POST /v1/databases/{db}/transactions`"] },
     { operation: "queryDocuments", method: "POST", pathTemplate: "/v1/databases/{db}/collections/{collection}/query", permission: "read", requestMediaTypes: ["application/json"], responseMediaType: "application/json", successStatuses: [200], idempotencyKey: "none", replaySafe: true, contract: "query-v1.md", contractText: ["`POST /v1/databases/{db}/collections/{collection}/query`"] },
     { operation: "createShape", method: "POST", pathTemplate: "/v1/databases/{db}/shapes", permission: "shape", requestMediaTypes: ["application/json"], responseMediaType: "application/json", successStatuses: [201], idempotencyKey: "none", replaySafe: true, contract: "shapes-v1.md", contractText: ["`POST /v1/databases/{db}/shapes`", "gatekeeper stores nothing, so clients may retry it like a read"] },
-    { operation: "readShape", method: "GET", pathTemplate: "/v1/shapes/{shape_id}", permission: "shape", requestMediaTypes: [], responseMediaType: "application/json", successStatuses: [200, 307], idempotencyKey: "none", replaySafe: true, contract: "shapes-v1.md", contractText: ["`GET /v1/shapes/{shape_id}?handle=…&offset=…[&live=true&cursor=…]`"] },
+    { operation: "readShape", method: "GET", pathTemplate: "/v1/shapes/{shape_id}", permission: "shape", requestMediaTypes: [], responseMediaType: "application/json", successStatuses: [200], idempotencyKey: "none", replaySafe: true, contract: "shapes-v1.md", contractText: ["`GET /v1/shapes/{shape_id}?handle=…&offset=…[&live=true&cursor=…]`"] },
     { operation: "streamShape", method: "GET", pathTemplate: "/v1/shapes/{shape_id}/sse", permission: "shape", requestMediaTypes: [], responseMediaType: "text/event-stream", successStatuses: [200], idempotencyKey: "none", replaySafe: true, contract: "shapes-v1.md", contractText: ["`GET /v1/shapes/{shape_id}/sse?handle=…&offset=…`"] },
   ]).map((route) => Object.freeze({
     ...route,

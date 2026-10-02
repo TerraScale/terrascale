@@ -5,18 +5,20 @@
 //
 // The v1 producer publishes its contract as the frozen terrabase documents
 // docs/api-v1.md, docs/query-v1.md and docs/shapes-v1.md. The manifest pins
-// those documents by SHA-256 at one terrabase revision. --check always
-// verifies that the manifest matches the client. It also verifies the contract
-// when one is supplied:
+// those documents by SHA-256 at one terrabase revision, and copies of them are
+// vendored in contracts/terrabase-v1 (not published). --check always verifies
+// that the manifest matches the client, the pinned digests, that every route's
+// actual method and path are declared in its contract document
+// (scripts/v1-contract.js), that each route's contractText notes appear there,
+// and that the client's error codes equal the api-v1.md error table. The
+// documents are read from contracts/terrabase-v1 unless overridden:
 //
 // - TERRABASE_V1_CONTRACT_DIR: absolute path of a terrabase docs directory, or
 // - TERRABASE_REPO: absolute path of a terrabase git checkout; the documents
 //   are read with `git show <pinned revision>:docs/<name>`.
 //
-// With either, --check verifies the pinned digests, that every route's actual
-// method and path are declared in its contract document (scripts/v1-contract.js),
-// that each route's contractText notes appear there, and that the client's
-// error codes equal the api-v1.md error table.
+// To move the pin, copy the new documents into contracts/terrabase-v1, update
+// contractSource and run npm run generate:v1-route-manifest.
 //
 // TERRABASE_V1_OPENAPI: absolute path of the producer's v1 OpenAPI 3.1
 // document (crates/tb-server/assets/client-openapi.json). When set, --check
@@ -34,6 +36,7 @@ import { verifyRouteDeclarations } from "./v1-contract.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const target = path.join(root, "sdk-v1-route-manifest.json");
+const vendoredContracts = path.join(root, "contracts", "terrabase-v1");
 
 const contractSource = {
   producer: "terrabase",
@@ -76,27 +79,27 @@ const manifest = {
 const output = `${JSON.stringify(manifest, null, 2)}\n`;
 
 /**
- * @returns {Promise<Record<string, Buffer> | undefined>}
+ * The pinned contract documents: the vendored copies in
+ * contracts/terrabase-v1 by default, or TERRABASE_V1_CONTRACT_DIR, or
+ * TERRABASE_REPO at the pinned revision. Their digests are always verified.
+ * @returns {Promise<{ source: string; documents: Record<string, Buffer> }>}
  */
 async function contractDocuments() {
-  const directory = process.env.TERRABASE_V1_CONTRACT_DIR;
+  const names = Object.keys(contractSource.documents);
   const repository = process.env.TERRABASE_REPO;
-  if (directory !== undefined && directory !== "") {
-    if (!path.isAbsolute(directory)) throw new Error("TERRABASE_V1_CONTRACT_DIR must be an absolute path.");
-    /** @type {Record<string, Buffer>} */
-    const documents = {};
-    for (const name of Object.keys(contractSource.documents)) documents[name] = await readFile(path.join(directory, name));
-    return documents;
-  }
-  if (repository !== undefined && repository !== "") {
+  if (repository !== undefined && repository !== "" && (process.env.TERRABASE_V1_CONTRACT_DIR ?? "") === "") {
     if (!path.isAbsolute(repository)) throw new Error("TERRABASE_REPO must be an absolute path.");
-    /** @type {Record<string, Buffer>} */
-    const documents = {};
-    for (const name of Object.keys(contractSource.documents))
-      documents[name] = execFileSync("git", ["-C", repository, "show", `${contractSource.revision}:docs/${name}`], { maxBuffer: 16 * 1024 * 1024 });
-    return documents;
+    return {
+      source: `${repository} at ${contractSource.revision.slice(0, 8)}`,
+      documents: Object.fromEntries(names.map((name) => [name,
+        execFileSync("git", ["-C", repository, "show", `${contractSource.revision}:docs/${name}`], { maxBuffer: 16 * 1024 * 1024 })])),
+    };
   }
-  return undefined;
+  const configured = process.env.TERRABASE_V1_CONTRACT_DIR;
+  const directory = configured === undefined || configured === "" ? vendoredContracts : configured;
+  if (!path.isAbsolute(directory)) throw new Error("TERRABASE_V1_CONTRACT_DIR must be an absolute path.");
+  const buffers = await Promise.all(names.map((name) => readFile(path.join(directory, name))));
+  return { source: path.relative(root, directory) || directory, documents: Object.fromEntries(names.map((name, index) => [name, /** @type {Buffer} */ (buffers[index])])) };
 }
 
 /**
@@ -140,28 +143,24 @@ async function checkOpenApi(file) {
 if (process.argv.includes("--check")) {
   if ((await readFile(target, "utf8")) !== output)
     throw new Error("sdk-v1-route-manifest.json differs from src/v1/routes.js or src/v1/errors.js; run npm run generate:v1-route-manifest.");
-  const documents = await contractDocuments();
-  if (documents === undefined) {
-    console.log(`v1 route manifest matches the client (${v1Routes.length} routes); contract documents not supplied (TERRABASE_REPO or TERRABASE_V1_CONTRACT_DIR), digest parity skipped.`);
-  } else {
-    /** @type {Record<string, string>} */
-    const texts = {};
-    for (const [name, digest] of Object.entries(contractSource.documents)) {
-      const bytes = /** @type {Buffer} */ (documents[name]);
-      if (createHash("sha256").update(bytes).digest("hex") !== digest)
-        throw new Error(`${name} differs from the pinned v1 contract digest.`);
-      texts[name] = bytes.toString("utf8");
-    }
-    verifyRouteDeclarations(v1Routes, texts);
-    for (const route of v1Routes)
-      for (const literal of route.contractText)
-        if (!(texts[route.contract] ?? "").includes(literal))
-          throw new Error(`${route.operation} is not declared in ${route.contract} as ${literal}.`);
-    const contractCodes = contractErrorCodes(texts["api-v1.md"] ?? "");
-    if (JSON.stringify(contractCodes) !== JSON.stringify(errorCodes))
-      throw new Error(`Client error codes differ from the api-v1.md error table.\n contract: ${contractCodes.join(", ")}\n client:   ${errorCodes.join(", ")}`);
-    console.log(`v1 route manifest matches the client and the contract documents at ${contractSource.revision.slice(0, 8)} (${v1Routes.length} routes, ${errorCodes.length} error codes).`);
+  const { source, documents } = await contractDocuments();
+  /** @type {Record<string, string>} */
+  const texts = {};
+  for (const [name, digest] of Object.entries(contractSource.documents)) {
+    const bytes = /** @type {Buffer} */ (documents[name]);
+    if (createHash("sha256").update(bytes).digest("hex") !== digest)
+      throw new Error(`${name} (${source}) differs from the pinned v1 contract digest.`);
+    texts[name] = bytes.toString("utf8");
   }
+  verifyRouteDeclarations(v1Routes, texts);
+  for (const route of v1Routes)
+    for (const literal of route.contractText)
+      if (!(texts[route.contract] ?? "").includes(literal))
+        throw new Error(`${route.operation} is not declared in ${route.contract} as ${literal}.`);
+  const contractCodes = contractErrorCodes(texts["api-v1.md"] ?? "");
+  if (JSON.stringify(contractCodes) !== JSON.stringify(errorCodes))
+    throw new Error(`Client error codes differ from the api-v1.md error table.\n contract: ${contractCodes.join(", ")}\n client:   ${errorCodes.join(", ")}`);
+  console.log(`v1 route manifest matches the client and the contract documents (${source}, ${contractSource.revision.slice(0, 8)}; ${v1Routes.length} routes, ${errorCodes.length} error codes).`);
   const openapi = process.env.TERRABASE_V1_OPENAPI;
   if (openapi === undefined || openapi === "") console.log("No v1 OpenAPI supplied (TERRABASE_V1_OPENAPI); OpenAPI parity skipped.");
   else console.log(`v1 OpenAPI declares every client route (${await checkOpenApi(openapi)} routes).`);

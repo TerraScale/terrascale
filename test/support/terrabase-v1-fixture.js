@@ -259,6 +259,24 @@ function validateFilter(filter, depth = 0) {
 const scalarEqual = (value, operand) => isScalar(value) && rank(value) === rank(operand) && compareValues(value, operand) === 0;
 
 /**
+ * Equality of any two stored values: scalars by exact value, structured
+ * values by canonical JSON text with sorted member names.
+ * @param {any} a
+ * @param {any} b
+ * @returns {boolean}
+ */
+function sameValue(a, b) {
+  if (isScalar(a) || isScalar(b)) return isScalar(a) && isScalar(b) && scalarEqual(a, b);
+  /** @param {any} value @returns {string} */
+  const canonical = (value) => {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+    if (isObject(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+    return value instanceof Num ? `#${decimal(value.text).m}e${decimal(value.text).e}` : JSON.stringify(value);
+  };
+  return canonical(a) === canonical(b);
+}
+
+/**
  * @param {any} filter
  * @param {any} doc
  * @param {string} id
@@ -293,6 +311,13 @@ function matches(filter, doc, id) {
     default: return order >= 0;
   }
 }
+
+/**
+ * @param {unknown} project
+ * @returns {boolean}
+ */
+const validProjection = (project) => project === undefined ||
+  (Array.isArray(project) && project.length <= 64 && project.every((pointer) => typeof pointer === "string" && /^(?:\/(?:[^~/]|~[01])*)+$/u.test(pointer)));
 
 /**
  * @param {any} doc
@@ -348,6 +373,7 @@ function applyOps(doc, ops) {
   if (!Array.isArray(ops) || ops.length < 1 || ops.length > 256) fail(400, "invalid_patch");
   const out = structuredCloneDoc(doc);
   for (const op of ops) {
+    if (!isObject(op) || typeof op.path !== "string" || !/^(?:\/(?:[^~/]|~[01])*)+$/u.test(op.path)) fail(400, "invalid_patch");
     const parts = segments(op.path);
     const last = /** @type {string} */ (parts.pop());
     let parent = out;
@@ -504,6 +530,22 @@ export async function startTerraBaseV1Fixture(options = {}) {
   let gatekeeperCalls = 0;
   let edgeOrigin = "";
 
+  /**
+   * The committed entries of one collection.
+   * @param {string} db
+   * @param {string} collection
+   * @param {boolean} withTombstones
+   * @returns {{ id: string; version: string; doc: any }[]}
+   */
+  const collectionEntries = (db, collection, withTombstones) => {
+    const prefix = `${db}/${collection}/`;
+    /** @type {{ id: string; version: string; doc: any }[]} */
+    const entries = [];
+    for (const [storeKey, entry] of store)
+      if (storeKey.startsWith(prefix) && (withTombstones || entry.doc !== null)) entries.push(entry);
+    return entries;
+  };
+
   /** @param {string} db */
   const database = (db) => {
     let state = databases.get(db);
@@ -556,15 +598,16 @@ export async function startTerraBaseV1Fixture(options = {}) {
       checkUnique(collection, id, doc) {
         for (const constraint of unique[collection] ?? []) {
           const value = resolve(doc, id, constraint.lower ? { lower: constraint.path } : constraint.path);
+          // Missing and null are not constrained; structured values are compared by canonical text.
           if (value === MISSING || value === null) continue;
           /** @type {Map<string, any>} */
           const docs = new Map();
-          for (const [storeKey, entry] of store) if (storeKey.startsWith(`${db}/${collection}/`)) docs.set(entry.id, entry.doc);
+          for (const entry of collectionEntries(db, collection, true)) docs.set(entry.id, entry.doc);
           for (const pending of writes.values()) if (pending.collection === collection) docs.set(pending.id, pending.after);
           for (const [otherId, other] of docs) {
             if (otherId === id || other === null) continue;
             const otherValue = resolve(other, otherId, constraint.lower ? { lower: constraint.path } : constraint.path);
-            if (otherValue !== MISSING && otherValue !== null && compareValues(otherValue, value) === 0 && rank(otherValue) === rank(value))
+            if (otherValue !== MISSING && otherValue !== null && sameValue(otherValue, value))
               fail(409, "unique_violation", { constraint: constraint.name });
           }
         }
@@ -628,8 +671,12 @@ export async function startTerraBaseV1Fixture(options = {}) {
    */
   function applyTxOp(op, index, work) {
     try {
+      if (!isObject(op)) fail(400, "invalid_request");
       const { collection, id } = op;
       if (typeof collection !== "string" || !namePattern.test(collection)) fail(400, "invalid_request");
+      // Every op but create (and assert_count, which has none) names a valid document ID.
+      const idOptional = op.op === "create" || op.op === "assert_count";
+      if ((id !== undefined || !idOptional) && (typeof id !== "string" || !idPattern.test(id))) fail(400, "invalid_request");
       switch (op.op) {
         case "create": {
           if (op.if_match !== undefined || op.if_none_match !== undefined) fail(400, "invalid_request");
@@ -646,15 +693,15 @@ export async function startTerraBaseV1Fixture(options = {}) {
         case "patch": {
           const entry = work.get(collection, id);
           if (("merge" in op) === ("ops" in op)) fail(400, "invalid_request");
-          precondition(entry, op.if_match, false);
           if (entry === undefined || entry.doc === null) fail(404, "not_found");
+          precondition(entry, op.if_match, false);
           const next = "merge" in op ? mergePatch(entry.doc, op.merge) : applyOps(entry.doc, op.ops);
           return { id, version: work.set(collection, id, next) };
         }
         case "delete": {
           const entry = work.get(collection, id);
-          precondition(entry, op.if_match, false);
           if (entry === undefined || entry.doc === null) fail(404, "not_found");
+          precondition(entry, op.if_match, false);
           return { id, version: work.set(collection, id, null) };
         }
         case "assert_count": {
@@ -662,9 +709,9 @@ export async function startTerraBaseV1Fixture(options = {}) {
           const bounds = ["gte", "lte"].filter((name) => op[name] !== undefined);
           if (bounds.length === 0 || !bounds.every((name) => op[name] instanceof Num)) fail(400, "invalid_request");
           // Counted against committed state, before this transaction's writes.
-          const examined = [...store.entries()].filter(([storeKey]) => storeKey.startsWith(`${work.db}/${collection}/`));
+          const examined = collectionEntries(work.db, collection, true);
           if (examined.length > 10_000) fail(400, "assert_requires_index");
-          const count = examined.filter(([, entry]) => entry.doc !== null && matches(op.filter, entry.doc, entry.id)).length;
+          const count = examined.filter((entry) => entry.doc !== null && matches(op.filter, entry.doc, entry.id)).length;
           if ((op.gte !== undefined && count < Number(op.gte.text)) || (op.lte !== undefined && count > Number(op.lte.text))) fail(412, "precondition_failed");
           return { asserted: true, count: String(count) };
         }
@@ -699,13 +746,12 @@ export async function startTerraBaseV1Fixture(options = {}) {
     if (query.filter !== undefined) validateFilter(query.filter);
     const sort = /** @type {{ path: any; order: string }[]} */ (query.sort ?? []);
     if (!Array.isArray(sort) || sort.length > 4) fail(400, "invalid_query");
+    if (!validProjection(query.project)) fail(400, "invalid_query");
     let limit = 50;
     if (query.limit !== undefined) limit = query.limit instanceof Num ? Number(query.limit.text) : Number.NaN;
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000) fail(400, "invalid_query");
     const digest = sha256(stringify([query.filter ?? null, query.sort ?? null, query.project ?? null]));
-    const all = [...store.entries()]
-      .filter(([storeKey, entry]) => storeKey.startsWith(`${db}/${collection}/`) && entry.doc !== null)
-      .map(([, entry]) => entry);
+    const all = collectionEntries(db, collection, false);
     const matching = all.filter((entry) => matches(query.filter, entry.doc, entry.id));
     /** @param {{ id: string; doc: any }} entry */
     const sortKey = (entry) => sort.map((item) => resolve(entry.doc, entry.id, item.path));
@@ -730,7 +776,8 @@ export async function startTerraBaseV1Fixture(options = {}) {
       try {
         position = parse(Buffer.from(cursor, "base64url").toString("utf8"));
       } catch { fail(400, "invalid_cursor"); }
-      if (position?.digest !== digest) fail(400, "invalid_cursor");
+      if (!isObject(position) || position.digest !== digest || !Array.isArray(position.key) ||
+        position.key.length !== sort.length || typeof position.id !== "string") fail(400, "invalid_cursor");
       const after = position.key.map((/** @type {any} */ value) => (isObject(value) && value.$missing === true ? MISSING : value));
       remaining = matching.filter((entry) => order(sortKey(entry), entry.id, after, position.id) > 0);
     }
@@ -760,7 +807,10 @@ export async function startTerraBaseV1Fixture(options = {}) {
   function dataRoute(request, match, grant) {
     const [, db = "", collection = "", rest = ""] = match;
     if (!namePattern.test(db) || (collection !== "" && !namePattern.test(collection))) fail(400, "invalid_request");
-    if (collection !== "") authorize(grant, db, collection, request.method === "GET" || rest === "/query" ? "read" : "write");
+    // Shapes and transactions authorize per request member below (shape, or
+    // read for asserts and write for writes).
+    if (collection !== "" && rest !== "/shapes" && rest !== "/transactions")
+      authorize(grant, db, collection, request.method === "GET" || rest === "/query" ? "read" : "write");
     const json = { "content-type": "application/json" };
     const ifMatch = unquote(request.headers["if-match"]);
     const ifNoneMatch = request.headers["if-none-match"];
@@ -838,6 +888,7 @@ export async function startTerraBaseV1Fixture(options = {}) {
       if (typeof body.collection !== "string" || !namePattern.test(body.collection)) fail(400, "invalid_request");
       authorize(grant, db, body.collection, "shape");
       if (body.filter !== undefined) validateFilter(body.filter);
+      if (!validProjection(body.project)) fail(400, "invalid_request");
       const shapeId = sha256(`TB-SHAPE-V1\0${db}\0${body.collection}\0${stringify(body.filter ?? null)}\0${stringify(body.project ?? null)}`).slice(0, 32);
       const existing = shapes.get(shapeId);
       shapes.set(shapeId, { db, collection: body.collection, filter: body.filter, project: body.project, handle: existing?.handle ?? `h1-${randomBytes(6).toString("hex")}` });
@@ -904,9 +955,9 @@ export async function startTerraBaseV1Fixture(options = {}) {
    */
   function materialize(shape) {
     const head = database(shape.db).head;
-    const docs = [...store.entries()]
-      .filter(([storeKey, entry]) => storeKey.startsWith(`${shape.db}/${shape.collection}/`) && entry.doc !== null && matches(shape.filter, entry.doc, entry.id))
-      .map(([, entry]) => ({ op: "upsert", id: entry.id, version: entry.version, document: projectDocument(entry.doc, shape.project) }))
+    const docs = collectionEntries(shape.db, shape.collection, false)
+      .filter((entry) => matches(shape.filter, entry.doc, entry.id))
+      .map((entry) => ({ op: "upsert", id: entry.id, version: entry.version, document: projectDocument(entry.doc, shape.project) }))
       .sort((a, b) => (a.id < b.id ? -1 : 1));
     snapshots.set(`${shape.handle}:${head}`, docs);
     return head;
@@ -1204,7 +1255,14 @@ export async function startTerraBaseV1Fixture(options = {}) {
    * @returns {Promise<{ server: import("node:http").Server; origin: string }>}
    */
   async function listen(name) {
-    const server = createServer((req, res) => void handle(name, req, res));
+    // A client may abort while its body is still uploading; never leave the
+    // rejection unhandled.
+    const server = createServer((req, res) => {
+      handle(name, req, res).catch(() => {
+        if (!res.headersSent) res.writeHead(400, { "content-type": "application/json" });
+        res.end();
+      });
+    });
     await new Promise((resolveListen) => server.listen(0, "127.0.0.1", () => resolveListen(undefined)));
     const address = /** @type {import("node:net").AddressInfo} */ (server.address());
     return { server, origin: `http://127.0.0.1:${address.port}` };
