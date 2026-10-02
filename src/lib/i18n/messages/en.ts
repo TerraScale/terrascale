@@ -2,7 +2,7 @@ export const en = {
   meta: {
     title: 'TerraScale Public Alpha | Regional Document Database',
     description:
-      'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo, San Francisco, and Falkenstein.',
+      'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo, San Jose, and Frankfurt.',
   },
 
   chrome: {
@@ -56,18 +56,6 @@ export const en = {
           apiReference: 'API Reference',
           status: 'Status',
           community: 'Community',
-          security: 'Security',
-          support: 'Support',
-        },
-      },
-      legal: {
-        title: 'Legal',
-        links: {
-          terms: 'Terms',
-          privacy: 'Privacy',
-          acceptableUse: 'Acceptable Use',
-          dataProcessingTerms: 'Data Processing Terms',
-          support: 'Support',
         },
       },
     },
@@ -85,7 +73,7 @@ export const en = {
     headlineLead: 'TerraScale',
     headlineAccent: 'Public Alpha',
     subtitle:
-      'A typed document database with asynchronous replication across São Paulo, San Francisco, and Falkenstein. The global endpoint routes to the nearest healthy region selected by your project. Public Alpha has no uptime percentage or SLA.',
+      'A typed document database with asynchronous replication across São Paulo, San Jose, and Frankfurt. The global endpoint routes to the nearest healthy region selected by your project. Public Alpha has no uptime percentage or SLA.',
     ctaPrimary: 'Register for Public Alpha',
     ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'View Docs',
@@ -112,7 +100,7 @@ export const en = {
       },
       {
         title: 'Launch Regions',
-        text: 'Choose São Paulo, San Francisco, or Falkenstein during Public Alpha.',
+        text: 'Choose São Paulo, San Jose, or Frankfurt during Public Alpha.',
         bullets: ['sfo', 'fra', 'gru'],
       },
       {
@@ -149,7 +137,6 @@ export const en = {
     ctaSecondary: 'Talk to Sales',
     perksAria: 'Plan details',
     perks: ['Monthly paid plans', 'No paid overages'],
-    policyLead: 'Review before payment verification:',
   },
 
   pricing: {
@@ -295,7 +282,7 @@ export const en = {
     titleLead: 'Globally distributed',
     titleAccent: 'database infrastructure.',
     subtitle:
-      'TerraScale Public Alpha provides a document database across São Paulo, San Francisco, and Falkenstein with asynchronous replication.',
+      'TerraScale Public Alpha provides a document database across São Paulo, San Jose, and Frankfurt with asynchronous replication.',
     ctaPricing: 'View Pricing',
     ctaContact: 'Talk to Us',
     missionEyebrow: 'Mission',
@@ -320,7 +307,7 @@ export const en = {
     bandTitle: 'Flat regional pricing, metered by real use.',
     bandText:
       'Storage usage adds the bytes stored in every selected region. Estimated network distance, measured API latency, and replication health remain separate values.',
-    regions: ['São Paulo', 'San Francisco', 'Falkenstein'],
+    regions: ['São Paulo', 'San Jose', 'Frankfurt'],
   },
 
   notFound: {

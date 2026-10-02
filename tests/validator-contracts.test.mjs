@@ -11,15 +11,13 @@ import {
   validateRedirectRules,
 } from '../scripts/validate-redirect-contract.mjs'
 import { validateProductFooterLinks } from '../scripts/validate-content.mjs'
-import { validateLegalPolicySource } from '../scripts/validate-legal-source.mjs'
 import { extractAttributes, extractStructuredDataUrls, probeExternalLinks, requiredLinks } from '../scripts/validate-links.mjs'
 import { validateRenderedLinks } from '../scripts/validate-links.mjs'
 import { findProhibitedClaims, scanProhibitedClaims, walk as walkClaimFiles } from '../scripts/validate-claims.mjs'
 
 test('required external destinations remain distinct', () => {
   assert.equal(new Set(requiredLinks).size, requiredLinks.length)
-  assert.ok(requiredLinks.includes('https://docs.terrascale.tech/legal/terms/'))
-  assert.ok(requiredLinks.includes('https://docs.terrascale.tech/legal/terms/#acceptable-use'))
+  assert.ok(requiredLinks.every((href) => !href.includes('docs.terrascale.tech/legal/')))
   assert.ok(requiredLinks.includes('https://docs.terrascale.tech'))
   assert.ok(requiredLinks.includes('https://docs.terrascale.tech/changelog/'))
   assert.notEqual('https://docs.terrascale.tech/changelog/', 'https://docs.terrascale.tech')
@@ -39,17 +37,26 @@ test('product footer validator rejects duplicate changelog and documentation des
   assert.match(failures.join('\n'), /product footer links must point to distinct canonical destinations/)
 })
 
-test('legal policy validator requires the source file and Acceptable use heading', () => {
-  const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'landing-policy-'))
-  const termsPath = path.join(fixtureRoot, 'terms.md')
-  try {
-    assert.match(validateLegalPolicySource(path.join(fixtureRoot, 'missing.md')).join('\n'), /source file is missing/)
-    writeFileSync(termsPath, '# Terms\n')
-    assert.match(validateLegalPolicySource(termsPath).join('\n'), /missing the Acceptable use heading/)
-    writeFileSync(termsPath, '# Terms\n\n## Acceptable use\n')
-    assert.deepEqual(validateLegalPolicySource(termsPath), [])
-  } finally {
-    rmSync(fixtureRoot, { recursive: true, force: true })
+test('claim validator requires the confirmed launch region names', () => {
+  for (const mode of ['source', 'rendered']) {
+    for (const retired of ['Falkenstein', 'San Francisco', 'Guarulhos']) {
+      assert.ok(
+        findProhibitedClaims(`<p>Replication across ${retired}.</p>`, { mode }).some(({ id }) => id === 'unsupported-region'),
+        `${mode} validator did not reject ${retired}`,
+      )
+    }
+    assert.deepEqual(findProhibitedClaims('<p>Replication across São Paulo, San Jose, and Frankfurt.</p>', { mode }), [])
+  }
+})
+
+test('claim validator rejects links to draft legal policies', () => {
+  for (const mode of ['source', 'rendered']) {
+    for (const href of ['https://docs.terrascale.tech/legal/terms/', 'https://docs.terrascale.tech/legal/dpa/']) {
+      assert.ok(
+        findProhibitedClaims(`<a href="${href}">Policy</a>`, { mode }).some(({ id }) => id === 'draft-legal-link'),
+        `${mode} validator did not reject ${href}`,
+      )
+    }
   }
 })
 
@@ -793,8 +800,8 @@ test('rendered external link inventory includes metadata and structured-data URL
   const fixture = path.join(temporaryRoot, 'inventory.html')
   const urls = [
     'https://status.terrascale.tech',
-    'https://docs.terrascale.tech/legal/security/',
-    'https://docs.terrascale.tech/legal/support/',
+    'https://docs.terrascale.tech/getting-started/',
+    'https://docs.terrascale.tech/changelog/',
   ]
   writeFileSync(fixture, `
     <a href="${urls[0]}">status</a>
