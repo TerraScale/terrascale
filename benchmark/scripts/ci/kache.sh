@@ -8,7 +8,9 @@ set -euo pipefail
 
 (( $# > 0 )) || { echo "usage: $0 COMMAND [ARG...]" >&2; exit 2; }
 store=/cache/kache
-if ! command -v kache >/dev/null || ! mkdir -p -- "$store" 2>/dev/null ||
+# Only the runner's existing shared /cache mount qualifies; never create it.
+if ! command -v kache >/dev/null || ! mountpoint -q /cache ||
+   ! { [[ -d $store ]] || mkdir -- "$store" 2>/dev/null; } ||
    [[ ! -d $store || ! -w $store || ! -x $store ]]; then
   echo 'kache store unavailable; compiling without it' >&2
   exec "$@"
