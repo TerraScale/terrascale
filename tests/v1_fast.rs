@@ -1925,3 +1925,249 @@ async fn cursors_distinguish_present_values_from_missing_keys() {
     ids.dedup();
     assert_eq!(ids.len(), 3);
 }
+
+async fn raw_req(
+    f: &Fixture,
+    method: reqwest::Method,
+    path: &str,
+    content_type: Option<&str>,
+    body: &str,
+) -> (u16, serde_json::Value) {
+    let http = reqwest::Client::builder()
+        .add_root_certificate(reqwest::Certificate::from_pem(f.ca_pem.as_bytes()).unwrap())
+        .build()
+        .unwrap();
+    let mut rb = http
+        .request(method, format!("{}{path}", f.url))
+        .bearer_auth(&f.data_token)
+        .body(body.to_owned());
+    if let Some(ct) = content_type {
+        rb = rb.header("content-type", ct);
+    }
+    let resp = rb.send().await.unwrap();
+    let status = resp.status().as_u16();
+    (status, resp.json().await.unwrap_or(serde_json::Value::Null))
+}
+
+fn code_op(v: &serde_json::Value) -> (Option<&str>, Option<u64>) {
+    (v["error"]["code"].as_str(), v["error"]["op"].as_u64())
+}
+
+#[tokio::test]
+async fn undecodable_mutation_acks_are_uncertain() {
+    let f = Fixture::start().await;
+    let items = data(&f).database("main").collection("items");
+    let docs = "/v1/databases/main/collections/items/documents";
+    let mut fault = Fault::new("POST", docs, 201, "ignored");
+    fault.after_commit = true;
+    fault.body = Some(r#"{"id":"not-a-uuid"}"#);
+    f.inject(fault);
+    let err = items
+        .create(&json!({"k": 1}), WriteOptions::new())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::UndecodableAck { status: 201, .. }),
+        "{err:?}"
+    );
+    assert!(err.is_uncertain());
+    let page = items
+        .query::<Box<RawValue>>(&Query::new().count(true))
+        .await
+        .unwrap();
+    assert_eq!(page.count.unwrap().value, 1, "the write was applied");
+
+    let tx_path = "/v1/databases/main/transactions";
+    let mut fault = Fault::new("POST", tx_path, 200, "ignored");
+    fault.after_commit = true;
+    fault.body = Some("{}");
+    f.inject(fault);
+    let mut tx = Tx::new();
+    tx.create("items", None, &json!({}));
+    let err = data(&f).database("main").commit(&tx).await.unwrap_err();
+    assert!(
+        matches!(err, Error::UndecodableAck { status: 200, .. }) && err.is_uncertain(),
+        "{err:?}"
+    );
+
+    // A malformed read is a plain decode error.
+    let id = uuidv5_for("items", "read");
+    items
+        .put(id, &json!({}), WriteOptions::new())
+        .await
+        .unwrap();
+    let mut fault = Fault::new("GET", docs, 200, "ignored");
+    fault.body = Some("[]");
+    f.inject(fault);
+    let err = items.get::<Box<RawValue>>(id).await.unwrap_err();
+    assert!(
+        matches!(err, Error::Decode(_)) && !err.is_uncertain(),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn fixture_rejects_wrong_media_types_and_malformed_members() {
+    let f = Fixture::start().await;
+    let id = uuidv5_for("items", "m");
+    let doc = format!("/v1/databases/main/collections/items/documents/{id}");
+    let query = "/v1/databases/main/collections/items/query";
+    let tx = "/v1/databases/main/transactions";
+    for ct in [None, Some("text/plain")] {
+        for (m, path, body) in [
+            (reqwest::Method::PUT, doc.as_str(), "{}"),
+            (
+                reqwest::Method::POST,
+                "/v1/databases/main/collections/items/documents",
+                "{}",
+            ),
+            (reqwest::Method::POST, query, "{}"),
+            (
+                reqwest::Method::POST,
+                tx,
+                r#"{"ops":[{"op":"create","collection":"items","document":{}}]}"#,
+            ),
+        ] {
+            let (status, e) = raw_req(&f, m, path, ct, body).await;
+            assert_eq!(
+                (status, code_op(&e).0),
+                (415, Some("unsupported_media_type")),
+                "{path} {ct:?}"
+            );
+        }
+    }
+    let json = Some("application/json; charset=utf-8");
+    for body in [
+        r#"{"sort":42}"#,
+        r#"{"sort":[42]}"#,
+        r#"{"project":[42]}"#,
+        r#"{"project":"/a"}"#,
+        r#"{"project":["a"]}"#,
+        r#"{"project":["/a~2"]}"#,
+        r#"{"cursor":7}"#,
+        r#"{"count":"yes"}"#,
+        r#"{"limit":"5"}"#,
+        r#"{"explain":"all"}"#,
+    ] {
+        let (status, e) = raw_req(&f, reqwest::Method::POST, query, json, body).await;
+        assert_eq!(
+            (status, code_op(&e).0),
+            (400, Some("invalid_query")),
+            "{body}"
+        );
+    }
+    let (status, _) = raw_req(
+        &f,
+        reqwest::Method::POST,
+        query,
+        json,
+        r#"{"project":["/a"],"count":true}"#,
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    // Count bounds: one valid and one invalid bound is rejected.
+    for body in [
+        r#"{"ops":[{"op":"assert_count","collection":"items","filter":{"exists":"/a"},"gte":1.5,"lte":10}]}"#,
+        r#"{"ops":[{"op":"assert_count","collection":"items","filter":{"exists":"/a"},"gte":0,"lte":-1}]}"#,
+    ] {
+        let (status, e) = raw_req(&f, reqwest::Method::POST, tx, json, body).await;
+        assert_eq!(
+            (status, code_op(&e)),
+            (400, (Some("invalid_request"), Some(0))),
+            "{body}"
+        );
+    }
+
+    // Transaction ops patches need 1-256 ops.
+    let (status, _) = raw_req(&f, reqwest::Method::PUT, &doc, json, r#"{"n":0}"#).await;
+    assert_eq!(status, 201);
+    let inc = r#"{"op":"inc","path":"/n","by":1}"#;
+    let patch = |n: usize| {
+        format!(
+            r#"{{"ops":[{{"op":"patch","collection":"items","id":"{id}","ops":[{}]}}]}}"#,
+            vec![inc; n].join(",")
+        )
+    };
+    for n in [0, 257] {
+        let (status, e) = raw_req(&f, reqwest::Method::POST, tx, json, &patch(n)).await;
+        assert_eq!(
+            (status, code_op(&e)),
+            (400, (Some("invalid_patch"), Some(0))),
+            "{n} ops"
+        );
+    }
+    for n in [1, 256] {
+        let (status, _) = raw_req(&f, reqwest::Method::POST, tx, json, &patch(n)).await;
+        assert_eq!(status, 200, "{n} ops");
+    }
+    let n = data(&f)
+        .database("main")
+        .collection("items")
+        .get::<serde_json::Value>(id)
+        .await
+        .unwrap();
+    assert_eq!(n.into_value().unwrap()["n"], json!(257));
+}
+
+#[tokio::test]
+async fn future_retry_after_dates_delay_the_retry() {
+    let f = Fixture::start().await;
+    let docs = "/v1/databases/main/collections/items/documents";
+    let items = data(&f).database("main").collection("items");
+    let id = uuidv5_for("items", "future");
+    let path = format!("{docs}/{id}");
+    let date = |secs: u64| -> &'static str {
+        Box::leak(
+            httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_secs(secs))
+                .into_boxed_str(),
+        )
+    };
+
+    // Two seconds ahead (second resolution): the retry waits at least 1 s.
+    let mut fault = Fault::new("PUT", docs, 429, "rate_limited");
+    fault.retry_after = Some(date(2));
+    f.inject(fault);
+    let start = std::time::Instant::now();
+    let probe = {
+        let f_count = || f.count("PUT", &path);
+        let items = items.clone();
+        let put = tokio::spawn(async move { items.put(id, &json!({}), WriteOptions::new()).await });
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let during = f_count();
+        put.await.unwrap().unwrap();
+        (during, f_count())
+    };
+    assert_eq!(probe, (1, 2), "no retry before the date, one after");
+    assert!(
+        start.elapsed() >= Duration::from_secs(1),
+        "{:?}",
+        start.elapsed()
+    );
+
+    // A far date is capped by max_retry_after.
+    let capped = Client::builder(&f.url, &f.data_token)
+        .add_root_ca_pem(&f.ca_pem)
+        .retry_policy(RetryPolicy {
+            max_retry_after: Duration::from_millis(50),
+            ..RetryPolicy::default()
+        })
+        .build()
+        .unwrap();
+    let mut fault = Fault::new("PUT", docs, 429, "rate_limited");
+    fault.retry_after = Some(date(3600));
+    f.inject(fault);
+    let start = std::time::Instant::now();
+    capped
+        .database("main")
+        .collection("items")
+        .put(id, &json!({}), WriteOptions::new())
+        .await
+        .unwrap();
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        start.elapsed()
+    );
+    assert_eq!(f.faults_left(), 0);
+}

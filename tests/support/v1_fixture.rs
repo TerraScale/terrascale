@@ -730,6 +730,17 @@ fn wrap(
             None => {}
         }
     }
+    // JSON bodies must say so; document PATCH checks its own media types.
+    let doc_patch = ctx.method == "PATCH" && !control;
+    if matches!(ctx.method, "POST" | "PUT" | "PATCH") && !doc_patch {
+        let media = ctx
+            .content_type
+            .as_deref()
+            .map(|c| c.split(';').next().unwrap_or("").trim());
+        if media != Some("application/json") {
+            return err(415, "unsupported_media_type");
+        }
+    }
     let rep = route(st, ctx, &key, body);
     if let Some((s, digest)) = slot {
         if rep.status < 500 {
@@ -1435,8 +1446,11 @@ fn transaction(st: &mut State, key: &Key, db: &str, body: &[u8]) -> Reply {
         let s = |k: &str| o.get(k).and_then(J::as_str).map(String::from);
         if kind == "assert_count" {
             count_ops += 1;
-            let gte = o.get("gte").and_then(J::as_u64);
-            let lte = o.get("lte").and_then(J::as_u64);
+            // A present bound must be a u64.
+            let bound = |k: &str| o.get(k).map(|v| v.as_u64().ok_or(()));
+            let (Ok(gte), Ok(lte)) = (bound("gte").transpose(), bound("lte").transpose()) else {
+                return err_op(400, "invalid_request", i);
+            };
             let Ok(filter) = Filter::parse(o.get("filter").unwrap_or(&J::Null)) else {
                 return err_op(400, "invalid_query", i);
             };
@@ -1513,7 +1527,11 @@ fn transaction(st: &mut State, key: &Key, db: &str, body: &[u8]) -> Reply {
             "patch" => {
                 let merge = o.get("merge").and_then(J::as_object).cloned();
                 let pops = o.get("ops").and_then(J::as_array).cloned();
-                if merge.is_some() == pops.is_some() {
+                if merge.is_some() == pops.is_some()
+                    || o.get("merge").is_some_and(|m| m.as_object().is_none())
+                    || o.get("ops")
+                        .is_some_and(|p| p.as_array().is_none_or(|a| a.is_empty() || a.len() > 256))
+                {
                     return err_op(400, "invalid_patch", i);
                 }
                 let apply = move |obj: &mut Obj| match (&merge, &pops) {
@@ -1823,22 +1841,42 @@ fn query(st: &mut State, key: &Key, db: &str, coll: &str, body: &[u8]) -> Reply 
     if q.keys().any(|k| !known.contains(&k.as_str())) {
         return err(400, "invalid_query");
     }
-    let limit = q.get("limit").map_or(Some(50), J::as_u64).unwrap_or(0) as usize;
-    let sort = q
-        .get("sort")
-        .and_then(J::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let project: Vec<String> = q
-        .get("project")
-        .and_then(J::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    if !(1..=1000).contains(&limit) || sort.len() > 4 || project.len() > 64 {
+    // Present members must have the right type; nothing defaults silently.
+    let limit = match q.get("limit") {
+        None => 50,
+        Some(v) => v.as_u64().unwrap_or(0) as usize,
+    };
+    let sort = match q.get("sort") {
+        None => Vec::new(),
+        Some(J::Arr(a)) if a.iter().all(|k| k.as_object().is_some()) => a.clone(),
+        Some(_) => return err(400, "invalid_query"),
+    };
+    let project: Vec<String> = match q.get("project") {
+        None => Vec::new(),
+        Some(J::Arr(a)) => {
+            let paths: Option<Vec<String>> = a
+                .iter()
+                .map(|v| {
+                    let p = v.as_str()?;
+                    let n = split_pointer(p)?.len();
+                    (1..=16).contains(&n).then(|| p.to_owned())
+                })
+                .collect();
+            match paths {
+                Some(p) => p,
+                None => return err(400, "invalid_query"),
+            }
+        }
+        Some(_) => return err(400, "invalid_query"),
+    };
+    let typed = matches!(q.get("cursor"), None | Some(J::Null | J::Str(_)))
+        && matches!(q.get("count"), None | Some(J::Bool(_)))
+        && match q.get("explain") {
+            None => true,
+            Some(J::Str(e)) => e == "plan" || e == "analyze",
+            Some(_) => false,
+        };
+    if !typed || !(1..=1000).contains(&limit) || sort.len() > 4 || project.len() > 64 {
         return err(400, "invalid_query");
     }
     let Ok(filter) = Filter::parse(q.get("filter").unwrap_or(&J::Null)) else {
