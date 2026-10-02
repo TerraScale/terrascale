@@ -114,7 +114,11 @@ const canonicalizeTermsHref = (value) => {
 const draftLegalHost = 'docs.terrascale.tech'
 
 const canonicalizeDraftLegalHref = (value) => {
-  const decoded = normalizeClaimText(value).trim()
+  // Decode entities without collapsing whitespace: WHATWG URL parsing strips
+  // embedded tabs/newlines and treats backslashes as slashes, so the guard
+  // must see the same destination a browser would navigate to.
+  const decoded = decodeHTML(String(value)).replace(/\\\//g, '/').trim()
+  if (!/^(?:https?:)?[\\/]{2}/i.test(decoded)) return null
   let url
   try {
     url = new URL(decoded, `${canonicalSiteOrigin}/`)
@@ -132,12 +136,14 @@ const canonicalizeDraftLegalHref = (value) => {
   return pathname === '/legal' || pathname.startsWith('/legal/') ? url : null
 }
 
-// Extract every absolute or protocol-relative URL candidate (attributes, meta
-// content, JSON-LD, source string literals) so the draft legal guard checks
-// the normalized destination rather than a raw substring.
+// Collect complete URL candidates (quoted attribute values, metadata, JSON-LD
+// and source string literals, plus bare whitespace-delimited tokens) so the
+// draft legal guard classifies whole destinations rather than raw substrings.
 const urlCandidates = (text) => {
-  const corpus = normalizeClaimText(text).replace(/\\\//g, '/')
-  return [...corpus.matchAll(/(?:https?:)?\/\/[^\s"'`<>()[\]{}\\]+/gi)].map(([candidate]) => (candidate.startsWith('//') ? `https:${candidate}` : candidate))
+  const corpus = String(text)
+  const quoted = [...corpus.matchAll(/"([^"]*)"|'([^']*)'|`([^`]*)`/g)].map((match) => match[1] ?? match[2] ?? match[3])
+  const tokens = corpus.split(/[\s"'`<>]+/)
+  return [...quoted, ...tokens].filter((value) => /(?:https?:)?(?:[\\/]|\\\/){2}|&#|&[a-z]+;/i.test(value))
 }
 
 const findDraftLegalLink = (values) => {

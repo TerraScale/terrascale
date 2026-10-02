@@ -55,6 +55,9 @@ test('claim validator rejects draft legal URLs outside anchors', () => {
     `<meta property="og:url" content="${url}">`,
     `<script type="application/ld+json">{"url":"${url.replaceAll('/', '\\/')}"}</script>`,
     `export const policy = '${url}'`,
+    '<meta property="og:url" content="https://docs.terrascale.tech\\legal\\terms/">',
+    '<a href="https://docs.terra&#9;scale.tech/legal/terms/">Policy</a>',
+    '<a href="https://docs.terrascale.tech/leg&#10;al/terms/">Policy</a>',
   ]
   for (const mode of ['source', 'rendered']) {
     for (const document of documents) {
@@ -68,7 +71,7 @@ test('claim validator rejects draft legal URLs outside anchors', () => {
 
 test('claim validator allows URLs that do not resolve to draft legal policies', () => {
   for (const mode of ['source', 'rendered']) {
-    for (const href of ['https://docs.terrascale.tech/legal/../guides/', 'https://notdocs.terrascale.tech/legal/terms/', 'https://docs.terrascale.tech/guides/legal/']) {
+    for (const href of ['https://docs.terrascale.tech/legal/../guides/', 'https://notdocs.terrascale.tech/legal/terms/', 'https://docs.terrascale.tech/guides/legal/', 'https://docs.terrascale.tech/legal(archive)/guides/']) {
       assert.ok(
         !findProhibitedClaims(`<a href="${href}">Docs</a>`, { mode }).some(({ id }) => id === 'draft-legal-link'),
         `${mode} validator rejected ${href}`,
