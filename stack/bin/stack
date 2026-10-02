@@ -293,11 +293,32 @@ json_field() { # json_field <file> <jq alternatives...>: first non-empty match.
   done
 }
 
-auth_issuer() { json_field "$platform_file" .issuer .instance.issuer; }
-auth_client_id() { json_field "$platform_file" .client_id .client.client_id .client.id; }
-auth_client_secret() { json_field "$platform_file" .client_secret .client.client_secret; }
-auth_database() { json_field "$provision_file" .database .database_name .database_id .database.id; }
-auth_data_key() { json_field "$provision_file" .key .data_key .api_key .token .key.token; }
+# provision writes {terrabase_url, tenant_id, database, data_key};
+# bootstrap-platform writes {issuer, instance_id, client_id, client_secret?,
+# management_key?}. Secrets appear only on the run that creates them, so
+# they are moved into .stack/secrets and read from there.
+auth_issuer() { json_field "$platform_file" .issuer; }
+auth_client_id() { json_field "$platform_file" .client_id; }
+auth_database() { json_field "$provision_file" .database; }
+auth_tenant_id() { json_field "$provision_file" .tenant_id; }
+optional_secret() { [[ -s "$secrets_dir/$1" ]] && read_secret "$1"; }
+auth_data_key() { optional_secret auth-data-key || true; }
+auth_client_secret() { optional_secret auth-client-secret || true; }
+
+# keep_secret <json-file> <field> <secret-name>: store the field when present
+# (a new value replaces the old one) and strip it from the JSON file.
+keep_secret() {
+  local value
+  value="$(jq -r --arg f "$2" '.[$f] // empty' "$1")"
+  if [[ -n "$value" ]]; then
+    mkdir -p "$secrets_dir"
+    chmod 700 "$secrets_dir"
+    (umask 077 && printf '%s\n' "$value" >"$secrets_dir/$3")
+  fi
+  local tmp="$1.strip"
+  (umask 077 && jq --arg f "$2" 'del(.[$f])' "$1" >"$tmp")
+  mv -f "$tmp" "$1"
+}
 control_key() { [[ -s "$TB_CONTROL_KEY_FILE" ]] && tr -d '\n' <"$TB_CONTROL_KEY_FILE"; }
 
 write_env() {
@@ -348,33 +369,37 @@ write_env() {
 # Process environments
 # ---------------------------------------------------------------------------
 auth_env() {
-  local db key
+  local db key url
   db="$(auth_database)"
   key="$(auth_data_key)"
   [[ -n "$db" && -n "$key" ]] ||
-    die "auth-provision output $provision_file lacks a database or data key (keys: $(jq -c 'keys' "$provision_file" 2>/dev/null || echo none))"
+    die "no provisioned database in $provision_file or data key in $secrets_dir/auth-data-key (auth-provision)"
+  url="$(json_field "$provision_file" .terrabase_url)"
+  url="${url:-$TB_URL}"
   export TS_AUTH_ENVIRONMENT=Development
   export TS_AUTH_LISTEN="http://127.0.0.1:$AUTH_PORT"
   export TS_AUTH_PUBLIC_ORIGIN="$AUTH_PUBLIC_URL"
   # AUTH-1c names, plus the names auth-app main reads today.
-  export TS_AUTH_TERRABASE_URL="$TB_URL"
+  export TS_AUTH_TERRABASE_URL="$url"
   export TS_AUTH_TERRABASE_CA_FILE="$TB_CA_FILE"
   export TS_AUTH_TERRABASE_KEY="$key"
-  export TS_AUTH_TERRASCALE_API_URL="$TB_URL"
+  export TS_AUTH_TERRASCALE_API_URL="$url"
   export TS_AUTH_TERRASCALE_API_KEY="$key"
+  TS_AUTH_TERRASCALE_TENANT_ID="$(auth_tenant_id)"
+  export TS_AUTH_TERRASCALE_TENANT_ID
   export TS_AUTH_DATABASE="$db"
   TS_AUTH_MASTER_KEY="$(read_secret auth-master-key)"
   TS_AUTH_AUDIT_SIGNING_KEY="$(read_secret auth-audit-signing-key)"
   TS_AUTH_OPERATOR_KEY="$(read_secret auth-operator-key)"
   TS_AUTH_METRICS_KEY="$(read_secret auth-metrics-key)"
   export TS_AUTH_MASTER_KEY TS_AUTH_AUDIT_SIGNING_KEY TS_AUTH_OPERATOR_KEY TS_AUTH_METRICS_KEY
-  # Mailpit offers STARTTLS with the stack certificate and accepts any login.
-  export TS_AUTH_SMTP_HOST=localhost
+  # Plaintext SMTP to Mailpit: ts-auth allows it only in Development and to a
+  # loopback host, and needs no credentials then.
+  export TS_AUTH_SMTP_HOST=127.0.0.1
   export TS_AUTH_SMTP_PORT="$MAILPIT_SMTP_PORT"
-  export TS_AUTH_SMTP_USERNAME=stack
-  export TS_AUTH_SMTP_PASSWORD=stack
+  export TS_AUTH_SMTP_PLAINTEXT=true
   export TS_AUTH_SMTP_FROM_ADDRESS=auth@stack.localhost
-  export TS_AUTH_SMTP_CA_FILE="$STACK_CA_FILE"
+  unset TS_AUTH_SMTP_USERNAME TS_AUTH_SMTP_PASSWORD
   export RUST_LOG="${RUST_LOG:-info}"
 }
 
@@ -459,18 +484,20 @@ run_auth_provision() {
   [[ -x "$AUTH_APP_BIN" ]] || die "auth-app not found at $AUTH_APP_BIN"
   has_subcommand "$AUTH_APP_BIN" provision ||
     waiting AUTH-1c "auth-app has no 'provision' subcommand (ts-auth: control key -> tenant, database, collections, data key)"
-  local key
-  key="$(control_key)" || die "no TerraBase control key at $TB_CONTROL_KEY_FILE"
+  [[ -s "$TB_CONTROL_KEY_FILE" ]] || die "no TerraBase control key at $TB_CONTROL_KEY_FILE"
+  chmod 600 "$TB_CONTROL_KEY_FILE"
   local tmp="$provision_file.tmp"
   (umask 077 && TS_AUTH_TERRABASE_URL="$TB_URL" TS_AUTH_TERRABASE_CA_FILE="$TB_CA_FILE" \
-    TS_AUTH_TERRABASE_CONTROL_KEY="$key" TS_AUTH_TERRABASE_KEY="$key" \
     TS_AUTH_DATABASE="${TS_AUTH_STACK_DATABASE:-ts-auth}" \
-    "$AUTH_APP_BIN" provision --output "$tmp")
+    "$AUTH_APP_BIN" provision --control-key-file="$TB_CONTROL_KEY_FILE" --output="$tmp")
   jq -e 'type == "object"' "$tmp" >/dev/null || die "auth-app provision did not write a JSON object"
+  keep_secret "$tmp" data_key auth-data-key
   mv -f "$tmp" "$provision_file"
-  [[ -n "$(auth_database)" && -n "$(auth_data_key)" ]] ||
-    die "auth-app provision output lacks a database or data key (keys: $(jq -c keys "$provision_file"))"
-  say "auth provisioned (database $(auth_database))"
+  [[ -n "$(auth_database)" ]] ||
+    die "auth-app provision output lacks database (keys: $(jq -c keys "$provision_file"))"
+  [[ -n "$(auth_data_key)" ]] ||
+    die "auth-app provision returned no data_key and none is saved in $secrets_dir (stack reset to start over)"
+  say "auth provisioned (tenant $(auth_tenant_id), database $(auth_database))"
   write_env
 }
 
@@ -486,13 +513,17 @@ run_auth_bootstrap_platform() {
   auth_env
   local tmp="$platform_file.tmp"
   (umask 077 && "$AUTH_APP_BIN" bootstrap-platform \
-    --redirect-uri "$DASHBOARD_PUBLIC_URL/auth/callback" \
-    --post-logout-redirect-uri "$DASHBOARD_PUBLIC_URL/" \
-    --output "$tmp")
+    --redirect-uri="$DASHBOARD_PUBLIC_URL/auth/callback" \
+    --post-logout-redirect-uri="$DASHBOARD_PUBLIC_URL/" \
+    --output="$tmp")
   jq -e 'type == "object"' "$tmp" >/dev/null || die "bootstrap-platform did not write a JSON object"
+  keep_secret "$tmp" client_secret auth-client-secret
+  keep_secret "$tmp" management_key auth-management-key
   mv -f "$tmp" "$platform_file"
-  [[ -n "$(auth_issuer)" && -n "$(auth_client_id)" && -n "$(auth_client_secret)" ]] ||
-    die "bootstrap-platform output lacks issuer, client_id or client_secret (keys: $(jq -c keys "$platform_file"))"
+  [[ -n "$(auth_issuer)" && -n "$(auth_client_id)" ]] ||
+    die "bootstrap-platform output lacks issuer or client_id (keys: $(jq -c keys "$platform_file"))"
+  [[ -n "$(auth_client_secret)" ]] ||
+    die "bootstrap-platform returned no client_secret and none is saved in $secrets_dir (stack reset to start over)"
   say "platform client $(auth_client_id) registered at $(auth_issuer)"
   write_env
 }

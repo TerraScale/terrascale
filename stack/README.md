@@ -12,7 +12,7 @@ stack/bin/stack down
 | Service   | Listens on                    | Public URL                    |
 |-----------|-------------------------------|-------------------------------|
 | TerraBase | admin `127.0.0.1:9464` (real backend), client TLS `127.0.0.1:9465`, edge TLS `127.0.0.1:9466` (fake backend) | `https://127.0.0.1:9465` |
-| Mailpit   | SMTP `127.0.0.1:1025` (STARTTLS, any login), UI `127.0.0.1:8025` | `http://127.0.0.1:8025` |
+| Mailpit   | SMTP `127.0.0.1:1025` (plaintext from ts-auth; STARTTLS offered), UI `127.0.0.1:8025` | `http://127.0.0.1:8025` |
 | ts-auth   | `127.0.0.1:18455`             | `https://localhost:18445` (Caddy) |
 | dashboard | `127.0.0.1:18456`             | `https://localhost:18446` (Caddy) |
 
@@ -103,20 +103,27 @@ subcommand.
 2. `mailpit`, `caddy`.
 3. `tb-init` (real backend) → `tb-server` healthy → `stack-env` writes
    `.stack/env`.
-4. `auth-provision`: `auth-app provision --output .stack/auth-provision.json`
-   with `TS_AUTH_TERRABASE_URL`, `TS_AUTH_TERRABASE_CA_FILE` and the control
-   key in `TS_AUTH_TERRABASE_CONTROL_KEY`. The output must be a JSON object
-   with the database (`database`) and data key (`key`, `data_key`,
-   `api_key` or `token`).
+4. `auth-provision`: `auth-app provision
+   --control-key-file=.stack/tb/control-key --output=.stack/auth-provision.json`
+   with `TS_AUTH_TERRABASE_URL` and `TS_AUTH_TERRABASE_CA_FILE`. Output:
+   `{terrabase_url, tenant_id, database, data_key}`.
 5. `dashboard-migrate`: `dashboard migrate` with the dashboard environment
    below (needs only TerraBase, so it runs beside step 4).
-6. `ts-auth`: `Development` environment, `TS_AUTH_TERRABASE_{URL,CA_FILE,KEY}`
-   and `TS_AUTH_DATABASE` from step 4, SMTP to Mailpit
-   (`TS_AUTH_SMTP_*`, plus `TS_AUTH_SMTP_CA_FILE` for the stack CA).
-7. `auth-bootstrap-platform`: `auth-app bootstrap-platform --redirect-uri
-   <dashboard>/auth/callback --post-logout-redirect-uri <dashboard>/ --output
-   .stack/auth-platform.json`; the output must include `issuer`, `client_id`
-   and `client_secret`.
+6. `ts-auth`: `Development` environment, `TS_AUTH_TERRABASE_{URL,CA_FILE,KEY}`,
+   `TS_AUTH_TERRASCALE_TENANT_ID` and `TS_AUTH_DATABASE` from step 4, and
+   plaintext SMTP to Mailpit (`TS_AUTH_SMTP_PLAINTEXT=true`, host
+   `127.0.0.1`, no credentials; ts-auth allows this only in Development to a
+   loopback host).
+7. `auth-bootstrap-platform`: `auth-app bootstrap-platform
+   --redirect-uri=<dashboard>/auth/callback
+   --post-logout-redirect-uri=<dashboard>/ --output=.stack/auth-platform.json`.
+   Output: `{issuer, instance_id, client_id, client_secret?, management_key?}`.
+
+ts-auth's CLI takes `--key=value` arguments only. Secrets (`data_key`,
+`client_secret`, `management_key`) are returned only by the run that creates
+them, so the stack moves them out of the JSON files into `.stack/secrets`
+(0600) and reuses them on later runs; a newer value replaces the saved one. A
+step fails if it gets no secret and none is saved (`stack reset` starts over).
 8. `dashboard` with `TS_DASHBOARD_LIVE=1`.
 
 A step whose subcommand does not exist yet exits with `stack: waiting on
