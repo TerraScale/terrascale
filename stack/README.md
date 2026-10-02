@@ -142,7 +142,9 @@ is skipped silently, and live mode never falls back to demo data.
 ## The `.stack/env` contract
 
 `.stack/env` is written with mode 0600, is gitignored, and holds one
-`KEY=value` per line (no quoting; values never contain whitespace). Values not
+`KEY=value` per line. Values containing spaces (a checkout path with a space)
+are single-quoted, `KEY='value'`; values never contain quotes, `$`, backslashes
+or newlines. Values not
 available yet appear as `# KEY= (waiting on …)` comments. Load it with
 `set -a; . .stack/env; set +a` or `eval "$(stack/bin/stack env --export)"`.
 

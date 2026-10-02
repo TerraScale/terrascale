@@ -327,8 +327,12 @@ write_env() {
   chmod 600 "$tmp"
   emit() { # emit <name> <value> <waiting-on>
     if [[ -n "$2" ]]; then
-      [[ "$2" != *[[:space:]\'\"\\]* ]] || die "refusing to write $1: value has whitespace or quotes"
-      printf '%s=%s\n' "$1" "$2" >>"$tmp"
+      [[ "$2" != *[\'\"\\\$\`]* && "$2" != *$'\n'* ]] || die "refusing to write $1: value has quotes or newlines"
+      if [[ "$2" == *[[:space:]]* ]]; then
+        printf "%s='%s'\n" "$1" "$2" >>"$tmp" # e.g. a checkout path with spaces
+      else
+        printf '%s=%s\n' "$1" "$2" >>"$tmp"
+      fi
     else
       printf '# %s= waiting on %s\n' "$1" "$3" >>"$tmp"
       missing+=("$1")
@@ -888,6 +892,12 @@ cmd_config() {
   pc_quiet -f "$stack_dir/process-compose.yaml" --disable-dotenv --dry-run "$@"
   caddy adapt --adapter caddyfile --config "$stack_dir/Caddyfile" 2>/dev/null |
     jq -e '.apps.http.servers | length == 2' >/dev/null || die "Caddyfile does not adapt"
+  if [[ -s "$STACK_CERT_FILE" ]]; then
+    XDG_DATA_HOME="$STACK_STATE/caddy/data" XDG_CONFIG_HOME="$STACK_STATE/caddy/config" \
+      caddy validate --adapter caddyfile --config "$stack_dir/Caddyfile" >/dev/null 2>&1 ||
+      die "caddy validate failed for $stack_dir/Caddyfile"
+    printf 'Caddyfile validates with %s\n' "$STACK_CERT_FILE"
+  fi
   printf 'Caddyfile adapts (auth %s -> %s, dashboard %s -> %s)\n' \
     "$AUTH_HTTPS_PORT" "$AUTH_PORT" "$DASHBOARD_HTTPS_PORT" "$DASHBOARD_PORT"
 }
