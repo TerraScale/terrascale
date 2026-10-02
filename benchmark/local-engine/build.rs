@@ -88,11 +88,31 @@ fn main() {
     // Rerun the validation whenever anything in the validated checkout or the
     // submodule's checked-out revision changes, not only the crates Cargo builds.
     println!("cargo:rerun-if-changed={}", turso.display());
-    for path in ["HEAD", "index"] {
+    let mut watched = vec![
+        "HEAD".to_owned(),
+        "index".to_owned(),
+        "packed-refs".to_owned(),
+    ];
+    // A symbolic HEAD resolves through its branch ref, which can move alone.
+    let head_ref = Command::new("git")
+        .arg("-C")
+        .arg(&turso)
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .output()
+        .expect("git is required to identify the pinned Turso source");
+    if head_ref.status.success() {
+        watched.push(text(head_ref.stdout));
+    }
+    for path in &watched {
         let git_path = text(git(
             &turso,
             None,
-            &["rev-parse", "--path-format=absolute", "--git-path", path],
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                path.as_str(),
+            ],
         ));
         println!("cargo:rerun-if-changed={git_path}");
     }

@@ -26,6 +26,9 @@ esac
 ASKPASS
 chmod 700 "$askpass"
 
+# Only a fresh checkout guarantees that prepare-turso.sh and the patch series
+# are the pinned revision's bytes; never reuse an existing sibling tree.
+[[ ! -e $engine ]] || { echo "$engine already exists; this script needs a fresh checkout" >&2; exit 2; }
 git init -q "$engine"
 GIT_ASKPASS=$askpass GIT_TERMINAL_PROMPT=0 git -C "$engine" -c credential.helper= fetch -q --depth 1 \
   https://git.terrascale.tech/TerraScale/terrabase.git "$rev"

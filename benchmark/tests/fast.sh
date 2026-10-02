@@ -4,13 +4,19 @@
 # timings here never fill a scoreboard row.
 set -euo pipefail
 
+command -v jq >/dev/null || { echo 'jq is required' >&2; exit 2; }
+
 root=$(cd "$(dirname "$0")/.." && pwd)
-floor="$root/terra-rust/target/release/throughput-floor"
-scorecard="$root/local-engine/target/release/local-engine-scorecard"
+# Resolve each crate's effective target directory (CARGO_TARGET_DIR or Cargo
+# config) so the suite tests exactly what build-fast produced.
+target_dir() {
+  cargo metadata --locked --no-deps --format-version 1 --manifest-path "$root/$1/Cargo.toml" | jq -er .target_directory
+}
+floor="$(target_dir terra-rust)/release/throughput-floor"
+scorecard="$(target_dir local-engine)/release/local-engine-scorecard"
 for binary in "$floor" "$scorecard"; do
   test -x "$binary" || { echo "missing $binary; run make build-fast first" >&2; exit 2; }
 done
-command -v jq >/dev/null || { echo 'jq is required' >&2; exit 2; }
 
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
