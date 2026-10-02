@@ -58,6 +58,12 @@ test('claim validator rejects draft legal URLs outside anchors', () => {
     '<meta property="og:url" content="https://docs.terrascale.tech\\legal\\terms/">',
     '<a href="https://docs.terra&#9;scale.tech/legal/terms/">Policy</a>',
     '<a href="https://docs.terrascale.tech/leg&#10;al/terms/">Policy</a>',
+    '<a href="ht&#9;tps://docs.terrascale.tech/legal/terms/">Policy</a>',
+    '<a href="https:/&#10;/docs.terrascale.tech/legal/terms/">Policy</a>',
+    "export const policy = 'https://docs.terrascale.tech/\\u006cegal/terms/'",
+    "export const policy = 'https://\\u0064ocs.terrascale.tech/legal/terms/'",
+    '<meta property=og:url content=https://docs.terrascale.tech/legal/terms/>',
+    '<a href="https://docs%2Eterrascale.tech/legal/terms/">Policy</a>',
   ]
   for (const mode of ['source', 'rendered']) {
     for (const document of documents) {

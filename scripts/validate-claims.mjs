@@ -114,14 +114,9 @@ const canonicalizeTermsHref = (value) => {
 const draftLegalHost = 'docs.terrascale.tech'
 
 const canonicalizeDraftLegalHref = (value) => {
-  // Decode entities without collapsing whitespace: WHATWG URL parsing strips
-  // embedded tabs/newlines and treats backslashes as slashes, so the guard
-  // must see the same destination a browser would navigate to.
-  const decoded = decodeHTML(String(value)).replace(/\\\//g, '/').trim()
-  if (!/^(?:https?:)?[\\/]{2}/i.test(decoded)) return null
   let url
   try {
-    url = new URL(decoded, `${canonicalSiteOrigin}/`)
+    url = new URL(value, `${canonicalSiteOrigin}/`)
   } catch {
     return null
   }
@@ -136,15 +131,25 @@ const canonicalizeDraftLegalHref = (value) => {
   return pathname === '/legal' || pathname.startsWith('/legal/') ? url : null
 }
 
-// Collect complete URL candidates (quoted attribute values, metadata, JSON-LD
-// and source string literals, plus bare whitespace-delimited tokens) so the
-// draft legal guard classifies whole destinations rather than raw substrings.
-const urlCandidates = (text) => {
-  const corpus = String(text)
-  const quoted = [...corpus.matchAll(/"([^"]*)"|'([^']*)'|`([^`]*)`/g)].map((match) => match[1] ?? match[2] ?? match[3])
-  const tokens = corpus.split(/[\s"'`<>]+/)
-  return [...quoted, ...tokens].filter((value) => /(?:https?:)?(?:[\\/]|\\\/){2}|&#|&[a-z]+;/i.test(value))
+// Undo the encodings a browser or JavaScript/JSON runtime would resolve before
+// navigating: HTML entities, string escapes, escaped slashes, percent-encoding
+// and the tab/newline characters WHATWG URL parsing ignores.
+const urlDecodingVariants = (text) => {
+  const decoded = decodeHTML(String(text))
+    .replace(/\\u\{([0-9a-f]{1,6})\}|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})/gi, (_, braced, unicode, hex) => String.fromCodePoint(parseInt(braced ?? unicode ?? hex, 16)))
+    .replace(/\\\//g, '/')
+    .replace(/[\t\n\r]/g, '')
+  const percentDecoded = decoded.replace(/%([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+  return [decoded, percentDecoded]
 }
+
+// Find every authority that names the docs host, wherever it appears (quoted
+// or unquoted attributes, metadata, JSON-LD, source literals), and classify the
+// complete destination that follows it.
+const urlCandidates = (text) =>
+  urlDecodingVariants(text).flatMap((corpus) =>
+    [...corpus.matchAll(/[\\/]{2}docs\.terrascale\.tech\.?(?::\d*)?(?:[\\/?#][^\s"'`<>]*)?/gi)].map(([candidate]) => `https:${candidate}`),
+  )
 
 const findDraftLegalLink = (values) => {
   for (const value of values) {
