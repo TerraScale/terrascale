@@ -82,10 +82,55 @@ async fn live_provision_crud_query_and_revoke() {
             .map(|t| t.id),
         Some(tenant.id.clone())
     );
+    // Run the checks in a task so a failure still reaches the cleanup.
+    let outcome = tokio::spawn(exercise(l, run.clone(), ctl.clone(), tenant.id.clone())).await;
+    cleanup(&ctl, &k, &tenant.id).await;
+    if let Err(e) = outcome {
+        std::panic::resume_unwind(e.into_panic());
+    }
+}
+
+/// Revokes every live key, deletes the tenant and awaits the deletion
+/// (bounded), on success and on failure.
+async fn cleanup(ctl: &ControlClient, k: &impl Fn(&str) -> IdempotencyKey, tenant: &str) {
+    if let Ok(keys) = ctl
+        .list_keys(
+            tenant,
+            &ListOptions {
+                limit: Some(200),
+                cursor: None,
+            },
+        )
+        .await
+    {
+        for key in keys.items.iter().filter(|key| key.revoked_at.is_none()) {
+            if let Err(e) = ctl
+                .revoke_key(&k(&format!("cleanup-revoke-{}", key.id)), tenant, &key.id)
+                .await
+            {
+                eprintln!("cleanup: revoke {}: {e}", key.id);
+            }
+        }
+    }
+    match ctl.delete_tenant(&k("cleanup-tenant"), tenant).await {
+        Ok(op) => {
+            let wait = ctl.wait_operation(&op.id, Duration::from_millis(200));
+            match tokio::time::timeout(Duration::from_secs(60), wait).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => eprintln!("cleanup: delete tenant {tenant}: {e}"),
+                Err(_) => eprintln!("cleanup: delete tenant {tenant}: timed out after 60 s"),
+            }
+        }
+        Err(e) => eprintln!("cleanup: delete tenant {tenant}: {e}"),
+    }
+}
+
+async fn exercise(l: Live, run: IdempotencyKey, ctl: ControlClient, tenant_id: String) {
+    let k = |step: &str| IdempotencyKey::derive(&[run.as_str(), step]);
     let db = ctl
         .create_database(
             &k("db"),
-            &tenant.id,
+            &tenant_id,
             &CreateDatabase {
                 name: "app".into(),
                 ..CreateDatabase::default()
@@ -96,7 +141,7 @@ async fn live_provision_crud_query_and_revoke() {
     assert_eq!(db.name, "app");
     ctl.create_collection(
         &k("todos"),
-        &tenant.id,
+        &tenant_id,
         "app",
         &CreateCollection {
             name: "todos".into(),
@@ -114,7 +159,7 @@ async fn live_provision_crud_query_and_revoke() {
     let key = ctl
         .create_key(
             &k("key"),
-            &tenant.id,
+            &tenant_id,
             &CreateKey {
                 name: "ts-rust-live".into(),
                 grants: vec![Grant {
@@ -218,7 +263,7 @@ async fn live_provision_crud_query_and_revoke() {
         other => panic!("{other:?}"),
     }
 
-    ctl.revoke_key(&k("revoke"), &tenant.id, &key.key.id)
+    ctl.revoke_key(&k("revoke"), &tenant_id, &key.key.id)
         .await
         .unwrap();
     let mut revoked = false;
