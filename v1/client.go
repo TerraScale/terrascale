@@ -66,12 +66,20 @@ type Config struct {
 	// Retry-After. Transport errors and the transient 503s (capacity,
 	// storage_unavailable, dependencies_unavailable, commit_uncertain) are
 	// retried with backoff only when the request is safe to replay: reads,
-	// queries and mutations with an Idempotency-Key. stored_corruption is never
-	// retried. Zero means DefaultMaxRetries; negative disables retries.
+	// queries, the shape gatekeeper and mutations with an Idempotency-Key.
+	// 500 internal_error is retried only with an Idempotency-Key.
+	// stored_corruption is never retried. Zero means DefaultMaxRetries; negative disables retries.
 	MaxRetries int
 	// MaxResponseBytes bounds one response body. Zero means
 	// DefaultMaxResponseBytes.
 	MaxResponseBytes int64
+	// AutoIdempotencyKeys gives every data-plane write (Put, Create, Patch,
+	// Delete and Tx.Commit) that has no IdempotencyKey option a fresh random
+	// key, kept across the client's retries. Such writes become safe to
+	// replay, so commit_uncertain, internal_error, transient 503s and
+	// transport errors are retried and return the original outcome. When the
+	// retries run out, the key is reported in APIError.IdempotencyKey.
+	AutoIdempotencyKeys bool
 }
 
 // Client is a data-plane client for one data key. It is safe for concurrent use.
@@ -81,6 +89,7 @@ type Client struct {
 	hc          *http.Client
 	maxRetries  int
 	maxResponse int64
+	autoIdem    bool
 }
 
 var tokenPattern = regexp.MustCompile(`^tbk1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$`)
@@ -105,7 +114,7 @@ func New(cfg Config) (*Client, error) {
 		hc = &copied
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	c := &Client{base: base, token: cfg.Token, hc: hc, maxRetries: cfg.MaxRetries, maxResponse: cfg.MaxResponseBytes}
+	c := &Client{base: base, token: cfg.Token, hc: hc, maxRetries: cfg.MaxRetries, maxResponse: cfg.MaxResponseBytes, autoIdem: cfg.AutoIdempotencyKeys}
 	switch {
 	case c.maxRetries == 0:
 		c.maxRetries = DefaultMaxRetries
@@ -162,6 +171,9 @@ type request struct {
 	contentType string
 	header      http.Header
 	idemKey     string
+	// write marks data-plane writes, which get a generated Idempotency-Key
+	// under Config.AutoIdempotencyKeys.
+	write bool
 	// replaySafe marks requests that may be resent after a transport error:
 	// reads, read-only POSTs and mutations carrying an Idempotency-Key.
 	replaySafe bool
@@ -185,6 +197,9 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 	if len(req.body) > MaxRequestBytes {
 		return nil, fmt.Errorf("terrabase: request body is %d bytes, over the %d byte limit", len(req.body), MaxRequestBytes)
 	}
+	if req.write && req.idemKey == "" && c.autoIdem {
+		req.idemKey = NewIdempotencyKey()
+	}
 	if req.idemKey != "" {
 		if err := validIdempotencyKey(req.idemKey); err != nil {
 			return nil, err
@@ -207,7 +222,8 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 			return resp, nil
 		}
 		apiErr := parseAPIError(resp.status, resp.header, resp.body)
-		if delay, ok := retryDelay(apiErr, attempt, req.replaySafe); ok && attempt < c.maxRetries {
+		apiErr.IdempotencyKey = req.idemKey
+		if delay, ok := retryDelay(apiErr, attempt, req.replaySafe, req.idemKey != ""); ok && attempt < c.maxRetries {
 			if err := sleep(ctx, delay); err != nil {
 				return nil, err
 			}
@@ -221,12 +237,14 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 // was not admitted); the transient 503s capacity, storage_unavailable,
 // dependencies_unavailable and commit_uncertain are retried only for requests
 // that are safe to replay (reads, queries and writes with an Idempotency-Key,
-// which make a retry return the original outcome). stored_corruption is never
-// retried.
-func retryDelay(e *APIError, attempt int, replaySafe bool) (time.Duration, bool) {
+// which make a retry return the original outcome). 500 internal_error is
+// retried only for requests carrying an Idempotency-Key, since the server
+// guarantees nothing about its effect. stored_corruption is never retried.
+func retryDelay(e *APIError, attempt int, replaySafe, keyed bool) (time.Duration, bool) {
 	switch {
 	case e.Status == http.StatusTooManyRequests:
 	case replaySafe && isTransient503(e):
+	case keyed && e.Status == http.StatusInternalServerError && e.Code == ErrInternalError:
 	default:
 		return 0, false
 	}

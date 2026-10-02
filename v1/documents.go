@@ -85,7 +85,8 @@ func (k idempotencyOption) applyWrite(w *writeConfig) { w.idemKey = string(k) }
 
 // IdempotencyKey sets the Idempotency-Key of a mutation. An exact retry with
 // the same key within 24 hours returns the original response, and the client
-// retries 503 commit_uncertain only for keyed requests.
+// retries 503 commit_uncertain and 500 internal_error only for keyed requests.
+// Config.AutoIdempotencyKeys generates a key when this option is absent.
 func IdempotencyKey(key string) WriteOption { return idempotencyOption(key) }
 
 func resolveWrite(opts []WriteOption) (writeConfig, error) {
@@ -167,7 +168,7 @@ func (col *Collection) Put(ctx context.Context, id string, doc any, opts ...Writ
 	if err != nil {
 		return nil, err
 	}
-	return col.write(ctx, request{method: http.MethodPut, path: p, body: body, header: w.header(), idemKey: w.idemKey})
+	return col.write(ctx, request{write: true, method: http.MethodPut, path: p, body: body, header: w.header(), idemKey: w.idemKey})
 }
 
 // Create stores a new document under a server-generated UUIDv7.
@@ -187,7 +188,7 @@ func (col *Collection) Create(ctx context.Context, doc any, opts ...WriteOption)
 	if err != nil {
 		return nil, err
 	}
-	return col.write(ctx, request{method: http.MethodPost, path: p, body: body, idemKey: w.idemKey})
+	return col.write(ctx, request{write: true, method: http.MethodPost, path: p, body: body, idemKey: w.idemKey})
 }
 
 // Patch applies a MergePatch or an Ops patch to an existing document.
@@ -207,7 +208,7 @@ func (col *Collection) Patch(ctx context.Context, id string, patch Patch, opts .
 	if err != nil {
 		return nil, err
 	}
-	return col.write(ctx, request{method: http.MethodPatch, path: p, body: body, contentType: contentType, header: w.header(), idemKey: w.idemKey})
+	return col.write(ctx, request{write: true, method: http.MethodPatch, path: p, body: body, contentType: contentType, header: w.header(), idemKey: w.idemKey})
 }
 
 // Delete tombstones a document. The result's Version is the tombstone's.
@@ -223,7 +224,7 @@ func (col *Collection) Delete(ctx context.Context, id string, opts ...WriteOptio
 	if w.ifNoneMatchAny {
 		return nil, errors.New("terrabase: Delete does not take IfNoneMatchAny")
 	}
-	return col.write(ctx, request{method: http.MethodDelete, path: p, header: w.header(), idemKey: w.idemKey})
+	return col.write(ctx, request{write: true, method: http.MethodDelete, path: p, header: w.header(), idemKey: w.idemKey})
 }
 
 func (col *Collection) write(ctx context.Context, req request) (*WriteResult, error) {

@@ -186,7 +186,8 @@ func (i *TSAuthInstanceClient) oidc(suffix string) string {
 // so they never enter Client.do: tsAuthSend mirrors do's timeout, retry, and
 // decoding behavior while authenticating and routing directly to the
 // instance's resolved ts-auth origin (no discovery, no placement repair, no
-// idempotency contract — mutations are never retried).
+// idempotency contract — mutations are never retried, except operator calls
+// that carry an Idempotency-Key, such as CreateInstance).
 
 func tsAuthRoute(path string) bool {
 	return strings.HasPrefix(path, "/v1/") ||
@@ -278,6 +279,15 @@ func (c *Client) tsAuthSendAuthorized(ctx context.Context, base, method, path st
 			return fmt.Errorf("sdk: auth endpoint discovery: %w", err)
 		}
 	}
+	// A keyed mutation (Idempotency-Key) replays its original outcome, so it
+	// is retried and failed over like a read.
+	// The ts-auth bootstrap answers 503 while an outcome is not yet visible,
+	// so keyed calls retry at least tsAuthKeyedRetries times.
+	retryable := tsAuthRetryable(method) || authorization.idempotencyKey != ""
+	maxRetries := c.cfg.MaxRetryAttempts
+	if authorization.idempotencyKey != "" {
+		maxRetries = max(maxRetries, tsAuthKeyedRetries)
+	}
 	regionIndex := 0
 	attempt := 0
 	for {
@@ -289,11 +299,11 @@ func (c *Client) tsAuthSendAuthorized(ctx context.Context, base, method, path st
 			return responseErr
 		}
 		if err != nil && responseErr == nil {
-			if tsAuthRetryable(method) && regionIndex < len(bases)-1 && requestCtx.Err() == nil {
+			if retryable && regionIndex < len(bases)-1 && requestCtx.Err() == nil {
 				regionIndex++
 				continue
 			}
-			if tsAuthRetryable(method) && attempt < c.cfg.MaxRetryAttempts && requestCtx.Err() == nil {
+			if retryable && attempt < maxRetries && requestCtx.Err() == nil {
 				if sleepErr := sleepContext(requestCtx, c.retryDelayFor(nil, attempt)); sleepErr != nil {
 					return sleepErr
 				}
@@ -326,13 +336,13 @@ func (c *Client) tsAuthSendAuthorized(ctx context.Context, base, method, path st
 		if apiErr == nil {
 			apiErr = tsAuthErrorFromResponse(route, method, path, status, headers, respBody)
 		}
-		if tsAuthRetryable(method) && regionIndex < len(bases)-1 &&
+		if retryable && regionIndex < len(bases)-1 &&
 			(status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) {
 			regionIndex++
 			continue
 		}
 		incompleteSuccess := responseErr != nil && status >= 200 && status < 300
-		if tsAuthRetryable(method) && attempt < c.cfg.MaxRetryAttempts && (retryableStatuses[status] || incompleteSuccess) {
+		if retryable && attempt < maxRetries && (retryableStatuses[status] || incompleteSuccess) {
 			if sleepErr := sleepContext(requestCtx, c.retryDelayFor(headers, attempt)); sleepErr != nil {
 				return sleepErr
 			}
@@ -342,6 +352,9 @@ func (c *Client) tsAuthSendAuthorized(ctx context.Context, base, method, path st
 		return apiErr
 	}
 }
+
+// tsAuthKeyedRetries is the minimum retry budget of keyed mutations.
+const tsAuthKeyedRetries = 3
 
 func tsAuthRetryable(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead
@@ -372,6 +385,9 @@ func (c *Client) tsAuthRoundTrip(ctx context.Context, base, method, path string,
 	}
 	if authorization.basic != "" {
 		h.Set("Authorization", "Basic "+authorization.basic)
+	}
+	if authorization.idempotencyKey != "" {
+		h.Set("Idempotency-Key", authorization.idempotencyKey)
 	}
 	resp, err := tsAuthNoRedirectClient(c.http).Do(req)
 	if err != nil {
@@ -1954,7 +1970,9 @@ func VerifyTSAuthWebhookWithTolerance(signingSecret, timestamp, signature string
 }
 
 // tsAuthAuthorization cannot be supplied by public request options.
-type tsAuthAuthorization struct{ bearer, basic string }
+// tsAuthAuthorization carries a request's credentials and, for keyed
+// mutations, its Idempotency-Key.
+type tsAuthAuthorization struct{ bearer, basic, idempotencyKey string }
 
 func (o *TSAuthOIDCClient) postAuthenticatedForm(ctx context.Context, endpoint string, form url.Values, authentication TSAuthOAuthClientAuthentication, out any, route string) error {
 	if err := authentication.validate(); err != nil {

@@ -36,7 +36,8 @@ type ShapeInfo struct {
 }
 
 // CreateShape calls the gatekeeper (needs the shape permission). Call it again
-// before ExpiresAt to obtain a fresh edge token.
+// before ExpiresAt to obtain a fresh edge token. The gatekeeper stores
+// nothing, so it is retried like a read.
 func (d *Database) CreateShape(ctx context.Context, req ShapeRequest) (*ShapeInfo, error) {
 	if err := checkName("database", d.name); err != nil {
 		return nil, err
@@ -45,7 +46,7 @@ func (d *Database) CreateShape(ctx context.Context, req ShapeRequest) (*ShapeInf
 		return nil, err
 	}
 	var info ShapeInfo
-	if _, err := d.c.call(ctx, request{method: http.MethodPost, path: []string{"v1", "databases", d.name, "shapes"}}, req, &info); err != nil {
+	if _, err := d.c.call(ctx, request{method: http.MethodPost, path: []string{"v1", "databases", d.name, "shapes"}, replaySafe: true}, req, &info); err != nil {
 		return nil, err
 	}
 	if !shapeIDPattern.MatchString(info.ShapeID) {
@@ -275,7 +276,7 @@ func (s *Subscription) Events(ctx context.Context) iter.Seq2[ShapeEvent, error] 
 // Next returns the next event. It follows the shape protocol: offset -1
 // redirects to the snapshot, snapshot pages, log chunks, then live long-polls
 // echoing TB-Shape-Cursor. A must_refetch returns EventReset and restarts from
-// the snapshot. Transient failures (network, 429, 502-504) are retried with
+// the snapshot. Transient failures (network, 429, transient 503s) are retried with
 // backoff up to the client's MaxRetries in a row.
 func (s *Subscription) Next(ctx context.Context) (ShapeEvent, error) {
 	if s.pending != nil {
@@ -329,17 +330,16 @@ func (s *Subscription) Next(ctx context.Context) (ShapeEvent, error) {
 	}
 }
 
-// transientDelay classifies shape read failures: transport errors, 429,
-// the transient 503s and the edge's 502/504 are retried; stored_corruption
-// and every other status are returned.
+// transientDelay classifies shape read failures: transport errors, 429 and
+// the transient 503s are retried; stored_corruption, the edge's 502
+// upstream_unavailable and every other status are returned.
 func transientDelay(err error, attempt int) (time.Duration, bool) {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		return backoff(attempt), true
 	}
 	switch {
-	case apiErr.Status == http.StatusTooManyRequests, isTransient503(apiErr),
-		apiErr.Status == http.StatusBadGateway, apiErr.Status == http.StatusGatewayTimeout:
+	case apiErr.Status == http.StatusTooManyRequests, isTransient503(apiErr):
 	default:
 		return 0, false
 	}

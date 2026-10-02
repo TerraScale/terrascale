@@ -213,3 +213,29 @@ func TestShapeSubscriptions(t *testing.T) {
 		})
 	}
 }
+
+func TestShapeRetryPolicy(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	db := newClient(t, f, f.dataToken).Database("main")
+	req := v1.ShapeRequest{Collection: "notifications", Filter: v1.Eq("/user_id", "u1")}
+
+	// The gatekeeper stores nothing, so a transient 503 is retried like a read.
+	const gate = "/v1/databases/main/shapes"
+	f.inject(fxFault{method: "POST", pathPrefix: gate, status: 503, code: "capacity"})
+	sub, err := db.Subscribe(ctx, req)
+	if err != nil || f.count("POST", gate) != 2 {
+		t.Fatalf("gatekeeper retry: %d requests (%v)", f.count("POST", gate), err)
+	}
+	defer sub.Close()
+
+	// A 502 upstream_unavailable is not a transient code and is surfaced.
+	f.inject(fxFault{method: "GET", pathPrefix: "/v1/shapes/", status: 502, code: "upstream_unavailable"})
+	_, err = sub.Next(ctx)
+	requireCode(t, err, v1.ErrUpstreamUnavailable)
+	if n := f.count("GET", "/v1/shapes"); n != 1 {
+		t.Fatalf("502 was retried: %d shape reads", n)
+	}
+}
