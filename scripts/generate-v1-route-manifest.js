@@ -21,12 +21,12 @@ const target = path.join(root, "sdk-v1-route-manifest.json");
 
 const contractSource = {
   producer: "terrabase",
-  revision: "d477861606d0c504a445d6eff09e053be7897f82",
+  revision: "7bc74f9d224167ff2dc6b815965305feca210c00",
   status: "frozen contract documents; producer OpenAPI and runtime qualification pending",
   documents: {
-    "api-v1.md": "181fe1068a84eca7ae82b2770ebb4027f5de1388a4b942517d020a8b543cf644",
+    "api-v1.md": "04f494248d8f3221675b26e997f8765b957e2b3f1bb19e6fa091f97b499420d5",
     "query-v1.md": "c5b0bdf07bd37b62c954526bc17af7cfbf22ed30f5545c5e23da68d2cb3a3e39",
-    "shapes-v1.md": "816efb41e33eea877a72b1abd52ba1952b4e37691a0c87b4e366dc71daf12914",
+    "shapes-v1.md": "be919ff760e5793eec5b9e249c4b1e18d0b306aecf418d1a3cd6c48b0b244106",
   },
 };
 
