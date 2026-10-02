@@ -11,7 +11,7 @@ stack/bin/stack down
 
 | Service   | Listens on                    | Public URL                    |
 |-----------|-------------------------------|-------------------------------|
-| TerraBase | admin `127.0.0.1:9464` (real backend only), client TLS `127.0.0.1:9465` | `https://127.0.0.1:9465` |
+| TerraBase | admin `127.0.0.1:9464` (real backend), client TLS `127.0.0.1:9465`, edge TLS `127.0.0.1:9466` (fake backend) | `https://127.0.0.1:9465` |
 | Mailpit   | SMTP `127.0.0.1:1025` (STARTTLS, any login), UI `127.0.0.1:8025` | `http://127.0.0.1:8025` |
 | ts-auth   | `127.0.0.1:18455`             | `https://localhost:18445` (Caddy) |
 | dashboard | `127.0.0.1:18456`             | `https://localhost:18446` (Caddy) |
@@ -37,7 +37,7 @@ TerraBase).
 | `down` | Stop every process. State stays in `.stack/`. |
 | `reset` | `down`, remove the preview rules, delete `.stack/` except the build cache (`.stack/bin`, `.stack/target`). |
 | `env [--export\|--path]` | Show `.stack/env` with secrets masked; `--export` prints `export` lines for `eval`. |
-| `check` | TerraBase readiness (real backend) and an authenticated control-plane call, OIDC discovery and JWKS at the issuer, dashboard `/health/ready` through Caddy, Mailpit API and SMTP. Exits non-zero on any failure. |
+| `check` | TerraBase readiness (admin `/readyz`, or `/v1/readyz` on the fake) and an authenticated control-plane call, OIDC discovery and JWKS at the issuer, dashboard `/health/ready` through Caddy, Mailpit API and SMTP. Exits non-zero on any failure. |
 | `bootstrap` | Re-run `auth-app provision`, `dashboard migrate` and `auth-app bootstrap-platform` against the running stack, then rewrite `.stack/env`. |
 | `preview [off]` | Publish ts-auth and the dashboard on the tailnet with `tailscale serve` (ports `18545`/`18546` plus the offset) and restart the stack with those URLs as issuer, redirect URIs and cookie origin. `preview off` removes the rules. |
 | `status`, `logs <process> [-f]` | Process table; one process's log from `.stack/logs/`. |
@@ -71,12 +71,15 @@ one temporary directory. `STACK_SKIP_BUILD=1` uses whatever is in
 
 ## Backends
 
-`TB_BACKEND=fake` (default) runs `tbv1-fake` from ts-go `cmd/tbv1-fake`:
-`--listen 127.0.0.1:9465 --cert-dir .stack/tb/certs --control-key-out
-.stack/tb/control-key`. The certificate directory starts with the stack's
-`cert.pem`, `key.pem` and `ca.pem`; if the fake writes its own pair there,
-`ca.pem` stays the CA clients must trust, so `TS_TERRABASE_CA_FILE` always
-points at it.
+`TB_BACKEND=fake` (default) runs `tbv1-fake` from ts-go `cmd/tbv1-fake`
+(branch `feat/v1-fake` until it merges): `--listen 127.0.0.1:9465
+--edge-listen 127.0.0.1:9466 --cert-dir .stack/tb/certs --control-key-out
+.stack/tb/control-key`, healthy when `GET /v1/readyz` answers 200 over TLS.
+The certificate directory holds the stack CA and leaf as `ca.pem`,
+`server.pem` and `server-key.pem`, so the fake serves the same chain as Caddy
+and `TS_TERRABASE_CA_FILE` points at `ca.pem`. The fake keeps state in memory:
+every start issues a new control key and empties every tenant. It is not
+tb-server; acceptance runs use `TB_BACKEND=real`.
 
 `TB_BACKEND=real` runs `terrabase-init --data-dir .stack/tb/data
 --bootstrap-control-key --control-key-out .stack/tb/control-key` once, then

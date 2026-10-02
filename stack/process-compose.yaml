@@ -12,6 +12,8 @@ version: "0.5"
 
 log_location: ${STACK_STATE}/logs/process-compose.log
 log_level: info
+log_configuration:
+  flush_each_line: true
 is_strict: true
 
 x-oneshot: &oneshot

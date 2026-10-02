@@ -80,7 +80,7 @@ load_config() {
   export STACK_PORT_OFFSET="${STACK_PORT_OFFSET:-0}"
   [[ "$STACK_PORT_OFFSET" =~ ^[0-9]+$ ]] || die "STACK_PORT_OFFSET must be a non-negative integer"
   local o=$STACK_PORT_OFFSET
-  export TB_ADMIN_PORT=$((9464 + o)) TB_CLIENT_PORT=$((9465 + o))
+  export TB_ADMIN_PORT=$((9464 + o)) TB_CLIENT_PORT=$((9465 + o)) TB_EDGE_PORT=$((9466 + o))
   export MAILPIT_SMTP_PORT=$((1025 + o)) MAILPIT_UI_PORT=$((8025 + o))
   export AUTH_PORT=$((18455 + o)) AUTH_HTTPS_PORT=$((18445 + o))
   export DASHBOARD_PORT=$((18456 + o)) DASHBOARD_HTTPS_PORT=$((18446 + o))
@@ -149,11 +149,11 @@ ensure_certs() {
     chmod 600 "$STACK_KEY_FILE"
   fi
   [[ -s "$STACK_CA_FILE" && -s "$STACK_CERT_FILE" ]] || die "mkcert did not produce the CA and certificate"
-  # TerraBase serves the same leaf; the fake backend may replace these files
-  # with its own pair, so the TerraBase CA is always read from $TB_CA_FILE.
-  if [[ ! -s "$TB_CERT_DIR/cert.pem" ]]; then
-    install -m 0644 "$STACK_CERT_FILE" "$TB_CERT_DIR/cert.pem"
-    install -m 0600 "$STACK_KEY_FILE" "$TB_CERT_DIR/key.pem"
+  # TerraBase serves the same leaf. tbv1-fake reads ca.pem, server.pem and
+  # server-key.pem from its --cert-dir, so TS_TERRABASE_CA_FILE is ca.pem.
+  if [[ ! -s "$TB_CERT_DIR/server.pem" ]]; then
+    install -m 0644 "$STACK_CERT_FILE" "$TB_CERT_DIR/server.pem"
+    install -m 0600 "$STACK_KEY_FILE" "$TB_CERT_DIR/server-key.pem"
     install -m 0644 "$STACK_CA_FILE" "$TB_CA_FILE"
   fi
 }
@@ -432,7 +432,7 @@ run_tb_init() {
     [[ -s "$TB_CONTROL_KEY_FILE" ]] || die "terrabase-init wrote no control key"
   fi
   jq -n --arg listen "127.0.0.1:$TB_CLIENT_PORT" \
-    --arg cert "$TB_CERT_DIR/cert.pem" --arg key "$TB_CERT_DIR/key.pem" \
+    --arg cert "$TB_CERT_DIR/server.pem" --arg key "$TB_CERT_DIR/server-key.pem" \
     '{version: 1, listen_addr: $listen, certificate_chain: $cert,
       private_key: $key, handshake_timeout_ms: 5000}' >"$tb_dir/client.json"
   chmod 600 "$tb_dir/client.json"
@@ -442,7 +442,9 @@ run_tb_server() {
   mkdir -p "$tb_dir"
   if [[ "$TB_BACKEND" == fake ]]; then
     [[ -x "$TBV1_FAKE_BIN" ]] || waiting GO-b "tbv1-fake not found at $TBV1_FAKE_BIN"
+    rm -f "$TB_CONTROL_KEY_FILE" # in-memory fake: a new key every start
     exec "$TBV1_FAKE_BIN" --listen "127.0.0.1:$TB_CLIENT_PORT" \
+      --edge-listen "127.0.0.1:$TB_EDGE_PORT" \
       --cert-dir "$TB_CERT_DIR" --control-key-out "$TB_CONTROL_KEY_FILE"
   fi
   [[ -x "$TB_SERVER_BIN" ]] || die "tb-server not found at $TB_SERVER_BIN"
@@ -535,7 +537,7 @@ probe_tb() {
   if [[ "$TB_BACKEND" == real ]]; then
     [[ "$(http_code "http://127.0.0.1:$TB_ADMIN_PORT/readyz")" == 200 ]]
   else
-    [[ -s "$TB_CONTROL_KEY_FILE" ]] && [[ "$(http_code --cacert "$TB_CA_FILE" "$TB_URL/")" != 000 ]]
+    [[ -s "$TB_CONTROL_KEY_FILE" ]] && [[ "$(http_code --cacert "$TB_CA_FILE" "$TB_URL/v1/readyz")" == 200 ]]
   fi
 }
 
@@ -554,15 +556,16 @@ cmd_probe() {
 # ---------------------------------------------------------------------------
 # process-compose
 # ---------------------------------------------------------------------------
-# process-compose logs a debug line on stderr when it has no user config dir.
-pc_quiet() { process-compose "$@" 2> >(grep -v '"level":"debug"' >&2); }
+# process-compose logs a debug line on stderr when it has no user config dir,
+# and a websocket close notice after `process logs`.
+pc_quiet() { process-compose "$@" 2> >(grep -v -e '"level":"debug"' -e '^write close:' >&2); }
 pc() { pc_quiet -U -u "$socket" "$@"; }
 
 pc_running() { [[ -S "$socket" ]] && pc process list -o json >/dev/null 2>&1; }
 
 check_ports_free() {
   local port busy=()
-  for port in "$TB_ADMIN_PORT" "$TB_CLIENT_PORT" "$MAILPIT_SMTP_PORT" "$MAILPIT_UI_PORT" \
+  for port in "$TB_ADMIN_PORT" "$TB_CLIENT_PORT" "$TB_EDGE_PORT" "$MAILPIT_SMTP_PORT" "$MAILPIT_UI_PORT" \
     "$AUTH_PORT" "$AUTH_HTTPS_PORT" "$DASHBOARD_PORT" "$DASHBOARD_HTTPS_PORT"; do
     if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then busy+=("$port"); fi
   done
@@ -597,10 +600,8 @@ wait_for_stack() {
   if [[ -n "$failed" || -n "$pending" ]]; then
     local name
     for name in $(jq -r '.[] | select(.status == "Completed" and .exit_code != 0) | .name' <<<"$list") $pending; do
-      [[ -s "$STACK_STATE/logs/$name.log" ]] || continue
-      printf '\n--- %s (last lines of .stack/logs/%s.log) ---\n' "$name" "$name" >&2
-      tail -n 8 "$STACK_STATE/logs/$name.log" | jq -r '.message // .' >&2 2>/dev/null ||
-        tail -n 8 "$STACK_STATE/logs/$name.log" >&2
+      printf '\n--- %s (stack logs %s) ---\n' "$name" "$name" >&2
+      proc_tail "$name" 8 >&2 || true
     done
     printf '\n' >&2
     say "stack is partially up; Skipped processes wait on a failed prerequisite above."
@@ -708,6 +709,9 @@ cmd_check() {
   if [[ "$TB_BACKEND" == real ]]; then
     code="$(http_code "http://127.0.0.1:$TB_ADMIN_PORT/readyz")"
     expect "$(yes_if test "$code" = 200)" "terrabase admin /readyz" "HTTP $code"
+  else
+    code="$(http_code --cacert "$TB_CA_FILE" "$TB_URL/v1/readyz")"
+    expect "$(yes_if test "$code" = 200)" "tbv1-fake $TB_URL/v1/readyz (TLS, CA $TB_CA_FILE)" "HTTP $code"
   fi
   local key
   if key="$(control_key)"; then
@@ -830,18 +834,20 @@ cmd_status() {
   print_status
 }
 
+# proc_tail <process> <lines> [-f]: from the running server, which has every
+# line, or else from the log file process-compose writes (JSON lines).
+proc_tail() {
+  if pc_running; then
+    pc process logs "$1" -n "$2" ${3:+--follow}
+  elif [[ -s "$STACK_STATE/logs/$1.log" ]]; then
+    tail -n "$2" "$STACK_STATE/logs/$1.log" | jq -rR '(fromjson? | .message) // .'
+  fi
+}
+
 cmd_logs() {
   load_config
-  [[ -n "${1:-}" ]] || die "usage: stack logs <process>"
-  local file="$STACK_STATE/logs/$1.log"
-  [[ -f "$file" ]] || die "no log for $1"
-  # process-compose writes JSON lines; show their messages.
-  local show=(jq --unbuffered -rR '(fromjson? | .message) // .')
-  if [[ "${2:-}" == -f ]]; then
-    tail -n 50 -F "$file" | "${show[@]}"
-  else
-    tail -n "${2:-80}" "$file" | "${show[@]}"
-  fi
+  [[ -n "${1:-}" ]] || die "usage: stack logs <process> [lines|-f]"
+  if [[ "${2:-}" == -f ]]; then proc_tail "$1" 50 -f; else proc_tail "$1" "${2:-80}"; fi
 }
 
 cmd_config() {
