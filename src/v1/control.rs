@@ -511,7 +511,7 @@ impl ControlClient {
     }
 
     /// Polls an operation every `interval` until it finishes. A failed
-    /// operation becomes [`Error::Api`] with its failure code (status 0).
+    /// operation becomes [`Error::OperationFailed`].
     pub async fn wait_operation(&self, id: &str, interval: Duration) -> Result<Operation> {
         loop {
             let op = self.get_operation(id).await?;
@@ -520,14 +520,12 @@ impl ControlClient {
                 "failed" => {
                     let (code, message) = op
                         .error
-                        .map(|e| (e.code, Some(e.message)))
+                        .map(|e| (e.code, Some(e.message).filter(|m| !m.is_empty())))
                         .unwrap_or_else(|| ("operation_failed".into(), None));
-                    return Err(Error::Api {
-                        status: 0,
+                    return Err(Error::OperationFailed {
+                        id: op.id,
                         code,
                         message,
-                        op: None,
-                        details: None,
                     });
                 }
                 _ => tokio::time::sleep(interval).await,

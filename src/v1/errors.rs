@@ -77,6 +77,13 @@ pub enum Error {
         /// `suggested_index`.
         details: Option<Box<RawValue>>,
     },
+    /// A control-plane operation finished with status `failed`.
+    #[error("terrabase: operation {id} failed: {code}{}", fmt_msg(message))]
+    OperationFailed {
+        id: String,
+        code: String,
+        message: Option<String>,
+    },
     /// The request was not sent or no response was read (connect, TLS,
     /// timeout, body too large). A mutation without an `Idempotency-Key`
     /// may or may not have been applied.
@@ -117,7 +124,10 @@ impl Error {
             Self::InvalidKey => 401,
             Self::InternalError => 500,
             Self::Api { status, .. } => *status,
-            Self::Transport(_) | Self::InvalidInput(_) | Self::Decode(_) => return None,
+            Self::OperationFailed { .. }
+            | Self::Transport(_)
+            | Self::InvalidInput(_)
+            | Self::Decode(_) => return None,
         })
     }
 
@@ -137,7 +147,7 @@ impl Error {
             Self::Forbidden { .. } => "forbidden_scope",
             Self::InvalidKey => "invalid_key",
             Self::InternalError => "internal_error",
-            Self::Api { code, .. } => code,
+            Self::Api { code, .. } | Self::OperationFailed { code, .. } => code,
             Self::Transport(_) | Self::InvalidInput(_) | Self::Decode(_) => return None,
         })
     }
