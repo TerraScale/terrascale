@@ -97,7 +97,14 @@ fn main() {
         None,
         &["rev-parse", "--path-format=absolute", "--git-dir"],
     )));
-    let mut watched = vec![git_dir.join("HEAD"), git_dir.join("refs")];
+    // Branch refs and packed-refs live in the common directory, which differs
+    // from the per-worktree HEAD/index directory in a linked worktree.
+    let common_dir = PathBuf::from(text(git(
+        &turso,
+        None,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )));
+    let mut watched = vec![git_dir.join("HEAD"), common_dir.join("refs")];
     let head_ref = Command::new("git")
         .arg("-C")
         .arg(&turso)
@@ -105,9 +112,9 @@ fn main() {
         .output()
         .expect("git is required to identify the pinned Turso source");
     if head_ref.status.success() {
-        watched.push(git_dir.join(text(head_ref.stdout)));
+        watched.push(common_dir.join(text(head_ref.stdout)));
     }
-    watched.extend([git_dir.join("index"), git_dir.join("packed-refs")]);
+    watched.extend([git_dir.join("index"), common_dir.join("packed-refs")]);
     for path in watched.iter().filter(|path| path.exists()) {
         println!("cargo:rerun-if-changed={}", path.display());
     }
