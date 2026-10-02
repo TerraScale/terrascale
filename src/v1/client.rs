@@ -363,11 +363,22 @@ pub(crate) struct Resp {
     pub status: StatusCode,
     pub headers: HeaderMap,
     pub body: Vec<u8>,
+    /// The request was a mutation, so a 2xx means it was applied.
+    pub mutation: bool,
 }
 
 impl Resp {
     pub fn decode<T: DeserializeOwned>(&self) -> Result<T> {
-        serde_json::from_slice(&self.body).map_err(|e| Error::Decode(e.to_string()))
+        serde_json::from_slice(&self.body).map_err(|e| {
+            if self.mutation && self.status.is_success() {
+                Error::UndecodableAck {
+                    status: self.status.as_u16(),
+                    message: e.to_string(),
+                }
+            } else {
+                Error::Decode(e.to_string())
+            }
+        })
     }
 
     pub fn header(&self, name: &str) -> Option<&str> {
@@ -504,6 +515,7 @@ impl Client {
                 status,
                 headers,
                 body,
+                mutation: !req.replay_safe,
             });
         }
         let retry_after = headers
@@ -546,10 +558,15 @@ fn backoff(policy: &RetryPolicy, attempt: u32) -> Duration {
 /// Equal-jitter backoff: half of the capped exponential delay is fixed, half
 /// random. Overflow-safe for any `Duration` policy values.
 fn backoff_with(policy: &RetryPolicy, attempt: u32, random: u128) -> Duration {
-    let full = policy
-        .base_delay
-        .saturating_mul(1u32 << attempt.min(16))
-        .min(policy.max_delay);
+    // Double toward the cap; a Duration saturates within 128 doublings.
+    let mut full = policy.base_delay;
+    for _ in 0..attempt.min(128) {
+        if full >= policy.max_delay {
+            break;
+        }
+        full = full.saturating_mul(2);
+    }
+    let full = full.min(policy.max_delay);
     let half = full / 2;
     // A Duration has fewer than 2^94 nanoseconds, so `span + 1` cannot overflow.
     let span = half.as_nanos();
@@ -623,5 +640,21 @@ mod tests {
             ),
             Duration::ZERO
         );
+        // Growth continues past 16 doublings until the cap.
+        let long = RetryPolicy {
+            max_retries: 30,
+            base_delay: Duration::from_millis(1),
+            max_delay: Duration::from_secs(600),
+            max_retry_after: Duration::from_secs(30),
+        };
+        assert_eq!(
+            backoff_with(&long, 18, 0),
+            Duration::from_millis(1 << 18) / 2
+        );
+        assert_eq!(
+            backoff_with(&long, 19, 0),
+            Duration::from_millis(1 << 19) / 2
+        );
+        assert_eq!(backoff_with(&long, 25, 0), Duration::from_secs(300));
     }
 }

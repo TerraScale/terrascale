@@ -111,6 +111,7 @@ enum Error {
     InternalError, Api { status, code, message, op, details },
     OperationFailed { id, code, message },   // ControlClient::wait_operation
     ResponseTooLarge { limit, status, may_have_applied }, // not retried; uncertain when may_have_applied
+    UndecodableAck { status, message },     // 2xx mutation ack that failed to decode; uncertain
     InvalidTxOp { op, message },             // local Tx validation; err.op() == Some(op)
     Transport(String), InvalidInput(String), Decode(String),
 }

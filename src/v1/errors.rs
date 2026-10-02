@@ -108,9 +108,15 @@ pub enum Error {
     /// The caller passed an invalid argument; nothing was sent.
     #[error("terrabase: invalid input: {0}")]
     InvalidInput(String),
-    /// A 2xx response did not match the contract.
+    /// A 2xx response to a read did not match the contract.
     #[error("terrabase: invalid response: {0}")]
     Decode(String),
+    /// A mutation got a 2xx status but its acknowledgement did not match the
+    /// contract. The write was accepted, so [`Error::is_uncertain`] is true:
+    /// retry with the same `Idempotency-Key`, or read back, to learn the
+    /// outcome.
+    #[error("terrabase: {status} acknowledgement could not be decoded: {message}")]
+    UndecodableAck { status: u16, message: String },
 }
 
 fn fmt_op(op: Option<usize>) -> String {
@@ -145,7 +151,8 @@ impl Error {
             | Self::InvalidTxOp { .. }
             | Self::Transport(_)
             | Self::InvalidInput(_)
-            | Self::Decode(_) => return None,
+            | Self::Decode(_)
+            | Self::UndecodableAck { .. } => return None,
         })
     }
 
@@ -170,7 +177,8 @@ impl Error {
             | Self::InvalidTxOp { .. }
             | Self::Transport(_)
             | Self::InvalidInput(_)
-            | Self::Decode(_) => return None,
+            | Self::Decode(_)
+            | Self::UndecodableAck { .. } => return None,
         })
     }
 
@@ -196,8 +204,9 @@ impl Error {
     }
 
     /// True when the outcome of a mutation is unknown: `commit_uncertain`,
-    /// `internal_error`, a transport failure, or an oversized response to a
-    /// mutation that may have been applied. Retry with the same
+    /// `internal_error`, a transport failure, an oversized response to a
+    /// mutation that may have been applied, or an undecodable mutation
+    /// acknowledgement. Retry with the same
     /// `Idempotency-Key` to learn the outcome.
     #[must_use]
     pub fn is_uncertain(&self) -> bool {
@@ -206,6 +215,7 @@ impl Error {
             Self::CommitUncertain
                 | Self::InternalError
                 | Self::Transport(_)
+                | Self::UndecodableAck { .. }
                 | Self::ResponseTooLarge {
                     may_have_applied: true,
                     ..
