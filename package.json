@@ -85,6 +85,7 @@
   ],
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('types', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "qualify:artifact": "node scripts/qualify-npm-artifact.js",
     "qualify:current-producer": "node scripts/qualification/current-producer-consumer.js",
     "check:route-manifest": "node scripts/generate-client-route-manifest.js --check",
