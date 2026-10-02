@@ -46,7 +46,6 @@ var (
 	namePattern    = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
 	idPattern      = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	versionPattern = regexp.MustCompile(`^tbv1-[0-9a-f]{32}$`)
-	keyIDPattern   = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
 	shapeIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 )
 
