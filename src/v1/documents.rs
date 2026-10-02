@@ -58,7 +58,14 @@ impl Database {
         );
         req.body = Some(body);
         req.idempotency_key = tx.key();
-        self.client.send(req).await?.decode()
+        let resp = self.client.send(req).await?;
+        let out: TxResult = resp.decode()?;
+        tx.check_results(&out.results)
+            .map_err(|message| Error::UndecodableAck {
+                status: resp.status.as_u16(),
+                message,
+            })?;
+        Ok(out)
     }
 }
 
@@ -246,14 +253,24 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Document<T> {
             ),
             "conflict" => DocumentState::Conflict(
                 w.siblings
+                    .filter(|s| !s.is_empty())
                     .ok_or_else(|| D::Error::custom("state conflict without siblings"))?
                     .into_iter()
-                    .map(|s| Sibling {
-                        event: s.event,
-                        deleted: s.deleted,
-                        document: s.document,
+                    .map(|s| match (s.deleted, s.document) {
+                        (false, Some(document)) => Ok(Sibling {
+                            event: s.event,
+                            deleted: false,
+                            document: Some(document),
+                        }),
+                        (true, None) => Ok(Sibling {
+                            event: s.event,
+                            deleted: true,
+                            document: None,
+                        }),
+                        (false, None) => Err(D::Error::custom("live sibling without a document")),
+                        (true, Some(_)) => Err(D::Error::custom("deleted sibling with a document")),
                     })
-                    .collect(),
+                    .collect::<Result<_, _>>()?,
             ),
             other => {
                 return Err(D::Error::custom(format!(
@@ -453,7 +470,14 @@ impl Collection {
         if resp.status == StatusCode::NOT_MODIFIED {
             return Ok(None);
         }
-        resp.decode().map(Some)
+        let doc: Document<T> = resp.decode()?;
+        if doc.id.to_string() != id {
+            return Err(Error::Decode(format!(
+                "response is for document {}, not {id}",
+                doc.id
+            )));
+        }
+        Ok(Some(doc))
     }
 
     /// Writes the complete document (`PUT`). `created` reports a `201`.
@@ -470,7 +494,7 @@ impl Collection {
         req.body = Some(body.get().as_bytes().to_vec());
         req.headers = precondition_headers(opts.precondition.as_ref());
         req.idempotency_key = opts.idempotency_key.as_ref();
-        write_result(self.client().send(req).await?)
+        write_result(self.client().send(req).await?, Some(&id))
     }
 
     /// Creates a document under a server-generated UUIDv7 (`POST`).
@@ -488,7 +512,7 @@ impl Collection {
         let mut req = Req::new(Method::POST, self.segments(&["documents"]));
         req.body = Some(body.get().as_bytes().to_vec());
         req.idempotency_key = opts.idempotency_key.as_ref();
-        write_result(self.client().send(req).await?)
+        write_result(self.client().send(req).await?, None)
     }
 
     /// Patches an existing document (`PATCH`). Only `IfMatch` is accepted.
@@ -511,7 +535,7 @@ impl Collection {
         req.content_type = Some(patch.content_type());
         req.headers = precondition_headers(opts.precondition.as_ref());
         req.idempotency_key = opts.idempotency_key.as_ref();
-        write_result(self.client().send(req).await?)
+        write_result(self.client().send(req).await?, Some(&id))
     }
 
     /// Deletes (tombstones) a document. Only `IfMatch` is accepted.
@@ -526,7 +550,7 @@ impl Collection {
         let mut req = Req::new(Method::DELETE, self.segments(&["documents", &id]));
         req.headers = precondition_headers(opts.precondition.as_ref());
         req.idempotency_key = opts.idempotency_key.as_ref();
-        write_result(self.client().send(req).await?)
+        write_result(self.client().send(req).await?, Some(&id))
     }
 
     pub(crate) fn query_segments(&self) -> Vec<&str> {
@@ -534,8 +558,17 @@ impl Collection {
     }
 }
 
-fn write_result(resp: Resp) -> Result<WriteResult> {
+fn write_result(resp: Resp, expected_id: Option<&str>) -> Result<WriteResult> {
     let mut out: WriteResult = resp.decode()?;
+    if expected_id.is_some_and(|id| out.id.to_string() != id) {
+        return Err(Error::UndecodableAck {
+            status: resp.status.as_u16(),
+            message: format!(
+                "acknowledgement is for document {}, not the one written",
+                out.id
+            ),
+        });
+    }
     out.created = resp.status == StatusCode::CREATED;
     out.location = resp.header("Location").map(str::to_owned);
     Ok(out)

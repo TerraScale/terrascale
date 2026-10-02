@@ -203,24 +203,28 @@ impl Error {
         matches!(self, Self::NotFound { .. })
     }
 
-    /// True when the outcome of a mutation is unknown: `commit_uncertain`,
-    /// `internal_error`, a transport failure, an oversized response to a
+    /// True when a mutation may have been applied although an error was
+    /// returned: `commit_uncertain`, `internal_error`, any other 5xx (a
+    /// gateway or unknown server failure may follow a commit), a non-2xx
+    /// status outside 4xx, a transport failure, an oversized response to a
     /// mutation that may have been applied, or an undecodable mutation
-    /// acknowledgement. Retry with the same
-    /// `Idempotency-Key` to learn the outcome.
+    /// acknowledgement. Only 4xx responses and local errors are certain
+    /// failures. Retry with the same `Idempotency-Key` to learn the outcome.
+    /// For reads, which have no effect, the flag only means the request may be
+    /// retried.
     #[must_use]
     pub fn is_uncertain(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::CommitUncertain
-                | Self::InternalError
-                | Self::Transport(_)
-                | Self::UndecodableAck { .. }
-                | Self::ResponseTooLarge {
-                    may_have_applied: true,
-                    ..
-                }
-        )
+            | Self::InternalError
+            | Self::Transport(_)
+            | Self::UndecodableAck { .. } => true,
+            Self::ResponseTooLarge {
+                may_have_applied, ..
+            } => *may_have_applied,
+            Self::Api { status, .. } => !(400..500).contains(status),
+            _ => false,
+        }
     }
 }
 

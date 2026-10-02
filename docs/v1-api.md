@@ -116,6 +116,10 @@ enum Error {
     Transport(String), InvalidInput(String), Decode(String),
 }
 err.status() / err.code() / err.op() / err.is_not_found() / err.is_uncertain()
+// is_uncertain(): the mutation may have applied - commit_uncertain, internal_error,
+// any other 5xx or non-4xx failure status, transport errors, undecodable or
+// mismatched 2xx acks (including tx results that do not match the ops), and
+// oversized non-4xx responses to mutations. 4xx and local errors are certain.
 ```
 
 ## Control plane (`/v1/dashboard`)

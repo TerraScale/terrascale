@@ -215,7 +215,7 @@ impl ClientBuilder {
     }
 }
 
-fn valid_token(token: &str) -> bool {
+pub(crate) fn valid_token(token: &str) -> bool {
     let mut parts = token.split('.');
     let b64 = |s: &str, n: usize| {
         s.len() == n
@@ -413,7 +413,7 @@ impl Client {
     }
 
     /// Sends `req` under the retry policy. Returns 2xx and 304 responses.
-    pub(crate) async fn send(&self, req: Req<'_>) -> Result<Resp> {
+    pub(crate) async fn send(&self, mut req: Req<'_>) -> Result<Resp> {
         if req
             .body
             .as_ref()
@@ -424,12 +424,14 @@ impl Client {
             )));
         }
         let url = self.url(&req.segments, &req.query)?;
+        // Serialized once; each attempt shares it without copying.
+        let body = req.body.take().map(bytes::Bytes::from);
         let keyed = req.idempotency_key.is_some();
         let replay_safe = req.replay_safe || keyed;
         let policy = &self.inner.retry;
         let mut attempt: u32 = 0;
         loop {
-            match self.attempt(&req, &url).await {
+            match self.attempt(&req, &url, body.clone()).await {
                 Attempt::Done(resp) => return Ok(resp),
                 Attempt::Failed(err, retry_after) => {
                     let retry = attempt < policy.max_retries
@@ -464,7 +466,7 @@ impl Client {
         }
     }
 
-    async fn attempt(&self, req: &Req<'_>, url: &Url) -> Attempt {
+    async fn attempt(&self, req: &Req<'_>, url: &Url, body: Option<bytes::Bytes>) -> Attempt {
         let mut rb = self
             .inner
             .http
@@ -477,10 +479,10 @@ impl Client {
         if let Some(key) = req.idempotency_key {
             rb = rb.header("Idempotency-Key", key.as_str());
         }
-        if let Some(body) = &req.body {
+        if let Some(body) = body {
             rb = rb
                 .header(CONTENT_TYPE, req.content_type.unwrap_or("application/json"))
-                .body(body.clone());
+                .body(body);
         }
         let resp = match rb.send().await {
             Ok(r) => r,

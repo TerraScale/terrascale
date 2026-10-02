@@ -357,6 +357,19 @@ pub struct Region {
     pub status: String,
 }
 
+/// A created key whose token is not a `tbk1` key is an unusable but applied
+/// mutation.
+fn checked_token(res: Result<KeyWithToken>) -> Result<KeyWithToken> {
+    let out = res?;
+    if !super::client::valid_token(&out.token) {
+        return Err(Error::UndecodableAck {
+            status: 201,
+            message: "the returned token is not a tbk1 key".into(),
+        });
+    }
+    Ok(out)
+}
+
 const D: [&str; 2] = ["v1", "dashboard"];
 
 fn path<'a>(rest: &[&'a str]) -> Vec<&'a str> {
@@ -528,7 +541,13 @@ impl ControlClient {
                         message,
                     });
                 }
-                _ => tokio::time::sleep(interval).await,
+                "running" => tokio::time::sleep(interval).await,
+                other => {
+                    return Err(Error::Decode(format!(
+                        "operation {} has unknown status {other:?}",
+                        op.id
+                    )))
+                }
             }
         }
     }
@@ -648,13 +667,15 @@ impl ControlClient {
         if let Some(f) = &req.row_filter {
             f.validate()?;
         }
-        self.mutate(
-            Method::POST,
-            key,
-            path(&["tenants", tenant, "keys"]),
-            Some(req),
+        checked_token(
+            self.mutate(
+                Method::POST,
+                key,
+                path(&["tenants", tenant, "keys"]),
+                Some(req),
+            )
+            .await,
         )
-        .await
     }
 
     /// `GET /tenants/{tenant}/keys`.
@@ -699,13 +720,15 @@ impl ControlClient {
             #[serde(skip_serializing_if = "Option::is_none")]
             grace_seconds: Option<u32>,
         }
-        self.mutate(
-            Method::POST,
-            key,
-            path(&["tenants", tenant, "keys", key_id, "rotate"]),
-            Some(&Body { grace_seconds }),
+        checked_token(
+            self.mutate(
+                Method::POST,
+                key,
+                path(&["tenants", tenant, "keys", key_id, "rotate"]),
+                Some(&Body { grace_seconds }),
+            )
+            .await,
         )
-        .await
     }
 
     // Regions.

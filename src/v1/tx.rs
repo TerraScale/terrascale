@@ -270,6 +270,32 @@ impl Tx {
         self.push(op)
     }
 
+    /// Checks that an acknowledgement has one compatible result per op, in
+    /// order, naming the submitted document IDs.
+    pub(crate) fn check_results(&self, results: &[OpResult]) -> std::result::Result<(), String> {
+        if results.len() != self.ops.len() {
+            return Err(format!(
+                "{} results for {} ops",
+                results.len(),
+                self.ops.len()
+            ));
+        }
+        for (i, (op, res)) in self.ops.iter().zip(results).enumerate() {
+            let ok = match (op.op, res) {
+                ("create" | "put" | "patch" | "delete", OpResult::Write { id, .. }) => {
+                    op.id.is_none_or(|want| want == *id)
+                }
+                ("assert", OpResult::Asserted { count: None }) => true,
+                ("assert_count", OpResult::Asserted { count: Some(_) }) => true,
+                _ => false,
+            };
+            if !ok {
+                return Err(format!("result {i} does not match its {} op", op.op));
+            }
+        }
+        Ok(())
+    }
+
     /// The request body.
     pub(crate) fn encode(&self) -> Result<Vec<u8>> {
         if let Some((op, message)) = &self.error {
