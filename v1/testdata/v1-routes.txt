@@ -1,0 +1,50 @@
+# v1 client routes, pinned from terrabase feat/v1-contracts @ 7bc74f9d
+# (docs/api-v1.md, docs/query-v1.md, docs/shapes-v1.md,
+# docs/control-plane-v1.md). openapi_parity_test.go uses this table until a
+# pinned testdata/client-openapi.json carries the v1 routes; then the OpenAPI
+# file is the source of truth and this table can be deleted.
+GET /v1/databases/{db}/collections/{collection}/documents/{id}
+PUT /v1/databases/{db}/collections/{collection}/documents/{id}
+POST /v1/databases/{db}/collections/{collection}/documents
+PATCH /v1/databases/{db}/collections/{collection}/documents/{id}
+DELETE /v1/databases/{db}/collections/{collection}/documents/{id}
+POST /v1/databases/{db}/transactions
+POST /v1/databases/{db}/collections/{collection}/query
+POST /v1/databases/{db}/shapes
+GET /v1/shapes/{shape_id}
+GET /v1/shapes/{shape_id}/sse
+POST /v1/dashboard/tenants
+GET /v1/dashboard/tenants
+GET /v1/dashboard/tenants/{tenant}
+PATCH /v1/dashboard/tenants/{tenant}
+DELETE /v1/dashboard/tenants/{tenant}
+GET /v1/dashboard/tenants/{tenant}/usage
+POST /v1/dashboard/tenants/{tenant}/databases
+GET /v1/dashboard/tenants/{tenant}/databases
+GET /v1/dashboard/tenants/{tenant}/databases/{db}
+PATCH /v1/dashboard/tenants/{tenant}/databases/{db}
+DELETE /v1/dashboard/tenants/{tenant}/databases/{db}
+GET /v1/dashboard/operations/{id}
+POST /v1/dashboard/tenants/{tenant}/databases/{db}/collections
+GET /v1/dashboard/tenants/{tenant}/databases/{db}/collections
+GET /v1/dashboard/tenants/{tenant}/databases/{db}/collections/{collection}
+PATCH /v1/dashboard/tenants/{tenant}/databases/{db}/collections/{collection}
+DELETE /v1/dashboard/tenants/{tenant}/databases/{db}/collections/{collection}
+GET /v1/dashboard/tenants/{tenant}/databases/{db}/collections/{collection}/stats
+GET /v1/dashboard/tenants/{tenant}/databases/{db}/collections/{collection}/indexes
+POST /v1/dashboard/tenants/{tenant}/databases/{db}/collections/{collection}/indexes
+GET /v1/dashboard/tenants/{tenant}/databases/{db}/collections/{collection}/indexes/{index}
+PATCH /v1/dashboard/tenants/{tenant}/databases/{db}/collections/{collection}/indexes/{index}
+DELETE /v1/dashboard/tenants/{tenant}/databases/{db}/collections/{collection}/indexes/{index}
+GET /v1/dashboard/tenants/{tenant}/databases/{db}/collections/{collection}/index-decisions
+POST /v1/dashboard/tenants/{tenant}/keys
+GET /v1/dashboard/tenants/{tenant}/keys
+GET /v1/dashboard/tenants/{tenant}/keys/{key}
+DELETE /v1/dashboard/tenants/{tenant}/keys/{key}
+POST /v1/dashboard/tenants/{tenant}/keys/{key}/rotate
+POST /v1/dashboard/edge-keys
+GET /v1/dashboard/edge-keys
+DELETE /v1/dashboard/edge-keys/{key}
+GET /v1/dashboard/advisors
+GET /v1/dashboard/regions
+GET /v1/dashboard/audit
