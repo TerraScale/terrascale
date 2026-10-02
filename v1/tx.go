@@ -62,6 +62,10 @@ func (d *Database) Tx() *Tx { return &Tx{db: d} }
 func (t *Tx) Len() int { return len(t.ops) }
 
 func (t *Tx) add(op txOp, pre []Precondition, collection, id string, idRequired bool) *Tx {
+	return t.addOp(op, pre, collection, id, idRequired, true)
+}
+
+func (t *Tx) addOp(op txOp, pre []Precondition, collection, id string, idRequired, allowNoneMatch bool) *Tx {
 	idx := len(t.ops)
 	fail := func(err error) *Tx {
 		t.err = errors.Join(t.err, fmt.Errorf("op %d: %w", idx, err))
@@ -84,6 +88,9 @@ func (t *Tx) add(op txOp, pre []Precondition, collection, id string, idRequired 
 			op.IfMatch = p.ifMatch
 		}
 		if p.ifNoneMatchAny {
+			if !allowNoneMatch {
+				return fail(fmt.Errorf("%s does not take IfNoneMatchAny", op.Op))
+			}
 			op.IfNoneMatch = "*"
 		}
 	}
@@ -114,7 +121,8 @@ func (t *Tx) Put(collection, id string, doc any, pre ...Precondition) *Tx {
 	return t.add(txOp{Op: "put", Document: body}, pre, collection, id, true)
 }
 
-// Patch adds a MergePatch or Ops patch with an optional IfMatch.
+// Patch adds a MergePatch or Ops patch with an optional IfMatch;
+// IfNoneMatchAny is rejected.
 func (t *Tx) Patch(collection, id string, patch Patch, pre ...Precondition) *Tx {
 	if patch.err != nil {
 		t.err = errors.Join(t.err, fmt.Errorf("op %d: %w", len(t.ops), patch.err))
@@ -122,12 +130,12 @@ func (t *Tx) Patch(collection, id string, patch Patch, pre ...Precondition) *Tx 
 	if patch.merge == nil && patch.ops == nil && patch.err == nil {
 		t.err = errors.Join(t.err, fmt.Errorf("op %d: empty Patch", len(t.ops)))
 	}
-	return t.add(txOp{Op: "patch", Merge: patch.merge, Ops: patch.ops}, pre, collection, id, true)
+	return t.addOp(txOp{Op: "patch", Merge: patch.merge, Ops: patch.ops}, pre, collection, id, true, false)
 }
 
-// Delete adds a delete with an optional IfMatch.
+// Delete adds a delete with an optional IfMatch; IfNoneMatchAny is rejected.
 func (t *Tx) Delete(collection, id string, pre ...Precondition) *Tx {
-	return t.add(txOp{Op: "delete"}, pre, collection, id, true)
+	return t.addOp(txOp{Op: "delete"}, pre, collection, id, true, false)
 }
 
 // Assert requires the document to exist, be unconflicted and match filter,
@@ -145,7 +153,8 @@ func (t *Tx) AssertAbsent(collection, id string) *Tx {
 }
 
 // AssertCount requires the number of documents in collection matching filter
-// to satisfy bounds. It is evaluated inside the commit before this
+// to satisfy bounds. The filter is required (the contract defines no
+// filter-less count). It is evaluated inside the commit before this
 // transaction's writes, so it is serializable with every other write to the
 // database (for example "at most 24 tokens per user"). A filter that would
 // examine more than 10000 entries fails with ErrAssertRequiresIndex; a
@@ -155,10 +164,10 @@ func (t *Tx) AssertCount(collection string, filter Filter, bounds CountBounds) *
 	if bounds.Gte == nil && bounds.Lte == nil {
 		t.err = errors.Join(t.err, fmt.Errorf("op %d: AssertCount needs Gte or Lte", idx))
 	}
-	op := txOp{Op: "assert_count", Filter: &filter, Gte: bounds.Gte, Lte: bounds.Lte}
 	if filter.IsZero() {
-		op.Filter = nil
+		t.err = errors.Join(t.err, fmt.Errorf("op %d: AssertCount needs a filter", idx))
 	}
+	op := txOp{Op: "assert_count", Filter: &filter, Gte: bounds.Gte, Lte: bounds.Lte}
 	if err := checkName("collection", collection); err != nil {
 		t.err = errors.Join(t.err, fmt.Errorf("op %d: %w", idx, err))
 	}
@@ -187,7 +196,7 @@ func (t *Tx) Commit(ctx context.Context, opts ...WriteOption) (*TxResult, error)
 	if w.ifMatch != "" || w.ifNoneMatchAny {
 		return nil, errors.New("terrabase: Commit takes no preconditions; pass them to the ops")
 	}
-	req := request{method: http.MethodPost, path: []string{"v1", "databases", t.db.name, "transactions"}, idemKey: w.idemKey}
+	req := request{write: true, method: http.MethodPost, path: []string{"v1", "databases", t.db.name, "transactions"}, idemKey: w.idemKey}
 	var res TxResult
 	if _, err := t.db.c.call(ctx, req, struct {
 		Ops []txOp `json:"ops"`

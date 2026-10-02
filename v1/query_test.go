@@ -101,6 +101,15 @@ func TestTransactions(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "op 0") {
 		t.Fatalf("local builder error: %v", err)
 	}
+	// If-None-Match: * only applies to put; patch and delete reject it.
+	_, err = db.Tx().
+		Put("items", id("items", "x"), map[string]any{}, v1.IfNoneMatchAny()).
+		Patch("items", id("items", "y"), v1.MergePatch(map[string]any{"a": 1}), v1.IfNoneMatchAny()).
+		Delete("items", id("items", "z"), v1.IfNoneMatchAny()).
+		Commit(ctx)
+	if err == nil || !strings.Contains(err.Error(), "op 1: patch does not take IfNoneMatchAny") || !strings.Contains(err.Error(), "op 2: delete does not take IfNoneMatchAny") {
+		t.Fatalf("IfNoneMatchAny on patch/delete: %v", err)
+	}
 }
 
 func TestQueries(t *testing.T) {
@@ -279,9 +288,17 @@ func TestTransactionAssertCount(t *testing.T) {
 	_, err = db.Tx().AssertCount("sessions", mine, v1.CountBounds{Lte: n(10)}).Commit(ctx)
 	requireCode(t, err, v1.ErrAssertRequiresIndex)
 
-	// Bounds are required, and at most 16 assert_count ops are accepted.
+	// Bounds and a filter are required, and at most 16 assert_count ops are
+	// accepted.
 	if _, err := db.Tx().AssertCount("sessions", mine, v1.CountBounds{}).Commit(ctx); err == nil || !strings.Contains(err.Error(), "Gte or Lte") {
 		t.Fatalf("missing bounds: %v", err)
+	}
+	before := f.count("POST", "/v1/databases/main/transactions")
+	if _, err := db.Tx().AssertCount("sessions", v1.Filter{}, v1.CountBounds{Lte: n(1)}).Commit(ctx); err == nil || !strings.Contains(err.Error(), "needs a filter") {
+		t.Fatalf("missing filter: %v", err)
+	}
+	if f.count("POST", "/v1/databases/main/transactions") != before {
+		t.Fatal("an invalid AssertCount reached the server")
 	}
 	f.SetAssertCountLimit(10000)
 	many := db.Tx()

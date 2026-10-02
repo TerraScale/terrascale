@@ -199,16 +199,23 @@ func TestRetriesAndIdempotency(t *testing.T) {
 		{"dependencies_unavailable with a key is retried", fxFault{method: "POST", status: 503, code: "dependencies_unavailable", retryAfter: "0"}, "k", 0, "", 2},
 		{"transient 503 without a key is not retried", fxFault{method: "POST", status: 503, code: "storage_unavailable"}, "", 0, v1.ErrStorageUnavailable, 1},
 		{"stored_corruption is never retried", fxFault{method: "POST", status: 503, code: "stored_corruption"}, "k", 0, v1.ErrStoredCorruption, 1},
+		{"internal_error with a key replays the original", fxFault{method: "POST", status: 500, code: "internal_error", afterCommit: true}, "create-1", 0, "", 2},
+		{"internal_error without a key is not retried", fxFault{method: "POST", status: 500, code: "internal_error"}, "", 0, v1.ErrInternalError, 1},
+		{"auto key retries commit_uncertain", fxFault{method: "POST", status: 503, code: "commit_uncertain", afterCommit: true}, "auto", 0, "", 2},
+		{"auto key retries internal_error", fxFault{method: "POST", status: 500, code: "internal_error", afterCommit: true}, "auto", 0, "", 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := newFixture(t)
-			items := newClient(t, f, f.dataToken, func(c *v1.Config) { c.MaxRetries = tc.maxRetries }).Database("main").Collection("items")
+			items := newClient(t, f, f.dataToken, func(c *v1.Config) {
+				c.MaxRetries = tc.maxRetries
+				c.AutoIdempotencyKeys = tc.key == "auto"
+			}).Database("main").Collection("items")
 			tc.fault.pathPrefix = prefix
 			f.inject(tc.fault)
 			var opts []v1.WriteOption
-			if tc.key != "" {
+			if tc.key != "" && tc.key != "auto" {
 				opts = append(opts, v1.IdempotencyKey(tc.key))
 			}
 			res, err := items.Create(t.Context(), map[string]any{"n": 1}, opts...)
@@ -234,8 +241,61 @@ func TestRetriesAndIdempotency(t *testing.T) {
 				_, err = items.Create(t.Context(), map[string]any{"n": 2}, opts...)
 				requireCode(t, err, v1.ErrIdempotencyConflict)
 			}
+			if tc.key == "auto" {
+				// The retry replayed the first commit instead of writing twice.
+				page, err := items.Query(t.Context(), v1.Query{Filter: v1.Eq("/n", 1)})
+				if err != nil || len(page.Items) != 1 || page.Items[0].ID != res.ID || res.Offset != 1 {
+					t.Fatalf("auto key: %+v, offset %d (%v)", page, res.Offset, err)
+				}
+			}
 		})
 	}
+}
+
+func TestAutoIdempotencyKeys(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := t.Context()
+	c := newClient(t, f, f.dataToken, func(c *v1.Config) { c.AutoIdempotencyKeys = true; c.MaxRetries = -1 })
+	items := c.Database("main").Collection("items")
+
+	// Every keyless write gets its own key: two creates are two documents.
+	a, err := items.Create(ctx, map[string]any{"n": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := items.Create(ctx, map[string]any{"n": 1})
+	if err != nil || a.ID == b.ID {
+		t.Fatalf("distinct keys expected: %v %v (%v)", a, b, err)
+	}
+
+	// When retries run out (here they are disabled), the generated key is
+	// reported so the caller can retry the same write and learn its original
+	// outcome.
+	const prefix = "/v1/databases/main/transactions"
+	f.inject(fxFault{method: "POST", pathPrefix: prefix, status: 503, code: "commit_uncertain", afterCommit: true})
+	id := v1.DocumentIDFor("items", "tx")
+	tx := func() *v1.Tx { return c.Database("main").Tx().Put("items", id, map[string]any{"n": 7}) }
+	_, err = tx().Commit(ctx)
+	apiErr := requireCode(t, err, v1.ErrCommitUncertain)
+	if apiErr.IdempotencyKey == "" || f.count("POST", prefix) != 1 {
+		t.Fatalf("key %q after %d requests", apiErr.IdempotencyKey, f.count("POST", prefix))
+	}
+	res, err := tx().Commit(ctx, v1.IdempotencyKey(apiErr.IdempotencyKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := items.Get(ctx, id)
+	if err != nil || doc.Version != res.Results[0].Version || f.count("POST", prefix) != 2 {
+		t.Fatalf("replayed commit: %+v vs %+v (%v)", doc, res, err)
+	}
+
+	// An explicit key wins over the generated one.
+	if _, err := items.Put(ctx, id, map[string]any{"n": 8}, v1.IdempotencyKey("explicit-1")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = items.Put(ctx, id, map[string]any{"n": 9}, v1.IdempotencyKey("explicit-1"))
+	requireCode(t, err, v1.ErrIdempotencyConflict)
 }
 
 func TestAuthenticationAndScope(t *testing.T) {
