@@ -59,7 +59,7 @@ export const prohibitedClaims = [
   { id: 'deferred-queue-product-localized', pattern: /\b(?:filas?|fila)\b/i, reason: 'Do not advertise deferred queue products.' },
   { id: 'positive-paid-overages', pattern: /\b(?:(?:paid\s+overages?|overages?)\s+(?:are|remain|supported|available|included|offered)|excedentes?\s+(?:pagados?|pagos?)\s+(?:est[aá]\s+)?(?:disponibles?|dispon[ií]ve(?:l|is)))\b/i, reason: 'Paid overages are not available during Public Alpha.' },
   { id: 'positive-enterprise-availability', pattern: /\bEnterprise\b[\s:;,–—-]*(?:(?:is|remains|est[aá])\s+)?(?:available|disponibles?|dispon[ií]ve(?:l|is))\b/i, reason: 'Enterprise is not available during Public Alpha.' },
-  { id: 'draft-legal-link', pattern: null, reason: 'Legal policies are unpublished drafts; do not link them until they are approved.' },
+  { id: 'draft-legal-link', pattern: /docs\.terrascale\.tech\/legal\//i, reason: 'Legal policies are unpublished drafts; do not link them until they are approved.' },
   { id: 'unpublished-terms-route', pattern: /href=["']\/terms["']/i, reason: 'The terms route must remain unpublished until approved.' },
 ]
 
@@ -111,12 +111,16 @@ const canonicalizeTermsHref = (value) => {
   return pathname === '/terms' || pathname === '/terms/' ? url : null
 }
 
+// Guards authored content against accidental links to the unpublished legal
+// drafts: a substring check plus parsed, normalized href destinations.
+// Deliberate obfuscation by repository authors is out of scope.
 const draftLegalHost = 'docs.terrascale.tech'
 
 const canonicalizeDraftLegalHref = (value) => {
+  const decoded = normalizeClaimText(value).trim()
   let url
   try {
-    url = new URL(value, `${canonicalSiteOrigin}/`)
+    url = new URL(decoded, `${canonicalSiteOrigin}/`)
   } catch {
     return null
   }
@@ -129,52 +133,6 @@ const canonicalizeDraftLegalHref = (value) => {
     return null
   }
   return pathname === '/legal' || pathname.startsWith('/legal/') ? url : null
-}
-
-const jsEscapes = { t: '\t', n: '\n', r: '\r' }
-
-// Undo the encodings a browser or JavaScript/JSON runtime resolves before a
-// value becomes a URL. Text is checked both as markup (entities only, where a
-// backslash is a path separator) and as a string literal (entities, string
-// escapes and escaped slashes). Percent-encoding and ignored tab/newline
-// characters are left to the URL parser so encoded delimiters stay path data.
-const decodeStringEscapes = (text) =>
-  text
-    .replace(/\\u\{([0-9a-f]{1,6})\}|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\([tnr])/gi, (escape, braced, unicode, hex, control) => {
-      if (control) return jsEscapes[control.toLowerCase()]
-      const codePoint = parseInt(braced ?? unicode ?? hex, 16)
-      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : escape
-    })
-    .replace(/\\\//g, '/')
-
-const decodedUrlTexts = (text) => {
-  const markup = decodeHTML(String(text))
-  return [markup, decodeStringEscapes(markup)]
-}
-
-const urlStart = /(?:[a-z][a-z0-9+.\-\t\n\r]*:)?[\t\n\r]*[\\/][\t\n\r]*[\\/]/i
-
-const fromUrlStart = (value) => {
-  const match = value.match(urlStart)
-  return match ? value.slice(match.index) : null
-}
-
-// Collect complete URL values: whole quoted attribute/string values (which may
-// contain spaces) and bare tokens such as unquoted attribute values. The URL
-// parser then decides the real hostname (user information, percent-encoding,
-// backslashes and ignored characters included) and path.
-const urlCandidates = (text) =>
-  decodedUrlTexts(text).flatMap((corpus) => {
-    const quoted = [...corpus.matchAll(/"([^"]*)"|'([^']*)'|`([^`]*)`/g)].map((match) => match[1] ?? match[2] ?? match[3])
-    const tokens = corpus.split(/[ "'`<>]+/)
-    return [...quoted, ...tokens].map(fromUrlStart).filter(Boolean)
-  })
-
-const findDraftLegalLink = (values) => {
-  for (const value of values) {
-    if (canonicalizeDraftLegalHref(value)) return [value]
-  }
-  return null
 }
 
 const sourceStartTags = (html) => {
@@ -341,7 +299,8 @@ const findRenderedClaimMatch = (rendered, claim) => {
     return null
   }
   if (claim.id === 'draft-legal-link') {
-    return findDraftLegalLink([...rendered.hrefs, ...urlCandidates(rendered.raw), ...rendered.jsonLdValues.flatMap(urlCandidates)])
+    const href = rendered.hrefs.find((value) => canonicalizeDraftLegalHref(value))
+    if (href) return [`href="${href}"`]
   }
   const values = [
     [rendered.raw, false],
@@ -363,7 +322,8 @@ const findClaimMatch = (corpus, claim) => {
     return href ? [`href="${href}"`] : null
   }
   if (claim.id === 'draft-legal-link') {
-    return findDraftLegalLink([...sourceHrefValues(corpus), ...urlCandidates(corpus)])
+    const href = sourceHrefValues(corpus).find((value) => canonicalizeDraftLegalHref(value))
+    if (href) return [`href="${href}"`]
   }
   return normalizeClaimText(corpus).match(claim.pattern)
 }

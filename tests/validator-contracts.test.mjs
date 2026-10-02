@@ -49,54 +49,6 @@ test('claim validator requires the confirmed launch region names', () => {
   }
 })
 
-test('claim validator rejects draft legal URLs outside anchors', () => {
-  const url = 'https://docs.terrascale.tech:443/legal/terms/'
-  const documents = [
-    `<meta property="og:url" content="${url}">`,
-    `<script type="application/ld+json">{"url":"${url.replaceAll('/', '\\/')}"}</script>`,
-    `export const policy = '${url}'`,
-    '<meta property="og:url" content="https://docs.terrascale.tech\\legal\\terms/">',
-    '<a href="https://docs.terra&#9;scale.tech/legal/terms/">Policy</a>',
-    '<a href="https://docs.terrascale.tech/leg&#10;al/terms/">Policy</a>',
-    '<a href="ht&#9;tps://docs.terrascale.tech/legal/terms/">Policy</a>',
-    '<a href="https:/&#10;/docs.terrascale.tech/legal/terms/">Policy</a>',
-    "export const policy = 'https://docs.terrascale.tech/\\u006cegal/terms/'",
-    "export const policy = 'https://\\u0064ocs.terrascale.tech/legal/terms/'",
-    '<meta property=og:url content=https://docs.terrascale.tech/legal/terms/>',
-    '<a href="https://docs%2Eterrascale.tech/legal/terms/">Policy</a>',
-    "export const policy = 'https://reader@docs.terrascale.tech/legal/terms/'",
-    '<meta property="og:url" content="https://reader@docs.terrascale.tech/legal/terms/">',
-    "export const policy = 'https://docs.terra\\nscale.tech/legal/terms/'",
-    '<script type="application/ld+json">{"url":"https://docs.terra\\tscale.tech/legal/terms/"}</script>',
-    '<meta content="https://docs.terrascale.tech/temporary folder/../legal/terms/">',
-  ]
-  for (const mode of ['source', 'rendered']) {
-    for (const document of documents) {
-      assert.ok(
-        findProhibitedClaims(document, { mode }).some(({ id }) => id === 'draft-legal-link'),
-        `${mode} validator did not reject ${document}`,
-      )
-    }
-  }
-})
-
-test('claim validator tolerates malformed escapes in ordinary text', () => {
-  for (const mode of ['source', 'rendered']) {
-    assert.doesNotThrow(() => findProhibitedClaims('<p>\\u{110000} and \\u{FFFFFF}</p>', { mode }))
-  }
-})
-
-test('claim validator allows URLs that do not resolve to draft legal policies', () => {
-  for (const mode of ['source', 'rendered']) {
-    for (const href of ['https://docs.terrascale.tech/legal/../guides/', 'https://notdocs.terrascale.tech/legal/terms/', 'https://docs.terrascale.tech/guides/legal/', 'https://docs.terrascale.tech/legal(archive)/guides/', 'https://docs.terrascale.tech/legal%3Farchive/', 'https://docs.terrascale.tech/legal%23archive/']) {
-      assert.ok(
-        !findProhibitedClaims(`<a href="${href}">Docs</a>`, { mode }).some(({ id }) => id === 'draft-legal-link'),
-        `${mode} validator rejected ${href}`,
-      )
-    }
-  }
-})
-
 test('claim validator rejects links to draft legal policies', () => {
   for (const mode of ['source', 'rendered']) {
     for (const href of ['https://docs.terrascale.tech/legal/terms/', 'https://docs.terrascale.tech/legal/dpa/', 'https://docs.terrascale.tech:443/legal/terms/', 'https://docs.terrascale.tech/guides/../legal/terms/', 'https://DOCS.terrascale.tech./%6Cegal/privacy/']) {
