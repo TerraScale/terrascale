@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -176,6 +177,60 @@ type TSAuthAuthorizationAttempt struct {
 	ClientID         string
 	RedirectURI      string
 	ExpiresAt        time.Time
+	// StartedAt is when the attempt was created; MaxAge and Prompt are the
+	// requested authentication constraints. ExchangeCode enforces them on the
+	// ID token's auth_time, so keep them with the attempt.
+	StartedAt time.Time
+	MaxAge    *time.Duration
+	Prompt    string
+}
+
+// TSAuthAuthorizationOptions are optional OIDC authentication request
+// parameters.
+type TSAuthAuthorizationOptions struct {
+	// Prompt is a space-separated list of none, login, consent and
+	// select_account; none cannot be combined with another value. login
+	// demands a fresh sign-in: the ID token's auth_time must not predate the
+	// attempt.
+	Prompt string
+	// MaxAge bounds the age of the end-user authentication (whole seconds,
+	// zero or more). MaxAge 0 demands a fresh sign-in, for step-up.
+	MaxAge *time.Duration
+}
+
+func (o TSAuthAuthorizationOptions) validate() error {
+	if o.MaxAge != nil && (*o.MaxAge < 0 || *o.MaxAge%time.Second != 0) {
+		return oidcError("invalid_max_age", "authorize", false, nil)
+	}
+	if o.Prompt == "" {
+		return nil
+	}
+	values := strings.Fields(o.Prompt)
+	if len(values) == 0 || strings.Join(values, " ") != o.Prompt {
+		return oidcError("invalid_prompt", "authorize", false, nil)
+	}
+	seen := map[string]bool{}
+	for _, v := range values {
+		switch v {
+		case "none", "login", "consent", "select_account":
+		default:
+			return oidcError("invalid_prompt", "authorize", false, nil)
+		}
+		if seen[v] {
+			return oidcError("invalid_prompt", "authorize", false, nil)
+		}
+		seen[v] = true
+	}
+	if seen["none"] && len(values) > 1 {
+		return oidcError("invalid_prompt", "authorize", false, nil)
+	}
+	return nil
+}
+
+// freshLoginRequired reports whether the attempt demands an authentication
+// after it started.
+func (a TSAuthAuthorizationAttempt) freshLoginRequired() bool {
+	return slices.Contains(strings.Fields(a.Prompt), "login")
 }
 
 func (a TSAuthAuthorizationAttempt) String() string {
@@ -186,7 +241,19 @@ func (a TSAuthAuthorizationAttempt) GoString() string { return a.String() }
 
 type TSAuthOIDCCallback struct{ Code, State string }
 
+// BeginAuthorization starts an authorization code flow with PKCE, state and
+// nonce. It is BeginAuthorizationWithOptions with no options.
 func (a *TSAuthOIDCApplication) BeginAuthorization(ctx context.Context, scopes []string) (*TSAuthAuthorizationAttempt, error) {
+	return a.BeginAuthorizationWithOptions(ctx, scopes, TSAuthAuthorizationOptions{})
+}
+
+// BeginAuthorizationWithOptions starts an authorization code flow and sends
+// options.Prompt and options.MaxAge as prompt and max_age. They are stored on
+// the attempt and enforced by ExchangeCode.
+func (a *TSAuthOIDCApplication) BeginAuthorizationWithOptions(ctx context.Context, scopes []string, options TSAuthAuthorizationOptions) (*TSAuthAuthorizationAttempt, error) {
+	if err := options.validate(); err != nil {
+		return nil, err
+	}
 	document, err := a.Discover(ctx)
 	if err != nil {
 		return nil, err
@@ -225,8 +292,18 @@ func (a *TSAuthOIDCApplication) BeginAuthorization(ctx context.Context, scopes [
 	query.Set("nonce", nonce)
 	query.Set("code_challenge", base64.RawURLEncoding.EncodeToString(challenge[:]))
 	query.Set("code_challenge_method", "S256")
+	var maxAge *time.Duration
+	if options.MaxAge != nil {
+		v := *options.MaxAge
+		maxAge = &v
+		query.Set("max_age", strconv.FormatInt(int64(v/time.Second), 10))
+	}
+	if options.Prompt != "" {
+		query.Set("prompt", options.Prompt)
+	}
 	endpoint.RawQuery = query.Encode()
-	return &TSAuthAuthorizationAttempt{AuthorizationURL: endpoint.String(), State: state, Nonce: nonce, CodeVerifier: verifier, Issuer: a.config.Issuer, ClientID: a.config.Authentication.ClientID, RedirectURI: a.config.RedirectURI, ExpiresAt: time.Now().Add(10 * time.Minute)}, nil
+	now := time.Now()
+	return &TSAuthAuthorizationAttempt{AuthorizationURL: endpoint.String(), State: state, Nonce: nonce, CodeVerifier: verifier, Issuer: a.config.Issuer, ClientID: a.config.Authentication.ClientID, RedirectURI: a.config.RedirectURI, ExpiresAt: now.Add(10 * time.Minute), StartedAt: now, MaxAge: maxAge, Prompt: options.Prompt}, nil
 }
 
 func oidcRandom() (string, error) {
@@ -240,19 +317,29 @@ func oidcRandom() (string, error) {
 // TSAuthVerifiedIDToken is identity evidence for this relying party. It is
 // never an access credential for database, product, or MCP operations.
 type TSAuthVerifiedIDToken struct {
-	Issuer        string
-	Subject       string
-	Audience      []string
-	ExpiresAt     time.Time
-	IssuedAt      time.Time
-	Nonce         string
+	Issuer    string
+	Subject   string
+	Audience  []string
+	ExpiresAt time.Time
+	IssuedAt  time.Time
+	Nonce     string
+	// AuthTime is the end-user authentication time (auth_time), when sent.
+	AuthTime      *time.Time
 	SessionID     *string
 	Email         *string
 	EmailVerified *bool
 	Name          *string
 }
 
-type TSAuthIDTokenVerificationOptions struct{ Nonce, AccessToken string }
+// TSAuthIDTokenVerificationOptions bind an ID token to its authorization
+// attempt. When MaxAge is set, the token must carry auth_time no older than
+// MaxAge before AuthorizationStartedAt (or before now when that is zero);
+// MaxAge 0 therefore demands an authentication after the attempt started.
+type TSAuthIDTokenVerificationOptions struct {
+	Nonce, AccessToken     string
+	MaxAge                 *time.Duration
+	AuthorizationStartedAt time.Time
+}
 type TSAuthOIDCLogin struct {
 	Tokens   TSAuthTokenResponse
 	Identity TSAuthVerifiedIDToken
@@ -263,6 +350,9 @@ func (l TSAuthOIDCLogin) String() string { return "TSAuthOIDCLogin{Tokens:[REDAC
 func (l TSAuthOIDCLogin) GoString() string { return l.String() }
 
 func (a *TSAuthOIDCApplication) ExchangeCode(ctx context.Context, callback TSAuthOIDCCallback, attempt TSAuthAuthorizationAttempt) (*TSAuthOIDCLogin, error) {
+	if (attempt.MaxAge != nil || attempt.freshLoginRequired()) && attempt.StartedAt.IsZero() {
+		return nil, oidcError("invalid_authorization_attempt", "exchange", false, nil)
+	}
 	if attempt.Issuer != a.config.Issuer || attempt.ClientID != a.config.Authentication.ClientID || attempt.RedirectURI != a.config.RedirectURI || !time.Now().Before(attempt.ExpiresAt) || attempt.Nonce == "" || !validPKCEVerifier(attempt.CodeVerifier) || callback.State == "" || subtle.ConstantTimeCompare([]byte(callback.State), []byte(attempt.State)) != 1 {
 		return nil, oidcError("invalid_authorization_attempt", "exchange", false, nil)
 	}
@@ -276,7 +366,12 @@ func (a *TSAuthOIDCApplication) ExchangeCode(ctx context.Context, callback TSAut
 	if tokens.IDToken == nil || *tokens.IDToken == "" || !strings.EqualFold(tokens.TokenType, "Bearer") || tokens.AccessToken == "" || tokens.ExpiresIn <= 0 {
 		return nil, oidcError("invalid_token_response", "exchange", true, nil)
 	}
-	identity, err := a.VerifyIDToken(ctx, *tokens.IDToken, TSAuthIDTokenVerificationOptions{Nonce: attempt.Nonce, AccessToken: tokens.AccessToken})
+	verify := TSAuthIDTokenVerificationOptions{Nonce: attempt.Nonce, AccessToken: tokens.AccessToken, MaxAge: attempt.MaxAge, AuthorizationStartedAt: attempt.StartedAt}
+	if attempt.freshLoginRequired() && (verify.MaxAge == nil || *verify.MaxAge > 0) {
+		zero := time.Duration(0)
+		verify.MaxAge = &zero
+	}
+	identity, err := a.VerifyIDToken(ctx, *tokens.IDToken, verify)
 	if err != nil {
 		return nil, oidcError("invalid_id_token", "exchange", true, err)
 	}
@@ -314,13 +409,34 @@ func (a *TSAuthOIDCApplication) Introspect(ctx context.Context, token string) (*
 	if err != nil {
 		return nil, oidcOperationError("introspect", false, err)
 	}
-	if result.Active && (result.Iss == nil || *result.Iss != a.config.Issuer || result.Aud == nil || *result.Aud != a.config.Authentication.ClientID || result.ClientID == nil || *result.ClientID != a.config.Authentication.ClientID || result.Sub == nil || *result.Sub == "" || result.Exp == nil || *result.Exp <= time.Now().Unix() || result.TokenType == nil || (*result.TokenType != "Bearer" && *result.TokenType != "refresh_token")) {
+	if result.Active && !a.validActiveIntrospection(result) {
 		return nil, oidcError("invalid_introspection", "introspect", false, nil)
 	}
-	if result.Active && ((a.config.RequireSession && result.SessionID == nil) || (result.SessionID != nil && *result.SessionID == "") || (*result.TokenType == "refresh_token" && (result.FamilyID == nil || *result.FamilyID == ""))) {
+	// sid is optional unless RequireSession; ts-auth sends no family_id for
+	// refresh tokens, so it is checked only when present.
+	if result.Active && ((a.config.RequireSession && result.SessionID == nil) || (result.SessionID != nil && *result.SessionID == "") || (*result.TokenType == "refresh_token" && result.FamilyID != nil && *result.FamilyID == "")) {
 		return nil, oidcError("invalid_session_binding", "introspect", false, nil)
 	}
 	return result, nil
+}
+
+// validActiveIntrospection checks an active answer. Access tokens must name
+// this issuer and client as iss and aud; ts-auth omits iss and aud for refresh
+// tokens, so they are checked only when present.
+func (a *TSAuthOIDCApplication) validActiveIntrospection(r *TSAuthIntrospection) bool {
+	clientID := a.config.Authentication.ClientID
+	if r.ClientID == nil || *r.ClientID != clientID || r.Sub == nil || *r.Sub == "" || r.Exp == nil || *r.Exp <= time.Now().Unix() || r.TokenType == nil {
+		return false
+	}
+	issOK := r.Iss != nil && *r.Iss == a.config.Issuer
+	audOK := r.Aud != nil && *r.Aud == clientID
+	switch *r.TokenType {
+	case "Bearer":
+		return issOK && audOK
+	case "refresh_token":
+		return (r.Iss == nil || issOK) && (r.Aud == nil || audOK)
+	}
+	return false
 }
 
 func (a *TSAuthOIDCApplication) Revoke(ctx context.Context, token string) error {
@@ -411,7 +527,10 @@ func validateTSAuthOAuthRegistration(redirects, logout, origins []string) error 
 }
 
 // UpdateTSAuthOAuthClientRequest uses pointers so an explicit empty vector
-// clears a registration while an absent field preserves it.
+// clears a registration while an absent field preserves it. A nil member is
+// never sent. Leave PostLogoutRedirectURIs nil against ts-auth deployments
+// whose client PATCH does not accept post_logout_redirect_uris yet: they
+// reject unknown members.
 type UpdateTSAuthOAuthClientRequest struct {
 	Name                   *string   `json:"name,omitempty"`
 	RedirectURIs           *[]string `json:"redirect_uris,omitempty"`
@@ -457,6 +576,9 @@ func (a *TSAuthOIDCApplication) VerifyIDToken(ctx context.Context, token string,
 	}
 	if options.Nonce == "" {
 		return nil, oidcError("nonce_required", "verify_id_token", false, nil)
+	}
+	if options.MaxAge != nil && *options.MaxAge < 0 {
+		return nil, oidcError("invalid_max_age", "verify_id_token", false, nil)
 	}
 	if len(token) > 65536 {
 		return nil, oidcError("invalid_id_token", "verify_id_token", false, nil)
@@ -543,12 +665,13 @@ func (a *TSAuthOIDCApplication) VerifyIDToken(ctx context.Context, token string,
 		TokenUse        string          `json:"token_use"`
 		AuthorizedParty *string         `json:"azp"`
 		SessionID       *string         `json:"sid"`
+		AuthTime        *int64          `json:"auth_time"`
 		AccessHash      *string         `json:"at_hash"`
 		Email           *string         `json:"email"`
 		EmailVerified   *bool           `json:"email_verified"`
 		Name            *string         `json:"name"`
 	}
-	if oidcDecodeExactJSON(payload, &c, []string{"iss", "sub", "aud", "exp", "iat", "nbf", "nonce", "token_use", "azp", "sid", "at_hash", "email", "email_verified", "name"}) != nil {
+	if oidcDecodeExactJSON(payload, &c, []string{"iss", "sub", "aud", "exp", "iat", "nbf", "nonce", "token_use", "azp", "sid", "auth_time", "at_hash", "email", "email_verified", "name"}) != nil {
 		return nil, oidcError("invalid_claims", "verify_id_token", false, nil)
 	}
 	var audiences []string
@@ -579,6 +702,21 @@ func (a *TSAuthOIDCApplication) VerifyIDToken(ctx context.Context, token string,
 	if (c.SessionID != nil && *c.SessionID == "") || (a.config.RequireSession && c.SessionID == nil) {
 		return nil, oidcError("invalid_session_binding", "verify_id_token", false, nil)
 	}
+	if c.AuthTime != nil && (*c.AuthTime <= 0 || *c.AuthTime > now.Unix()+skew) {
+		return nil, oidcError("invalid_auth_time", "verify_id_token", false, nil)
+	}
+	if options.MaxAge != nil {
+		reference := options.AuthorizationStartedAt
+		if reference.IsZero() {
+			reference = now
+		}
+		// auth_time has whole-second precision; the attempt start is
+		// truncated so a sign-in in the same second counts as fresh.
+		oldest := reference.Truncate(time.Second).Unix() - int64(*options.MaxAge/time.Second) - skew
+		if c.AuthTime == nil || *c.AuthTime < oldest {
+			return nil, oidcError("authentication_too_old", "verify_id_token", false, nil)
+		}
+	}
 	if options.AccessToken != "" {
 		hash := sha256.Sum256([]byte(options.AccessToken))
 		expected := base64.RawURLEncoding.EncodeToString(hash[:16])
@@ -586,7 +724,12 @@ func (a *TSAuthOIDCApplication) VerifyIDToken(ctx context.Context, token string,
 			return nil, oidcError("access_token_hash_mismatch", "verify_id_token", false, nil)
 		}
 	}
-	return &TSAuthVerifiedIDToken{Issuer: c.Issuer, Subject: c.Subject, Audience: audiences, ExpiresAt: time.Unix(c.Expires, 0), IssuedAt: time.Unix(c.Issued, 0), Nonce: c.Nonce, SessionID: c.SessionID, Email: c.Email, EmailVerified: c.EmailVerified, Name: c.Name}, nil
+	var authTime *time.Time
+	if c.AuthTime != nil {
+		at := time.Unix(*c.AuthTime, 0)
+		authTime = &at
+	}
+	return &TSAuthVerifiedIDToken{Issuer: c.Issuer, Subject: c.Subject, Audience: audiences, ExpiresAt: time.Unix(c.Expires, 0), IssuedAt: time.Unix(c.Issued, 0), Nonce: c.Nonce, AuthTime: authTime, SessionID: c.SessionID, Email: c.Email, EmailVerified: c.EmailVerified, Name: c.Name}, nil
 }
 
 // Duplicate JSON member names cannot alter the signed claim interpretation.

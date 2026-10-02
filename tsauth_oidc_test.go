@@ -556,3 +556,51 @@ func TestTSAuthOIDCAtlasSecurityJSONAndLease(t *testing.T) {
 		t.Fatal("short Atlas admission lease widened")
 	}
 }
+
+// ts-auth answers refresh-token introspection with token_type, sub,
+// client_id, scope, exp and iat only (no iss, aud, sid or family_id).
+func TestTSAuthOIDCRefreshTokenIntrospection(t *testing.T) {
+	f := newOIDCFixture(t)
+	oidc := newTSAuthTestInstance(t, Config{APIBaseURL: f.server.URL, AccessToken: "sk_not_oidc"}).OIDC
+	app, err := oidc.NewApplication(TSAuthOIDCApplicationConfig{Issuer: f.issuer, Authentication: TSAuthOAuthClientAuthentication{ClientID: "client", ClientSecret: "secret", Method: TSAuthClientSecretBasic}, RedirectURI: "https://app.example/callback"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := func(members map[string]any) {
+		f.formHandler = func(w http.ResponseWriter, r *http.Request) { json.NewEncoder(w).Encode(members) }
+	}
+	refresh := func() map[string]any {
+		return map[string]any{"active": true, "token_type": "refresh_token", "sub": "user", "client_id": "client", "scope": "openid", "exp": time.Now().Unix() + 60, "iat": time.Now().Unix()}
+	}
+	answer(refresh())
+	result, err := app.Introspect(t.Context(), "refresh")
+	if err != nil || !result.Active || result.Iss != nil || result.SessionID != nil {
+		t.Fatalf("server-shaped refresh introspection: %+v %v", result, err)
+	}
+	// An access token answer without sid is fine unless RequireSession.
+	answer(map[string]any{"active": true, "token_type": "Bearer", "iss": f.issuer, "aud": "client", "client_id": "client", "sub": "user", "exp": time.Now().Unix() + 60})
+	if _, err := app.Introspect(t.Context(), "access"); err != nil {
+		t.Fatalf("sessionless access token without RequireSession: %v", err)
+	}
+
+	cases := []struct {
+		name, code string
+		members    map[string]any
+	}{
+		{"access token without iss", "invalid_introspection", map[string]any{"active": true, "token_type": "Bearer", "aud": "client", "client_id": "client", "sub": "user", "exp": time.Now().Unix() + 60}},
+		{"refresh token for another client", "invalid_introspection", func() map[string]any { m := refresh(); m["client_id"] = "other"; return m }()},
+		{"refresh token with a foreign iss", "invalid_introspection", func() map[string]any { m := refresh(); m["iss"] = "https://evil.example/acme"; return m }()},
+		{"refresh token with a foreign aud", "invalid_introspection", func() map[string]any { m := refresh(); m["aud"] = "other"; return m }()},
+		{"expired refresh token", "invalid_introspection", func() map[string]any { m := refresh(); m["exp"] = time.Now().Unix() - 1; return m }()},
+		{"empty family", "invalid_session_binding", func() map[string]any { m := refresh(); m["family_id"] = ""; return m }()},
+		{"empty sid", "invalid_session_binding", func() map[string]any { m := refresh(); m["sid"] = ""; return m }()},
+	}
+	for _, tc := range cases {
+		answer(tc.members)
+		_, err := app.Introspect(t.Context(), "token")
+		if err == nil {
+			t.Fatalf("%s: accepted", tc.name)
+		}
+		assertOIDCCode(t, err, tc.code)
+	}
+}
