@@ -77,45 +77,56 @@ async fn live_provision_crud_query_and_revoke() {
         .unwrap();
     // Run the checks in a task so a failure still reaches the cleanup.
     let outcome = tokio::spawn(exercise(l, run.clone(), ctl.clone(), tenant.id.clone())).await;
-    cleanup(&ctl, &k, &tenant.id).await;
-    if let Err(e) = outcome {
-        std::panic::resume_unwind(e.into_panic());
+    let failures = cleanup(&ctl, &k, &tenant.id).await;
+    match outcome {
+        Err(e) => {
+            // Keep the original failure; report cleanup problems alongside.
+            for f in &failures {
+                eprintln!("cleanup: {f}");
+            }
+            std::panic::resume_unwind(e.into_panic());
+        }
+        Ok(()) => assert!(failures.is_empty(), "cleanup failed: {failures:?}"),
     }
 }
 
 /// Revokes every live key, deletes the tenant and awaits the deletion
-/// (bounded), on success and on failure.
-async fn cleanup(ctl: &ControlClient, k: &impl Fn(&str) -> IdempotencyKey, tenant: &str) {
-    if let Ok(keys) = ctl
-        .list_keys(
-            tenant,
-            &ListOptions {
-                limit: Some(200),
-                cursor: None,
-            },
-        )
-        .await
-    {
-        for key in keys.items.iter().filter(|key| key.revoked_at.is_none()) {
-            if let Err(e) = ctl
-                .revoke_key(&k(&format!("cleanup-revoke-{}", key.id)), tenant, &key.id)
-                .await
-            {
-                eprintln!("cleanup: revoke {}: {e}", key.id);
+/// (bounded). Every step is attempted; failures are returned.
+async fn cleanup(
+    ctl: &ControlClient,
+    k: &impl Fn(&str) -> IdempotencyKey,
+    tenant: &str,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    let list = ListOptions {
+        limit: Some(200),
+        cursor: None,
+    };
+    match ctl.list_keys(tenant, &list).await {
+        Ok(keys) => {
+            for key in keys.items.iter().filter(|key| key.revoked_at.is_none()) {
+                if let Err(e) = ctl
+                    .revoke_key(&k(&format!("cleanup-revoke-{}", key.id)), tenant, &key.id)
+                    .await
+                {
+                    failures.push(format!("revoke key {}: {e}", key.id));
+                }
             }
         }
+        Err(e) => failures.push(format!("list keys: {e}")),
     }
     match ctl.delete_tenant(&k("cleanup-tenant"), tenant).await {
         Ok(op) => {
             let wait = ctl.wait_operation(&op.id, Duration::from_millis(200));
             match tokio::time::timeout(Duration::from_secs(60), wait).await {
                 Ok(Ok(_)) => {}
-                Ok(Err(e)) => eprintln!("cleanup: delete tenant {tenant}: {e}"),
-                Err(_) => eprintln!("cleanup: delete tenant {tenant}: timed out after 60 s"),
+                Ok(Err(e)) => failures.push(format!("delete tenant {tenant}: {e}")),
+                Err(_) => failures.push(format!("delete tenant {tenant}: timed out after 60 s")),
             }
         }
-        Err(e) => eprintln!("cleanup: delete tenant {tenant}: {e}"),
+        Err(e) => failures.push(format!("delete tenant {tenant}: {e}")),
     }
+    failures
 }
 
 async fn exercise(l: Live, run: IdempotencyKey, ctl: ControlClient, tenant_id: String) {
@@ -266,15 +277,10 @@ async fn exercise(l: Live, run: IdempotencyKey, ctl: ControlClient, tenant_id: S
     ctl.revoke_key(&k("revoke"), &tenant_id, &key.key.id)
         .await
         .unwrap();
-    let mut revoked = false;
-    for _ in 0..20 {
-        match todos.get::<Box<RawValue>>(id).await {
-            Err(Error::InvalidKey) => {
-                revoked = true;
-                break;
-            }
-            _ => tokio::time::sleep(Duration::from_millis(100)).await,
-        }
-    }
-    assert!(revoked, "a revoked key must fail with 401 invalid_key");
+    // Revocation applies to requests admitted after its commit.
+    let after = todos.get::<Box<RawValue>>(id).await;
+    assert!(
+        matches!(after, Err(Error::InvalidKey)),
+        "a revoked key must fail with 401 invalid_key at once: {after:?}"
+    );
 }

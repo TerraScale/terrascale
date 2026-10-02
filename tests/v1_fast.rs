@@ -1091,7 +1091,6 @@ async fn control_plane_provisions_keys_that_work_until_revoked() {
         .database("app")
         .collection("todos");
     todos2.get::<Box<RawValue>>(w.id).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(5)).await;
     assert!(matches!(
         todos.get::<Box<RawValue>>(w.id).await,
         Err(Error::InvalidKey)
@@ -1646,6 +1645,7 @@ async fn tenant_updates_validate_before_applying() {
 
 async fn raw_post(f: &Fixture, path: &str, body: &str) -> (u16, serde_json::Value) {
     let http = reqwest::Client::builder()
+        .no_proxy()
         .add_root_certificate(reqwest::Certificate::from_pem(f.ca_pem.as_bytes()).unwrap())
         .build()
         .unwrap();
@@ -1934,6 +1934,7 @@ async fn raw_req(
     body: &str,
 ) -> (u16, serde_json::Value) {
     let http = reqwest::Client::builder()
+        .no_proxy()
         .add_root_certificate(reqwest::Certificate::from_pem(f.ca_pem.as_bytes()).unwrap())
         .build()
         .unwrap();
@@ -2117,57 +2118,463 @@ async fn future_retry_after_dates_delay_the_retry() {
     let items = data(&f).database("main").collection("items");
     let id = uuidv5_for("items", "future");
     let path = format!("{docs}/{id}");
-    let date = |secs: u64| -> &'static str {
-        Box::leak(
-            httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_secs(secs))
-                .into_boxed_str(),
-        )
-    };
 
-    // Two seconds ahead (second resolution): the retry waits at least 1 s.
+    // The retry must not arrive before the HTTP-date (same clock as the
+    // fixture's arrival timestamps), whatever the scheduling delays.
+    let not_before = std::time::SystemTime::now() + Duration::from_secs(2);
+    let date: &'static str = Box::leak(httpdate::fmt_http_date(not_before).into_boxed_str());
+    let not_before = httpdate::parse_http_date(date).unwrap();
     let mut fault = Fault::new("PUT", docs, 429, "rate_limited");
-    fault.retry_after = Some(date(2));
+    fault.retry_after = Some(date);
     f.inject(fault);
-    let start = std::time::Instant::now();
-    let probe = {
-        let f_count = || f.count("PUT", &path);
-        let items = items.clone();
-        let put = tokio::spawn(async move { items.put(id, &json!({}), WriteOptions::new()).await });
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let during = f_count();
-        put.await.unwrap().unwrap();
-        (during, f_count())
-    };
-    assert_eq!(probe, (1, 2), "no retry before the date, one after");
+    items
+        .put(id, &json!({}), WriteOptions::new())
+        .await
+        .unwrap();
+    let times = f.request_times("PUT", &path);
+    assert_eq!(times.len(), 2);
     assert!(
-        start.elapsed() >= Duration::from_secs(1),
-        "{:?}",
-        start.elapsed()
+        times[1] >= not_before,
+        "retried {:?} before the date",
+        not_before.duration_since(times[1])
     );
 
-    // A far date is capped by max_retry_after.
+    // A far date is capped by max_retry_after, which is still waited for.
+    let cap = Duration::from_millis(200);
     let capped = Client::builder(&f.url, &f.data_token)
         .add_root_ca_pem(&f.ca_pem)
         .retry_policy(RetryPolicy {
-            max_retry_after: Duration::from_millis(50),
+            max_retry_after: cap,
             ..RetryPolicy::default()
         })
         .build()
         .unwrap();
+    let far: &'static str = Box::leak(
+        httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_secs(3600))
+            .into_boxed_str(),
+    );
     let mut fault = Fault::new("PUT", docs, 429, "rate_limited");
-    fault.retry_after = Some(date(3600));
+    fault.retry_after = Some(far);
     f.inject(fault);
-    let start = std::time::Instant::now();
     capped
         .database("main")
         .collection("items")
         .put(id, &json!({}), WriteOptions::new())
         .await
         .unwrap();
-    assert!(
-        start.elapsed() < Duration::from_secs(5),
-        "{:?}",
-        start.elapsed()
-    );
+    let times = f.request_times("PUT", &path);
+    assert_eq!(times.len(), 4);
+    let gap = times[3].duration_since(times[2]).unwrap();
+    assert!(gap >= cap && gap < Duration::from_secs(30), "{gap:?}");
     assert_eq!(f.faults_left(), 0);
+}
+
+#[tokio::test]
+async fn non_4xx_mutation_failures_are_uncertain() {
+    let f = Fixture::start().await;
+    let items = data(&f).database("main").collection("items");
+    let docs = "/v1/databases/main/collections/items/documents";
+    for (status, body) in [
+        (502, Some("<html>bad gateway</html>")),
+        (504, Some("")),
+        (500, Some(r#"{"error":"boom"}"#)),
+        (503, Some(r#"{"unexpected":true}"#)),
+        (503, None),
+    ] {
+        let mut fault = Fault::new("POST", docs, status, "mystery");
+        fault.after_commit = true;
+        fault.body = body;
+        f.inject(fault);
+        let before = f.count("POST", docs);
+        let err = items
+            .create(&json!({}), WriteOptions::new())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::Api { status: s, .. } if s == status),
+            "{err:?}"
+        );
+        assert!(err.is_uncertain(), "{status} {body:?}");
+        assert_eq!(
+            f.count("POST", docs) - before,
+            1,
+            "unkeyed writes are not retried"
+        );
+    }
+    let page = items
+        .query::<Box<RawValue>>(&Query::new().count(true))
+        .await
+        .unwrap();
+    assert_eq!(page.count.unwrap().value, 5, "every write committed");
+    // 4xx failures stay certain.
+    let err = items
+        .put(
+            uuidv5_for("items", "x"),
+            &json!({}),
+            WriteOptions::new().if_match("tbv1-00000000000000000000000000000000".parse().unwrap()),
+        )
+        .await
+        .unwrap_err();
+    assert!(!err.is_uncertain());
+}
+
+#[tokio::test]
+async fn malformed_acknowledgements_and_documents_are_rejected() {
+    let f = Fixture::start().await;
+    let db = data(&f).database("main");
+    let items = db.collection("items");
+    let docs = "/v1/databases/main/collections/items/documents";
+    let id = uuidv5_for("items", "ack");
+    let path = format!("{docs}/{id}");
+    let v = "tbv1-00000000000000000000000000000000";
+
+    // A write acknowledgement for a different document.
+    let mut fault = Fault::new("PUT", docs, 200, "x");
+    fault.after_commit = true;
+    let other = format!(
+        r#"{{"id":"{}","version":"{v}","offset":"9","durability":"local_durable"}}"#,
+        uuidv5_for("items", "other")
+    );
+    fault.body = Some(Box::leak(other.into_boxed_str()));
+    f.inject(fault);
+    let err = items
+        .put(id, &json!({}), WriteOptions::new())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::UndecodableAck { status: 200, .. }) && err.is_uncertain(),
+        "{err:?}"
+    );
+
+    // Transaction results that do not match the submitted ops.
+    let tx_path = "/v1/databases/main/transactions";
+    let mut tx = Tx::new();
+    tx.put("items", id, &json!({}), None).assert_count(
+        "items",
+        Filter::exists("/a"),
+        CountBounds::at_most(9),
+    );
+    for body in [
+        r#"{"offset":"1","durability":"local_durable","results":[]}"#.to_owned(),
+        r#"{"offset":"1","durability":"local_durable","results":[{"asserted":true},{"asserted":true,"count":"0"}]}"#.to_owned(),
+        format!(r#"{{"offset":"1","durability":"local_durable","results":[{{"id":"{}","version":"{v}"}},{{"asserted":true,"count":"0"}}]}}"#, uuidv5_for("items", "other")),
+        format!(r#"{{"offset":"1","durability":"local_durable","results":[{{"id":"{id}","version":"{v}"}},{{"asserted":true}}]}}"#),
+    ] {
+        let mut fault = Fault::new("POST", tx_path, 200, "x");
+        fault.after_commit = true;
+        fault.body = Some(Box::leak(body.clone().into_boxed_str()));
+        f.inject(fault);
+        let err = db.commit(&tx).await.unwrap_err();
+        assert!(matches!(err, Error::UndecodableAck { status: 200, .. }), "{body}: {err:?}");
+    }
+    db.commit(&tx).await.unwrap();
+
+    // Document reads: wrong ID, empty conflicts, inconsistent siblings.
+    let ev = r#"{"replica":"0192f0c4-7a1e-7c3d-9b2a-5e8f1d2c3b4a","incarnation":"8f14e45fceea167a5a36dedd4bea2543","sequence":"1"}"#;
+    for body in [
+        format!(
+            r#"{{"id":"{}","version":"{v}","state":"value","document":{{}}}}"#,
+            uuidv5_for("items", "other")
+        ),
+        format!(r#"{{"id":"{id}","version":"{v}","state":"conflict","siblings":[]}}"#),
+        format!(
+            r#"{{"id":"{id}","version":"{v}","state":"conflict","siblings":[{{"event":{ev},"deleted":false}}]}}"#
+        ),
+        format!(
+            r#"{{"id":"{id}","version":"{v}","state":"conflict","siblings":[{{"event":{ev},"deleted":false,"document":null}}]}}"#
+        ),
+        format!(
+            r#"{{"id":"{id}","version":"{v}","state":"conflict","siblings":[{{"event":{ev},"deleted":true,"document":{{}}}}]}}"#
+        ),
+    ] {
+        let mut fault = Fault::new("GET", &path, 200, "x");
+        fault.body = Some(Box::leak(body.clone().into_boxed_str()));
+        f.inject(fault);
+        let err = items.get::<serde_json::Value>(id).await.unwrap_err();
+        assert!(
+            matches!(err, Error::Decode(_)) && !err.is_uncertain(),
+            "{body}: {err:?}"
+        );
+    }
+    assert_eq!(f.faults_left(), 0);
+}
+
+#[tokio::test]
+async fn operations_with_unknown_status_stop_polling() {
+    let f = Fixture::start().await;
+    let ctl = control(&f);
+    let op = ctl
+        .delete_collection(&key("del"), &f.tenant_id, "main", "items")
+        .await
+        .unwrap();
+    let mut fault = Fault::new("GET", "/v1/dashboard/operations/", 200, "x");
+    let body = format!(
+        r#"{{"id":"{}","kind":"delete_collection","status":"","resource":"/x","error":null,"created_at":"1","finished_at":null}}"#,
+        op.id
+    );
+    fault.body = Some(Box::leak(body.into_boxed_str()));
+    f.inject(fault);
+    let err = tokio::time::timeout(
+        Duration::from_secs(5),
+        ctl.wait_operation(&op.id, Duration::from_millis(1)),
+    )
+    .await
+    .expect("polling stops")
+    .unwrap_err();
+    assert!(
+        matches!(&err, Error::Decode(m) if m.contains("unknown status")),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn completed_deletions_remove_the_resource() {
+    let f = Fixture::start().await;
+    let ctl = control(&f);
+    let t = ctl
+        .create_tenant(
+            &key("t"),
+            &CreateTenant {
+                name: "Gone".into(),
+                external_ref: "proj_gone".into(),
+                ..CreateTenant::default()
+            },
+        )
+        .await
+        .unwrap();
+    ctl.create_database(
+        &key("d1"),
+        &t.id,
+        &CreateDatabase {
+            name: "a".into(),
+            ..CreateDatabase::default()
+        },
+    )
+    .await
+    .unwrap();
+    ctl.create_database(
+        &key("d2"),
+        &t.id,
+        &CreateDatabase {
+            name: "b".into(),
+            ..CreateDatabase::default()
+        },
+    )
+    .await
+    .unwrap();
+    let op = ctl
+        .delete_database(&key("del-a"), &t.id, "a")
+        .await
+        .unwrap();
+    ctl.wait_operation(&op.id, Duration::from_millis(1))
+        .await
+        .unwrap();
+    assert!(ctl
+        .get_database(&t.id, "a")
+        .await
+        .unwrap_err()
+        .is_not_found());
+    let names: Vec<_> = ctl
+        .list_databases(&t.id, &ListOptions::default())
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|d| d.name)
+        .collect();
+    assert_eq!(names, ["b"]);
+
+    let op = ctl.delete_tenant(&key("del-t"), &t.id).await.unwrap();
+    ctl.wait_operation(&op.id, Duration::from_millis(1))
+        .await
+        .unwrap();
+    assert!(ctl.get_tenant(&t.id).await.unwrap_err().is_not_found());
+    assert!(ctl.find_tenant("proj_gone").await.unwrap().is_none());
+
+    // The data plane stops serving a deleted database.
+    let op = ctl
+        .delete_database(&key("del-main"), &f.tenant_id, "main")
+        .await
+        .unwrap();
+    ctl.wait_operation(&op.id, Duration::from_millis(1))
+        .await
+        .unwrap();
+    let err = data(&f)
+        .database("main")
+        .collection("items")
+        .get::<Box<RawValue>>(uuidv5_for("items", "x"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Api { status: 404, code, .. } if code == "unknown_database"),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn fixture_rejects_malformed_preconditions_and_control_bodies() {
+    let f = Fixture::start().await;
+    let json = Some("application/json");
+    let id = uuidv5_for("items", "pre");
+    let doc = format!("/v1/databases/main/collections/items/documents/{id}");
+    let items = data(&f).database("main").collection("items");
+    let w = items
+        .put(id, &json!({"v": 1}), WriteOptions::new())
+        .await
+        .unwrap();
+    let tx = "/v1/databases/main/transactions";
+    let v = w.version.as_str();
+    for op in [
+        format!(
+            r#"{{"op":"put","collection":"items","id":"{id}","document":{{}},"if_match":123}}"#
+        ),
+        format!(
+            r#"{{"op":"put","collection":"items","id":"{id}","document":{{}},"if_none_match":"tbv1-x"}}"#
+        ),
+        format!(
+            r#"{{"op":"put","collection":"items","id":"{id}","document":{{}},"if_match":"{v}","if_none_match":"*"}}"#
+        ),
+        format!(r#"{{"op":"put","collection":"items","id":"{id}","document":[]}}"#),
+        r#"{"op":"put","collection":"items","document":{}}"#.to_string(),
+        format!(
+            r#"{{"op":"create","collection":"items","id":"{id}","document":{{}},"if_match":"{v}"}}"#
+        ),
+        format!(r#"{{"op":"delete","collection":"items","id":"{id}","if_none_match":"*"}}"#),
+        format!(r#"{{"op":"delete","collection":"items","id":"{id}","document":{{}}}}"#),
+        format!(r#"{{"op":"assert","collection":"items","id":"{id}","absent":false}}"#),
+        format!(r#"{{"op":"assert","collection":"items","id":"{id}"}}"#),
+        format!(
+            r#"{{"op":"assert_count","collection":"items","id":"{id}","filter":{{"exists":"/v"}},"lte":1}}"#
+        ),
+        format!(r#"{{"op":"upsert","collection":"items","id":"{id}","document":{{}}}}"#),
+    ] {
+        let body = format!(r#"{{"ops":[{op}]}}"#);
+        let (status, e) = raw_req(&f, reqwest::Method::POST, tx, json, &body).await;
+        assert_eq!(
+            (status, code_op(&e)),
+            (400, (Some("invalid_request"), Some(0))),
+            "{op}"
+        );
+    }
+    for (m, headers) in [
+        (reqwest::Method::PUT, [("if-none-match", "\"x\"")]),
+        (
+            reqwest::Method::PUT,
+            [("if-match", "tbv1-00000000000000000000000000000000")],
+        ),
+        (reqwest::Method::DELETE, [("if-none-match", "*")]),
+    ] {
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .add_root_certificate(reqwest::Certificate::from_pem(f.ca_pem.as_bytes()).unwrap())
+            .build()
+            .unwrap();
+        let mut rb = http
+            .request(m.clone(), format!("{}{doc}", f.url))
+            .bearer_auth(&f.data_token);
+        for (k, val) in headers {
+            rb = rb.header(k, val);
+        }
+        if m == reqwest::Method::PUT {
+            rb = rb.header("content-type", "application/json").body("{}");
+        }
+        assert_eq!(
+            rb.send().await.unwrap().status().as_u16(),
+            400,
+            "{m} {headers:?}"
+        );
+    }
+    let still = items.get::<serde_json::Value>(id).await.unwrap();
+    assert_eq!(
+        (still.version.clone(), still.into_value().unwrap()),
+        (w.version, json!({"v": 1})),
+        "nothing changed"
+    );
+
+    let ctl = control(&f);
+    let t = f.tenant_id.clone();
+    for (path, body) in [
+        (
+            "/v1/dashboard/tenants".to_owned(),
+            r#"{"name":1,"external_ref":"r"}"#,
+        ),
+        (
+            format!("/v1/dashboard/tenants/{t}/databases"),
+            r#"{"name":"Bad Name"}"#,
+        ),
+        (
+            format!("/v1/dashboard/tenants/{t}/databases"),
+            r#"{"name":"ok","durability":"fast"}"#,
+        ),
+        (
+            format!("/v1/dashboard/tenants/{t}/databases/main/collections"),
+            r#"{"name":"c","ttl_path":5}"#,
+        ),
+        (
+            format!("/v1/dashboard/tenants/{t}/databases/main/collections"),
+            r#"{"name":"c","advisor":"sometimes"}"#,
+        ),
+        (
+            format!("/v1/dashboard/tenants/{t}/keys"),
+            r#"{"name":"k","grants":{}}"#,
+        ),
+    ] {
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .add_root_certificate(reqwest::Certificate::from_pem(f.ca_pem.as_bytes()).unwrap())
+            .build()
+            .unwrap();
+        let resp = http
+            .post(format!("{}{path}", f.url))
+            .bearer_auth(&f.control_token)
+            .header("content-type", "application/json")
+            .header(
+                "idempotency-key",
+                IdempotencyKey::derive(&[&path, body]).as_str(),
+            )
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 400, "{path} {body}");
+    }
+    assert_eq!(
+        ctl.list_databases(&t, &ListOptions::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn created_keys_must_carry_a_tbk1_token() {
+    let f = Fixture::start().await;
+    let ctl = control(&f);
+    let path = format!("/v1/dashboard/tenants/{}/keys", f.tenant_id);
+    let mut fault = Fault::new("POST", &path, 201, "x");
+    fault.after_commit = true;
+    fault.body = Some(
+        r#"{"key":{"id":"k","name":"n","role":"data","created_at":"1","last_four":"abcd","expires_at":null,"revoked_at":null},"token":"secret"}"#,
+    );
+    f.inject(fault);
+    let req = CreateKey {
+        name: "n".into(),
+        grants: vec![Grant {
+            database: "main".into(),
+            collections: vec!["*".into()],
+            permissions: vec!["read".into()],
+        }],
+        ..CreateKey::default()
+    };
+    let err = ctl
+        .create_key(&key("bad-token"), &f.tenant_id, &req)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::UndecodableAck { .. }) && err.is_uncertain(),
+        "{err:?}"
+    );
+    assert!(!format!("{err:?}").contains("secret"));
 }

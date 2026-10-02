@@ -194,6 +194,8 @@ struct Operation {
     resource: String,
     created_at: u64,
     polls: u32,
+    /// Tenant ID and, for database deletions, the database name.
+    target: (String, Option<String>),
 }
 
 #[derive(Default, Debug)]
@@ -206,6 +208,7 @@ struct State {
     ops: HashMap<String, Operation>,
     seq: u64,
     requests: HashMap<String, usize>,
+    times: HashMap<String, Vec<SystemTime>>,
 }
 
 pub struct Fixture {
@@ -463,6 +466,17 @@ impl Fixture {
             .unwrap_or(&0)
     }
 
+    /// When each request for `METHOD /path` arrived.
+    pub fn request_times(&self, method: &str, path: &str) -> Vec<SystemTime> {
+        self.state
+            .lock()
+            .unwrap()
+            .times
+            .get(&format!("{method} {path}"))
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// Adds a data key on the default tenant.
     pub fn add_data_key(&self, grants: Value) -> String {
         let tenant_id = self.tenant_id.clone();
@@ -674,9 +688,12 @@ fn wrap(
     encoded: bool,
     body: &[u8],
 ) -> Reply {
-    *st.requests
-        .entry(format!("{} {}", ctx.method, ctx.path))
-        .or_default() += 1;
+    let route_key = format!("{} {}", ctx.method, ctx.path);
+    *st.requests.entry(route_key.clone()).or_default() += 1;
+    st.times
+        .entry(route_key)
+        .or_default()
+        .push(SystemTime::now());
     if body.len() > 4 << 20 {
         return err(413, "payload_too_large");
     }
@@ -753,8 +770,45 @@ fn wrap(
     rep
 }
 
+/// Document routes accept only well-formed preconditions: a quoted version
+/// in If-Match (writes) or If-None-Match (GET), `*` in If-None-Match (PUT),
+/// and never both.
+fn bad_preconditions(ctx: &Ctx) -> bool {
+    let quoted_version = |h: &str| {
+        h.strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .is_some_and(valid_version)
+    };
+    let (im, inm) = (ctx.if_match.as_deref(), ctx.if_none_match.as_deref());
+    match ctx.method {
+        "GET" => im.is_some() || inm.is_some_and(|h| !quoted_version(h)),
+        "PUT" => {
+            (im.is_some() && inm.is_some())
+                || im.is_some_and(|h| !quoted_version(h))
+                || inm.is_some_and(|h| h != "*")
+        }
+        "POST" => im.is_some() || inm.is_some(),
+        _ => inm.is_some() || im.is_some_and(|h| !quoted_version(h)),
+    }
+}
+
+fn valid_version(v: &str) -> bool {
+    v.len() == 37
+        && v.starts_with("tbv1-")
+        && v[5..]
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 fn route(st: &mut State, ctx: &Ctx, key: &Key, body: &[u8]) -> Reply {
     let s: Vec<&str> = ctx.segs.iter().map(String::as_str).collect();
+    if matches!(
+        s.as_slice(),
+        ["v1", "databases", _, "collections", _, "documents", ..]
+    ) && bad_preconditions(ctx)
+    {
+        return err(400, "invalid_request");
+    }
     match (ctx.method, s.as_slice()) {
         ("GET", ["v1", "databases", db, "collections", c, "documents", id]) => {
             get_doc(st, key, db, c, id, ctx)
@@ -808,7 +862,7 @@ fn tenant_db<'a>(
     if t.status != "active" {
         return Err(err(403, "forbidden_scope"));
     }
-    let Some(d) = t.dbs.get_mut(db) else {
+    let Some(d) = t.dbs.get_mut(db).filter(|d| d.status == "ready") else {
         return Err(if grant["database"] == "*" {
             err(404, "unknown_database")
         } else {
@@ -1401,7 +1455,7 @@ fn transaction(st: &mut State, key: &Key, db: &str, body: &[u8]) -> Reply {
         let Some(o) = op.as_object() else {
             return err_op(400, "invalid_request", i);
         };
-        if o.keys().any(|k| !allowed.contains(&k.as_str())) {
+        if o.keys().any(|k| !allowed.contains(&k.as_str())) || !tx_op_shape_ok(o) {
             return err_op(400, "invalid_request", i);
         }
         let perm = if matches!(
@@ -1594,6 +1648,52 @@ fn transaction(st: &mut State, key: &Key, db: &str, body: &[u8]) -> Reply {
         200,
         json!({"offset": offset.to_string(), "durability": "local_durable", "results": results}),
     )
+}
+
+/// Per-kind members, their types and permitted precondition combinations.
+fn tx_op_shape_ok(o: &Obj) -> bool {
+    let kind = o.get("op").and_then(J::as_str).unwrap_or("");
+    let allowed: &[&str] = match kind {
+        "create" => &["op", "collection", "id", "document"],
+        "put" => &[
+            "op",
+            "collection",
+            "id",
+            "document",
+            "if_match",
+            "if_none_match",
+        ],
+        "patch" => &["op", "collection", "id", "merge", "ops", "if_match"],
+        "delete" => &["op", "collection", "id", "if_match"],
+        "assert" => &["op", "collection", "id", "filter", "absent"],
+        "assert_count" => &["op", "collection", "filter", "gte", "lte"],
+        _ => return false,
+    };
+    if o.keys().any(|k| !allowed.contains(&k.as_str())) {
+        return false;
+    }
+    let id_ok = match o.get("id") {
+        None => kind == "create" || kind == "assert_count",
+        Some(id) => id.as_str().is_some_and(is_uuid),
+    };
+    let doc_ok = !matches!(kind, "create" | "put")
+        || o.get("document").is_some_and(|d| d.as_object().is_some());
+    let im_ok = o
+        .get("if_match")
+        .is_none_or(|v| v.as_str().is_some_and(valid_version));
+    let inm_ok = o
+        .get("if_none_match")
+        .is_none_or(|v| v.as_str() == Some("*"));
+    let both = o.contains_key("if_match") && o.contains_key("if_none_match");
+    let assert_ok = kind != "assert"
+        || match (o.get("filter"), o.get("absent")) {
+            (Some(f), None) => f.as_object().is_some(),
+            (None, Some(J::Bool(true))) => true,
+            _ => false,
+        };
+    let count_ok =
+        kind != "assert_count" || o.get("filter").is_some_and(|f| f.as_object().is_some());
+    id_ok && doc_ok && im_ok && inm_ok && !both && assert_ok && count_ok
 }
 
 // ---- query ------------------------------------------------------------------
@@ -2094,13 +2194,14 @@ fn op_json(op: &Operation) -> Value {
         "finished_at": if done { json!(op.created_at.to_string()) } else { Value::Null }})
 }
 
-fn start_op(st: &mut State, kind: &str, resource: &str) -> Reply {
+fn start_op(st: &mut State, kind: &str, resource: &str, target: (String, Option<String>)) -> Reply {
     let op = Operation {
         id: new_id(),
         kind: kind.into(),
         resource: resource.into(),
         created_at: now_ms(),
         polls: 0,
+        target,
     };
     let r = reply(202, op_json(&op));
     st.ops.insert(op.id.clone(), op);
@@ -2114,8 +2215,82 @@ fn strict(body: &[u8], allowed: &[&str]) -> Option<Map<String, Value>> {
     m.keys().all(|k| allowed.contains(&k.as_str())).then_some(m)
 }
 
+#[derive(Clone, Copy)]
+enum Kind {
+    Str,
+    Name,
+    Bool,
+    Obj,
+    Arr,
+    OptStr,
+    OptObj,
+    OneOf(&'static [&'static str]),
+}
+
+fn kind_ok(v: &Value, k: Kind) -> bool {
+    match k {
+        Kind::Str => v.as_str().is_some_and(|s| !s.is_empty()),
+        Kind::Name => v.as_str().is_some_and(valid_name),
+        Kind::Bool => v.is_boolean(),
+        Kind::Obj => v.is_object(),
+        Kind::Arr => v.is_array(),
+        Kind::OptStr => v.is_null() || v.as_str().is_some_and(|s| !s.is_empty()),
+        Kind::OptObj => v.is_null() || v.is_object(),
+        Kind::OneOf(values) => v.as_str().is_some_and(|s| values.contains(&s)),
+    }
+}
+
+/// Member types of control-plane bodies; present members must match.
+fn body_types_ok(method: &str, rest: &[&str], body: &[u8]) -> bool {
+    use Kind::*;
+    const ADVISOR: Kind = OneOf(&["auto", "manual"]);
+    let spec: &[(&str, Kind)] = match (method, rest) {
+        ("POST", ["tenants"]) => &[
+            ("name", Str),
+            ("external_ref", Str),
+            ("limits", Obj),
+            ("advisor_external", Bool),
+        ],
+        ("POST", ["tenants", _, "databases"]) => &[
+            ("name", Name),
+            ("home_region", Str),
+            ("durability", OneOf(&["local_durable", "object_durable"])),
+            ("retention", Obj),
+        ],
+        ("POST", ["tenants", _, "databases", _, "collections"]) => &[
+            ("name", Name),
+            ("schema", OptObj),
+            ("ttl_path", OptStr),
+            ("unique", Arr),
+            ("indexes", Arr),
+            ("advisor", ADVISOR),
+        ],
+        ("PATCH", ["tenants", _, "databases", _, "collections", _]) => &[
+            ("schema", OptObj),
+            ("ttl_path", OptStr),
+            ("unique", Arr),
+            ("advisor", ADVISOR),
+        ],
+        ("POST", ["tenants", _, "keys"]) => &[
+            ("name", Str),
+            ("grants", Arr),
+            ("row_filter", OptObj),
+            ("rate", Obj),
+        ],
+        _ => &[],
+    };
+    let Ok(Value::Object(m)) = serde_json::from_slice::<Value>(body) else {
+        return spec.is_empty();
+    };
+    spec.iter()
+        .all(|(k, kind)| m.get(*k).is_none_or(|v| kind_ok(v, *kind)))
+}
+
 fn dashboard(st: &mut State, ctx: &Ctx, _key: &Key, rest: &[&str], body: &[u8]) -> Reply {
     let not_found = || err(404, "not_found");
+    if !body_types_ok(ctx.method, rest, body) {
+        return err(400, "invalid_request");
+    }
     match (ctx.method, rest) {
         ("POST", ["tenants"]) => {
             let Some(b) = strict(
@@ -2218,12 +2393,12 @@ fn dashboard(st: &mut State, ctx: &Ctx, _key: &Key, rest: &[&str], body: &[u8]) 
             }
             reply(200, tenant_json(t))
         }
-        ("DELETE", ["tenants", t]) => {
-            let Some(t) = st.tenants.get_mut(*t) else {
+        ("DELETE", ["tenants", tid]) => {
+            let Some(t) = st.tenants.get_mut(*tid) else {
                 return not_found();
             };
             t.status = "deleting".into();
-            start_op(st, "delete_tenant", ctx.path)
+            start_op(st, "delete_tenant", ctx.path, ((*tid).to_owned(), None))
         }
         ("POST", ["tenants", t, "databases"]) => {
             let Some(b) = strict(body, &["name", "home_region", "durability", "retention"]) else {
@@ -2277,14 +2452,40 @@ fn dashboard(st: &mut State, ctx: &Ctx, _key: &Key, rest: &[&str], body: &[u8]) 
                 return not_found();
             };
             db.status = "deleting".into();
-            start_op(st, "delete_database", ctx.path)
+            start_op(
+                st,
+                "delete_database",
+                ctx.path,
+                ((*t).to_owned(), Some((*d).to_owned())),
+            )
         }
         ("GET", ["operations", id]) => {
             let Some(op) = st.ops.get_mut(*id) else {
                 return not_found();
             };
             op.polls += 1;
-            reply(200, op_json(op))
+            let r = reply(200, op_json(op));
+            // The deletion takes effect when the operation succeeds.
+            if op.polls == 2 {
+                let (kind, (tenant, db)) = (op.kind.clone(), op.target.clone());
+                match (kind.as_str(), db) {
+                    ("delete_tenant", _) => {
+                        st.tenants.remove(&tenant);
+                        st.tenant_order.retain(|t| *t != tenant);
+                        for k in st.keys.values_mut().filter(|k| k.tenant_id == tenant) {
+                            k.revoked_at.get_or_insert_with(now_ms);
+                        }
+                    }
+                    ("delete_database", Some(db)) => {
+                        if let Some(t) = st.tenants.get_mut(&tenant) {
+                            t.dbs.remove(&db);
+                            t.db_order.retain(|d| *d != db);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            r
         }
         ("POST", ["tenants", t, "databases", d, "collections"]) => {
             let Some(b) = strict(
@@ -2381,7 +2582,7 @@ fn dashboard(st: &mut State, ctx: &Ctx, _key: &Key, rest: &[&str], body: &[u8]) 
             {
                 return not_found();
             }
-            start_op(st, "delete_collection", ctx.path)
+            start_op(st, "delete_collection", ctx.path, ((*t).to_owned(), None))
         }
         ("POST", ["tenants", t, "keys"]) => {
             let Some(b) = strict(
