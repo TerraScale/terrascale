@@ -820,6 +820,7 @@ fn deleted_history_timeout_receipt(
     physical_fixture_state: Option<&Value>,
     active: ActiveScan,
 ) -> Value {
+    #[cfg_attr(not(feature = "terrabase"), allow(unused_mut))]
     let mut receipt = serde_json::json!({
         "schema_version": 1,
         "matrix_version": MATRIX_VERSION,
@@ -849,6 +850,9 @@ fn deleted_history_timeout_receipt(
         "matrix_sha256": hex_hash(include_bytes!("../../bench/terrabase-rust-acceptance-v1.md")),
         "dependency_lock_sha256": hex_hash(include_bytes!("../Cargo.lock")),
     });
+    // The embedded caller's storage sources exist only in the TerraBase
+    // revision it was written for; keep the SQLite-only build independent.
+    #[cfg(feature = "terrabase")]
     if engine == "terrabase-embedded" {
         receipt["adapter_source_sha256"] = Value::String(hex_hash(include_bytes!("terrabase.rs")));
         receipt["storage_source_sha256"] = Value::String(hex_hash(include_bytes!(

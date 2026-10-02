@@ -1,0 +1,51 @@
+name: Fast
+
+# Blocking Fast suite: format, lint and build every driver against the
+# TerraBase revision pinned in terrabase.rev (with its patched Turso v0.8.1
+# submodule), then run tests/fast.sh: the v2 throughput-floor classifier and a
+# small SQLite-vs-Turso CRUD smoke benchmark through the real bindings. Shared
+# runner timings never fill a scoreboard row. Rust compiles go through the
+# runner's shared kache store when /cache is mounted.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ts-benchmark-fast-${{ forgejo.ref }}
+  cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
+
+env:
+  CI: "true"
+
+jobs:
+  fast:
+    name: Fast suite
+    runs-on: terrascale-builder
+    timeout-minutes: 120
+    container:
+      image: git.terrascale.tech/terrascale/ts-builder:latest
+      options: --memory=8g
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          path: ts-benchmark
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned TerraBase and Turso sources
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash ts-benchmark/scripts/ci/checkout-terrabase.sh
+
+      - name: Format, lint and build the drivers
+        run: bash ts-benchmark/scripts/ci/kache.sh make -C ts-benchmark lint-fast build-fast
+
+      - name: Run the Fast suite
+        run: make -C ts-benchmark test-fast

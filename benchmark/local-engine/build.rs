@@ -4,13 +4,18 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
-const PINNED_TURSO: &str = "64b8ef5742fc18937f9c89806c81e3f6475dc7a3";
+const PINNED_TURSO: &str = "8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a";
+// Git tree of the pinned gitlink plus TerraBase's ordered patches/turso series,
+// as printed by TerraBase's `scripts/ci/prepare-turso.sh --tree`.
+const PINNED_TURSO_TREE: &str = "4da45c6e8290634cff70f371d123b0564206e4b0";
 
-fn git(turso: &Path, args: &[&str]) -> Vec<u8> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(turso)
-        .args(args)
+fn git(turso: &Path, index: Option<&Path>, args: &[&str]) -> Vec<u8> {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(turso).args(args);
+    if let Some(index) = index {
+        command.env("GIT_INDEX_FILE", index);
+    }
+    let output = command
         .output()
         .expect("git is required to identify the pinned Turso source");
     assert!(
@@ -21,29 +26,43 @@ fn git(turso: &Path, args: &[&str]) -> Vec<u8> {
     output.stdout
 }
 
+fn text(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes)
+        .expect("Turso git output is UTF-8")
+        .trim()
+        .to_owned()
+}
+
 fn main() {
     let manifest = env::var("CARGO_MANIFEST_DIR").expect("Cargo manifest directory");
     let turso = Path::new(&manifest).join("../../terrabase/crates/turso");
-    let revision_bytes = git(&turso, &["rev-parse", "HEAD"]);
-    let revision = String::from_utf8(revision_bytes).expect("Turso revision is UTF-8");
-    let revision = revision.trim();
+    let revision = text(git(&turso, None, &["rev-parse", "HEAD"]));
     assert_eq!(
         revision, PINNED_TURSO,
         "Turso source differs from the pinned TerraBase gitlink"
     );
-    let status = String::from_utf8(git(
+    // Hash the whole checkout, including files the patch series adds, through
+    // a scratch index so the submodule's own index stays untouched.
+    let index = Path::new(&env::var("OUT_DIR").expect("Cargo out directory")).join("turso-index");
+    let own_index = text(git(
         &turso,
-        &["status", "--porcelain", "--untracked-files=all"],
-    ))
-    .expect("Turso status is UTF-8");
-    assert!(
-        !status.lines().any(|line| line.starts_with("??")),
-        "untracked Turso source cannot enter a reproducible build"
+        None,
+        &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+    ));
+    std::fs::copy(own_index, &index).expect("copy the Turso index");
+    git(&turso, Some(&index), &["add", "--all"]);
+    let tree = text(git(&turso, Some(&index), &["write-tree"]));
+    assert_eq!(
+        tree, PINNED_TURSO_TREE,
+        "Turso checkout differs from the pinned gitlink plus TerraBase's patches/turso series"
     );
-    let diff = git(&turso, &["diff", "--binary", "HEAD", "--"]);
+    let diff = git(&turso, None, &["diff", "--binary", "HEAD", &tree, "--"]);
     let diff_sha256 = format!("{:x}", Sha256::digest(&diff));
-    let changed = String::from_utf8(git(&turso, &["diff", "--name-only", "HEAD", "--"]))
-        .expect("Turso changed paths are UTF-8");
+    let changed = text(git(
+        &turso,
+        None,
+        &["diff", "--name-only", "HEAD", &tree, "--"],
+    ));
     let mut file_inventory = Vec::new();
     for name in changed.lines() {
         assert!(
@@ -62,10 +81,11 @@ fn main() {
         file_inventory.push(format!("{name}={digest}"));
     }
     println!("cargo:rustc-env=PINNED_TURSO_REVISION={revision}");
-    println!("cargo:rustc-env=TURSO_TRACKED_DIFF_SHA256={diff_sha256}");
-    println!("cargo:rustc-env=TURSO_TRACKED_DIRTY={}", !diff.is_empty());
+    println!("cargo:rustc-env=TURSO_SOURCE_TREE={tree}");
+    println!("cargo:rustc-env=TURSO_PATCH_DIFF_SHA256={diff_sha256}");
+    println!("cargo:rustc-env=TURSO_PATCHED={}", !diff.is_empty());
     println!(
-        "cargo:rustc-env=TURSO_TRACKED_FILE_INVENTORY={}",
+        "cargo:rustc-env=TURSO_PATCH_FILE_INVENTORY={}",
         file_inventory.join(";")
     );
     println!("cargo:rerun-if-changed={}", turso.join("core").display());

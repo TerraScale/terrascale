@@ -12,7 +12,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 sha2 = "=0.10.9"
 tokio = { version = "=1.53.1", features = ["rt", "time"] }
-turso_pinned = { package = "turso", path = "../../terrabase/crates/turso/bindings/rust", version = "=0.8.0-pre.13", default-features = false }
+turso_pinned = { package = "turso", path = "../../terrabase/crates/turso/bindings/rust", version = "=0.8.1", default-features = false }
 
 [build-dependencies]
 sha2 = "=0.10.9"
