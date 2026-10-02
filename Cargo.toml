@@ -34,7 +34,13 @@ path = "examples/postgres_journey.rs"
 required-features = ["postgres"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "test-util"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "test-util", "net"] }
+rcgen = "0.14"
+rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring"] }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring"] }
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }
+http-body-util = "0.1"
 base64 = "0.22"
 sha2 = "0.10"
 
