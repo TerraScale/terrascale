@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Typed Rust client for TerraBase's native document protocol and TerraScale authentication"
 license = "Apache-2.0"
+repository = "https://git.terrascale.tech/TerraScale/ts-rust"
 exclude = ["AGENTS.md", "CLAUDE.md"]
 
 [features]
