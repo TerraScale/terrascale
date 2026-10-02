@@ -27,6 +27,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="TerraScale.DotNet.Tests" />
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="../../LICENSE" Pack="true" PackagePath="\" />
     <None Include="../../contracts/native/**/*" Pack="true" PackagePath="contracts/native" />
     <EmbeddedResource Include="../../contracts/native/client-openapi.json" LogicalName="TerraScale.DotNet.Native.client-openapi.json" />
     <EmbeddedResource Include="../../contracts/native/atomic_vectors.json" LogicalName="TerraScale.DotNet.Native.atomic_vectors.json" />
