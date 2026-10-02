@@ -29,5 +29,8 @@ mimalloc.workspace = true
 lettre.workspace = true
 url.workspace = true
 
+[dev-dependencies]
+time.workspace = true
+
 [lints]
 workspace = true

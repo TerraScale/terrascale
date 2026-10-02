@@ -533,6 +533,13 @@ fn predicate_matches(document: &Value, predicate: &Predicate) -> bool {
                 _ => false,
             },
         },
+        "lessThan" => match (actual.as_i64(), expected.as_i64()) {
+            (Some(actual), Some(expected)) => actual < expected,
+            _ => match (actual.as_str(), expected.as_str()) {
+                (Some(actual), Some(expected)) => actual < expected,
+                _ => false,
+            },
+        },
         _ => false,
     }
 }

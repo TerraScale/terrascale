@@ -945,10 +945,22 @@ SkTC5yT/7mYw4aLlRAKOxAEMHQjj5bFyr8NZa296YIcdBbdRm8oqGDqWcK4wcu/I
 yFtbTMIWwNL9n/lLh695eNwDmg28
 -----END CERTIFICATE-----"#;
 
-fn signed_saml_response(redirect_url: &str, acs_url: &str, email: &str) -> (String, String) {
+/// Have the test IdP answer the app's AuthnRequest. With `sign_assertion` the
+/// IdP signs the assertion itself; otherwise it signs only the enclosing
+/// Response, leaving the assertion unsigned.
+fn signed_saml_response(
+    redirect_url: &str,
+    acs_url: &str,
+    email: &str,
+    sign_assertion: bool,
+) -> (String, String) {
     let mut sp_policy = SpValidationPolicy::strict();
     sp_policy.authn_requests = AuthnRequestSigningPolicy::DoNotSignForCompatibility;
-    sp_policy.assertions = AssertionSignaturePolicy::AllowUnsignedForCompatibility;
+    sp_policy.assertions = if sign_assertion {
+        AssertionSignaturePolicy::RequireSigned
+    } else {
+        AssertionSignaturePolicy::AllowUnsignedForCompatibility
+    };
     sp_policy.responses = ResponseSignaturePolicy::RequireForEncryptedCbc;
     sp_policy.audience = AudienceValidationPolicy::Validate;
     let sp = Saml::sp(
@@ -1187,7 +1199,8 @@ async fn saml_acs_waits_for_local_mfa_and_restores_the_safe_continuation() {
         "{}/{slug}/connections/{connection_id}/saml/acs",
         server.state.options.public_origin.trim_end_matches('/')
     );
-    let (saml_response, response_relay) = signed_saml_response(&redirect_url, &acs_url, email);
+    let (saml_response, response_relay) =
+        signed_saml_response(&redirect_url, &acs_url, email, true);
     assert_eq!(response_relay, relay);
     let acs = client
         .post(format!(
@@ -1288,6 +1301,631 @@ async fn saml_acs_waits_for_local_mfa_and_restores_the_safe_continuation() {
             .any(|value| value.starts_with("tsauth_session=")),
         "a session should be established after the local TOTP succeeds"
     );
+}
+
+/// One SP-initiated SAML attempt: the IdP redirect, its RelayState, and the
+/// ACS-scoped correlation cookie the browser would send back.
+struct SamlAttempt {
+    redirect_url: String,
+    relay: String,
+    cookie: String,
+}
+
+async fn start_saml_attempt(
+    server: &TestServer,
+    client: &Client,
+    slug: &str,
+    connection_id: &str,
+) -> SamlAttempt {
+    let login = client
+        .get(format!(
+            "{}/ui/{slug}/connections/{connection_id}/saml/login",
+            server.origin
+        ))
+        .send()
+        .await
+        .expect("SAML login should reach the service");
+    assert_eq!(login.status(), StatusCode::SEE_OTHER);
+    let redirect_url = login
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .expect("SAML login should redirect to the configured IdP")
+        .to_owned();
+    let relay = reqwest::Url::parse(&redirect_url)
+        .expect("IdP redirect URL should parse")
+        .query_pairs()
+        .find(|(key, _)| key == "RelayState")
+        .map(|(_, value)| value.into_owned())
+        .expect("SAML login should include RelayState");
+    let set_cookie = login
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find(|value| value.starts_with("tsauth_saml_state="))
+        .expect("SAML login should bind its correlation cookie to the ACS");
+    let mut parts = set_cookie.split(';').map(str::trim);
+    let cookie = parts
+        .next()
+        .expect("correlation cookie has a name and value")
+        .to_owned();
+    let attributes: Vec<String> = parts.map(cookie_attribute).collect();
+    // The IdP returns through a cross-site POST, so a browser only sends the
+    // cookie back if it is scoped to this ACS, Secure, and SameSite=None.
+    for expected in [
+        format!("path=/{slug}/connections/{connection_id}/saml/acs"),
+        "secure".to_owned(),
+        "httponly".to_owned(),
+        "samesite=None".to_owned(),
+    ] {
+        assert!(
+            attributes.contains(&expected),
+            "correlation cookie should carry `{expected}`: {set_cookie}"
+        );
+    }
+    assert!(
+        !cookie.ends_with('=') && !cookie_expired(&attributes),
+        "correlation cookie should be live: {set_cookie}"
+    );
+    SamlAttempt {
+        redirect_url,
+        relay,
+        cookie,
+    }
+}
+
+async fn post_saml_acs(
+    server: &TestServer,
+    client: &Client,
+    slug: &str,
+    connection_id: &str,
+    attempt: &SamlAttempt,
+    saml_response: &str,
+) -> reqwest::Response {
+    client
+        .post(format!(
+            "{}/{slug}/connections/{connection_id}/saml/acs",
+            server.origin
+        ))
+        .header(header::COOKIE, &attempt.cookie)
+        .form(&[
+            ("SAMLResponse", saml_response),
+            ("RelayState", attempt.relay.as_str()),
+        ])
+        .send()
+        .await
+        .expect("SAML response should reach the ACS")
+}
+
+fn saml_acs_url(server: &TestServer, slug: &str, connection_id: &str) -> String {
+    format!(
+        "{}/{slug}/connections/{connection_id}/saml/acs",
+        server.state.options.public_origin.trim_end_matches('/')
+    )
+}
+
+/// The live session cookie a response issues, ignoring deletion cookies
+/// (empty value, `Max-Age=0`, or an `Expires` in the past).
+fn issued_session_cookie(response: &reqwest::Response) -> Option<String> {
+    response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(|value| {
+            let mut parts = value.split(';').map(str::trim);
+            let session = parts.next()?.strip_prefix("tsauth_session=")?;
+            let attributes: Vec<String> = parts.map(cookie_attribute).collect();
+            (!session.is_empty() && !cookie_expired(&attributes)).then(|| session.to_owned())
+        })
+}
+
+/// A `Set-Cookie` attribute with its case-insensitive name lower-cased and
+/// its value (such as a case-sensitive `Path`) preserved.
+fn cookie_attribute(attribute: &str) -> String {
+    match attribute.split_once('=') {
+        Some((name, value)) => format!("{}={value}", name.trim().to_ascii_lowercase()),
+        None => attribute.to_ascii_lowercase(),
+    }
+}
+
+/// Whether a browser would discard a cookie with these attributes: `Max-Age` takes precedence over `Expires` (RFC 6265 5.3), and
+/// an unparseable value counts as expired so the check fails closed.
+fn cookie_expired(attributes: &[String]) -> bool {
+    if let Some(age) = attributes
+        .iter()
+        .rev()
+        .find_map(|attribute| attribute.strip_prefix("max-age="))
+    {
+        return age.parse::<i64>().map_or(true, |age| age <= 0);
+    }
+    let Some(expires) = attributes
+        .iter()
+        .rev()
+        .find_map(|attribute| attribute.strip_prefix("expires="))
+    else {
+        return false;
+    };
+    let format = time::format_description::parse(
+        "[weekday repr:short case_sensitive:false], [day] [month repr:short case_sensitive:false] [year] [hour]:[minute]:[second] GMT",
+    )
+    .expect("HTTP-date format should parse");
+    time::PrimitiveDateTime::parse(expires, &format).map_or(true, |at| {
+        at.assume_utc() <= time::OffsetDateTime::now_utc()
+    })
+}
+
+/// Require a live session cookie and prove it authenticates the account page.
+async fn assert_authenticated_session(
+    server: &TestServer,
+    client: &Client,
+    slug: &str,
+    response: &reqwest::Response,
+) {
+    let cookie = issued_session_cookie(response).expect("sign-in should issue a live session");
+    let account = client
+        .get(format!("{}/ui/{slug}/account", server.origin))
+        .header(header::COOKIE, format!("tsauth_session={cookie}"))
+        .send()
+        .await
+        .expect("account page should reach the service");
+    assert_eq!(
+        account.status(),
+        StatusCode::OK,
+        "the issued session should authenticate the account page"
+    );
+}
+
+fn saml_xml(saml_response: &str) -> String {
+    String::from_utf8(
+        base64::engine::general_purpose::STANDARD
+            .decode(saml_response)
+            .expect("SAML response should be base64"),
+    )
+    .expect("SAML response should be UTF-8")
+}
+
+fn saml_assertion_id(xml: &str) -> String {
+    xml.split_once("<saml:Assertion")
+        .and_then(|(_, rest)| rest.split_once(" ID=\""))
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(id, _)| id.to_owned())
+        .expect("SAML response should carry an assertion ID")
+}
+
+/// Unix seconds of the earliest `NotOnOrAfter`/`SessionNotOnOrAfter` bound in
+/// the assertion, the instant replay retention must follow.
+fn earliest_not_on_or_after(xml: &str) -> time::OffsetDateTime {
+    xml.split("NotOnOrAfter=\"")
+        .skip(1)
+        .filter_map(|rest| rest.split_once('"').map(|(value, _)| value))
+        .map(|value| {
+            time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+                .expect("NotOnOrAfter should be RFC 3339")
+        })
+        .min()
+        .expect("signed assertion should carry a NotOnOrAfter bound")
+}
+
+async fn https_saml_server() -> TestServer {
+    TestServer::start_with_config(|options| {
+        options.public_origin = options.public_origin.replacen("http://", "https://", 1);
+    })
+    .await
+}
+
+#[tokio::test]
+async fn saml_requires_signed_assertions_unless_the_connection_opts_in() {
+    let server = https_saml_server().await;
+    let client = server.client();
+    let bootstrap = create_instance(&server, &client, "saml-signed-assertions").await;
+    let slug = bootstrap["instance"]["slug"]
+        .as_str()
+        .expect("instance slug is returned");
+    let api_key = bootstrap["api_key"]
+        .as_str()
+        .expect("initial API key is returned");
+
+    let rejected_opt_in = client
+        .post(format!("{}/v1/{slug}/connections", server.origin))
+        .bearer_auth(api_key)
+        .json(&json!({
+            "type": "github",
+            "name": "Not SAML",
+            "client_id": "github-client",
+            "client_secret": "github-secret",
+            "allow_unsigned_assertions": true,
+        }))
+        .send()
+        .await
+        .expect("connection creation should reach the service");
+    assert_eq!(rejected_opt_in.status(), StatusCode::BAD_REQUEST);
+    let rejected_opt_in: Value = rejected_opt_in
+        .json()
+        .await
+        .expect("connection error should be JSON");
+    assert!(
+        rejected_opt_in
+            .to_string()
+            .contains("allow_unsigned_assertions"),
+        "the unsigned-assertion opt-in is SAML-only: {rejected_opt_in}"
+    );
+
+    let created = client
+        .post(format!("{}/v1/{slug}/connections", server.origin))
+        .bearer_auth(api_key)
+        .json(&json!({
+            "type": "saml",
+            "name": "Signed assertions",
+            "idp_entity_id": TEST_SAML_IDP_ENTITY_ID,
+            "sso_redirect_url": TEST_SAML_IDP_SSO,
+            "x509_certificate_pem": TEST_SAML_CERT,
+        }))
+        .send()
+        .await
+        .expect("SAML connection creation should reach the service");
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let connection: Value = created
+        .json()
+        .await
+        .expect("SAML connection response should be JSON");
+    assert_eq!(connection["allow_unsigned_assertions"], json!(false));
+    let connection_id = connection["id"]
+        .as_str()
+        .expect("SAML connection ID is returned");
+    let acs_url = saml_acs_url(&server, slug, connection_id);
+
+    let attempt = start_saml_attempt(&server, &client, slug, connection_id).await;
+    let (response_only, _) = signed_saml_response(
+        &attempt.redirect_url,
+        &acs_url,
+        "unsigned-assertion@example.test",
+        false,
+    );
+    let rejected = post_saml_acs(
+        &server,
+        &client,
+        slug,
+        connection_id,
+        &attempt,
+        &response_only,
+    )
+    .await;
+    assert_eq!(
+        rejected.status(),
+        StatusCode::BAD_REQUEST,
+        "an assertion covered only by a Response signature is rejected by default"
+    );
+    assert_eq!(issued_session_cookie(&rejected), None);
+
+    let attempt = start_saml_attempt(&server, &client, slug, connection_id).await;
+    let (signed_assertion, _) = signed_saml_response(
+        &attempt.redirect_url,
+        &acs_url,
+        "signed-assertion@example.test",
+        true,
+    );
+    let accepted = post_saml_acs(
+        &server,
+        &client,
+        slug,
+        connection_id,
+        &attempt,
+        &signed_assertion,
+    )
+    .await;
+    assert_eq!(accepted.status(), StatusCode::SEE_OTHER);
+    assert_authenticated_session(&server, &client, slug, &accepted).await;
+
+    let opted_in = client
+        .patch(format!(
+            "{}/v1/{slug}/connections/{connection_id}",
+            server.origin
+        ))
+        .bearer_auth(api_key)
+        .json(&json!({ "allow_unsigned_assertions": true }))
+        .send()
+        .await
+        .expect("SAML connection update should reach the service");
+    assert_eq!(opted_in.status(), StatusCode::OK);
+    let opted_in: Value = opted_in
+        .json()
+        .await
+        .expect("SAML connection update should be JSON");
+    assert_eq!(opted_in["allow_unsigned_assertions"], json!(true));
+    let stored = server
+        .state
+        .store
+        .get_connection(connection_id)
+        .await
+        .expect("SAML connection should be readable")
+        .expect("SAML connection should exist");
+    assert!(stored.allow_unsigned_saml_assertions);
+
+    let attempt = start_saml_attempt(&server, &client, slug, connection_id).await;
+    let (response_only, _) = signed_saml_response(
+        &attempt.redirect_url,
+        &acs_url,
+        "unsigned-assertion@example.test",
+        false,
+    );
+    let compatible = post_saml_acs(
+        &server,
+        &client,
+        slug,
+        connection_id,
+        &attempt,
+        &response_only,
+    )
+    .await;
+    assert_eq!(
+        compatible.status(),
+        StatusCode::SEE_OTHER,
+        "the explicit opt-in accepts a signed Response with an unsigned assertion"
+    );
+    assert_authenticated_session(&server, &client, slug, &compatible).await;
+}
+
+#[tokio::test]
+async fn saml_connections_stored_without_the_signature_setting_require_signed_assertions() {
+    let server = https_saml_server().await;
+    let client = server.client();
+    let bootstrap = create_instance(&server, &client, "saml-legacy-connection").await;
+    let instance_id = bootstrap["instance"]["id"]
+        .as_str()
+        .expect("instance ID is returned");
+    let slug = bootstrap["instance"]["slug"]
+        .as_str()
+        .expect("instance slug is returned");
+    let api_key = bootstrap["api_key"]
+        .as_str()
+        .expect("initial API key is returned");
+    let connection_id = "con_legacy_saml_record";
+    // A record written before `allowUnsignedSamlAssertions` existed.
+    server
+        .state
+        .store
+        .create(
+            "connections",
+            connection_id,
+            &json!({
+                "id": connection_id,
+                "instanceId": instance_id,
+                "type": "saml",
+                "name": "Legacy SAML",
+                "scopes": [],
+                "enabled": true,
+                "idpEntityId": TEST_SAML_IDP_ENTITY_ID,
+                "ssoRedirectUrl": TEST_SAML_IDP_SSO,
+                "x509CertificatePem": TEST_SAML_CERT,
+                "createdAt": unix_now(),
+            }),
+        )
+        .await
+        .expect("legacy connection record should be seedable");
+
+    let listed: Value = client
+        .get(format!("{}/v1/{slug}/connections", server.origin))
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .expect("connection list should reach the service")
+        .json()
+        .await
+        .expect("connection list should be JSON");
+    let legacy = listed["data"]
+        .as_array()
+        .expect("connection list has data")
+        .iter()
+        .find(|item| item["id"] == connection_id)
+        .expect("legacy connection is listed");
+    assert_eq!(legacy["allow_unsigned_assertions"], json!(false));
+
+    let acs_url = saml_acs_url(&server, slug, connection_id);
+    let attempt = start_saml_attempt(&server, &client, slug, connection_id).await;
+    let (response_only, _) = signed_saml_response(
+        &attempt.redirect_url,
+        &acs_url,
+        "legacy-unsigned@example.test",
+        false,
+    );
+    let rejected = post_saml_acs(
+        &server,
+        &client,
+        slug,
+        connection_id,
+        &attempt,
+        &response_only,
+    )
+    .await;
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(issued_session_cookie(&rejected), None);
+}
+
+#[tokio::test]
+async fn saml_replay_claims_expire_with_the_assertion_and_are_pruned_per_instance() {
+    let server = https_saml_server().await;
+    let client = server.client();
+    let bootstrap = create_instance(&server, &client, "saml-replay-expiry").await;
+    let instance_id = bootstrap["instance"]["id"]
+        .as_str()
+        .expect("instance ID is returned");
+    let slug = bootstrap["instance"]["slug"]
+        .as_str()
+        .expect("instance slug is returned");
+    let api_key = bootstrap["api_key"]
+        .as_str()
+        .expect("initial API key is returned");
+    let created: Value = client
+        .post(format!("{}/v1/{slug}/connections", server.origin))
+        .bearer_auth(api_key)
+        .json(&json!({
+            "type": "saml",
+            "name": "Replay expiry",
+            "idp_entity_id": TEST_SAML_IDP_ENTITY_ID,
+            "sso_redirect_url": TEST_SAML_IDP_SSO,
+            "x509_certificate_pem": TEST_SAML_CERT,
+        }))
+        .send()
+        .await
+        .expect("SAML connection creation should reach the service")
+        .json()
+        .await
+        .expect("SAML connection response should be JSON");
+    let connection_id = created["id"]
+        .as_str()
+        .expect("SAML connection ID is returned");
+
+    let store = &server.state.store;
+    let now = unix_now();
+    store
+        .claim_expiring_unique(
+            "saml-assertion",
+            "expired-here",
+            "seed",
+            instance_id,
+            now - 1,
+        )
+        .await
+        .expect("expired claim should be seedable");
+    store
+        .claim_expiring_unique(
+            "saml-assertion",
+            "live-here",
+            "seed",
+            instance_id,
+            now + 3_600,
+        )
+        .await
+        .expect("live claim should be seedable");
+    store
+        .claim_expiring_unique(
+            "saml-assertion",
+            "expired-elsewhere",
+            "seed",
+            "ins_other_tenant",
+            now - 1,
+        )
+        .await
+        .expect("other tenant's claim should be seedable");
+    let claim = |key: &str| auth_store::unique_claim_id("saml-assertion", key);
+
+    let acs_url = saml_acs_url(&server, slug, connection_id);
+    let attempt = start_saml_attempt(&server, &client, slug, connection_id).await;
+    let (saml_response, _) = signed_saml_response(
+        &attempt.redirect_url,
+        &acs_url,
+        "replay-expiry@example.test",
+        true,
+    );
+    let accepted = post_saml_acs(
+        &server,
+        &client,
+        slug,
+        connection_id,
+        &attempt,
+        &saml_response,
+    )
+    .await;
+    assert_eq!(accepted.status(), StatusCode::SEE_OTHER);
+    assert_authenticated_session(&server, &client, slug, &accepted).await;
+
+    let get_claim = |id: String| async move {
+        store
+            .get::<Value>("uniques", &id)
+            .await
+            .expect("replay claim should be readable")
+    };
+    assert!(
+        get_claim(claim("expired-here")).await.is_none(),
+        "a sign-in prunes this instance's expired replay claims"
+    );
+    assert!(get_claim(claim("live-here")).await.is_some());
+    assert!(
+        get_claim(claim("expired-elsewhere")).await.is_some(),
+        "cleanup never touches another instance's claims"
+    );
+
+    let xml = saml_xml(&saml_response);
+    let assertion_id = saml_assertion_id(&xml);
+    let assertion_claim = get_claim(claim(&format!(
+        "{instance_id}:{connection_id}:assertion_id:{assertion_id}"
+    )))
+    .await
+    .expect("the accepted assertion should leave a replay claim");
+    assert_eq!(assertion_claim["scopeId"], json!(instance_id));
+    // The earliest NotOnOrAfter bound, rounded up to the next whole second,
+    // plus the 300-second REPLAY_CLAIM_GRACE_SECONDS margin.
+    let expected_expiry = earliest_not_on_or_after(&xml).unix_timestamp() + 1 + 300;
+    assert_eq!(
+        assertion_claim["expiresAt"].as_i64(),
+        Some(expected_expiry),
+        "replay retention follows the assertion's NotOnOrAfter bound"
+    );
+
+    // A fresh, valid response whose scoped replay claim already exists fails
+    // closed without a session.
+    let attempt = start_saml_attempt(&server, &client, slug, connection_id).await;
+    let (colliding, _) = signed_saml_response(
+        &attempt.redirect_url,
+        &acs_url,
+        "replay-collision@example.test",
+        true,
+    );
+    let colliding_id = saml_assertion_id(&saml_xml(&colliding));
+    store
+        .claim_expiring_unique(
+            "saml-assertion",
+            &format!("{instance_id}:{connection_id}:assertion_id:{colliding_id}"),
+            "earlier-sign-in",
+            instance_id,
+            now + 3_600,
+        )
+        .await
+        .expect("colliding replay claim should be seedable");
+    let replayed = post_saml_acs(&server, &client, slug, connection_id, &attempt, &colliding).await;
+    assert_eq!(replayed.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(issued_session_cookie(&replayed), None);
+
+    // Stalled replay-claim cleanup cannot hold a validated sign-in hostage:
+    // the cleanup query never answers, yet the callback completes promptly.
+    let mut stalled_cleanup = server
+        ._storage_fixture
+        .as_ref()
+        .expect("contract fixture is available")
+        .pause_next_query_response("uniques");
+    let attempt = start_saml_attempt(&server, &client, slug, connection_id).await;
+    let (saml_response, _) = signed_saml_response(
+        &attempt.redirect_url,
+        &acs_url,
+        "replay-cleanup-budget@example.test",
+        true,
+    );
+    let started = std::time::Instant::now();
+    let completed = timeout(
+        Duration::from_secs(10),
+        post_saml_acs(
+            &server,
+            &client,
+            slug,
+            connection_id,
+            &attempt,
+            &saml_response,
+        ),
+    )
+    .await
+    .expect("a stalled cleanup must not block the SAML callback");
+    timeout(Duration::from_secs(1), stalled_cleanup.wait_until_paused())
+        .await
+        .expect("the sign-in should have started replay-claim cleanup");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "cleanup stays within its time budget"
+    );
+    assert_eq!(completed.status(), StatusCode::SEE_OTHER);
+    assert_authenticated_session(&server, &client, slug, &completed).await;
+    stalled_cleanup.resume();
 }
 
 #[tokio::test]

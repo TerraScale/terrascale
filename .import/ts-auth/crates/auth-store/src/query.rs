@@ -48,6 +48,13 @@ impl Predicate {
             value: Some(serde_json::to_value(value)?),
         })
     }
+    pub fn less_than(path: impl Into<String>, value: impl Serialize) -> StoreResult<Self> {
+        Ok(Self {
+            path: path.into(),
+            operator: "lessThan",
+            value: Some(serde_json::to_value(value)?),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

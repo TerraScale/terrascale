@@ -130,13 +130,21 @@ GitHub uses its OAuth app flow and accepts only verified email addresses. The
 client secret is encrypted at rest and never shown again. Connections are
 scoped to the selected organization; only its admins can enable or disable
 them. The hosted sign-in choices are at `/ui/{slug}/connections/list`.
-SAML sign-in accepts one verified signature on the response or its sole
-assertion under the configured profile. Starting another sign-in tab for the
+SAML sign-in accepts exactly one verified signature, on the response or its
+sole assertion. By default the assertion itself must be signed. An IdP that
+signs only the enclosing response needs an explicit per-connection opt-in:
+`allow_unsigned_assertions: true` on `POST` or `PATCH
+/v1/{slug}/connections[/{id}]` (SAML connections only). The response signature
+is still required then. Connections stored before this setting existed read as
+`false`, so they require signed assertions. Starting another sign-in tab for the
 same connection replaces the first flow's correlation cookie; complete the
 latest flow. Validated SAML assertions also create durable replay claims, so a
-duplicate assertion fails closed. Current storage has no expiry cleanup for
-these claims, so they are retained permanently. Do not remove them until a
-verified assertion-expiry and storage-lifecycle contract exists.
+duplicate assertion fails closed. Each claim records its tenant and an expiry:
+the earliest `NotOnOrAfter` bound of the assertion plus a five-minute clock-skew
+margin. After each successful SAML sign-in, the service deletes up to 32 expired
+claims for that instance, within a 1.5-second budget that never delays the
+sign-in further. Each delete is version-conditional. Claims created
+before expiries were recorded have no expiry, so cleanup never removes them.
 
 The OAuth provider advertises and accepts `openid`, `profile`, and `email`.
 OAuth clients register `none`, `client_secret_basic`, or

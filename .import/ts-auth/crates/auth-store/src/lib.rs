@@ -474,6 +474,80 @@ impl AuthStore {
         )
         .await
     }
+    /// Create a unique claim that is only needed until `expires_at` (Unix
+    /// seconds). `scope_id` bounds later expiry cleanup to one tenant.
+    pub async fn claim_expiring_unique(
+        &self,
+        kind: &str,
+        key: &str,
+        owner_id: &str,
+        scope_id: &str,
+        expires_at: i64,
+    ) -> StoreResult<()> {
+        if kind == "quota-seat" || scope_id.is_empty() {
+            return Err(StoreError::InvalidConfiguration(
+                "expiring claims need a scoped, non-quota kind".into(),
+            ));
+        }
+        let id = unique_claim_id(kind, key);
+        self.create(
+            "uniques",
+            &id,
+            &serde_json::json!({
+                "ownerType": kind,
+                "ownerId": owner_id,
+                "scopeId": scope_id,
+                "expiresAt": expires_at,
+            }),
+        )
+        .await
+    }
+    /// Delete at most `limit` claims of `kind` in `scope_id` whose `expiresAt`
+    /// is before `now`. Each delete is conditional on the version that was
+    /// read, and each row is rechecked before deletion, so a claim is never
+    /// removed before its recorded expiry. Returns the number deleted.
+    pub async fn prune_expired_uniques(
+        &self,
+        kind: &str,
+        scope_id: &str,
+        now: i64,
+        limit: u32,
+    ) -> StoreResult<usize> {
+        if kind == "quota-seat" || scope_id.is_empty() {
+            return Err(StoreError::InvalidConfiguration(
+                "expiring claims need a scoped, non-quota kind".into(),
+            ));
+        }
+        let (rows, _) = self
+            .query_page::<Value>(
+                "uniques",
+                &[
+                    Predicate::equal("ownerType", kind)?,
+                    Predicate::equal("scopeId", scope_id)?,
+                    Predicate::less_than("expiresAt", now)?,
+                ],
+                limit,
+                None,
+            )
+            .await?;
+        let mut removed = 0;
+        for (claim, row) in rows {
+            let expired = claim.get("ownerType").and_then(Value::as_str) == Some(kind)
+                && claim.get("scopeId").and_then(Value::as_str) == Some(scope_id)
+                && claim
+                    .get("expiresAt")
+                    .and_then(Value::as_i64)
+                    .is_some_and(|expires_at| expires_at < now);
+            if expired
+                && self
+                    .compare_and_delete("uniques", &row.id, &row.version.to_string())
+                    .await?
+            {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
     pub async fn release_unique(&self, kind: &str, key: &str, owner_id: &str) -> StoreResult<()> {
         if kind == "quota-seat" {
             return Err(StoreError::InvalidConfiguration(

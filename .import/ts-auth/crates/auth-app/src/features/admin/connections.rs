@@ -421,6 +421,7 @@ async fn create_saml(
         sso_redirect_url: Some(sso_text),
         x509_certificate_pem: Some(pem.to_owned()),
         sp_entity_id: None,
+        allow_unsigned_saml_assertions: false,
         created_at: now(),
     };
     persist_connection(state, context, &connection, "connection.created", None).await
@@ -546,6 +547,7 @@ async fn create_oauth_provider(
         sso_redirect_url: None,
         x509_certificate_pem: None,
         sp_entity_id: None,
+        allow_unsigned_saml_assertions: false,
         created_at: now(),
     };
     persist_connection(
@@ -1047,6 +1049,7 @@ mod tests {
             sso_redirect_url: Some("https://idp.example/sso".into()),
             x509_certificate_pem: None,
             sp_entity_id: None,
+            allow_unsigned_saml_assertions: false,
             created_at: 1,
         };
         assert_eq!(

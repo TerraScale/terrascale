@@ -580,6 +580,7 @@ mod tests {
             sso_redirect_url: None,
             x509_certificate_pem: None,
             sp_entity_id: None,
+            allow_unsigned_saml_assertions: false,
             created_at: 1,
         };
         let html = render_connection(&connection, "https://auth.example", "tenant%2Fone");

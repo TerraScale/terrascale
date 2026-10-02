@@ -124,6 +124,11 @@ pub struct CreateConnectionRequest {
     pub x509_certificate_pem: Option<String>,
     #[serde(rename = "sp_entity_id")]
     pub sp_entity_id: Option<String>,
+    /// SAML only. Defaults to `false`: assertions must carry their own valid
+    /// signature. Set `true` only for an IdP that signs just the enclosing
+    /// Response; the Response signature is then still required.
+    #[serde(rename = "allow_unsigned_assertions")]
+    pub allow_unsigned_assertions: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -132,6 +137,11 @@ pub struct UpdateConnectionRequest {
     pub name: Option<String>,
     #[serde(rename = "client_secret")]
     pub client_secret: Option<String>,
+    /// SAML only. `true` explicitly accepts assertions that are not directly
+    /// signed when the enclosing Response is signed; `false` restores the
+    /// default that requires signed assertions.
+    #[serde(rename = "allow_unsigned_assertions")]
+    pub allow_unsigned_assertions: Option<bool>,
 }
 
 #[utoipa::path(
@@ -163,6 +173,13 @@ async fn create_connection(
             "name is required",
         ));
     };
+    if body.allow_unsigned_assertions.is_some() && body.r#type.as_deref() != Some("saml") {
+        return Ok(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "allow_unsigned_assertions may only be configured for SAML connections",
+        ));
+    }
     if body.scopes.is_some() && body.r#type.as_deref() != Some("oidc") {
         return Ok(api_error(
             StatusCode::BAD_REQUEST,
@@ -354,6 +371,7 @@ async fn create_oidc_connection(
         sso_redirect_url: None,
         x509_certificate_pem: None,
         sp_entity_id: clean_option(body.sp_entity_id.as_deref()),
+        allow_unsigned_saml_assertions: false,
         created_at: now(),
     })
 }
@@ -434,6 +452,7 @@ async fn create_github_connection(
         sso_redirect_url: None,
         x509_certificate_pem: None,
         sp_entity_id: None,
+        allow_unsigned_saml_assertions: false,
         created_at: now(),
     })
 }
@@ -506,6 +525,7 @@ fn create_saml_connection(
         sso_redirect_url: Some(sso_url.to_owned()),
         x509_certificate_pem: Some(certificate.to_owned()),
         sp_entity_id: clean_option(body.sp_entity_id.as_deref()),
+        allow_unsigned_saml_assertions: body.allow_unsigned_assertions.unwrap_or(false),
         created_at: now(),
     };
     if saml::idp_descriptor(&connection).is_err() {
@@ -606,7 +626,15 @@ async fn update_connection(
     } else {
         None
     };
+    if body.allow_unsigned_assertions.is_some() && connection.r#type != "saml" {
+        return Ok(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "allow_unsigned_assertions may only be configured for SAML connections",
+        ));
+    }
     let enabled = body.enabled;
+    let allow_unsigned_assertions = body.allow_unsigned_assertions;
     let instance_id = context.instance.id;
     let updated = state
         .store
@@ -622,6 +650,11 @@ async fn update_connection(
             }
             if let Some(secret_box) = &secret_box {
                 current.client_secret_box = Some(secret_box.clone());
+            }
+            if let Some(allow) = allow_unsigned_assertions
+                && current.r#type == "saml"
+            {
+                current.allow_unsigned_saml_assertions = allow;
             }
         })
         .await
@@ -1762,12 +1795,16 @@ async fn find_connection(
 }
 
 fn connection_view(connection: &Connection) -> Value {
-    json!({
+    let mut view = json!({
         "id":connection.id,"type":connection.r#type,"name":connection.name,"scopes":connection.scopes,"enabled":connection.enabled,"org_id":connection.org_id,
         "issuer_url":connection.issuer_url,"client_id":connection.client_id,"authorization_endpoint":connection.authorization_endpoint,
         "token_endpoint":connection.token_endpoint,"userinfo_endpoint":connection.userinfo_endpoint,"idp_entity_id":connection.idp_entity_id,
         "sso_redirect_url":connection.sso_redirect_url,"sp_entity_id":connection.sp_entity_id,"created_at":connection.created_at
-    })
+    });
+    if connection.r#type == "saml" {
+        view["allow_unsigned_assertions"] = json!(connection.allow_unsigned_saml_assertions);
+    }
+    view
 }
 
 fn normalize_oidc_scopes(scopes: Option<&[String]>) -> Result<Vec<String>, ()> {

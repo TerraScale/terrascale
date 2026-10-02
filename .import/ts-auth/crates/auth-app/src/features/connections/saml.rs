@@ -1,6 +1,9 @@
 //! SP-initiated SAML Web SSO for a pinned, per-instance IdP connection.
 
-use std::{collections::HashMap, time::SystemTime};
+use std::{
+    collections::HashMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use auth_contracts::{
     AppResult,
@@ -18,9 +21,9 @@ use quick_xml::{events::Event, name::ResolveResult, reader::NsReader};
 use saml_rs::{
     AcsEndpoint, AssertionSignaturePolicy, AudienceValidationPolicy, AuthnRequest,
     AuthnRequestSigningPolicy, BrowserInput, EntityId, FormField, IdpDescriptor,
-    MetadataTrustPolicy, PendingAuthnRequest, PendingSnapshot, RelayStateParam, ReplayPolicy,
-    ResponseSignaturePolicy, Saml, SamlValidationContext, SpConfig, SpValidationPolicy,
-    SsoResponse, StartSso,
+    MetadataTrustPolicy, PendingAuthnRequest, PendingSnapshot, RelayStateParam, ReplayCache,
+    ReplayKey, ReplayPolicy, ResponseSignaturePolicy, Saml, SamlValidationContext, SpConfig,
+    SpValidationPolicy, SsoResponse, StartSso,
     raw::{
         Binding,
         metadata::{Endpoint, IdpMetadataConfig, try_generate_idp_metadata},
@@ -39,6 +42,14 @@ const STATE_COOKIE: &str = "tsauth_saml_state";
 const STATE_PURPOSE: &str = "saml.state";
 const MAX_SAML_RESPONSE_BASE64: usize = 350_000;
 const MAX_SAML_RESPONSE_XML: usize = 256 * 1024;
+const REPLAY_CLAIM_KIND: &str = "saml-assertion";
+/// Replay claims outlive the assertion's own validity window by this margin so
+/// clock differences between replicas cannot reopen a replay window.
+const REPLAY_CLAIM_GRACE_SECONDS: i64 = 300;
+/// Each successful sign-in removes at most this many expired replay claims.
+const REPLAY_CLAIM_PRUNE_LIMIT: u32 = 32;
+/// Cleanup never adds more than this to a sign-in's latency.
+const REPLAY_CLAIM_PRUNE_BUDGET: std::time::Duration = std::time::Duration::from_millis(1_500);
 
 #[derive(ToSchema)]
 #[allow(dead_code)]
@@ -134,15 +145,23 @@ fn service_provider(
     let entity_id = connection.sp_entity_id.as_deref().unwrap_or(&acs);
     let config = SpConfig::builder(EntityId::try_new(entity_id)?)
         .acs_endpoint(AcsEndpoint::post(&acs)?)
-        .validation(sp_validation_policy())
+        .validation(sp_validation_policy(
+            connection.allow_unsigned_saml_assertions,
+        ))
         .build()?;
     Saml::sp(config)
 }
 
-fn sp_validation_policy() -> SpValidationPolicy {
+/// Assertions must be signed unless the connection explicitly opted in to
+/// accepting assertions covered only by a signed Response.
+fn sp_validation_policy(allow_unsigned_assertions: bool) -> SpValidationPolicy {
     let mut policy = SpValidationPolicy::strict();
     policy.authn_requests = AuthnRequestSigningPolicy::DoNotSignForCompatibility;
-    policy.assertions = AssertionSignaturePolicy::AllowUnsignedForCompatibility;
+    policy.assertions = if allow_unsigned_assertions {
+        AssertionSignaturePolicy::AllowUnsignedForCompatibility
+    } else {
+        AssertionSignaturePolicy::RequireSigned
+    };
     policy.responses = ResponseSignaturePolicy::RequireForEncryptedCbc;
     policy.audience = AudienceValidationPolicy::Validate;
     policy
@@ -349,6 +368,16 @@ async fn complete_acs(
             return Ok(invalid_attempt(slug));
         }
     };
+    // Derive each replay key's retention from the validated assertion's
+    // NotOnOrAfter bounds; a session without a usable bound fails closed.
+    let mut replay = ReplayExpiry::default();
+    if let Err(error) = session.check_and_store_replay(&mut SamlValidationContext::new(
+        SystemTime::now(),
+        ReplayPolicy::RequireCache(&mut replay),
+    )) {
+        tracing::warn!(?error, "SAML response has no usable replay expiry");
+        return Ok(invalid_attempt(slug));
+    }
     let Some(email) = email_from_session(&session) else {
         return Ok(invalid_attempt(slug));
     };
@@ -365,17 +394,42 @@ async fn complete_acs(
     {
         return Ok(invalid_attempt(slug));
     }
-    for key in session.replay_keys() {
+    for (key, expires_at) in &replay.keys {
         let scoped = format!("{}:{}:{}", instance.id, connection.id, key.cache_key());
         match state
             .store
-            .claim_unique("saml-assertion", &scoped, &pending_record.id)
+            .claim_expiring_unique(
+                REPLAY_CLAIM_KIND,
+                &scoped,
+                &pending_record.id,
+                &instance.id,
+                expires_at.saturating_add(REPLAY_CLAIM_GRACE_SECONDS),
+            )
             .await
         {
             Ok(()) => {}
             Err(error) if error.is_conflict() => return Ok(invalid_attempt(slug)),
             Err(error) => return Err(internal(error)),
         }
+    }
+    // Bounded cleanup on write keeps replay claims from accumulating. It is
+    // capped in rows and elapsed time, and a failure or timeout never blocks
+    // the already validated sign-in. Abandoning it mid-way is safe: each
+    // delete is independent and version-conditional.
+    match tokio::time::timeout(
+        REPLAY_CLAIM_PRUNE_BUDGET,
+        state.store.prune_expired_uniques(
+            REPLAY_CLAIM_KIND,
+            &instance.id,
+            now(),
+            REPLAY_CLAIM_PRUNE_LIMIT,
+        ),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => tracing::warn!(?error, "could not prune expired SAML replay claims"),
+        Err(_) => tracing::warn!("SAML replay claim cleanup exceeded its time budget"),
     }
     finish_federated_sign_in(
         state,
@@ -388,6 +442,30 @@ async fn complete_acs(
         pending_record.authentication_next.as_deref(),
     )
     .await
+}
+
+/// Records the library-derived replay expiry for each key; durable uniqueness
+/// is enforced afterwards with create-only claims in `TerraBase`.
+#[derive(Default)]
+struct ReplayExpiry {
+    keys: Vec<(ReplayKey, i64)>,
+}
+
+impl ReplayCache for ReplayExpiry {
+    fn check_and_store(
+        &mut self,
+        key: ReplayKey,
+        expires_at: SystemTime,
+    ) -> Result<(), saml_rs::SamlError> {
+        let seconds = expires_at
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+            .ok_or_else(|| saml_rs::SamlError::Invalid("invalid replay expiry".into()))?;
+        // Round up so the claim never expires before the assertion does.
+        self.keys.push((key, seconds.saturating_add(1)));
+        Ok(())
+    }
 }
 
 fn eligible_state(record: &VerificationToken, instance_id: &str, connection_id: &str) -> bool {
@@ -766,13 +844,10 @@ yyoWAJDUHiAmvFA=
         let sp = Saml::sp(
             SpConfig::builder(EntityId::try_new(SP_ID)?)
                 .acs_endpoint(AcsEndpoint::post(SP_ID)?)
-                .validation(sp_validation_policy())
+                .validation(sp_validation_policy(!assertion_signed))
                 .build()?,
         )?;
-        let mut metadata_policy = sp_validation_policy();
-        if assertion_signed {
-            metadata_policy.assertions = AssertionSignaturePolicy::RequireSigned;
-        }
+        let metadata_policy = sp_validation_policy(!assertion_signed);
         let metadata_sp = Saml::sp(
             SpConfig::builder(EntityId::try_new(SP_ID)?)
                 .acs_endpoint(AcsEndpoint::post(SP_ID)?)

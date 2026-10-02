@@ -488,6 +488,7 @@ async fn connection_scopes_round_trip_and_non_oidc_scope_input_is_rejected() {
             sso_redirect_url: None,
             x509_certificate_pem: None,
             sp_entity_id: None,
+            allow_unsigned_saml_assertions: false,
             created_at: timestamp,
         })
         .await
@@ -1182,6 +1183,7 @@ async fn oidc_callback_requires_browser_correlation_before_consuming_state() {
             sso_redirect_url: None,
             x509_certificate_pem: None,
             sp_entity_id: None,
+            allow_unsigned_saml_assertions: false,
             created_at: timestamp,
         })
         .await

@@ -448,6 +448,12 @@ pub struct Connection {
     pub x509_certificate_pem: Option<String>,
     #[serde(default)]
     pub sp_entity_id: Option<String>,
+    /// Explicit per-connection opt-in to accept SAML assertions that are not
+    /// directly signed (the enclosing Response must still be signed). Records
+    /// stored before this field existed deserialize to `false`, so they
+    /// require signed assertions.
+    #[serde(default)]
+    pub allow_unsigned_saml_assertions: bool,
     #[serde(default)]
     pub created_at: i64,
 }
