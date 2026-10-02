@@ -3,6 +3,7 @@
   import RouteLink from '@/components/RouteLink.svelte'
   import type { AppIconName } from '@/lib/icons'
   import { dict } from '@/lib/i18n'
+  import { launchRegions } from '@/lib/site'
 
   type Pillar = {
     icon: AppIconName
@@ -15,7 +16,7 @@
     icon: pillarIcons[i] ?? 'database',
     ...pillar,
   }))
-  $: regions = $dict.about.regions
+  const regions = launchRegions.map((region) => region.name)
 </script>
 
 <section class="about-hero">

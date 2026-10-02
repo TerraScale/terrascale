@@ -1,4 +1,6 @@
 import type { AppIconName } from '@/lib/icons'
+import pricingJson from '../../static/pricing.json'
+import regionsJson from '../../static/regions.json'
 
 export type RoutePath = '/' | '/about' | '/contact' | '/pricing'
 
@@ -26,55 +28,43 @@ export const registrationUrl = 'https://dash.terrascale.tech/register'
 
 export const loginUrl = 'https://dash.terrascale.tech/login'
 
-export const publicAlphaCatalog = [
-  {
-    name: 'Starter',
-    slug: 'starter',
-    icon: 'star' as AppIconName,
-    accent: 'var(--ts-secondary)',
-    accentRgb: 'var(--ts-secondary-rgb)',
-    popular: false,
-    price: 5,
-    annualPrice: 50,
-    projects: 5,
-    databases: 5,
-    members: 5,
-    storageGb: 5,
-    operationUnits: 1_000_000,
-  },
-  {
-    name: 'Pro',
-    slug: 'pro',
-    icon: 'trendingUp' as AppIconName,
-    accent: 'var(--ts-primary)',
-    accentRgb: 'var(--ts-primary-rgb)',
-    popular: true,
-    price: 50,
-    annualPrice: 500,
-    projects: 25,
-    databases: 25,
-    members: 25,
-    storageGb: 25,
-    operationUnits: 100_000_000,
-  },
-  {
-    name: 'Enterprise',
-    slug: 'enterprise',
-    icon: 'shieldCheck' as AppIconName,
-    accent: 'var(--ts-tertiary)',
-    accentRgb: 'var(--ts-tertiary-rgb)',
-    popular: false,
-    price: 500,
-    annualPrice: 5000,
-    projects: null,
-    databases: null,
-    members: null,
-    storageGb: null,
-    operationUnits: null,
-  },
-] as const
+// Plan prices, allowances, and metering live in static/pricing.json, which is
+// also published at https://terrascale.tech/pricing.json for the docs,
+// dashboard, and status surfaces. Only presentation metadata lives here.
+export const pricingCatalog = pricingJson
+export const regionCatalog = regionsJson
 
-export type PublicAlphaPlanSlug = (typeof publicAlphaCatalog)[number]['slug']
+export type PlanLimits = {
+  projects: number | null
+  databases: number | null
+  members: number | null
+  storageGb: number | null
+  operationUnitsPerMonth: number | null
+}
+
+export type PublicAlphaPlanSlug = 'hobby' | 'starter' | 'pro' | 'enterprise'
+
+const planPresentation: Record<
+  PublicAlphaPlanSlug,
+  { icon: AppIconName; accent: string; accentRgb: string; popular: boolean }
+> = {
+  hobby: { icon: 'zap', accent: 'var(--ts-primary-light)', accentRgb: 'var(--ts-primary-light-rgb)', popular: false },
+  starter: { icon: 'star', accent: 'var(--ts-secondary)', accentRgb: 'var(--ts-secondary-rgb)', popular: false },
+  pro: { icon: 'trendingUp', accent: 'var(--ts-primary)', accentRgb: 'var(--ts-primary-rgb)', popular: true },
+  enterprise: { icon: 'shieldCheck', accent: 'var(--ts-tertiary)', accentRgb: 'var(--ts-tertiary-rgb)', popular: false },
+}
+
+export const publicAlphaCatalog = pricingJson.plans.map((plan) => ({
+  name: plan.name,
+  slug: plan.id as PublicAlphaPlanSlug,
+  ...planPresentation[plan.id as PublicAlphaPlanSlug],
+  available: plan.available,
+  price: plan.priceMonthlyUsd,
+  annualPrice: plan.priceAnnualUsd,
+  limits: plan.limits as PlanLimits,
+}))
+
+export const launchRegions = regionsJson.regions
 
 export const launchPhase =
   import.meta.env.PUBLIC_TERRASCALE_LAUNCH_PHASE === 'public-alpha' ? 'public-alpha' : 'prelaunch'

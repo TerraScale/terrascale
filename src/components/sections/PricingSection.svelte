@@ -5,11 +5,14 @@
   import SectionHeader from '@/components/sections/SectionHeader.svelte'
   import AnimatedPrice from '@/components/AnimatedPrice.svelte'
   import type { AppIconName } from '@/lib/icons'
-  import { dict } from '@/lib/i18n'
+  import { dict, locale } from '@/lib/i18n'
+  import { localeMeta } from '@/lib/i18n/locales'
+  import { formatPlanLimits } from '@/lib/pricing'
   import {
     launchPhase,
     publicAlphaCatalog,
     registrationUrl,
+    type PlanLimits,
     type PublicAlphaPlanSlug,
   } from '@/lib/site'
 
@@ -23,6 +26,7 @@
     accentRgb: string
     price: number
     annualPrice: number
+    limits: PlanLimits
     description: string
     features: string[]
     cta: string
@@ -38,6 +42,7 @@
       accentRgb: catalogPlan.accentRgb,
       price: catalogPlan.price,
       annualPrice: catalogPlan.annualPrice,
+      limits: catalogPlan.limits,
       popular: catalogPlan.popular,
       icon: catalogPlan.icon,
     }),
@@ -49,10 +54,11 @@
 
   $: plans = planMeta.map((meta) => {
     const copy = $dict.pricing.plans[meta.slug]
+    const limitLines = formatPlanLimits(meta.limits, $dict.pricing.limits, localeMeta($locale).bcp47)
     return {
       ...meta,
       description: copy.description,
-      features: copy.features,
+      features: 'features' in copy ? [...limitLines, ...copy.features] : limitLines,
       cta: meta.slug === 'enterprise' || launchPhase === 'public-alpha' ? copy.cta : $dict.hero.ctaPrelaunch,
       href: meta.slug === 'enterprise' ? '/contact' : `${registrationUrl}?plan=${meta.slug}`,
     }
@@ -102,7 +108,7 @@
       </div>
     </div>
 
-    <div class="pricing-grid">
+    <div class="pricing-grid" style={`--plan-count: ${plans.length};`}>
       {#each plans as plan (plan.name)}
         <div
           class="pricing-card"
@@ -264,13 +270,13 @@
     color: #fff;
   }
 
-  /* Product requirement: the three plan cards stay on a single row at every
-     viewport width, so the card content scales down instead of the grid
-     wrapping into multiple rows. */
+  /* The plan cards share a single row and scale their content down. Below
+     40rem four columns would split words mid-word, so they form two rows
+     of two instead. */
   .pricing-grid {
     --pricing-pad: clamp(0.5rem, 2vw, 1.5rem);
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(var(--plan-count), minmax(0, 1fr));
     gap: clamp(0.375rem, 1.3vw, 1rem);
     margin-top: clamp(1.5rem, 3.4vw, 3rem);
   }
@@ -500,6 +506,13 @@
   /* Below ~35rem the badge pill is wider than its column, and shrinking its
      label below 0.625rem would make it unreadable. Keep the accent-colored star
      mark and leave the label for assistive technology. */
+  @media (max-width: 640px) {
+    .pricing-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      row-gap: 1.25rem;
+    }
+  }
+
   @media (max-width: 560px) {
     .pricing-card__badge {
       top: -0.6875rem;

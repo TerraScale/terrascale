@@ -145,7 +145,7 @@ export const es: Messages = {
     eyebrow: 'Precios',
     titleLead: 'Precios simples',
     titleAccent: 'que escalan contigo',
-    subtitle: 'Tres planes para Public Alpha. Enterprise sigue sin estar disponible.',
+    subtitle: 'Hobby, Starter y Pro para Public Alpha. Enterprise sigue sin estar disponible.',
     badge: 'Más popular',
     toggleLabel: 'Ciclo de facturación',
     monthly: 'Mensual',
@@ -154,14 +154,16 @@ export const es: Messages = {
     suffixMonthly: '/mes',
     suffixAnnual: '/año',
     plans: {
+      hobby: {
+        description: 'Plan gratuito para construir y evaluar',
+        cta: 'Empezar con Hobby',
+      },
       starter: {
         description: 'Plan mensual con una prueba elegible de 30 días',
-        features: ['5 proyectos', '5 bases de datos', '5 miembros', '5 GB entre regiones', '1.000.000 unidades de operación/mes'],
         cta: 'Elegir Starter',
       },
       pro: {
         description: 'Plan mensual con una prueba elegible de 30 días',
-        features: ['25 proyectos', '25 bases de datos', '25 miembros', '25 GB entre regiones', '100.000.000 unidades de operación/mes'],
         cta: 'Elegir Pro',
       },
       enterprise: {
@@ -170,9 +172,16 @@ export const es: Messages = {
         cta: 'Contacto para acceso futuro',
       },
     },
+    limits: {
+      projects: ['{n} proyecto', '{n} proyectos'],
+      databases: ['{n} base de datos', '{n} bases de datos'],
+      members: ['{n} miembro', '{n} miembros'],
+      storage: '{n} entre regiones',
+      operationUnits: '{n} unidades de operación/mes',
+    },
     triad: [
       { title: 'Almacenamiento entre regiones', text: 'Los bytes cuentan una vez en cada región seleccionada' },
-      { title: 'Unidades de operación', text: 'Cada 4 KiB iniciados de documento cuentan como una unidad' },
+      { title: 'Unidades de operación', text: 'Cada 4 KiB iniciados leídos o escritos cuentan como una unidad' },
       { title: 'Límites estrictos', text: 'Lecturas, exportaciones, eliminación y reducción de uso siguen disponibles' },
     ],
     detailed: {
@@ -209,7 +218,7 @@ export const es: Messages = {
       items: [
         {
           q: '¿Qué es una unidad de operación?',
-          a: 'Cada 4 KiB iniciados de datos de documento sin comprimir cuentan como una unidad. Las escrituras cuentan en cada región seleccionada. Los documentos en lote se redondean por separado.',
+          a: 'Una unidad de operación es cada 4 KiB (4.096 bytes) iniciados de un objeto lógico leído o escrito correctamente. Las listas, consultas y lotes cuentan cada elemento por separado. Las escrituras cuentan una vez por región seleccionada; las lecturas cuentan solo en la región que las atiende. Las solicitudes fallidas, denegadas, inválidas, limitadas y no encontradas no se facturan.',
         },
         {
           q: '¿Qué ocurre al alcanzar un límite?',
@@ -225,7 +234,7 @@ export const es: Messages = {
         },
         {
           q: '¿Qué incluye el plan Enterprise?',
-          a: 'Enterprise tiene una base mensual de soporte de US$ 500 más uso medido, pero no está disponible durante Public Alpha.',
+          a: 'Enterprise tiene una base mensual de soporte de US$ {enterprisePriceUsd} más uso medido, pero no está disponible durante Public Alpha.',
         },
       ],
       footerTitle: '¿Todavía tienes dudas?',
@@ -309,7 +318,6 @@ export const es: Messages = {
     bandTitle: 'Precios regionales planos, medidos por el uso real.',
     bandText:
       'El almacenamiento suma los bytes en cada región seleccionada. Distancia de red estimada, latencia medida de API y salud de replicación siguen separadas.',
-    regions: ['São Paulo', 'San Jose', 'Frankfurt'],
   },
 
   notFound: {
