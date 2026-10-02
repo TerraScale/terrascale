@@ -1,4 +1,6 @@
-// Generates docs/pricing.md and docs/limits.md from data/pricing.json (L-1 draft).
+// Generates docs/pricing.md and docs/limits.md from the canonical plan catalog
+// (data/canonical/pricing.json, vendored from https://terrascale.tech/pricing.json
+// by scripts/canonical-data.mjs) plus docs-only policies in data/policies.json.
 // Usage: node scripts/generate-pricing.mjs [--check]
 // --check exits non-zero when the checked-in pages differ from generated output.
 import { readFileSync, writeFileSync } from "node:fs";
@@ -6,110 +8,104 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const dataPath = join(root, "data", "pricing.json");
 const pricingPath = join(root, "docs", "pricing.md");
 const limitsPath = join(root, "docs", "limits.md");
 const check = process.argv.includes("--check");
 
-const d = JSON.parse(readFileSync(dataPath, "utf8"));
-const planNames = d.plans.map((p) => p.name);
+const catalog = JSON.parse(readFileSync(join(root, "data", "canonical", "pricing.json"), "utf8"));
+const regions = JSON.parse(readFileSync(join(root, "data", "canonical", "regions.json"), "utf8")).regions;
+const policy = JSON.parse(readFileSync(join(root, "data", "policies.json"), "utf8"));
+const { plans, metering } = catalog;
+const planNames = plans.map((p) => p.name);
+const header = "<!-- GENERATED from data/canonical/pricing.json (https://terrascale.tech/pricing.json) and data/policies.json by scripts/generate-pricing.mjs — do not edit. -->";
 
-function planRow(f) {
-  return `| ${f} | ${d.plans.map((p) => p[f] ?? "—").join(" | ")} |`;
-}
+const number = (n) => n.toLocaleString("en-US");
+const usd = (n) => `$${number(n)}`;
+const storage = (gb) => (gb < 1 ? `${number(Math.round(gb * 1000))} MB` : `${number(gb)} GB`);
+const limit = (value, format = number) => (value === null ? "Custom" : format(value));
+const row = (label, cell) => `| ${label} | ${plans.map((p) => cell(p)).join(" | ")} |`;
+const table = (label) => `| ${label} | ${planNames.join(" | ")} |\n| --- | ${planNames.map(() => "---").join(" | ")} |`;
+const regionList = regions.map((r) => `${r.id.toUpperCase()} (${r.name})`).join(", ");
 
-const pricingMd = `<!-- GENERATED from data/pricing.json by scripts/generate-pricing.mjs — do not edit. Draft; publication requires measured economics and owner approval. -->
+const pricingMd = `${header}
 # Pricing
 
-> **DRAFT.** Publication awaits measured unit economics and owner approval
-> of the final price sheet. These targets do not establish service readiness.
->
-> **Pay for writes and storage; everything else is free.** Reads, queries,
-> egress, CDN delivery, fan-out, subscribers, and webhook delivery are free
-> and unbilled. Reads, queries, and direct member read egress are metered for
-> abuse guards and cost attribution; a guard is never a charge. A write is billed once no matter how many views or
-> subscribers it reaches. We never claim infrastructure is free:
-> selected Regions multiply 4 KiB write units before included allowances,
-> shown before Region selection.
+> **Public Alpha.** Prices and allowances come from the canonical catalog at
+> [terrascale.tech/pricing.json](https://terrascale.tech/pricing.json); the
+> [pricing page](https://terrascale.tech/pricing) renders the same catalog.
+> All prices are in ${catalog.currency}.
 
-## What you pay for
+## How usage is metered
 
-- **Writes.** ${d.writeUnit.definition} ${d.writeUnit.replication}
-- **Storage.** ${d.storage.definition}
-- Not billed as storage: ${d.storage.notBilled.join(", ")}.
-- Free and unbilled: ${d.billingDimensions.freeUnbilled.join(", ")}.
-- Metered for abuse guards and cost attribution (never billed): ${d.billingDimensions.meteredForGuards.join(", ")}.
+- **${metering.operationUnit.name}s.** ${metering.operationUnit.definition} ${metering.operationUnit.rules.join(" ")}
+- **${metering.storage.name}.** ${metering.storage.definition}
+- **Allowances.** ${metering.allowances.definition}
 
 ## Plans
 
-|  | ${planNames.join(" | ")} |
-| --- | ${planNames.map(() => "---").join(" | ")} |
-${planRow("price")}
-${planRow("writes")}
-${planRow("storage")}
-${planRow("regions")}
-${planRow("databases")}
-${planRow("pitrDays")}
+${table("")}
+${row("Monthly price", (p) => usd(p.priceMonthlyUsd))}
+${row("Annual price", (p) => usd(p.priceAnnualUsd))}
+${row("Projects", (p) => limit(p.limits.projects))}
+${row("Databases", (p) => limit(p.limits.databases))}
+${row("Members", (p) => limit(p.limits.members))}
+${row("Storage across regions", (p) => limit(p.limits.storageGb, storage))}
+${row("Operation units / month", (p) => limit(p.limits.operationUnitsPerMonth))}
+${row("Regions per database", () => `up to ${policy.maxRegions}`)}
+${row("PITR retention", (p) => `${policy.pitrRetentionDays[p.id]} day${policy.pitrRetentionDays[p.id] === 1 ? "" : "s"}`)}
 
-Overage and PAYG: **${d.overagePayg.writes}**, **${d.overagePayg.storage}** (${d.overagePayg.note})
+Launch regions: ${regionList}.
 
-**Shared organization allowances.** ${d.sharedAllowances}
+${plans.filter((p) => p.trialDays).map((p) => p.name).join(" and ")} include one eligible ${plans.find((p) => p.trialDays)?.trialDays}-day trial per verified payment method and organization.
 
-**Free tier.** ${d.freeTier.databases} database, ${d.freeTier.storage}, **${d.freeTier.writesPerMonth.toLocaleString("en-US")} writes/month**, up to ${d.freeTier.maxRegions} regions. ${d.freeTier.notes}
+**Shared organization allowances.** ${policy.sharedAllowances}
 
-**Scale.** ${d.plans.find((p) => p.name === "Scale").notes}
+**Hobby.** ${policy.hobbyEligibility}
 
-**Idle Free databases.** ${d.reaper}
+**Enterprise.** ${plans.find((p) => p.id === "enterprise").billing} ${policy.enterpriseNotes}
 
-${Object.entries(d.billingPolicies).map(([title, body]) => `## ${title}\n\n${body}`).join("\n\n")}
+**Idle Hobby databases.** ${policy.reaper}
+
+${Object.entries(policy.billingPolicies).map(([title, body]) => `## ${title}\n\n${body}`).join("\n\n")}
 
 See also: [Limits](./limits.md).
 `;
 
-const g = d.limits.abuseGuards;
-const guardRow = (label, obj) =>
-  `| ${label} | ${planNames.map((p) => obj[p]).join(" | ")} |`;
+const g = policy.abuseGuards;
+const guardRow = (label, values) => row(label, (p) => (typeof values[p.id] === "number" ? number(values[p.id]) : values[p.id]));
 
-const limitsMd = `<!-- GENERATED from data/pricing.json by scripts/generate-pricing.mjs — do not edit. Draft; publication requires measured economics and owner approval. -->
+const limitsMd = `${header}
 # Limits
 
-> **DRAFT.** Publication awaits measured unit economics and owner approval.
+PITR retention (days): ${plans.map((p) => `${p.name} ${policy.pitrRetentionDays[p.id]}`).join(" / ")}.
 
-PITR retention (days): Free ${d.limits.pitrRetentionDays.Free} / Starter ${d.limits.pitrRetentionDays.Starter} / Pro ${d.limits.pitrRetentionDays.Pro} / Scale ${d.limits.pitrRetentionDays.Scale}.
+Databases per org: ${plans.map((p) => `${p.name} ${limit(p.limits.databases)}`).join(" / ")}.
 
-Databases per org: Free ${d.limits.databasesPerOrg.Free} / Starter ${d.limits.databasesPerOrg.Starter} / Pro ${d.limits.databasesPerOrg.Pro} / Scale ${d.limits.databasesPerOrg.Scale}.
+- **Max document:** ${policy.maxDocument}.
+- **History retention:** ${policy.historyRetention}
+- **Idle Hobby databases:** ${policy.reaper}
 
-- **Max document:** ${d.limits.maxDocument}.
-- **History retention:** ${d.limits.historyRetention}
-- **Idle Free databases:** ${d.reaper}
+## Abuse guards (unbilled safety limits)
 
-## Abuse guards (unbilled, enforced, no upsell UI)
+${g._note}
 
-${g._note} Reads, queries, and direct member read egress are metered for abuse guards and cost attribution;
-exceeding one returns a typed error with the fix, and nothing is billed.
-
-| Guard (per database) | ${planNames.join(" | ")} |
-| --- | ${planNames.map(() => "---").join(" | ")} |
+${table("Guard (per database)")}
 ${guardRow("Read + query requests/s", g.readQueryRequestsPerSec)}
 ${guardRow("Direct member read bandwidth/month", g.directMemberReadBandwidthPerMonth)}
 ${guardRow("Distinct active shared views", g.distinctActiveSharedViews)}
 ${guardRow("Optional WebSocket connections", g.optionalWebSocketConnections)}
 ${guardRow("Webhook endpoints", g.webhookEndpoints)}
 
-Subscribers per view are unlimited on every plan. CDN-delivered reactive data has no bandwidth guard.
+Plan allowances and operation-unit metering are on the [pricing page](./pricing.md).
 `;
 
 if (check) {
-  const cur1 = readFileSync(pricingPath, "utf8");
-  const cur2 = readFileSync(limitsPath, "utf8");
   let ok = true;
-  if (cur1 !== pricingMd) {
-    console.error("FAIL: docs/pricing.md is stale; run node scripts/generate-pricing.mjs");
-    ok = false;
-  }
-  if (cur2 !== limitsMd) {
-    console.error("FAIL: docs/limits.md is stale; run node scripts/generate-pricing.mjs");
-    ok = false;
+  for (const [path, expected] of [[pricingPath, pricingMd], [limitsPath, limitsMd]]) {
+    if (readFileSync(path, "utf8") !== expected) {
+      console.error(`FAIL: ${path.slice(root.length + 1)} is stale; run node scripts/generate-pricing.mjs`);
+      ok = false;
+    }
   }
   if (!ok) process.exit(1);
   console.log("pricing/limits pages are up to date.");

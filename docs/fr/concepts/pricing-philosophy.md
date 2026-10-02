@@ -5,49 +5,46 @@
 
 # Pricing philosophy
 
-**Writes and storage are the only billed dimensions.** Everything else —
-reads, queries, egress, CDN delivery, fan-out, concurrent subscribers,
-WebSocket connections, webhook delivery, catch-up and replay, TTL expiry — is
-free and unbilled within disclosed safety limits. Guards on those free dimensions exist to stop
-abuse, not to bill you (see [pricing & limits](/fr/pricing/)).
+**Two meters: operation units and storage across regions.** Every plan
+includes a monthly operation-unit allowance and a storage allowance. During
+Public Alpha those allowances are hard limits: there are no paid overages,
+and reaching one never creates a charge (see [pricing & limits](/fr/pricing/)).
 
 Stated precisely, because honesty is the brand:
 
-- **Delivery is free. Infrastructure is not.** We pay for the edge, the
-  regions, and the hardware; the architecture is built so that cost follows
-  writes and stored bytes, and those two prices carry it.
-- **Replicated writes cost one write per region.** We never say "no
-  per-region cost" — multi-region durability is real work and it is priced as
-  exactly what it is, shown up front when you select regions.
+- **Infrastructure is not free.** We pay for the edge, the regions, and the
+  hardware. The meters follow the work you ask for: the bytes you read and
+  write, and the bytes you keep.
+- **Replicated writes count once per region.** We never say "no per-region
+  cost". Multi-region durability is real work, and it is metered as exactly
+  what it is, shown up front when you select regions.
 
-## The write
+## The operation unit
 
-One write = one create, update, patch, or delete of **≤ 4 KiB**, counted as
-`ceil(bytes / 4 KiB)`. Replicating that write to another selected region
-multiplies its 4 KiB units by the number of selected Regions before allowances. That is the entire metering rule for writes.
+One operation unit is each started 4 KiB (4,096 bytes) of a logical object
+successfully read or written. Lists, queries, and batches count each item
+independently. Writes count once per selected region; reads count only in the
+serving region. Failed, denied, invalid, throttled, and not-found requests are
+not billed. That is the entire metering rule.
 
-A write is billed **once** regardless of how many shared views it affects or
-how many clients are attached to them — authorization-equivalent subscribers
-share one view, one delta computation, one log append. Fan-out, catch-up, and
-replay are free. If your bill went up because your app got popular with
-readers, something would be wrong with our architecture, not with your app.
+A write counts **once per selected region** regardless of how many shared
+views it affects or how many clients are attached to them.
+Authorization-equivalent subscribers share one view, one delta computation,
+and one log append, so fan-out does not multiply the write.
 
 ## The gigabyte
 
-Storage is **logical bytes × regions**: the canonical bytes of your current
-documents plus retained history, TTL-aware, measured in byte-seconds, billed
-at $/GB-month per region. Indexes, backups, and service-managed storage
-overhead are **not billed** — you
-should never be taxed for our performance work.
+Stored bytes count once in every selected region: the canonical bytes of your
+current documents plus retained history, TTL-aware. Indexes, backups, and
+service-managed storage overhead do not count toward storage.
 
 ## Prices require evidence
 
-Before publication, each billed line must sustain at least 50% measured
-margin, and unbilled dimensions must have measured worst cases under their
-guards. The draft rates need owner approval of that evidence and the final
-price sheet. Customer usage facts must reconcile with invoices.
+Each plan price must be backed by measured unit costs, and guarded dimensions
+must have measured worst cases under their guards. Customer usage facts must
+reconcile with invoices.
 
-A stored card does not authorize excess usage. Databases and branches share
-normal organization allowances; there is no additional branch allowance.
-Review the [billing policy](/fr/pricing/) for explicit consent, spending caps,
+A stored card does not authorize charges beyond your plan. Databases and
+branches share normal organization allowances; there is no additional branch
+allowance. Review the [billing policy](/fr/pricing/) for allowance exhaustion,
 continuing storage costs, and retention policies.

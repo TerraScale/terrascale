@@ -71,7 +71,7 @@ confirmation (O-4).]
 
 ## Audits and questionnaires
 
-Security questionnaires and audit materials are handled under the Scale
+Security questionnaires and audit materials are handled under the Enterprise
 plan. [PLACEHOLDER — audit rights and SOC 2 report access terms pending
 O-5 / SOC 2 is post-launch.]
 

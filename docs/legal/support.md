@@ -21,8 +21,8 @@ are required before publication. No staffed response commitment is approved.
 Customer support email intake, a support form, and diagnostic attachments are
 deferred until after launch. Do not send account information to an unconfirmed
 address. Community channels may be listed once their operation is confirmed.
-No response-time guarantee, staffed incident coverage, or Scale shared channel
-is promised at launch. Scale support/compliance benefits require explicit
+No response-time guarantee, staffed incident coverage, or Enterprise shared channel
+is promised at launch. Enterprise support/compliance benefits require explicit
 confirmation before enrollment; SOC 2 and contractual SLA capabilities are
 post-launch work.
 

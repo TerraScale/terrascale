@@ -35,7 +35,7 @@ retention and communications choices pending O-5 review.]
 
 - **Account identity**: your email, credentials, and organization membership,
   managed by our identity provider.
-- **Usage and billing records**: writes and storage metered per database,
+- **Usage and billing records**: operation units and storage metered per database,
   invoices and payments (intended to be processed by Stripe; Stripe Tax is
   intended from day one to calculate applicable taxes). [PLACEHOLDER —
   Stripe Tax configuration and tax-treatment language pending O-4/O-5.]

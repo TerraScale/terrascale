@@ -4,7 +4,7 @@ layout: home
 hero:
   name: TerraScale
   text: Multi-region document database
-  tagline: Selected Regions, reactive live queries, and read-only SQL. Pay for writes and storage; reads, queries, egress, and delivery are free.
+  tagline: Selected Regions, reactive live queries, and read-only SQL. Metered in operation units and storage across selected regions, with hard plan allowances.
   actions:
     - theme: brand
       text: Get started
@@ -19,16 +19,16 @@ hero:
 features:
   - icon: ⚙️
     title: Live results across selected Regions
-    details: Subscribe to authorized results and receive changes as documents are written. Selected Regions multiply write units and logical storage before included allowances.
+    details: Subscribe to authorized results and receive changes as documents are written. Writes count once per selected Region and storage counts in every selected Region before included allowances.
   - icon: 📝
     title: SQL you already know
     details: "Every collection is a SQL table: typed columns from your schema, JSON paths into the document body, full-text search. The same query ends in .subscribe() for live results or .execute() for one shot."
   - icon: 🌍
     title: Active-active multi-region
-    details: Choose placement in GRU, SFO, and FRA. Causal sessions and deterministic conflict resolution have explicit limits; global uniqueness and linearizable reads are not promised.
+    details: Choose placement in GRU (São Paulo), SFO (San Jose), and FRA (Frankfurt). Causal sessions and deterministic conflict resolution have explicit limits; global uniqueness and linearizable reads are not promised.
   - icon: 💰
-    title: Writes and storage, nothing else
-    details: One write = one create/update/patch/delete of ≤ 4 KiB. Storage = logical bytes × regions. Reads, queries, egress, CDN delivery, fan-out, subscribers, webhooks, catch-up and replay are unbilled within disclosed safety guards.
+    title: Operation units and storage, nothing else
+    details: One operation unit = each started 4 KiB read or written; writes count once per selected region and reads only in the serving region. Storage counts once in every selected region. Plans use hard allowances with no paid overages.
   - icon: 🌿
     title: Branches, PITR, per-document history
     details: Keep retained document history within plan limits. Recovery and branching preserve placement and access scope; their real-service workflows require qualification.

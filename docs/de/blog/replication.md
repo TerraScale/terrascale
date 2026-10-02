@@ -18,5 +18,5 @@ The [replication guide](/de/concepts/replication) explains sessions, uncertainty
 and the limits of cross-Region conflict resolution. Neither option promises
 linearizable reads or global uniqueness.
 
-Selected Regions multiply write units and logical storage before included
-allowances. Review [pricing](/de/pricing/) before choosing placement.
+Writes count one operation unit per 4 KiB in every selected Region, and
+storage counts in every selected Region, before included allowances. Review [pricing](/de/pricing/) before choosing placement.

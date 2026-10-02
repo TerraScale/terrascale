@@ -57,10 +57,10 @@ stay in tab memory until disconnect or reload. Never embed a privileged key
 in `NEXT_PUBLIC` settings. The deployed provider must accept the exact
 registered callback and authorize the selected branch. Application sign-in
 integration and the real five-minute journey remain unqualified.
-A card is required at signup for fraud screening; you can continue on the free
+A card is required at signup for fraud screening; you can continue on the Hobby
 plan without subscribing, and the onboarding promotion waives only the first paid month’s
-subscription fee. Explicitly authorized excess usage remains chargeable.
-Free and promotional eligibility are limited per verified billing customer
+subscription fee. Public Alpha plans use hard allowances with no paid overages.
+Hobby and promotional eligibility are limited per verified billing customer
 across organizations; review [billing terms](/de/pricing/) before enrollment.
 
 ## 2. Define a schema
@@ -183,9 +183,8 @@ Open the app in two tabs and sign in separately to connect each to the same
 cloud branch. Add a post in either tab; both live views
 should display it. This journey still requires real cloud qualification.
 The CRUD snippet exercises the public write API when its real sandbox is available;
-see [pricing](/de/pricing/) for billing (writes and logical document/history
-storage are billed; reads, queries, egress, delivery, fan-out, and subscribers
-are free).
+see [pricing](/de/pricing/) for billing (reads and writes consume operation
+units, and logical document/history storage counts in every selected Region).
 
 ## Where to go next
 

@@ -19,7 +19,7 @@ are available. Do not assume a provisioning API is ready from this pattern.
 
 Databases and branches share organization plan allowances. Logical storage,
 including retained history, remains metered even when the database is idle.
-Free databases pause after 30 idle days and may become eligible for deletion
+Hobby databases pause after 30 idle days and may become eligible for deletion
 after 90 with advance notices unless deletion protection is enabled. Paid
 databases are never idle-reaped. Separate unpaid-storage and required-card
 policies still apply; see [pricing](/fr/pricing/).

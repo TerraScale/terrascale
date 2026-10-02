@@ -12,6 +12,13 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8");
 const stub = process.argv.includes("--sandbox=stub");
 if (stub && process.argv.includes("--sandbox=remote")) throw new Error("choose one sandbox mode");
+// Canonical parity: the vendored data/canonical/*.json must equal what
+// https://terrascale.tech publishes (fails on drift or when unreachable).
+const canonical = spawnSync(process.execPath, [join(root, "scripts", "canonical-data.mjs"), "--check"], {
+  cwd: root,
+  encoding: "utf8",
+});
+assert.equal(canonical.status, 0, canonical.stdout + canonical.stderr);
 const generated = spawnSync(process.execPath, [join(root, "scripts", "generate-pricing.mjs"), "--check"], {
   cwd: root,
   encoding: "utf8",
@@ -91,8 +98,8 @@ assert.ok(read("scripts/run-snippets.mjs").includes("x-terrascale-capability"), 
 assert.ok(!read("scripts/run-snippets.mjs").includes("frame.t"), "remote runner does not decode legacy JSON frame fields");
 
 for (const [page, needles] of [
-  ["docs/pricing.md", ["$1 per 1M writes", "$0.20 per GB-month per region", "billed once", "Shared organization allowances", "Metered for abuse guards"]],
-  ["docs/limits.md", ["Max document", "1 MiB", "Abuse guards", "unlimited on every plan", "direct member read egress"]],
+  ["docs/pricing.md", ["successfully read or written", "Writes count once per selected region; reads count only in the serving region", "Shared organization allowances", "Hobby", "Enterprise"]],
+  ["docs/limits.md", ["Max document", "1 MiB", "Abuse guards", "unlimited on every plan", "never billed"]],
 ]) {
   assert.ok(existsSync(join(root, page)), `${page} exists`);
   const content = read(page);
@@ -141,8 +148,46 @@ for (const slug of ["reads-are-free", "benchmarks", "replication", "database-per
 }
 
 const pricingIndex = read("docs/pricing/index.md");
-for (const needle of ["$1 per 1M", "$0.20 per GB-month", "| Writes / month | 100k", "no additional branch allowance", "30-day grace period", "billed once"]) {
+for (const needle of ["successfully read or written", "no paid overages", "no additional branch allowance", "30-day grace period", "Writes count once per selected region"]) {
   assert.ok(pricingIndex.includes(needle), `pricing/index.md agrees on ${needle}`);
+}
+// The hand-written pricing overview must restate the canonical catalog exactly.
+const catalog = JSON.parse(read("data/canonical/pricing.json"));
+const fmt = (n) => n.toLocaleString("en-US");
+const allowance = (value, format = fmt) => (value === null ? "Custom" : format(value));
+const storage = (gb) => (gb < 1 ? `${fmt(Math.round(gb * 1000))} MB` : `${fmt(gb)} GB`);
+const planRow = (label, cell) => `| ${label} | ${catalog.plans.map(cell).join(" | ")} |`;
+for (const expectedRow of [
+  `| | ${catalog.plans.map((plan) => plan.name).join(" | ")} |`,
+  planRow("Monthly price", (plan) => `$${fmt(plan.priceMonthlyUsd)}`),
+  planRow("Annual price", (plan) => `$${fmt(plan.priceAnnualUsd)}`),
+  planRow("Projects", (plan) => allowance(plan.limits.projects)),
+  planRow("Databases", (plan) => allowance(plan.limits.databases)),
+  planRow("Members", (plan) => allowance(plan.limits.members)),
+  planRow("Storage across regions", (plan) => allowance(plan.limits.storageGb, storage)),
+  planRow("Operation units / month", (plan) => allowance(plan.limits.operationUnitsPerMonth)),
+]) assert.ok(pricingIndex.includes(expectedRow), `pricing/index.md matches the canonical catalog row ${expectedRow}`);
+// Retired plan names and the superseded writes-only billing model stay out of
+// English sources (locale trees are regenerated from them).
+const englishPages = (dir) => readdirSync(join(root, dir), { withFileTypes: true }).flatMap((entry) => {
+  const rel = `${dir}/${entry.name}`;
+  if (entry.isDirectory()) return /^docs\/(?:ar|de|es|fr|hi|ja|pt-br|ru|zh-cn|public|\.vitepress)$/.test(rel) ? [] : englishPages(rel);
+  return entry.name.endsWith(".md") ? [rel] : [];
+});
+for (const page of englishPages("docs").filter((page) => page !== "docs/blog/reads-are-free.md")) {
+  const content = read(page);
+  assert.ok(!/\b(?:Free|Scale) (?:plan|tier|databases?)\b|\$1 per 1M writes|writes\/month|PAYG/.test(content), `${page} uses the canonical plan names and metering`);
+}
+// Launch region names must match the canonical region catalog wherever an
+// English page names a region code.
+const canonicalRegions = JSON.parse(read("data/canonical/regions.json")).regions;
+for (const page of englishPages("docs")) {
+  const content = read(page);
+  for (const region of canonicalRegions) {
+    for (const [mention, name] of content.matchAll(new RegExp(`\\b${region.id.toUpperCase()} \\(([^)]+)\\)`, "g"))) {
+      assert.equal(name, region.name, `${page}: ${mention} must name ${region.id.toUpperCase()} ${region.name}`);
+    }
+  }
 }
 
 console.log(`npm test: ${results.length} snippets + i18n freshness + SDK-version consistency + pricing/limits + llms route assertions passed.`);
