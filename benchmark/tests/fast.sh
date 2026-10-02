@@ -42,10 +42,16 @@ expect_status() {
   fi
 }
 
+# expect_reject <name> <diagnostic>: the classifier must fail validation with
+# exit status 1 and the expected message, and write no report.
 expect_reject() {
-  local name=$1
-  if "$floor" --input "$work/$name.json" --output "$work/$name.out.json" >/dev/null 2>&1; then
-    fail "throughput-floor accepted $name"
+  local name=$1 diagnostic=$2 status=0
+  "$floor" --input "$work/$name.json" --output "$work/$name.out.json" \
+    > /dev/null 2> "$work/$name.err" || status=$?
+  if (( status != 1 )); then
+    fail "throughput-floor $name: want exit 1, got $status"
+  elif ! grep -qF -- "$diagnostic" "$work/$name.err"; then
+    fail "throughput-floor $name: missing diagnostic '$diagnostic'"
   elif [[ -e $work/$name.out.json ]]; then
     fail "throughput-floor wrote a report for rejected $name"
   else
@@ -56,6 +62,9 @@ expect_reject() {
 # TerraBase at 0.5x SQLite throughput in every pair: CI is [0.5, 0.5].
 pairs meets M01/insert/c1/throughput 7 2000000000
 expect_status meets MEETS_FLOOR
+# Exactly 0.40x in every pair: CI is [0.40, 0.40], which meets the floor.
+pairs at-floor M01/insert/c1/throughput 7 2500000000
+expect_status at-floor MEETS_FLOOR
 # 0.2x in every pair.
 pairs below M01/insert/c1/throughput 7 5000000000
 expect_status below BELOW_FLOOR
@@ -71,18 +80,23 @@ else
   fail 'throughput-floor capped a ratio above 1.0'
 fi
 pairs too-few M01/insert/c1/throughput 6 2000000000
-expect_reject too-few
+expect_reject too-few 'at least 7 paired trials are required'
 pairs latency M01/insert/c1/p99 7 2000000000
-expect_reject latency
+expect_reject latency 'the floor applies only to throughput cases'
 pairs unequal M01/insert/c1/throughput 7 2000000000
 jq '.pairs[3].terrabase.operations_completed = 999' "$work/unequal.json" > "$work/unequal-work.json"
-expect_reject unequal-work
+expect_reject unequal-work 'lanes completed different logical work'
 jq '.matrix_version = "v1"' "$work/meets.json" > "$work/v1.json"
-expect_reject v1
-if "$floor" --input "$work/meets.json" --output "$work/meets.out.json" >/dev/null 2>&1; then
-  fail 'throughput-floor overwrote an existing report'
-else
+expect_reject v1 'only matrix v2 registers the throughput floor'
+cp "$work/meets.out.json" "$work/meets.before.json"
+status=0
+"$floor" --input "$work/meets.json" --output "$work/meets.out.json" \
+  > /dev/null 2> "$work/overwrite.err" || status=$?
+if (( status == 1 )) && grep -qF 'create fresh report' "$work/overwrite.err" &&
+   cmp -s "$work/meets.before.json" "$work/meets.out.json"; then
   pass 'throughput-floor refuses to overwrite a report'
+else
+  fail "throughput-floor overwrite: exit $status or report changed"
 fi
 
 # Smoke benchmark: both local SQL engines run the same CRUD trace through the
@@ -109,12 +123,17 @@ for engine in sqlite turso; do
     fail "local-engine $engine CRUD smoke"
   fi
 done
-if [[ -f $work/lane-sqlite/results/receipt.json && -f $work/lane-turso/results/receipt.json ]] &&
-   [[ $(jq -r '.trace_sha256 + " " + .final_state_sha256' "$work/lane-sqlite/results/receipt.json") == \
-      $(jq -r '.trace_sha256 + " " + .final_state_sha256' "$work/lane-turso/results/receipt.json") ]]; then
+hashes() {
+  jq -er '[.trace_sha256, .final_state_sha256]
+          | if all(type == "string" and test("^[0-9a-f]{64}$")) then join(" ") else error("missing hash") end' \
+    "$1" 2>/dev/null
+}
+if sqlite_hashes=$(hashes "$work/lane-sqlite/results/receipt.json") &&
+   turso_hashes=$(hashes "$work/lane-turso/results/receipt.json") &&
+   [[ $sqlite_hashes == "$turso_hashes" ]]; then
   pass 'local-engine lanes agree on trace and final state'
 else
-  fail 'local-engine lanes disagree on trace or final state'
+  fail 'local-engine lanes lack or disagree on trace and final-state SHA-256'
 fi
 
 if (( failures > 0 )); then

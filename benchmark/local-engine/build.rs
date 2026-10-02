@@ -42,14 +42,11 @@ fn main() {
         "Turso source differs from the pinned TerraBase gitlink"
     );
     // Hash the whole checkout, including files the patch series adds, through
-    // a scratch index so the submodule's own index stays untouched.
+    // a fresh scratch index built from HEAD. Copying the submodule's own index
+    // would inherit assume-unchanged/skip-worktree flags that hide edits.
     let index = Path::new(&env::var("OUT_DIR").expect("Cargo out directory")).join("turso-index");
-    let own_index = text(git(
-        &turso,
-        None,
-        &["rev-parse", "--path-format=absolute", "--git-path", "index"],
-    ));
-    std::fs::copy(own_index, &index).expect("copy the Turso index");
+    let _ = std::fs::remove_file(&index);
+    git(&turso, Some(&index), &["read-tree", "HEAD"]);
     git(&turso, Some(&index), &["add", "--all"]);
     let tree = text(git(&turso, Some(&index), &["write-tree"]));
     assert_eq!(
@@ -88,17 +85,15 @@ fn main() {
         "cargo:rustc-env=TURSO_PATCH_FILE_INVENTORY={}",
         file_inventory.join(";")
     );
-    println!("cargo:rerun-if-changed={}", turso.join("core").display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        turso.join("bindings/rust").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        turso.join("Cargo.toml").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        turso.join("Cargo.lock").display()
-    );
+    // Rerun the validation whenever anything in the validated checkout or the
+    // submodule's checked-out revision changes, not only the crates Cargo builds.
+    println!("cargo:rerun-if-changed={}", turso.display());
+    for path in ["HEAD", "index"] {
+        let git_path = text(git(
+            &turso,
+            None,
+            &["rev-parse", "--path-format=absolute", "--git-path", path],
+        ));
+        println!("cargo:rerun-if-changed={git_path}");
+    }
 }

@@ -13,9 +13,22 @@ rev=$(tr -d '[:space:]' < "$repo/terrabase.rev")
 [[ $rev =~ ^[0-9a-f]{40}$ ]] || { echo "terrabase.rev must hold a full commit SHA" >&2; exit 2; }
 engine="$repo/../terrabase"
 
+# The token reaches Git only through this askpass helper's environment, never
+# through a command-line argument or a stored remote URL.
+askpass=$(mktemp)
+trap 'rm -f -- "$askpass"' EXIT
+cat > "$askpass" <<'ASKPASS'
+#!/bin/sh
+case $1 in
+  Username*) printf '%s\n' oauth2 ;;
+  *) printf '%s\n' "$ORG_READ_TOKEN" ;;
+esac
+ASKPASS
+chmod 700 "$askpass"
+
 git init -q "$engine"
-git -C "$engine" fetch -q --depth 1 \
-  "https://oauth2:${ORG_READ_TOKEN}@git.terrascale.tech/TerraScale/terrabase.git" "$rev"
+GIT_ASKPASS=$askpass GIT_TERMINAL_PROMPT=0 git -C "$engine" -c credential.helper= fetch -q --depth 1 \
+  https://git.terrascale.tech/TerraScale/terrabase.git "$rev"
 git -C "$engine" checkout -q --detach FETCH_HEAD
 test "$(git -C "$engine" rev-parse HEAD)" = "$rev"
 git -C "$engine" submodule update -q --init --depth 1 crates/turso
