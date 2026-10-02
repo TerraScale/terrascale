@@ -1,4 +1,4 @@
-package v1_test
+package v1test
 
 // Contract fixture: shapes-v1 gatekeeper, shape tokens (EdDSA JWS), log
 // reads with 307/snapshot/chunks/live, must_refetch, SSE and an edge proxy
@@ -61,7 +61,7 @@ func (f *fixture) gatekeeper(r *http.Request, k *fxKey, body []byte) fxReply {
 	token := f.signToken(map[string]any{"iss": "terrabase", "aud": "terrabase-edge", "tid": k.tenantID, "db": db.id, "shp": id,
 		"iat": now.Unix(), "exp": (expires.UnixMilli() + 999) / 1000})
 	return fxOK(201, map[string]any{"shape_id": id, "handle": shape.handle, "offset": "-1",
-		"url": f.edge.URL + "/v1/shapes/" + id + "?offset=-1", "token": token, "expires_at": strconv.FormatInt(expires.UnixMilli(), 10)})
+		"url": f.edgeURL + "/v1/shapes/" + id + "?offset=-1", "token": token, "expires_at": strconv.FormatInt(expires.UnixMilli(), 10)})
 }
 
 func (f *fixture) signToken(claims map[string]any) string {
@@ -98,15 +98,6 @@ func (f *fixture) verifyToken(token, shapeID string) *fxReply {
 	return nil
 }
 
-// rotateHandle simulates a new lineage (generation change / retention).
-func (f *fixture) rotateHandle(shapeID string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.shapes[shapeID].handle = "h1-" + randB64(6)
-	close(f.commitCh)
-	f.commitCh = make(chan struct{})
-}
-
 // shapeQuery parses the shape read parameters strictly.
 func shapeQuery(raw string, allowed ...string) (map[string]string, bool) {
 	out := map[string]string{}
@@ -130,12 +121,12 @@ func shapeQuery(raw string, allowed ...string) (map[string]string, bool) {
 // shapeAuth authorizes a shape read: a data key with shape on the
 // collection, or (edge) an edge key forwarding a valid TB-Shape-Token.
 func (f *fixture) shapeAuth(r *http.Request, shapeID string, allowEdge bool) (*fxShape, *fxReply) {
-	k := f.keys[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
+	k := f.authKey(r)
 	shape := f.shapes[shapeID]
 	unauthorized := fxErr(401, "invalid_key")
 	forbidden := fxErr(403, "forbidden_scope")
 	switch {
-	case k == nil || k.revokedAt != "":
+	case k == nil:
 		return nil, &unauthorized
 	case shape == nil:
 		rep := fxErr(404, "not_found")
@@ -493,12 +484,10 @@ func (f *fixture) serveEdge(w http.ResponseWriter, r *http.Request) {
 			canon = append(canon, name+"="+url.QueryEscape(v))
 		}
 	}
-	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, f.origin.URL+"/v1/shapes/"+shapeID+"?"+strings.Join(canon, "&"), nil)
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, f.originURL+"/v1/shapes/"+shapeID+"?"+strings.Join(canon, "&"), nil)
 	req.Header.Set("Authorization", "Bearer "+f.edgeToken)
 	req.Header.Set("TB-Shape-Token", token)
-	hc := f.origin.Client()
-	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	res, err := hc.Do(req)
+	res, err := f.originClient.Do(req)
 	if err != nil {
 		writeReply(w, fxErr(502, "upstream_unavailable"))
 		return

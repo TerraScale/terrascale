@@ -1,4 +1,4 @@
-package v1_test
+package v1test
 
 // Contract fixture: query-v1 filter grammar, sort, projection, keyset cursors,
 // counts and explain. See fixture_test.go.
@@ -358,7 +358,7 @@ func (f *fixture) query(r *http.Request, k *fxKey, body []byte) fxReply {
 
 	var rows []fxRow
 	for id, d := range coll.docs {
-		if !d.live() {
+		if !f.visible(coll, d) {
 			continue
 		}
 		objs := []map[string]any{mustObject(d.raw)}

@@ -1,4 +1,4 @@
-package v1_test
+package v1test
 
 // Contract fixture: control-plane-v1 (/v1/dashboard). See fixture_test.go.
 
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func (f *fixture) dashboardRoutes(mux *http.ServeMux) {
+func (f *fixture) dashboardRoutes(rt *routes) {
 	d := "/v1/dashboard"
 	t := d + "/tenants/{tenant}"
 	db := t + "/databases/{db}"
@@ -56,7 +56,7 @@ func (f *fixture) dashboardRoutes(mux *http.ServeMux) {
 		"GET " + d + "/audit":              f.listAudit,
 	}
 	for pattern, h := range routes {
-		mux.HandleFunc(pattern, f.wrap(controlRoute, h))
+		rt.handle(pattern, f.wrap(controlRoute, h))
 	}
 }
 
@@ -121,13 +121,8 @@ func (f *fixture) createTenant(r *http.Request, _ *fxKey, body []byte) fxReply {
 			return fxErr(409, "name_taken")
 		}
 	}
-	if req.Limits == nil {
-		req.Limits = map[string]any{"max_databases": 10, "max_storage_bytes": "10737418240", "max_rate_per_second": 1000}
-	}
-	t := &fxTenant{id: fxUUID(), name: req.Name, externalRef: req.ExternalRef, status: "active", limits: req.Limits,
-		advisorExternal: req.AdvisorExternal, createdAt: fxNow(), dbs: map[string]*fxDB{}}
-	f.tenants[t.id] = t
-	f.tenantList = append(f.tenantList, t.id)
+	t := f.newTenant(req.Name, req.ExternalRef, req.Limits)
+	t.advisorExternal = req.AdvisorExternal
 	return fxOK(201, f.tenantJSON(t))
 }
 
@@ -179,23 +174,40 @@ func (f *fixture) updateTenant(r *http.Request, _ *fxKey, body []byte) fxReply {
 	return fxOK(200, f.tenantJSON(t))
 }
 
-func (f *fixture) startOperation(kind, resource string) fxReply {
-	op := &fxOperation{id: fxUUID(), kind: kind, resource: resource, createdAt: fxNow()}
+func (f *fixture) startOperation(kind, resource string, effect func()) fxReply {
+	op := &fxOperation{id: fxUUID(), kind: kind, resource: resource, createdAt: fxNow(), started: f.now(), status: "running", effect: effect}
 	f.ops[op.id] = op
 	return fxOK(202, f.operationJSON(op))
 }
 
-// operationJSON finishes an operation on its second poll. Collection
-// deletions fail, to exercise the failed-operation shape.
+// finishIfDue completes a running operation on its second poll or once
+// opDelay has passed. Server.FailOperations forces a kind to fail.
+func (f *fixture) finishIfDue(op *fxOperation) {
+	if op.status != "running" || (op.polls < 2 && f.now().Sub(op.started) < f.opDelay) {
+		return
+	}
+	op.finishedAt = fxNow()
+	if fail, ok := f.opFailures[op.kind]; ok {
+		op.status, op.errCode, op.errMessage = "failed", fail.code, fail.message
+		return
+	}
+	op.status = "succeeded"
+	if op.effect != nil {
+		op.effect()
+	}
+}
+
+func (f *fixture) settleOperations() {
+	for _, op := range f.ops {
+		f.finishIfDue(op)
+	}
+}
+
 func (f *fixture) operationJSON(op *fxOperation) map[string]any {
-	out := map[string]any{"id": op.id, "kind": op.kind, "status": "running", "resource": op.resource, "error": nil, "created_at": op.createdAt, "finished_at": nil}
-	switch {
-	case op.polls < 2:
-	case op.kind == "delete_collection":
-		out["status"], out["finished_at"] = "failed", op.createdAt
-		out["error"] = map[string]any{"code": "storage_unavailable", "message": "object store unreachable"}
-	default:
-		out["status"], out["finished_at"] = "succeeded", op.createdAt
+	out := map[string]any{"id": op.id, "kind": op.kind, "status": op.status, "resource": op.resource, "error": nil,
+		"created_at": op.createdAt, "finished_at": nilIfEmpty(op.finishedAt)}
+	if op.status == "failed" {
+		out["error"] = map[string]any{"code": op.errCode, "message": op.errMessage}
 	}
 	return out
 }
@@ -206,7 +218,15 @@ func (f *fixture) deleteTenant(r *http.Request, _ *fxKey, _ []byte) fxReply {
 		return *rep
 	}
 	t.status = "deleting"
-	return f.startOperation("delete_tenant", r.URL.Path)
+	return f.startOperation("delete_tenant", r.URL.Path, func() {
+		for _, k := range f.keys {
+			if k.tenantID == t.id && k.revokedAt == "" {
+				k.revokedAt = fxNow()
+			}
+		}
+		delete(f.tenants, t.id)
+		f.tenantList = slices.DeleteFunc(f.tenantList, func(id string) bool { return id == t.id })
+	})
 }
 
 func (f *fixture) getOperation(r *http.Request, _ *fxKey, _ []byte) fxReply {
@@ -215,6 +235,7 @@ func (f *fixture) getOperation(r *http.Request, _ *fxKey, _ []byte) fxReply {
 		return fxErr(404, "not_found")
 	}
 	op.polls++
+	f.finishIfDue(op)
 	return fxOK(200, f.operationJSON(op))
 }
 
@@ -266,7 +287,8 @@ func (f *fixture) createDatabase(r *http.Request, _ *fxKey, body []byte) fxReply
 		Durability string         `json:"durability"`
 		Retention  map[string]any `json:"retention"`
 	}
-	if strictDecode(body, &req) != nil || req.Name == "" {
+	if strictDecode(body, &req) != nil || !namePattern.MatchString(req.Name) ||
+		(req.Durability != "" && req.Durability != "local_durable" && req.Durability != "object_durable") {
 		return fxErr(400, "invalid_request")
 	}
 	if t.dbs[req.Name] != nil {
@@ -334,7 +356,13 @@ func (f *fixture) deleteDatabase(r *http.Request, _ *fxKey, _ []byte) fxReply {
 		return *rep
 	}
 	db.status = "deleting"
-	return f.startOperation("delete_database", r.URL.Path)
+	t := f.tenants[db.tenantID]
+	return f.startOperation("delete_database", r.URL.Path, func() {
+		if t.dbs[db.name] == db {
+			delete(t.dbs, db.name)
+			t.dbOrder = slices.DeleteFunc(t.dbOrder, func(n string) bool { return n == db.name })
+		}
+	})
 }
 
 func collJSON(c *fxColl) map[string]any {
@@ -352,6 +380,24 @@ func collJSON(c *fxColl) map[string]any {
 	}
 	return map[string]any{"id": c.id, "name": c.name, "generation": strconv.FormatUint(c.generation, 10), "schema": schema,
 		"ttl_path": ttl, "unique": unique, "advisor": c.advisor, "created_at": c.createdAt}
+}
+
+// validUnique checks unique constraint definitions: a name, 1-4 pointer
+// paths and an optional lower transform.
+func validUnique(list []fxUnique) bool {
+	names := map[string]bool{}
+	for _, u := range list {
+		if !namePattern.MatchString(u.Name) || names[u.Name] || len(u.Paths) < 1 || len(u.Paths) > 4 || (u.Transform != "" && u.Transform != "lower") {
+			return false
+		}
+		names[u.Name] = true
+		for _, p := range u.Paths {
+			if len(splitPointer(p)) == 0 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (f *fixture) collection(r *http.Request) (*fxDB, *fxColl, *fxReply) {
@@ -394,7 +440,8 @@ func (f *fixture) createCollection(r *http.Request, _ *fxKey, body []byte) fxRep
 		} `json:"indexes"`
 		Advisor string `json:"advisor"`
 	}
-	if strictDecode(body, &req) != nil || req.Name == "" {
+	if strictDecode(body, &req) != nil || !namePattern.MatchString(req.Name) || !validUnique(req.Unique) ||
+		(req.TTLPath != nil && len(splitPointer(*req.TTLPath)) == 0) || (req.Advisor != "" && req.Advisor != "auto" && req.Advisor != "manual") {
 		return fxErr(400, "invalid_request")
 	}
 	if req.Schema != nil && string(req.Schema) != "null" {
@@ -462,8 +509,27 @@ func (f *fixture) updateCollection(r *http.Request, _ *fxKey, body []byte) fxRep
 		Unique  *[]fxUnique     `json:"unique"`
 		Advisor *string         `json:"advisor"`
 	}
-	if strictDecode(body, &req) != nil || json.Unmarshal(body, &members) != nil {
+	if strictDecode(body, &req) != nil || json.Unmarshal(body, &members) != nil ||
+		(req.Unique != nil && !validUnique(*req.Unique)) || (req.TTLPath != nil && len(splitPointer(*req.TTLPath)) == 0) ||
+		(req.Advisor != nil && *req.Advisor != "auto" && *req.Advisor != "manual") {
 		return fxErr(400, "invalid_request")
+	}
+	if req.Unique != nil {
+		// New constraints are built before they are enforced; existing
+		// duplicates fail the change.
+		seen := map[string]bool{}
+		for _, u := range *req.Unique {
+			for _, d := range c.docs {
+				if !f.visible(c, d) || d.raw == nil {
+					continue
+				}
+				key, ok := uniqueKey(u, mustObject(d.raw))
+				if ok && seen[u.Name+"\x00"+key] {
+					return fxErr(409, "unique_violation", "constraint", u.Name)
+				}
+				seen[u.Name+"\x00"+key] = true
+			}
+		}
 	}
 	if raw, ok := members["schema"]; ok {
 		if (string(raw) == "null") != (c.schema == nil) {
@@ -487,11 +553,16 @@ func (f *fixture) updateCollection(r *http.Request, _ *fxKey, body []byte) fxRep
 }
 
 func (f *fixture) deleteCollection(r *http.Request, _ *fxKey, _ []byte) fxReply {
-	_, _, rep := f.collection(r)
+	db, c, rep := f.collection(r)
 	if rep != nil {
 		return *rep
 	}
-	return f.startOperation("delete_collection", r.URL.Path)
+	return f.startOperation("delete_collection", r.URL.Path, func() {
+		if db.colls[c.name] == c {
+			delete(db.colls, c.name)
+			db.collOrder = slices.DeleteFunc(db.collOrder, func(n string) bool { return n == c.name })
+		}
+	})
 }
 
 func (f *fixture) collectionStats(r *http.Request, _ *fxKey, _ []byte) fxReply {
@@ -601,6 +672,25 @@ func (f *fixture) indexDecisions(r *http.Request, _ *fxKey, _ []byte) fxReply {
 		"fallback_reason": nil, "request_digest": strings.Repeat("ab", 32), "decided_at": fxNow()}})
 }
 
+func validGrants(grants []fxGrant) bool {
+	for _, g := range grants {
+		if (g.Database != "*" && !namePattern.MatchString(g.Database)) || len(g.Collections) == 0 || len(g.Permissions) == 0 {
+			return false
+		}
+		for _, c := range g.Collections {
+			if c != "*" && !namePattern.MatchString(c) {
+				return false
+			}
+		}
+		for _, p := range g.Permissions {
+			if p != "read" && p != "write" && p != "shape" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func keyJSON(k *fxKey) map[string]any {
 	out := map[string]any{"id": k.id, "name": k.name, "role": k.role, "created_at": k.createdAt, "last_four": k.token[len(k.token)-4:],
 		"expires_at": nilIfEmpty(k.expiresAt), "revoked_at": nilIfEmpty(k.revokedAt)}
@@ -659,8 +749,13 @@ func (f *fixture) createKey(r *http.Request, _ *fxKey, body []byte) fxReply {
 		Rate       map[string]any  `json:"rate"`
 		TTLSeconds int             `json:"ttl_seconds"`
 	}
-	if strictDecode(body, &req) != nil || req.Name == "" || len(req.Grants) == 0 {
+	if strictDecode(body, &req) != nil || req.Name == "" || len(req.Grants) == 0 || !validGrants(req.Grants) || req.TTLSeconds < 0 {
 		return fxErr(400, "invalid_request")
+	}
+	if len(req.RowFilter) > 0 && string(req.RowFilter) != "null" {
+		if _, err := parseFilter(req.RowFilter); err != nil {
+			return fxErr(400, "invalid_query", "message", err.Error())
+		}
 	}
 	if req.Rate == nil {
 		req.Rate = map[string]any{"per_second": 100, "burst": 200, "max_in_flight": 16}
@@ -668,7 +763,7 @@ func (f *fixture) createKey(r *http.Request, _ *fxKey, body []byte) fxReply {
 	k := &fxKey{name: req.Name, role: "data", tenantID: t.id, grants: req.Grants, rowFilter: req.RowFilter, rate: req.Rate}
 	token := f.addKey(k)
 	if req.TTLSeconds > 0 {
-		k.expiresAt = strconv.FormatInt(time.Now().Add(time.Duration(req.TTLSeconds)*time.Second).UnixMilli(), 10)
+		k.expiresAt = strconv.FormatInt(f.now().Add(time.Duration(req.TTLSeconds)*time.Second).UnixMilli(), 10)
 	}
 	return fxOK(201, map[string]any{"key": keyJSON(k), "token": token})
 }
@@ -717,7 +812,7 @@ func (f *fixture) rotateKey(r *http.Request, _ *fxKey, body []byte) fxReply {
 	if req.GraceSeconds != nil {
 		grace = *req.GraceSeconds
 	}
-	old.expiresAt = strconv.FormatInt(time.Now().Add(time.Duration(grace)*time.Second).UnixMilli(), 10)
+	old.expiresAt = strconv.FormatInt(f.now().Add(time.Duration(grace)*time.Second).UnixMilli(), 10)
 	k := &fxKey{name: old.name, role: "data", tenantID: old.tenantID, grants: old.grants, rowFilter: old.rowFilter, rate: old.rate}
 	token := f.addKey(k)
 	return fxOK(201, map[string]any{"key": keyJSON(k), "token": token})

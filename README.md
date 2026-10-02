@@ -111,10 +111,71 @@ In `PATCH` requests nullable members use `tb.Optional`: the zero value leaves
 the member unchanged, `tb.Value(v)` sets it and `tb.Null[T]()` clears it, for
 example `tb.UpdateCollectionRequest{TTLPath: tb.Null[string]()}`.
 
-The v1 tests run in the normal `go test -race ./...` suite against an in-test
-HTTPS contract fixture (`v1/fixture_*_test.go`) that implements the contract's
-wire format; it will be replaced by the packaged tb-server once the v1 routes
-ship.
+The v1 tests run in the normal `go test -race ./...` suite against the
+`v1/v1test` contract fake described below.
+
+### Development fake: `v1/v1test` and `tbv1-fake`
+
+> **Development and contract tests only.** The fake keeps all state in memory
+> and loses it on exit. It has no persistence, replication, rate limiting,
+> row-filter enforcement, home regions or TTL reaper (expired documents are
+> hidden from reads, queries and transactions, but shapes never see a
+> tombstone for them). Acceptance and release checks must run against the real
+> tb-server.
+
+`terrascale.tech/sdk/v1/v1test` serves the frozen v1 contracts (terrabase
+`docs/api-v1.md`, `query-v1.md`, `shapes-v1.md` and `control-plane-v1.md`) over
+HTTPS with TLS 1.3 and HTTP/2, in the style of `net/http/httptest`:
+
+```go
+srv := v1test.NewServer(v1test.Options{}) // or v1test.Start for an error
+defer srv.Close()
+p, err := srv.Provision(v1test.ProvisionRequest{Collections: []v1test.CollectionSpec{
+	{Name: "todos", TTLPath: "/expires_at",
+		Unique: []v1test.Unique{{Name: "email", Paths: []string{"/email"}, Transform: "lower"}}},
+}})
+client, err := tb.New(tb.Config{BaseURL: srv.URL, Token: p.DataKey, HTTPClient: srv.Client()})
+dash, err := tb.NewDashboard(tb.Config{BaseURL: srv.URL, Token: srv.ControlKey, HTTPClient: srv.Client()})
+```
+
+`Server` exposes `URL`, `EdgeURL`, `ControlKey`, `CACertPEM` and `Client()`,
+plus `CreateTenant`, `CreateDatabase`, `CreateCollection`, `CreateDataKey`,
+`RevokeKey` and `Provision`. Test hooks: `InjectFault` (429/503 and
+after-commit `commit_uncertain`), `Advance` (moves the clock for TTL, key
+expiry and the 24-hour idempotency window), `RequestCount`, `SeedConflict`,
+`RotateShapeHandle` and `FailOperations`. It enforces data/control/edge roles
+and grants, immediate revocation (`401 invalid_key`), `If-Match` and
+`If-None-Match` with `tbv1-` versions (`412`, `304`), unique constraints with
+the `lower` transform (`409 unique_violation` with `constraint`), TTL hiding
+and `ttl_invalid`, `Idempotency-Key` replay, `idempotency_conflict` and
+`idempotency_expired`, transactions with `assert` and `assert_count`, queries
+with filters, sort, projection, cursors and counts, shapes with an edge proxy,
+the `/v1/dashboard` control plane with audit and operations, and the
+`{"error":{"code":…}}` envelope, including `404 unknown_route` and
+`405 method_not_allowed`.
+
+`cmd/tbv1-fake` runs the same fake as a TLS server for local stacks:
+
+```sh
+go run ./cmd/tbv1-fake --control-key-out .tbv1-fake/control.key
+curl --cacert .tbv1-fake/ca.pem https://127.0.0.1:9465/v1/readyz
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--listen` | `127.0.0.1:9465` | Origin listen address. |
+| `--edge-listen` | `127.0.0.1:0` | Edge-proxy listen address (shape URLs point here). |
+| `--cert-dir` | `.tbv1-fake` | Holds `ca.pem`, `server.pem` and `server-key.pem`; a development CA and a leaf for `--hosts` are generated when any is missing. |
+| `--hosts` | `localhost,127.0.0.1,::1` | Names and IPs of a generated leaf. |
+| `--control-key-out` | | Writes the bootstrap control key to this file with mode 0600. |
+| `--print-control-key` | `false` | Prints `TB_CONTROL_KEY=…` (and `TB_DATA_KEY=…` with `--seed`) to stdout. One of these two flags is required. |
+| `--seed` | `false` | Seeds tenant `Acme`, database `main`, the SDK test collections and an all-access data key. |
+| `--data-key-out` | | With `--seed`, writes the data key to this file with mode 0600. |
+
+Secrets never reach stdout or stderr unless `--print-control-key` is given.
+The banner on stderr states that it is a development fake. Every start creates
+fresh keys and empty state; `GET /v1/readyz` and `GET /v1/healthz` return 200
+on the origin listener. Stop it with SIGINT or SIGTERM.
 
 ## Native data client
 
