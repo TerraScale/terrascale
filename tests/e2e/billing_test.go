@@ -18,7 +18,8 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 		t.Fatalf("GET /billing = %d at %s", response.Status(), page.URL())
 	}
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Plans and billing"))
-	visible(t, page.GetByText("Demo billing"))
+	// The demo badge is gone; nothing may reserve its row above the summary card.
+	must(t, expect.Locator(page.GetByText("Demo billing")).ToHaveCount(0))
 
 	proPlan := planCard(page, "Pro")
 	for _, allowance := range []string{"25 GB-region storage", "100M operations/month", "25 databases", "25 team members", "30-day free trial"} {

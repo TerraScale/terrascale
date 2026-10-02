@@ -10,9 +10,6 @@ import (
 templ subscriptionsContent(csrfToken string, data subscriptionsPage) {
 	<main class="ts-page ts-billing">
 		@ui.PageHeader("Plans and billing") {
-			if data.Demo {
-				@ui.Badge("info", "Demo billing")
-			}
 			if data.ShowPortal {
 				<a class="ts-btn ts-btn-secondary" href="/billing/portal">@icons.ExternalLink(15)<span>Manage billing</span></a>
 			}
