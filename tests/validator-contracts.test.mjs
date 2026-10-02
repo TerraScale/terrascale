@@ -64,6 +64,11 @@ test('claim validator rejects draft legal URLs outside anchors', () => {
     "export const policy = 'https://\\u0064ocs.terrascale.tech/legal/terms/'",
     '<meta property=og:url content=https://docs.terrascale.tech/legal/terms/>',
     '<a href="https://docs%2Eterrascale.tech/legal/terms/">Policy</a>',
+    "export const policy = 'https://reader@docs.terrascale.tech/legal/terms/'",
+    '<meta property="og:url" content="https://reader@docs.terrascale.tech/legal/terms/">',
+    "export const policy = 'https://docs.terra\\nscale.tech/legal/terms/'",
+    '<script type="application/ld+json">{"url":"https://docs.terra\\tscale.tech/legal/terms/"}</script>',
+    '<meta content="https://docs.terrascale.tech/temporary folder/../legal/terms/">',
   ]
   for (const mode of ['source', 'rendered']) {
     for (const document of documents) {
@@ -75,9 +80,15 @@ test('claim validator rejects draft legal URLs outside anchors', () => {
   }
 })
 
+test('claim validator tolerates malformed escapes in ordinary text', () => {
+  for (const mode of ['source', 'rendered']) {
+    assert.doesNotThrow(() => findProhibitedClaims('<p>\\u{110000} and \\u{FFFFFF}</p>', { mode }))
+  }
+})
+
 test('claim validator allows URLs that do not resolve to draft legal policies', () => {
   for (const mode of ['source', 'rendered']) {
-    for (const href of ['https://docs.terrascale.tech/legal/../guides/', 'https://notdocs.terrascale.tech/legal/terms/', 'https://docs.terrascale.tech/guides/legal/', 'https://docs.terrascale.tech/legal(archive)/guides/']) {
+    for (const href of ['https://docs.terrascale.tech/legal/../guides/', 'https://notdocs.terrascale.tech/legal/terms/', 'https://docs.terrascale.tech/guides/legal/', 'https://docs.terrascale.tech/legal(archive)/guides/', 'https://docs.terrascale.tech/legal%3Farchive/', 'https://docs.terrascale.tech/legal%23archive/']) {
       assert.ok(
         !findProhibitedClaims(`<a href="${href}">Docs</a>`, { mode }).some(({ id }) => id === 'draft-legal-link'),
         `${mode} validator rejected ${href}`,

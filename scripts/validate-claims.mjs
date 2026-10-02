@@ -131,25 +131,44 @@ const canonicalizeDraftLegalHref = (value) => {
   return pathname === '/legal' || pathname.startsWith('/legal/') ? url : null
 }
 
-// Undo the encodings a browser or JavaScript/JSON runtime would resolve before
-// navigating: HTML entities, string escapes, escaped slashes, percent-encoding
-// and the tab/newline characters WHATWG URL parsing ignores.
-const urlDecodingVariants = (text) => {
-  const decoded = decodeHTML(String(text))
-    .replace(/\\u\{([0-9a-f]{1,6})\}|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})/gi, (_, braced, unicode, hex) => String.fromCodePoint(parseInt(braced ?? unicode ?? hex, 16)))
+const jsEscapes = { t: '\t', n: '\n', r: '\r' }
+
+// Undo the encodings a browser or JavaScript/JSON runtime resolves before a
+// value becomes a URL. Text is checked both as markup (entities only, where a
+// backslash is a path separator) and as a string literal (entities, string
+// escapes and escaped slashes). Percent-encoding and ignored tab/newline
+// characters are left to the URL parser so encoded delimiters stay path data.
+const decodeStringEscapes = (text) =>
+  text
+    .replace(/\\u\{([0-9a-f]{1,6})\}|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\([tnr])/gi, (escape, braced, unicode, hex, control) => {
+      if (control) return jsEscapes[control.toLowerCase()]
+      const codePoint = parseInt(braced ?? unicode ?? hex, 16)
+      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : escape
+    })
     .replace(/\\\//g, '/')
-    .replace(/[\t\n\r]/g, '')
-  const percentDecoded = decoded.replace(/%([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-  return [decoded, percentDecoded]
+
+const decodedUrlTexts = (text) => {
+  const markup = decodeHTML(String(text))
+  return [markup, decodeStringEscapes(markup)]
 }
 
-// Find every authority that names the docs host, wherever it appears (quoted
-// or unquoted attributes, metadata, JSON-LD, source literals), and classify the
-// complete destination that follows it.
+const urlStart = /(?:[a-z][a-z0-9+.\-\t\n\r]*:)?[\t\n\r]*[\\/][\t\n\r]*[\\/]/i
+
+const fromUrlStart = (value) => {
+  const match = value.match(urlStart)
+  return match ? value.slice(match.index) : null
+}
+
+// Collect complete URL values: whole quoted attribute/string values (which may
+// contain spaces) and bare tokens such as unquoted attribute values. The URL
+// parser then decides the real hostname (user information, percent-encoding,
+// backslashes and ignored characters included) and path.
 const urlCandidates = (text) =>
-  urlDecodingVariants(text).flatMap((corpus) =>
-    [...corpus.matchAll(/[\\/]{2}docs\.terrascale\.tech\.?(?::\d*)?(?:[\\/?#][^\s"'`<>]*)?/gi)].map(([candidate]) => `https:${candidate}`),
-  )
+  decodedUrlTexts(text).flatMap((corpus) => {
+    const quoted = [...corpus.matchAll(/"([^"]*)"|'([^']*)'|`([^`]*)`/g)].map((match) => match[1] ?? match[2] ?? match[3])
+    const tokens = corpus.split(/[ "'`<>]+/)
+    return [...quoted, ...tokens].map(fromUrlStart).filter(Boolean)
+  })
 
 const findDraftLegalLink = (values) => {
   for (const value of values) {
