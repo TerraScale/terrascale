@@ -1,0 +1,9 @@
+# Tools for the local platform stack (stack/bin/stack). stack/bin/stack runs
+# itself under `mise exec` with this file, so `mise install` is optional.
+[tools]
+"aqua:F1bonacc1/process-compose" = "1.122.0"
+"aqua:axllent/mailpit" = "1.31.3"
+caddy = "2.11.6"
+mkcert = "1.4.4"
+jq = "1.8.1"
+shellcheck = "0.11.0"

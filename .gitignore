@@ -10,3 +10,6 @@ bin/
 web/static/js/
 # Written by release builds of scripts/build-css.mjs.
 web/static/css/*.br
+# Local platform stack state (certs, keys, data, .stack/env); see stack/README.md.
+/.stack/
+!/stack/bin/
