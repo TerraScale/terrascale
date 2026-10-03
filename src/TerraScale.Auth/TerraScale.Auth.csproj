@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>TerraScale.Auth</RootNamespace>
+    <AssemblyName>ts-auth</AssemblyName>
+    <Version>0.1.0</Version>
+    <!-- /healthz reports "<version>+<revision>"; CI passes TS_AUTH_REVISION. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <InformationalVersion Condition="'$(TS_AUTH_REVISION)' != ''">$(Version)+$(TS_AUTH_REVISION)</InformationalVersion>
+    <UserSecretsId />
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../TerraScale.Auth.Contracts/TerraScale.Auth.Contracts.csproj" />
+    <ProjectReference Include="../TerraScale.Auth.Security/TerraScale.Auth.Security.csproj" />
+    <ProjectReference Include="../TerraScale.Auth.Store/TerraScale.Auth.Store.csproj" />
+    <ProjectReference Include="$(TsLibsRoot)/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Direct references pin newer patches than ts-libs' own central versions. -->
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Scalar.AspNetCore" />
+    <PackageReference Include="RazorSlices" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+    <PackageReference Include="Sentry.AspNetCore" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets/admin/admin.css" LogicalName="assets/admin/admin.css" />
+    <EmbeddedResource Include="Assets/admin/datastar.js" LogicalName="assets/admin/datastar.js" />
+    <EmbeddedResource Include="Assets/admin/logo.svg" LogicalName="assets/admin/logo.svg" />
+    <EmbeddedResource Include="Assets/fonts/oxanium-latin-wght-normal.woff2" LogicalName="assets/fonts/oxanium-latin-wght-normal.woff2" />
+    <EmbeddedResource Include="Assets/fonts/jetbrains-mono-latin-wght-normal.woff2" LogicalName="assets/fonts/jetbrains-mono-latin-wght-normal.woff2" />
+  </ItemGroup>
+
+  <Target Name="EnsureTsLibs" BeforeTargets="CollectPackageReferences;BeforeBuild" Condition="!Exists('$(TsLibsRoot)/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj')">
+    <Error Text="ts-libs not found at '$(TsLibsRoot)'. Clone it next to ts-auth or pass -p:TerraScaleRoot=&lt;dir containing ts-dotnet and ts-libs&gt;." />
+  </Target>
+</Project>

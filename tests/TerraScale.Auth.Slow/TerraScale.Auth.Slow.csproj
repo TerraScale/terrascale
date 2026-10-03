@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The slow integration suite. Tests drive the real application over HTTP on a
+       loopback Kestrel socket; there are no unit tests. -->
+  <PropertyGroup>
+    <RootNamespace>TerraScale.Auth.Slow</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- CA1515: TUnit discovers public test classes. CA1707: test names use
+         underscores as sentence separators. CA2007: tests have no synchronization
+         context to capture. -->
+    <NoWarn>$(NoWarn);CA1515;CA1707;CA2007</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/TerraScale.Auth/TerraScale.Auth.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Playwright" />
+    <PackageReference Include="Bogus" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Shared harness source; deliberately not a third test project. -->
+    <Compile Include="../Shared/**/*.cs" Link="Shared/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

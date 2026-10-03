@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Build auth-app as a static x86_64 musl executable with the job image's musl
-# toolchain and stage it as DIST_DIR/ts-auth, the path the Containerfile
-# copies. TS_AUTH_REVISION, reported in the /healthz and /readyz version, is
-# the first 12 characters of the source commit. CI runs it under
-# scripts/ci/cargo-cache.sh, or with a clean target directory to publish.
+# Publish ts-auth as a self-contained single-file linux-x64 executable and
+# stage it as DIST_DIR/ts-auth, the path the Containerfile copies.
+# TS_AUTH_REVISION, reported in the /healthz and /readyz version, is the first
+# 12 characters of the source commit. The executable needs only glibc,
+# libstdc++, OpenSSL and CA certificates, which the chiseled runtime-deps base
+# image provides.
 set -euo pipefail
 
 dist=${1:-}
@@ -12,23 +13,22 @@ dist=${1:-}
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$repo"
 
-command -v readelf >/dev/null || { echo "readelf is required" >&2; exit 1; }
 revision=$(git rev-parse HEAD)
 [[ -z ${FORGEJO_SHA:-} || $revision == "$FORGEJO_SHA" ]] ||
   { echo "checkout $revision is not the event revision $FORGEJO_SHA" >&2; exit 1; }
 
-target=x86_64-unknown-linux-musl
-TS_AUTH_REVISION=${revision:0:12} cargo build --release --locked -p auth-app --target "$target"
-binary=${CARGO_TARGET_DIR:-$repo/target}/$target/release/auth-app
+out=$(mktemp -d)
+trap 'rm -rf "$out"' EXIT
+TS_AUTH_REVISION=${revision:0:12} dotnet publish src/TerraScale.Auth/TerraScale.Auth.csproj \
+  --configuration Release --runtime linux-x64 --self-contained true --nologo \
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+  -p:DebugType=none --output "$out"
 
-metadata=$(readelf -hldW -- "$binary")
-grep -Eq '^[[:space:]]*Machine:[[:space:]]+Advanced Micro Devices X86-64$' <<<"$metadata" ||
-  { echo "$binary is not an x86-64 executable" >&2; exit 1; }
-if grep -Eq 'INTERP|\((NEEDED|RPATH|RUNPATH)\)' <<<"$metadata"; then
-  echo "$binary is not a self-contained static executable" >&2
-  exit 1
-fi
+binary="$out/ts-auth"
+[[ -x $binary ]] || { echo "publish produced no ts-auth executable" >&2; exit 1; }
+file_type=$(od -An -tx1 -N4 "$binary" | tr -d ' \n')
+[[ $file_type == 7f454c46 ]] || { echo "$binary is not an ELF executable" >&2; exit 1; }
 
 mkdir -p -- "$dist"
 install -m 0755 -- "$binary" "$dist/ts-auth"
-printf 'staged static %s ts-auth revision %s in %s\n' "$target" "${revision:0:12}" "$dist"
+printf 'staged self-contained linux-x64 ts-auth revision %s in %s\n' "${revision:0:12}" "$dist"
