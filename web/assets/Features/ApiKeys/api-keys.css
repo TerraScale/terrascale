@@ -1,8 +1,13 @@
 /* API keys: one-time secret banner, credential type badges, and filters. */
 
-/* Keep the create action right-aligned when the card header wraps. */
+/* Keep controls centered and the create action right-aligned when wrapping. */
+.ts-apikeys-page .ts-card-head {
+  align-items: center;
+}
+
 .ts-apikeys-page .ts-card-actions {
   margin-left: auto;
+  justify-content: flex-end;
 }
 
 /* Credential type badge: the icon keeps its size in narrow table cells. */
@@ -21,20 +26,24 @@
   gap: var(--ts-s1);
 }
 
-/* Credential filters sit on the tab row, right-aligned. */
-.ts-apikeys-filters {
-  flex: 1 1 520px;
+/* Keep the form and create action together when they fit. If the form itself
+   must wrap, let it take the available header width before the create action. */
+.ts-apikeys-page .ts-card-actions > .ts-apikeys-filters {
+  flex: 0 0 auto;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
 }
 
 .ts-apikeys-filters > .ts-input {
-  flex: 1 1 180px;
-  max-width: 240px;
+  flex: 0 1 auto;
+  width: 240px;
 }
 
 .ts-apikeys-filters > .ts-select {
-  flex: 0 1 160px;
-  width: auto;
+  flex: 0 1 auto;
+  width: 160px;
 }
 
 .ts-apikeys-secret > .ts-alert-title {
