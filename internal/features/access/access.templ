@@ -12,11 +12,7 @@ import (
 
 templ accessPageView(page core.Page, data pageData) {
 	<main id="access-page" class="ts-page ts-access-page">
-		@ui.PageHeader("Team") {
-			if data.CanManage {
-				<a class="ts-btn ts-btn-primary" href="/access?tab=invitations&amp;create=1">@icons.UserPlus(16)<span>Invite member</span></a>
-			}
-		}
+		@ui.PageHeader("Team") {}
 		if data.Error != "" {
 			@ui.Alert("warning", data.Error, "")
 		}
@@ -40,7 +36,7 @@ templ accessPageView(page core.Page, data pageData) {
 				</div>
 			</section>
 		}
-		<div class="ts-toolbar">
+		<div class="ts-toolbar ts-access-toolbar">
 			@ui.Tabs("Team sections", []ui.Tab{
 				{Label: "Overview", URL: "/access", Active: data.Tab == "overview"},
 				{Label: "Members", URL: "/access?tab=members", Active: data.Tab == "members"},
@@ -49,6 +45,9 @@ templ accessPageView(page core.Page, data pageData) {
 			})
 			if data.Tab == "members" {
 				@memberFilters(data)
+			}
+			if data.CanManage {
+				<a class="ts-btn ts-btn-primary" href="/access?tab=invitations&amp;create=1">@icons.UserPlus(16)<span>Invite member</span></a>
 			}
 		</div>
 		switch data.Tab {

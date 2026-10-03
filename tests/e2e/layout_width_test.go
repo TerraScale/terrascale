@@ -66,6 +66,23 @@ func TestPageLayoutsFitContentColumn(t *testing.T) {
 							if (columns !== expected) problems.push(selector + ' has ' + columns + ' columns, want ' + expected);
 						}
 					}
+					if (location.pathname === '/access') {
+						const toolbar = document.querySelector('#access-page > .ts-toolbar');
+						const tabs = toolbar?.querySelector('[aria-label="Team sections"]');
+						const invite = toolbar?.querySelector('a[href="/access?tab=invitations&create=1"]');
+						if (!tabs || !invite) {
+							problems.push('Team tabs and invite action must share the header container');
+						} else {
+							if (!inside(invite, toolbar) || box(invite).left < box(toolbar).left - 1)
+								problems.push('Team invite action escapes the header');
+							if (innerWidth >= 1024 && (
+								Math.abs((box(tabs).top + box(tabs).bottom - box(invite).top - box(invite).bottom) / 2) > 1 ||
+								box(tabs).right > box(invite).left || Math.abs(box(invite).right - box(toolbar).right) > 1))
+								problems.push('Team tabs and invite action must be centered on one desktop row');
+						}
+						if ([...document.querySelectorAll('#access-page > .ts-page-actions')].some(visible))
+							problems.push('Team header has a redundant page-action row');
+					}
 					if (location.pathname === '/access' && innerWidth === 1440) {
 						const nested = document.createElement('div');
 						nested.style.width = '600px';
@@ -120,7 +137,9 @@ func TestPageLayoutsFitContentColumn(t *testing.T) {
 
 func layoutScreenshot(route string, width int) bool {
 	switch route {
-	case "team", "profile":
+	case "team":
+		return width == 360 || width == 768 || width == 1440
+	case "profile":
 		return width == 768
 	case "overview", "usage":
 		return width == 1100 || (route == "usage" && width == 360)
