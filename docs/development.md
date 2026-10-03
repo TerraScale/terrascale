@@ -196,10 +196,12 @@ every 5xx response grouped by its route, and every `slog` record at error
 level, with an `error` attribute as the exception. Events carry the build
 version as the release and `SENTRY_ENVIRONMENT` as the environment, which
 defaults to `production` on Fly.io and `development` elsewhere. Request
-bodies, cookies and the signed-in user are never sent, and request headers
-keep their values only for `Accept`, `Content-Type`, `Content-Length`,
-`Datastar-Request`, `Referer` and `User-Agent`. Without `SENTRY_DSN`,
-nothing is reported.
+bodies, query strings, cookies and the signed-in user are never sent (the
+CLI approval URL carries its `user_code` in the query, also nested in
+`returnTo`), and request headers keep their values only for `Accept`,
+`Content-Type`, `Content-Length`, `Datastar-Request` and `User-Agent`;
+`Referer` would repeat such a URL. Without `SENTRY_DSN`, nothing is
+reported.
 
 `DASHBOARD_CSP_REPORT_URL` adds a `report-uri` directive to every page's
 Content-Security-Policy so browsers post violations to GlitchTip's security
