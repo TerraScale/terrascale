@@ -110,7 +110,7 @@ templ signedInDocument(page core.Page, body templ.Component, admin bool) {
 						}
 					</a>
 				</header>
-				@StatusBanner(page.Shell.Notices)
+				@StatusBanner(page.Shell.Notices, page.Shell.NoticeScope, page.Nonce)
 				<div id="ts-main" class="ts-main" tabindex="-1">
 					@body
 				</div>
@@ -122,11 +122,11 @@ templ signedInDocument(page core.Page, body templ.Component, admin bool) {
 // StatusBanner announces the status page's unresolved incidents and current
 // or upcoming maintenance above the page. It renders nothing when all is
 // clear or the status page cannot be read.
-templ StatusBanner(notices []core.StatusNotice) {
+templ StatusBanner(notices []core.StatusNotice, scope string, nonce string) {
 	if len(notices) > 0 {
-		<div class="ts-status-banner" role="status" aria-label="TerraScale status">
+		<div class="ts-status-banner" role="status" aria-label="TerraScale status" data-notice-scope={ scope } hidden?={ scope != "" }>
 			for _, notice := range notices {
-				<div class="ts-status-notice" data-impact={ notice.Impact }>
+				<div class="ts-status-notice" data-impact={ notice.Impact } data-notice-id={ notice.ID }>
 					<span class="ts-dot" aria-hidden="true"></span>
 					<p class="ts-status-notice-text">
 						<span class="ts-status-notice-label">{ notice.Label }<span class="ts-sr-only">:</span></span>
@@ -136,9 +136,17 @@ templ StatusBanner(notices []core.StatusNotice) {
 						}
 					</p>
 					<a class="ts-link ts-status-notice-link" href={ notice.URL }>View status<span class="ts-sr-only"> of { notice.Title }</span></a>
+					if notice.ID != "" && scope != "" {
+						<button type="button" class="ts-icon-btn ts-status-notice-dismiss" aria-label={ "Dismiss alert: " + notice.Title }>
+							@icons.X(16)
+						</button>
+					}
 				</div>
 			}
 		</div>
+		if scope != "" {
+			@statusBannerDismissals(nonce)
+		}
 	}
 }
 

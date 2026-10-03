@@ -25,18 +25,19 @@ type StatusNotices interface {
 }
 
 type Engine struct {
-	store  core.Store
-	csrf   core.CSRF
-	status StatusNotices
-	dev    bool
+	store       core.Store
+	csrf        core.CSRF
+	status      StatusNotices
+	noticeScope func(*http.Request) string
+	dev         bool
 	// cspReportURL receives the browser's Content-Security-Policy violation
 	// reports; empty sends none.
 	cspReportURL string
 }
 
 // New returns the page renderer. A nil status source renders no banner.
-func New(store core.Store, csrf core.CSRF, status StatusNotices, dev bool) *Engine {
-	return &Engine{store: store, csrf: csrf, status: status, dev: dev}
+func New(store core.Store, csrf core.CSRF, status StatusNotices, noticeScope func(*http.Request) string, dev bool) *Engine {
+	return &Engine{store: store, csrf: csrf, status: status, noticeScope: noticeScope, dev: dev}
 }
 
 // ReportCSPViolationsTo makes rendered pages ask the browser to post their
@@ -100,6 +101,9 @@ func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) er
 		}
 		if e.status != nil {
 			page.Shell.Notices = e.status.Notices(r.Context())
+			if e.noticeScope != nil {
+				page.Shell.NoticeScope = e.noticeScope(r)
+			}
 		}
 	}
 	body := page.View(page)

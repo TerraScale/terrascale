@@ -135,7 +135,7 @@ func TestOnboardingPageReportsSnapshotOutageAsUnavailable(t *testing.T) {
 			sessions := session.New(failing, session.Options{})
 			guard := csrf.New(sessions, csrf.Options{})
 			mux := http.NewServeMux()
-			Mount(mux, core.Deps{Store: failing, Sessions: sessions, CSRF: guard, Render: renderer.New(failing, guard, nil, false), Tools: core.NewTools(failing), Demo: true}, nil)
+			Mount(mux, core.Deps{Store: failing, Sessions: sessions, CSRF: guard, Render: renderer.New(failing, guard, nil, sessions.NoticeScope, false), Tools: core.NewTools(failing), Demo: true}, nil)
 			signIn := httptest.NewRecorder()
 			if err := sessions.Start(signIn, httptest.NewRequest(http.MethodGet, "/", nil), p); err != nil {
 				t.Fatal(err)

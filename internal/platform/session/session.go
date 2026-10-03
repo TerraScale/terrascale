@@ -176,6 +176,20 @@ func (m *Manager) Principal(r *http.Request) (core.Principal, bool) {
 	return m.principalFor(r.Context(), token)
 }
 
+// NoticeScope identifies this browser login without exposing its bearer token.
+// Domain separation keeps it distinct from the digest used to look up sessions.
+func (m *Manager) NoticeScope(r *http.Request) string {
+	token, ok := m.Token(r)
+	if !ok {
+		return ""
+	}
+	if _, valid := m.principalFor(r.Context(), token); !valid {
+		return ""
+	}
+	digest := sha256.Sum256([]byte("status-notices\x00" + token))
+	return hex.EncodeToString(digest[:16])
+}
+
 func (m *Manager) BearerPrincipal(r *http.Request) (core.Principal, bool) {
 	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
 	if !ok || !strings.EqualFold(scheme, "Bearer") || token == "" || strings.ContainsAny(token, " \t\r\n") {

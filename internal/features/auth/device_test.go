@@ -56,7 +56,7 @@ func newDeviceFixtureWithStores(t *testing.T, state session.Store, accounts core
 	f.p = a.Principal()
 	f.sessions = session.New(f.store, session.Options{Store: state})
 	f.guard = csrf.New(f.sessions, csrf.Options{})
-	deps := core.Deps{Store: f.store, Sessions: f.sessions, CSRF: f.guard, Render: render.New(f.store, f.guard, nil, false), Throttle: throttle.New(throttle.Options{Client: throttle.Budget{Burst: 100, Interval: time.Second}, Account: throttle.Budget{Burst: 100, Interval: time.Second}}), Demo: true}
+	deps := core.Deps{Store: f.store, Sessions: f.sessions, CSRF: f.guard, Render: render.New(f.store, f.guard, nil, f.sessions.NoticeScope, false), Throttle: throttle.New(throttle.Options{Client: throttle.Budget{Burst: 100, Interval: time.Second}, Account: throttle.Budget{Burst: 100, Interval: time.Second}}), Demo: true}
 	f.d = NewDeviceAuthorization(deps, nil, false, "http://dashboard.test")
 	f.time.Store(time.Now().Unix())
 	f.d.now = func() time.Time { return time.Unix(f.time.Load(), 0) }

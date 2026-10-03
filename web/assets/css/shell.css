@@ -480,7 +480,7 @@ details[open] > .ts-account-trigger {
 .ts-status-notice {
   --impact: var(--ts-info);
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--ts-s3);
   padding: var(--ts-s3) var(--ts-s10);

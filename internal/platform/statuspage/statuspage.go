@@ -163,6 +163,7 @@ type summary struct {
 }
 
 type incident struct {
+	ID        string   `json:"id"`
 	Name      string   `json:"name"`
 	Status    string   `json:"status"`
 	Impact    string   `json:"impact"`
@@ -174,6 +175,7 @@ type incident struct {
 }
 
 type maintenance struct {
+	ID             string    `json:"id"`
 	Name           string    `json:"name"`
 	Status         string    `json:"status"`
 	ScheduledFor   time.Time `json:"scheduled_for"`
@@ -229,11 +231,11 @@ func noticesAt(s summary, now time.Time, home string) []core.StatusNotice {
 			continue
 		}
 		impact := impactOf(i.Impact)
-		notice := core.StatusNotice{Impact: impact, Label: incidentLabels[impact], Title: i.Name, Message: i.Headline, URL: link(i.Shortlink, home)}
+		notice := core.StatusNotice{ID: noticeID("incident", i.ID), Impact: impact, Label: incidentLabels[impact], Title: i.Name, Message: i.Headline, URL: link(i.Shortlink, home)}
 		list = append(list, ranked{rank: incidentRanks[impact], StatusNotice: notice})
 	}
 	for _, m := range s.Maintenances {
-		notice := core.StatusNotice{Impact: "maintenance", Title: m.Name, Message: window(m.ScheduledFor, m.ScheduledUntil), URL: link(m.Shortlink, home)}
+		notice := core.StatusNotice{ID: noticeID("maintenance", m.ID), Impact: "maintenance", Title: m.Name, Message: window(m.ScheduledFor, m.ScheduledUntil), URL: link(m.Shortlink, home)}
 		switch {
 		case m.Name == "":
 			continue
@@ -254,6 +256,14 @@ func noticesAt(s summary, now time.Time, home string) []core.StatusNotice {
 		notices = append(notices, item.StatusNotice)
 	}
 	return notices
+}
+
+// A missing source ID must not make unrelated notices share a dismissal.
+func noticeID(kind, id string) string {
+	if id == "" {
+		return ""
+	}
+	return kind + ":" + id
 }
 
 var (

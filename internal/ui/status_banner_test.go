@@ -9,7 +9,7 @@ import (
 
 func TestStatusBannerRendersNothingWhenAllIsClear(t *testing.T) {
 	var out strings.Builder
-	if err := StatusBanner(nil).Render(t.Context(), &out); err != nil {
+	if err := StatusBanner(nil, "", "").Render(t.Context(), &out); err != nil {
 		t.Fatal(err)
 	}
 	if out.Len() != 0 {
@@ -20,24 +20,27 @@ func TestStatusBannerRendersNothingWhenAllIsClear(t *testing.T) {
 func TestStatusBannerRendersEachNoticeByImpact(t *testing.T) {
 	var out strings.Builder
 	err := StatusBanner([]core.StatusNotice{
-		{Impact: "major", Label: "Major incident", Title: "Database API errors",
+		{ID: "incident:2", Impact: "major", Label: "Major incident", Title: "Database API errors",
 			Message: "We are investigating <elevated> error rates.", URL: "https://status.terrascale.tech/incidents/2"},
-		{Impact: "maintenance", Label: "Scheduled maintenance", Title: "Storage migration",
+		{ID: "maintenance:4", Impact: "maintenance", Label: "Scheduled maintenance", Title: "Storage migration",
 			URL: "https://status.terrascale.tech/incidents/4"},
-	}).Render(t.Context(), &out)
+	}, "test-scope", "test-nonce").Render(t.Context(), &out)
 	if err != nil {
 		t.Fatal(err)
 	}
 	html := out.String()
 	for _, want := range []string{
-		`<div class="ts-status-banner" role="status" aria-label="TerraScale status">`,
-		`<div class="ts-status-notice" data-impact="major">`,
+		`data-notice-scope="test-scope"`,
+		`<div class="ts-status-notice" data-impact="major" data-notice-id="incident:2">`,
 		`<span class="ts-status-notice-label">Major incident<span class="ts-sr-only">:</span></span>`,
 		`<span class="ts-status-notice-title">Database API errors</span>`,
 		`<span class="ts-status-notice-message">We are investigating &lt;elevated&gt; error rates.</span>`,
 		`href="https://status.terrascale.tech/incidents/2"`,
-		`<div class="ts-status-notice" data-impact="maintenance">`,
+		`<div class="ts-status-notice" data-impact="maintenance" data-notice-id="maintenance:4">`,
 		`href="https://status.terrascale.tech/incidents/4"`,
+		`aria-label="Dismiss alert: Database API errors"`,
+		`aria-label="Dismiss alert: Storage migration"`,
+		`<script nonce="test-nonce">`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("banner is missing %s in:\n%s", want, html)

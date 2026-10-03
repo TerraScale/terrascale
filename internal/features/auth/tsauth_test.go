@@ -235,7 +235,7 @@ func newTSAuthDashboard(t *testing.T, issuer *testIssuer) *tsAuthDashboard {
 	sessions := session.New(store, session.Options{Store: records, Refresh: tsAuth.RefreshSession})
 	guard := csrf.New(sessions, csrf.Options{})
 	deps := core.Deps{
-		Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil, false),
+		Store: store, Sessions: sessions, CSRF: guard, Render: render.New(store, guard, nil, sessions.NoticeScope, false),
 		Throttle: throttle.New(throttle.Options{}), ExternalSignIn: true,
 	}
 	mux := http.NewServeMux()
