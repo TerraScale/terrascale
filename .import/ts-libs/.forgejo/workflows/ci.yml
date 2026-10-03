@@ -35,7 +35,8 @@ jobs:
             -p:EnableNETAnalyzers=true \
             -p:Nullable=enable \
             -p:TreatWarningsAsErrors=true \
-            -p:AnalysisLevel=latest-recommended
+            -p:AnalysisLevel=latest-recommended \
+            -p:VersionPatch=${{ forgejo.run_number }}
 
       - name: Verify ts-libs formatting
         shell: bash
@@ -75,6 +76,7 @@ jobs:
             --configuration Release \
             --no-build \
             --nologo \
+            -p:VersionPatch=${{ forgejo.run_number }} \
             --output artifacts/packages
           echo "Packed packages:"
           ls -1 artifacts/packages
@@ -96,3 +98,22 @@ jobs:
             --source "https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json" \
             --api-key "${TERRASCALE_BOT_TOKEN:?organization bot token is required}" \
             --skip-duplicate
+
+      - name: Verify the packages are in the Forgejo NuGet registry
+        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --skip-duplicate turns a version conflict into success, so confirm
+          # each pushed id/version is actually served by the registry.
+          for pkg in artifacts/packages/*.nupkg; do
+            nuspec=$(unzip -p "$pkg" '*.nuspec')
+            id=$(sed -n 's:.*<id>\(.*\)</id>.*:\1:p' <<<"$nuspec" | head -n1)
+            version=$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' <<<"$nuspec" | head -n1)
+            index="https://git.terrascale.tech/api/packages/TerraScale/nuget/package/${id,,}/index.json"
+            if ! curl -fsS "$index" | grep -q "\"${version,,}\""; then
+              echo "$id $version is not listed at $index" >&2
+              exit 1
+            fi
+            echo "Published $id $version"
+          done
