@@ -79,14 +79,11 @@ templ apiKeysContent(page core.Page, d pageData) {
 templ credentialActions(d pageData) {
 	@apiKeysFilters(d)
 	if d.CanManage {
-		@createCredentialAction(d.CanManage, d.Kind)
+		@createCredentialAction(d.Kind)
 	}
 }
 
-func createCredentialAction(canManage bool, kind string) templ.Component {
-	if !canManage {
-		return nil
-	}
+func createCredentialAction(kind string) templ.Component {
 	tab := controlsFor(kind)
 	return ui.DialogTrigger(ui.DialogTriggerProps{Dialog: tab.CreateDialog, Label: tab.CreateLabel, Icon: credentialIcon(kind), Variant: "primary"})
 }

@@ -38,13 +38,13 @@
 }
 
 .ts-apikeys-filters > .ts-input {
-  flex: 1 1 180px;
+  flex: 1 1 auto;
   width: 240px;
   max-width: 240px;
 }
 
 .ts-apikeys-filters > .ts-select {
-  flex: 0 1 160px;
+  flex: 0 1 auto;
   width: 160px;
 }
 
