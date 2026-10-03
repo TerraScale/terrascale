@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
-using TerraScale.Endpoints;
 
 namespace TerraScale.Endpoints.Tests;
 
@@ -37,7 +36,7 @@ public sealed class EndpointTests
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.AddSingleton(new EndpointCatalog([typeof(ProbeEndpoint)]));
+        builder.Services.AddTerraScaleEndpoints([EndpointRegistration.Create<ProbeEndpoint>()]);
         var app = builder.Build();
         app.MapTerraScaleEndpoints();
         await app.StartAsync();
@@ -74,7 +73,7 @@ public sealed class EndpointTests
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.AddSingleton(new EndpointCatalog([typeof(RequestProbeEndpoint)]));
+        builder.Services.AddTerraScaleEndpoints([EndpointRegistration.Create<RequestProbeEndpoint>()]);
         var app = builder.Build();
         app.MapTerraScaleEndpoints();
         await app.StartAsync();
@@ -87,9 +86,13 @@ public sealed class EndpointTests
     }
 
     [Test]
-    public async Task PrecomputedCatalogDeduplicatesTypes()
+    public async Task CatalogDeduplicatesAndMergesRegistrations()
     {
-        var catalog = new EndpointCatalog([typeof(ProbeEndpoint), typeof(ProbeEndpoint)]);
+        var services = new ServiceCollection();
+        services.AddTerraScaleEndpoints([EndpointRegistration.Create<ProbeEndpoint>(), EndpointRegistration.Create<ProbeEndpoint>()]);
+        services.AddTerraScaleEndpoints([EndpointRegistration.Create<ProbeEndpoint>()]);
+        using var provider = services.BuildServiceProvider();
+        var catalog = provider.GetRequiredService<EndpointCatalog>();
         await Assert.That(catalog.Count).IsEqualTo(1);
         await Assert.That(catalog.Types.Single()).IsEqualTo(typeof(ProbeEndpoint));
     }
@@ -99,7 +102,7 @@ public sealed class EndpointTests
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.AddSingleton(new EndpointCatalog([typeof(SenderProbeEndpoint)]));
+        builder.Services.AddTerraScaleEndpoints([EndpointRegistration.Create<SenderProbeEndpoint>()]);
         var app = builder.Build();
         app.MapTerraScaleEndpoints();
         await app.StartAsync();
@@ -162,7 +165,7 @@ public sealed class EndpointTests
     }
 
     [Test]
-    public async Task ManuallyActivatedEndpointLivesThroughResultExecution()
+    public async Task EndpointLivesThroughResultExecution()
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
@@ -183,18 +186,18 @@ public sealed class EndpointTests
 public sealed class ProbeEndpoint : EndpointWithoutRequest<string>
 {
     public override void Configure() { Get("/probe"); Name("probe"); Summary("Probe"); Tags("Tests"); AllowAnonymous(); }
-    public override Task<string> HandleAsync(CancellationToken cancellationToken) => Task.FromResult("ok");
+    public override ValueTask<string> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult("ok");
 }
 public sealed class InvalidEndpoint : EndpointWithoutRequest<string>
 {
     public override void Configure() { }
-    public override Task<string> HandleAsync(CancellationToken cancellationToken) => Task.FromResult("x");
+    public override ValueTask<string> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult("x");
 }
 
 public sealed class SenderProbeEndpoint : Endpoint<SenderProbeRequest>
 {
     public override void Configure() { Post("/sender-probe"); AllowAnonymous(); Produces<SenderProbeResponse>(); }
-    public override async Task HandleAsync(SenderProbeRequest request, CancellationToken cancellationToken)
+    public override async ValueTask HandleAsync(SenderProbeRequest request, CancellationToken cancellationToken)
     {
         await Send.OkAsync(new SenderProbeResponse(request.Value), cancellationToken);
     }
@@ -205,7 +208,7 @@ public sealed record SenderProbeResponse(string Value);
 public sealed class RequestProbeEndpoint : Endpoint<RequestProbe, string>
 {
     public override void Configure() { Post("/request-probe"); Accepts<RequestProbe>("application/json", "application/problem+json"); }
-    public override Task<string> HandleAsync(RequestProbe request, CancellationToken cancellationToken) => Task.FromResult(request.Value);
+    public override ValueTask<string> HandleAsync(RequestProbe request, CancellationToken cancellationToken) => ValueTask.FromResult(request.Value);
 }
 public sealed record RequestProbe(string Value);
 
@@ -217,7 +220,7 @@ public sealed class ScopedProbeDependency
 public sealed class ScopedProbeEndpoint(ScopedProbeDependency dependency) : EndpointWithoutRequest<string>
 {
     public override void Configure() => Get("/scoped-probe");
-    public override Task<string> HandleAsync(CancellationToken cancellationToken) => Task.FromResult(dependency.Id.ToString());
+    public override ValueTask<string> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(dependency.Id.ToString());
 }
 
 public sealed class DeferredResultEndpoint : EndpointWithoutRequest<IResult>, IAsyncDisposable
@@ -226,8 +229,8 @@ public sealed class DeferredResultEndpoint : EndpointWithoutRequest<IResult>, IA
 
     public override void Configure() => Get("/deferred-result");
 
-    public override Task<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        Task.FromResult<IResult>(new DeferredResult(this));
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        ValueTask.FromResult<IResult>(new DeferredResult(this));
 
     public ValueTask DisposeAsync()
     {

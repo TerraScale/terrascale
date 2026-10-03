@@ -3,7 +3,9 @@
     <RootNamespace>TerraScale.Endpoints</RootNamespace>
     <PackageId>TerraScale.Endpoints</PackageId>
     <Description>Shared TerraScale endpoint authoring and ASP.NET Core mapping library.</Description>
-    <Version>1.1.0</Version>
+    <!-- Prerelease until .NET 11 and Microsoft.AspNetCore.OpenApi 11 ship stable. -->
+    <Version>2.0.0-rc.1</Version>
+    <IsAotCompatible>true</IsAotCompatible>
     <PackageProjectUrl>https://git.terrascale.tech/TerraScale/ts-libs</PackageProjectUrl>
     <RepositoryUrl>https://git.terrascale.tech/TerraScale/ts-libs</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -25,5 +27,10 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Scalar.AspNetCore" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Build the generator first and ship it in analyzers/ so consumers get compile-time registration. -->
+    <ProjectReference Include="../TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <None Include="../TerraScale.Endpoints.Generators/bin/$(Configuration)/netstandard2.0/TerraScale.Endpoints.Generators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
   </ItemGroup>
 </Project>

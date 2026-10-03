@@ -1,4 +1,3 @@
-using TerraScale.Endpoints;
 namespace TerraScale.Endpoints.Example.Endpoints;
 
 public sealed class GetWidgetEndpoint(WidgetStore store) : IEndpoint

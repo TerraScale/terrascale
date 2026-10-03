@@ -1,13 +1,18 @@
 using TerraScale.Endpoints;
 using TerraScale.Endpoints.Example;
 
-var builder = WebApplication.CreateBuilder(args);
+var builder = WebApplication.CreateSlimBuilder(args);
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, ExampleJsonContext.Default));
 builder.Services.AddSingleton<WidgetStore>();
-builder.Services.AddTerraScaleEndpoints(typeof(Program).Assembly, options =>
+
+// Generated at compile time: registers every endpoint in this project, no reflection scanning.
+builder.Services.AddTerraScaleEndpoints(options =>
 {
     options.Title = "TerraScale.Endpoints example";
     options.Version = "v1";
 });
+
 var app = builder.Build();
 app.UseDefaultFiles();
 app.UseStaticFiles();

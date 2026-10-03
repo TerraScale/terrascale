@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using System.Text;
-using TerraScale.Endpoints;
 
 namespace TerraScale.Endpoints.Tests;
 
@@ -16,7 +15,7 @@ public sealed class SseTests
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.AddSingleton(new EndpointCatalog([typeof(RawSseEndpoint)]));
+        builder.Services.AddTerraScaleEndpoints([EndpointRegistration.Create<RawSseEndpoint>()]);
         var app = builder.Build();
         app.MapTerraScaleEndpoints();
         await app.StartAsync();
@@ -39,7 +38,7 @@ public sealed class SseTests
     [Test]
     public async Task RawSseEventsAndCommentsUseTheSseWireFormat()
     {
-        var (contentType, body) = await GetSseAsync(typeof(RawSseEndpoint), RawSseEndpoint.Path);
+        var (contentType, body) = await GetSseAsync(EndpointRegistration.Create<RawSseEndpoint>(), RawSseEndpoint.Path);
         await Assert.That(contentType).IsEqualTo("text/event-stream");
         await Assert.That(body).IsEqualTo(": ping\n\nevent: greeting\nid: 1\ndata: hello world\n\n");
     }
@@ -47,7 +46,7 @@ public sealed class SseTests
     [Test]
     public async Task EndpointsExposeTheRequestContext()
     {
-        var body = await GetStringAsync(typeof(ContextProbeEndpoint), ContextProbeEndpoint.Path);
+        var body = await GetStringAsync(EndpointRegistration.Create<ContextProbeEndpoint>(), ContextProbeEndpoint.Path);
         await Assert.That(body).Contains("/context-probe");
     }
 
@@ -56,7 +55,7 @@ public sealed class SseTests
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.AddSingleton(new EndpointCatalog([typeof(RawSseEndpoint)]));
+        builder.Services.AddTerraScaleEndpoints([EndpointRegistration.Create<RawSseEndpoint>()]);
         var app = builder.Build();
         app.MapTerraScaleEndpoints();
         await app.StartAsync();
@@ -67,23 +66,23 @@ public sealed class SseTests
         await app.DisposeAsync();
     }
 
-    private static async Task<(string ContentType, string Body)> GetSseAsync(Type endpointType, string path)
+    private static async Task<(string ContentType, string Body)> GetSseAsync(EndpointRegistration endpoint, string path)
     {
-        var (contentType, bytes) = await RequestAsync(endpointType, path);
+        var (contentType, bytes) = await RequestAsync(endpoint, path);
         return (contentType, Encoding.UTF8.GetString(bytes));
     }
 
-    private static async Task<string> GetStringAsync(Type endpointType, string path)
+    private static async Task<string> GetStringAsync(EndpointRegistration endpoint, string path)
     {
-        var (_, bytes) = await RequestAsync(endpointType, path);
+        var (_, bytes) = await RequestAsync(endpoint, path);
         return Encoding.UTF8.GetString(bytes);
     }
 
-    private static async Task<(string ContentType, byte[] Body)> RequestAsync(Type endpointType, string path)
+    private static async Task<(string ContentType, byte[] Body)> RequestAsync(EndpointRegistration endpoint, string path)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.AddSingleton(new EndpointCatalog([endpointType]));
+        builder.Services.AddTerraScaleEndpoints([endpoint]);
         var app = builder.Build();
         app.MapTerraScaleEndpoints();
         await app.StartAsync();
@@ -108,8 +107,8 @@ public sealed class RawSseEndpoint : EndpointWithoutRequest<IResult>
 
     public override void Configure() { Get(Path); ProducesSse(); }
 
-    public override Task<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(Sse.Stream(async (sse, ct) =>
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        ValueTask.FromResult(Sse.Stream(async (sse, ct) =>
         {
             await sse.CommentAsync("ping", ct);
             await sse.SendEventAsync("greeting", ["hello world"], eventId: "1", cancellationToken: ct);
@@ -122,6 +121,6 @@ public sealed class ContextProbeEndpoint : EndpointWithoutRequest<string>
 
     public override void Configure() => Get(Path);
 
-    public override Task<string> HandleAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(HttpContext.Request.Path.ToString());
+    public override ValueTask<string> HandleAsync(CancellationToken cancellationToken) =>
+        ValueTask.FromResult(HttpContext.Request.Path.ToString());
 }

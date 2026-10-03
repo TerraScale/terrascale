@@ -1,5 +1,3 @@
-using TerraScale.Endpoints;
-
 namespace TerraScale.Endpoints.Example.Endpoints;
 
 /// <summary>FastEndpoints-style request/response endpoint.</summary>
@@ -13,8 +11,8 @@ public sealed class EchoWidgetEndpoint : Endpoint<EchoWidgetRequest, EchoWidgetR
         AllowAnonymous();
     }
 
-    public override Task<EchoWidgetResponse> HandleAsync(EchoWidgetRequest request, CancellationToken cancellationToken) =>
-        Task.FromResult(new EchoWidgetResponse(request.Name));
+    public override ValueTask<EchoWidgetResponse> HandleAsync(EchoWidgetRequest request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(new EchoWidgetResponse(request.Name));
 }
 
 public sealed record EchoWidgetRequest(string Name);

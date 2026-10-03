@@ -12,5 +12,7 @@
   <ItemGroup>
     <PackageReference Include="TUnit" />
     <ProjectReference Include="../../src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+    <!-- In-repo stand-in for the analyzer the NuGet package carries. -->
+    <ProjectReference Include="../../src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

@@ -1,3 +1,6 @@
+using System.Buffers;
+using System.IO.Pipelines;
+
 namespace TerraScale.Endpoints;
 
 /// <summary>Raw server-sent event stream entry points.</summary>
@@ -8,21 +11,22 @@ public static class Sse
     public static IResult Stream(Func<SseClient, CancellationToken, Task> handler)
     {
         ArgumentNullException.ThrowIfNull(handler);
-        return new SseResult(static response => new SseClient(response), handler);
+        return new SseResult(handler);
     }
 }
 
-/// <summary>Writes server-sent events to the active HTTP response.</summary>
+/// <summary>Writes server-sent events to the active HTTP response. Not safe for concurrent writes.</summary>
 public class SseClient
 {
     internal static readonly TimeSpan DefaultRetry = TimeSpan.FromSeconds(1);
 
-    private readonly HttpResponse response;
+    private readonly PipeWriter writer;
     private readonly StringBuilder buffer = new();
+    private readonly Encoder encoder = Encoding.UTF8.GetEncoder();
 
     internal SseClient(HttpResponse response)
     {
-        this.response = response;
+        this.writer = response.BodyWriter;
     }
 
     /// <summary>Sends one event using the standard event/id/retry/data lines and flushes it.</summary>
@@ -74,7 +78,16 @@ public class SseClient
         }
 
         buffer.Append('\n');
-        return this.WriteAsync(buffer.ToString(), cancellationToken);
+
+        // Validation finished before anything reached the pipe, so a rejected event never leaves
+        // a partial frame behind. The chunks are encoded straight into the response buffer.
+        foreach (var chunk in buffer.GetChunks())
+        {
+            this.encoder.Convert(chunk.Span, this.writer, flush: false, out _, out _);
+        }
+
+        this.encoder.Convert([], this.writer, flush: true, out _, out _);
+        return this.FlushAsync(cancellationToken);
     }
 
     /// <summary>Sends a comment line, useful for keepalive pings through proxies.</summary>
@@ -86,19 +99,22 @@ public class SseClient
             throw new ArgumentException("The SSE comment must be a single line.", nameof(text));
         }
 
-        return this.WriteAsync($": {text}\n\n", cancellationToken);
+        this.writer.Write(": "u8);
+        Encoding.UTF8.GetBytes(text, this.writer);
+        this.writer.Write("\n\n"u8);
+        return this.FlushAsync(cancellationToken);
     }
 
-    private async Task WriteAsync(string payload, CancellationToken cancellationToken)
+    private async Task FlushAsync(CancellationToken cancellationToken)
     {
-        await this.response.BodyWriter.WriteAsync(Encoding.UTF8.GetBytes(payload), cancellationToken).ConfigureAwait(false);
+        await this.writer.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static bool ContainsLineBreak(string value) => value.Contains('\n') || value.Contains('\r');
 }
 
 /// <summary>Executes a handler as a server-sent event stream response.</summary>
-internal sealed class SseResult(Func<HttpResponse, SseClient> clientFactory, Func<SseClient, CancellationToken, Task> handler) : IResult
+internal sealed class SseResult(Func<SseClient, CancellationToken, Task> handler) : IResult
 {
     public async Task ExecuteAsync(HttpContext httpContext)
     {
@@ -114,7 +130,7 @@ internal sealed class SseResult(Func<HttpResponse, SseClient> clientFactory, Fun
         }
 
         await response.StartAsync(cancellationToken).ConfigureAwait(false);
-        var client = clientFactory(response);
+        var client = new SseClient(response);
         await handler(client, cancellationToken).ConfigureAwait(false);
     }
 }
