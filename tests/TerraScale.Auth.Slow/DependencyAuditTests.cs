@@ -32,9 +32,11 @@ public sealed class DependencyAuditTests
     [Test]
     public async Task A_project_that_cannot_be_audited_fails_the_gate()
     {
-        var (exitCode, _) = await AuditAsync("""<PackageReference Include="TerraScale.Package.That.Does.Not.Exist" Version="1.0.0" />""");
+        var (exitCode, output) = await AuditAsync("""<PackageReference Include="TerraScale.Package.That.Does.Not.Exist" Version="1.0.0" />""");
 
+        // The gate's own scanner-failure diagnostic, not merely some failing exit code.
         await Assert.That(exitCode).IsEqualTo(1);
+        await Assert.That(output).Contains("NuGet audit failed for");
     }
 
     private static async Task<(int ExitCode, string Output)> AuditAsync(string references)
@@ -53,6 +55,7 @@ public sealed class DependencyAuditTests
             File.WriteAllText(Path.Combine(directory.FullName, "nuget.config"), """
                 <configuration><packageSources><clear /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>
                 """);
+            // Restore may fail (the unrestorable case); the gate itself must then report it.
             await RunAsync("dotnet", ["restore", directory.FullName], directory.FullName);
             return await RunAsync(
                 "dotnet",
@@ -67,7 +70,9 @@ public sealed class DependencyAuditTests
 
     private static async Task<(int ExitCode, string Output)> RunAsync(string file, string[] arguments, string workingDirectory)
     {
-        var start = new ProcessStartInfo(file, arguments)
+        // setsid: the command leads its own process group, so cleanup reaches every
+        // descendant even after the direct child has exited.
+        var start = new ProcessStartInfo("setsid", [file, .. arguments])
         {
             WorkingDirectory = workingDirectory,
             RedirectStandardError = true,
@@ -75,7 +80,9 @@ public sealed class DependencyAuditTests
         };
         start.Environment.Remove("CI");
         using var process = Process.Start(start)!;
-        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        // Longer than the gate's own 10-minute scanner deadline, so the gate always gets to
+        // clean up its separately grouped scanner before this harness gives up.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(12));
         var stdout = process.StandardOutput.ReadToEndAsync(deadline.Token);
         var stderr = process.StandardError.ReadToEndAsync(deadline.Token);
         try
@@ -85,14 +92,8 @@ public sealed class DependencyAuditTests
         }
         finally
         {
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch (InvalidOperationException)
-            {
-                // Already exited.
-            }
+            using var kill = Process.Start(new ProcessStartInfo("kill", ["-KILL", "--", $"-{process.Id}"]) { RedirectStandardError = true });
+            await kill!.WaitForExitAsync();
         }
 
         return (process.ExitCode, await stdout + await stderr);

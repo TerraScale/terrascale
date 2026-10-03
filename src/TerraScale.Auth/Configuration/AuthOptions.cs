@@ -9,7 +9,7 @@ namespace TerraScale.Auth.Configuration;
 public sealed class AuthConfigurationException(string message) : Exception(message);
 
 /// <summary>
-/// Validated process configuration (port of <c>crates/auth-app/src/config.rs</c>).
+/// Validated process configuration.
 /// Every setting is <c>TS_AUTH_&lt;NAME&gt;</c> or the equivalent <c>--name=value</c> argument.
 /// </summary>
 public sealed partial record AuthOptions

@@ -152,6 +152,9 @@ done
 
 # Re-read Serve right before publishing: another user or a manual `tailscale serve`
 # may have taken the port during the build. Never replace someone else's handler.
+# tailscale offers no conditional update, so a writer outside these scripts can
+# still race this check by milliseconds; launches through dev.sh are coordinated
+# by the reservation directory.
 current=$(served_ports) || { echo "could not read tailscale serve status" >&2; exit 1; }
 if grep -Fxq -- "$https_port" <<<"$current"; then
   echo "tailnet HTTPS port $https_port was taken while the server started; run again" >&2

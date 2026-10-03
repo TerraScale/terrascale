@@ -7,7 +7,7 @@ public sealed record ReadinessObservation(bool Ready, string? Region);
 
 /// <summary>
 /// Coalesces concurrent <c>/readyz</c> probes into one storage round trip, caches the result
-/// for one second and bounds each wait to two seconds (port of the Rust readiness cache).
+/// for one second and bounds each wait to two seconds.
 /// The cache only shortens repeat probes; it never turns a failed check into success.
 /// </summary>
 public sealed partial class ReadinessProbe(IStorageHealth health, TimeProvider clock, ILogger<ReadinessProbe> logger)

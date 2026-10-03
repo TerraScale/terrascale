@@ -5,6 +5,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Sentry;
 using Sentry.Extensibility;
+using Sentry.Protocol;
 using TerraScale.Auth.Configuration;
 
 namespace TerraScale.Auth.Hosting;
@@ -13,7 +14,7 @@ namespace TerraScale.Auth.Hosting;
 /// OpenTelemetry traces, metrics and logs pushed over OTLP, plus error reporting to
 /// GlitchTip through the Sentry SDK. Nothing is exported unless it is configured.
 /// </summary>
-public static class Telemetry
+public static partial class Telemetry
 {
     /// <summary>Service name reported in telemetry resources.</summary>
     public const string ServiceName = "ts-auth";
@@ -120,63 +121,65 @@ public static class Telemetry
     public static SentryEvent Scrub(SentryEvent sentryEvent)
     {
         ArgumentNullException.ThrowIfNull(sentryEvent);
-        var request = sentryEvent.Request;
-        request.Cookies = null;
-        request.QueryString = null;
-        request.Data = null;
-        request.Url = PathOnly(request.Url);
-        foreach (var header in request.Headers.Keys.Where(name => !SafeHeaders.Contains(name)).ToList())
+
+        // A brand-new event carries only allowlisted data, so nothing attached to the original
+        // by scope or application code (breadcrumbs, extras and their keys, tags, contexts,
+        // transaction, fingerprint, user, messages) can survive into the report.
+        // Sentry 6 exposes EventId and Timestamp read-only, so the rebuilt event gets a new id
+        // and a timestamp later only by the in-process delay before BeforeSend; ts-auth never
+        // uses the capture id. Debug images (local file paths) are not sent: GlitchTip does not
+        // symbolicate .NET frames, which already carry their code locations.
+        var clean = new SentryEvent
         {
-            request.Headers.Remove(header);
+            Level = sentryEvent.Level,
+            Release = sentryEvent.Release,
+            Environment = sentryEvent.Environment,
+            Platform = sentryEvent.Platform,
+            SentryExceptions = (sentryEvent.SentryExceptions ?? []).Select(ScrubException).ToList(),
+        };
+
+        clean.Request.Method = sentryEvent.Request.Method;
+        clean.Request.Url = PathOnly(sentryEvent.Request.Url);
+        foreach (var (name, value) in sentryEvent.Request.Headers.Where(header => SafeHeaders.Contains(header.Key)))
+        {
+            clean.Request.Headers[name] = value;
         }
 
-        request.Env.Clear();
-        sentryEvent.User = new SentryUser();
-        sentryEvent.ServerName = null;
-        sentryEvent.Message = null;
-        sentryEvent.Logger = null;
-        // Fingerprints are application-chosen text; grouping falls back to the stack trace.
-        sentryEvent.SetFingerprint([]);
-        foreach (var exception in sentryEvent.SentryExceptions ?? [])
-        {
-            exception.Value = null;
-            if (exception.Mechanism is { } mechanism)
-            {
-                mechanism.Description = null;
-                mechanism.HelpLink = null;
-                mechanism.Data.Clear();
-                mechanism.Meta.Clear();
-            }
-
-            ScrubFrames(exception.Stacktrace);
-        }
-
-        foreach (var thread in sentryEvent.SentryThreads ?? [])
-        {
-            thread.Name = null;
-            ScrubFrames(thread.Stacktrace);
-        }
-
-        // The event exposes no way to remove an extra; nulling drops every value.
-        foreach (var key in sentryEvent.Extra.Keys.ToList())
-        {
-            sentryEvent.SetExtra(key, null);
-        }
-
-        foreach (var key in sentryEvent.Tags.Keys.ToList())
-        {
-            sentryEvent.UnsetTag(key);
-        }
-
-        foreach (var key in sentryEvent.Contexts.Keys.ToList())
-        {
-            sentryEvent.Contexts.Remove(key);
-        }
-
-        sentryEvent.TransactionName = null;
-
-        return sentryEvent;
+        return clean;
     }
+
+    // Exception type, module and code locations only; every free-text field is dropped.
+    private static SentryException ScrubException(SentryException original)
+    {
+        var exception = new SentryException
+        {
+            Type = original.Type,
+            Module = original.Module,
+            ThreadId = original.ThreadId,
+            Stacktrace = original.Stacktrace,
+        };
+        if (original.Mechanism is { } mechanism)
+        {
+            // Type and Source are strings an event processor could set; keep only the SDK's own
+            // vocabulary: the generic and chained mechanisms, and InnerException(s)[n].
+            exception.Mechanism = new Mechanism
+            {
+                Type = mechanism.Type is "generic" or "chained" ? mechanism.Type : "generic",
+                Handled = mechanism.Handled,
+                Synthetic = mechanism.Synthetic,
+                ExceptionId = mechanism.ExceptionId,
+                ParentId = mechanism.ParentId,
+                Source = mechanism.Source is { } source && MechanismSource().IsMatch(source) ? source : null,
+                IsExceptionGroup = mechanism.IsExceptionGroup,
+            };
+        }
+
+        ScrubFrames(exception.Stacktrace);
+        return exception;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\AInnerExceptions?(\[[0-9]{1,6}\])?\z")]
+    private static partial System.Text.RegularExpressions.Regex MechanismSource();
 
     // A frame keeps its code location (function, module, file, line) and loses every
     // captured value: local variables and source context lines.

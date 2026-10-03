@@ -6,10 +6,10 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Auth;
 
-/// <summary>Composes services, middleware and endpoints (port of <c>app.rs</c>).</summary>
+/// <summary>Composes services, middleware and endpoints.</summary>
 public static class App
 {
-    /// <summary>OpenAPI document title shared with the Rust service.</summary>
+    /// <summary>OpenAPI document title; clients key on it.</summary>
     public const string ApiTitle = "TerraScale Auth API";
 
     /// <summary>

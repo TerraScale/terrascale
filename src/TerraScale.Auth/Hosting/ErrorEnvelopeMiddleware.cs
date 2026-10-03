@@ -4,7 +4,7 @@ namespace TerraScale.Auth.Hosting;
 
 /// <summary>
 /// Turns <see cref="ApiException"/> into its JSON envelope and any other unhandled exception into
-/// the generic 500 envelope, so internal details never reach the client (Rust <c>CatchPanicLayer</c>).
+/// the generic 500 envelope, so internal details never reach the client.
 /// </summary>
 public sealed partial class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorEnvelopeMiddleware> logger)
 {

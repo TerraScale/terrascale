@@ -1,5 +1,9 @@
 # Consumer identity competitive review
 
+> Historical review from 2026-09-25, written against the Rust service. The
+> findings and release gates still describe the target product; the C# port
+> (TS-424) carries them forward, and `docs/parity.md` tracks what has landed.
+
 Reviewed 2026-09-25. The target is consumer applications, especially Firebase
 Authentication, Supabase Auth, and Amazon Cognito. Clerk, Auth0, WorkOS and
 Keycloak are secondary benchmarks. Product documentation establishes what

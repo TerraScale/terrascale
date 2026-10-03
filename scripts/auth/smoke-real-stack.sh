@@ -18,7 +18,7 @@ MEMBER_URL=${MEMBER_URL:-http://127.0.0.1:8420}
 SERVICE_LISTEN=${SERVICE_LISTEN:-http://127.0.0.1:8480}
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # Override SERVICE_BINARY to smoke a built worktree/pinned checkout.
-SERVICE_BINARY=${SERVICE_BINARY:-$REPO_ROOT/target/release/auth-app}
+SERVICE_BINARY=${SERVICE_BINARY:-$REPO_ROOT/artifacts/ci/container-publish/ts-auth}
 WEBHOOK_SINK_URL=${WEBHOOK_SINK_URL:-}
 WEBHOOK_SINK_CAPTURE_FILE=${WEBHOOK_SINK_CAPTURE_FILE:-}
 FAILURES=0
@@ -63,11 +63,10 @@ fi
 # ---- 1. Boot the real service process ------------------------------------------------
 
 OP_KEY="smoke-operator-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
-METRICS_KEY="smoke-metrics-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
 if [[ ! -x "$SERVICE_BINARY" ]]; then
-    echo "Rust service binary missing: $SERVICE_BINARY"
-    echo "Set up sibling ../ts-rust at TS_RUST_REV from .forgejo/workflows/ci.yml as documented under Running in README.md, then build from the repository root:"
-    echo "  cargo build --release --locked -p auth-app"
+    echo "ts-auth executable missing: $SERVICE_BINARY"
+    echo "Build the self-contained executable from the repository root first:"
+    echo "  scripts/ci/stage-release.sh artifacts/ci/container-publish"
     exit 2
 fi
 
@@ -80,7 +79,6 @@ TS_AUTH_DATABASE="${TS_AUTH_E2E_DATABASE:-ts-auth-dev}" \
 TS_AUTH_MASTER_KEY="$(head -c 32 /dev/urandom | base64 -w0)" \
 TS_AUTH_AUDIT_SIGNING_KEY="$(head -c 32 /dev/urandom | base64 -w0)" \
 TS_AUTH_OPERATOR_KEY="$OP_KEY" \
-TS_AUTH_METRICS_KEY="$METRICS_KEY" \
 "$SERVICE_BINARY" >/tmp/ts-auth-smoke-service.log 2>&1 &
 SERVICE_PID=$!
 

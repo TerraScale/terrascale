@@ -3,7 +3,7 @@ using TerraScale.Auth.Security;
 
 namespace TerraScale.Auth.Features.Ui;
 
-/// <summary>Response headers and cookies shared by every hosted page (port of <c>security_headers</c> and the session-cookie helpers).</summary>
+/// <summary>Response headers and cookies shared by every hosted page.</summary>
 public static class BrowserSecurity
 {
     /// <summary>Creates a fresh CSP nonce for one response.</summary>

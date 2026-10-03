@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Package the binary staged by scripts/ci/stage-release.sh into the
-# distroless Containerfile image localhost/terrascale/ts-auth:<commit>, then
+# chiseled Containerfile image localhost/terrascale/ts-auth:<commit>, then
 # exercise the packaged binary and composed router without a live TerraBase:
 # /healthz reports this revision, /openapi/v1.json serves the contract, and
 # readiness fails closed.
@@ -35,7 +35,6 @@ podman run --detach --rm --name "$container" --network host \
   --env TS_AUTH_DATABASE=ci-contract-db \
   --env TS_AUTH_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
   --env TS_AUTH_OPERATOR_KEY=ci-operator \
-  --env TS_AUTH_METRICS_KEY=ci-metrics \
   "$image"
 trap 'podman stop "$container" >/dev/null 2>&1 || true' EXIT
 ready=0
@@ -49,4 +48,6 @@ curl --silent --fail "http://127.0.0.1:${port}/healthz" |
 curl --silent --fail "http://127.0.0.1:${port}/openapi/v1.json" |
   jq -e '.info.title == "TerraScale Auth API" and .paths["/healthz"] != null'
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/readyz")" = 503
+# GET /metrics was replaced by OTLP push and must not come back unannounced.
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/metrics")" = 404
 printf 'packaged and smoke-checked %s\n' "$image"

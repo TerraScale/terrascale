@@ -34,7 +34,7 @@ public static class SecuritySchemes
 public sealed record RequiresSecurity(string Scheme);
 
 /// <summary>
-/// Completes the generated OpenAPI document the way Rust's <c>complete_openapi()</c> did:
+/// Completes the generated OpenAPI document:
 /// security schemes, per-route security that matches enforcement, and a default response
 /// for operations that declare none.
 /// </summary>

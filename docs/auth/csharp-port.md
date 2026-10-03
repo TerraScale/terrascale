@@ -1,9 +1,9 @@
 # C# port (TS-424)
 
-ts-auth is moving from the Rust workspace in `crates/` to C# on .NET 10. Epic
-[TS-424](https://ku.mariogk.com) tracks the work. Until the cutover (TS-442)
-the Rust service on `main` is the behavioural source of truth, and both
-codebases live side by side on the `refactor/csharp-port` branch.
+ts-auth is a C# service on .NET 10. Epic TS-424 (ku.mariogk.com) tracks the
+port. The Rust workspace was removed in TS-442; its source in Git history
+before that change is the behavioural reference for each port stream, and
+`docs/parity.md` tracks what has landed.
 
 ## Layout
 
@@ -24,7 +24,8 @@ doubles are added through that call and exist only in the test process.
 The sibling `ts-dotnet` and `ts-libs` checkouts are project references. Locally
 they are found at `../ts-dotnet` and `../ts-libs`, or under
 `~/Projects/TerraScale/`; pass `-p:TerraScaleRoot=<dir>` to use another
-location. CI checks out the revisions pinned in `.forgejo/workflows/dotnet.yml`.
+location. CI checks out the revisions pinned in `.forgejo/workflows/ci.yml`
+into a job-owned directory outside the repository.
 
 ## Commands
 
@@ -42,6 +43,10 @@ removes only its own `tailscale serve` mapping when it stops. Put local
 settings in `.env` (gitignored); without it, throwaway Development values are used.
 
 ## Configuration changes from the Rust service
+
+The release image is the self-contained executable on the chiseled
+`runtime-deps` base (see README, CI).
+
 
 All `TS_AUTH_*` settings keep their names and defaults, with these exceptions:
 

@@ -132,24 +132,25 @@ public sealed class ConfigurationTests
     {
         private readonly Process process;
 
-        private RunningBinary(Process process, Uri address)
+        private RunningBinary(Process process)
         {
             this.process = process;
-            this.Client = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(10) };
+            this.Client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         }
 
         public HttpClient Client { get; }
 
         public static async Task<RunningBinary> StartAsync(Dictionary<string, string> settings, params string[] arguments)
         {
-            var port = FreePort();
-            settings["listen"] = $"http://127.0.0.1:{port}";
+            // Port 0: the child binds a free port itself and reports it on its startup line,
+            // so no other process can answer in its place.
+            settings["listen"] = "http://127.0.0.1:0";
             var start = new ProcessStartInfo("dotnet", [Path.Combine(AppContext.BaseDirectory, "ts-auth.dll"), .. arguments])
             {
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,
             };
-            foreach (var name in start.Environment.Keys.Where(key => key.StartsWith("TS_AUTH_", StringComparison.Ordinal) || key.StartsWith("OTEL_", StringComparison.Ordinal)).ToList())
+            foreach (var name in start.Environment.Keys.Where(key => key.StartsWith("TS_AUTH_", StringComparison.Ordinal) || key.StartsWith("OTEL_", StringComparison.Ordinal) || key.StartsWith("Logging__", StringComparison.Ordinal)).ToList())
             {
                 start.Environment.Remove(name);
             }
@@ -159,32 +160,29 @@ public sealed class ConfigurationTests
                 start.Environment[$"TS_AUTH_{key.Replace('-', '_').ToUpperInvariant()}"] = value;
             }
 
+            start.Environment["Logging__LogLevel__Microsoft.Hosting.Lifetime"] = "Information";
+            var listening = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
             var process = Process.Start(start)!;
-            process.OutputDataReceived += (_, _) => { };
+            process.OutputDataReceived += (_, line) =>
+            {
+                if (line.Data?.IndexOf("Now listening on: ", StringComparison.Ordinal) is >= 0 and var at)
+                {
+                    listening.TrySetResult(new Uri(line.Data[(at + "Now listening on: ".Length)..].Trim()));
+                }
+            };
             process.ErrorDataReceived += (_, _) => { };
+            process.Exited += (_, _) => listening.TrySetException(new InvalidOperationException("ts-auth exited before listening."));
+            process.EnableRaisingEvents = true;
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            var service = new RunningBinary(process, new Uri($"http://127.0.0.1:{port}"));
+            var service = new RunningBinary(process);
             var started = false;
             try
             {
-                for (var attempt = 0; attempt < 100 && !process.HasExited; attempt++)
-                {
-                    try
-                    {
-                        using var probe = await service.Client.GetAsync("/healthz");
-                        started = true;
-                        return service;
-                    }
-                    catch (HttpRequestException)
-                    {
-                        await Task.Delay(200);
-                    }
-                }
-
-                // Read the exit state before disposal detaches the process.
-                var exit = process.HasExited ? process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) : "still running";
-                throw new InvalidOperationException($"ts-auth did not start (exit {exit}).");
+                service.Client.BaseAddress = await listening.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                using var probe = await service.Client.GetAsync("/healthz");
+                started = true;
+                return service;
             }
             finally
             {
@@ -206,13 +204,6 @@ public sealed class ConfigurationTests
             }
 
             this.process.Dispose();
-        }
-
-        private static int FreePort()
-        {
-            using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-            listener.Start();
-            return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
         }
     }
 

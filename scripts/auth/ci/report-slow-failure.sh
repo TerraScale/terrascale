@@ -59,7 +59,8 @@ cap() {
 import sys
 limit = int(sys.argv[1])
 data = sys.stdin.buffer.read()
-sys.stdout.buffer.write(data[:limit])
+# Cut on a character boundary so the body stays valid UTF-8.
+sys.stdout.buffer.write(data[:limit].decode("utf-8", errors="ignore").encode("utf-8"))
 if len(data) > limit:
     sys.stdout.write(f"\n[truncated {len(data) - limit} bytes]\n")
 ' "$1"

@@ -30,12 +30,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Brand assets stay in one committed location; they move here at the Rust cutover (TS-442). -->
-    <EmbeddedResource Include="../../crates/auth-app/assets/admin/admin.css" LogicalName="assets/admin/admin.css" />
-    <EmbeddedResource Include="../../crates/auth-app/assets/admin/datastar.js" LogicalName="assets/admin/datastar.js" />
-    <EmbeddedResource Include="../../crates/auth-app/assets/admin/logo.svg" LogicalName="assets/admin/logo.svg" />
-    <EmbeddedResource Include="../../crates/auth-app/assets/fonts/oxanium-latin-wght-normal.woff2" LogicalName="assets/fonts/oxanium-latin-wght-normal.woff2" />
-    <EmbeddedResource Include="../../crates/auth-app/assets/fonts/jetbrains-mono-latin-wght-normal.woff2" LogicalName="assets/fonts/jetbrains-mono-latin-wght-normal.woff2" />
+    <EmbeddedResource Include="Assets/admin/admin.css" LogicalName="assets/admin/admin.css" />
+    <EmbeddedResource Include="Assets/admin/datastar.js" LogicalName="assets/admin/datastar.js" />
+    <EmbeddedResource Include="Assets/admin/logo.svg" LogicalName="assets/admin/logo.svg" />
+    <EmbeddedResource Include="Assets/fonts/oxanium-latin-wght-normal.woff2" LogicalName="assets/fonts/oxanium-latin-wght-normal.woff2" />
+    <EmbeddedResource Include="Assets/fonts/jetbrains-mono-latin-wght-normal.woff2" LogicalName="assets/fonts/jetbrains-mono-latin-wght-normal.woff2" />
   </ItemGroup>
 
   <Target Name="EnsureTsLibs" BeforeTargets="CollectPackageReferences;BeforeBuild" Condition="!Exists('$(TsLibsRoot)/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj')">

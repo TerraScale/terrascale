@@ -1,6 +1,10 @@
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+# Chiseled Ubuntu runtime dependencies for self-contained .NET apps: glibc,
+# libstdc++, OpenSSL, zlib and CA certificates, no shell or package manager.
+# Pinned by index digest; the CI build selects linux/amd64.
+FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled@sha256:dc5cd0c7d0a39b825312b4f0986d99b9adf9b6a3af69bc23cd345c27d9ed916a
 COPY artifacts/ci/container-publish/ts-auth /ts-auth
 WORKDIR /tmp
-ENV TS_AUTH_LISTEN=http://0.0.0.0:8080
+ENV TS_AUTH_LISTEN=http://0.0.0.0:8080 \
+    DOTNET_gcServer=0
 USER 1654
 ENTRYPOINT ["/ts-auth"]

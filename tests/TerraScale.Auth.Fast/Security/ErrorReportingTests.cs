@@ -32,11 +32,12 @@ public sealed class ErrorReportingTests
     private const string ContextSecret = "context-secret-5e0b3a";
     private const string StreamSecret = "stream-secret-a81f4c";
     private const string FrameSecret = "frame-secret-7c2e19";
+    private const string AlphanumericSecret = "token7c2e19secret";
 
     private static readonly string[] AllSecrets =
     [
         BearerSecret, CookieSecret, QuerySecret, FormSecret, MessageSecret, InnerSecret, UrlSecret,
-        HeaderSecret, JsonSecret, UserInfoSecret, TagSecret, ExtraSecret, BreadcrumbSecret, ContextSecret, FrameSecret, "203.0.113.7",
+        HeaderSecret, JsonSecret, UserInfoSecret, TagSecret, ExtraSecret, BreadcrumbSecret, ContextSecret, FrameSecret, AlphanumericSecret, "203.0.113.7",
         // Exception messages are withheld entirely, whatever they contain.
         "synthetic failure", "upstream rejected",
     ];
@@ -168,6 +169,7 @@ public sealed class ErrorReportingTests
                     logger.LogError("Throwing collection: {Items}", new ThrowingCollection());
                     logger.BeginScope(new ThrowingCollection())?.Dispose();
                     logger.LogError("Formatted {Elapsed:F2} ms, {{literal}}, {Missing}", 1.23456, null);
+                    logger.LogError(new LyingStackTraceException(secret), "Lying stack trace");
                 }
 #pragma warning restore CA1848, CA2254
                 return Results.Ok();
@@ -262,11 +264,18 @@ public sealed class ErrorReportingTests
     {
         public Sentry.SentryEvent? Process(Sentry.SentryEvent @event)
         {
+            @event.AddBreadcrumb($"attached directly {FrameSecret}");
+            @event.SetExtra($"https://idp.example/callback?code={FrameSecret}", "failed");
+            @event.DebugImages ??= [];
+            @event.DebugImages.Add(new Sentry.Protocol.DebugImage { Type = "pe_dotnet", CodeFile = $"/home/{FrameSecret}/app.dll" });
             foreach (var exception in @event.SentryExceptions ?? [])
             {
                 if (exception.Mechanism is { } mechanism)
                 {
                     mechanism.Description = $"mechanism {FrameSecret}";
+                    // Plausible-looking alphanumeric names must not pass either.
+                    mechanism.Type = AlphanumericSecret;
+                    mechanism.Source = $"source {FrameSecret}";
                 }
 
                 foreach (var frame in exception.Stacktrace?.Frames ?? [])
@@ -279,6 +288,12 @@ public sealed class ErrorReportingTests
 
             return @event;
         }
+    }
+
+    /// <summary>An exception whose virtual StackTrace returns a secret instead of frames.</summary>
+    private sealed class LyingStackTraceException(string secret) : Exception("message")
+    {
+        public override string StackTrace => $"password={secret}";
     }
 
     /// <summary>A collection that throws as soon as anything enumerates it.</summary>

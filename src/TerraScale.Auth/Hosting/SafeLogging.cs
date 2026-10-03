@@ -27,7 +27,7 @@ public sealed class ScrubbedException : Exception
         : base(Describe(original ?? throw new ArgumentNullException(nameof(original))), Inner(original, depth))
     {
         this.OriginalType = original is ScrubbedException scrubbed ? scrubbed.OriginalType : original.GetType().FullName ?? original.GetType().Name;
-        this.originalStackTrace = original.StackTrace;
+        this.originalStackTrace = original is ScrubbedException wrapped ? wrapped.originalStackTrace : FramesOf(original);
         this.rendered = original is ScrubbedException already ? already.rendered : Render(original, 0);
     }
 
@@ -59,6 +59,21 @@ public sealed class ScrubbedException : Exception
     public override string ToString() => this.rendered;
 
     // The wrapped chain stops at the same depth the rendering does.
+    // Frames come from the runtime's own trace data, never the virtual StackTrace property,
+    // which a custom exception could override to return its message (or to throw).
+    private static string? FramesOf(Exception exception)
+    {
+        try
+        {
+            var trace = new System.Diagnostics.StackTrace(exception, fNeedFileInfo: true);
+            return trace.FrameCount == 0 ? null : trace.ToString().TrimEnd();
+        }
+        catch (Exception unreadable) when (unreadable is not OutOfMemoryException)
+        {
+            return null;
+        }
+    }
+
     private static Exception? Inner(Exception original, int depth) =>
         original is ScrubbedException ? original.InnerException
         : original.InnerException is { } inner && depth < MaxDepth ? new ScrubbedException(inner, depth + 1)
@@ -97,7 +112,7 @@ public sealed class ScrubbedException : Exception
         }
 
         builder.AppendLine(Describe(exception));
-        if (exception.StackTrace is { } trace)
+        if ((exception is ScrubbedException wrapped ? wrapped.originalStackTrace : FramesOf(exception)) is { Length: > 0 } trace)
         {
             builder.AppendLine(trace);
         }

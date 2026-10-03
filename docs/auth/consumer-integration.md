@@ -1,5 +1,9 @@
 # Guest accounts, browser APIs and device sign-in
 
+> This document describes the integration contract that the C# port restores
+> (TS-432, TS-433, TS-437). Routes become available as each stream lands; see
+> `docs/parity.md`.
+
 All endpoints below are included in `/openapi/v1.json` and `/scalar`.
 Authentication and account storage remain on the existing GRU authority.
 

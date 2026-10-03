@@ -4,7 +4,7 @@ using System.Text;
 
 namespace TerraScale.Auth.Security;
 
-/// <summary>Random tokens, digests and constant-time comparison (port of <c>auth-security/src/tokens.rs</c>).</summary>
+/// <summary>Random tokens, digests and constant-time comparison.</summary>
 public static class Tokens
 {
     private const string Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";

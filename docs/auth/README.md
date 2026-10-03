@@ -1,26 +1,31 @@
 # ts-auth
 
-> **C# port in progress (TS-424).** The service is being ported to C# on .NET 10 on the
-> `refactor/csharp-port` branch. See [docs/csharp-port.md](docs/csharp-port.md) for the layout,
-> commands and intentional changes (OTLP replaces `GET /metrics`). The Rust service below remains
-> authoritative until the cutover.
+A hosted identity provider in the Clerk / Auth0 / WorkOS category, built on
+TerraBase. The service is written in C# on .NET 10: ASP.NET Core with every
+API declared through `TerraScale.Endpoints` (ts-libs), TerraBase native-v1
+storage through `ts-dotnet`, RazorSlices and Datastar for hosted pages, and
+TUnit and Playwright integration tests.
 
-A hosted identity provider in the Clerk / Auth0 / WorkOS category. It is a
-first-class TerraScale application: ts-auth uses `ts-rust` as its database
-contract for user, session, passkey, and OAuth grant documents.
-
-The service is written in Rust. `docs/parity.md` tracks its capabilities and
-the evidence still needed for live integrations.
+> **Port status (epic TS-424).** ts-auth was rewritten from Rust to C#, and the
+> Rust workspace has been removed (TS-442). The foundation is in place:
+> configuration and production guards, the error envelope, health and
+> readiness, OpenAPI and Scalar, the hosted-page shell, telemetry, the test
+> harness and CI. The identity features below are being ported stream by
+> stream (TS-427 to TS-441). Until a stream lands, its routes are not served.
+> [`docs/parity.md`](docs/parity.md) tracks each capability, and
+> [`docs/csharp-port.md`](docs/csharp-port.md) describes the layout, commands
+> and intentional changes. The Rust implementation remains in Git history
+> (before TS-442) as the behavioural reference.
 
 The consumer-app competitive review and remaining release gates are in
-[`docs/competitive-review.md`](docs/competitive-review.md). Guest accounts,
-verified conversion, browser-origin configuration, OAuth device authorization,
-and organization permission checks are documented in
+[`docs/competitive-review.md`](docs/competitive-review.md). The consumer
+integration contract (guest accounts, browser origins, device authorization,
+organization permission checks) is in
 [`docs/consumer-integration.md`](docs/consumer-integration.md).
 
 ## Target feature inventory
 
-| Area | Capability to verify in Rust |
+| Area | Target capability |
 | --- | --- |
 | Users | Email/password, usernames, profile + public/private metadata, blocking, soft delete, impersonation |
 | Sessions | Server-side sessions, httpOnly cookie, device list, revoke one/all, 14-day TTL |
@@ -41,6 +46,7 @@ and organization permission checks are documented in
 | Audit logs | Signed audit events in production, with query and verification APIs |
 | Billing | Stripe subscriptions: Checkout, customer portal, signature-verified webhooks, plan quotas |
 
+
 Multi-instance: one ts-auth deployment hosts many customer instances; every
 instance gets its own users, keys, orgs, and OAuth clients, isolated by
 instance-scoped keys. The public issuer and hosted UI use one global origin;
@@ -48,36 +54,42 @@ customers do not choose an authentication region. Regional ts-auth processes
 share one database, and that database is replicated to the admitted launch
 regions. Project and customer database placement remain separate choices.
 
-The HTTP app composes feature routers and OpenAPI documents from each Rust
-feature. Scalar is served at `/scalar`; the JSON contract is at
-`/openapi/v1.json`.
+
+Scalar is served at `/scalar` and the JSON contract at `/openapi/v1.json`.
+Both are generated from the endpoints the running service actually maps.
 
 ## Layout
 
 ```text
-crates/auth-app/          # Axum startup, configuration, middleware, feature routers, Datastar UI
-crates/auth-contracts/    # shared request, response, and persisted document shapes
-crates/auth-security/     # password, tokens, JWT, WebAuthn, TOTP, and secret handling
-crates/auth-store/        # TerraBase SDK-backed storage and query adapter
-scripts/                  # provisioning and real-stack smoke checks
+src/TerraScale.Auth/            # ASP.NET Core host; Features/<Area>/ endpoints, services and Razor slices; Assets/
+src/TerraScale.Auth.Contracts/  # persisted models and the {"error":{…}} envelope
+src/TerraScale.Auth.Security/   # tokens, digests and (with TS-427) password, JWT, WebAuthn and TOTP primitives
+src/TerraScale.Auth.Store/      # TerraBase native-v1 adapter on ts-dotnet (TS-428)
+tests/TerraScale.Auth.Fast/     # blocking integration suite
+tests/TerraScale.Auth.Slow/     # non-blocking integration suite
+tests/Shared/                   # harness source linked into both suites
+scripts/                        # dev loop, OpenAPI export, CI, provisioning and real-stack smoke checks
 ```
 
-The previous .NET service, tests, and development helper are retained in Git
-history; the current source tree builds only the Rust service.
-
-The service uses `ts-rust` as its TerraBase document and query contract. The
-live database implementation is still being completed, so current Rust
-verification uses local contract fixtures and explicit backend-unavailable
-responses. Persistent uploaded files, if a feature needs them, belong in
-RustFS through its S3 API; packaged fonts and static assets are embedded in
-the service binary.
+Persistent uploaded files, if a feature needs them, belong in RustFS through
+its S3 API. Packaged fonts and static assets are embedded in the executable.
 
 ## Running
 
-The build requires the sibling `../ts-rust` SDK checkout at the commit
-specified by `TS_RUST_REV` in `.forgejo/workflows/ci.yml`. Install the
-Rust 1.98.1 toolchain from `.mise.toml` with `mise install`. The service itself
-needs a TerraScale API endpoint, project API key, and database:
+The build needs the .NET 10 SDK (see `global.json`) and the sibling `ts-dotnet`
+and `ts-libs` checkouts at the revisions pinned in `.forgejo/workflows/ci.yml`.
+They are looked up at `../ts-dotnet` and `../ts-libs`, or under
+`~/Projects/TerraScale/`; pass `-p:TerraScaleRoot=<dir>` or set the
+`TerraScaleRoot` environment variable to use another location. Run local
+commands at low CPU priority:
+
+```sh
+nice -n 19 make check      # format, build (analyzers as errors), NuGet audit, OpenAPI lint, fast suite
+nice -n 19 make test-slow  # slow suite
+nice -n 19 make dev        # dotnet watch, published over HTTPS on the tailnet for this worktree
+```
+
+The service needs a TerraScale API endpoint, a project API key and a database:
 
 ```sh
 TS_AUTH_PUBLIC_ORIGIN=https://auth.terrascale.tech \
@@ -87,42 +99,38 @@ TS_AUTH_DATABASE=ts-auth \
 TS_AUTH_MASTER_KEY=$(head -c 32 /dev/urandom | base64) \
 TS_AUTH_AUDIT_SIGNING_KEY=$(head -c 32 /dev/urandom | base64) \
 TS_AUTH_OPERATOR_KEY=$(head -c 32 /dev/urandom | base64) \
-TS_AUTH_METRICS_KEY=$(head -c 32 /dev/urandom | base64) \
-mise exec -- cargo run --locked -p auth-app
+dotnet run --project src/TerraScale.Auth
 ```
 
 | Variable | Meaning |
 | --- | --- |
-| `TS_AUTH_PUBLIC_ORIGIN` | One global public origin shared by every replica (issuer URLs, email links, WebAuthn RP) |
-| `TS_AUTH_TERRASCALE_API_URL` | TerraScale API origin (default `https://api.terrascale.tech`); must be `https://api.terrascale.tech` or `https://gru.api.terrascale.tech`, or a loopback URL in Development. Non-loopback storage routes strictly to the GRU authority |
-| `TS_AUTH_TERRASCALE_API_KEY` | Project API key for TerraBase |
-| `TS_AUTH_TERRASCALE_PROJECT_ID` / `TS_AUTH_TERRASCALE_TENANT_ID` | Optional project/tenant selectors |
+| `TS_AUTH_PUBLIC_ORIGIN` | One global public origin shared by every replica (issuer URLs, email links, WebAuthn RP, OpenAPI server). Must be an origin without a path |
+| `TS_AUTH_TERRASCALE_API_URL` | TerraScale API origin (default `https://api.terrascale.tech`). Must be `https://api.terrascale.tech` or `https://gru.api.terrascale.tech`, or a loopback URL in Development |
+| `TS_AUTH_TERRASCALE_API_KEY` | Project API key for TerraBase; a bare `Bearer` prefix is stripped |
+| `TS_AUTH_TERRASCALE_PROJECT_ID` / `TS_AUTH_TERRASCALE_TENANT_ID` | Optional project and tenant selectors |
 | `TS_AUTH_DATABASE` | TerraBase database backing ts-auth |
-| `TS_AUTH_MASTER_KEY` | base64 32 bytes; encrypts recoverable secrets (TOTP seeds) |
-| `TS_AUTH_AUDIT_SIGNING_KEY` | base64 32-byte HMAC key for authentic audit-event seals (required outside Development) |
-| `TS_AUTH_AUDIT_VERIFY_KEYS` | optional semicolon-separated previous audit HMAC keys (at most 5) retained during rotation |
+| `TS_AUTH_MASTER_KEY` | Base64, 32 bytes; encrypts recoverable secrets |
+| `TS_AUTH_AUDIT_SIGNING_KEY` | Base64 32-byte HMAC key for audit-event seals (required outside Development) |
+| `TS_AUTH_AUDIT_VERIFY_KEYS` | Optional semicolon-separated previous audit keys (at most 5), kept during rotation |
 | `TS_AUTH_OPERATOR_KEY` | Bearer key that can create instances (`POST /v1/instances`) |
-| `TS_AUTH_METRICS_KEY` | Dedicated private `/metrics` scrape key sent as `X-TerraScale-Metrics-Key` (required outside Development) |
-| `TS_AUTH_LISTEN` | Listen URL (default `http://0.0.0.0:8080`) |
-| `TS_AUTH_ENVIRONMENT` | `Development` waives the audit-signing and metrics key requirements and permits a loopback TerraScale API URL |
-| `TS_AUTH_RATE_LIMIT` | Management API requests per key per 5-minute process-local window (default 1000) |
-| `TS_AUTH_STRIPE_SECRET_KEY` | Stripe secret key (billing routes 503 when unset) |
-| `TS_AUTH_STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (`whsec_...`) |
+| `TS_AUTH_LISTEN` | Plain-HTTP listen address with an explicit port (default `http://0.0.0.0:8080`) |
+| `TS_AUTH_ENVIRONMENT` | `Development` waives the audit-signing key requirement and permits a loopback TerraScale API URL |
+| `TS_AUTH_RATE_LIMIT` | Management API requests per key per window (default 1000) |
+| `TS_AUTH_STRIPE_SECRET_KEY` / `TS_AUTH_STRIPE_WEBHOOK_SECRET` | Stripe credentials |
 | `TS_AUTH_PRICE_PRO` / `TS_AUTH_PRICE_ENTERPRISE` | Stripe price ids for the plans |
 | `TS_AUTH_STRIPE_API_URL` | Stripe API origin (default `https://api.stripe.com`; test override) |
-| `TS_AUTH_SMTP_HOST` | SMTP host for real email delivery (OCI: `smtp.email.sa-saopaulo-1.oci.oraclecloud.com`); when unset, emails are only logged |
-| `TS_AUTH_SMTP_PORT` | SMTP port, default 587 (STARTTLS) |
-| `TS_AUTH_SMTP_USERNAME` | SMTP username — the OCI SMTP credential OCID, full string including the `@oci` suffix |
-| `TS_AUTH_SMTP_PASSWORD` | SMTP credential password |
-| `TS_AUTH_SMTP_FROM_ADDRESS` | Envelope-from; must be an approved sender (OCI: `noreply@terrascale.tech`) |
+| `TS_AUTH_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` | SMTP delivery; host, username, password and from address are all or nothing, port defaults to 587 |
+| `TS_AUTH_SENTRY_DSN` | GlitchTip/Sentry DSN for error reporting; a deployment secret, never committed. Off when unset |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` (or the per-signal `OTEL_EXPORTER_OTLP_*_ENDPOINT`), `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_HEADERS` | Standard OpenTelemetry settings; traces, metrics and logs are pushed over OTLP only when an endpoint is set |
 
-The four `TS_AUTH_SMTP_HOST` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` are
-all-or-nothing: setting any one without the others fails startup with the list
-of missing variables.
+`GET /metrics` and `TS_AUTH_METRICS_KEY` from the Rust service are gone:
+metrics are pushed over OTLP. Telemetry never carries exception messages,
+request header values, query strings, bodies or credentials. See
+`docs/csharp-port.md` for the exact allowlists.
 
-The management rate limit is a fixed window maintained separately by each
-service process. Replicas do not share counters, and restarting a process resets
-its counters; this is protective throttling rather than a distributed quota.
+Every setting can also be passed as `--name=value` (for example
+`--public-origin=https://…`). Configuration errors name the setting, never its
+value, and stop startup with exit code 2.
 
 ### Self-service authentication setup
 
@@ -209,62 +217,6 @@ Organization-scoped directories affect membership only, and an admin ban
 remains an independent denial. Reactivation can make an existing, unexpired
 session usable again; deactivation does not itself revoke sessions.
 
-### Repairing a stranded SCIM userName claim
-
-A directory-scoped SCIM rename or delete that fails after reserving a new
-`userName` can leave the old or new name unavailable. Repair the claim through
-the GRU storage authority only after placing that directory behind an
-exclusive write fence on every auth replica and draining in-flight SCIM
-requests. Pausing one upstream sync client is insufficient if another caller
-can still write. A directory already in `Deleting` or `Deleted` status cannot
-accept new SCIM writes, but do not start directory deletion solely to repair a
-name. If an exclusive fence is unavailable, retain the claim.
-
-For the affected directory and name, compute the claim key as
-`{directory.id}:{trimmed-lowercase-userName}` (the service's
-`users::normalize_email` rule). Its document ID in `uniques` is
-`scim-user-name:` followed by the lowercase SHA-256 hex digest of that key.
-Read the claim with its ETag and check `ownerType == "scim-user-name"`. Its
-`ownerId` must be the expected `scim_user_links` ID,
-`{directory.id}:{user.id}`. Inspect the current link and all links in that
-directory: retain the claim if any link still uses that normalized name,
-including an inactive link. For a link whose profile has not been initialized,
-check the linked user's email as the effective `userName` before deciding.
-Retain it as well if ownership, link state, or an in-flight operation cannot
-be established unambiguously. Only for a proven unused claim with the expected
-owner, delete that exact `uniques` document using the ETag as an `If-Match`
-condition (the store's `compare_and_delete` operation). A failed conditional
-delete means the state changed; reread and reassess rather than retrying an
-unconditional delete. Verify the final claim and links before lifting the
-write fence.
-
-### Repairing a stranded SCIM cleanup owner
-
-If SCIM User DELETE or directory deletion fails after taking a cleanup owner,
-the `scim_user_links` row can remain with `deleting: true`,
-`cleanupComplete: false`, and a non-null `cleanupOwner`. A retry returns a
-conflict while that owner is present. These are the serialized
-`ScimUserLink.cleanup_owner` and `cleanup_complete` fields; `incarnationId`
-below is `incarnation_id` in Rust. Fence the affected directory against
-writes on every auth replica, drain in-flight SCIM requests, and confirm the
-logged `cleanupOwner` request has stopped. Read the link and its ETag from the
-GRU authority. Verify its `instanceId`, `directoryId`, `userId`, and
-`incarnationId` against the failed operation; a new incarnation or a completed
-link must never be taken over. Reconcile the owning directory's membership
-claim and membership, group members, and local `userName` claim against the
-current link and any other active directory authority. Retain each child whose
-ownership or write outcome is uncertain.
-
-Only after the fence and child checks, clear `cleanupOwner` with a conditional
-write against that exact link ETag, preserving `deleting: true`,
-`cleanupComplete: false`, and `incarnationId`. If the conditional write loses,
-reread and reassess; do not force the owner to null. Retry the original SCIM
-User DELETE or directory deletion so the service finishes cleanup and marks
-the retained link `cleanupComplete: true`. Verify that terminal link and its
-children before lifting the fence. If the original owner may still write or
-the incarnation cannot be proven, leave the owner in place and escalate
-instead of starting another finisher.
-
 ### Email delivery (OCI)
 
 Without `TS_AUTH_SMTP_*` configuration ts-auth uses the logging sender —
@@ -288,34 +240,29 @@ this repo):
 
 ### Local development against a real TerraBase member
 
-The Rust service uses TerraBase's authenticated document API. Point
-`TS_AUTH_TERRASCALE_API_URL` at an already running compatible local development
-member with the document API and project-key gateway enabled, then set
-`TS_AUTH_ENVIRONMENT=Development`. This repository does not start or embed a
-TerraBase member.
-
-Rust unit and router tests run with `mise exec -- cargo test --workspace
---all-targets --locked`.
-`scripts/smoke-real-stack.sh` is a future real-backend check for a built Rust
-service and separately running compatible member. It exits with a precondition
+Point `TS_AUTH_TERRASCALE_API_URL` at an already running compatible local
+member and set `TS_AUTH_ENVIRONMENT=Development`. This repository does not
+start or embed a TerraBase member. `/readyz` fails closed (503) until the
+native-v1 store (TS-428) provides a real storage probe.
+`scripts/smoke-real-stack.sh` is a future real-backend check for the published
+executable against a separately running member; it exits with a precondition
 error while no member is reachable.
 
 ## Provisioning the global auth dataset
 
-The Rust service starts with a newly provisioned dataset; it does not migrate
-legacy identity or SCIM link documents.
-
-The platform operator provisions ts-auth through the same database contract
-used by customer projects — see `scripts/provision.sh`:
+The C# service starts with a newly provisioned dataset; it does not migrate
+documents written by the Rust service. Native-v1 collection and schema
+provisioning moves into the service with the store (TS-428);
+`scripts/provision.sh` documents the placement steps:
 
 1. Create a platform `ts-auth` project with `GRU,SFO,FRA` placement and issue
    its project API key. Set `TS_AUTH_TERRASCALE_PROJECT_ID` and
    `TS_AUTH_TERRASCALE_API_KEY` for the provisioning process.
 2. Create the `ts-auth` database with placement and residency lock
-   `GRU,SFO,FRA`, using the GRU regional data endpoint. Provisioning is an internal
-   operator action; the customer never selects a region for authentication.
+   `GRU,SFO,FRA`, using the GRU regional data endpoint. Provisioning is an
+   internal operator action; customers never select a region for authentication.
 3. Deploy the same image in each admitted region behind
-   `auth.terrascale.tech`, using the same database, public origin, master key,
+   `auth.terrascale.tech`, with the same database, public origin, master key,
    audit signing and verification keys, and operator key on every replica.
 
 All auth storage reads and writes use the GRU data-plane authority. This is
@@ -328,7 +275,13 @@ edge endpoint may route requests to any healthy auth process, but every such
 process still uses that one storage authority. `scripts/provision.sh` records
 the global placement and creates the database through the regional data API.
 
-## API surface (per instance slug `S`)
+## API surface
+
+Currently served: `GET /healthz`, `GET /readyz`, `GET /openapi/v1.json`,
+`GET /scalar`, `GET /admin/{asset}` and `GET /fonts/{asset}`. The target
+surface below is the contract the port streams restore (from the Rust service);
+each stream keeps its paths, methods and operation ids.
+
 
 - Hosted UI: `/ui/S/sign-in`, `/sign-up`, `/account`, `/account/sessions`,
   `/forgot-password`, `/reset-password`, `/verify-email`, `/magic-link`,
@@ -384,32 +337,26 @@ rotation.
 
 ## CI
 
-`.forgejo/workflows/ci.yml` checks out a pinned `ts-rust` revision and runs
-three jobs in parallel. `lint` checks formatting, runs Clippy with warnings
-denied, and runs a locked dependency advisory audit. `fast` runs the Cargo
-tests and the explicit Chromium admin and device-authorization tests.
-`release` builds `auth-app` as a static x86_64 musl executable with the job
-image's musl toolchain (`scripts/ci/stage-release.sh`), packages it into the
-distroless `Containerfile`, and smoke-checks `/healthz`, `/openapi/v1.json`
-and fail-closed `/readyz` (`scripts/ci/package-image.sh`). Each job keeps
-compiled dependencies in its own Cargo target directory on the runner's
-shared `/cache` and compiles through the kache store at `/cache/kache`, which
-every TerraScale Rust job shares, so units an earlier job built are restored
-instead of recompiled (`scripts/ci/cargo-cache.sh`). On pushes to `main`,
-`release` instead builds the binary from a clean Cargo cache without kache
-and stages the smoke-checked image in `git.terrascale.tech/<owner>/ts-auth-ci`.
-Its registry manifest digest is passed to `publish` as a job output
-(`scripts/ci/transfer-image.sh`), so jobs can run on different machines and
-a publish retry within 30 days pulls the same image. Once all three jobs pass, `publish`
-pushes it as `git.terrascale.tech/<owner>/ts-auth:<commit>`. Each transfer
-uses a private temporary registry auth file and removes it on exit. The daily
-`registry-retention.yml` workflow removes staging candidates older than 30 days;
-retry the release job too when that retention window has elapsed. Published
-release tags are retained.
+`.forgejo/workflows/ci.yml` runs two jobs in parallel.
+- **`fast`** is the required gate. It checks out the pinned ts-dotnet and
+  ts-libs revisions into a job-owned directory, then runs a locked restore,
+  `dotnet format --verify-no-changes`, a Release build with analyzers as
+  errors, the NuGet vulnerability audit, the Redocly lint of the served OpenAPI
+  document, the image-transfer guard tests and the fast integration suite,
+  including Chromium.
+- **`release`** publishes a self-contained single-file linux-x64 executable
+  (`scripts/ci/stage-release.sh`), packages it into the chiseled
+  `runtime-deps` image (`Containerfile`, pinned by digest), and smoke-checks
+  `/healthz` (revision), `/openapi/v1.json`, fail-closed `/readyz` and the
+  absence of `/metrics` (`scripts/ci/package-image.sh`).
 
-The locked dependency audit ignores only `RUSTSEC-2023-0071` for `rsa`:
-ts-auth currently uses RSA public-key signature verification for JWT,
-WebAuthn, and SAML, while the advisory concerns private-key operations. The
-advisory has no fixed release. Reevaluate and remove this exception before
-adding any RSA private-key signing or decryption path; every other vulnerability
-advisory remains a CI failure.
+On pushes to `main`, `release` stages the smoke-checked image in
+`git.terrascale.tech/<owner>/ts-auth-ci` and passes its registry manifest
+digest to `publish` (`scripts/ci/transfer-image.sh`). Once both jobs pass,
+`publish` tags that exact image as `git.terrascale.tech/<owner>/ts-auth:<commit>`.
+The daily `registry-retention.yml` workflow removes staging candidates older
+than 30 days.
+
+`.forgejo/workflows/slow.yml` runs the slow suite after pushes, nightly and on
+demand. It never blocks merges or releases. A failure files or updates the
+open "Slow test suite failed" Forgejo issue with `fj`, redacting the log first.

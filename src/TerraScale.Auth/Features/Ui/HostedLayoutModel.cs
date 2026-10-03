@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace TerraScale.Auth.Features.Ui;
 
 /// <summary>
-/// Model for the shared hosted-page card (port of <c>features/ui/mod.rs::page</c>).
+/// Model for the shared hosted-page card.
 /// Razor encodes every value; the accent colour is additionally restricted to <c>#rrggbb</c>
 /// because it is interpolated into CSS.
 /// </summary>

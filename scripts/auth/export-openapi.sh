@@ -10,8 +10,9 @@ output=$2
 
 log=$(mktemp)
 # Only the throwaway settings below apply: inherited TS_AUTH_*, OTEL_* and
-# SENTRY_* values could fail validation or send this run's telemetry somewhere.
-inherited=$(env | sed -nE 's/^((TS_AUTH|OTEL|SENTRY)_[A-Za-z0-9_]*)=.*/-u \1/p' | tr '\n' ' ')
+# SENTRY_* values could fail validation or send this run's telemetry somewhere,
+# and inherited Logging__* filters could hide the startup line read below.
+inherited=$(env | sed -nE 's/^((TS_AUTH|OTEL|SENTRY)_[A-Za-z0-9_]*|Logging__[A-Za-z0-9_.]*)=.*/-u \1/p' | tr '\n' ' ')
 # Port 0: the kernel picks a free port at bind time, and the address is read
 # back from this process's own startup log, so no other listener can answer.
 # shellcheck disable=SC2086 # $inherited is a list of separate -u options
@@ -24,7 +25,8 @@ env $inherited \
   TS_AUTH_MASTER_KEY="$(head -c 32 /dev/urandom | base64)" \
   TS_AUTH_OPERATOR_KEY="openapi-export" \
   TS_AUTH_ENVIRONMENT="Development" \
-  "Logging__LogLevel__Microsoft.Hosting.Lifetime=Information" "Logging__Console__FormatterName=simple" \
+  "Logging__LogLevel__Microsoft.Hosting.Lifetime=Information" \
+  "Logging__Console__LogLevel__Microsoft.Hosting.Lifetime=Information" "Logging__Console__FormatterName=simple" \
   dotnet "$dll" >"$log" 2>&1 &
 pid=$!
 trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -f "$log"' EXIT
@@ -38,5 +40,5 @@ for _ in $(seq 1 150); do
 done
 [[ -n $address ]] || { cat "$log" >&2; echo "Timed out waiting for ts-auth to listen" >&2; exit 1; }
 
-curl -fsS --connect-timeout 2 --max-time 10 "$address/openapi/v1.json" -o "$output"
+curl -fsS --noproxy '*' --connect-timeout 2 --max-time 10 "$address/openapi/v1.json" -o "$output"
 echo "Exported OpenAPI to $output"
