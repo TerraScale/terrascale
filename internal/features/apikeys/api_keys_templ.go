@@ -270,7 +270,7 @@ func credentialActions(d pageData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if d.CanManage {
-			templ_7745c5c3_Err = createCredentialAction(d.CanManage, d.Kind).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = createCredentialAction(d.Kind).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -279,10 +279,7 @@ func credentialActions(d pageData) templ.Component {
 	})
 }
 
-func createCredentialAction(canManage bool, kind string) templ.Component {
-	if !canManage {
-		return nil
-	}
+func createCredentialAction(kind string) templ.Component {
 	if kind == "m2m" {
 		return ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-m2m", Label: "Create machine credential", Icon: credentialIcon("m2m"), Variant: "primary"})
 	}
@@ -317,7 +314,7 @@ func apiKeysFilters(d pageData) templ.Component {
 		var templ_7745c5c3_Var11 string
 		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.ResolveAttributeValue(d.Kind)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 99, Col: 49}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 96, Col: 49}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var11)
 		if templ_7745c5c3_Err != nil {
@@ -330,7 +327,7 @@ func apiKeysFilters(d pageData) templ.Component {
 		var templ_7745c5c3_Var12 string
 		templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.ResolveAttributeValue(d.Search)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 100, Col: 77}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 97, Col: 77}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var12)
 		if templ_7745c5c3_Err != nil {
@@ -368,7 +365,7 @@ func apiKeysFilters(d pageData) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.ResolveAttributeValue(db.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 109, Col: 25}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 106, Col: 25}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var13)
 			if templ_7745c5c3_Err != nil {
@@ -391,7 +388,7 @@ func apiKeysFilters(d pageData) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(db.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 109, Col: 73}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 106, Col: 73}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -460,7 +457,7 @@ func createCredential(page core.Page, d pageData, kind, action, title, descripti
 			var templ_7745c5c3_Var17 templ.SafeURL
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinURLErrs(d.with("/api/v1/dashboard/credentials/" + kind))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 121, Col: 78}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 118, Col: 78}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -473,7 +470,7 @@ func createCredential(page core.Page, d pageData, kind, action, title, descripti
 			var templ_7745c5c3_Var18 string
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.ResolveAttributeValue(page.CSRFToken)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 122, Col: 59}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 119, Col: 59}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var18)
 			if templ_7745c5c3_Err != nil {
@@ -508,7 +505,7 @@ func createCredential(page core.Page, d pageData, kind, action, title, descripti
 				var templ_7745c5c3_Var20 string
 				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.ResolveAttributeValue(kind + "-name")
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 127, Col: 47}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 124, Col: 47}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var20)
 				if templ_7745c5c3_Err != nil {
@@ -521,7 +518,7 @@ func createCredential(page core.Page, d pageData, kind, action, title, descripti
 				var templ_7745c5c3_Var21 string
 				templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.ResolveAttributeValue(d.draftFor(kind).Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 127, Col: 91}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 124, Col: 91}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var21)
 				if templ_7745c5c3_Err != nil {
@@ -556,7 +553,7 @@ func createCredential(page core.Page, d pageData, kind, action, title, descripti
 				var templ_7745c5c3_Var23 string
 				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.ResolveAttributeValue(kind + "-scopes")
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 130, Col: 49}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 127, Col: 49}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var23)
 				if templ_7745c5c3_Err != nil {
@@ -569,7 +566,7 @@ func createCredential(page core.Page, d pageData, kind, action, title, descripti
 				var templ_7745c5c3_Var24 string
 				templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.ResolveAttributeValue(cmp.Or(d.draftFor(kind).Scopes, scopes))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 130, Col: 113}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 127, Col: 113}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var24)
 				if templ_7745c5c3_Err != nil {
@@ -604,7 +601,7 @@ func createCredential(page core.Page, d pageData, kind, action, title, descripti
 				var templ_7745c5c3_Var26 string
 				templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.ResolveAttributeValue(kind + "-database")
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 133, Col: 53}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 130, Col: 53}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var26)
 				if templ_7745c5c3_Err != nil {
@@ -622,7 +619,7 @@ func createCredential(page core.Page, d pageData, kind, action, title, descripti
 					var templ_7745c5c3_Var27 string
 					templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.ResolveAttributeValue(db.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 136, Col: 27}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 133, Col: 27}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var27)
 					if templ_7745c5c3_Err != nil {
@@ -645,7 +642,7 @@ func createCredential(page core.Page, d pageData, kind, action, title, descripti
 					var templ_7745c5c3_Var28 string
 					templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(db.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 136, Col: 90}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 133, Col: 90}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 					if templ_7745c5c3_Err != nil {
@@ -685,7 +682,7 @@ func createCredential(page core.Page, d pageData, kind, action, title, descripti
 				var templ_7745c5c3_Var30 string
 				templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(action)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 141, Col: 64}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 138, Col: 64}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 				if templ_7745c5c3_Err != nil {
@@ -750,7 +747,7 @@ func credentialRow(page core.Page, filters listFilters, canManage bool, key keyV
 		var templ_7745c5c3_Var32 string
 		templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(key.Name)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 156, Col: 34}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 153, Col: 34}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 		if templ_7745c5c3_Err != nil {
@@ -763,7 +760,7 @@ func credentialRow(page core.Page, filters listFilters, canManage bool, key keyV
 		var templ_7745c5c3_Var33 string
 		templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.ResolveAttributeValue(key.Type.Tone)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 158, Col: 81}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 155, Col: 81}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var33)
 		if templ_7745c5c3_Err != nil {
@@ -780,7 +777,7 @@ func credentialRow(page core.Page, filters listFilters, canManage bool, key keyV
 		var templ_7745c5c3_Var34 string
 		templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(key.Type.Label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 160, Col: 20}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 157, Col: 20}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 		if templ_7745c5c3_Err != nil {
@@ -793,7 +790,7 @@ func credentialRow(page core.Page, filters listFilters, canManage bool, key keyV
 		var templ_7745c5c3_Var35 string
 		templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinStringErrs(key.Prefix)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 163, Col: 24}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 160, Col: 24}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 		if templ_7745c5c3_Err != nil {
@@ -806,7 +803,7 @@ func credentialRow(page core.Page, filters listFilters, canManage bool, key keyV
 		var templ_7745c5c3_Var36 string
 		templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(key.LastFour)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 163, Col: 43}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 160, Col: 43}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 		if templ_7745c5c3_Err != nil {
@@ -830,7 +827,7 @@ func credentialRow(page core.Page, filters listFilters, canManage bool, key keyV
 			var templ_7745c5c3_Var37 string
 			templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.JoinStringErrs(key.DatabaseName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 173, Col: 22}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 170, Col: 22}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var37))
 			if templ_7745c5c3_Err != nil {
@@ -956,7 +953,7 @@ func credentialAction(page core.Page, filters listFilters, key keyView, action, 
 			var templ_7745c5c3_Var40 templ.SafeURL
 			templ_7745c5c3_Var40, templ_7745c5c3_Err = templ.JoinURLErrs(filters.with("/api/v1/dashboard/credentials/" + action))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 206, Col: 86}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 203, Col: 86}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var40))
 			if templ_7745c5c3_Err != nil {
@@ -969,7 +966,7 @@ func credentialAction(page core.Page, filters listFilters, key keyView, action, 
 			var templ_7745c5c3_Var41 string
 			templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.ResolveAttributeValue(page.CSRFToken)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 207, Col: 59}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 204, Col: 59}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var41)
 			if templ_7745c5c3_Err != nil {
@@ -982,7 +979,7 @@ func credentialAction(page core.Page, filters listFilters, key keyView, action, 
 			var templ_7745c5c3_Var42 string
 			templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.ResolveAttributeValue(key.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 208, Col: 51}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 205, Col: 51}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var42)
 			if templ_7745c5c3_Err != nil {
@@ -1029,7 +1026,7 @@ func credentialAction(page core.Page, filters listFilters, key keyView, action, 
 				var templ_7745c5c3_Var46 string
 				templ_7745c5c3_Var46, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 210, Col: 73}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/apikeys/api_keys.templ`, Line: 207, Col: 73}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var46))
 				if templ_7745c5c3_Err != nil {

@@ -80,14 +80,11 @@ templ apiKeysContent(page core.Page, d pageData) {
 templ credentialActions(d pageData) {
 	@apiKeysFilters(d)
 	if d.CanManage {
-		@createCredentialAction(d.CanManage, d.Kind)
+		@createCredentialAction(d.Kind)
 	}
 }
 
-func createCredentialAction(canManage bool, kind string) templ.Component {
-	if !canManage {
-		return nil
-	}
+func createCredentialAction(kind string) templ.Component {
 	if kind == "m2m" {
 		return ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-m2m", Label: "Create machine credential", Icon: credentialIcon("m2m"), Variant: "primary"})
 	}

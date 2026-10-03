@@ -61,6 +61,8 @@ func assertAPIKeyHeaderLayout(t *testing.T, page playwright.Page) {
 			problems.push('horizontal page overflow');
 		const bounds = header.getBoundingClientRect();
 		const boxes = [...controls, ...form.querySelectorAll('a'), create].map(el => el.getBoundingClientRect());
+		if (innerWidth >= 1440 && [240, 160, 160].some((width, i) => Math.abs(boxes[i].width - width) > 1))
+			problems.push('desktop filter field widths changed');
 		for (const box of boxes) {
 			if (box.width <= 0 || box.left < bounds.left - 1 || box.right > bounds.right + 1)
 				problems.push('control escapes the list header');
