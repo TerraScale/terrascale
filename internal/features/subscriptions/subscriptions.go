@@ -47,7 +47,6 @@ type subscriptionsPage struct {
 	CanManage        bool
 	ShowPortal       bool
 	Change           upcomingPlanChange
-	Demo             bool
 	PaymentNotice    string
 	Interval         string
 	AnnualSavings    int
@@ -109,7 +108,6 @@ func Mount(mux *http.ServeMux, deps core.Deps, billing *payments.Stripe) {
 			interval = intervalAnnual
 		}
 		data := billingPage(deps.Store, principal, view, interval)
-		data.Demo = deps.Demo
 		data.PaymentNotice = paymentNotice(r.URL.Query().Get("payment"))
 		if err := deps.Render.Page(w, r, core.Page{
 			Layout: "shell", Title: "Billing | TerraScale", Principal: principal,
