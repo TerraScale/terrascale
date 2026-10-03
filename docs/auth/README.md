@@ -1,5 +1,10 @@
 # ts-auth
 
+> **C# port in progress (TS-424).** The service is being ported to C# on .NET 10 on the
+> `refactor/csharp-port` branch. See [docs/csharp-port.md](docs/csharp-port.md) for the layout,
+> commands and intentional changes (OTLP replaces `GET /metrics`). The Rust service below remains
+> authoritative until the cutover.
+
 A hosted identity provider in the Clerk / Auth0 / WorkOS category. It is a
 first-class TerraScale application: ts-auth uses `ts-rust` as its database
 contract for user, session, passkey, and OAuth grant documents.

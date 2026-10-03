@@ -1,0 +1,7 @@
+# OpenAPI lint for the contract served at /openapi/v1.json (make openapi-check).
+extends:
+  - recommended
+rules:
+  # Probes (/healthz, /readyz) have no client-error outcome; every endpoint that
+  # can reject input declares its 4XX responses explicitly.
+  operation-4xx-response: off

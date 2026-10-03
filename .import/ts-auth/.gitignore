@@ -2,3 +2,7 @@ target/
 artifacts/
 .env
 .claude/worktrees/
+bin/
+obj/
+*.user
+TestResults/

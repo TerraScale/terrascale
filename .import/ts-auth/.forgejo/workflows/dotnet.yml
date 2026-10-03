@@ -1,0 +1,67 @@
+name: ts-auth .NET CI
+
+# Required gate for the C# port (TS-424): format, build with analyzers as
+# errors, NuGet audit, OpenAPI lint and the fast suite. The Rust workflow
+# (ci.yml) keeps gating main until the cutover (TS-442). The slow suite runs
+# separately in slow.yml and never blocks.
+
+on:
+  push:
+    branches: [main, refactor/csharp-port]
+  pull_request:
+    branches: [main, refactor/csharp-port]
+  workflow_dispatch:
+
+concurrency:
+  group: ts-auth-dotnet-${{ forgejo.ref }}
+  cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
+
+env:
+  CI: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  TS_DOTNET_REV: 20862d391a8c0e746af010b289a1a6dc7ae7867b
+  TS_LIBS_REV: 55b260872f8d4fb1cfa0975576632b4e022e4c91
+
+jobs:
+  fast:
+    name: Build, lint and fast-test ts-auth (.NET)
+    runs-on: terrascale-builder
+    timeout-minutes: 45
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned ts-dotnet and ts-libs revisions
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/ci/checkout-dotnet-deps.sh
+
+      - name: Restore with locked dependencies
+        run: dotnet restore TerraScale.Auth.slnx --locked-mode
+
+      - name: Check formatting
+        run: dotnet format TerraScale.Auth.slnx --verify-no-changes --no-restore
+
+      - name: Build Release with analyzers as errors
+        run: make build CONFIGURATION=Release TS_AUTH_REVISION="${FORGEJO_SHA:0:12}"
+        env:
+          FORGEJO_SHA: ${{ forgejo.sha }}
+
+      - name: Fail closed on vulnerable NuGet packages
+        run: make audit
+
+      - name: Lint the served OpenAPI contract
+        run: make openapi-check CONFIGURATION=Release
+
+      - name: Fast integration suite
+        run: |
+          set -euo pipefail
+          TS_AUTH_CHROMIUM_PATH="$(node -p 'require("playwright").chromium.executablePath()')"
+          export TS_AUTH_CHROMIUM_PATH
+          make test-fast CONFIGURATION=Release
