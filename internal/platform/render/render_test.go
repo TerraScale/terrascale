@@ -4,9 +4,11 @@ import (
 	"maps"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/ui"
 )
 
 func TestShellReturnURLIsTheCurrentSection(t *testing.T) {
@@ -69,5 +71,16 @@ func TestShellNavigationNamesItsCounts(t *testing.T) {
 	}
 	if len(want) > 0 {
 		t.Errorf("navigation lacks %v", slices.Collect(maps.Keys(want)))
+	}
+}
+
+func TestContentSecurityPolicyReportURI(t *testing.T) {
+	features := &ui.PageFeatures{}
+	if policy := contentSecurityPolicy("n", features, ""); strings.Contains(policy, "report-") {
+		t.Fatalf("policy reports without a URL: %s", policy)
+	}
+	url := "https://glitchtip.example/api/1/security/?glitchtip_key=abc"
+	if policy := contentSecurityPolicy("n", features, url); !strings.HasSuffix(policy, "; report-uri "+url) {
+		t.Fatalf("policy=%s", policy)
 	}
 }

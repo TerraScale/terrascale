@@ -35,6 +35,7 @@ import (
 	"terrascale.tech/dashboard/internal/platform/config"
 	"terrascale.tech/dashboard/internal/platform/csrf"
 	"terrascale.tech/dashboard/internal/platform/datastar"
+	"terrascale.tech/dashboard/internal/platform/errortracking"
 	"terrascale.tech/dashboard/internal/platform/mcpserver"
 	"terrascale.tech/dashboard/internal/platform/render"
 	"terrascale.tech/dashboard/internal/platform/session"
@@ -72,7 +73,7 @@ func New(cfg config.Config) (*Application, error) {
 		}
 		notices = client
 	}
-	renderer := render.New(store, guard, notices, cfg.Dev)
+	renderer := render.New(store, guard, notices, cfg.Dev).ReportCSPViolationsTo(cfg.CSPReportURL)
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: cfg.Demo, Tools: core.NewTools(store),
@@ -119,7 +120,11 @@ func New(cfg config.Config) (*Application, error) {
 	root.Handle(core.MCPPath, mcpserver.New(store, deps.Tools))
 	root.Handle("/api/v1/dashboard/cli/", deviceAuthorization.PublicHandler())
 	root.Handle("/", invalidatePrefetch(dropForeignMessages(guard.Protect(mux))))
-	return &Application{Handler: compress(securityHeaders(cfg.SecureCookies, root))}, nil
+	var handler http.Handler = securityHeaders(cfg.SecureCookies, root)
+	if cfg.SentryDSN != "" {
+		handler = errortracking.Middleware(handler)
+	}
+	return &Application{Handler: compress(handler)}, nil
 }
 
 // securityHeaders sets the headers every response shares; rendered pages add

@@ -187,6 +187,30 @@ two lines; "View status" opens the full update. Set
 to disable the banner. The summary is fetched server-side with a two-second
 timeout and cached for 30 seconds; when it cannot be read, no banner is shown.
 
+### Error tracking
+
+Errors go to GlitchTip through the official Sentry Go SDK
+(`internal/platform/errortracking`). With `SENTRY_DSN` set, the dashboard
+reports handler panics (then lets `net/http` abort the response as before),
+every 5xx response grouped by its route, and every `slog` record at error
+level, with an `error` attribute as the exception. Events carry the build
+version as the release and `SENTRY_ENVIRONMENT` as the environment, which
+defaults to `production` on Fly.io and `development` elsewhere. Request
+bodies, query strings, cookies and the signed-in user are never sent (the
+CLI approval URL carries its `user_code` in the query, also nested in
+`returnTo`), and request headers keep their values only for `Accept`,
+`Content-Type`, `Content-Length`, `Datastar-Request` and `User-Agent`;
+`Referer` would repeat such a URL. Without `SENTRY_DSN`, nothing is
+reported.
+
+`DASHBOARD_CSP_REPORT_URL` adds a `report-uri` directive to every page's
+Content-Security-Policy so browsers post violations to GlitchTip's security
+endpoint. There is no `report-to` directive: GlitchTip only accepts the
+legacy `application/csp-report` body, not the Reporting API's.
+
+`fly.toml` and `fly.preview.toml` set both; previews report as the `preview`
+environment.
+
 The e2e workflow runs lint and the full Go browser and SDK suite on every pull
 request and push to `main`. The production and preview workflows build the
 image on Fly's remote builder (`fly deploy --remote-only`), so they need no Go

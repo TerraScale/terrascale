@@ -1,5 +1,13 @@
 /* Team page: invite forms, member search, and inline role editing. */
 
+.ts-access-toolbar {
+  align-items: center;
+}
+
+.ts-access-toolbar > .ts-btn {
+  margin-left: auto;
+}
+
 .ts-access-invite {
   display: flex;
   flex-wrap: wrap;

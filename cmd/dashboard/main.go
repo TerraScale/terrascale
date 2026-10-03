@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"terrascale.tech/dashboard/internal/app"
+	"terrascale.tech/dashboard/internal/platform/buildinfo"
 	"terrascale.tech/dashboard/internal/platform/config"
+	"terrascale.tech/dashboard/internal/platform/errortracking"
 )
 
 // shutdownTimeout bounds how long in-flight requests may finish after a
@@ -21,16 +23,33 @@ import (
 const shutdownTimeout = 10 * time.Second
 
 func main() {
-	if err := run(); err != nil {
+	flush := func() {}
+	err := run(&flush)
+	if err != nil {
 		slog.Error("dashboard stopped", "error", err)
+	}
+	flush()
+	if err != nil {
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(flush *func()) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
+	}
+	*flush, err = errortracking.Init(errortracking.Options{
+		DSN: cfg.SentryDSN, Release: buildinfo.Version(), Environment: cfg.SentryEnvironment,
+	})
+	if err != nil {
+		return err
+	}
+	if cfg.SentryDSN != "" {
+		// Wrap a new handler: slog's default one writes through the log
+		// package, which SetDefault points back at slog, so wrapping it
+		// would deadlock on the first record.
+		slog.SetDefault(slog.New(errortracking.LogHandler(slog.NewTextHandler(os.Stderr, nil))))
 	}
 	application, err := app.New(cfg)
 	if err != nil {

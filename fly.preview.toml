@@ -5,6 +5,10 @@ primary_region = "gru"
 [env]
   DASHBOARD_ADDR = ":8080"
   TS_DASHBOARD_PRODUCTION_DEMO = "1"
+  # GlitchTip project; the DSN key only permits sending events.
+  SENTRY_DSN = "https://116f3420d22b471e905488aecd859878@glitchtip.mariogk.com/1"
+  SENTRY_ENVIRONMENT = "preview"
+  DASHBOARD_CSP_REPORT_URL = "https://glitchtip.mariogk.com/api/1/security/?glitchtip_key=116f3420d22b471e905488aecd859878"
 
 [http_service]
   internal_port = 8080
