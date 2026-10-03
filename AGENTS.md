@@ -88,6 +88,8 @@ Everything must work in memory account creation and etc
     the user which one.
 - If you have no issue at the start of a task, ask for one right away.
   Never push or open a PR without it, and never make up an ID.
+- When the AI creates the issue, it must assign it to the user who is
+  running the AI and move it to In Progress right away.
 
 ### Branches
 - Branch from `origin/main` in a new worktree:

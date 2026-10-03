@@ -29,11 +29,21 @@ type Engine struct {
 	csrf   core.CSRF
 	status StatusNotices
 	dev    bool
+	// cspReportURL receives the browser's Content-Security-Policy violation
+	// reports; empty sends none.
+	cspReportURL string
 }
 
 // New returns the page renderer. A nil status source renders no banner.
 func New(store *core.Store, csrf core.CSRF, status StatusNotices, dev bool) *Engine {
 	return &Engine{store: store, csrf: csrf, status: status, dev: dev}
+}
+
+// ReportCSPViolationsTo makes rendered pages ask the browser to post their
+// Content-Security-Policy violations to url.
+func (e *Engine) ReportCSPViolationsTo(url string) *Engine {
+	e.cspReportURL = url
+	return e
 }
 
 // buffers holds render buffers across requests; a page is rendered fully
@@ -46,13 +56,19 @@ const maxPooledBuffer = 1 << 20
 // contentSecurityPolicy admits only same-origin resources and the page's own
 // nonced scripts. A page with a code editor also admits Monaco's nonced
 // <style> elements and the inline style attributes it positions lines with.
-func contentSecurityPolicy(nonce string, features *ui.PageFeatures) string {
+// Violations go to reportURL through report-uri only: GlitchTip's security
+// endpoint accepts the legacy csp-report body, not the Reporting API's.
+func contentSecurityPolicy(nonce string, features *ui.PageFeatures, reportURL string) string {
 	style := "style-src 'self'"
 	if features.CodeEditor {
 		style = "style-src 'self' 'nonce-" + nonce + "'; style-src-attr 'unsafe-inline'"
 	}
-	return "default-src 'self'; script-src 'self' 'nonce-" + nonce + "'; " + style +
+	policy := "default-src 'self'; script-src 'self' 'nonce-" + nonce + "'; " + style +
 		"; img-src 'self' data: https://flagcdn.com; font-src 'self'; connect-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+	if reportURL != "" {
+		policy += "; report-uri " + reportURL
+	}
+	return policy
 }
 
 func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) error {
@@ -112,7 +128,7 @@ func (e *Engine) Page(w http.ResponseWriter, r *http.Request, page core.Page) er
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-store")
-	w.Header().Set("Content-Security-Policy", contentSecurityPolicy(page.Nonce, features))
+	w.Header().Set("Content-Security-Policy", contentSecurityPolicy(page.Nonce, features, e.cspReportURL))
 	if page.Status != 0 {
 		w.WriteHeader(page.Status)
 	}

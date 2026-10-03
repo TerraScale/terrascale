@@ -28,18 +28,29 @@ type Config struct {
 	// the dashboard reports the client address; empty means the connection's
 	// remote address is the client's.
 	ClientIPHeader string
+	// SentryDSN is where errors and panics are reported (GlitchTip speaks the
+	// Sentry protocol); empty disables error tracking.
+	SentryDSN string
+	// SentryEnvironment tags every reported event.
+	SentryEnvironment string
+	// CSPReportURL receives Content-Security-Policy violation reports; empty
+	// sends none.
+	CSPReportURL string
 }
 
 func Load() (Config, error) {
 	c := Config{
-		PublicURL:      strings.TrimRight(strings.TrimSpace(os.Getenv("DASHBOARD_PUBLIC_URL")), "/"),
-		Addr:           strings.TrimSpace(os.Getenv("DASHBOARD_ADDR")),
-		Demo:           os.Getenv("TS_DASHBOARD_PRODUCTION_DEMO") == "1",
-		Dev:            os.Getenv("DASHBOARD_DEV") == "1",
-		AdminEmail:     strings.TrimSpace(os.Getenv("DASHBOARD_DEMO_ADMIN_EMAIL")),
-		AdminPassword:  os.Getenv("DASHBOARD_DEMO_ADMIN_PASSWORD"),
-		SDKBaseURL:     strings.TrimSpace(os.Getenv("TS_API_BASE_URL")),
-		SDKAccessToken: os.Getenv("TS_API_ACCESS_TOKEN"),
+		PublicURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("DASHBOARD_PUBLIC_URL")), "/"),
+		Addr:              strings.TrimSpace(os.Getenv("DASHBOARD_ADDR")),
+		Demo:              os.Getenv("TS_DASHBOARD_PRODUCTION_DEMO") == "1",
+		Dev:               os.Getenv("DASHBOARD_DEV") == "1",
+		AdminEmail:        strings.TrimSpace(os.Getenv("DASHBOARD_DEMO_ADMIN_EMAIL")),
+		AdminPassword:     os.Getenv("DASHBOARD_DEMO_ADMIN_PASSWORD"),
+		SDKBaseURL:        strings.TrimSpace(os.Getenv("TS_API_BASE_URL")),
+		SDKAccessToken:    os.Getenv("TS_API_ACCESS_TOKEN"),
+		SentryDSN:         strings.TrimSpace(os.Getenv("SENTRY_DSN")),
+		SentryEnvironment: strings.TrimSpace(os.Getenv("SENTRY_ENVIRONMENT")),
+		CSPReportURL:      strings.TrimSpace(os.Getenv("DASHBOARD_CSP_REPORT_URL")),
 	}
 	if c.Addr == "" {
 		c.Addr = ":8080"
@@ -58,6 +69,20 @@ func Load() (Config, error) {
 	c.StatusURL = defaultStatusURL
 	if statusURL, set := os.LookupEnv("DASHBOARD_STATUS_SUMMARY_URL"); set {
 		c.StatusURL = strings.TrimSpace(statusURL)
+	}
+	if c.SentryEnvironment == "" {
+		c.SentryEnvironment = "development"
+		if os.Getenv("FLY_APP_NAME") != "" {
+			c.SentryEnvironment = "production"
+		}
+	}
+	if c.CSPReportURL != "" {
+		// The URL is spliced into the Content-Security-Policy header, where
+		// whitespace, ";" or "," would start another directive or policy.
+		u, err := url.Parse(c.CSPReportURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || strings.ContainsAny(c.CSPReportURL, " \t\r\n;,'\"") {
+			return Config{}, errors.New("DASHBOARD_CSP_REPORT_URL must be an HTTP(S) URL")
+		}
 	}
 	if !c.Demo {
 		return Config{}, errors.New("live dashboard persistence is not configured; set TS_DASHBOARD_PRODUCTION_DEMO=1")
