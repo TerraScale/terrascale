@@ -1,3 +1,6 @@
+using System.Reflection;
+using Microsoft.AspNetCore.Http.Metadata;
+
 namespace TerraScale.Endpoints;
 
 /// <summary>Fluent route and OpenAPI metadata for one endpoint.</summary>
@@ -197,14 +200,22 @@ public sealed class EndpointDefinition
         return this;
     }
 
-    internal RouteHandlerBuilder Map(IEndpointRouteBuilder routes, Delegate handler, Type? requestType, Type responseType)
+    internal void EnsureMappable()
     {
         if (this.methods.Count == 0 || !this.routeConfigured)
         {
             throw new InvalidOperationException("An endpoint must select an HTTP method and route.");
         }
+    }
 
-        var builder = routes.MapMethods(this.Route, this.methods, handler);
+    internal RouteHandlerBuilder Map(IEndpointRouteBuilder routes, RequestDelegate handler, MethodInfo signature, Type? requestType, Type responseType)
+    {
+        this.EnsureMappable();
+
+        // A RequestDelegate keeps mapping free of RequestDelegateFactory (reflection and runtime
+        // code generation). The signature MethodInfo is what lets ApiExplorer and OpenAPI describe it.
+        var builder = new RouteHandlerBuilder([routes.MapMethods(this.Route, this.methods, handler)]);
+        builder.WithMetadata(signature);
         if (this.Name is not null)
         {
             builder.WithName(this.Name);
@@ -222,31 +233,23 @@ public sealed class EndpointDefinition
 
         if (this.tags.Count > 0)
         {
-            builder.WithTags(this.tags.ToArray());
+            builder.WithTags([.. this.tags]);
         }
 
-        if (requestType is not null && requestType != typeof(EmptyRequest))
+        if (requestType is not null || this.acceptedContentTypes is not null)
         {
-            foreach (var contentType in this.acceptedContentTypes ?? ["application/json"])
-            {
-                builder.Accepts(requestType, contentType);
-            }
-        }
-        else if (this.acceptedContentTypes is not null)
-        {
-            foreach (var contentType in this.acceptedContentTypes)
-            {
-                builder.Accepts(typeof(EmptyRequest), contentType);
-            }
+            builder.WithMetadata(new AcceptsMetadata(this.acceptedContentTypes ?? ["application/json"], requestType));
         }
 
-        if (responseType != typeof(void) && !typeof(IResult).IsAssignableFrom(responseType))
+        if (!typeof(IResult).IsAssignableFrom(responseType) && !this.responses.Exists(static response => response.StatusCode == StatusCodes.Status200OK))
         {
-            builder.Produces(StatusCodes.Status200OK, responseType, "application/json");
+            var contentType = responseType == typeof(string) ? "text/plain" : "application/json";
+            builder.WithMetadata(new ProducesResponseTypeMetadata(StatusCodes.Status200OK, responseType, [contentType]));
         }
+
         foreach (var response in this.responses)
         {
-            builder.Produces(response.StatusCode, response.Type, response.ContentType);
+            builder.WithMetadata(new ProducesResponseTypeMetadata(response.StatusCode, response.Type, [response.ContentType]));
         }
 
         if (this.allowAnonymous)

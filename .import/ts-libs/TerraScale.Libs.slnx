@@ -1,6 +1,10 @@
 <Solution>
   <Folder Name="/Core/">
     <Project Path="src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+    <Project Path="src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" />
+  </Folder>
+  <Folder Name="/Benchmarks/">
+    <Project Path="bench/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/Examples/">
     <Project Path="src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj" />

@@ -1,359 +1,239 @@
+using System.Diagnostics;
+using System.Reflection;
+using System.Text.Json.Serialization.Metadata;
+
 namespace TerraScale.Endpoints;
 
-internal interface IRequestScopedEndpoint
-{
-}
-
-internal static class EndpointActivation
-{
-    internal static object Resolve(IServiceProvider services, Type endpointType, out bool manuallyCreated)
-    {
-        ArgumentNullException.ThrowIfNull(services);
-        ArgumentNullException.ThrowIfNull(endpointType);
-
-        if (services.GetService(endpointType) is { } endpoint)
-        {
-            manuallyCreated = false;
-            return endpoint;
-        }
-
-        manuallyCreated = true;
-        return ActivatorUtilities.CreateInstance(services, endpointType);
-    }
-
-    internal static void RegisterForDispose(HttpResponse response, object endpoint)
-    {
-        ArgumentNullException.ThrowIfNull(response);
-        ArgumentNullException.ThrowIfNull(endpoint);
-
-        if (endpoint is IAsyncDisposable asyncDisposable)
-        {
-            response.RegisterForDisposeAsync(asyncDisposable);
-        }
-        else if (endpoint is IDisposable disposable)
-        {
-            response.RegisterForDispose(disposable);
-        }
-    }
-
-    internal static void DisposeSynchronously(object endpoint)
-    {
-        if (endpoint is IAsyncDisposable asyncDisposable)
-        {
-            asyncDisposable.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        }
-        else if (endpoint is IDisposable disposable)
-        {
-            disposable.Dispose();
-        }
-    }
-}
-
-/// <summary>Shared request-scoped state for an endpoint while handling a request.</summary>
-public abstract class EndpointRequestContext
-{
-    private readonly AsyncLocal<HttpContext?> requestContext = new();
-
-    /// <summary>The request context while handling a request.</summary>
-    protected HttpContext HttpContext => this.requestContext.Value ?? throw new InvalidOperationException("HttpContext is only available while handling a request.");
-
-    internal RequestContextScope BeginRequestContext(HttpContext context)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        this.requestContext.Value = context;
-        return new RequestContextScope(this.requestContext);
-    }
-
-    internal readonly struct RequestContextScope(AsyncLocal<HttpContext?> slot) : IDisposable
-    {
-        void IDisposable.Dispose() => slot.Value = null;
-    }
-}
-
 /// <summary>FastEndpoints-style base for one request/response endpoint.</summary>
-/// <typeparam name="TRequest">The bound request model.</typeparam>
+/// <typeparam name="TRequest">The request model, bound from the JSON body unless <see cref="BindAsync"/> is overridden.</typeparam>
 /// <typeparam name="TResponse">The response model or <see cref="IResult"/>.</typeparam>
-public abstract class Endpoint<TRequest, TResponse> : EndpointRequestContext, IEndpoint, IRequestScopedEndpoint
+public abstract class Endpoint<TRequest, TResponse> : EndpointBase
 {
-    private EndpointDefinition? definition;
+    private static readonly MethodInfo Signature = ((Func<TRequest, CancellationToken, Task<TResponse>>)Describe).Method;
 
-    /// <summary>Declares the route and endpoint metadata.</summary>
-    public abstract void Configure();
+    private JsonTypeInfo<TRequest>? requestJson;
 
     /// <summary>Handles one request.</summary>
-    public abstract Task<TResponse> HandleAsync(TRequest request, CancellationToken cancellationToken);
+    /// <remarks>Return <c>ValueTask.FromResult(value)</c> (or write an <c>async</c> method) to avoid a task allocation per request.</remarks>
+    public abstract ValueTask<TResponse> HandleAsync(TRequest request, CancellationToken cancellationToken);
 
-    /// <summary>The active fluent definition during <see cref="Configure"/>.</summary>
-    protected EndpointDefinition Definition => this.definition ?? throw new InvalidOperationException("Endpoint configuration is only available from Configure().");
+    /// <summary>Binds the request model. Reads the JSON body by default; throw <see cref="BadHttpRequestException"/> to reject.</summary>
+    protected virtual ValueTask<TRequest> BindAsync(CancellationToken cancellationToken) =>
+        EndpointJson.ReadBodyAsync(this.HttpContext, this.requestJson!, cancellationToken);
 
-    protected EndpointDefinition Get(string route) => this.Definition.Get(route);
-    protected EndpointDefinition Post(string route) => this.Definition.Post(route);
-    protected EndpointDefinition Put(string route) => this.Definition.Put(route);
-    protected EndpointDefinition Patch(string route) => this.Definition.Patch(route);
-    protected EndpointDefinition Delete(string route) => this.Definition.Delete(route);
-    protected EndpointDefinition Verbs(params string[] methods) => this.Definition.Verbs(methods);
-    protected EndpointDefinition Route(string route) => this.Definition.WithRoute(route);
-    protected EndpointDefinition Name(string name) => this.Definition.WithName(name);
-    protected EndpointDefinition Summary(string summary) => this.Definition.WithSummary(summary);
-    protected EndpointDefinition Description(string description) => this.Definition.WithDescription(description);
-    protected EndpointDefinition Tags(params string[] tags) => this.Definition.WithTags(tags);
-    protected EndpointDefinition Produces<T>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") => this.Definition.Produces<T>(statusCode, contentType);
-    protected EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) => this.Definition.ProducesSse(statusCode);
-    protected EndpointDefinition Accepts<T>(params string[] contentTypes) => this.Definition.Accepts<T>(contentTypes);
-    protected EndpointDefinition AllowAnonymous() => this.Definition.AllowAnonymous();
-    protected EndpointDefinition RequireAuthorization(params string[] policies) => this.Definition.RequireAuthorization(policies);
-    protected EndpointDefinition Metadata(params object[] metadata) => this.Definition.WithMetadata(metadata);
-
-    /// <inheritdoc />
-    public RouteHandlerBuilder Map(IEndpointRouteBuilder routes)
+    private protected sealed override RouteHandlerBuilder MapCore(IEndpointRouteBuilder routes, EndpointDefinition definition, Type endpointType)
     {
-        ArgumentNullException.ThrowIfNull(routes);
-        var configured = new EndpointDefinition();
-        this.definition = configured;
-        try
-        {
-            this.Configure();
-        }
-        finally
-        {
-            this.definition = null;
-        }
-
-        var endpointType = this.GetType();
-        return configured.Map(
+        var requestJson = EndpointJson.GetRequestTypeInfo<TRequest>(routes.ServiceProvider);
+        var responseJson = EndpointJson.GetResponseTypeInfo<TResponse>(routes.ServiceProvider);
+        return definition.Map(
             routes,
-            new Func<HttpContext, TRequest, CancellationToken, Task<TResponse>>(
-                (context, request, cancellationToken) => HandleAsync(context, request, endpointType, cancellationToken)),
+            context =>
+            {
+                var endpoint = Activate<Endpoint<TRequest, TResponse>>(context, endpointType);
+                endpoint.requestJson = requestJson;
+                var cancellationToken = context.RequestAborted;
+                ValueTask<TRequest> binding;
+                try
+                {
+                    binding = endpoint.BindAsync(cancellationToken);
+                }
+                catch (BadHttpRequestException exception)
+                {
+                    return Reject(context, exception);
+                }
+
+                return binding.IsCompletedSuccessfully
+                    ? EndpointJson.RespondAsync(context, endpoint.HandleAsync(binding.Result, cancellationToken), responseJson)
+                    : CompleteAsync(context, endpoint, binding, responseJson, cancellationToken);
+            },
+            Signature,
             typeof(TRequest),
             typeof(TResponse));
     }
 
-    private static async Task<TResponse> HandleAsync(
+    private static async Task CompleteAsync(
         HttpContext context,
-        TRequest request,
-        Type endpointType,
+        Endpoint<TRequest, TResponse> endpoint,
+        ValueTask<TRequest> binding,
+        JsonTypeInfo<TResponse>? responseJson,
         CancellationToken cancellationToken)
     {
-        var endpoint = (Endpoint<TRequest, TResponse>)EndpointActivation.Resolve(context.RequestServices, endpointType, out var manuallyCreated);
-        if (manuallyCreated)
+        TRequest request;
+        try
         {
-            EndpointActivation.RegisterForDispose(context.Response, endpoint);
+            request = await binding.ConfigureAwait(false);
+        }
+        catch (BadHttpRequestException exception)
+        {
+            await Reject(context, exception).ConfigureAwait(false);
+            return;
         }
 
-        using var requestScope = endpoint.BeginRequestContext(context);
-        return await endpoint.HandleAsync(request, cancellationToken).ConfigureAwait(false);
+        await EndpointJson.RespondAsync(context, endpoint.HandleAsync(request, cancellationToken), responseJson).ConfigureAwait(false);
     }
+
+    private static Task<TResponse> Describe(TRequest request, CancellationToken cancellationToken) => throw new UnreachableException();
 }
 
 /// <summary>FastEndpoints-style base for an endpoint without a request body.</summary>
 /// <typeparam name="TResponse">The response model or <see cref="IResult"/>.</typeparam>
-public abstract class EndpointWithoutRequest<TResponse> : EndpointRequestContext, IEndpoint, IRequestScopedEndpoint
+public abstract class EndpointWithoutRequest<TResponse> : EndpointBase
 {
-    private EndpointDefinition? definition;
-
-    /// <summary>Declares the route and endpoint metadata.</summary>
-    public abstract void Configure();
+    private static readonly MethodInfo Signature = ((Func<CancellationToken, Task<TResponse>>)Describe).Method;
 
     /// <summary>Handles one request.</summary>
-    public abstract Task<TResponse> HandleAsync(CancellationToken cancellationToken);
+    /// <remarks>Return <c>ValueTask.FromResult(value)</c> (or write an <c>async</c> method) to avoid a task allocation per request.</remarks>
+    public abstract ValueTask<TResponse> HandleAsync(CancellationToken cancellationToken);
 
-    /// <summary>The active fluent definition during <see cref="Configure"/>.</summary>
-    protected EndpointDefinition Definition => this.definition ?? throw new InvalidOperationException("Endpoint configuration is only available from Configure().");
-
-    protected EndpointDefinition Get(string route) => this.Definition.Get(route);
-    protected EndpointDefinition Post(string route) => this.Definition.Post(route);
-    protected EndpointDefinition Put(string route) => this.Definition.Put(route);
-    protected EndpointDefinition Patch(string route) => this.Definition.Patch(route);
-    protected EndpointDefinition Delete(string route) => this.Definition.Delete(route);
-    protected EndpointDefinition Verbs(params string[] methods) => this.Definition.Verbs(methods);
-    protected EndpointDefinition Route(string route) => this.Definition.WithRoute(route);
-    protected EndpointDefinition Name(string name) => this.Definition.WithName(name);
-    protected EndpointDefinition Summary(string summary) => this.Definition.WithSummary(summary);
-    protected EndpointDefinition Description(string description) => this.Definition.WithDescription(description);
-    protected EndpointDefinition Tags(params string[] tags) => this.Definition.WithTags(tags);
-    protected EndpointDefinition Produces<T>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") => this.Definition.Produces<T>(statusCode, contentType);
-    protected EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) => this.Definition.ProducesSse(statusCode);
-    protected EndpointDefinition Accepts<T>(params string[] contentTypes) => this.Definition.Accepts<T>(contentTypes);
-    protected EndpointDefinition AllowAnonymous() => this.Definition.AllowAnonymous();
-    protected EndpointDefinition RequireAuthorization(params string[] policies) => this.Definition.RequireAuthorization(policies);
-    protected EndpointDefinition Metadata(params object[] metadata) => this.Definition.WithMetadata(metadata);
-
-    /// <inheritdoc />
-    public RouteHandlerBuilder Map(IEndpointRouteBuilder routes)
+    private protected sealed override RouteHandlerBuilder MapCore(IEndpointRouteBuilder routes, EndpointDefinition definition, Type endpointType)
     {
-        ArgumentNullException.ThrowIfNull(routes);
-        var configured = new EndpointDefinition();
-        this.definition = configured;
-        try
-        {
-            this.Configure();
-        }
-        finally
-        {
-            this.definition = null;
-        }
-
-        var endpointType = this.GetType();
-        return configured.Map(
+        var responseJson = EndpointJson.GetResponseTypeInfo<TResponse>(routes.ServiceProvider);
+        return definition.Map(
             routes,
-            new Func<HttpContext, CancellationToken, Task<TResponse>>(
-                (context, cancellationToken) => HandleAsync(context, endpointType, cancellationToken)),
-            typeof(EmptyRequest),
+            context =>
+            {
+                var endpoint = Activate<EndpointWithoutRequest<TResponse>>(context, endpointType);
+                return EndpointJson.RespondAsync(context, endpoint.HandleAsync(context.RequestAborted), responseJson);
+            },
+            Signature,
+            requestType: null,
             typeof(TResponse));
     }
 
-    private static async Task<TResponse> HandleAsync(
-        HttpContext context,
-        Type endpointType,
-        CancellationToken cancellationToken)
-    {
-        var endpoint = (EndpointWithoutRequest<TResponse>)EndpointActivation.Resolve(context.RequestServices, endpointType, out var manuallyCreated);
-        if (manuallyCreated)
-        {
-            EndpointActivation.RegisterForDispose(context.Response, endpoint);
-        }
-
-        using var requestScope = endpoint.BeginRequestContext(context);
-        return await endpoint.HandleAsync(cancellationToken).ConfigureAwait(false);
-    }
+    private static Task<TResponse> Describe(CancellationToken cancellationToken) => throw new UnreachableException();
 }
 
 /// <summary>FastEndpoints-style request endpoint that writes its response through <see cref="Send"/>.</summary>
-public abstract class Endpoint<TRequest> : EndpointSenderEndpoint, IEndpoint, IRequestScopedEndpoint
+/// <typeparam name="TRequest">The request model, bound from the JSON body unless <see cref="BindAsync"/> is overridden.</typeparam>
+public abstract class Endpoint<TRequest> : EndpointBase
 {
-    public abstract void Configure();
-    public abstract Task HandleAsync(TRequest request, CancellationToken cancellationToken);
+    private static readonly MethodInfo Signature = ((Func<TRequest, CancellationToken, Task<IResult>>)Describe).Method;
 
-    protected EndpointDefinition Definition => Configuration;
-    protected EndpointDefinition Get(string route) => Definition.Get(route);
-    protected EndpointDefinition Post(string route) => Definition.Post(route);
-    protected EndpointDefinition Put(string route) => Definition.Put(route);
-    protected EndpointDefinition Patch(string route) => Definition.Patch(route);
-    protected EndpointDefinition Delete(string route) => Definition.Delete(route);
-    protected EndpointDefinition Verbs(params string[] methods) => Definition.Verbs(methods);
-    protected EndpointDefinition Route(string route) => Definition.WithRoute(route);
-    protected EndpointDefinition Name(string name) => Definition.WithName(name);
-    protected EndpointDefinition Summary(string summary) => Definition.WithSummary(summary);
-    protected EndpointDefinition Description(string description) => Definition.WithDescription(description);
-    protected EndpointDefinition Tags(params string[] tags) => Definition.WithTags(tags);
-    protected EndpointDefinition Produces<T>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") => Definition.Produces<T>(statusCode, contentType);
-    protected EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) => Definition.ProducesSse(statusCode);
-    protected EndpointDefinition Accepts<T>(params string[] contentTypes) => Definition.Accepts<T>(contentTypes);
-    protected EndpointDefinition AllowAnonymous() => Definition.AllowAnonymous();
-    protected EndpointDefinition RequireAuthorization(params string[] policies) => Definition.RequireAuthorization(policies);
-    protected EndpointDefinition Metadata(params object[] metadata) => Definition.WithMetadata(metadata);
+    private JsonTypeInfo<TRequest>? requestJson;
 
-    public RouteHandlerBuilder Map(IEndpointRouteBuilder routes)
+    /// <summary>Handles one request.</summary>
+    public abstract ValueTask HandleAsync(TRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Sets the response for the current request. Without a call the endpoint answers 204.</summary>
+    protected EndpointSender Send => new(this);
+
+    /// <summary>Binds the request model. Reads the JSON body by default; throw <see cref="BadHttpRequestException"/> to reject.</summary>
+    protected virtual ValueTask<TRequest> BindAsync(CancellationToken cancellationToken) =>
+        EndpointJson.ReadBodyAsync(this.HttpContext, this.requestJson!, cancellationToken);
+
+    private protected sealed override RouteHandlerBuilder MapCore(IEndpointRouteBuilder routes, EndpointDefinition definition, Type endpointType)
     {
-        ArgumentNullException.ThrowIfNull(routes);
-        ConfigureForMapping(Configure);
-        var endpointType = this.GetType();
-        return Configuration.Map(
+        var requestJson = EndpointJson.GetRequestTypeInfo<TRequest>(routes.ServiceProvider);
+        return definition.Map(
             routes,
-            new Func<HttpContext, TRequest, CancellationToken, Task<IResult>>(
-                (context, request, cancellationToken) => ExecuteAsync(context, request, endpointType, cancellationToken)),
+            context =>
+            {
+                var endpoint = Activate<Endpoint<TRequest>>(context, endpointType);
+                endpoint.requestJson = requestJson;
+                var cancellationToken = context.RequestAborted;
+                ValueTask<TRequest> binding;
+                try
+                {
+                    binding = endpoint.BindAsync(cancellationToken);
+                }
+                catch (BadHttpRequestException exception)
+                {
+                    return Reject(context, exception);
+                }
+
+                return binding.IsCompletedSuccessfully
+                    ? EndpointSender.RespondAsync(context, endpoint.HandleAsync(binding.Result, cancellationToken), endpoint)
+                    : CompleteAsync(context, endpoint, binding, cancellationToken);
+            },
+            Signature,
             typeof(TRequest),
             typeof(IResult));
     }
 
-    private static async Task<IResult> ExecuteAsync(
-        HttpContext context,
-        TRequest request,
-        Type endpointType,
-        CancellationToken cancellationToken)
+    private static async Task CompleteAsync(HttpContext context, Endpoint<TRequest> endpoint, ValueTask<TRequest> binding, CancellationToken cancellationToken)
     {
-        var endpoint = (Endpoint<TRequest>)EndpointActivation.Resolve(context.RequestServices, endpointType, out var manuallyCreated);
-        if (manuallyCreated)
+        TRequest request;
+        try
         {
-            EndpointActivation.RegisterForDispose(context.Response, endpoint);
+            request = await binding.ConfigureAwait(false);
+        }
+        catch (BadHttpRequestException exception)
+        {
+            await Reject(context, exception).ConfigureAwait(false);
+            return;
         }
 
-        using var requestScope = endpoint.BeginRequestContext(context);
-        using var scope = endpoint.BeginSendScope();
-        await endpoint.HandleAsync(request, cancellationToken).ConfigureAwait(false);
-        return scope.Result ?? Results.NoContent();
+        await EndpointSender.RespondAsync(context, endpoint.HandleAsync(request, cancellationToken), endpoint).ConfigureAwait(false);
     }
+
+    private static Task<IResult> Describe(TRequest request, CancellationToken cancellationToken) => throw new UnreachableException();
 }
 
 /// <summary>FastEndpoints-style endpoint without a request body that writes through <see cref="Send"/>.</summary>
-public abstract class EndpointWithoutRequest : EndpointSenderEndpoint, IEndpoint, IRequestScopedEndpoint
+public abstract class EndpointWithoutRequest : EndpointBase
 {
-    public abstract void Configure();
-    public abstract Task HandleAsync(CancellationToken cancellationToken);
+    private static readonly MethodInfo Signature = ((Func<CancellationToken, Task<IResult>>)Describe).Method;
 
-    protected EndpointDefinition Definition => Configuration;
-    protected EndpointDefinition Get(string route) => Definition.Get(route);
-    protected EndpointDefinition Post(string route) => Definition.Post(route);
-    protected EndpointDefinition Put(string route) => Definition.Put(route);
-    protected EndpointDefinition Patch(string route) => Definition.Patch(route);
-    protected EndpointDefinition Delete(string route) => Definition.Delete(route);
-    protected EndpointDefinition Verbs(params string[] methods) => Definition.Verbs(methods);
-    protected EndpointDefinition Route(string route) => Definition.WithRoute(route);
-    protected EndpointDefinition Name(string name) => Definition.WithName(name);
-    protected EndpointDefinition Summary(string summary) => Definition.WithSummary(summary);
-    protected EndpointDefinition Description(string description) => Definition.WithDescription(description);
-    protected EndpointDefinition Tags(params string[] tags) => Definition.WithTags(tags);
-    protected EndpointDefinition Produces<T>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") => Definition.Produces<T>(statusCode, contentType);
-    protected EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) => Definition.ProducesSse(statusCode);
-    protected EndpointDefinition Accepts<T>(params string[] contentTypes) => Definition.Accepts<T>(contentTypes);
-    protected EndpointDefinition AllowAnonymous() => Definition.AllowAnonymous();
-    protected EndpointDefinition RequireAuthorization(params string[] policies) => Definition.RequireAuthorization(policies);
-    protected EndpointDefinition Metadata(params object[] metadata) => Definition.WithMetadata(metadata);
+    /// <summary>Handles one request.</summary>
+    public abstract ValueTask HandleAsync(CancellationToken cancellationToken);
 
-    public RouteHandlerBuilder Map(IEndpointRouteBuilder routes)
-    {
-        ArgumentNullException.ThrowIfNull(routes);
-        ConfigureForMapping(Configure);
-        var endpointType = this.GetType();
-        return Configuration.Map(
+    /// <summary>Sets the response for the current request. Without a call the endpoint answers 204.</summary>
+    protected EndpointSender Send => new(this);
+
+    private protected sealed override RouteHandlerBuilder MapCore(IEndpointRouteBuilder routes, EndpointDefinition definition, Type endpointType) =>
+        definition.Map(
             routes,
-            new Func<HttpContext, CancellationToken, Task<IResult>>(
-                (context, cancellationToken) => ExecuteAsync(context, endpointType, cancellationToken)),
-            typeof(EmptyRequest),
+            context =>
+            {
+                var endpoint = Activate<EndpointWithoutRequest>(context, endpointType);
+                return EndpointSender.RespondAsync(context, endpoint.HandleAsync(context.RequestAborted), endpoint);
+            },
+            Signature,
+            requestType: null,
             typeof(IResult));
+
+    private static Task<IResult> Describe(CancellationToken cancellationToken) => throw new UnreachableException();
+}
+
+/// <summary>Sets the response of a request-only endpoint. A thin view over the endpoint, so it allocates nothing.</summary>
+public readonly struct EndpointSender
+{
+    private readonly EndpointBase endpoint;
+
+    internal EndpointSender(EndpointBase endpoint) => this.endpoint = endpoint;
+
+    public ValueTask OkAsync<T>(T response, CancellationToken cancellationToken = default) => this.Set(TypedResults.Ok(response));
+    public ValueTask CreatedAsync<T>(string uri, T response, CancellationToken cancellationToken = default) => this.Set(TypedResults.Created(uri, response));
+    public ValueTask AcceptedAsync<T>(string? uri, T response, CancellationToken cancellationToken = default) => this.Set(TypedResults.Accepted(uri, response));
+    public ValueTask NotFoundAsync(CancellationToken cancellationToken = default) => this.Set(TypedResults.NotFound());
+    public ValueTask NoContentAsync(CancellationToken cancellationToken = default) => this.Set(TypedResults.NoContent());
+    public ValueTask ResponseAsync(IResult response, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        return this.Set(response);
     }
 
-    private static async Task<IResult> ExecuteAsync(
-        HttpContext context,
-        Type endpointType,
-        CancellationToken cancellationToken)
+    private ValueTask Set(IResult response)
     {
-        var endpoint = (EndpointWithoutRequest)EndpointActivation.Resolve(context.RequestServices, endpointType, out var manuallyCreated);
-        if (manuallyCreated)
+        (this.endpoint ?? throw new InvalidOperationException("Send is only available inside an endpoint.")).SentResult = response;
+        return ValueTask.CompletedTask;
+    }
+
+    // Completed handlers execute the result without an async state machine.
+    internal static Task RespondAsync(HttpContext context, ValueTask handled, EndpointBase endpoint)
+    {
+        if (!handled.IsCompletedSuccessfully)
         {
-            EndpointActivation.RegisterForDispose(context.Response, endpoint);
+            return AwaitAsync(context, handled, endpoint);
         }
 
-        using var requestScope = endpoint.BeginRequestContext(context);
-        using var scope = endpoint.BeginSendScope();
-        await endpoint.HandleAsync(cancellationToken).ConfigureAwait(false);
-        return scope.Result ?? Results.NoContent();
+        handled.GetAwaiter().GetResult();
+        return (endpoint.SentResult ?? TypedResults.NoContent()).ExecuteAsync(context);
     }
-}
 
-/// <summary>Per-request response sender used by request-only endpoints.</summary>
-public sealed class EndpointSender
-{
-    internal IResult? Result { get; private set; }
-    public Task<IResult> OkAsync<T>(T response, CancellationToken cancellationToken = default) => Set(Results.Ok(response));
-    public Task<IResult> CreatedAsync<T>(string uri, T response, CancellationToken cancellationToken = default) => Set(Results.Created(uri, response));
-    public Task<IResult> AcceptedAsync<T>(string? uri, T response, CancellationToken cancellationToken = default) => Set(Results.Accepted(uri, response));
-    public Task<IResult> NotFoundAsync(CancellationToken cancellationToken = default) => Set(Results.NotFound());
-    public Task<IResult> NoContentAsync(CancellationToken cancellationToken = default) => Set(Results.NoContent());
-    public Task<IResult> ResponseAsync(IResult response, CancellationToken cancellationToken = default) => Set(response);
-    private Task<IResult> Set(IResult response) { Result = response; return Task.FromResult(response); }
-}
-
-public abstract class EndpointSenderEndpoint : EndpointRequestContext
-{
-    private readonly AsyncLocal<EndpointSender?> sender = new();
-    private protected EndpointDefinition Configuration { get; } = new();
-    protected EndpointSender Send => sender.Value ?? throw new InvalidOperationException("Send is only available while handling a request.");
-    private protected static void ConfigureForMapping(Action configure) => configure();
-    private protected SendScope BeginSendScope() { var value = new EndpointSender(); sender.Value = value; return new SendScope(sender, value); }
-    private protected sealed class SendScope(AsyncLocal<EndpointSender?> slot, EndpointSender value) : IDisposable
+    private static async Task AwaitAsync(HttpContext context, ValueTask handled, EndpointBase endpoint)
     {
-        internal IResult? Result => value.Result;
-        public void Dispose() => slot.Value = null;
+        await handled.ConfigureAwait(false);
+        await (endpoint.SentResult ?? TypedResults.NoContent()).ExecuteAsync(context).ConfigureAwait(false);
     }
 }

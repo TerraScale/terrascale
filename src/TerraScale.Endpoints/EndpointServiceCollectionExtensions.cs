@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 
 namespace TerraScale.Endpoints;
@@ -19,48 +20,70 @@ public sealed class EndpointOptions
 }
 
 /// <summary>Dependency injection and application integration helpers.</summary>
+/// <remarks>
+/// Projects referencing the package also get a generated, reflection-free
+/// <c>AddTerraScaleEndpoints(Action&lt;EndpointOptions&gt;?)</c> overload that registers every endpoint in the project.
+/// </remarks>
 public static class EndpointServiceCollectionExtensions
 {
-    /// <summary>Registers a cached endpoint catalog and OpenAPI services.</summary>
+    /// <summary>Registers endpoints and OpenAPI services. Calling it again adds more endpoints to the same catalog.</summary>
     public static IServiceCollection AddTerraScaleEndpoints(
         this IServiceCollection services,
-        IEnumerable<Assembly> assemblies,
+        IEnumerable<EndpointRegistration> endpoints,
         Action<EndpointOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
-        ArgumentNullException.ThrowIfNull(assemblies);
-        var options = new EndpointOptions();
-        configure?.Invoke(options);
-        Validate(options);
-        services.AddSingleton(options);
-        services.AddSingleton(new EndpointCatalog(assemblies));
-        AddOpenApi(services, options);
+        ArgumentNullException.ThrowIfNull(endpoints);
+
+        if (FindSingleton<EndpointCatalog>(services) is { } catalog && FindSingleton<EndpointOptions>(services) is { } options)
+        {
+            var documentName = options.Version;
+            configure?.Invoke(options);
+            Validate(options);
+            if (!string.Equals(documentName, options.Version, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("The OpenAPI document version cannot change after the first AddTerraScaleEndpoints call.");
+            }
+        }
+        else
+        {
+            options = new EndpointOptions();
+            configure?.Invoke(options);
+            Validate(options);
+            catalog = new EndpointCatalog();
+            services.AddSingleton(options);
+            services.AddSingleton(catalog);
+            AddOpenApi(services, options);
+        }
+
+        catalog.Add(services, endpoints);
         return services;
     }
 
-    /// <summary>Registers endpoints from the calling assembly.</summary>
-    public static IServiceCollection AddTerraScaleEndpoints(
-        this IServiceCollection services,
-        Action<EndpointOptions>? configure = null) =>
-        services.AddTerraScaleEndpoints(Assembly.GetCallingAssembly(), configure);
-
-    /// <summary>Registers a precomputed endpoint list without assembly scanning.</summary>
+    /// <summary>Registers endpoints from explicit types using reflection.</summary>
+    [RequiresUnreferencedCode(EndpointDiscovery.ReflectionMessage)]
     public static IServiceCollection AddTerraScaleEndpoints(
         this IServiceCollection services,
         IEnumerable<Type> endpointTypes,
         Action<EndpointOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(endpointTypes);
-        var options = new EndpointOptions();
-        configure?.Invoke(options);
-        Validate(options);
-        services.AddSingleton(options);
-        services.AddSingleton(new EndpointCatalog(endpointTypes));
-        AddOpenApi(services, options);
-        return services;
+        return services.AddTerraScaleEndpoints(endpointTypes.Select(EndpointRegistration.FromType).ToArray(), configure);
     }
 
-    /// <summary>Registers endpoints from an assembly.</summary>
+    /// <summary>Registers endpoints by scanning assemblies with reflection.</summary>
+    [RequiresUnreferencedCode(EndpointDiscovery.ReflectionMessage)]
+    public static IServiceCollection AddTerraScaleEndpoints(
+        this IServiceCollection services,
+        IEnumerable<Assembly> assemblies,
+        Action<EndpointOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(assemblies);
+        return services.AddTerraScaleEndpoints(assemblies.Distinct().SelectMany(EndpointDiscovery.Discover), configure);
+    }
+
+    /// <summary>Registers endpoints by scanning an assembly with reflection.</summary>
+    [RequiresUnreferencedCode(EndpointDiscovery.ReflectionMessage)]
     public static IServiceCollection AddTerraScaleEndpoints(
         this IServiceCollection services,
         Assembly assembly,
@@ -70,11 +93,12 @@ public static class EndpointServiceCollectionExtensions
         return services.AddTerraScaleEndpoints([assembly], configure);
     }
 
-    /// <summary>Maps the cached endpoint catalog.</summary>
+    /// <summary>Maps the registered endpoints.</summary>
     public static IEndpointRouteBuilder MapTerraScaleEndpoints(this IEndpointRouteBuilder routes)
     {
         ArgumentNullException.ThrowIfNull(routes);
-        var catalog = routes.ServiceProvider.GetRequiredService<EndpointCatalog>();
+        var catalog = routes.ServiceProvider.GetService<EndpointCatalog>()
+            ?? throw new InvalidOperationException("Call AddTerraScaleEndpoints() before MapTerraScaleEndpoints().");
         catalog.Map(routes, routes.ServiceProvider);
         return routes;
     }
@@ -93,6 +117,20 @@ public static class EndpointServiceCollectionExtensions
                 .AddDocument(options.Version, options.Title, options.OpenApiRoute, isDefault: true);
         });
         return app;
+    }
+
+    private static T? FindSingleton<T>(IServiceCollection services)
+        where T : class
+    {
+        for (var i = services.Count - 1; i >= 0; i--)
+        {
+            if (services[i] is { ServiceType: var type, IsKeyedService: false, ImplementationInstance: T instance } && type == typeof(T))
+            {
+                return instance;
+            }
+        }
+
+        return null;
     }
 
     private static void Validate(EndpointOptions options)

@@ -5,9 +5,14 @@
     <Description>Shared TerraScale endpoint authoring and ASP.NET Core mapping library.</Description>
     <!-- Bump major.minor by hand; CI sets VersionPatch to the run number so
          every main push publishes a new version. Local builds use patch 0. -->
-    <VersionMajorMinor>2.0</VersionMajorMinor>
+    <VersionMajorMinor>3.0</VersionMajorMinor>
     <VersionPatch Condition="'$(VersionPatch)' == ''">0</VersionPatch>
+    <!-- Prerelease until .NET 11 and Microsoft.AspNetCore.OpenApi 11 ship stable;
+         NuGet refuses a stable package with a prerelease dependency. Clear it then. -->
+    <VersionPrerelease>rc.1</VersionPrerelease>
     <Version>$(VersionMajorMinor).$(VersionPatch)</Version>
+    <Version Condition="'$(VersionPrerelease)' != ''">$(Version)-$(VersionPrerelease)</Version>
+    <IsAotCompatible>true</IsAotCompatible>
     <PackageProjectUrl>https://git.terrascale.tech/TerraScale/ts-libs</PackageProjectUrl>
     <RepositoryUrl>https://git.terrascale.tech/TerraScale/ts-libs</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -29,5 +34,10 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Scalar.AspNetCore" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Build the generator first and ship it in analyzers/ so consumers get compile-time registration. -->
+    <ProjectReference Include="../TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <None Include="../TerraScale.Endpoints.Generators/bin/$(Configuration)/netstandard2.0/TerraScale.Endpoints.Generators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
   </ItemGroup>
 </Project>
