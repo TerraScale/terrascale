@@ -38,19 +38,21 @@ func Init(opts Options) (func(), error) {
 		AttachStacktrace: true,
 		Transport:        opts.Transport,
 		// Never collect bodies (login forms carry passwords), cookies
-		// (sessions) or the signed-in user; only headers that identify the
-		// client and request shape keep their values.
+		// (sessions), the signed-in user or query strings: the CLI approval
+		// URL carries its user_code there, also nested inside returnTo. For
+		// the same reason Referer is not on the header allowlist; only
+		// headers that describe the client and request shape keep values.
 		DataCollection: &sentry.DataCollection{
 			UserInfo:   sentry.Set(false),
 			Cookies:    &sentry.KeyValueCollectionBehavior{Mode: sentry.CollectionOff},
 			HTTPBodies: []sentry.BodyType{},
 			HTTPHeaders: &sentry.HeaderCollectionConfig{
 				Request: &sentry.KeyValueCollectionBehavior{Mode: sentry.CollectionAllowList, Terms: []string{
-					"accept", "content-type", "content-length", "datastar-request", "referer", "user-agent",
+					"accept", "content-type", "content-length", "datastar-request", "user-agent",
 				}},
 				Response: &sentry.KeyValueCollectionBehavior{Mode: sentry.CollectionAllowList, Terms: []string{"content-type"}},
 			},
-			QueryParams: &sentry.KeyValueCollectionBehavior{Mode: sentry.CollectionDenyList},
+			QueryParams: &sentry.KeyValueCollectionBehavior{Mode: sentry.CollectionOff},
 		},
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
 			// net/http's sentinel for deliberately aborted responses is not

@@ -68,12 +68,13 @@ func TestMiddlewareReportsServerErrorsWithoutSecrets(t *testing.T) {
 	mux.HandleFunc("GET /ok", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	handler := Middleware(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/projects/prj_1", strings.NewReader("password=hunter2"))
+	req := httptest.NewRequest(http.MethodPost, "/projects/prj_1?user_code=ABCD-EFGH&returnTo=%2Fcli%2Fapprove%3Fuser_code%3DWXYZ-1234", strings.NewReader("password=hunter2"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", "session=secret-session")
 	req.Header.Set("Authorization", "Bearer secret-token")
 	req.Header.Set("Fly-Client-IP", "203.0.113.9")
 	req.Header.Set("User-Agent", "test-agent")
+	req.Header.Set("Referer", "https://dashboard.example/cli/approve?user_code=REFR-CODE")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ok", nil))
@@ -89,8 +90,9 @@ func TestMiddlewareReportsServerErrorsWithoutSecrets(t *testing.T) {
 	if event.Request == nil || event.Request.Headers["User-Agent"] != "test-agent" {
 		t.Fatalf("request context missing: %+v", event.Request)
 	}
-	for _, leaked := range []string{"hunter2", "secret-session", "secret-token", "203.0.113.9"} {
-		if strings.Contains(event.Request.Data+event.Request.Cookies+strings.Join(values(event.Request.Headers), " "), leaked) {
+	exported := event.Request.URL + event.Request.QueryString + event.Request.Data + event.Request.Cookies + strings.Join(values(event.Request.Headers), " ")
+	for _, leaked := range []string{"hunter2", "secret-session", "secret-token", "203.0.113.9", "ABCD-EFGH", "WXYZ-1234", "REFR-CODE", "user_code"} {
+		if strings.Contains(exported, leaked) {
 			t.Fatalf("event leaked %q: %+v", leaked, event.Request)
 		}
 	}
