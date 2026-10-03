@@ -16,17 +16,11 @@
 }
 
 .ts-audit-search-field {
-  flex: 1 1 220px;
+  flex: 1 1 150px;
 }
 
 .ts-audit-apply {
   margin-left: auto;
-}
-
-/* Export sits in the filter bar, next to Apply filters, aligned with the
-   controls row. */
-.ts-audit-filters > .ts-menu {
-  align-self: flex-end;
 }
 
 .ts-audit-table td:first-child {
