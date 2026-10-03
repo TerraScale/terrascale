@@ -35,12 +35,13 @@
 
 .ts-apikeys-filters > .ts-input {
   flex: 1 1 180px;
+  width: 240px;
   max-width: 240px;
 }
 
 .ts-apikeys-filters > .ts-select {
   flex: 0 1 160px;
-  width: auto;
+  width: 160px;
 }
 
 /* Wrap against the content column, not just the viewport with its sidebar. */
