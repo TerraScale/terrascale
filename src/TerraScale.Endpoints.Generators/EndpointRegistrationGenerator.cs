@@ -139,7 +139,7 @@ public sealed class EndpointRegistrationGenerator : IIncrementalGenerator
             namespace TerraScale.Endpoints
             {
                 /// <summary>Endpoints discovered at compile time in this project.</summary>
-                [global::System.CodeDom.Compiler.GeneratedCode("TerraScale.Endpoints.Generators", "2.0.0")]
+                [global::System.CodeDom.Compiler.GeneratedCode("TerraScale.Endpoints.Generators", "3.0.0")]
                 internal static class GeneratedEndpoints
                 {
                     /// <summary>Every concrete endpoint in this project, in deterministic order.</summary>

@@ -104,6 +104,13 @@ public sealed class EchoEndpoint : Endpoint<EchoRequest>
 }
 ```
 
+The request and response records are plain types:
+
+```csharp
+public sealed record EchoRequest(string Value);
+public sealed record EchoResponse(string Value);
+```
+
 `Send` is request-scoped and supports `OkAsync`, `CreatedAsync`,
 `AcceptedAsync`, `NotFoundAsync`, `NoContentAsync`, and `ResponseAsync`. A
 handler that never calls `Send` answers 204. The `Send` methods return
@@ -140,7 +147,10 @@ buffering, and passes the request cancellation token to the handler. Use
 are encoded straight into the response pipe without intermediate strings. An
 `SseClient` must not be written from several tasks at once.
 
-## Upgrading from 1.x
+## Upgrading from 2.0 and earlier
+
+3.0 is the first release on .NET 11. It ships as `3.0.<n>-rc.1` prerelease
+packages until .NET 11 is released.
 
 - Targets `net11.0`.
 - `AddTerraScaleEndpoints()` without arguments is now generated per project

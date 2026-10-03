@@ -3,7 +3,7 @@
     <!-- Roslyn loads analyzers on netstandard2.0 in every host (SDK, Visual Studio, Rider). -->
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>TerraScale.Endpoints.Generators</RootNamespace>
-    <Version>2.0.0</Version>
+    <Version>3.0.0</Version>
     <IsRoslynComponent>true</IsRoslynComponent>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <IsPackable>false</IsPackable>
