@@ -26,9 +26,13 @@
   gap: var(--ts-s1);
 }
 
-/* Credential filters lead the card header actions, before the create button. */
-.ts-apikeys-filters {
-  flex: 1 1 auto;
+/* Keep the form and create action together when they fit. If the form itself
+   must wrap, let it take the available header width before the create action. */
+.ts-apikeys-page .ts-card-actions > .ts-apikeys-filters {
+  flex: 1 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
 }
@@ -42,15 +46,6 @@
 .ts-apikeys-filters > .ts-select {
   flex: 0 1 160px;
   width: 160px;
-}
-
-/* Wrap against the content column, not just the viewport with its sidebar. */
-@container page (max-width: 50rem) {
-  .ts-apikeys-page .ts-card-actions > .ts-apikeys-filters {
-    flex-basis: 100%;
-    min-width: 0;
-    flex-wrap: wrap;
-  }
 }
 
 .ts-apikeys-secret > .ts-alert-title {

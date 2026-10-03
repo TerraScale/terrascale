@@ -12,7 +12,7 @@ func TestAPIKeyFiltersInListHeader(t *testing.T) {
 	t.Parallel()
 	page := newPage(t)
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
-	for _, width := range []int{360, 390, 768, 1024, 1440, 1920} {
+	for _, width := range []int{360, 390, 768, 960, 980, 1024, 1440, 1920} {
 		must(t, page.SetViewportSize(width, 900))
 		for _, kind := range []string{"", "key", "m2m"} {
 			t.Run(fmt.Sprintf("%s/%d", kind, width), func(t *testing.T) {
@@ -22,44 +22,7 @@ func TestAPIKeyFiltersInListHeader(t *testing.T) {
 				form := page.Locator("#credentials .ts-card-head .ts-apikeys-filters")
 				must(t, expect.Locator(form).ToHaveCount(1))
 				must(t, expect.Locator(form.Locator(`[name="kind"]`)).ToHaveValue(kind))
-				raw, err := page.Evaluate(`() => {
-					const header = document.querySelector('#credentials .ts-card-head');
-					const actions = header.querySelector('.ts-card-actions');
-					const form = actions.querySelector('form');
-					const controls = [...form.querySelectorAll('input:not([type="hidden"]), select, button')];
-					const create = actions.querySelector(':scope > button');
-					const problems = [];
-					if (controls.map(el => el.name || el.textContent.trim()).join(',') !== 'q,status,databaseId,Filter')
-						problems.push('filter control order changed');
-					if (form.nextElementSibling !== create)
-						problems.push('create action must follow the filter form');
-					if (document.documentElement.scrollWidth > innerWidth + 1)
-						problems.push('horizontal page overflow');
-					const bounds = header.getBoundingClientRect();
-					const boxes = [...controls, create].map(el => el.getBoundingClientRect());
-					for (const box of boxes) {
-						if (box.width <= 0 || box.left < bounds.left - 1 || box.right > bounds.right + 1)
-							problems.push('control escapes the list header');
-					}
-					for (let i = 0; i < boxes.length; i++) {
-						for (let j = i + 1; j < boxes.length; j++) {
-							const a = boxes[i], b = boxes[j];
-							if (Math.min(a.right, b.right) > Math.max(a.left, b.left) + 1 &&
-								Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top) + 1)
-								problems.push('controls overlap');
-							if (Math.abs(a.top + a.height / 2 - b.top - b.height / 2) > 1 &&
-								Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top) + 1)
-								problems.push('controls on the same row are not vertically centered');
-						}
-					}
-					if (Math.abs(create.getBoundingClientRect().right - actions.getBoundingClientRect().right) > 1)
-						problems.push('create action is not at the right edge');
-					return problems.join('\n');
-				}`)
-				must(t, err)
-				if raw != "" {
-					t.Fatal(raw)
-				}
+				assertAPIKeyHeaderLayout(t, page)
 				if width == 390 || width == 1440 {
 					viewportScreenshot(t, page, fmt.Sprintf("api-keys/header-%s-%d", kind, width))
 				}
@@ -75,8 +38,51 @@ func TestAPIKeyFiltersInListHeader(t *testing.T) {
 				must(t, expect.Locator(form.Locator(`[name="q"]`)).ToHaveValue("core"))
 				must(t, expect.Locator(form.Locator(`[name="status"]`)).ToHaveValue("active"))
 				must(t, expect.Locator(form.Locator(`[name="databaseId"]`)).ToHaveValue("db_01JC9Q8Y5N7P9R3T5V7X9Z2AC"))
+				assertAPIKeyHeaderLayout(t, page)
 			})
 		}
+	}
+}
+
+func assertAPIKeyHeaderLayout(t *testing.T, page playwright.Page) {
+	t.Helper()
+	raw, err := page.Evaluate(`() => {
+		const header = document.querySelector('#credentials .ts-card-head');
+		const actions = header.querySelector('.ts-card-actions');
+		const form = actions.querySelector('form');
+		const controls = [...form.querySelectorAll('input:not([type="hidden"]), select, button')];
+		const create = actions.querySelector(':scope > button');
+		const problems = [];
+		if (controls.map(el => el.name || el.textContent.trim()).join(',') !== 'q,status,databaseId,Filter')
+			problems.push('filter control order changed');
+		if (form.nextElementSibling !== create)
+			problems.push('create action must follow the filter form');
+		if (document.documentElement.scrollWidth > innerWidth + 1)
+			problems.push('horizontal page overflow');
+		const bounds = header.getBoundingClientRect();
+		const boxes = [...controls, ...form.querySelectorAll('a'), create].map(el => el.getBoundingClientRect());
+		for (const box of boxes) {
+			if (box.width <= 0 || box.left < bounds.left - 1 || box.right > bounds.right + 1)
+				problems.push('control escapes the list header');
+		}
+		for (let i = 0; i < boxes.length; i++) {
+			for (let j = i + 1; j < boxes.length; j++) {
+				const a = boxes[i], b = boxes[j];
+				if (Math.min(a.right, b.right) > Math.max(a.left, b.left) + 1 &&
+					Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top) + 1)
+					problems.push('controls overlap');
+				if (Math.abs(a.top + a.height / 2 - b.top - b.height / 2) > 1 &&
+					Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top) + 1)
+					problems.push('controls on the same row are not vertically centered');
+			}
+		}
+		if (Math.abs(create.getBoundingClientRect().right - actions.getBoundingClientRect().right) > 1)
+			problems.push('create action is not at the right edge');
+		return problems.join('\n');
+	}`)
+	must(t, err)
+	if raw != "" {
+		t.Fatal(raw)
 	}
 }
 
