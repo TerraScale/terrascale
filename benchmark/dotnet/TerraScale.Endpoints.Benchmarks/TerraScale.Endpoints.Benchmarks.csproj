@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <!-- Source-generated minimal API handlers (RDG), the AOT-compatible baseline. -->
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <!-- RDG002 is the point of the /rdf routes: they must fall back to RequestDelegateFactory. -->
+    <NoWarn>$(NoWarn);RDG002</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+    <!-- BenchmarkDotNet 0.16 (first with net11.0 support) needs a newer Roslyn than the generator pins. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" VersionOverride="5.6.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" VersionOverride="5.3.0" PrivateAssets="all" />
+    <ProjectReference Include="../../src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+    <ProjectReference Include="../../src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>
