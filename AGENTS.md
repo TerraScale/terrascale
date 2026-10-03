@@ -92,6 +92,32 @@ Everything must work in memory account creation and etc
 ### Branches
 - Branch from `origin/main` in a new worktree:
   `feat/…`, `fix/…`, `hotfix/…`, `refactor/…`.
+- Always base work on `origin/main`, never the local `main` (it is often
+  stale in worktrees). Run `git fetch origin` first, then branch, rebase, diff
+  and compare against `origin/main`.
+- Before pushing, run `git fetch origin` and rebase onto the latest
+  `origin/main` so the PR never carries outdated code.
+
+### Conflicts
+Work has been lost while resolving conflicts. When a merge, rebase, cherry-pick
+or stash apply hits conflicts:
+
+- Stop before resolving anything. Do not pick `--ours`/`--theirs`, run
+  `git checkout -- <file>`, `git reset --hard`, `git clean`, or force-push to
+  make a conflict go away.
+- Tell the user, for each conflicted file:
+  - what our side changes and what `origin/main` changes (summarize the
+    intent of each, with the commits/PRs involved),
+  - exactly what would be lost under each possible resolution,
+  - which side you recommend keeping and why (by default, keep what is already
+    on `origin/main` and reapply our changes on top of it).
+- Wait for the user to confirm the resolution before applying it.
+- Combine both sides whenever possible instead of discarding one. If something
+  really must be dropped, say so explicitly.
+- Before resolving, save a backup ref (for example
+  `git branch backup/<branch>-<date>`) so nothing is unrecoverable.
+- After resolving, show the user the final diff of the conflicted files and
+  confirm that build, lint and tests still pass.
 
 ### Pull requests
 - Use `fj` for git and Forgejo.

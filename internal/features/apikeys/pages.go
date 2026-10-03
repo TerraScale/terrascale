@@ -35,13 +35,7 @@ type listFilters struct {
 
 func readFilters(query url.Values) listFilters {
 	f := listFilters{Kind: query.Get("kind"), Status: query.Get("status"), DatabaseID: query.Get("databaseId"), Search: clip(strings.TrimSpace(query.Get("q")), 256)}
-	if !slices.Contains([]string{"key", "m2m"}, f.Kind) {
-		f.Kind = ""
-	}
-	if !slices.Contains([]string{"active", "inactive"}, f.Status) {
-		f.Status = ""
-	}
-	return f
+	return f.forTab(f.Kind)
 }
 
 func (f listFilters) query() url.Values {
@@ -241,19 +235,13 @@ func renderPage(w http.ResponseWriter, r *http.Request, deps core.Deps, service 
 		return
 	}
 	query := r.URL.Query()
-	data := pageData{listFilters: readFilters(query), ProjectID: project.ID, CanManage: a.Organizations[p.OrganizationID].CanManage(p.UserID), Revealed: reveal, Error: query.Get("error"), Create: query.Get("create")}
+	data := pageData{listFilters: readFilters(query).forProject(project), ProjectID: project.ID, CanManage: a.Organizations[p.OrganizationID].CanManage(p.UserID), Revealed: reveal, Error: query.Get("error"), Create: query.Get("create")}
 	if slices.Contains([]string{"key", "m2m"}, data.Create) {
 		data.Draft = newDraft(query.Get("draftName"), query.Get("draftScopes"), query.Get("draftDatabaseId"))
 	} else {
 		data.Create = ""
 	}
-	filter := credentialFilter{Status: data.Status, DatabaseID: data.DatabaseID, Search: data.Search}
-	switch data.Kind {
-	case "key":
-		filter.Kind = kindAPIKey
-	case "m2m":
-		filter.Kind = kindM2M
-	}
+	filter := credentialFilter{Kind: controlsFor(data.Kind).CredentialKind, Status: data.Status, DatabaseID: data.DatabaseID, Search: data.Search}
 	credentials, err := service.List(p, filter)
 	if err != nil {
 		writeError(w, err)

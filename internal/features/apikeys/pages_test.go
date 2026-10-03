@@ -14,6 +14,24 @@ import (
 	sdk "terrascale.tech/sdk"
 )
 
+func TestDatabaseFilterKeepsFullSelectedName(t *testing.T) {
+	name := "production-orders-primary-north-america-very-long-name"
+	data := pageData{
+		listFilters: listFilters{DatabaseID: "db_long"},
+		Databases:   []databaseChoice{{ID: "db_long", Name: name}},
+	}
+	var html strings.Builder
+	if err := apiKeysFilters(data).Render(t.Context(), &html); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html.String(), `title="`+name+`"`) {
+		t.Fatal("the selected database's full name must be available in the title")
+	}
+	if got := databaseFilterTitle(pageData{}); got != "All databases" {
+		t.Fatalf("unfiltered title = %q, want All databases", got)
+	}
+}
+
 func TestRotateReturnsTheRotatedKey(t *testing.T) {
 	store := core.NewStore()
 	account, err := store.CreateAccount(core.User{Name: "Owner", Email: "owner@example.test", PasswordHash: "hash"})
