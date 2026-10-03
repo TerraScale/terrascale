@@ -37,14 +37,13 @@ templ apiKeysContent(page core.Page, d pageData) {
 		}
 		if d.CanManage {
 			@createCredential(page, d, "key", "Create key", "New project key", "Project keys authenticate application requests to this project's databases.", "database:read,database:write")
-			@createCredential(page, d, "m2m", "Create machine credential", "New machine credential", "Machine clients authenticate services that call TerraScale without a user.", "database:read")
+			@createCredential(page, d, "m2m", "Create client", "New machine credential", "Machine clients authenticate services that call TerraScale without a user.", "database:read")
+			if d.Kind == "" {
+				@chooseCredential(d.listFilters)
+			}
 		}
 		<div class="ts-toolbar">
-			@ui.Tabs("Credential types", []ui.Tab{
-				{Label: "All credentials", URL: "/api-keys", Active: d.Kind == ""},
-				{Label: "API keys", URL: "/api-keys?kind=key", Active: d.Kind == "key"},
-				{Label: "M2M clients", URL: "/api-keys?kind=m2m", Active: d.Kind == "m2m"},
-			})
+			@ui.Tabs("Credential types", d.tabs())
 		</div>
 		@ui.Card(ui.CardProps{ID: "credentials", Title: "Credentials", Description: "Keys and machine clients in the selected project.", Actions: credentialActions(d), Flush: len(d.Keys) > 0, ShrinkActions: true}) {
 			if len(d.Keys) > 0 {
@@ -88,32 +87,49 @@ func createCredentialAction(canManage bool, kind string) templ.Component {
 	if !canManage {
 		return nil
 	}
-	if kind == "m2m" {
-		return ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-m2m", Label: "Create machine credential", Icon: credentialIcon("m2m"), Variant: "primary"})
-	}
-	return ui.DialogTrigger(ui.DialogTriggerProps{Dialog: "create-key", Label: "Create key", Icon: credentialIcon("key"), Variant: "primary"})
+	tab := controlsFor(kind)
+	return ui.DialogTrigger(ui.DialogTriggerProps{Dialog: tab.CreateDialog, Label: tab.CreateLabel, Icon: credentialIcon(kind), Variant: "primary"})
 }
 
 templ apiKeysFilters(d pageData) {
-	<form class="ts-filters ts-apikeys-filters" method="get" action="/api-keys" role="search" aria-label="Filter credentials">
-		<input type="hidden" name="kind" value={ d.Kind }/>
-		<input class="ts-input ts-input-sm" type="search" name="q" value={ d.Search } placeholder="Search credentials" aria-label="Search credentials"/>
+	{{ tab := controlsFor(d.Kind) }}
+	<form class="ts-filters ts-apikeys-filters" method="get" action="/api-keys" role="search" aria-label={ "Filter " + tab.Label }>
+		<input type="hidden" name="kind" value={ tab.Kind }/>
+		<input class="ts-input ts-input-sm" type="search" name="q" value={ d.Search } placeholder={ tab.SearchLabel } aria-label={ tab.SearchLabel }/>
 		<select class="ts-select ts-input-sm" name="status" aria-label="Status">
 			<option value="">All statuses</option>
-			<option value="active" selected?={ d.Status == "active" }>Active</option>
-			<option value="inactive" selected?={ d.Status == "inactive" }>Inactive</option>
-		</select>
-		<select class="ts-select ts-input-sm" name="databaseId" aria-label="Database">
-			<option value="">All databases</option>
-			for _, db := range d.Databases {
-				<option value={ db.ID } selected?={ d.DatabaseID == db.ID }>{ db.Name }</option>
+			for _, status := range tab.Statuses {
+				<option value={ status.Value } selected?={ d.Status == status.Value }>{ status.Label }</option>
 			}
 		</select>
+		if tab.DatabaseFilter {
+			<select class="ts-select ts-input-sm" name="databaseId" aria-label="Database">
+				<option value="">All databases</option>
+				for _, db := range d.Databases {
+					<option value={ db.ID } selected?={ d.DatabaseID == db.ID }>{ db.Name }</option>
+				}
+			</select>
+		}
 		<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Filter</button>
 		if d.Search != "" || d.Status != "" || d.DatabaseID != "" {
-			<a class="ts-btn ts-btn-ghost ts-btn-sm" href="/api-keys">Clear</a>
+			<a class="ts-btn ts-btn-ghost ts-btn-sm" href={ d.clearURL() }>Clear</a>
 		}
 	</form>
+}
+
+templ chooseCredential(filters listFilters) {
+	@ui.Dialog(ui.DialogProps{ID: "create-credential", Title: "Create credential", Description: "Choose the type of credential to create."}) {
+		<div class="ts-row">
+			<a class="ts-btn ts-btn-secondary" href={ filters.createURL("key") }>
+				@credentialIcon("key")
+				API key
+			</a>
+			<a class="ts-btn ts-btn-secondary" href={ filters.createURL("m2m") }>
+				@credentialIcon("m2m")
+				M2M client
+			</a>
+		</div>
+	}
 }
 
 templ createCredential(page core.Page, d pageData, kind, action, title, description, scopes string) {
@@ -145,6 +161,9 @@ templ createCredential(page core.Page, d pageData, kind, action, title, descript
 }
 
 func credentialIcon(kind string) templ.Component {
+	if kind == "" {
+		return icons.Plus(16)
+	}
 	if kind == "key" {
 		return readWriteKey.Icon(16)
 	}
