@@ -19,7 +19,7 @@ templ auditView(data pageData) {
 			@ui.Stat("Warnings", fmt.Sprint(data.Warn), "Warning events in this view")
 			@ui.Stat("Informational", fmt.Sprint(data.Info), "Informational events in this view")
 		}
-		@ui.Card(ui.CardProps{ID: "recent-activity", Title: "Recent activity", Description: fmt.Sprintf("Security events matching the current filters · retention is %d days", data.Retention), Actions: exportMenu(data), ActionsAlongsideTitle: true, Flush: true}) {
+		@ui.Card(ui.CardProps{ID: "recent-activity", Title: "Recent activity", Description: fmt.Sprintf("Security events matching the current filters · retention is %d days", data.Retention), Flush: true}) {
 			<form method="get" action="/audit" class="ts-filters ts-audit-filters" role="search" aria-label="Filter audit events">
 				<label class="ts-filter-field ts-audit-search-field" for="audit-search">
 					Search
@@ -58,6 +58,7 @@ templ auditView(data pageData) {
 					</select>
 				</label>
 				<button class="ts-btn ts-btn-primary ts-btn-sm ts-audit-apply" type="submit">Apply filters</button>
+				@exportMenu(data)
 			</form>
 			if len(data.Rows) > 0 {
 				<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Audit events table. Scroll horizontally to see all columns.">

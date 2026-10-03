@@ -50,13 +50,15 @@ func TestPageLayoutsFitContentColumn(t *testing.T) {
 					if (location.pathname === '/audit' && innerWidth === 360) {
 						const header = document.querySelector('#recent-activity .ts-card-head');
 						const title = header?.querySelector('.ts-card-title');
-						const actions = header?.querySelector('.ts-card-actions');
 						const description = header?.querySelector('.ts-card-description');
-						if (!title || !actions || !description ||
-							box(title).bottom <= box(actions).top || box(actions).bottom <= box(title).top ||
-							box(actions).right < box(header).right - 1 ||
-							box(description).top < Math.max(box(title).bottom, box(actions).bottom))
-							problems.push('audit export must share the title row, with description below');
+						if (!title || !description || header?.querySelector('.ts-card-actions'))
+							problems.push('audit card head must hold only the title and description');
+						const filters = document.querySelector('#recent-activity .ts-audit-filters');
+						const apply = filters?.querySelector('.ts-audit-apply');
+						const exportMenu = filters?.querySelector('.ts-menu > summary');
+						if (!apply || !exportMenu ||
+							box(exportMenu).top < box(apply).top - 1 || box(exportMenu).bottom > box(apply).bottom + 1)
+							problems.push('audit export must sit next to Apply filters in the filter bar');
 					}
 					for (const [selector, breakpoint] of [['.ts-grid-2', 768], ['.ts-grid-3', 960], ['.ts-split', 960]]) {
 						for (const grid of document.querySelectorAll(selector)) {
