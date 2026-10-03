@@ -29,8 +29,7 @@
 /* Keep the form and create action together when they fit. If the form itself
    must wrap, let it take the available header width before the create action. */
 .ts-apikeys-page .ts-card-actions > .ts-apikeys-filters {
-  flex: 1 0 auto;
-  min-width: 0;
+  flex: 0 0 auto;
   max-width: 100%;
   flex-wrap: wrap;
   align-items: center;
@@ -38,9 +37,8 @@
 }
 
 .ts-apikeys-filters > .ts-input {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   width: 240px;
-  max-width: 240px;
 }
 
 .ts-apikeys-filters > .ts-select {

@@ -100,7 +100,7 @@ templ apiKeysFilters(d pageData) {
 			<option value="active" selected?={ d.Status == "active" }>Active</option>
 			<option value="inactive" selected?={ d.Status == "inactive" }>Inactive</option>
 		</select>
-		<select class="ts-select ts-input-sm" name="databaseId" aria-label="Database">
+		<select class="ts-select ts-input-sm" name="databaseId" aria-label="Database" title={ databaseFilterTitle(d) } data-on:change="el.title = el.selectedOptions[0].textContent">
 			<option value="">All databases</option>
 			for _, db := range d.Databases {
 				<option value={ db.ID } selected?={ d.DatabaseID == db.ID }>{ db.Name }</option>
@@ -111,6 +111,15 @@ templ apiKeysFilters(d pageData) {
 			<a class="ts-btn ts-btn-ghost ts-btn-sm" href="/api-keys">Clear</a>
 		}
 	</form>
+}
+
+func databaseFilterTitle(d pageData) string {
+	for _, db := range d.Databases {
+		if db.ID == d.DatabaseID {
+			return db.Name
+		}
+	}
+	return "All databases"
 }
 
 templ createCredential(page core.Page, d pageData, kind, action, title, description, scopes string) {

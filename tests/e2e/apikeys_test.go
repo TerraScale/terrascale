@@ -29,6 +29,7 @@ func TestAPIKeyFiltersInListHeader(t *testing.T) {
 				fill(t, form.Locator(`[name="q"]`), "core")
 				selectOption(t, form.Locator(`[name="status"]`), "active")
 				selectOption(t, form.Locator(`[name="databaseId"]`), "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC")
+				must(t, expect.Locator(form.Locator(`[name="databaseId"]`)).ToHaveAttribute("title", "core-primary"))
 				click(t, byRole(form, *playwright.AriaRoleButton, "Filter"))
 				waitForPath(t, page, func(u *url.URL) bool {
 					q := u.Query()
@@ -38,6 +39,7 @@ func TestAPIKeyFiltersInListHeader(t *testing.T) {
 				must(t, expect.Locator(form.Locator(`[name="q"]`)).ToHaveValue("core"))
 				must(t, expect.Locator(form.Locator(`[name="status"]`)).ToHaveValue("active"))
 				must(t, expect.Locator(form.Locator(`[name="databaseId"]`)).ToHaveValue("db_01JC9Q8Y5N7P9R3T5V7X9Z2AC"))
+				must(t, expect.Locator(form.Locator(`[name="databaseId"]`)).ToHaveAttribute("title", "core-primary"))
 				assertAPIKeyHeaderLayout(t, page)
 			})
 		}
