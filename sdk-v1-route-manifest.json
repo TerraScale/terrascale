@@ -1,0 +1,266 @@
+{
+  "manifestVersion": 1,
+  "contractVersion": "terrabase-documents-v1",
+  "contractSource": {
+    "producer": "terrabase",
+    "branch": "feat/v1-contracts",
+    "revision": "7bc74f9d224167ff2dc6b815965305feca210c00",
+    "status": "frozen contract documents; producer OpenAPI and runtime qualification pending",
+    "documents": {
+      "api-v1.md": "04f494248d8f3221675b26e997f8765b957e2b3f1bb19e6fa091f97b499420d5",
+      "query-v1.md": "c5b0bdf07bd37b62c954526bc17af7cfbf22ed30f5545c5e23da68d2cb3a3e39",
+      "shapes-v1.md": "be919ff760e5793eec5b9e249c4b1e18d0b306aecf418d1a3cd6c48b0b244106"
+    }
+  },
+  "routeCount": 10,
+  "routes": [
+    {
+      "producer": "terrabase",
+      "client": "TerraBaseV1Client",
+      "operation": "getDocument",
+      "method": "GET",
+      "pathTemplate": "/v1/databases/{db}/collections/{collection}/documents/{id}",
+      "permission": "read",
+      "requestMediaTypes": [],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        200
+      ],
+      "idempotencyKey": "none",
+      "replaySafe": true,
+      "contract": "api-v1.md",
+      "contractText": [
+        "Base path: `/v1/databases/{db}/collections/{collection}/documents`",
+        "`GET …/documents/{id}`"
+      ]
+    },
+    {
+      "producer": "terrabase",
+      "client": "TerraBaseV1Client",
+      "operation": "putDocument",
+      "method": "PUT",
+      "pathTemplate": "/v1/databases/{db}/collections/{collection}/documents/{id}",
+      "permission": "write",
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        200,
+        201
+      ],
+      "idempotencyKey": "optional",
+      "replaySafe": false,
+      "contract": "api-v1.md",
+      "contractText": [
+        "Base path: `/v1/databases/{db}/collections/{collection}/documents`",
+        "`PUT …/documents/{id}`"
+      ]
+    },
+    {
+      "producer": "terrabase",
+      "client": "TerraBaseV1Client",
+      "operation": "createDocument",
+      "method": "POST",
+      "pathTemplate": "/v1/databases/{db}/collections/{collection}/documents",
+      "permission": "write",
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        201
+      ],
+      "idempotencyKey": "optional",
+      "replaySafe": false,
+      "contract": "api-v1.md",
+      "contractText": [
+        "Base path: `/v1/databases/{db}/collections/{collection}/documents`",
+        "`POST …/documents`"
+      ]
+    },
+    {
+      "producer": "terrabase",
+      "client": "TerraBaseV1Client",
+      "operation": "patchDocument",
+      "method": "PATCH",
+      "pathTemplate": "/v1/databases/{db}/collections/{collection}/documents/{id}",
+      "permission": "write",
+      "requestMediaTypes": [
+        "application/merge-patch+json",
+        "application/vnd.terrabase.ops+json"
+      ],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        200
+      ],
+      "idempotencyKey": "optional",
+      "replaySafe": false,
+      "contract": "api-v1.md",
+      "contractText": [
+        "Base path: `/v1/databases/{db}/collections/{collection}/documents`",
+        "`PATCH …/documents/{id}`"
+      ]
+    },
+    {
+      "producer": "terrabase",
+      "client": "TerraBaseV1Client",
+      "operation": "deleteDocument",
+      "method": "DELETE",
+      "pathTemplate": "/v1/databases/{db}/collections/{collection}/documents/{id}",
+      "permission": "write",
+      "requestMediaTypes": [],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        200
+      ],
+      "idempotencyKey": "optional",
+      "replaySafe": false,
+      "contract": "api-v1.md",
+      "contractText": [
+        "Base path: `/v1/databases/{db}/collections/{collection}/documents`",
+        "`DELETE …/documents/{id}`"
+      ]
+    },
+    {
+      "producer": "terrabase",
+      "client": "TerraBaseV1Client",
+      "operation": "commitTransaction",
+      "method": "POST",
+      "pathTemplate": "/v1/databases/{db}/transactions",
+      "permission": "write",
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        200
+      ],
+      "idempotencyKey": "optional",
+      "replaySafe": false,
+      "contract": "api-v1.md",
+      "contractText": [
+        "`POST /v1/databases/{db}/transactions`"
+      ]
+    },
+    {
+      "producer": "terrabase",
+      "client": "TerraBaseV1Client",
+      "operation": "queryDocuments",
+      "method": "POST",
+      "pathTemplate": "/v1/databases/{db}/collections/{collection}/query",
+      "permission": "read",
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        200
+      ],
+      "idempotencyKey": "none",
+      "replaySafe": true,
+      "contract": "query-v1.md",
+      "contractText": [
+        "`POST /v1/databases/{db}/collections/{collection}/query`"
+      ]
+    },
+    {
+      "producer": "terrabase",
+      "client": "TerraBaseV1Client",
+      "operation": "createShape",
+      "method": "POST",
+      "pathTemplate": "/v1/databases/{db}/shapes",
+      "permission": "shape",
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        201
+      ],
+      "idempotencyKey": "none",
+      "replaySafe": true,
+      "contract": "shapes-v1.md",
+      "contractText": [
+        "`POST /v1/databases/{db}/shapes`",
+        "gatekeeper stores nothing, so clients may retry it like a read"
+      ]
+    },
+    {
+      "producer": "terrabase",
+      "client": "TerraBaseV1Client",
+      "operation": "readShape",
+      "method": "GET",
+      "pathTemplate": "/v1/shapes/{shape_id}",
+      "permission": "shape",
+      "requestMediaTypes": [],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        200
+      ],
+      "idempotencyKey": "none",
+      "replaySafe": true,
+      "contract": "shapes-v1.md",
+      "contractText": [
+        "`GET /v1/shapes/{shape_id}?handle=…&offset=…[&live=true&cursor=…]`"
+      ]
+    },
+    {
+      "producer": "terrabase",
+      "client": "TerraBaseV1Client",
+      "operation": "streamShape",
+      "method": "GET",
+      "pathTemplate": "/v1/shapes/{shape_id}/sse",
+      "permission": "shape",
+      "requestMediaTypes": [],
+      "responseMediaType": "text/event-stream",
+      "successStatuses": [
+        200
+      ],
+      "idempotencyKey": "none",
+      "replaySafe": true,
+      "contract": "shapes-v1.md",
+      "contractText": [
+        "`GET /v1/shapes/{shape_id}/sse?handle=…&offset=…`"
+      ]
+    }
+  ],
+  "errorCodes": [
+    "assert_requires_index",
+    "capacity",
+    "commit_uncertain",
+    "conflict_unresolved",
+    "dependencies_unavailable",
+    "forbidden_scope",
+    "home_region_required",
+    "idempotency_conflict",
+    "idempotency_expired",
+    "index_limit_exceeded",
+    "internal_error",
+    "invalid_cursor",
+    "invalid_key",
+    "invalid_patch",
+    "invalid_query",
+    "invalid_request",
+    "invalid_token",
+    "method_not_allowed",
+    "must_refetch",
+    "not_found",
+    "patch_conflict",
+    "payload_too_large",
+    "precondition_failed",
+    "rate_limited",
+    "schema_changed",
+    "sort_requires_index",
+    "storage_unavailable",
+    "stored_corruption",
+    "transaction_too_large",
+    "ttl_invalid",
+    "unique_violation",
+    "unknown_collection",
+    "unknown_database",
+    "unknown_route",
+    "unsupported_media_type",
+    "upstream_unavailable"
+  ]
+}
