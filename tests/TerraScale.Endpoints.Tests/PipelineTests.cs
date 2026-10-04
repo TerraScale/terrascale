@@ -42,6 +42,26 @@ public sealed class PipelineTests
         await Assert.That(text.StatusCode).IsEqualTo(HttpStatusCode.UnsupportedMediaType);
         await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(empty.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(invalid.Content.Headers.ContentType?.MediaType).IsEqualTo("application/problem+json");
+        using var problem = JsonDocument.Parse(await invalid.Content.ReadAsStringAsync());
+        await Assert.That(problem.RootElement.GetProperty("status").GetInt32()).IsEqualTo(400);
+        await Assert.That(problem.RootElement.GetProperty("detail").GetString()).IsEqualTo("The JSON request body is invalid.");
+    }
+
+    [Test]
+    public async Task SenderErrorHelpersSetStatusAndBody()
+    {
+        await using var app = await StartAsync(EndpointRegistration.Create<ErrorSenderProbeEndpoint>());
+        using var client = Client(app);
+        using var conflict = await client.GetAsync("/error-sender/conflict");
+        using var forbidden = await client.GetAsync("/error-sender/forbidden");
+        using var validation = await client.GetAsync("/error-sender/validation");
+        await Assert.That(conflict.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(await conflict.Content.ReadAsStringAsync()).IsEqualTo("""{"value":"taken"}""");
+        await Assert.That(forbidden.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(validation.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        using var problem = JsonDocument.Parse(await validation.Content.ReadAsStringAsync());
+        await Assert.That(problem.RootElement.GetProperty("errors").GetProperty("name")[0].GetString()).IsEqualTo("required");
     }
 
     [Test]
@@ -78,7 +98,8 @@ public sealed class PipelineTests
         var paths = document.RootElement.GetProperty("paths");
         var post = paths.GetProperty("/json-probe").GetProperty("post");
         await Assert.That(post.GetProperty("requestBody").GetProperty("content").TryGetProperty("application/json", out _)).IsTrue();
-        await Assert.That(post.GetProperty("responses").GetProperty("200").GetProperty("content").TryGetProperty("application/json", out _)).IsTrue();
+        var okContent = post.GetProperty("responses").GetProperty("200").GetProperty("content");
+        await Assert.That(okContent.TryGetProperty("application/json", out _)).IsTrue();
         await Assert.That(paths.GetProperty("/probe").GetProperty("get").GetProperty("operationId").GetString()).IsEqualTo("probe");
     }
 
@@ -113,6 +134,7 @@ public sealed record JsonProbe(string Value);
 public sealed class JsonProbeEndpoint : Endpoint<JsonProbe, JsonProbe>
 {
     public override void Configure() => Post("/json-probe");
+
     public override ValueTask<JsonProbe> HandleAsync(JsonProbe request, CancellationToken cancellationToken) =>
         ValueTask.FromResult(new JsonProbe(request.Value + "!"));
 }
@@ -133,7 +155,21 @@ public sealed class BoundProbeEndpoint : Endpoint<int, string>
 public sealed class SilentProbeEndpoint : EndpointWithoutRequest
 {
     public override void Configure() => Delete("/silent");
+
     public override ValueTask HandleAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
+}
+
+public sealed class ErrorSenderProbeEndpoint : EndpointWithoutRequest
+{
+    public override void Configure() => Get("/error-sender/{kind}");
+
+    public override ValueTask HandleAsync(CancellationToken cancellationToken) =>
+        (HttpContext.Request.RouteValues["kind"] as string) switch
+        {
+            "conflict" => Send.ConflictAsync(new JsonProbe("taken"), cancellationToken),
+            "forbidden" => Send.ForbiddenAsync(cancellationToken),
+            _ => Send.ValidationProblemAsync(new Dictionary<string, string[]> { ["name"] = ["required"] }, cancellationToken),
+        };
 }
 
 public abstract class AbstractProbeEndpoint : EndpointWithoutRequest<string>;

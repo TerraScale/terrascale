@@ -4,6 +4,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>14.0</LangVersion>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <!-- IDE0007/IDE0008: var vs explicit type is left to the author. -->
+    <NoWarn>$(NoWarn);IDE0007;IDE0008</NoWarn>
     <!-- You are not allowed to remove the lines below this comment -->
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

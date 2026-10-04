@@ -1,5 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using Microsoft.AspNetCore.OpenApi;
+using Microsoft.OpenApi;
 
 namespace TerraScale.Endpoints;
 
@@ -53,6 +55,7 @@ public static class EndpointServiceCollectionExtensions
             catalog = new EndpointCatalog();
             services.AddSingleton(options);
             services.AddSingleton(catalog);
+            services.ConfigureHttpJsonOptions(json => json.SerializerOptions.TypeInfoResolverChain.Add(ProblemJsonContext.Default));
             AddOpenApi(services, options);
         }
 
@@ -143,11 +146,38 @@ public static class EndpointServiceCollectionExtensions
 
     private static void AddOpenApi(IServiceCollection services, EndpointOptions options)
     {
-        services.AddOpenApi(options.Version, openApi => openApi.AddDocumentTransformer((document, _, _) =>
+        services.AddOpenApi(options.Version, openApi => openApi
+            .AddDocumentTransformer((document, _, _) =>
+            {
+                document.Info.Title = options.Title;
+                document.Info.Version = options.Version;
+                return Task.CompletedTask;
+            })
+            .AddOperationTransformer(AddRequestParametersAsync));
+    }
+
+    // ApiExplorer only sees parameters that RequestDelegateFactory describes, and endpoints map a
+    // plain RequestDelegate, so route and query parameters are added from endpoint metadata here.
+    private static async Task AddRequestParametersAsync(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        if (context.Description.ActionDescriptor.EndpointMetadata.OfType<RequestParametersMetadata>().FirstOrDefault() is not { } metadata)
         {
-            document.Info.Title = options.Title;
-            document.Info.Version = options.Version;
-            return Task.CompletedTask;
-        }));
+            return;
+        }
+
+        operation.Parameters ??= [];
+        foreach (var parameter in metadata.Parameters)
+        {
+            operation.Parameters.Add(new OpenApiParameter
+            {
+                Name = parameter.Name,
+                In = parameter.InPath ? ParameterLocation.Path : ParameterLocation.Query,
+                Required = parameter.Required,
+                Schema = await context.GetOrCreateSchemaAsync(parameter.Type, null, cancellationToken).ConfigureAwait(false),
+            });
+        }
     }
 }

@@ -8,6 +8,7 @@ namespace TerraScale.Endpoints.Example;
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(Widget))]
 [JsonSerializable(typeof(CreateWidgetRequest))]
+[JsonSerializable(typeof(GetWidgetRequest))]
 [JsonSerializable(typeof(EchoWidgetRequest))]
 [JsonSerializable(typeof(EchoWidgetResponse))]
 [JsonSerializable(typeof(HealthResponse))]

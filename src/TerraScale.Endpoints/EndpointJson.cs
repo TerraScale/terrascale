@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Options;
 using JsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
@@ -20,13 +21,25 @@ internal static class EndpointJson
             ? null
             : GetSerializerOptions(services).GetTypeInfo<TResponse>();
 
-    internal static async ValueTask<TRequest> ReadBodyAsync<TRequest>(HttpContext context, JsonTypeInfo<TRequest> typeInfo, CancellationToken cancellationToken)
+    internal static async ValueTask<TRequest> ReadBodyAsync<TRequest>(
+        HttpContext context,
+        JsonTypeInfo<TRequest> typeInfo,
+        CancellationToken cancellationToken)
     {
         if (!context.Request.HasJsonContentType())
         {
             throw new BadHttpRequestException("Expected a JSON request body.", StatusCodes.Status415UnsupportedMediaType);
         }
 
+        return await ReadJsonAsync(context, typeInfo, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Reads the body once the JSON content type is known; parsing it again allocates.</summary>
+    internal static async ValueTask<TRequest> ReadJsonAsync<TRequest>(
+        HttpContext context,
+        JsonTypeInfo<TRequest> typeInfo,
+        CancellationToken cancellationToken)
+    {
         TRequest? request;
         try
         {
@@ -67,3 +80,11 @@ internal static class EndpointJson
     private static JsonSerializerOptions GetSerializerOptions(IServiceProvider services) =>
         services.GetRequiredService<IOptions<JsonOptions>>().Value.SerializerOptions;
 }
+
+/// <summary>
+/// Problem responses (binding errors, validation, <c>Send.ProblemAsync</c>) serialize through the
+/// app's JSON options. This context is appended to the resolver chain so they work in native AOT.
+/// </summary>
+[JsonSerializable(typeof(Microsoft.AspNetCore.Mvc.ProblemDetails))]
+[JsonSerializable(typeof(HttpValidationProblemDetails))]
+internal sealed partial class ProblemJsonContext : JsonSerializerContext;

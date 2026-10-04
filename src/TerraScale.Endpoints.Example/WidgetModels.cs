@@ -15,6 +15,14 @@ public sealed class WidgetStore
         return widget;
     }
 
+    public bool NameExists(string name)
+    {
+        lock (widgets)
+        {
+            return widgets.Values.Any(widget => widget.Name == name);
+        }
+    }
+
     public Widget? Find(Guid id)
     {
         lock (widgets)

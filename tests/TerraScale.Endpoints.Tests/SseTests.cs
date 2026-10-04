@@ -105,7 +105,11 @@ public sealed class RawSseEndpoint : EndpointWithoutRequest<IResult>
 {
     public const string Path = "/raw-sse";
 
-    public override void Configure() { Get(Path); ProducesSse(); }
+    public override void Configure()
+    {
+        Get(Path);
+        ProducesSse();
+    }
 
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         ValueTask.FromResult(Sse.Stream(async (sse, ct) =>

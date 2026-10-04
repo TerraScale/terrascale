@@ -10,6 +10,10 @@ public abstract class EndpointBase : IEndpoint
     private EndpointDefinition? definition;
     private HttpContext? httpContext;
 
+    /// <summary>Returned by the default <c>ValidateAsync</c>, so the pipeline can skip it without awaiting.</summary>
+    private protected static readonly IAsyncEnumerable<System.ComponentModel.DataAnnotations.ValidationResult> NoValidation =
+        AsyncEnumerable.Empty<System.ComponentModel.DataAnnotations.ValidationResult>();
+
     /// <summary>The response chosen through <c>Send</c>, for request-only endpoints.</summary>
     internal IResult? SentResult { get; set; }
 
@@ -21,10 +25,12 @@ public abstract class EndpointBase : IEndpoint
     public abstract void Configure();
 
     /// <summary>The request context while handling a request.</summary>
-    protected HttpContext HttpContext => this.httpContext ?? throw new InvalidOperationException("HttpContext is only available while handling a request.");
+    protected HttpContext HttpContext =>
+        this.httpContext ?? throw new InvalidOperationException("HttpContext is only available while handling a request.");
 
     /// <summary>The active fluent definition during <see cref="Configure"/>.</summary>
-    protected EndpointDefinition Definition => this.definition ?? throw new InvalidOperationException("Endpoint configuration is only available from Configure().");
+    protected EndpointDefinition Definition =>
+        this.definition ?? throw new InvalidOperationException("Endpoint configuration is only available from Configure().");
 
     protected EndpointDefinition Get(string route) => this.Definition.Get(route);
     protected EndpointDefinition Post(string route) => this.Definition.Post(route);
@@ -37,7 +43,8 @@ public abstract class EndpointBase : IEndpoint
     protected EndpointDefinition Summary(string summary) => this.Definition.WithSummary(summary);
     protected EndpointDefinition Description(string description) => this.Definition.WithDescription(description);
     protected EndpointDefinition Tags(params string[] tags) => this.Definition.WithTags(tags);
-    protected EndpointDefinition Produces<T>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") => this.Definition.Produces<T>(statusCode, contentType);
+    protected EndpointDefinition Produces<T>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") =>
+        this.Definition.Produces<T>(statusCode, contentType);
     protected EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) => this.Definition.ProducesSse(statusCode);
     protected EndpointDefinition Accepts<T>(params string[] contentTypes) => this.Definition.Accepts<T>(contentTypes);
     protected EndpointDefinition AllowAnonymous() => this.Definition.AllowAnonymous();
@@ -72,11 +79,9 @@ public abstract class EndpointBase : IEndpoint
 
     private protected abstract RouteHandlerBuilder MapCore(IEndpointRouteBuilder routes, EndpointDefinition definition, Type endpointType);
 
-    private protected static Task Reject(HttpContext context, BadHttpRequestException exception)
-    {
-        context.Response.StatusCode = exception.StatusCode;
-        return Task.CompletedTask;
-    }
+    // Goes through IProblemDetailsService when the app registers one, so error bodies stay customizable.
+    private protected static Task Reject(HttpContext context, BadHttpRequestException exception) =>
+        TypedResults.Problem(exception.Message, statusCode: exception.StatusCode).ExecuteAsync(context);
 
     private protected static TEndpoint Activate<TEndpoint>(HttpContext context, Type endpointType)
         where TEndpoint : EndpointBase
