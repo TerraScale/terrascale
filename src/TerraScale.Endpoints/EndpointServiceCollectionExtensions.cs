@@ -57,7 +57,14 @@ public static class EndpointServiceCollectionExtensions
             catalog = new EndpointCatalog();
             services.AddSingleton(options);
             services.AddSingleton(catalog);
-            services.ConfigureHttpJsonOptions(json => json.SerializerOptions.TypeInfoResolverChain.Add(ProblemJsonContext.Default));
+            // Post-configure, so it survives an app that replaces TypeInfoResolver in its own configuration.
+            services.PostConfigure<Microsoft.AspNetCore.Http.Json.JsonOptions>(json =>
+            {
+                if (!json.SerializerOptions.TypeInfoResolverChain.Contains(ProblemJsonContext.Default))
+                {
+                    json.SerializerOptions.TypeInfoResolverChain.Add(ProblemJsonContext.Default);
+                }
+            });
             AddOpenApi(services, options);
         }
 

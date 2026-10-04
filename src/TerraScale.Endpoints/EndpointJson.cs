@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Options;
+using Microsoft.Net.Http.Headers;
 using JsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
 
 namespace TerraScale.Endpoints;
@@ -49,9 +50,27 @@ internal static class EndpointJson
         {
             throw new BadHttpRequestException("The JSON request body is invalid.", StatusCodes.Status400BadRequest, exception);
         }
+        catch (InvalidOperationException exception) when (GetEncoding(context.Request) is null)
+        {
+            // ReadFromJsonAsync throws InvalidOperationException for an unknown charset; the filter
+            // only runs on that failure, so valid requests do not parse the content type again.
+            throw UnsupportedCharset(exception);
+        }
 
         return request ?? throw new BadHttpRequestException("A JSON request body is required.", StatusCodes.Status400BadRequest);
     }
+
+    /// <summary>The body encoding, UTF-8 when no charset is given, or null for an unknown charset.</summary>
+    internal static Encoding? GetEncoding(HttpRequest request) =>
+        !MediaTypeHeaderValue.TryParse(request.ContentType, out var mediaType) || !mediaType.Charset.HasValue
+            ? Encoding.UTF8
+            : mediaType.Encoding;
+
+    internal static BadHttpRequestException UnsupportedCharset() =>
+        new("The request charset is not supported.", StatusCodes.Status415UnsupportedMediaType);
+
+    internal static BadHttpRequestException UnsupportedCharset(Exception inner) =>
+        new("The request charset is not supported.", StatusCodes.Status415UnsupportedMediaType, inner);
 
     // Completed handlers write without an async state machine, like generated minimal API code.
     internal static Task RespondAsync<TResponse>(HttpContext context, ValueTask<TResponse> handled, JsonTypeInfo<TResponse>? typeInfo) =>

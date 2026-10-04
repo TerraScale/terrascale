@@ -958,3 +958,105 @@ public sealed class NullableStructEndpoint : Endpoint<NullableStructQuery, Nulla
     public override ValueTask<NullableStructQuery> HandleAsync(NullableStructQuery request, CancellationToken cancellationToken) =>
         ValueTask.FromResult(request);
 }
+
+/// <summary>Regressions for the sixth ts-reviewer pass on PR #8.</summary>
+public sealed class SixthPassBindingTests
+{
+    [Test]
+    public async Task EmptyValuesBindNullToNullableValueTypes()
+    {
+        await using var app = await StartAsync(_ => { });
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/sixth/nullable?limit=&shade=")).IsEqualTo("""{"limit":null,"shade":null}""");
+    }
+
+    [Test]
+    public async Task EnumNamesBindWithTheDefaultNumericConverter()
+    {
+        await using var app = await StartAsync(_ => { });
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/sixth/enum?color=green&access=Read,Write")).IsEqualTo("""{"color":1,"access":3}""");
+    }
+
+    [Test]
+    public async Task UnsupportedCharsetsAreAnsweredWith415()
+    {
+        await using var app = await StartAsync(_ => { });
+        using var client = Client(app);
+        using var content = new ByteArrayContent("""{"page":1}"""u8.ToArray());
+        content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse("application/json; charset=not-an-encoding");
+        using var merged = await client.PostAsync("/sixth/echo?page=2", content);
+        using var direct = await client.PostAsync("/sixth/echo", content);
+
+        // MediaTypeHeaderValue.Encoding returns null for an unknown charset (the merge path read it
+        // as UTF-8) and ReadFromJsonAsync throws InvalidOperationException (the direct path was a 500).
+        await Assert.That(merged.StatusCode).IsEqualTo(HttpStatusCode.UnsupportedMediaType);
+        await Assert.That(direct.StatusCode).IsEqualTo(HttpStatusCode.UnsupportedMediaType);
+    }
+
+    [Test]
+    public async Task ProblemResponsesSurviveAReplacedTypeInfoResolver()
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolver = MoneyJsonContext.Default),
+            EndpointRegistration.Create<MoneyEndpoint>());
+        using var client = Client(app);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/money?amount=1") { Content = new StringContent("{", Encoding.UTF8, "application/json") };
+        using var response = await client.SendAsync(request);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("application/problem+json");
+    }
+
+    private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(endpoints.Length > 0
+            ? endpoints
+            : [
+                EndpointRegistration.Create<NullableValuesEndpoint>(),
+                EndpointRegistration.Create<EnumNamesEndpoint>(),
+                EndpointRegistration.Create<SixthEchoEndpoint>()]);
+        configure(builder);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+public sealed record NullableValuesQuery(int? Limit, Color? Shade);
+
+public sealed class NullableValuesEndpoint : Endpoint<NullableValuesQuery, NullableValuesQuery>
+{
+    public override void Configure() => Get("/sixth/nullable");
+
+    public override ValueTask<NullableValuesQuery> HandleAsync(NullableValuesQuery request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(request);
+}
+
+[Flags]
+public enum Access
+{
+    None = 0,
+    Read = 1,
+    Write = 2,
+}
+
+public sealed record EnumNamesQuery(Color Color, Access Access);
+
+public sealed class EnumNamesEndpoint : Endpoint<EnumNamesQuery, EnumNamesQuery>
+{
+    public override void Configure() => Get("/sixth/enum");
+
+    public override ValueTask<EnumNamesQuery> HandleAsync(EnumNamesQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+public sealed class SixthEchoEndpoint : Endpoint<FilteredQuery, FilteredQuery>
+{
+    public override void Configure() => Post("/sixth/echo");
+
+    public override ValueTask<FilteredQuery> HandleAsync(FilteredQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}

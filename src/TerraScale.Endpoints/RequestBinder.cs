@@ -10,7 +10,6 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Extensions.Validation;
-using Microsoft.Net.Http.Headers;
 
 namespace TerraScale.Endpoints;
 
@@ -250,8 +249,8 @@ internal sealed class RequestBinder<TRequest>
         CancellationToken cancellationToken)
     {
         // Like ReadFromJsonAsync, honor a non-UTF-8 charset by transcoding the body to UTF-8.
-        var encoding = MediaTypeHeaderValue.TryParse(request.ContentType, out var mediaType) ? mediaType.Encoding : null;
-        var transcoded = encoding is null || encoding.CodePage == Encoding.UTF8.CodePage
+        var encoding = EndpointJson.GetEncoding(request) ?? throw EndpointJson.UnsupportedCharset();
+        var transcoded = encoding.CodePage == Encoding.UTF8.CodePage
             ? null
             : Encoding.CreateTranscodingStream(request.Body, encoding, Encoding.UTF8, leaveOpen: true);
         await using (transcoded)
@@ -381,7 +380,14 @@ internal static class RequestValues
             return JsonValue.Create(raw);
         }
 
-        var target = Nullable.GetUnderlyingType(type) ?? type;
+        // Like ASP.NET Core parameter binding, ?limit= binds null to a nullable value type.
+        var underlying = Nullable.GetUnderlyingType(type);
+        if (underlying is not null && string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var target = underlying ?? type;
         if (target == typeof(bool) && bool.TryParse(raw, out var flag))
         {
             return JsonValue.Create(flag);
@@ -395,6 +401,19 @@ internal static class RequestValues
         if (ToNumber(raw, target) is { } number)
         {
             return number;
+        }
+
+        // Enum names (and flag combinations such as "Read, Write") parse like ASP.NET Core parameter
+        // binding and are sent as the underlying number, which the default enum converter reads.
+        // ponytail: a JsonStringEnumConverter with AllowIntegerValues = false rejects that number;
+        // probe the converter per enum type if such contracts show up.
+        if (target.IsEnum && Enum.TryParse(target, raw, ignoreCase: true, out var named))
+        {
+            var culture = CultureInfo.InvariantCulture;
+            var value = Type.GetTypeCode(target) == TypeCode.UInt64
+                ? Convert.ToUInt64(named, culture).ToString(culture)
+                : Convert.ToInt64(named, culture).ToString(culture);
+            return (JsonValue)JsonNode.Parse(value)!;
         }
 
         return JsonValue.Create(raw);
