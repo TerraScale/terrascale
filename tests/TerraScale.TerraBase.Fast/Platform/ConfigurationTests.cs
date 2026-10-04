@@ -54,6 +54,8 @@ public sealed class ConfigurationTests
             await File.WriteAllTextAsync(shortSecret, "secret-value");
             var longSecret = Path.Combine(directory, "long");
             await File.WriteAllTextAsync(longSecret, new string('s', 32) + "\n");
+            var blankSecret = Path.Combine(directory, "blank");
+            await File.WriteAllTextAsync(blankSecret, new string(' ', 40));
             using var tls = new ClientTls();
             var client = new Dictionary<string, string>();
             tls.Apply(client);
@@ -65,12 +67,17 @@ public sealed class ConfigurationTests
             var missing = await Assert.That(() => TerraBaseOptions.FromValues(
                     new Dictionary<string, string>(client) { ["dashboard-credential-file"] = Path.Combine(directory, "missing") }))
                 .Throws<TerraBaseConfigurationException>();
+            var blank = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string>(client) { ["dashboard-credential-file"] = blankSecret }))
+                .Throws<TerraBaseConfigurationException>();
             var options = TerraBaseOptions.FromValues(new Dictionary<string, string>(client) { ["dashboard-credential-file"] = longSecret });
 
             await Assert.That(withoutClient!.Message).Contains("client-port");
             await Assert.That(tooShort!.Message).Contains("dashboard-credential-file");
             await Assert.That(tooShort.Message).DoesNotContain("secret-value");
             await Assert.That(missing!.Message).DoesNotContain(directory);
+            // A file of only whitespace is trimmed to an empty, too short secret.
+            await Assert.That(blank!.Message).Contains("dashboard-credential-file");
+            await Assert.That(blank.Message).DoesNotContain(directory);
             await Assert.That(options.DashboardCredentialHash.Length).IsEqualTo(32);
             foreach (var owner in new[] { "bad\u0001owner", "", "   ", new string('o', 257) })
             {

@@ -344,6 +344,34 @@ public sealed class ManagementApiTests
     }
 
     [Test]
+    public async Task The_dashboard_credential_file_is_trimmed_like_the_presented_secret()
+    {
+        var directory = Directory.CreateTempSubdirectory("terrabase-dashboard-").FullName;
+        try
+        {
+            var secret = Faker.Random.AlphaNumeric(40);
+            var credentialFile = Path.Combine(directory, "credential");
+            await File.WriteAllTextAsync(credentialFile, "  " + secret + "  \n");
+            using var tls = new ClientTls();
+            await using var server = await TerraBaseTestServer.StartAsync(settings =>
+            {
+                tls.Apply(settings);
+                settings["dashboard-credential-file"] = credentialFile;
+            });
+            using var client = tls.CreateClient(server.ClientAddress!, secret);
+            client.DefaultRequestHeaders.Add(UserHeader, Faker.Random.Guid().ToString());
+
+            using var response = await client.GetAsync(Uri("/v1/management/organizations"));
+
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task A_catalog_from_before_membership_is_migrated_to_the_configured_owner()
     {
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-legacy-").FullName;
@@ -402,6 +430,47 @@ public sealed class ManagementApiTests
     }
 
     [Test]
+    public async Task A_catalog_from_before_roles_makes_its_members_owners()
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-roles-").FullName;
+        try
+        {
+            var organization = Guid.CreateVersion7().ToString();
+            await WriteSystemDocumentsAsync(
+                dataDirectory,
+                ("catalog", "version", JsonSerializer.Serialize("2")),
+                ("organizations", organization, $$"""{"id":"{{organization}}","name":"Acme","createdBy":"alice","createdAt":"2026-10-04T12:00:00+00:00"}"""),
+                ($"organizations/{organization}/members", "alice", JsonSerializer.Serialize("alice")),
+                ("users/alice/organizations", organization, JsonSerializer.Serialize(organization)),
+                ("users/alice/organization_names", "acme", JsonSerializer.Serialize(organization)));
+
+            string[] members;
+            HttpStatusCode invited, read;
+            await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = dataDirectory))
+            {
+                using var alice = api.As("alice");
+                var page = await alice.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}/members"));
+                members = [.. page.GetProperty("items").EnumerateArray().Select(member => $"{member.GetProperty("userId").GetString()}={member.GetProperty("role").GetString()}")];
+                // Owner rights work: only an admin or owner may invite.
+                invited = await StatusAsync(alice.PostAsJsonAsync(Uri($"/v1/management/organizations/{organization}/invitations"), new { email = Faker.Internet.Email() }));
+                read = await StatusAsync(alice.GetAsync(Uri($"/v1/management/organizations/{organization}")));
+            }
+
+            SqliteConnection.ClearAllPools();
+            await Assert.That(members).IsEquivalentTo(["alice=owner"]);
+            await Assert.That(invited).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(read).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await ReadSystemDocumentsAsync(dataDirectory)).Where(line => line.StartsWith("catalog|version|", StringComparison.Ordinal)))
+                .IsEquivalentTo([$"catalog|version|{JsonSerializer.Serialize("3")}"]);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task A_catalog_with_an_unsupported_version_is_refused_and_left_unchanged()
     {
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-future-").FullName;
@@ -410,7 +479,7 @@ public sealed class ManagementApiTests
             var organization = Guid.CreateVersion7().ToString();
             await WriteSystemDocumentsAsync(
                 dataDirectory,
-                ("catalog", "version", JsonSerializer.Serialize("3")),
+                ("catalog", "version", JsonSerializer.Serialize("99")),
                 ("organizations", organization, $$"""{"id":"{{organization}}","name":"Acme","createdBy":"alice","createdAt":"2026-10-04T12:00:00+00:00"}"""),
                 ($"organizations/{organization}/members", "alice", JsonSerializer.Serialize("alice")),
                 ("users/alice/organizations", organization, JsonSerializer.Serialize(organization)),

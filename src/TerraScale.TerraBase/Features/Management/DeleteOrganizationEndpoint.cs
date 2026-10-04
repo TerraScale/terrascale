@@ -12,8 +12,9 @@ public sealed class DeleteOrganizationEndpoint(IManagementService management) : 
         Delete(ManagementRoute.Organization);
         Name("deleteOrganization");
         Summary("Deletes an organization");
-        Description("Fails with 409 while the organization still has projects." + " " + ManagementRoute.IdentityDescription);
+        Description("Needs owner (403 otherwise). Fails with 409 while the organization still has projects. Also deletes its members, invitations, ownership transfer and audit log." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
+        Produces<string>(StatusCodes.Status403Forbidden);
         Produces<string>(StatusCodes.Status404NotFound);
         Produces<string>(StatusCodes.Status409Conflict);
         RequireAuthorization(DashboardAuthenticationHandler.PolicyName);

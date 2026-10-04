@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Endpoints;
 using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
@@ -21,7 +22,9 @@ public sealed class PutDocumentEndpoint(IDocumentService documents) : EndpointWi
         Summary("Inserts or replaces a JSON document");
         Description("The body is any JSON object of at most 1 MiB.");
         Tags("Documents");
-        Accepts<JsonElement>("application/json");
+        // Not Accepts<JsonElement>(): TerraScale.Endpoints 3.0.23-rc.1 drops its type on an endpoint
+        // without a request model, and the untyped body fails the whole OpenAPI document.
+        Metadata(new AcceptsMetadata(["application/json"], typeof(JsonElement)));
         Produces<DocumentVersionBody>();
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
         Metadata(ListenerMetadata.Client);

@@ -37,6 +37,24 @@ public enum ManagementError
 
     /// <summary>The resource still has children; delete them first.</summary>
     NotEmpty,
+
+    /// <summary>The acting user is a member, but its role does not allow the operation.</summary>
+    Forbidden,
+
+    /// <summary>The change would leave the organization without an owner.</summary>
+    LastOwner,
+
+    /// <summary>The user is already a member of the organization.</summary>
+    AlreadyMember,
+
+    /// <summary>An unexpired invitation for the email address is pending.</summary>
+    InvitationPending,
+
+    /// <summary>The member is already an owner.</summary>
+    AlreadyOwner,
+
+    /// <summary>The invitation expired.</summary>
+    Expired,
 }
 
 /// <summary>A value or the reason there is none.</summary>
@@ -74,7 +92,7 @@ public sealed record ManagementPage<T>(IReadOnlyList<T> Items, string? Next);
 /// </remarks>
 public interface IManagementService
 {
-    /// <summary>Creates an organization with the user as its first member.</summary>
+    /// <summary>Creates an organization with the user as its first member, an <see cref="OrganizationRole.Owner"/>.</summary>
     ValueTask<ManagementResult<Organization>> CreateOrganizationAsync(string userId, string name, CancellationToken cancellationToken);
 
     /// <summary>Lists the user's organizations after <paramref name="after"/>.</summary>
@@ -83,11 +101,14 @@ public interface IManagementService
     /// <summary>Reads an organization.</summary>
     ValueTask<Organization?> GetOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
-    /// <summary>Renames an organization.</summary>
+    /// <summary>Renames an organization. Needs <see cref="OrganizationRole.Admin"/>.</summary>
     ValueTask<ManagementResult<Organization>> RenameOrganizationAsync(
         string userId, string organizationId, string name, CancellationToken cancellationToken);
 
-    /// <summary>Deletes an organization that has no projects, with its memberships.</summary>
+    /// <summary>
+    /// Deletes an organization that has no projects, with its memberships, invitations, ownership transfer and
+    /// audit log. Needs <see cref="OrganizationRole.Owner"/>.
+    /// </summary>
     ValueTask<ManagementError> DeleteOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
     /// <summary>Reads the organization the user last switched to; <see langword="null"/> when none or no longer a member.</summary>

@@ -57,33 +57,41 @@ every request against the organizations that user belongs to.
 
 ### Membership
 
-- Creating an organization makes the acting user its first member. Invitations, roles and
-  removing members belong to the members follow-up.
+- Creating an organization makes the acting user its first member, with the `owner` role. Roles,
+  invitations, removing members and ownership transfer are described in [Members and roles](#members-and-roles).
 - Every operation checks membership in the same SQLite transaction as the read or write it guards.
   A membership change can therefore never land between the check and the write.
 - An organization the user is not a member of, and everything under it (projects, databases,
   branches), answers `404`, exactly like an id that does not exist. A non-member cannot confirm
   that an organization exists.
-- Project access is decided at the organization level for now: every member can manage every
-  project in the organization. Per-project roles belong to the members/roles follow-up.
+- Project access is decided at the organization level for now: every member, whatever its role, can
+  manage every project and database in the organization. Renaming the organization needs `admin` and
+  deleting it needs `owner` (`403` otherwise). Per-project roles are a follow-up.
 - `GET /organizations` lists only the acting user's organizations. The current organization can
   be set only to an organization the user belongs to, and it reads as `404` once the user no longer
   belongs to it.
 - Platform-admin routes in the dashboard (`/api/v1/admin/…`) act on any organization. They need a
   separate admin authorization design and are not served by this API.
 
+### Upgrading a catalog from before roles
+
+Catalog version 2 (TS-461) stored members without roles. Version 3 stores each member as
+`{userId, role, joinedAt}`. On its first Management request, a process upgrades a version 2 catalog in one
+write transaction: every member becomes an `owner`, because version 2 could only make an organization's
+creator (or the legacy owner) a member. `joinedAt` is the organization's creation time. No setting is needed.
+
 ### Upgrading a catalog from before membership
 
 The first Management release (#5) stored organizations with no members and with globally
-unique names. That is catalog version 1. This release uses version 2 and records it in the
+unique names. That is catalog version 1. This release uses version 3 and records it in the
 `catalog/version` document of the `_system` database.
 
-- On its first Management request, each process brings the catalog to version 2, in one write
+- On its first Management request, each process brings the catalog to version 3, in one write
   transaction.
 - If the catalog is still version 1 and holds organizations, set `TERRABASE_MANAGEMENT_LEGACY_OWNER`
   (or `--management-legacy-owner=`) to a ts-auth user id. In that same transaction, every version 1
   organization:
-  - gets that user as `createdBy` and only member;
+  - gets that user as `createdBy` and only member, an `owner`;
   - moves its name claim from the global index to that user's own index.
 
   Projects and databases are untouched.
@@ -111,8 +119,10 @@ unique names. That is catalog version 1. This release uses version 2 and records
   `_` or `-`, at most 63 characters. They are unique per project.
 - **Lists** take `?after=<id>&limit=1..100` (default 20) and return `{"items":[…],"next":null|"<id>"}`.
   This matches the document list endpoint.
-- **Errors:** `400` for invalid input, `404` for an unknown resource or parent, `409` for a
-  duplicate name or a non-empty delete. Bodies are a plain message that never echoes input.
+- **Errors:** `400` for invalid input, `403` when the acting member's role does not allow the request,
+  `404` for an unknown resource or parent (or an organization the user is not a member of), `409` for a
+  duplicate name, a non-empty delete or a rule in [Members and roles](#members-and-roles). Bodies are a plain
+  message that never echoes input.
 - Every database gets a generated `storageName` (`db-<32 hex>`), which is the name the data API
   uses: `/v1/databases/{storageName}/collections/…`.
 
@@ -125,8 +135,8 @@ Base path: `/v1/management`.
 | `POST` | `/organizations` | `{name}` → `201` organization with the acting user as its first member; `409` name taken |
 | `GET` | `/organizations` | page of the acting user's organizations |
 | `GET` | `/organizations/{organization}` | organization |
-| `PATCH` | `/organizations/{organization}` | `{name}` → renamed organization, `409` name taken |
-| `DELETE` | `/organizations/{organization}` | `204`; `409` while it has projects |
+| `PATCH` | `/organizations/{organization}` | `{name}` → renamed organization, `409` name taken; needs `admin` |
+| `DELETE` | `/organizations/{organization}` | `204`; `409` while it has projects; needs `owner`. Also deletes its members, invitations, transfer and audit log |
 | `GET` | `/current-organization` | the organization the acting user last switched to; `404` if none or no longer a member |
 | `PUT` | `/current-organization` | `{organizationId}` → organization; `404` if the user is not a member |
 | `POST` | `/organizations/{organization}/projects` | `{name}` → `201` project |
@@ -147,6 +157,71 @@ Shapes:
 {"id":"0199…","organizationId":"0199…","name":"Production","createdAt":"…"}
 {"id":"0199…","projectId":"0199…","name":"main","storageName":"db-0199…","branchedFrom":null,"createdAt":"…"}
 ```
+
+## Members and roles
+
+Roles, from least to most privileged: `member`, `admin`, `owner`. The routes below are under
+`/v1/management/organizations/{organization}` and follow [Access and authorization](#access-and-authorization):
+a user who is not a member gets `404`, and a member whose role is too low gets `403`.
+
+| Method | Route | Needs | Result |
+| --- | --- | --- | --- |
+| `GET` | `/members` | member | page of members in user id order |
+| `PUT` | `/members/{user}/role` | admin; owner if the member is or becomes an owner | `{role}` → member; `409` when it would demote the last owner |
+| `DELETE` | `/members/{user}` | admin; owner to remove an owner | `204`; `409` for the last owner |
+| `POST` | `/leave` | member | `204`; `409` for the last owner |
+| `POST` | `/invitations` | admin; owner to invite an owner | `{email, role}` (role defaults to `member`) → `201` `{invitation, token}`; `409` while an unexpired invitation for the email is pending |
+| `GET` | `/invitations` | admin | page of pending invitations in creation order, expired ones included; `after` is the previous page's `next` |
+| `DELETE` | `/invitations/{invitation}` | admin | `204`; the token stops working |
+| `GET` | `/ownership-transfer` | member | pending transfer; `404` if none |
+| `POST` | `/ownership-transfer` | owner | `{userId}` → `201` transfer to a member who is not an owner; replaces a pending one |
+| `POST` | `/ownership-transfer/confirm` | the nominee | nominee's membership, now `owner`; the owner who started it becomes `member` |
+| `DELETE` | `/ownership-transfer` | owner or the nominee | `204` |
+| `GET` | `/audit-retention` | admin | `{days}`, `90` unless set |
+| `PUT` | `/audit-retention` | admin | `{days}` (1 to 90) → `{days}` |
+| `GET` | `/audit-events` | admin | page of audit events, newest first, within the retention; `after` is the previous page's `next` |
+
+Accepting is the one route outside an organization: `POST /v1/management/invitations/accept` with
+`{token, email}`, the acting user in `X-TerraBase-User-Id` and no organization header (the token names the
+organization). It answers the new membership; `403` when `email` differs from the invitation, `404` for an
+unknown token, `409` when the invitation expired or the user is already a member.
+
+Rules:
+
+- **The last owner** cannot be demoted, removed or leave. An organization can have several owners;
+  only owners grant, revoke or transfer ownership.
+- **Invitations** expire after 7 days. The token (`<organization>.<invitation>.<secret>`) is returned
+  only by the create call; TerraBase stores the SHA-256 of its secret and compares it in constant time.
+  Inviting an address whose invitation expired replaces it. TerraBase sends no email: the dashboard delivers
+  the link and, on accept, passes the signed-in user's verified email, which must match the invitation
+  ignoring case.
+- **Ownership transfer** follows the dashboard: one pending transfer per organization, valid for 7 days.
+  Only the nominee confirms. The offer lapses (`404`) as soon as its starter stops being an owner or
+  either side leaves, even if the starter later regains ownership.
+- **Audit events** record every change above as `{id, actor, action, target, detail, occurredAt}`.
+  Actions: `member.role_changed`, `member.removed`, `member.left`, `invitation.created`,
+  `invitation.revoked`, `invitation.accepted`, `ownership.transfer_started`,
+  `ownership.transfer_confirmed`, `ownership.transfer_cancelled`, `settings.audit_retention_updated`.
+  `target` is a user id or an invitation email; `detail` is the new role or the number of days. Retention
+  is measured on each event's exact `occurredAt`: events older than the retention stop being listed at once
+  and are deleted, oldest first, as new events are recorded.
+- **Order:** invitations list in creation order and audit events newest first, by a per-organization
+  sequence. The sequence comes from a counter document incremented in the same write transaction as the
+  insert, and is the key the list is stored under. The order therefore survives restarts, does not depend
+  on the clock, and holds within one millisecond. Invitation and event ids are opaque UUIDs. On these two
+  lists `next` is an opaque cursor to pass back as `after`, not an item id.
+
+Shapes:
+
+```json
+{"userId":"<ts-auth user id>","role":"owner","joinedAt":"2026-10-04T12:00:00+00:00"}
+{"invitation":{"id":"0199…","email":"ada@example.com","role":"admin","invitedBy":"<user id>","createdAt":"…","expiresAt":"…"},"token":"0199….0199….<secret>"}
+{"fromUserId":"<user id>","toUserId":"<user id>","createdAt":"…","expiresAt":"…"}
+{"id":"0199…","actor":"<user id>","action":"member.role_changed","target":"<user id>","detail":"admin","occurredAt":"…"}
+```
+
+Not covered yet: invitation resend (revoke and invite again), audit filters and export, and audit events
+for organization, project and database changes.
 
 ## Dashboard feature map
 
@@ -170,13 +245,19 @@ Shapes:
 | Create database | `POST /api/v1/dashboard/databases` | `POST …/projects/{project}/databases` |
 | Branch (clone) database | `POST /api/v1/dashboard/databases/branch` | `POST …/databases/{database}/branches` |
 | Delete database | `POST /api/v1/dashboard/databases/delete` | `DELETE …/databases/{database}` |
+| Members list | `GET /access`, organization page | `GET …/members` |
+| Change member role | `/api/v1/access/members/{userID}/role`, `/api/v1/dashboard/organization/members/{userID}/role` | `PUT …/members/{user}/role` |
+| Remove member | `/api/v1/access/members/{userID}/revoke`, `/api/v1/dashboard/organization/members/{userID}/remove` | `DELETE …/members/{user}` |
+| Leave organization | `/api/v1/dashboard/organization/leave` | `POST …/leave` |
+| Invitations | `/api/v1/access/invitations[/{id}/revoke]`, `/invitations/{token}/respond` | `POST`/`GET …/invitations`, `DELETE …/invitations/{invitation}`, `POST /invitations/accept` |
+| Ownership transfer | `/api/v1/dashboard/organization/members/ownership[/confirm\|/cancel]` | `GET`/`POST`/`DELETE …/ownership-transfer`, `POST …/ownership-transfer/confirm` |
+| Audit log and retention | `GET /audit`, `/api/v1/dashboard/settings/audit-retention` | `GET …/audit-events`, `GET`/`PUT …/audit-retention` |
 
 ### TerraBase, in follow-up threads stacked on this one
 
 | Dashboard feature | Dashboard routes |
 | --- | --- |
-| Members, roles, invitations, leave organization | `/api/v1/access/invitations[/{id}/resend\|revoke]`, `/api/v1/access/members/{userID}/role\|revoke`, `/api/v1/dashboard/organization/members/{userID}/role\|remove`, `/api/v1/dashboard/organization/leave` |
-| Ownership transfer | `/api/v1/dashboard/organization/members/ownership[/confirm\|/cancel]` |
+| Invitation resend | `/api/v1/access/invitations/{id}/resend` |
 | Project switcher (current project) | `POST /api/v1/dashboard/switch-project` |
 | Backups, backup policy, restore | `/api/v1/dashboard/backups[/policy\|/restore]`, `/api/v1/dashboard/settings/backup-policy\|backup-now\|restore` |
 | Collections, schema, indexes, index recommendations | `/api/v1/dashboard/schema`, `/api/v1/dashboard/indexes[/recommendations/apply]` |
@@ -184,7 +265,7 @@ Shapes:
 | Saved queries, live-query subscriptions | `/api/v1/dashboard/data/saved-queries[/delete]`, `/api/v1/dashboard/subscriptions/attach\|pause\|resume\|detach` |
 | Usage and spending controls | `GET /usage`, `/api/v1/dashboard/usage/spending-controls` |
 | API keys and M2M credentials | `/api/v1/dashboard/credentials/key\|m2m\|rotate\|revoke`, `/api/v1/projects/{projectID}/auth/api-keys[…]` |
-| Audit log and retention | `GET /audit[/export]`, `/api/v1/dashboard/settings/audit-retention` |
+| Audit export and filters | `GET /audit/export`, `GET /audit?action=…&range=…&search=…` |
 | Platform admin: rename any organization or project | `/api/v1/admin/organizations/{accountID}/{organizationID}`, `/api/v1/admin/projects/{accountID}/{organizationID}/{projectID}` (needs admin authorization, see above) |
 
 ### Owned elsewhere
@@ -241,6 +322,9 @@ Until that decision, this API does not implement the control-plane-v1 tenant rou
 | Organization delete | deletes an empty organization | dashboard only marks `deletionRequested` and keeps the data |
 | Project delete | refuses a project that still has databases | dashboard refuses the default or last project |
 | Database delete and branch | synchronous | SDK and control-plane-v1 return provisioning operations (`202`) |
+| Roles | `owner`, `admin`, `member`; several owners; admins manage members and invitations | dashboard: also `viewer`; exactly one owner, who alone manages members |
+| Members | user id, role and join time | dashboard members also carry email and name; ts-auth owns profiles |
+| Invitation decline, resend | not modeled; revoke and invite again | dashboard stores `declined` and `revoked` and reissues tokens on resend |
 
 These are deliberate simplifications for the first slice. The dashboard adapter maps
 names and IDs until the contracts are aligned.

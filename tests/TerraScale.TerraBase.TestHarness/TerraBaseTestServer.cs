@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Configuration;
 
@@ -51,8 +52,13 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// <summary>A client for the administrative listener that never follows redirects and never stores cookies.</summary>
     public HttpClient Client { get; }
 
-    /// <summary>Starts a server. <paramref name="settings"/> edits the <c>--name=value</c> settings.</summary>
-    public static async Task<TerraBaseTestServer> StartAsync(Action<Dictionary<string, string>>? settings = null)
+    /// <summary>
+    /// Starts a server. <paramref name="settings"/> edits the <c>--name=value</c> settings;
+    /// <paramref name="services"/> replaces services after the application registered its own
+    /// (for example a <see cref="TimeProvider"/> that tests move forward).
+    /// </summary>
+    public static async Task<TerraBaseTestServer> StartAsync(
+        Action<Dictionary<string, string>>? settings = null, Action<IServiceCollection>? services = null)
     {
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-test-").FullName;
         WebApplicationFactory<Program>? factory = null;
@@ -74,7 +80,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 arguments[key] = value;
             }
 
-            factory = new Factory(arguments);
+            factory = new Factory(arguments, services);
             factory.UseKestrel();
             factory.StartServer();
             var addresses = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()
@@ -102,13 +108,18 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         Directory.Delete(DataDirectory, recursive: true);
     }
 
-    private sealed class Factory(IReadOnlyDictionary<string, string> settings) : WebApplicationFactory<Program>
+    private sealed class Factory(IReadOnlyDictionary<string, string> settings, Action<IServiceCollection>? services) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             foreach (var (key, value) in settings)
             {
                 builder.UseSetting(key, value);
+            }
+
+            if (services is not null)
+            {
+                builder.ConfigureTestServices(services);
             }
         }
     }

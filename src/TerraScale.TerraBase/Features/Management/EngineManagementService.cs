@@ -13,26 +13,30 @@ namespace TerraScale.TerraBase.Features.Management;
 /// lowercased name; organization names are unique per creator, so they reveal nothing across tenants.
 /// </summary>
 /// <remarks>
-/// Membership is stored twice: <c>organizations/{id}/members</c> (who belongs) and
-/// <c>users/{id}/organizations</c> (what a user lists). Every lookup goes through
-/// <see cref="GetOrganizationAsync(IStorageTransaction, string, string, CancellationToken)"/>, which
-/// answers <see langword="null"/> to non-members.
+/// Membership is stored twice: <c>organizations/{id}/members</c> (who belongs, with its
+/// <see cref="OrganizationMember"/> role) and <c>users/{id}/organizations</c> (what a user lists). Every lookup
+/// goes through <see cref="GetOrganizationAsync(IStorageTransaction, string, string, CancellationToken)"/> or
+/// <c>AuthorizeAsync</c>, which answer non-members as if the organization did not exist.
 /// <para>
-/// The catalog is versioned by the <c>catalog/version</c> document. Version 1 (no document) predates
-/// membership: its organizations have no members and globally unique names. It is migrated to version 2
-/// in one transaction, before the first operation of the process, by assigning every organization to
-/// <see cref="TerraBaseOptions.ManagementLegacyOwner"/>; without that setting the API answers 503. Any other
-/// version is unsupported: the API answers 503 and the catalog is left unchanged.
+/// The catalog is versioned by the <c>catalog/version</c> document, and migrated in one transaction before the
+/// first operation of the process. Version 1 (no document) predates membership: its organizations have no
+/// members and globally unique names, and every organization is assigned to
+/// <see cref="TerraBaseOptions.ManagementLegacyOwner"/> as its owner; without that setting the API answers 503.
+/// Version 2 stored members without roles; they all become owners. Any other version is unsupported: the API
+/// answers 503 and the catalog is left unchanged.
 /// </para>
 /// </remarks>
 internal sealed partial class EngineManagementService(
-    IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger) : IManagementService
+    IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger) : IManagementService, IAccessService
 {
     private const string Organizations = "organizations";
     private const string CurrentOrganizations = "current_organizations";
     private const string Catalog = "catalog";
     private const string CatalogVersionId = "version";
-    private const string CatalogVersion = "2";
+    private const string CatalogVersion = "3";
+
+    // Version 2 added membership; its member documents hold only the user id.
+    private const string MembershipCatalogVersion = "2";
 
     // Version 1 kept one global name index.
     private const string LegacyOrganizationNames = "organization_names";
@@ -60,8 +64,8 @@ internal sealed partial class EngineManagementService(
             await PutAsync(transaction, OrganizationNames(userId), Key(name), organization.Id, Id, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, Organizations, organization.Id, organization, TerraBaseJsonContext.Default.Organization, cancellationToken)
                 .ConfigureAwait(false);
-            await PutAsync(transaction, Members(organization.Id), userId, userId, Id, cancellationToken).ConfigureAwait(false);
-            await PutAsync(transaction, UserOrganizations(userId), organization.Id, organization.Id, Id, cancellationToken).ConfigureAwait(false);
+            await PutMemberAsync(transaction, organization.Id, new OrganizationMember(userId, OrganizationRole.Owner, organization.CreatedAt), cancellationToken)
+                .ConfigureAwait(false);
             return organization;
         }, cancellationToken).ConfigureAwait(false);
     }
@@ -88,10 +92,15 @@ internal sealed partial class EngineManagementService(
         string userId, string organizationId, string name, CancellationToken cancellationToken) =>
         await WriteAsync<ManagementResult<Organization>>(async transaction =>
         {
-            if (await GetOrganizationAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false) is not { } organization)
+            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Admin, cancellationToken).ConfigureAwait(false);
+            if (actor.Error != ManagementError.None)
             {
-                return ManagementError.NotFound;
+                return actor.Error;
             }
+
+            // Written with the membership, removed with the organization: always present.
+            var organization = await GetOrganizationAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("a membership names a missing organization");
 
             if (!await RenameAsync(transaction, OrganizationNames(organization.CreatedBy), organization.Id, organization.Name, name, cancellationToken)
                 .ConfigureAwait(false))
@@ -108,10 +117,15 @@ internal sealed partial class EngineManagementService(
     public async ValueTask<ManagementError> DeleteOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         await WriteAsync(async transaction =>
         {
-            if (await GetOrganizationAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false) is not { } organization)
+            var actor = await AuthorizeAsync(transaction, userId, organizationId, OrganizationRole.Owner, cancellationToken).ConfigureAwait(false);
+            if (actor.Error != ManagementError.None)
             {
-                return ManagementError.NotFound;
+                return actor.Error;
             }
+
+            // Written with the membership, removed with the organization: always present.
+            var organization = await GetOrganizationAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("a membership names a missing organization");
 
             if (await AnyAsync(transaction, Projects(organization.Id), cancellationToken).ConfigureAwait(false))
             {
@@ -132,6 +146,7 @@ internal sealed partial class EngineManagementService(
             }
             while (members.HasMore);
 
+            await DeleteAccessAsync(transaction, organization.Id, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(OrganizationNames(organization.CreatedBy), Key(organization.Name), cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Organizations, organization.Id, cancellationToken).ConfigureAwait(false);
             return ManagementError.None;
@@ -356,7 +371,7 @@ internal sealed partial class EngineManagementService(
     // The single authorization point: non-members get null, exactly like a missing organization.
     private static async ValueTask<Organization?> GetOrganizationAsync(
         IStorageTransaction transaction, string userId, string organizationId, CancellationToken cancellationToken) =>
-        await GetAsync(transaction, Members(organizationId), userId, Id, cancellationToken).ConfigureAwait(false) is null
+        await GetMemberAsync(transaction, organizationId, userId, cancellationToken).ConfigureAwait(false) is null
             ? null
             : await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
 
@@ -466,6 +481,23 @@ internal sealed partial class EngineManagementService(
                 return 0;
             }
 
+            if (version == MembershipCatalogVersion)
+            {
+                // Version 2 could only make an organization's creator (or the legacy owner) a member.
+                foreach (var organization in await ListAllAsync(transaction, Organizations, TerraBaseJsonContext.Default.Organization, cancellationToken)
+                    .ConfigureAwait(false))
+                {
+                    foreach (var member in await ListAllAsync(transaction, Members(organization.Id), Id, cancellationToken).ConfigureAwait(false))
+                    {
+                        await PutMemberAsync(transaction, organization.Id, new OrganizationMember(member, OrganizationRole.Owner, organization.CreatedAt), cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                }
+
+                await PutAsync(transaction, Catalog, CatalogVersionId, CatalogVersion, Id, cancellationToken).ConfigureAwait(false);
+                return 0;
+            }
+
             if (version is not null)
             {
                 // Never migrate, or downgrade, a catalog this build does not know.
@@ -490,8 +522,8 @@ internal sealed partial class EngineManagementService(
                 await transaction.DeleteAsync(LegacyOrganizationNames, Key(owned.Name), cancellationToken).ConfigureAwait(false);
                 await PutAsync(transaction, OrganizationNames(owned.CreatedBy), Key(owned.Name), owned.Id, Id, cancellationToken).ConfigureAwait(false);
                 await PutAsync(transaction, Organizations, owned.Id, owned, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, Members(owned.Id), owned.CreatedBy, owned.CreatedBy, Id, cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, UserOrganizations(owned.CreatedBy), owned.Id, owned.Id, Id, cancellationToken).ConfigureAwait(false);
+                await PutMemberAsync(transaction, owned.Id, new OrganizationMember(owned.CreatedBy, OrganizationRole.Owner, owned.CreatedAt), cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             await PutAsync(transaction, Catalog, CatalogVersionId, CatalogVersion, Id, cancellationToken).ConfigureAwait(false);

@@ -12,10 +12,11 @@ public sealed class RenameOrganizationEndpoint(IManagementService management) : 
         Patch(ManagementRoute.Organization);
         Name("renameOrganization");
         Summary("Renames an organization");
-        Description(ManagementRoute.IdentityDescription);
+        Description("Needs admin (403 otherwise). " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<Organization>();
         Produces<string>(StatusCodes.Status400BadRequest);
+        Produces<string>(StatusCodes.Status403Forbidden);
         Produces<string>(StatusCodes.Status404NotFound);
         Produces<string>(StatusCodes.Status409Conflict);
         RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
