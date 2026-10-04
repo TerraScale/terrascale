@@ -4,6 +4,7 @@
 SOLUTION := TerraScale.TerraBase.slnx
 CONFIGURATION ?= Debug
 RUNTIME ?= linux-x64
+PUBLISH_DIR ?= artifacts/publish
 
 .PHONY: restore build fmt fmt-check lint test-fast test-slow check run publish clean
 
@@ -34,9 +35,9 @@ check: lint test-fast
 run:
 	dotnet run --project src/TerraScale.TerraBase --configuration $(CONFIGURATION)
 
-# Self-contained single-file binary (JIT): artifacts/publish/terrabase
+# Self-contained single-file binary (JIT): $(PUBLISH_DIR)/terrabase
 publish:
-	dotnet publish src/TerraScale.TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output artifacts/publish --nologo
+	dotnet publish src/TerraScale.TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output $(PUBLISH_DIR) --nologo
 
 clean:
 	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION) --nologo

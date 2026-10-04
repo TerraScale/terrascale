@@ -64,23 +64,6 @@ When interacting with Forgejo, always use the `fj` CLI.
 
 The project MUST follow a **feature-sliced design** so related and dependent files and services are kept together.
 
-```
-src/
-  TerraScale.TerraBase/            # the server: one single-file binary
-    Program.cs                     # top-level statements: parse options, compose services, middleware and endpoints, run
-    Configuration/                 # validated process options (TERRABASE_* / --name=value)
-    Hosting/                       # cross-cutting host concerns: listeners, telemetry, JSON context, version
-    Engine/                        # storage engine interfaces (IStorageEngine, IDatabaseStore, IStorageTransaction)
-      Sqlite/                      # the SQLite implementation; one folder per engine implementation
-    Features/
-      <Feature>/                   # one folder per vertical slice
-  Tests/
-    TerraScale.TerraBase.Fast/     # fast integration suite
-    TerraScale.TerraBase.Slow/     # slow integration suite
-    TestHarness/                   # shared test source, linked into both suites (not a project)
-TerraScale.TerraBase.slnx
-```
-
 - **All projects live in `src/`**; test projects live in `src/Tests/`. All are listed in `TerraScale.TerraBase.slnx` at the repository root.
 - A feature folder owns its endpoints, request/response records, services, options, storage access, metrics and `IServiceCollection` registration extension. Namespaces follow folders (`TerraScale.TerraBase.Features.<Feature>`).
 - Features talk to each other through small, explicit public types. Do not reach into another feature’s internals; prefer `internal` for anything not used across slices.
@@ -88,23 +71,6 @@ TerraScale.TerraBase.slnx
 - **Program over interfaces.** Every service, store, engine and adapter is consumed through an interface (`IStorageEngine`, `IDocumentService`, `IApiKeyStore`, …) registered in DI; implementations are `internal`. Swapping an implementation (for example SQLite for Turso) means adding a new implementation of the same interface, never changing its callers.
 - `Program.cs` is the only composition root and uses top-level statements with `WebApplication.CreateSlimBuilder`. Do not reintroduce an `App` class or `Startup`.
 - Keep one server project by default. Extract a separate project only for a real boundary (native interop, generated gRPC contracts, a library consumed elsewhere), and ask a human first.
-
-Expected slices, mapped from the Rust crates. Each slice starts with its public interface (and records) so the project structure is visible early; an interface without an implementation is marked "Not implemented yet" in its XML docs and is not registered in DI until its first real behavior lands:
-
-| Slice | Responsibility | Rust reference |
-| --- | --- | --- |
-| `Health` | Liveness/readiness probes | `tb-server` |
-| `Memory` | Process/tenant/worker memory budgets and admission | `tb-core` |
-| `Engine/` (not under `Features/`) | Storage engine interfaces and implementations (SQLite), transactions, database open | `tb-storage`, `tb-engine-io` |
-| `ObjectTier` | S3-compatible immutable objects, manifests, verified range reads | `tb-object` |
-| `Documents` | Document catalog, HTTPS/JSON document API, queries, subscriptions | `tb-document`, `tb-server` |
-| `Sql` | PostgreSQL-wire endpoint for the supported SQL subset | `tb-server` (`sql_*`) |
-| `Replication` | Leaderless replication, journals, cursors, merge, gRPC transport | `tb-replication`, `tb-protocol` |
-| `Membership` | Signed membership authority, epochs, member lifecycle | `tb-replication`, `tb-server` |
-| `Catalog` | Offline catalog and schema administration | `tb-server` (`catalog_admin`) |
-| `Backup` | Backup, restore and archival | `tb-object`, `tb-server` |
-| `Indexing` | Deterministic initial index decisions, Von/JEV advisors, workload adaptation | `docs/auto-index.md` |
-| `ApiKeys` | Scoped API keys and client authorization | `tb-server` (`client_auth`, `terrabase_keygen`) |
 
 ### Storage engine
 

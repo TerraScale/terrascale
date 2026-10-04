@@ -1,0 +1,129 @@
+name: Fast integration
+
+# fast and release run in parallel. Require "Fast integration / fast" and
+# "Fast integration / release" in Forgejo's branch protection for the merge gate.
+#
+# - fast: locked restore, formatting, Release build with analyzers as errors,
+#   and the Fast integration suite (make targets).
+# - release: publishes the self-contained single-file executable, smoke-runs
+#   the exact staged bytes and, on main pushes, retains them on the prerelease
+#   ci-<sha>-run-<run id>.
+# - publish: once both pass on a main push, reads the retained bytes back and
+#   uploads qualification.json, the completion marker. Nothing is rebuilt.
+#
+# The Slow suite runs separately (slow.yml) and never blocks.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push supersedes a running check of the same branch; main always finishes.
+concurrency:
+  group: terrabase-fast-${{ forgejo.ref }}
+  cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
+
+env:
+  CI: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+  # Pinned TerraScale/ts-libs revision for TerraScale.Endpoints (TerraScaleRoot).
+  TS_LIBS_REV: 14674be372abd4809392343084f2de9238aff919
+
+jobs:
+  fast:
+    name: fast
+    runs-on: terrascale-builder
+    # Fast takes a few minutes; fail a hung run before it holds the runner.
+    timeout-minutes: 20
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned ts-libs revision
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/ci/checkout-deps.sh
+
+      - name: Use the persistent NuGet cache
+        run: bash scripts/ci/nuget-cache.sh
+
+      - name: Restore with locked dependencies
+        run: make restore
+
+      - name: Check formatting
+        run: make fmt-check
+
+      - name: Build Release with analyzers as errors
+        run: make build CONFIGURATION=Release
+
+      - name: Fast integration suite
+        run: make test-fast CONFIGURATION=Release
+
+  release:
+    name: release
+    runs-on: terrascale-builder
+    timeout-minutes: 20
+    outputs:
+      qualification: ${{ steps.retain.outputs.qualification }}
+      qualification_sha256: ${{ steps.retain.outputs.qualification_sha256 }}
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned ts-libs revision
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/ci/checkout-deps.sh
+
+      - name: Use the persistent NuGet cache
+        run: bash scripts/ci/nuget-cache.sh
+
+      - name: Publish and smoke-run the release executable
+        run: bash scripts/ci/stage-release.sh artifacts/dist
+
+      - name: Retain the tested release bytes
+        id: retain
+        if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+          FORGEJO_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+          FORGEJO_SERVER_URL: ${{ forgejo.server_url }}
+        run: bash scripts/ci/retain-release.sh artifacts/dist
+
+  publish:
+    name: publish
+    needs: [fast, release]
+    if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Publish the tested release bytes
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+          FORGEJO_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+          FORGEJO_SERVER_URL: ${{ forgejo.server_url }}
+          QUALIFICATION: ${{ needs.release.outputs.qualification }}
+          QUALIFICATION_SHA256: ${{ needs.release.outputs.qualification_sha256 }}
+        run: bash scripts/ci/publish-release.sh
