@@ -34,7 +34,7 @@ internal sealed class SqliteStorageEngine(string dataDirectory) : IStorageEngine
         {
             if (!File.Exists(path))
             {
-                await PublishNewAsync(name, path, cancellationToken).ConfigureAwait(false);
+                await PublishAsync(name, path, temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, cancellationToken)).ConfigureAwait(false);
                 await OpenStoreAsync(name, path, cancellationToken).ConfigureAwait(false);
                 return true;
             }
@@ -48,22 +48,83 @@ internal sealed class SqliteStorageEngine(string dataDirectory) : IStorageEngine
         return false;
     }
 
+    public async ValueTask<bool> CopyDatabaseAsync(DatabaseName source, DatabaseName target, CancellationToken cancellationToken)
+    {
+        if (await OpenDatabaseAsync(source, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        {
+            return false;
+        }
+
+        var path = PathOf(target);
+        await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (File.Exists(path))
+            {
+                throw new InvalidOperationException($"database '{target}' already exists");
+            }
+
+            await PublishAsync(target, path, temporary => store.CopyToAsync(temporary, cancellationToken)).ConfigureAwait(false);
+        }
+        finally
+        {
+            _creation.Release();
+        }
+
+        await OpenStoreAsync(target, path, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <remarks>
+    /// ponytail: a transaction already running on the deleted database finishes on the unlinked file (Linux)
+    /// and new ones fail; add per-database reference counting if deletes must wait for in-flight work.
+    /// </remarks>
+    public async ValueTask<bool> DeleteDatabaseAsync(DatabaseName name, CancellationToken cancellationToken)
+    {
+        var path = PathOf(name);
+        await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return false;
+            }
+
+            if (_stores.TryRemove(name, out var store))
+            {
+                store.ClearPool();
+            }
+
+            DeleteFiles(path);
+            return true;
+        }
+        finally
+        {
+            _creation.Release();
+        }
+    }
+
     // Initializes a private temporary file and then moves it into place, so a database is visible
     // only once fully initialized and a failed or cancelled creation leaves nothing behind.
-    private async Task PublishNewAsync(DatabaseName name, string path, CancellationToken cancellationToken)
+    private async Task PublishAsync(DatabaseName name, string path, Func<string, Task> initialize)
     {
         var temporary = Path.Combine(dataDirectory, $".{name.Value}.{Guid.NewGuid():N}.creating");
         try
         {
-            await SqliteDatabaseStore.InitializeAsync(name, temporary, cancellationToken).ConfigureAwait(false);
+            await initialize(temporary).ConfigureAwait(false);
             File.Move(temporary, path, overwrite: false);
         }
         finally
         {
-            foreach (var file in new[] { temporary, temporary + "-wal", temporary + "-shm", temporary + "-journal" })
-            {
-                File.Delete(file);
-            }
+            DeleteFiles(temporary);
+        }
+    }
+
+    private static void DeleteFiles(string path)
+    {
+        foreach (var file in new[] { path, path + "-wal", path + "-shm", path + "-journal" })
+        {
+            File.Delete(file);
         }
     }
 
