@@ -24,7 +24,14 @@ internal sealed class ApiKeyAuthenticationHandler(
             return AuthenticateResult.NoResult();
         }
 
-        var key = await keys.FindAsync(header["Bearer ".Length..].Trim(), Context.RequestAborted).ConfigureAwait(false);
+        var secret = header["Bearer ".Length..].Trim();
+        if (!secret.StartsWith(EngineApiKeyStore.SecretPrefix, StringComparison.Ordinal))
+        {
+            // Another scheme's token: leave it to that scheme instead of logging a failed API key.
+            return AuthenticateResult.NoResult();
+        }
+
+        var key = await keys.FindAsync(secret, Context.RequestAborted).ConfigureAwait(false);
         if (key is null)
         {
             // Never echo the presented secret.

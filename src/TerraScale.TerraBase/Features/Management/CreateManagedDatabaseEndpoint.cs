@@ -1,5 +1,4 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -13,13 +12,13 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management)
         Post(ManagementRoute.Databases);
         Name("createManagedDatabase");
         Summary("Creates a database in a project");
-        Description("name: a lowercase letter, then lowercase letters, digits, _ or -, at most 63 characters; unique within the project. storageName addresses the database in the data API.");
+        Description("name: a lowercase letter, then lowercase letters, digits, _ or -, at most 63 characters; unique within the project. storageName addresses the database in the data API." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ManagedDatabase>(StatusCodes.Status201Created);
         Produces<string>(StatusCodes.Status400BadRequest);
         Produces<string>(StatusCodes.Status404NotFound);
         Produces<string>(StatusCodes.Status409Conflict);
-        RequireAuthorization(ApiKeyScopes.Management);
+        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
         Metadata(ListenerMetadata.Client);
     }
 
@@ -27,7 +26,7 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management)
     public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var result = await management.CreateDatabaseAsync(ManagementRoute.Value(HttpContext, "organization"), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.DatabaseName(request), cancellationToken);
+        var result = await management.CreateDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.DatabaseName(request), cancellationToken);
         return result.Value is { } value
             ? TypedResults.Created($"{HttpContext.Request.Path}/{value.Id}", value)
             : ManagementRoute.Error(result.Error);

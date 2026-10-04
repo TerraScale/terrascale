@@ -1,5 +1,4 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -13,11 +12,11 @@ public sealed class ListProjectsEndpoint(IManagementService management) : Endpoi
         Get(ManagementRoute.Projects);
         Name("listProjects");
         Summary("Lists the projects of an organization");
-        Description(ManagementRoute.PageDescription);
+        Description(ManagementRoute.PageDescription + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ManagementPage<Project>>();
         Produces<string>(StatusCodes.Status404NotFound);
-        RequireAuthorization(ApiKeyScopes.Management);
+        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
         Metadata(ListenerMetadata.Client);
     }
 
@@ -25,7 +24,7 @@ public sealed class ListProjectsEndpoint(IManagementService management) : Endpoi
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var (after, limit) = ManagementRoute.Page(HttpContext);
-        return await management.ListProjectsAsync(ManagementRoute.Value(HttpContext, "organization"), after, limit, cancellationToken) is { } page
+        return await management.ListProjectsAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), after, limit, cancellationToken) is { } page
             ? TypedResults.Ok(page)
             : TypedResults.NotFound();
     }

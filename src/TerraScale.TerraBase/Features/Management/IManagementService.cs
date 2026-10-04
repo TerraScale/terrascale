@@ -2,9 +2,10 @@ namespace TerraScale.TerraBase.Features.Management;
 
 /// <summary>An organization: the top-level owner of projects.</summary>
 /// <param name="Id">Lowercase hyphenated UUID.</param>
-/// <param name="Name">Display name, unique among organizations (case-insensitive).</param>
+/// <param name="Name">Display name, unique among the organizations created by <paramref name="CreatedBy"/> (case-insensitive).</param>
+/// <param name="CreatedBy">User id (from ts-auth) of the creator, its first member.</param>
 /// <param name="CreatedAt">Creation time.</param>
-public sealed record Organization(string Id, string Name, DateTimeOffset CreatedAt);
+public sealed record Organization(string Id, string Name, string CreatedBy, DateTimeOffset CreatedAt);
 
 /// <summary>A project inside an organization; it owns databases.</summary>
 /// <param name="Id">Lowercase hyphenated UUID.</param>
@@ -28,7 +29,7 @@ public enum ManagementError
     /// <summary>Succeeded.</summary>
     None,
 
-    /// <summary>The addressed resource, or one of its parents, does not exist.</summary>
+    /// <summary>The addressed resource, or one of its parents, does not exist or the user is not a member of its organization.</summary>
     NotFound,
 
     /// <summary>Another resource with the same parent already has the name.</summary>
@@ -67,59 +68,68 @@ public sealed record ManagementPage<T>(IReadOnlyList<T> Items, string? Next);
 /// Organizations, projects and the databases they own, for the dashboard. Ids are opaque to callers;
 /// names are validated by the endpoints before they reach this service.
 /// </summary>
+/// <remarks>
+/// Every method acts as <c>userId</c> (the ts-auth user id) and authorizes in the same transaction as the
+/// operation: an organization the user is not a member of, and everything under it, is <see cref="ManagementError.NotFound"/>.
+/// </remarks>
 public interface IManagementService
 {
-    /// <summary>Creates an organization.</summary>
-    ValueTask<ManagementResult<Organization>> CreateOrganizationAsync(string name, CancellationToken cancellationToken);
+    /// <summary>Creates an organization with the user as its first member.</summary>
+    ValueTask<ManagementResult<Organization>> CreateOrganizationAsync(string userId, string name, CancellationToken cancellationToken);
 
-    /// <summary>Lists organizations after <paramref name="after"/>.</summary>
-    ValueTask<ManagementPage<Organization>> ListOrganizationsAsync(string? after, int limit, CancellationToken cancellationToken);
+    /// <summary>Lists the user's organizations after <paramref name="after"/>.</summary>
+    ValueTask<ManagementPage<Organization>> ListOrganizationsAsync(string userId, string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>Reads an organization.</summary>
-    ValueTask<Organization?> GetOrganizationAsync(string organizationId, CancellationToken cancellationToken);
+    ValueTask<Organization?> GetOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
     /// <summary>Renames an organization.</summary>
-    ValueTask<ManagementResult<Organization>> RenameOrganizationAsync(string organizationId, string name, CancellationToken cancellationToken);
+    ValueTask<ManagementResult<Organization>> RenameOrganizationAsync(
+        string userId, string organizationId, string name, CancellationToken cancellationToken);
 
-    /// <summary>Deletes an organization that has no projects.</summary>
-    ValueTask<ManagementError> DeleteOrganizationAsync(string organizationId, CancellationToken cancellationToken);
+    /// <summary>Deletes an organization that has no projects, with its memberships.</summary>
+    ValueTask<ManagementError> DeleteOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
-    /// <summary>Reads the organization <paramref name="userId"/> last switched to; <see langword="null"/> when none or deleted.</summary>
+    /// <summary>Reads the organization the user last switched to; <see langword="null"/> when none or no longer a member.</summary>
     ValueTask<Organization?> GetCurrentOrganizationAsync(string userId, CancellationToken cancellationToken);
 
-    /// <summary>Switches <paramref name="userId"/> to an existing organization.</summary>
+    /// <summary>Switches the user to one of their organizations.</summary>
     ValueTask<ManagementResult<Organization>> SetCurrentOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
     /// <summary>Creates a project in an organization.</summary>
-    ValueTask<ManagementResult<Project>> CreateProjectAsync(string organizationId, string name, CancellationToken cancellationToken);
+    ValueTask<ManagementResult<Project>> CreateProjectAsync(string userId, string organizationId, string name, CancellationToken cancellationToken);
 
     /// <summary>Lists the projects of an organization; <see langword="null"/> when it does not exist.</summary>
-    ValueTask<ManagementPage<Project>?> ListProjectsAsync(string organizationId, string? after, int limit, CancellationToken cancellationToken);
+    ValueTask<ManagementPage<Project>?> ListProjectsAsync(
+        string userId, string organizationId, string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>Reads a project.</summary>
-    ValueTask<Project?> GetProjectAsync(string organizationId, string projectId, CancellationToken cancellationToken);
+    ValueTask<Project?> GetProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
     /// <summary>Renames a project.</summary>
-    ValueTask<ManagementResult<Project>> RenameProjectAsync(string organizationId, string projectId, string name, CancellationToken cancellationToken);
+    ValueTask<ManagementResult<Project>> RenameProjectAsync(
+        string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken);
 
     /// <summary>Deletes a project that has no databases.</summary>
-    ValueTask<ManagementError> DeleteProjectAsync(string organizationId, string projectId, CancellationToken cancellationToken);
+    ValueTask<ManagementError> DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
     /// <summary>Creates an empty database in a project.</summary>
     ValueTask<ManagementResult<ManagedDatabase>> CreateDatabaseAsync(
-        string organizationId, string projectId, string name, CancellationToken cancellationToken);
+        string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken);
 
     /// <summary>Lists the databases of a project; <see langword="null"/> when it does not exist.</summary>
     ValueTask<ManagementPage<ManagedDatabase>?> ListDatabasesAsync(
-        string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken);
+        string userId, string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>Reads a database.</summary>
-    ValueTask<ManagedDatabase?> GetDatabaseAsync(string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
+    ValueTask<ManagedDatabase?> GetDatabaseAsync(
+        string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
     /// <summary>Deletes a database and its data.</summary>
-    ValueTask<ManagementError> DeleteDatabaseAsync(string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
+    ValueTask<ManagementError> DeleteDatabaseAsync(
+        string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
     /// <summary>Creates a database in the same project as a snapshot copy of an existing one.</summary>
     ValueTask<ManagementResult<ManagedDatabase>> BranchDatabaseAsync(
-        string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken);
+        string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken);
 }

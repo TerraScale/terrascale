@@ -1,5 +1,4 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -13,14 +12,14 @@ public sealed class DeleteManagedDatabaseEndpoint(IManagementService management)
         Delete(ManagementRoute.Database);
         Name("deleteManagedDatabase");
         Summary("Deletes a database and its data");
-        Description("Branches of the database are independent copies and are not deleted.");
+        Description("Branches of the database are independent copies and are not deleted." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<string>(StatusCodes.Status404NotFound);
-        RequireAuthorization(ApiKeyScopes.Management);
+        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
         Metadata(ListenerMetadata.Client);
     }
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        ManagementRoute.NoContent(await management.DeleteDatabaseAsync(ManagementRoute.Value(HttpContext, "organization"), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), cancellationToken));
+        ManagementRoute.NoContent(await management.DeleteDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), cancellationToken));
 }

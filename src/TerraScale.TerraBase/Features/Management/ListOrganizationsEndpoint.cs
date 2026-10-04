@@ -1,5 +1,4 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -13,10 +12,10 @@ public sealed class ListOrganizationsEndpoint(IManagementService management) : E
         Get(ManagementRoute.Organizations);
         Name("listOrganizations");
         Summary("Lists organizations");
-        Description(ManagementRoute.PageDescription);
+        Description(ManagementRoute.PageDescription + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ManagementPage<Organization>>();
-        RequireAuthorization(ApiKeyScopes.Management);
+        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
         Metadata(ListenerMetadata.Client);
     }
 
@@ -24,6 +23,6 @@ public sealed class ListOrganizationsEndpoint(IManagementService management) : E
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var (after, limit) = ManagementRoute.Page(HttpContext);
-        return TypedResults.Ok(await management.ListOrganizationsAsync(after, limit, cancellationToken));
+        return TypedResults.Ok(await management.ListOrganizationsAsync(ManagementRoute.UserId(HttpContext), after, limit, cancellationToken));
     }
 }

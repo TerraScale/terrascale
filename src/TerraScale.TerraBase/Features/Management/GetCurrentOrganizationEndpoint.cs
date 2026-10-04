@@ -1,10 +1,9 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
 
-/// <summary><c>GET /v1/management/users/{user}/current-organization</c>: reads the organization a user last switched to.</summary>
+/// <summary><c>GET /v1/management/current-organization</c>: reads the organization the acting user last switched to.</summary>
 public sealed class GetCurrentOrganizationEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
@@ -12,12 +11,12 @@ public sealed class GetCurrentOrganizationEndpoint(IManagementService management
     {
         Get(ManagementRoute.CurrentOrganization);
         Name("getCurrentOrganization");
-        Summary("Reads the organization a user last switched to");
-        Description("user is the caller-supplied identity (for example the ts-auth subject); TerraBase does not authenticate users. 404 when the user never switched or the organization was deleted.");
+        Summary("Reads the organization the acting user last switched to");
+        Description("404 when the user never switched, or is no longer a member of that organization. " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<Organization>();
         Produces<string>(StatusCodes.Status404NotFound);
-        RequireAuthorization(ApiKeyScopes.Management);
+        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
         Metadata(ListenerMetadata.Client);
     }
 

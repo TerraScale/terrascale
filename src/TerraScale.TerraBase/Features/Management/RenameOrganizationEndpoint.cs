@@ -1,5 +1,4 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -13,12 +12,13 @@ public sealed class RenameOrganizationEndpoint(IManagementService management) : 
         Patch(ManagementRoute.Organization);
         Name("renameOrganization");
         Summary("Renames an organization");
+        Description(ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<Organization>();
         Produces<string>(StatusCodes.Status400BadRequest);
         Produces<string>(StatusCodes.Status404NotFound);
         Produces<string>(StatusCodes.Status409Conflict);
-        RequireAuthorization(ApiKeyScopes.Management);
+        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
         Metadata(ListenerMetadata.Client);
     }
 
@@ -26,6 +26,6 @@ public sealed class RenameOrganizationEndpoint(IManagementService management) : 
     public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return ManagementRoute.Ok(await management.RenameOrganizationAsync(ManagementRoute.Value(HttpContext, "organization"), ManagementRoute.DisplayName(request), cancellationToken));
+        return ManagementRoute.Ok(await management.RenameOrganizationAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.DisplayName(request), cancellationToken));
     }
 }

@@ -16,7 +16,17 @@ internal static class ManagementRoute
     public const string Project = Projects + "/{project}";
     public const string Databases = Project + "/databases";
     public const string Database = Databases + "/{database}";
-    public const string CurrentOrganization = "/v1/management/users/{user}/current-organization";
+    public const string CurrentOrganization = "/v1/management/current-organization";
+
+    /// <summary>The acting user's id from ts-auth, sent by the dashboard on every request.</summary>
+    public const string UserHeader = "X-TerraBase-User-Id";
+
+    /// <summary>The organization the user acts in; required on, and equal to, every <c>/organizations/{organization}/…</c> route.</summary>
+    public const string OrganizationHeader = "X-TerraBase-Organization-Id";
+
+    public const string IdentityDescription =
+        "Authorization: Bearer <dashboard credential>. " + UserHeader + " names the acting user; " + OrganizationHeader
+        + " must equal {organization} on organization routes. Organizations the user is not a member of answer 404.";
     public const string PageDescription = "Query: after (exclusive id cursor from the previous page's next), limit (1 to 100, default 20). Items are in creation order.";
 
     private const int MaxDisplayNameLength = 128;
@@ -28,10 +38,21 @@ internal static class ManagementRoute
 
     public static string UserId(HttpContext context)
     {
-        var user = Value(context, "user");
-        return user.Length > MaxUserIdLength || user.Any(char.IsControl)
-            ? throw new BadHttpRequestException("user must be 1 to 256 characters without control characters")
+        var values = context.Request.Headers[UserHeader];
+        var user = values.Count == 1 ? values[0] : null;
+        return string.IsNullOrEmpty(user) || user.Length > MaxUserIdLength || user.Any(char.IsControl)
+            ? throw new BadHttpRequestException(UserHeader + " must be one value of 1 to 256 characters without control characters")
             : user;
+    }
+
+    /// <summary>The route's organization, which must match <see cref="OrganizationHeader"/>.</summary>
+    public static string OrganizationId(HttpContext context)
+    {
+        var organization = Value(context, "organization");
+        var values = context.Request.Headers[OrganizationHeader];
+        return values.Count == 1 && string.Equals(values[0], organization, StringComparison.Ordinal)
+            ? organization
+            : throw new BadHttpRequestException(OrganizationHeader + " must be one value equal to the organization in the path");
     }
 
     /// <summary>Validates an organization or project name and returns it trimmed.</summary>

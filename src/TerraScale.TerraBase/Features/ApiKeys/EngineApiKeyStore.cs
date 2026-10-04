@@ -13,7 +13,8 @@ namespace TerraScale.TerraBase.Features.ApiKeys;
 internal sealed class EngineApiKeyStore(IStorageEngine engine) : IApiKeyStore
 {
     private const string Collection = "api_keys";
-    private const string SecretPrefix = "tb_";
+    /// <summary>Every API key secret starts with this; other bearer tokens (the dashboard credential) are not API keys.</summary>
+    internal const string SecretPrefix = "tb_";
 
     public async ValueTask<(ApiKey Key, string Secret)> CreateAsync(string name, IReadOnlyList<string> scopes, CancellationToken cancellationToken)
     {

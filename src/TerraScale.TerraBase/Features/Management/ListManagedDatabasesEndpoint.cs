@@ -1,5 +1,4 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -13,11 +12,11 @@ public sealed class ListManagedDatabasesEndpoint(IManagementService management) 
         Get(ManagementRoute.Databases);
         Name("listManagedDatabases");
         Summary("Lists the databases of a project");
-        Description(ManagementRoute.PageDescription);
+        Description(ManagementRoute.PageDescription + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<ManagementPage<ManagedDatabase>>();
         Produces<string>(StatusCodes.Status404NotFound);
-        RequireAuthorization(ApiKeyScopes.Management);
+        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
         Metadata(ListenerMetadata.Client);
     }
 
@@ -25,7 +24,7 @@ public sealed class ListManagedDatabasesEndpoint(IManagementService management) 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var (after, limit) = ManagementRoute.Page(HttpContext);
-        return await management.ListDatabasesAsync(ManagementRoute.Value(HttpContext, "organization"), ManagementRoute.Value(HttpContext, "project"), after, limit, cancellationToken) is { } page
+        return await management.ListDatabasesAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), after, limit, cancellationToken) is { } page
             ? TypedResults.Ok(page)
             : TypedResults.NotFound();
     }

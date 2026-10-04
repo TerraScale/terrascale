@@ -2,6 +2,7 @@ using System.Collections.Frozen;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 
 namespace TerraScale.TerraBase.Configuration;
 
@@ -24,13 +25,17 @@ public sealed record TerraBaseOptions
 
     private const string EnvironmentPrefix = "TERRABASE_";
 
+    private const int MinDashboardCredentialLength = 32;
+
+    private const int MaxUserIdLength = 256;
+
     private static readonly string[] ClientTlsKeys = ["client-certificate", "client-private-key"];
 
     private static readonly string[] PeerTlsKeys = ["peer-certificate", "peer-private-key", "peer-client-ca"];
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "client-port", .. ClientTlsKeys, "peer-port", .. PeerTlsKeys]);
+        ["admin-port", "data-directory", "client-port", .. ClientTlsKeys, "dashboard-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -54,6 +59,18 @@ public sealed record TerraBaseOptions
 
     /// <summary>Server certificate with its private key for the client listener.</summary>
     public X509Certificate2? ClientCertificate { get; init; }
+
+    /// <summary>
+    /// SHA-256 of the dashboard service credential that authorizes the Management API, read from
+    /// <c>dashboard-credential-file</c>. Empty disables the Management API. The secret itself is not kept.
+    /// </summary>
+    public ReadOnlyMemory<byte> DashboardCredentialHash { get; init; }
+
+    /// <summary>
+    /// User id (from ts-auth) that becomes the creator and only member of organizations stored before the
+    /// Management API had membership (catalog version 1). Read once, when such a catalog is migrated.
+    /// </summary>
+    public string? ManagementLegacyOwner { get; init; }
 
     /// <summary>
     /// Port of the inter-node gRPC listener (mutual TLS, HTTP/2); <c>0</c> picks a free port.
@@ -138,6 +155,18 @@ public sealed record TerraBaseOptions
 
         var clientPort = ParsePort(values, "client-port");
         RequireGroup(values, "client-port", clientPort, ClientTlsKeys);
+        if (clientPort is null && values.ContainsKey("dashboard-credential-file"))
+        {
+            throw new TerraBaseConfigurationException("dashboard-credential-file requires client-port");
+        }
+
+        var legacyOwner = values.GetValueOrDefault("management-legacy-owner");
+        if (legacyOwner is not null && (string.IsNullOrWhiteSpace(legacyOwner) || legacyOwner.Length > MaxUserIdLength || legacyOwner.Any(char.IsControl)))
+        {
+            throw new TerraBaseConfigurationException(
+                "management-legacy-owner must be a non-blank user id of at most 256 characters without control characters");
+        }
+
         var peerPort = ParsePort(values, "peer-port");
         RequireGroup(values, "peer-port", peerPort, PeerTlsKeys);
 
@@ -149,6 +178,10 @@ public sealed record TerraBaseOptions
             ClientCertificate = clientPort is null ? null : LoadPem(
                 () => X509Certificate2.CreateFromPemFile(values["client-certificate"], values["client-private-key"]),
                 "client-certificate and client-private-key must name a readable PEM certificate and its private key"),
+            DashboardCredentialHash = values.TryGetValue("dashboard-credential-file", out var credentialFile)
+                ? ReadDashboardCredentialHash(credentialFile)
+                : ReadOnlyMemory<byte>.Empty,
+            ManagementLegacyOwner = legacyOwner,
             PeerPort = peerPort,
             PeerCertificate = peerPort is null ? null : LoadPem(
                 () => X509Certificate2.CreateFromPemFile(values["peer-certificate"], values["peer-private-key"]),
@@ -187,6 +220,24 @@ public sealed record TerraBaseOptions
         }
 
         return port;
+    }
+
+    // The file holds the secret alone; surrounding whitespace (a trailing newline) is ignored.
+    private static byte[] ReadDashboardCredentialHash(string path)
+    {
+        string secret;
+        try
+        {
+            secret = File.ReadAllText(path).Trim();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            throw new TerraBaseConfigurationException("dashboard-credential-file must name a readable file");
+        }
+
+        return secret.Length < MinDashboardCredentialLength
+            ? throw new TerraBaseConfigurationException("dashboard-credential-file must hold a secret of at least 32 characters")
+            : SHA256.HashData(Encoding.UTF8.GetBytes(secret));
     }
 
     // Messages name the settings, never the paths or file contents.

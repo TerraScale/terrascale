@@ -1,5 +1,4 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -13,16 +12,17 @@ public sealed class GetOrganizationEndpoint(IManagementService management) : End
         Get(ManagementRoute.Organization);
         Name("getOrganization");
         Summary("Reads an organization");
+        Description(ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<Organization>();
         Produces<string>(StatusCodes.Status404NotFound);
-        RequireAuthorization(ApiKeyScopes.Management);
+        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
         Metadata(ListenerMetadata.Client);
     }
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await management.GetOrganizationAsync(ManagementRoute.Value(HttpContext, "organization"), cancellationToken) is { } organization
+        await management.GetOrganizationAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), cancellationToken) is { } organization
             ? TypedResults.Ok(organization)
             : TypedResults.NotFound();
 }

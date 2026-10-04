@@ -1,5 +1,4 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -13,12 +12,12 @@ public sealed class CreateOrganizationEndpoint(IManagementService management) : 
         Post(ManagementRoute.Organizations);
         Name("createOrganization");
         Summary("Creates an organization");
-        Description("name: 1 to 128 characters with a letter or digit, unique among organizations ignoring case.");
+        Description("name: 1 to 128 characters with a letter or digit, unique among the organizations the acting user created, ignoring case. The acting user becomes its first member." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<Organization>(StatusCodes.Status201Created);
         Produces<string>(StatusCodes.Status400BadRequest);
         Produces<string>(StatusCodes.Status409Conflict);
-        RequireAuthorization(ApiKeyScopes.Management);
+        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
         Metadata(ListenerMetadata.Client);
     }
 
@@ -26,7 +25,7 @@ public sealed class CreateOrganizationEndpoint(IManagementService management) : 
     public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var result = await management.CreateOrganizationAsync(ManagementRoute.DisplayName(request), cancellationToken);
+        var result = await management.CreateOrganizationAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.DisplayName(request), cancellationToken);
         return result.Value is { } value
             ? TypedResults.Created($"{ManagementRoute.Organizations}/{value.Id}", value)
             : ManagementRoute.Error(result.Error);

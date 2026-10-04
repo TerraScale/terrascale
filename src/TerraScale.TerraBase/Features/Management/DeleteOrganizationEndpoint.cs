@@ -1,5 +1,4 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -13,15 +12,15 @@ public sealed class DeleteOrganizationEndpoint(IManagementService management) : 
         Delete(ManagementRoute.Organization);
         Name("deleteOrganization");
         Summary("Deletes an organization");
-        Description("Fails with 409 while the organization still has projects.");
+        Description("Fails with 409 while the organization still has projects." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<string>(StatusCodes.Status404NotFound);
         Produces<string>(StatusCodes.Status409Conflict);
-        RequireAuthorization(ApiKeyScopes.Management);
+        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
         Metadata(ListenerMetadata.Client);
     }
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        ManagementRoute.NoContent(await management.DeleteOrganizationAsync(ManagementRoute.Value(HttpContext, "organization"), cancellationToken));
+        ManagementRoute.NoContent(await management.DeleteOrganizationAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), cancellationToken));
 }

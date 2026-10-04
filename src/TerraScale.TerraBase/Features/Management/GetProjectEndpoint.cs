@@ -1,5 +1,4 @@
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Features.ApiKeys;
 using TerraScale.TerraBase.Hosting;
 
 namespace TerraScale.TerraBase.Features.Management;
@@ -13,16 +12,17 @@ public sealed class GetProjectEndpoint(IManagementService management) : Endpoint
         Get(ManagementRoute.Project);
         Name("getProject");
         Summary("Reads a project");
+        Description(ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<Project>();
         Produces<string>(StatusCodes.Status404NotFound);
-        RequireAuthorization(ApiKeyScopes.Management);
+        RequireAuthorization(DashboardAuthenticationHandler.PolicyName);
         Metadata(ListenerMetadata.Client);
     }
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await management.GetProjectAsync(ManagementRoute.Value(HttpContext, "organization"), ManagementRoute.Value(HttpContext, "project"), cancellationToken) is { } project
+        await management.GetProjectAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), cancellationToken) is { } project
             ? TypedResults.Ok(project)
             : TypedResults.NotFound();
 }

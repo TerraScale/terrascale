@@ -41,16 +41,22 @@ public sealed class ClientTls : IDisposable
     /// </summary>
     public HttpClient CreateClient(Uri clientAddress, string? apiKey = null)
     {
-        var handler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false };
-        handler.SslOptions.RemoteCertificateValidationCallback = (_, presented, _, _) =>
-            presented is not null && presented.GetCertHash().AsSpan().SequenceEqual(_certificate.GetCertHash());
-        var client = new HttpClient(handler) { BaseAddress = clientAddress, Timeout = TimeSpan.FromSeconds(30) };
+        var client = new HttpClient(CreateHandler()) { BaseAddress = clientAddress, Timeout = TimeSpan.FromSeconds(30) };
         if (apiKey is not null)
         {
             client.DefaultRequestHeaders.Authorization = new("Bearer", apiKey);
         }
 
         return client;
+    }
+
+    /// <summary>A handler that trusts only this certificate, never follows redirects and never stores cookies.</summary>
+    public SocketsHttpHandler CreateHandler()
+    {
+        var handler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false };
+        handler.SslOptions.RemoteCertificateValidationCallback = (_, presented, _, _) =>
+            presented is not null && presented.GetCertHash().AsSpan().SequenceEqual(_certificate.GetCertHash());
+        return handler;
     }
 
     /// <inheritdoc />
