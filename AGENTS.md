@@ -1,6 +1,7 @@
 AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 
 # Rules
+- Never add AI attribution to commits, PR titles, or PR descriptions: no `Co-Authored-By:` trailers, no `🤖 Generated with [Claude Code]` or similar generated-by notices.
 - We need to use vitepress
 - This is a public docs repo, we should not have internal information here like which database we are using interally and similar information
 - This repo must not have internal information
