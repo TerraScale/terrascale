@@ -238,7 +238,17 @@ internal sealed class SqliteStorageEngine(string dataDirectory) : IStorageEngine
         }
 
         store = new SqliteDatabaseStore(name, path, Pool);
-        await store.MigrateAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await store.MigrateAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Not published, so nothing else would close it: release its sessions and file handles now.
+            store.Dispose();
+            throw;
+        }
+
         _stores[name] = store;
         return store;
     }

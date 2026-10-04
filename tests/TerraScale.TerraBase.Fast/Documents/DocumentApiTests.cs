@@ -1,78 +1,590 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Extensions.DependencyInjection;
+using TerraScale.TerraBase.Engine;
 using TerraScale.TerraBase.Testing;
 
 namespace TerraScale.TerraBase.Fast.Documents;
 
 public sealed class DocumentApiTests
 {
+    [Test]
+    public async Task Recreated_database_rejects_versions_from_its_previous_incarnation()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+        var deletedId = DocumentApi.NewId();
+        var original = await api.PutAsync(id, new { n = 1 });
+        (await api.PutAsync(deletedId, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        var oldTombstone = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(deletedId));
+        oldTombstone.Status.ShouldBe(HttpStatusCode.OK);
+
+        // Database deletion has no Documents endpoint; arrange it through the real server's engine.
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        await Assert.That(DatabaseName.TryParse("db", out var database)).IsTrue();
+        await Assert.That(await engine.DeleteDatabaseAsync(database, CancellationToken.None)).IsTrue();
+        (await api.SendAsync(HttpMethod.Put, "/v1/databases/db")).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.SendAsync(HttpMethod.Post, "/v1/databases/db/collections", new { name = "items" })).Status.ShouldBe(HttpStatusCode.Created);
+        var recreated = await api.PutAsync(id, new { n = 2 });
+        recreated.Status.ShouldBe(HttpStatusCode.Created);
+        await Assert.That(Offset(recreated)).IsEqualTo(Offset(original));
+        await Assert.That(recreated.Version).IsNotEqualTo(original.Version);
+        (await api.PutAsync(deletedId, new { n = 2 })).Status.ShouldBe(HttpStatusCode.Created);
+        var newTombstone = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(deletedId));
+        await Assert.That(Offset(newTombstone)).IsEqualTo(Offset(oldTombstone));
+        await Assert.That(newTombstone.Version).IsNotEqualTo(oldTombstone.Version);
+
+        var cached = await api.GetAsync(id, DocumentApi.IfNoneMatch(original.Version));
+        await Assert.That(cached.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(cached.Version).IsEqualTo(recreated.Version);
+        foreach (var response in new[]
+        {
+            await api.GetAsync(id, DocumentApi.IfMatch(original.Version)),
+            await api.PutAsync(id, new { n = 3 }, DocumentApi.IfMatch(original.Version)),
+            await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"n":3}""", "application/merge-patch+json", DocumentApi.IfMatch(original.Version)),
+            await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id), configure: DocumentApi.IfMatch(original.Version)),
+            await api.PutAsync(deletedId, new { n = 3 }, DocumentApi.IfMatch(oldTombstone.Version)),
+        })
+        {
+            await Assert.That((response.Status, response.Code)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed"));
+        }
+
+        var transaction = await api.TransactAsync(new { op = "put", collection = "items", id, document = new { n = 3 }, if_match = original.Version });
+        await Assert.That((transaction.Status, transaction.Code, transaction.Op)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed", (int?)0));
+        var read = await api.GetAsync(id);
+        await Assert.That(read.Version).IsEqualTo(recreated.Version);
+        await Assert.That(read.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2);
+        foreach (var response in new[] { await api.QueryAsync(new { }), await api.SendAsync(HttpMethod.Get, DocumentApi.Documents) })
+        {
+            await Assert.That(response.Json.GetProperty("items")[0].GetProperty("version").GetString()).IsEqualTo(recreated.Version);
+        }
+
+        var updated = await api.TransactAsync(new { op = "put", collection = "items", id, document = new { n = 4 }, if_match = recreated.Version });
+        await Assert.That(updated.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(updated.Json.GetProperty("results")[0].GetProperty("version").GetString()).IsEqualTo((await api.GetAsync(id)).Version);
+        (await api.PutAsync(deletedId, new { n = 4 }, DocumentApi.IfMatch(newTombstone.Version))).Status.ShouldBe(HttpStatusCode.Created);
+    }
+
+    [Test]
+    public async Task Generated_id_creation_validates_and_enforces_conditional_headers_without_failed_writes()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        foreach (var (header, value, status, code) in new[]
+        {
+            ("If-Match", "\"stale\"", HttpStatusCode.PreconditionFailed, "precondition_failed"),
+            ("If-Match", "*", HttpStatusCode.PreconditionFailed, "precondition_failed"),
+            ("If-Match", "W/\"stale\"", HttpStatusCode.PreconditionFailed, "precondition_failed"),
+            ("If-Match", "\"*\"", HttpStatusCode.PreconditionFailed, "precondition_failed"),
+            ("If-Match", "", HttpStatusCode.BadRequest, "invalid_request"),
+            ("If-Match", "malformed", HttpStatusCode.BadRequest, "invalid_request"),
+            ("If-None-Match", "malformed", HttpStatusCode.BadRequest, "invalid_request"),
+            ("If-None-Match", "\"stale\"", HttpStatusCode.BadRequest, "invalid_request"),
+            ("If-None-Match", "", HttpStatusCode.BadRequest, "invalid_request"),
+        })
+        {
+            var result = await api.SendAsync(HttpMethod.Post, DocumentApi.Documents, new { n = 1 },
+                request => request.Headers.TryAddWithoutValidation(header, value));
+            await Assert.That((result.Status, result.Code)).IsEqualTo((status, code));
+        }
+
+        await Assert.That((await api.QueryAsync(new { })).Ids.Count).IsEqualTo(0);
+        var created = await api.SendAsync(HttpMethod.Post, DocumentApi.Documents, new { n = 2 }, DocumentApi.IfNoneMatch("*"));
+        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await api.SendAsync(HttpMethod.Get, created.Location!.OriginalString)).Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await api.QueryAsync(new { })).Ids.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Invalid_raw_utf8_is_rejected_in_values_and_member_names_on_every_body_route()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+        var original = await api.PutAsync(id, new { n = 1 });
+        var cases = new (HttpMethod Method, string Route, string Body, string MediaType, string Code)[]
+        {
+            (HttpMethod.Put, DocumentApi.Document(id), "{\"s\":\"BAD\"}", "application/json", "invalid_request"),
+            (HttpMethod.Put, DocumentApi.Document(id), "{\"BAD\":1}", "application/json", "invalid_request"),
+            (HttpMethod.Patch, DocumentApi.Document(id), "{\"s\":\"BAD\"}", "application/merge-patch+json", "invalid_patch"),
+            (HttpMethod.Patch, DocumentApi.Document(id), "{\"ops\":[{\"op\":\"set\",\"path\":\"/s\",\"value\":\"BAD\"}]}", "application/vnd.terrabase.ops+json", "invalid_patch"),
+            (HttpMethod.Post, DocumentApi.Query, "{\"filter\":{\"eq\":[\"/s\",\"BAD\"]}}", "application/json", "invalid_query"),
+            (HttpMethod.Post, DocumentApi.Transactions, "{\"ops\":[{\"op\":\"create\",\"collection\":\"items\",\"document\":{\"s\":\"BAD\"}}]}", "application/json", "invalid_request"),
+        };
+        foreach (var (method, route, body, mediaType, code) in cases)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(body.Replace("BAD", "X", StringComparison.Ordinal));
+            bytes[Array.IndexOf(bytes, (byte)'X')] = 0xff;
+            using var content = new ByteArrayContent(bytes);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mediaType);
+            var result = await DocumentApi.SendAsync(api.Client, method, route, content);
+            await Assert.That((result.Status, result.Code)).IsEqualTo((HttpStatusCode.BadRequest, code));
+        }
+
+        await Assert.That((await api.GetAsync(id)).Version).IsEqualTo(original.Version);
+        var valid = await api.PutAsync(DocumentApi.NewId(), new { text = "Olá 世界 😀" });
+        await Assert.That(valid.Status).IsEqualTo(HttpStatusCode.Created);
+    }
+
+    [Test]
+    public async Task Validation_errors_do_not_echo_unknown_client_member_names()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var secret = "private-client-input-" + new string('x', 10000);
+        var query = await api.QueryAsync(new Dictionary<string, object> { [secret] = 1 });
+        var transaction = await api.TransactAsync(new Dictionary<string, object> { [secret] = 1 });
+        var filter = new Dictionary<string, object> { [secret] = 1 };
+        var queryFilter = await api.QueryAsync(new { filter });
+        var assertionFilter = await api.TransactAsync(new { op = "assert", collection = "items", id = DocumentApi.NewId(), filter });
+        var countFilter = await api.TransactAsync(new { op = "assert_count", collection = "items", filter, gte = 0 });
+
+        foreach (var response in new[] { query, transaction, queryFilter, assertionFilter, countFilter })
+        {
+            await Assert.That(response.Status).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(response.Json.GetRawText().Contains(secret, StringComparison.Ordinal)).IsFalse();
+            await Assert.That(response.Json.GetRawText().Length).IsLessThan(200);
+        }
+
+        await Assert.That(transaction.Op).IsEqualTo(0);
+    }
+
     private static readonly Faker Faker = new();
     private static readonly int[] JsonArray = [1, 2];
     private static readonly string[] WriteScope = ["documents:write"];
+    private static readonly string[] SingleTag = ["a"];
+    private static readonly string[] OutOfRangeNumbers = ["1e-9223372036854775808", "0.5e-1000000", "4.9e-324", "1e-308", "1e9223372036854775807"];
 
     [Test]
-    public async Task Documents_round_trip_through_the_client_listener()
+    public async Task Documents_round_trip_with_versions_and_offsets()
     {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        var key = await server.IssueAsync("documents:read", "documents:write");
-        using var client = tls.CreateClient(server.ClientAddress!, key);
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
         var person = new { name = Faker.Name.FullName(), email = Faker.Internet.Email(), age = Faker.Random.Int(18, 90) };
 
-        using var created = await client.PutAsync(new Uri("/v1/databases/shop", UriKind.Relative), null);
-        using var again = await client.PutAsync(new Uri("/v1/databases/shop", UriKind.Relative), null);
-        using var put = await client.PutAsJsonAsync(new Uri("/v1/databases/shop/collections/people/documents/p1", UriKind.Relative), person);
-        using var replaced = await client.PutAsJsonAsync(new Uri("/v1/databases/shop/collections/people/documents/p1", UriKind.Relative), person);
-        using var read = JsonDocument.Parse(await client.GetStringAsync(new Uri("/v1/databases/shop/collections/people/documents/p1", UriKind.Relative)));
-        using var deleted = await client.DeleteAsync(new Uri("/v1/databases/shop/collections/people/documents/p1", UriKind.Relative));
-        using var gone = await client.GetAsync(new Uri("/v1/databases/shop/collections/people/documents/p1", UriKind.Relative));
+        var created = await api.PutAsync(id, person);
+        var replaced = await api.PutAsync(id, person with { age = person.age + 1 });
+        var read = await api.GetAsync(id);
+        var deleted = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id));
+        var gone = await api.GetAsync(id);
 
-        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(again.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(put.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await replaced.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("version").GetInt64()).IsEqualTo(2);
-        await Assert.That(read.RootElement.GetProperty("version").GetInt64()).IsEqualTo(2);
-        await Assert.That(read.RootElement.GetProperty("data").GetProperty("email").GetString()).IsEqualTo(person.email);
-        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(created.Version).Matches("^tbv1-[0-9a-f]{32}$");
+        await Assert.That(created.ETag).IsEqualTo(created.Version);
+        await Assert.That(created.Json.GetProperty("durability").GetString()).IsEqualTo("local_durable");
+        await Assert.That(replaced.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(replaced.Version).IsNotEqualTo(created.Version);
+        await Assert.That(Offset(replaced)).IsGreaterThan(Offset(created));
+        await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(read.ETag).IsEqualTo(replaced.Version);
+        await Assert.That(read.Json.GetProperty("id").GetString()).IsEqualTo(id);
+        await Assert.That(read.Json.GetProperty("state").GetString()).IsEqualTo("value");
+        await Assert.That(read.Json.GetProperty("document").GetProperty("email").GetString()).IsEqualTo(person.email);
+        await Assert.That(read.Json.GetProperty("document").GetProperty("age").GetInt32()).IsEqualTo(person.age + 1);
+        await Assert.That(deleted.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(deleted.Version).IsNotEqualTo(replaced.Version);
+        await Assert.That(Offset(deleted)).IsGreaterThan(Offset(replaced));
+        // A deleted document's 404 carries its tombstone's version.
+        await Assert.That(gone.Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(gone.Code).IsEqualTo("not_found");
+        await Assert.That(gone.ETag).IsEqualTo(deleted.Version);
         // The settings reached Program: the database lives in this server's own data directory.
-        await Assert.That(File.Exists(Path.Combine(server.DataDirectory, "shop.db"))).IsTrue();
+        await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, "db.db"))).IsTrue();
+    }
+
+    [Test]
+    public async Task Post_creates_a_document_with_a_generated_uuidv7()
+    {
+        await using var api = await DocumentApi.StartAsync();
+
+        var created = await api.SendAsync(HttpMethod.Post, DocumentApi.Documents, new { title = Faker.Commerce.ProductName() });
+        var id = created.Json.GetProperty("id").GetString()!;
+        var read = await api.SendAsync(HttpMethod.Get, created.Location!.OriginalString);
+
+        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(Guid.Parse(id).Version).IsEqualTo(7);
+        await Assert.That(id).IsEqualTo(id.ToLowerInvariant());
+        await Assert.That(created.Location.OriginalString).IsEqualTo(DocumentApi.Document(id));
+        await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(read.Version).IsEqualTo(created.Version);
+    }
+
+    [Test]
+    public async Task Missing_databases_collections_and_documents_have_distinct_codes()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+
+        var noDatabase = await api.SendAsync(HttpMethod.Get, $"/v1/databases/nope/collections/items/documents/{id}");
+        var noCollection = await api.SendAsync(HttpMethod.Put, $"/v1/databases/db/collections/nope/documents/{id}", new { a = 1 });
+        var noDocument = await api.GetAsync(id);
+        var deleteAbsent = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id));
+        var patchAbsent = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"a":1}""", "application/merge-patch+json");
+        await api.PutAsync(id, new { a = 1 });
+        await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id));
+        var deleteTwice = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id));
+        var patchDeleted = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"a":1}""", "application/merge-patch+json");
+        var unknownRoute = await api.SendAsync(HttpMethod.Get, "/v1/nothing");
+
+        await Assert.That((noDatabase.Status, noDatabase.Code)).IsEqualTo((HttpStatusCode.NotFound, "unknown_database"));
+        await Assert.That((noCollection.Status, noCollection.Code)).IsEqualTo((HttpStatusCode.NotFound, "unknown_collection"));
+        await Assert.That((noDocument.Status, noDocument.Code)).IsEqualTo((HttpStatusCode.NotFound, "not_found"));
+        await Assert.That(noDocument.ETag).IsNull();
+        await Assert.That((deleteAbsent.Status, deleteAbsent.Code)).IsEqualTo((HttpStatusCode.NotFound, "not_found"));
+        await Assert.That((patchAbsent.Status, patchAbsent.Code)).IsEqualTo((HttpStatusCode.NotFound, "not_found"));
+        await Assert.That((deleteTwice.Status, deleteTwice.Code)).IsEqualTo((HttpStatusCode.NotFound, "not_found"));
+        await Assert.That((patchDeleted.Status, patchDeleted.Code)).IsEqualTo((HttpStatusCode.NotFound, "not_found"));
+        await Assert.That((unknownRoute.Status, unknownRoute.Code)).IsEqualTo((HttpStatusCode.NotFound, "unknown_route"));
+    }
+
+    [Test]
+    public async Task Preconditions_guard_writes_and_reads()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+        var first = await api.PutAsync(id, new { n = 1 }, DocumentApi.IfNoneMatch("*"));
+
+        var createAgain = await api.PutAsync(id, new { n = 2 }, DocumentApi.IfNoneMatch("*"));
+        var second = await api.PutAsync(id, new { n = 2 }, DocumentApi.IfMatch(first.Version));
+        var stale = await api.PutAsync(id, new { n = 3 }, DocumentApi.IfMatch(first.Version));
+        var stalePatch = await api.SendRawAsync(
+            HttpMethod.Patch, DocumentApi.Document(id), """{"n":3}""", "application/merge-patch+json", DocumentApi.IfMatch(first.Version));
+        var staleDelete = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id), configure: DocumentApi.IfMatch(first.Version));
+        var notModified = await api.GetAsync(id, DocumentApi.IfNoneMatch(second.Version));
+        var modified = await api.GetAsync(id, DocumentApi.IfNoneMatch(first.Version));
+        var weakNotModified = await api.GetAsync(
+            id, request => request.Headers.IfNoneMatch.Add(new System.Net.Http.Headers.EntityTagHeaderValue($"\"{second.Version}\"", isWeak: true)));
+        var weakIfMatch = await api.PutAsync(
+            id, new { n = 3 }, request => request.Headers.IfMatch.Add(new System.Net.Http.Headers.EntityTagHeaderValue($"\"{second.Version}\"", isWeak: true)));
+        var malformedIfMatch = await api.PutAsync(id, new { n = 3 }, request => request.Headers.TryAddWithoutValidation("If-Match", "not-an-etag"));
+        var malformedIfNoneMatch = await api.GetAsync(id, request => request.Headers.TryAddWithoutValidation("If-None-Match", "tbv1-unquoted"));
+        var emptyIfMatch = await api.PutAsync(id, new { n = 3 }, request => request.Headers.TryAddWithoutValidation("If-Match", ""));
+        var quotedStar = await api.PutAsync(id, new { n = 3 }, request => request.Headers.IfMatch.Add(new System.Net.Http.Headers.EntityTagHeaderValue("\"*\"")));
+        var starInList = await api.PutAsync(id, new { n = 3 }, request => request.Headers.TryAddWithoutValidation("If-Match", $"*, \"{second.Version}\""));
+        var anyNotModified = await api.GetAsync(id, DocumentApi.IfNoneMatch("*"));
+        var anyExisting = await api.PutAsync(id, new { n = 4 }, DocumentApi.IfMatch("*"));
+        var deleted = await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(id), configure: DocumentApi.IfMatch(anyExisting.Version));
+        // The tombstone's version recreates the document.
+        var recreated = await api.PutAsync(id, new { n = 5 }, DocumentApi.IfMatch(deleted.Version));
+        var other = DocumentApi.NewId();
+        var anyAbsent = await api.PutAsync(other, new { n = 1 }, request => request.Headers.IfMatch.Add(System.Net.Http.Headers.EntityTagHeaderValue.Any));
+        // Reads evaluate If-Match first (strongly), and parse both headers before reporting absence.
+        var readStale = await api.GetAsync(id, DocumentApi.IfMatch(first.Version));
+        var readCurrent = await api.GetAsync(id, DocumentApi.IfMatch(recreated.Version));
+        var readAbsentIfMatch = await api.GetAsync(other, DocumentApi.IfMatch("*"));
+        var readAbsentMalformed = await api.GetAsync(other, request => request.Headers.TryAddWithoutValidation("If-None-Match", "unquoted"));
+        var weakNoneMatch = await api.PutAsync(other, new { n = 1 }, DocumentApi.IfNoneMatch("tbv1-00000000000000000000000000000000"));
+
+        await Assert.That(first.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((createAgain.Status, createAgain.Code)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed"));
+        await Assert.That(second.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((stale.Status, stale.Code)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed"));
+        await Assert.That(stalePatch.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        await Assert.That(staleDelete.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        await Assert.That(notModified.Status).IsEqualTo(HttpStatusCode.NotModified);
+        await Assert.That(notModified.ETag).IsEqualTo(second.Version);
+        await Assert.That(modified.Status).IsEqualTo(HttpStatusCode.OK);
+        // Conditional reads compare weakly, conditional writes strongly.
+        await Assert.That(weakNotModified.Status).IsEqualTo(HttpStatusCode.NotModified);
+        await Assert.That(weakIfMatch.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        await Assert.That((malformedIfMatch.Status, malformedIfMatch.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        await Assert.That((malformedIfNoneMatch.Status, malformedIfNoneMatch.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        await Assert.That((emptyIfMatch.Status, emptyIfMatch.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        // A quoted "*" is an ordinary entity tag, not the wildcard.
+        await Assert.That(quotedStar.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        // RFC 9110: * stands alone; If-None-Match: * on a read of an existing document is a 304.
+        await Assert.That((starInList.Status, starInList.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        await Assert.That(anyNotModified.Status).IsEqualTo(HttpStatusCode.NotModified);
+        await Assert.That(anyExisting.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(deleted.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(recreated.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(anyAbsent.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        await Assert.That((readStale.Status, readStale.Code)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed"));
+        await Assert.That(readCurrent.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(readAbsentIfMatch.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        await Assert.That((readAbsentMalformed.Status, readAbsentMalformed.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        await Assert.That((weakNoneMatch.Status, weakNoneMatch.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+    }
+
+    [Test]
+    public async Task Merge_patch_follows_rfc_7396()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+        await api.PutAsync(id, new { name = "Ana", legacy = true, profile = new { city = "Lisbon", zip = "1000" }, tags = SingleTag });
+
+        var patched = await api.SendRawAsync(
+            HttpMethod.Patch, DocumentApi.Document(id), """{"legacy":null,"profile":{"zip":null,"country":"PT"},"tags":["b"],"new":{"x":1}}""",
+            "application/merge-patch+json");
+        var read = await api.GetAsync(id);
+        var notObject = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), "[1]", "application/merge-patch+json");
+
+        await Assert.That(patched.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(read.ETag).IsEqualTo(patched.Version);
+        await Assert.That(read.Json.GetProperty("document").GetRawText()).IsEqualTo(
+            """{"name":"Ana","profile":{"city":"Lisbon","country":"PT"},"tags":["b"],"new":{"x":1}}""");
+        await Assert.That((notObject.Status, notObject.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
+    }
+
+    [Test]
+    public async Task Patch_operations_set_unset_inc_and_append()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+        await api.PutAsync(id, new { legacy = 1, total = 0.1, name = "x", tags = SingleTag });
+        const string ops = "application/vnd.terrabase.ops+json";
+
+        var patched = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """
+            {"ops":[{"op":"set","path":"/profile/name","value":"Ana"},
+                    {"op":"unset","path":"/legacy"},
+                    {"op":"unset","path":"/missing/deeper"},
+                    {"op":"inc","path":"/total","by":0.2},
+                    {"op":"inc","path":"/count","by":2},
+                    {"op":"append","path":"/tags","value":"b"},
+                    {"op":"append","path":"/fresh","value":{"k":1}},
+                    {"op":"set","path":"/a~1b","value":null}]}
+            """, ops);
+        var read = await api.GetAsync(id);
+        var incString = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"inc","path":"/name","by":1}]}""", ops);
+        var appendObject = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"append","path":"/profile","value":1}]}""", ops);
+        var throughScalar = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"set","path":"/name/x","value":1}]}""", ops);
+        var unsetThroughScalar = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"unset","path":"/name/x"}]}""", ops);
+        var unsetThroughNull = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"unset","path":"/a~1b/x"}]}""", ops);
+        var unsetThroughArray = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"unset","path":"/tags/0"}]}""", ops);
+        var chainedInc = await api.SendRawAsync(
+            HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"set","path":"/big","value":1e300},{"op":"inc","path":"/big","by":1},{"op":"inc","path":"/big","by":1}]}""", ops);
+        var surrogateValue = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"set","path":"/s","value":"\udc00"}]}""", ops);
+        var surrogateMerge = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"s":"\ud800"}""", "application/merge-patch+json");
+        var outOfRange = await api.SendRawAsync(
+            HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"set","path":"/big","value":9e307},{"op":"inc","path":"/big","by":9e307}]}""", ops);
+        var nullOp = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[null]}""", ops);
+        var minExponentBy = await api.SendRawAsync(
+            HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"inc","path":"/count","by":1e-9223372036854775808}]}""", ops);
+        var hugeBy = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"inc","path":"/count","by":1e400}]}""", ops);
+        var deepValue = string.Concat(Enumerable.Repeat("""{"a":""", 55)) + "1" + new string('}', 55);
+        var tooDeep = await api.SendRawAsync(
+            HttpMethod.Patch, DocumentApi.Document(id), $$"""{"ops":[{"op":"set","path":"/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p","value":{{deepValue}}}]}""", ops);
+        // A value within the limits under a 16-segment path: the patched document is too deep, a 400 rather than a 500.
+        var deepResult = await api.SendRawAsync(
+            HttpMethod.Patch, DocumentApi.Document(id), $$"""{"ops":[{"op":"set","path":"/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p","value":{{Nested(16)}}}]}""", ops);
+        var unknownOp = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"move","path":"/a"}]}""", ops);
+        var noOps = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[]}""", ops);
+        var extraMember = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"unset","path":"/a","value":1}]}""", ops);
+        var badPath = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"ops":[{"op":"unset","path":"a"}]}""", ops);
+        var plainJson = await api.SendRawAsync(HttpMethod.Patch, DocumentApi.Document(id), """{"a":1}""", "application/json");
+        var after = await api.GetAsync(id);
+
+        await Assert.That(patched.Status).IsEqualTo(HttpStatusCode.OK);
+        var document = read.Json.GetProperty("document");
+        await Assert.That(document.GetProperty("profile").GetProperty("name").GetString()).IsEqualTo("Ana");
+        await Assert.That(document.TryGetProperty("legacy", out _)).IsFalse();
+        await Assert.That(document.TryGetProperty("missing", out _)).IsFalse();
+        // Exact decimal arithmetic: 0.1 + 0.2 is 0.3, not 0.30000000000000004.
+        await Assert.That(document.GetProperty("total").GetRawText()).IsEqualTo("0.3");
+        await Assert.That(document.GetProperty("count").GetInt32()).IsEqualTo(2);
+        await Assert.That(document.GetProperty("tags").GetRawText()).IsEqualTo("""["a","b"]""");
+        await Assert.That(document.GetProperty("fresh").GetRawText()).IsEqualTo("""[{"k":1}]""");
+        await Assert.That(document.GetProperty("a/b").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That((incString.Status, incString.Code)).IsEqualTo((HttpStatusCode.Conflict, "patch_conflict"));
+        await Assert.That((appendObject.Status, appendObject.Code)).IsEqualTo((HttpStatusCode.Conflict, "patch_conflict"));
+        await Assert.That((throughScalar.Status, throughScalar.Code)).IsEqualTo((HttpStatusCode.Conflict, "patch_conflict"));
+        await Assert.That((unsetThroughScalar.Status, unsetThroughScalar.Code)).IsEqualTo((HttpStatusCode.Conflict, "patch_conflict"));
+        await Assert.That((unsetThroughNull.Status, unsetThroughNull.Code)).IsEqualTo((HttpStatusCode.Conflict, "patch_conflict"));
+        await Assert.That((unsetThroughArray.Status, unsetThroughArray.Code)).IsEqualTo((HttpStatusCode.Conflict, "patch_conflict"));
+        await Assert.That((outOfRange.Status, outOfRange.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        await Assert.That((chainedInc.Status, chainedInc.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        await Assert.That((surrogateValue.Status, surrogateValue.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
+        await Assert.That((surrogateMerge.Status, surrogateMerge.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
+        await Assert.That((nullOp.Status, nullOp.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
+        await Assert.That((hugeBy.Status, hugeBy.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
+        await Assert.That((minExponentBy.Status, minExponentBy.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
+        await Assert.That((tooDeep.Status, tooDeep.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
+        await Assert.That((deepResult.Status, deepResult.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        await Assert.That((unknownOp.Status, unknownOp.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
+        await Assert.That((noOps.Status, noOps.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
+        await Assert.That((extraMember.Status, extraMember.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
+        await Assert.That((badPath.Status, badPath.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
+        await Assert.That((plainJson.Status, plainJson.Code)).IsEqualTo((HttpStatusCode.UnsupportedMediaType, "unsupported_media_type"));
+        // Failed patches change nothing.
+        await Assert.That(after.Version).IsEqualTo(patched.Version);
+    }
+
+    // (stored number, by, exact sum as stored).
+    private static readonly (string Start, string By, string Expected)[] IncCases =
+    [
+        ("1", "1e-29", "1.00000000000000000000000000001"),
+        ("12345678901234567890123456789012345", "1", "12345678901234567890123456789012346"),
+        ("0.1", "0.2", "0.3"),
+        ("2.5", "-2.5", "0"),
+        ("1e3", "1", "1001"),
+        ("-1.50", "0.25", "-1.25"),
+        ("0.1234567890123456789012345678901234567890", "1", "1.123456789012345678901234567890123456789"),
+        ("1e300", "1e300", "2e300"),
+    ];
+
+    [Test]
+    public async Task Inc_adds_exactly()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var mismatches = new List<string>();
+        foreach (var (start, by, expected) in IncCases)
+        {
+            var id = DocumentApi.NewId();
+            await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), $$"""{"n":{{start}}}""", "application/json");
+            var patched = await api.SendRawAsync(
+                HttpMethod.Patch, DocumentApi.Document(id), $$"""{"ops":[{"op":"inc","path":"/n","by":{{by}}}]}""", "application/vnd.terrabase.ops+json");
+            var actual = (await api.GetAsync(id)).Json.GetProperty("document").GetProperty("n").GetRawText();
+            if (patched.Status != HttpStatusCode.OK || actual != expected)
+            {
+                mismatches.Add($"{start} + {by} -> {(int)patched.Status} {actual}, expected {expected}");
+            }
+        }
+
+        await Assert.That(mismatches).IsEmpty();
+    }
+
+    [Test]
+    public async Task Server_faults_answer_internal_error_without_details()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        // A database file from a newer TerraBase: opening it fails on the server side.
+        var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(api.Server.DataDirectory, "future.db")};Pooling=False");
+        await using (connection)
+        {
+            await connection.OpenAsync();
+            var command = connection.CreateCommand();
+            await using (command)
+            {
+                command.CommandText = "PRAGMA user_version = 99;";
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+
+        var result = await api.SendAsync(HttpMethod.Get, "/v1/databases/future/collections");
+
+        await Assert.That((result.Status, result.Code)).IsEqualTo((HttpStatusCode.InternalServerError, "internal_error"));
+        await Assert.That(result.Json.GetProperty("error").TryGetProperty("message", out _)).IsFalse();
+        // The failed first open published no store, and left no handle on the file.
+        await Assert.That(new DirectoryInfo("/proc/self/fd").EnumerateFileSystemInfos()
+            .Select(descriptor => descriptor.LinkTarget)
+            .Where(target => target?.StartsWith(Path.Combine(api.Server.DataDirectory, "future.db"), StringComparison.Ordinal) == true)).IsEmpty();
     }
 
     [Test]
     public async Task Listing_pages_through_a_collection_in_id_order()
     {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!, await server.IssueAsync("documents:read", "documents:write"));
-        (await client.PutAsync(new Uri("/v1/databases/catalog", UriKind.Relative), null)).Dispose();
+        await using var api = await DocumentApi.StartAsync();
         // An exact multiple of the page size: the last full page must already report no next page.
-        var ids = Enumerable.Range(0, 4).Select(i => $"item-{i}").ToList();
+        var ids = Enumerable.Range(0, 5).Select(_ => DocumentApi.NewId()).ToList();
         foreach (var id in Faker.Random.Shuffle(ids))
         {
-            (await client.PutAsJsonAsync(
-                new Uri($"/v1/databases/catalog/collections/items/documents/{id}", UriKind.Relative),
-                new { title = Faker.Commerce.ProductName() })).EnsureSuccessStatusCode();
+            await api.PutAsync(id, new { title = Faker.Commerce.ProductName() });
         }
+
+        // Tombstones are not listed.
+        await api.SendAsync(HttpMethod.Delete, DocumentApi.Document(ids[2]));
+        ids.RemoveAt(2);
 
         var seen = new List<string>();
         var pages = 0;
-        string? after = null;
+        string? cursor = null;
         do
         {
             pages++;
-            var query = after is null ? "?limit=2" : $"?limit=2&after={after}";
-            using var page = JsonDocument.Parse(await client.GetStringAsync(
-                new Uri($"/v1/databases/catalog/collections/items/documents{query}", UriKind.Relative)));
-            seen.AddRange(page.RootElement.GetProperty("documents").EnumerateArray().Select(document => document.GetProperty("id").GetString()!));
-            after = page.RootElement.GetProperty("next").GetString();
+            var page = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?limit=2" + (cursor is null ? "" : $"&cursor={cursor}"));
+            seen.AddRange(page.Ids);
+            cursor = page.Json.GetProperty("next_cursor").GetString();
         }
-        while (after is not null);
+        while (cursor is not null);
+
+        var defaults = await api.SendAsync(HttpMethod.Get, DocumentApi.Documents);
+        var badCursor = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?cursor=bm90LWEtY3Vyc29y");
+        var tooSmall = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?limit=0");
+        var tooLarge = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?limit=1001");
+        var unknown = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?after=x");
+        var duplicate = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?limit=1&limit=2");
+        var empty = await api.SendAsync(HttpMethod.Get, $"{DocumentApi.Documents}?limit=");
 
         await Assert.That(pages).IsEqualTo(2);
         await Assert.That(seen).IsEquivalentTo(ids);
         await Assert.That(seen).IsOrderedBy(id => id, StringComparer.Ordinal);
+        await Assert.That(defaults.Ids.Count).IsEqualTo(4);
+        await Assert.That(defaults.Json.GetProperty("next_cursor").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That((badCursor.Status, badCursor.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_cursor"));
+        await Assert.That((tooSmall.Status, tooSmall.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        await Assert.That(tooLarge.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(unknown.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(duplicate.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(empty.Status).IsEqualTo(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task Invalid_names_ids_and_bodies_are_rejected()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+
+        var badName = await api.SendAsync(HttpMethod.Put, "/v1/databases/Not_Valid");
+        var deviceName = await api.SendAsync(HttpMethod.Put, "/v1/databases/con");
+        var trailingNewline = await api.SendAsync(HttpMethod.Put, "/v1/databases/valid%0A");
+        var notUuid = await api.PutAsync("p1", new { a = 1 });
+        var upperUuid = await api.PutAsync(id.ToUpperInvariant(), new { a = 1 });
+        var notObject = await api.SendAsync(HttpMethod.Put, DocumentApi.Document(id), JsonArray);
+        var notJson = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), "{oops", "application/json");
+        var duplicate = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"a":1,"a":2}""", "application/json");
+        var deepest = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), Nested(16), "application/json");
+        var tooDeep = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), Nested(17), "application/json");
+        var tooManyValues = await api.SendAsync(HttpMethod.Put, DocumentApi.Document(id), new { values = new int[4096] });
+        var longNumber = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), $$"""{"n":{{new string('7', 129)}}}""", "application/json");
+        var infinite = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"n":1e400}""", "application/json");
+        var tooBig = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"n":-1e308}""", "application/json");
+        var tooSmall = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"n":1e-400}""", "application/json");
+        var loneSurrogate = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"s":"\ud800"}""", "application/json");
+        var surrogateName = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"\udc00":1}""", "application/json");
+        // Underflow and exponent overflow are 400s, decided on the decimal text.
+        var underflows = await Task.WhenAll(OutOfRangeNumbers.Select(number => api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), $$"""{"n":{{number}}}""", "application/json")));
+        var duplicateDecoded = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"a":1,"\u0061":2}""", "application/json");
+        var surrogatePair = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(DocumentApi.NewId()), """{"s":"\ud83d\ude00"}""", "application/json");
+        var hugeTransaction = await api.SendRawAsync(
+            HttpMethod.Post, DocumentApi.Transactions, $$"""{"ops":[],"pad":"{{new string('x', 4 * 1024 * 1024)}}"}""", "application/json");
+        var tooLarge = await api.SendAsync(HttpMethod.Put, DocumentApi.Document(id), new { blob = new string('x', 1024 * 1024) });
+        var text = await api.SendRawAsync(HttpMethod.Put, DocumentApi.Document(id), """{"a":1}""", "text/plain");
+        var encoded = await api.SendRawAsync(
+            HttpMethod.Put, DocumentApi.Document(id), """{"a":1}""", "application/json", request => request.Content!.Headers.ContentEncoding.Add("gzip"));
+        var idempotent = await api.PutAsync(id, new { a = 1 }, request => request.Headers.Add("Idempotency-Key", "k1"));
+        var query = await api.SendAsync(HttpMethod.Put, DocumentApi.Document(id) + "?x=1", new { a = 1 });
+        var absent = await api.GetAsync(id);
+
+        await Assert.That((badName.Status, badName.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        await Assert.That(deviceName.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(trailingNewline.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((notUuid.Status, notUuid.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        await Assert.That(upperUuid.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(notObject.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(notJson.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(duplicate.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(deepest.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(tooDeep.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(tooManyValues.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(longNumber.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((infinite.Status, infinite.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        await Assert.That(tooBig.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(tooSmall.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((loneSurrogate.Status, loneSurrogate.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        await Assert.That(surrogateName.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(underflows.All(response => (response.Status, response.Code) == (HttpStatusCode.BadRequest, "invalid_request"))).IsTrue();
+        // Documents reject duplicate decoded names, as named-json-document-contract.md requires ("a" and "\u0061").
+        await Assert.That((duplicateDecoded.Status, duplicateDecoded.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        // A valid escaped pair is ordinary text.
+        await Assert.That(surrogatePair.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((hugeTransaction.Status, hugeTransaction.Code)).IsEqualTo((HttpStatusCode.RequestEntityTooLarge, "payload_too_large"));
+        await Assert.That((tooLarge.Status, tooLarge.Code)).IsEqualTo((HttpStatusCode.RequestEntityTooLarge, "payload_too_large"));
+        await Assert.That((text.Status, text.Code)).IsEqualTo((HttpStatusCode.UnsupportedMediaType, "unsupported_media_type"));
+        await Assert.That(encoded.Status).IsEqualTo(HttpStatusCode.UnsupportedMediaType);
+        await Assert.That(idempotent.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(query.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        // Only the valid 16-level document was stored.
+        await Assert.That(absent.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(absent.Version).IsEqualTo(deepest.Version);
     }
 
     [Test]
@@ -93,6 +605,17 @@ public sealed class DocumentApiTests
     }
 
     [Test]
+    public async Task Concurrent_writes_get_distinct_offsets()
+    {
+        await using var api = await DocumentApi.StartAsync();
+
+        var writes = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => api.PutAsync(DocumentApi.NewId(), new { n = 1 })));
+
+        await Assert.That(writes.All(write => write.Status == HttpStatusCode.Created)).IsTrue();
+        await Assert.That(writes.Select(Offset).Distinct().Count()).IsEqualTo(16);
+    }
+
+    [Test]
     public async Task The_bearer_scheme_name_is_case_insensitive()
     {
         using var tls = new ClientTls();
@@ -109,48 +632,22 @@ public sealed class DocumentApiTests
     [Test]
     public async Task Requests_need_a_key_with_the_right_scope()
     {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var anonymous = tls.CreateClient(server.ClientAddress!);
-        using var unknown = tls.CreateClient(server.ClientAddress!, "tb_not-a-real-key");
-        using var reader = tls.CreateClient(server.ClientAddress!, await server.IssueAsync("documents:read"));
+        await using var api = await DocumentApi.StartAsync();
+        using var anonymous = await api.ClientWithScopesAsync("documents:read");
+        anonymous.DefaultRequestHeaders.Authorization = null;
+        using var unknown = await api.ClientWithScopesAsync("documents:read");
+        unknown.DefaultRequestHeaders.Authorization = new("Bearer", "tb_not-a-real-key");
+        using var reader = await api.ClientWithScopesAsync("documents:read");
 
-        using var noKey = await anonymous.GetAsync(new Uri("/v1/databases/x/collections/y/documents", UriKind.Relative));
-        using var badKey = await unknown.GetAsync(new Uri("/v1/databases/x/collections/y/documents", UriKind.Relative));
-        using var readOnlyWrite = await reader.PutAsync(new Uri("/v1/databases/x", UriKind.Relative), null);
-        using var readMissing = await reader.GetAsync(new Uri("/v1/databases/x/collections/y/documents", UriKind.Relative));
+        var noKey = await DocumentApi.SendAsync(anonymous, HttpMethod.Get, DocumentApi.Documents);
+        var badKey = await DocumentApi.SendAsync(unknown, HttpMethod.Get, DocumentApi.Documents);
+        var readOnlyWrite = await DocumentApi.SendAsync(reader, HttpMethod.Put, DocumentApi.Document(DocumentApi.NewId()), JsonContent.Create(new { a = 1 }));
+        var readOnlyRead = await DocumentApi.SendAsync(reader, HttpMethod.Get, DocumentApi.Documents);
 
-        await Assert.That(noKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(badKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(readOnlyWrite.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(readMissing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-    }
-
-    [Test]
-    public async Task Invalid_names_and_bodies_are_rejected()
-    {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!, await server.IssueAsync("documents:write"));
-        (await client.PutAsync(new Uri("/v1/databases/valid", UriKind.Relative), null)).Dispose();
-
-        using var badName = await client.PutAsync(new Uri("/v1/databases/Not_Valid", UriKind.Relative), null);
-        using var deviceName = await client.PutAsync(new Uri("/v1/databases/con", UriKind.Relative), null);
-        using var trailingNewline = await client.PutAsync(new Uri("/v1/databases/valid%0A", UriKind.Relative), null);
-        using var notObject = await client.PutAsync(
-            new Uri("/v1/databases/valid/collections/c/documents/d", UriKind.Relative), JsonContent.Create(JsonArray));
-        using var notJson = await client.PutAsync(
-            new Uri("/v1/databases/valid/collections/c/documents/d", UriKind.Relative), new StringContent("{oops", null, "application/json"));
-        using var tooLarge = await client.PutAsync(
-            new Uri("/v1/databases/valid/collections/c/documents/d", UriKind.Relative),
-            JsonContent.Create(new { blob = new string('x', 1024 * 1024) }));
-
-        await Assert.That(badName.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(deviceName.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(trailingNewline.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(notObject.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(notJson.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(tooLarge.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
+        await Assert.That((noKey.Status, noKey.Code)).IsEqualTo((HttpStatusCode.Unauthorized, "invalid_key"));
+        await Assert.That((badKey.Status, badKey.Code)).IsEqualTo((HttpStatusCode.Unauthorized, "invalid_key"));
+        await Assert.That((readOnlyWrite.Status, readOnlyWrite.Code)).IsEqualTo((HttpStatusCode.Forbidden, "forbidden_scope"));
+        await Assert.That(readOnlyRead.Status).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]
@@ -169,4 +666,33 @@ public sealed class DocumentApiTests
         await Assert.That(keysOnClient.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(healthOnClient.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
+
+    [Test]
+    public async Task Every_document_route_is_in_the_openapi_document()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+
+        using var openApi = JsonDocument.Parse(await server.Client.GetStringAsync(new Uri("/openapi/v1.json", UriKind.Relative)));
+        var operations = openApi.RootElement.GetProperty("paths").EnumerateObject()
+            .SelectMany(path => path.Value.EnumerateObject().Select(operation => operation.Value.GetProperty("operationId").GetString()))
+            .ToHashSet();
+
+        string[] expected =
+        [
+            "createDatabase", "createCollection", "listCollections", "getCollection", "dropCollection", "getDocument", "putDocument",
+            "createDocument", "patchDocument", "deleteDocument", "listDocuments", "queryDocuments", "transaction",
+        ];
+        await Assert.That(expected.Where(operation => !operations.Contains(operation))).IsEmpty();
+        var paths = openApi.RootElement.GetProperty("paths");
+        var query = paths.GetProperty("/v1/databases/{database}/collections/{collection}/query").GetProperty("post");
+        var patch = paths.GetProperty("/v1/databases/{database}/collections/{collection}/documents/{id}").GetProperty("patch");
+        await Assert.That(query.GetProperty("requestBody").GetProperty("content").TryGetProperty("application/json", out _)).IsTrue();
+        await Assert.That(patch.GetProperty("requestBody").GetProperty("content").EnumerateObject().Select(media => media.Name))
+            .IsEquivalentTo(["application/merge-patch+json", "application/vnd.terrabase.ops+json"]);
+    }
+
+    private static string Nested(int depth) => string.Concat(Enumerable.Repeat("""{"a":""", depth)) + "1" + new string('}', depth);
+
+    private static long Offset(ApiResponse response) =>
+        long.Parse(response.Json.GetProperty("offset").GetString()!, NumberStyles.None, CultureInfo.InvariantCulture);
 }

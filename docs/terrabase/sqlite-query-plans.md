@@ -14,23 +14,48 @@ and renames use `Put` and `Delete`, list endpoints and "has children" checks use
 The plan test runs every statement against both a client database and the `_system` database
 (plans depend on the schema, which is the same in both, not on the rows).
 
-Schema v1: `documents (collection, id, version, body)`, `PRIMARY KEY (collection, id)`,
-`WITHOUT ROWID`. The primary key is the clustered B-tree, so every primary-key lookup is
-covering. No secondary index is needed today.
+Schema v4: `documents (collection, id, version, body)`, `PRIMARY KEY (collection, id)`,
+`WITHOUT ROWID`, where a NULL `body` is a tombstone and `version` is the commit offset of the last
+write; `collections (name PRIMARY KEY, created_at)`, `WITHOUT ROWID`; and the one-row
+`commit_offset (id, value, incarnation)`; the random 128-bit incarnation is persisted and renewed
+for newly created/copied databases. The primary keys are clustered B-trees, so every primary-key lookup is covering.
+The partial `documents_live (collection, id) WHERE body IS NOT NULL` index excludes tombstones
+from live listing and query scans. Point reads and tombstone metadata still use the primary key.
 
 | Statement | Hot path | Plan before | Plan after |
 | --- | --- | --- | --- |
 | `Get`: `SELECT … WHERE collection = ? AND id = ?` | every document read, every API-key check | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` | unchanged |
-| `Put`: `INSERT … ON CONFLICT (collection, id) DO UPDATE … RETURNING version` | every document write | no plan rows (conflict check is a primary-key probe) | unchanged |
+| `Version`: `SELECT version, typeof(body) = 'null' …` | write preconditions, delete, assert-absent | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)`; `typeof` reads the record header, not the body |
+| `Put`: `INSERT … ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = …` | every document write | no plan rows (conflict check is a primary-key probe) | unchanged |
+| `Tombstone`: `UPDATE … SET body = NULL …` | document delete (Documents API) | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` |
+| `NextOffset`, `CurrentOffset` on `commit_offset WHERE id = 1` | first write of a transaction, commit without writes | — | `SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)` |
+| `Incarnation`, `RenewIncarnation` on `commit_offset WHERE id = 1` | store open, new database/copy publication | — | `SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)` |
+| `CreateCollection`, `GetCollection`, `DropCollection` | collection routes, every document request (existence check) | — | insert: no plan rows; others `SEARCH collections USING PRIMARY KEY (name=?)` |
+| `ListCollectionsFirst`, `ListCollectionsAfter` | collection listing | — | `SCAN collections` (primary-key order, stops at the limit); `SEARCH collections USING PRIMARY KEY (name>?)` |
+| `DropDocuments`: `DELETE … WHERE collection = ?` | collection drop | — | `SEARCH documents USING PRIMARY KEY (collection=?)` |
 | `Delete`: `DELETE … WHERE collection = ? AND id = ?` | every document delete | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` | unchanged |
-| List, first page: `… WHERE collection = ? ORDER BY id LIMIT ?` | list without cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` | unchanged (`ListFirst`) |
-| List, next page: `… WHERE collection = ? AND id > ? ORDER BY id LIMIT ?` | list with cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` — one statement used `($after IS NULL OR id > $after)`, which kept SQLite from seeking to the cursor: every page walked the collection from its first id | `SEARCH documents USING PRIMARY KEY (collection=? AND id>?)` (`ListAfter`) |
+| List, first page: `… WHERE collection = ? ORDER BY id LIMIT ?` | list without cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` | `SEARCH documents USING INDEX documents_live (collection=?)` (`ListFirst`), skipping tombstones |
+| List, next page: `… WHERE collection = ? AND id > ? ORDER BY id LIMIT ?` | list with cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` — one statement used `($after IS NULL OR id > $after)`, which kept SQLite from seeking to the cursor: every page walked the collection from its first id | `SEARCH documents USING INDEX documents_live (collection=? AND id>?)` (`ListAfter`) |
 | `PRAGMA user_version`, `PRAGMA journal_mode = WAL`, `CREATE TABLE` | once per database per process (migration) | DDL, no plan | unchanged |
 | `VACUUM INTO $path` | database copy (Management API), rare | maintenance, `EXPLAIN QUERY PLAN` returns no rows | unchanged; runs on a pooled connection |
 
-No statement scans a table or sorts in a temporary B-tree. There is no query on JSON fields yet,
-so there is no `json_extract` expression index; add one with the first statement that filters or
-sorts on a document field, and add its plan here and to the test.
+No fixed statement sorts in a temporary B-tree, and only the first collections page scans (in key
+order, up to its limit).
+
+Queries and counts (`SqliteQueryCompiler`) are compiled per request and are neither prepared on
+the session nor in `SqliteStatements.All`. Live queries read the collection's partial-index range
+(`SEARCH documents USING INDEX documents_live (collection=?)`, or `collection=? AND id>?` with an id-only
+cursor) and evaluate filters with `json_type`/`json_extract`/`json_each`; a sort on a document field
+sorts in a temporary B-tree. There is no `json_extract` expression index yet (Indexing slice). Queries/counts have cancellation,
+VM-instruction and deadline budgets; field sorts also preflight
+10000 live candidates and 8 MiB of JSON metadata before admitting a temporary sorter. A leading `$id` sort emits only
+`ORDER BY id ASC|DESC`: the constant rank and redundant later terms would force a sorter. Its
+ascending/descending and duplicate-key/cursor plans are checked against the real server database.
+Explicit `$id` continuation predicates are direct `id > ?` or `id < ?` ranges, so the live index seeks
+past prior pages. Count evaluates the filter only on the first bounded rows, with a separate metadata
+scan of at most bound + 1 rows to detect overflow without adding that row to the match sum.
+The commit-offset increment is guarded by `value < 9223372036854775807`; exhaustion cannot promote
+its integer counter to REAL.
 
 ## Connection settings
 
@@ -43,7 +68,7 @@ Applied once per connection (`SqliteSession`), not per transaction.
 | `busy_timeout` | 30 s | SQLite's own busy handler (1–100 ms back-off) instead of Microsoft.Data.Sqlite's retry loop, which sleeps 150 ms between attempts: a writer behind a 20 ms write lock waited 150 ms before, 34 ms after. Same 30 s bound as the command timeout. |
 | `mmap_size` | 256 MiB | Reads map pages instead of copying them through `read()`: about 5–10 % faster point reads and 25 % faster full listings in the benchmark below. Address space only; pages are the OS page cache. |
 | `cache_size` | default (2 MiB) | With mmap, reads bypass most of the page cache. Per-connection memory stays bounded at 2 MiB × idle connections. |
-| `temp_store` | default | No statement uses temporary storage (asserted: no `TEMP B-TREE` in any plan). |
+| `temp_store` | default | No fixed statement uses temporary storage (asserted: no `TEMP B-TREE` in any plan); a query sorted on a document field does. |
 | `foreign_keys` | default | The schema has no foreign keys. |
 
 Connections are pooled by the engine (`SqliteSessionPool`; Microsoft.Data.Sqlite pooling is off).

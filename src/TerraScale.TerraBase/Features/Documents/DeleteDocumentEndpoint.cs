@@ -13,14 +13,23 @@ public sealed class DeleteDocumentEndpoint(IDocumentService documents) : Endpoin
         Delete(DocumentRoute.Collection + "/{id}");
         Name("deleteDocument");
         Summary("Deletes a JSON document");
+        Description("Optional If-Match. Returns the tombstone's version; deleting an absent or deleted document returns 404 not_found.");
         Tags("Documents");
+        Produces<WriteBody>();
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status412PreconditionFailed);
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
         Metadata(ListenerMetadata.Client);
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await documents.DeleteAsync(DocumentRoute.Key(HttpContext), cancellationToken)
-            ? TypedResults.NoContent()
-            : TypedResults.NotFound();
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        var key = DocumentRoute.Key(HttpContext);
+        DocumentRoute.Parameters(HttpContext);
+        DocumentRoute.RejectIdempotencyKey(HttpContext);
+        var (body, _) = await DocumentRoute.WriteAsync(
+            HttpContext, documents, key, new DeleteOperation(key.Collection, key.Id, ETags.Precondition(HttpContext)), cancellationToken);
+        return TypedResults.Ok(body);
+    }
 }

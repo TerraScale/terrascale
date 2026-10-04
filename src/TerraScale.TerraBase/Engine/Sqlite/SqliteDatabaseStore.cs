@@ -5,7 +5,46 @@ namespace TerraScale.TerraBase.Engine.Sqlite;
 internal sealed class SqliteDatabaseStore(DatabaseName name, string path, SqliteSessionPool pool) : IDatabaseStore, IDisposable
 {
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 4;
+
+    // Migrations[n] moves user_version n to n + 1.
+    private static readonly string[] Migrations =
+    [
+        """
+        CREATE TABLE IF NOT EXISTS documents (
+            collection TEXT NOT NULL,
+            id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            body TEXT NOT NULL,
+            PRIMARY KEY (collection, id)
+        ) WITHOUT ROWID;
+        """,
+        // Version 2: explicit collections, tombstones (body NULL) and a per-database commit offset.
+        // A document's version becomes the offset of its last write; offsets continue after every
+        // version 1 counter so no document ever sees a version again.
+        """
+        CREATE TABLE collections (name TEXT PRIMARY KEY, created_at INTEGER NOT NULL) WITHOUT ROWID;
+        CREATE TABLE commit_offset (id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL);
+        CREATE TABLE documents_v2 (
+            collection TEXT NOT NULL,
+            id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            body TEXT,
+            PRIMARY KEY (collection, id)
+        ) WITHOUT ROWID;
+        INSERT INTO documents_v2 (collection, id, version, body) SELECT collection, id, version, body FROM documents;
+        DROP TABLE documents;
+        ALTER TABLE documents_v2 RENAME TO documents;
+        INSERT INTO collections (name, created_at) SELECT DISTINCT collection, CAST(unixepoch('subsec') * 1000 AS INTEGER) FROM documents;
+        INSERT INTO commit_offset (id, value) SELECT 1, coalesce(max(version), 0) FROM documents;
+        """,
+        // Version 3 also upgrades databases opened by an earlier build of the document API.
+        "CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;",
+        // Version 4: offsets can restart after database recreation; versions also need a persisted incarnation.
+        """
+        ALTER TABLE commit_offset ADD COLUMN incarnation TEXT NOT NULL DEFAULT '';
+        """ + SqliteStatements.RenewIncarnation,
+    ];
 
     private readonly string _connectionString = new SqliteConnectionStringBuilder
     {
@@ -19,6 +58,8 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path, Sqlite
     }.ToString();
 
     public DatabaseName Name => name;
+
+    internal Guid Incarnation { get; private set; }
 
     /// <summary>Set once the database is deleted or the engine shuts down; guarded by <see cref="SqliteSessionPool"/>.</summary>
     internal bool Closed { get; set; }
@@ -108,6 +149,9 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path, Sqlite
             // The creating connection uses the same settings as every pooled one.
             await ScalarAsync(connection, null, "PRAGMA journal_mode = WAL;" + SqliteSession.Pragmas, cancellationToken).ConfigureAwait(false);
             await MigrateAsync(name, connection, cancellationToken).ConfigureAwait(false);
+            // Initialize publishes a new database, including a VACUUM copy: give it its own identity.
+            await ScalarAsync(connection, null,
+                SqliteStatements.RenewIncarnation, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -117,6 +161,9 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path, Sqlite
         try
         {
             await MigrateAsync(name, session.Connection, cancellationToken).ConfigureAwait(false);
+            Incarnation = Guid.ParseExact(
+                (string)(await ScalarAsync(session.Connection, null, SqliteStatements.Incarnation, cancellationToken).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("database incarnation is missing")), "N");
         }
         catch
         {
@@ -140,18 +187,11 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path, Sqlite
         await using (transaction.ConfigureAwait(false))
         {
             // Another process or caller may have migrated while this one waited for the lock.
-            if (!await IsCurrentAsync(name, connection, transaction, cancellationToken).ConfigureAwait(false))
+            var version = await VersionAsync(name, connection, transaction, cancellationToken).ConfigureAwait(false);
+            for (; version < SchemaVersion; version++)
             {
-                await ScalarAsync(connection, transaction, """
-                    CREATE TABLE IF NOT EXISTS documents (
-                        collection TEXT NOT NULL,
-                        id TEXT NOT NULL,
-                        version INTEGER NOT NULL,
-                        body TEXT NOT NULL,
-                        PRIMARY KEY (collection, id)
-                    ) WITHOUT ROWID;
-                    PRAGMA user_version = 1;
-                    """, cancellationToken).ConfigureAwait(false);
+                await ScalarAsync(
+                    connection, transaction, Migrations[version] + $"PRAGMA user_version = {version + 1};", cancellationToken).ConfigureAwait(false);
             }
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -160,6 +200,10 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path, Sqlite
 
     // True when the schema is current; throws for a newer, unsupported schema.
     private static async Task<bool> IsCurrentAsync(
+        DatabaseName name, SqliteConnection connection, SqliteTransaction? transaction, CancellationToken cancellationToken) =>
+        await VersionAsync(name, connection, transaction, cancellationToken).ConfigureAwait(false) == SchemaVersion;
+
+    private static async Task<int> VersionAsync(
         DatabaseName name, SqliteConnection connection, SqliteTransaction? transaction, CancellationToken cancellationToken)
     {
         var version = Convert.ToInt32(
@@ -167,7 +211,7 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path, Sqlite
             System.Globalization.CultureInfo.InvariantCulture);
         return version > SchemaVersion
             ? throw new InvalidOperationException($"database '{name}' has schema version {version}; this build supports up to {SchemaVersion}")
-            : version == SchemaVersion;
+            : version;
     }
 
     private static async Task<object?> ScalarAsync(

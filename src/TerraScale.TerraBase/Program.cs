@@ -43,6 +43,7 @@ builder.Services.AddTerraScaleEndpoints(endpoints =>
     endpoints.Title = "TerraBase API";
     endpoints.Version = "v1";
 });
+builder.Services.AddTerraBaseRequestBodies("v1");
 builder.Services.AddTerraBaseTelemetry();
 builder.Services.AddTerraBaseEngine(options);
 builder.Services.AddTerraBaseApiKeys();
@@ -51,8 +52,9 @@ builder.Services.AddTerraBaseManagement();
 builder.AddTerraBaseReplication(options);
 
 var app = builder.Build();
-app.UseTerraBaseListeners();
+// Error bodies first, so they also cover the listener check's 404.
 app.UseTerraBaseBadRequests();
+app.UseTerraBaseListeners();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapTerraScaleEndpoints();

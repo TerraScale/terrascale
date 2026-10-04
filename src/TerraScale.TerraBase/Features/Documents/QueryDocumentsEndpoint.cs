@@ -1,0 +1,54 @@
+using System.Globalization;
+using TerraScale.Endpoints;
+using TerraScale.TerraBase.Engine;
+using TerraScale.TerraBase.Features.ApiKeys;
+using TerraScale.TerraBase.Hosting;
+
+namespace TerraScale.TerraBase.Features.Documents;
+
+/// <summary><c>POST …/collections/{collection}/query</c>: filters, sorts and projects documents (query v1).</summary>
+public sealed class QueryDocumentsEndpoint(IDocumentService documents) : EndpointWithoutRequest<IResult>
+{
+    // count examines at most this many documents; beyond, it is a lower bound.
+    private const long MaxCount = 100_000;
+
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post(DocumentRoute.Collections + "/{collection}/query");
+        Name("queryDocuments");
+        Summary("Queries JSON documents");
+        Description("""
+            Filters ({"and"|"or":[F…]} with 1 to 64 children, {"not":F}, {"eq"|"ne"|"lt"|"lte"|"gt"|"gte":[P,V]}, {"in"|"nin":[P,[V…]]} with 1 to 256 values, {"exists":P}, {"prefix":[P,"str"]}, {"contains":[P,V]}; at most 8 levels and 256 nodes) run inside SQLite. P is a JSON Pointer of object members (nested paths allowed) or "$id"; V is a JSON scalar. Ordered comparisons only match values of V's type and reject null; ne and nin also match missing members. sort has at most 4 {path, order} keys, then id; repeated paths retain only their first occurrence, and keys after the unique $id are omitted; encoded cursors are at most 1 MiB and cursor-producing string values are at most 64 KiB UTF-8 each, and the compact query plus continuation must fit the 4 MiB request limit (400 sort_requires_index beyond); values order missing < null < false < true < numbers < strings < arrays/objects. project keeps at most 64 paths with their parents; duplicate decoded paths and descendants covered by selected ancestors are copied only once, with case-sensitive member names. limit is 1 to 1000 (default 50); a page also stops at 8 MiB of JSON. cursor is the previous page's next_cursor and only works with the same filter, sort and project (400 invalid_cursor). count counts matches among at most 100000 documents (exact is false beyond, and value is a lower bound), on requests without a cursor. Queries and counts are interrupted at SQLite progress callbacks after 5 million VM instructions or a 5-second deadline (400 invalid_query, query too expensive). Cancellation also interrupts SQLite. A field sort requires at most 10000 live candidate documents and at most 8 MiB of candidate JSON, otherwise 400 sort_requires_index. lower and explain are not supported yet.
+            """);
+        Tags("Documents");
+        Metadata(new RequestBodyMetadata(typeof(QueryRequest), DocumentRoute.JsonMediaType));
+        Produces<DocumentPageBody>();
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        RequireAuthorization(ApiKeyScopes.DocumentsRead);
+        Metadata(ListenerMetadata.Client);
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        var database = DocumentRoute.Database(HttpContext);
+        var collection = DocumentRoute.CollectionName(HttpContext);
+        DocumentRoute.Parameters(HttpContext);
+        var body = await DocumentRoute.ReadBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_query", cancellationToken, DocumentRoute.JsonMediaType);
+        var request = RequestJson.Deserialize<QueryRequest>(body, "invalid_query");
+        var query = QueryParser.Parse(database, collection, request);
+        var after = request.Cursor is { } cursor ? QueryParser.Position(cursor, query.Digest, query.Sort.Count) : null;
+        var (page, count) = await documents.QueryAsync(
+            database,
+            new DocumentQuery(collection, query.Filter, query.Sort, after, query.Limit, DocumentRoute.MaxPageBytes),
+            request.Count == true && after is null ? MaxCount : null,
+            cancellationToken);
+        return TypedResults.Ok(new DocumentPageBody(
+            [.. page.Rows.Select(row => GetDocumentEndpoint.Body(collection, row.Document, query.Project, cancellationToken))],
+            page.HasMore ? QueryParser.Cursor(query.Digest, page.Rows[^1], body) : null,
+            count is var (n, complete) ? new CountBody(n.ToString(CultureInfo.InvariantCulture), complete) : null));
+    }
+}

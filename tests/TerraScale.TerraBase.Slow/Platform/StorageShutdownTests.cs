@@ -33,11 +33,14 @@ public sealed class StorageShutdownTests
                     try
                     {
                         using var created = await http.PutAsync(new Uri($"/v1/databases/{database}", UriKind.Relative), null, stop.Token);
+                        using var collection = await http.PostAsJsonAsync(
+                            new Uri($"/v1/databases/{database}/collections", UriKind.Relative), new { name = "items" }, stop.Token);
                         using var put = await http.PutAsJsonAsync(
-                            new Uri($"/v1/databases/{database}/collections/items/documents/{Faker.Random.AlphaNumeric(8)}", UriKind.Relative),
+                            new Uri($"/v1/databases/{database}/collections/items/documents/{Guid.CreateVersion7()}", UriKind.Relative),
                             new { title = Faker.Commerce.ProductName() },
                             stop.Token);
-                        if (created.IsSuccessStatusCode && put.IsSuccessStatusCode && Interlocked.Increment(ref written) == 64)
+                        if (created.IsSuccessStatusCode && collection.IsSuccessStatusCode && put.IsSuccessStatusCode
+                            && Interlocked.Increment(ref written) == 64)
                         {
                             loaded.TrySetResult();
                         }

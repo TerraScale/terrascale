@@ -143,23 +143,25 @@ public sealed class ManagementApiTests
         var project = await api.CreateProjectAsync(organization, "Shop");
         var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
         var person = new { name = Faker.Name.FullName() };
+        var (p1, p2) = (Guid.CreateVersion7().ToString(), Guid.CreateVersion7().ToString());
 
         using var created = await api.Client.PostAsJsonAsync(Uri(databases), new { name = "main" });
         var main = await created.Content.ReadFromJsonAsync<JsonElement>();
         var mainId = main.GetProperty("id").GetString()!;
         var mainStorage = main.GetProperty("storageName").GetString()!;
-        (await data.PutAsJsonAsync(Uri($"/v1/databases/{mainStorage}/collections/people/documents/p1"), person)).EnsureSuccessStatusCode();
+        (await data.PostAsJsonAsync(Uri($"/v1/databases/{mainStorage}/collections"), new { name = "people" })).EnsureSuccessStatusCode();
+        (await data.PutAsJsonAsync(Uri($"/v1/databases/{mainStorage}/collections/people/documents/{p1}"), person)).EnsureSuccessStatusCode();
         using var branched = await api.Client.PostAsJsonAsync(Uri($"{databases}/{mainId}/branches"), new { name = "preview" });
         var branch = await branched.Content.ReadFromJsonAsync<JsonElement>();
         var branchStorage = branch.GetProperty("storageName").GetString()!;
-        (await data.PutAsJsonAsync(Uri($"/v1/databases/{branchStorage}/collections/people/documents/p2"), person)).EnsureSuccessStatusCode();
-        using var mainWithoutBranchWrite = await data.GetAsync(Uri($"/v1/databases/{mainStorage}/collections/people/documents/p2"));
+        (await data.PutAsJsonAsync(Uri($"/v1/databases/{branchStorage}/collections/people/documents/{p2}"), person)).EnsureSuccessStatusCode();
+        using var mainWithoutBranchWrite = await data.GetAsync(Uri($"/v1/databases/{mainStorage}/collections/people/documents/{p2}"));
         using var list = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(databases)));
         using var projectNotEmpty = await api.Client.DeleteAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}"));
         using var deleted = await api.Client.DeleteAsync(Uri($"{databases}/{mainId}"));
         using var gone = await api.Client.GetAsync(Uri($"{databases}/{mainId}"));
-        using var dataGone = await data.GetAsync(Uri($"/v1/databases/{mainStorage}/collections/people/documents/p1"));
-        using var branchKeepsCopy = await data.GetAsync(Uri($"/v1/databases/{branchStorage}/collections/people/documents/p1"));
+        using var dataGone = await data.GetAsync(Uri($"/v1/databases/{mainStorage}/collections/people/documents/{p1}"));
+        using var branchKeepsCopy = await data.GetAsync(Uri($"/v1/databases/{branchStorage}/collections/people/documents/{p1}"));
 
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(main.GetProperty("name").GetString()).IsEqualTo("main");
