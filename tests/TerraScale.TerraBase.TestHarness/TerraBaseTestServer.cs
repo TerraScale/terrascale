@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.TerraBase.Configuration;
+using TerraScale.TerraBase.Engine;
 
 namespace TerraScale.TerraBase.Testing;
 
@@ -51,6 +52,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     /// <summary>A client for the administrative listener that never follows redirects and never stores cookies.</summary>
     public HttpClient Client { get; }
+
+    /// <summary>The running server's services, for checks no listener exposes (for example engine transactions).</summary>
+    public IServiceProvider Services => _factory.Services;
 
     /// <summary>
     /// Starts a server. <paramref name="settings"/> edits the <c>--name=value</c> settings;
@@ -104,7 +108,12 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Client.Dispose();
+        var engine = _factory.Services.GetRequiredService<IStorageEngine>();
         await _factory.DisposeAsync();
+        // Program's RunAsync disposes the host on its own thread, which can still be closing database
+        // files when the factory returns. Disposing the engine again is a no-op that returns only once
+        // its files are closed (or closes them first).
+        await engine.DisposeAsync();
         Directory.Delete(DataDirectory, recursive: true);
     }
 

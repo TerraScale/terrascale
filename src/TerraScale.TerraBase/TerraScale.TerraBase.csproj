@@ -34,6 +34,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The Fast suite checks the query plan of every engine statement (Engine/Sqlite/SqliteStatements.cs). -->
+    <InternalsVisibleTo Include="TerraScale.TerraBase.Fast" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Checked-in, versioned inter-node contract (wire-compatible with terrabase-rust/proto). -->
     <Protobuf Include="Features/Replication/Protos/**/*.proto" ProtoRoot="Features/Replication/Protos" GrpcServices="Both" />
   </ItemGroup>

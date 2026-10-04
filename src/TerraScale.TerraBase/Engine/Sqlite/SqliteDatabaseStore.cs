@@ -2,7 +2,7 @@ using Microsoft.Data.Sqlite;
 
 namespace TerraScale.TerraBase.Engine.Sqlite;
 
-internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDatabaseStore
+internal sealed class SqliteDatabaseStore(DatabaseName name, string path, SqliteSessionPool pool) : IDatabaseStore, IDisposable
 {
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
     private const int SchemaVersion = 1;
@@ -12,24 +12,31 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
         DataSource = path,
         // Never recreate a deleted database: only InitializeAsync creates files.
         Mode = SqliteOpenMode.ReadWrite,
-        Pooling = true,
+        // This store pools sessions itself, so prepared statements survive between transactions.
+        Pooling = false,
         // Seconds a statement waits on a locked database before failing.
         DefaultTimeout = 30,
     }.ToString();
 
     public DatabaseName Name => name;
 
+    /// <summary>Set once the database is deleted or the engine shuts down; guarded by <see cref="SqliteSessionPool"/>.</summary>
+    internal bool Closed { get; set; }
+
+    /// <summary>Idle sessions of this database, for tests.</summary>
+    internal int IdleCount => pool.IdleCountOf(this);
+
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken)
     {
-        var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        var session = await RentAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             // Writers take the lock up front (BEGIN IMMEDIATE) so they wait instead of failing on upgrade.
-            return new SqliteStorageTransaction(connection, connection.BeginTransaction(deferred: !write));
+            return new SqliteStorageTransaction(this, session, session.Connection.BeginTransaction(deferred: !write));
         }
         catch
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            session.Dispose();
             throw;
         }
     }
@@ -37,10 +44,10 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
     /// <summary>Writes a consistent snapshot of this database to a new file at <paramref name="path"/>.</summary>
     internal async Task CopyToAsync(string path, CancellationToken cancellationToken)
     {
-        var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using (connection.ConfigureAwait(false))
+        var session = await RentAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            var command = connection.CreateCommand();
+            var command = session.Connection.CreateCommand();
             await using (command.ConfigureAwait(false))
             {
                 command.CommandText = "VACUUM INTO $path;";
@@ -48,16 +55,37 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
         }
+        catch
+        {
+            session.Dispose();
+            throw;
+        }
 
+        Return(session);
         // InitializeAsync switches the copy to WAL and refuses an unsupported schema version.
         await InitializeAsync(name, path, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Closes idle pooled connections to this file and discards busy ones when they are returned.</summary>
-    internal void ClearPool()
+    /// <summary>Takes back a session whose work has ended; the pool keeps it idle or closes it.</summary>
+    internal void Return(SqliteSession session) => pool.Return(this, session);
+
+    /// <summary>
+    /// Closes idle sessions and refuses new ones; a rented session is closed when it is returned.
+    /// The engine calls this when the database is deleted and at shutdown.
+    /// </summary>
+    public void Dispose() => pool.Close(this);
+
+    private async Task<SqliteSession> RentAsync(CancellationToken cancellationToken)
     {
-        using var connection = new SqliteConnection(_connectionString);
-        SqliteConnection.ClearPool(connection);
+        cancellationToken.ThrowIfCancellationRequested();
+        // A deleted or shut-down database hands out no session.
+        if (pool.Rent(this) is { } idle)
+        {
+            return idle;
+        }
+
+        var session = await SqliteSession.OpenAsync(_connectionString, cancellationToken).ConfigureAwait(false);
+        return pool.Adopt(this, session);
     }
 
     /// <summary>
@@ -77,23 +105,31 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
         {
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
             // A copy made by VACUUM INTO may already be current, so set WAL here and not only in a migration.
-            await ScalarAsync(connection, null, "PRAGMA journal_mode = WAL;", cancellationToken).ConfigureAwait(false);
-            await new SqliteDatabaseStore(name, path).MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
+            // The creating connection uses the same settings as every pooled one.
+            await ScalarAsync(connection, null, "PRAGMA journal_mode = WAL;" + SqliteSession.Pragmas, cancellationToken).ConfigureAwait(false);
+            await MigrateAsync(name, connection, cancellationToken).ConfigureAwait(false);
         }
     }
 
     internal async Task MigrateAsync(CancellationToken cancellationToken)
     {
-        var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using (connection.ConfigureAwait(false))
+        var session = await RentAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            await MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
+            await MigrateAsync(name, session.Connection, cancellationToken).ConfigureAwait(false);
         }
+        catch
+        {
+            session.Dispose();
+            throw;
+        }
+
+        Return(session);
     }
 
-    private async Task MigrateAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    private static async Task MigrateAsync(DatabaseName name, SqliteConnection connection, CancellationToken cancellationToken)
     {
-        if (await IsCurrentAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false))
+        if (await IsCurrentAsync(name, connection, transaction: null, cancellationToken).ConfigureAwait(false))
         {
             return;
         }
@@ -104,7 +140,7 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
         await using (transaction.ConfigureAwait(false))
         {
             // Another process or caller may have migrated while this one waited for the lock.
-            if (!await IsCurrentAsync(connection, transaction, cancellationToken).ConfigureAwait(false))
+            if (!await IsCurrentAsync(name, connection, transaction, cancellationToken).ConfigureAwait(false))
             {
                 await ScalarAsync(connection, transaction, """
                     CREATE TABLE IF NOT EXISTS documents (
@@ -123,7 +159,8 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
     }
 
     // True when the schema is current; throws for a newer, unsupported schema.
-    private async Task<bool> IsCurrentAsync(SqliteConnection connection, SqliteTransaction? transaction, CancellationToken cancellationToken)
+    private static async Task<bool> IsCurrentAsync(
+        DatabaseName name, SqliteConnection connection, SqliteTransaction? transaction, CancellationToken cancellationToken)
     {
         var version = Convert.ToInt32(
             await ScalarAsync(connection, transaction, "PRAGMA user_version;", cancellationToken).ConfigureAwait(false),
@@ -131,13 +168,6 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
         return version > SchemaVersion
             ? throw new InvalidOperationException($"database '{name}' has schema version {version}; this build supports up to {SchemaVersion}")
             : version == SchemaVersion;
-    }
-
-    private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
-    {
-        var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        return connection;
     }
 
     private static async Task<object?> ScalarAsync(

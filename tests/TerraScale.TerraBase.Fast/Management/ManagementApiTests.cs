@@ -212,7 +212,8 @@ public sealed class ManagementApiTests
         await Assert.That(branchDuplicate.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         // A rejected create or branch leaves no database behind.
         await Assert.That(list.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(1);
-        await Assert.That(Directory.EnumerateFiles(api.Server.DataDirectory, "db-*").Count()).IsEqualTo(1);
+        // Database files only: an open database also has SQLite -wal and -shm files.
+        await Assert.That(Directory.EnumerateFiles(api.Server.DataDirectory, "db-*.db").Count()).IsEqualTo(1);
     }
 
     [Test]
