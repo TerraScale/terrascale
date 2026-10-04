@@ -16,13 +16,16 @@ public sealed class ListDocumentsEndpoint(IDocumentService documents) : Endpoint
     private const int DefaultLimit = 20;
     private const int MaxLimit = 100;
 
+    // Bounds the JSON one page materializes; a page always holds at least one document.
+    private const long MaxPageBytes = 8 * 1024 * 1024;
+
     /// <inheritdoc />
     public override void Configure()
     {
         Get(DocumentRoute.Collection);
         Name("listDocuments");
         Summary("Lists JSON documents in id order");
-        Description("Query: after (exclusive id cursor from the previous page's next), limit (1 to 100, default 20).");
+        Description("Query: after (exclusive id cursor from the previous page's next), limit (1 to 100, default 20). A page also stops at 8 MiB of JSON; next is null only on the last page.");
         Tags("Documents");
         Produces<DocumentPageBody>();
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
@@ -42,13 +45,13 @@ public sealed class ListDocumentsEndpoint(IDocumentService documents) : Endpoint
 
         var after = query.TryGetValue("after", out var rawAfter) ? rawAfter.ToString() : null;
         var page = await documents.ListAsync(
-            DocumentRoute.Database(HttpContext), DocumentRoute.CollectionName(HttpContext), after, limit, cancellationToken);
+            DocumentRoute.Database(HttpContext), DocumentRoute.CollectionName(HttpContext), after, limit, MaxPageBytes, cancellationToken);
         if (page is null)
         {
             return TypedResults.NotFound();
         }
 
-        var next = page.Count == limit ? page[^1].Id : null;
-        return TypedResults.Ok(new DocumentPageBody([.. page.Select(DocumentBody.From)], next));
+        var next = page.HasMore ? page.Documents[^1].Id : null;
+        return TypedResults.Ok(new DocumentPageBody([.. page.Documents.Select(DocumentBody.From)], next));
     }
 }

@@ -118,7 +118,7 @@ The project MUST follow a **feature-sliced design** so related and dependent fil
 - Always use the repository `Makefile` when an equivalent Make target exists.
 - Analyzers and code style run in the build with warnings as errors (`Directory.Build.props`, `.editorconfig`). `TreatWarningsAsErrors` MUST always be `true` for every project and configuration; never disable it, override it per project, or use `WarningsNotAsErrors`.
 - `NoWarn` is closed. The only allowed entries are:
-  - `NU1507;NU1801;EXTEXP0001` in `Directory.Build.props`;
+  - `NU1507;NU1801;EXTEXP0001;IDE0007;IDE0008` in `Directory.Build.props`;
   - `CA1515;CA1707;CA2007;CS1591` for test projects in `Directory.Build.targets`.
 
   Each entry has its reason in a comment next to it. Never add another `NoWarn` entry anywhere without asking a human first.

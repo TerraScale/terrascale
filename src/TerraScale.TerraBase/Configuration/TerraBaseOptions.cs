@@ -113,6 +113,15 @@ public sealed record TerraBaseOptions
             throw new TerraBaseConfigurationException("data-directory must not be empty");
         }
 
+        try
+        {
+            dataDirectory = Path.GetFullPath(dataDirectory);
+        }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException or System.Security.SecurityException)
+        {
+            throw new TerraBaseConfigurationException("data-directory must be a valid path");
+        }
+
         var clientPort = ParsePort(values, "client-port");
         RequireGroup(values, "client-port", clientPort, ClientTlsKeys);
         var peerPort = ParsePort(values, "peer-port");
@@ -121,7 +130,7 @@ public sealed record TerraBaseOptions
         return new TerraBaseOptions
         {
             AdminPort = ParsePort(values, "admin-port") ?? DefaultAdminPort,
-            DataDirectory = Path.GetFullPath(dataDirectory),
+            DataDirectory = dataDirectory,
             ClientPort = clientPort,
             ClientCertificate = clientPort is null ? null : LoadPem(
                 () => X509Certificate2.CreateFromPemFile(values["client-certificate"], values["client-private-key"]),

@@ -19,8 +19,10 @@ internal sealed class EngineApiKeyStore(IStorageEngine engine) : IApiKeyStore
     {
         var secret = SecretPrefix + Base64Url(RandomNumberGenerator.GetBytes(32));
         var key = new ApiKey(Base64Url(RandomNumberGenerator.GetBytes(12)), name, scopes);
-        var store = await engine.OpenDatabaseAsync(DatabaseName.System, create: true, cancellationToken).ConfigureAwait(false);
-        var transaction = await store!.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        await engine.CreateDatabaseAsync(DatabaseName.System, cancellationToken).ConfigureAwait(false);
+        var store = await engine.OpenDatabaseAsync(DatabaseName.System, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("the system database disappeared after creation");
+        var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             var json = JsonSerializer.SerializeToUtf8Bytes(key, TerraBaseJsonContext.Default.ApiKey);
@@ -38,7 +40,7 @@ internal sealed class EngineApiKeyStore(IStorageEngine engine) : IApiKeyStore
             return null;
         }
 
-        var store = await engine.OpenDatabaseAsync(DatabaseName.System, create: false, cancellationToken).ConfigureAwait(false);
+        var store = await engine.OpenDatabaseAsync(DatabaseName.System, cancellationToken).ConfigureAwait(false);
         if (store is null)
         {
             return null;

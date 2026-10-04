@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.IO.Compression;
 using Grpc.Net.Compression;
 using NativeCompressions;
@@ -6,8 +5,8 @@ using NativeCompressions;
 namespace TerraScale.TerraBase.Features.Replication;
 
 /// <summary>
-/// <c>lz4</c> gRPC message encoding (one LZ4 frame per message) for inter-node traffic. Register
-/// it on both the peer server and every peer client; see
+/// <c>lz4</c> gRPC message encoding (one LZ4 frame per message, content size in the frame header)
+/// for inter-node traffic. Register it on both the peer server and every peer client; see
 /// <c>docs/decisions/0001-grpc-lz4-transport-compression.md</c>.
 /// </summary>
 /// <remarks>
@@ -33,17 +32,19 @@ public sealed class Lz4CompressionProvider(int maxDecodedBytes) : ICompressionPr
         // gRPC hands over one complete, size-checked message, already buffered in memory.
         using var encoded = new MemoryStream();
         stream.CopyTo(encoded);
-        var decoded = ArrayPool<byte>.Shared.Rent(maxDecodedBytes);
-        try
+        var frame = encoded.GetBuffer().AsSpan(0, (int)encoded.Length);
+
+        // The declared size bounds the allocation; the decoder fails if the frame decodes to more.
+        if (!LZ4.TryGetFrameInfo(frame, out var info) || info.ContentSize > (ulong)maxDecodedBytes)
         {
-            // Throws when the frame decodes to more than maxDecodedBytes.
-            var length = LZ4.Decompress(encoded.GetBuffer().AsSpan(0, (int)encoded.Length), decoded.AsSpan(0, maxDecodedBytes));
-            return new MemoryStream(decoded.AsSpan(0, length).ToArray(), writable: false);
+            throw new InvalidDataException($"lz4 frames must declare a content size of at most {maxDecodedBytes} bytes");
         }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(decoded);
-        }
+
+        var decoded = new byte[info.ContentSize];
+        var length = LZ4.Decompress(frame, decoded);
+        return length == decoded.Length
+            ? new MemoryStream(decoded, writable: false)
+            : throw new InvalidDataException("lz4 frame decoded to a different size than it declared");
     }
 
     // Buffers one message and writes it to the transport as a single LZ4 frame on dispose.
@@ -53,7 +54,8 @@ public sealed class Lz4CompressionProvider(int maxDecodedBytes) : ICompressionPr
         {
             if (disposing && CanRead)
             {
-                destination.Write(LZ4.Compress(GetBuffer().AsSpan(0, (int)Length)));
+                var options = LZ4CompressionOptions.Default with { ContentSize = (ulong)Length };
+                destination.Write(LZ4.Compress(GetBuffer().AsSpan(0, (int)Length), options));
             }
 
             base.Dispose(disposing);

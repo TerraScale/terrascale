@@ -14,13 +14,12 @@ namespace TerraScale.TerraBase.Testing;
 public sealed class TerraBaseTestServer : IAsyncDisposable
 {
     private readonly WebApplicationFactory<Program> _factory;
-    private readonly string _dataDirectory;
 
     private TerraBaseTestServer(
         WebApplicationFactory<Program> factory, string dataDirectory, IReadOnlyList<Uri> listeners, IReadOnlyDictionary<string, string> settings)
     {
         _factory = factory;
-        _dataDirectory = dataDirectory;
+        DataDirectory = dataDirectory;
         BaseAddress = listeners.Single(address => address.Scheme == Uri.UriSchemeHttp);
         Client = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false })
         {
@@ -36,6 +35,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         PeerAddress = settings.ContainsKey("peer-port") ? https[^1] : null;
     }
 
+    /// <summary>This server's own temporary data directory, deleted on dispose.</summary>
+    public string DataDirectory { get; }
+
     /// <summary>The loopback origin of the administrative listener.</summary>
     public Uri BaseAddress { get; }
 
@@ -49,22 +51,38 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     public HttpClient Client { get; }
 
     /// <summary>Starts a server. <paramref name="settings"/> edits the <c>--name=value</c> settings.</summary>
-    public static Task<TerraBaseTestServer> StartAsync(Action<Dictionary<string, string>>? settings = null)
+    public static async Task<TerraBaseTestServer> StartAsync(Action<Dictionary<string, string>>? settings = null)
     {
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-test-").FullName;
-        var values = new Dictionary<string, string>(StringComparer.Ordinal)
+        WebApplicationFactory<Program>? factory = null;
+        try
         {
-            ["admin-port"] = "0",
-            ["data-directory"] = dataDirectory,
-        };
-        settings?.Invoke(values);
+            var values = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["admin-port"] = "0",
+                ["data-directory"] = dataDirectory,
+            };
+            settings?.Invoke(values);
 
-        var factory = new Factory(values);
-        factory.UseKestrel();
-        factory.StartServer();
-        var addresses = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()
-            ?? throw new InvalidOperationException("the server did not report its listening addresses");
-        return Task.FromResult(new TerraBaseTestServer(factory, dataDirectory, [.. addresses.Addresses.Select(address => new Uri(address))], values));
+            // UseSetting values reach Program as --name=value entry-point arguments.
+            factory = new Factory(values);
+            factory.UseKestrel();
+            factory.StartServer();
+            var addresses = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()
+                ?? throw new InvalidOperationException("the server did not report its listening addresses");
+            return new TerraBaseTestServer(factory, dataDirectory, [.. addresses.Addresses.Select(address => new Uri(address))], values);
+        }
+        catch
+        {
+            // The caller gets nothing to dispose: stop the host and remove its directory here.
+            if (factory is not null)
+            {
+                await factory.DisposeAsync();
+            }
+
+            Directory.Delete(dataDirectory, recursive: true);
+            throw;
+        }
     }
 
     /// <inheritdoc />
@@ -72,7 +90,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     {
         Client.Dispose();
         await _factory.DisposeAsync();
-        Directory.Delete(_dataDirectory, recursive: true);
+        Directory.Delete(DataDirectory, recursive: true);
     }
 
     private sealed class Factory(IReadOnlyDictionary<string, string> settings) : WebApplicationFactory<Program>

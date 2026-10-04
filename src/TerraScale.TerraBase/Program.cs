@@ -19,8 +19,11 @@ catch (TerraBaseConfigurationException error)
     return 2;
 }
 
-// Settings come only from TerraBaseOptions; the host never reads args or configuration files.
+// Settings come only from TerraBaseOptions. The slim builder still adds environment variables
+// and appsettings files, and Kestrel would bind listeners from a "Kestrel" section in them
+// (for example Kestrel__Endpoints__X__Url): drop every configuration source.
 var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
+builder.Configuration.Sources.Clear();
 builder.WebHost.ConfigureKestrel(kestrel =>
 {
     // The administrative listener is loopback-only by construction; it is never configurable.

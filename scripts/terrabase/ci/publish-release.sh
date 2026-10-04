@@ -53,6 +53,14 @@ mkdir -m 0700 "$work/readback"
 while IFS=$'\t' read -r name bytes sha256; do
   bash "$repo/scripts/ci/read-back-asset.sh" "$tag" "$name" "$sha256:$bytes" "$work/readback/$name"
 done < <(jq -r '.artifacts[] | [.name, .bytes, .sha256] | @tsv' "$manifest")
-fj -H "$host" release asset create -r "$GITHUB_REPOSITORY" "$tag" "$manifest"
+# A rerun after a successful upload finds the same manifest and succeeds again.
+existing="$work/existing-qualification.json"
+if XDG_DATA_HOME="$FJ_READ_PROFILE" fj -H "$host" release asset download -r "$GITHUB_REPOSITORY" \
+  "$tag" qualification.json -o "$existing" >/dev/null 2>&1; then
+  cmp -s "$existing" "$manifest" || { echo "$tag carries a different qualification.json" >&2; exit 1; }
+  echo "$tag already carries this qualification.json"
+else
+  fj -H "$host" release asset create -r "$GITHUB_REPOSITORY" "$tag" "$manifest"
+fi
 printf 'TS_TERRABASE_DOTNET_QUALIFICATION_V1 source_sha=%s run_id=%s run_number=%s manifest_sha256=%s\n' \
   "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_NUMBER" "$QUALIFICATION_SHA256"

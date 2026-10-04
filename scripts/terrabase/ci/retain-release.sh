@@ -63,6 +63,19 @@ printf '%s' "$FORGEJO_READ_TOKEN" | XDG_DATA_HOME="$FJ_READ_PROFILE" fj -H "$hos
 unset FORGEJO_TOKEN FORGEJO_READ_TOKEN GITHUB_TOKEN
 
 tag="ci-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
+# A rerun keeps the run ID. A release left by an earlier attempt that never got
+# its qualification.json was never admitted, so it is replaced; a qualified one
+# is never touched.
+if XDG_DATA_HOME="$FJ_READ_PROFILE" fj -H "$host" release view -r "$GITHUB_REPOSITORY" "$tag" >/dev/null 2>&1; then
+  if XDG_DATA_HOME="$FJ_READ_PROFILE" fj -H "$host" release asset download -r "$GITHUB_REPOSITORY" \
+    "$tag" qualification.json -o "$auth_home/existing-qualification.json" >/dev/null 2>&1; then
+    echo "$tag is already qualified; refusing to replace published bytes" >&2
+    exit 1
+  fi
+  echo "replacing the unqualified release $tag left by an earlier attempt"
+  fj -H "$host" release delete -r "$GITHUB_REPOSITORY" --by-tag "$tag"
+  fj -H "$host" tag delete -r "$GITHUB_REPOSITORY" "$tag" || true
+fi
 fj -H "$host" release create -r "$GITHUB_REPOSITORY" "$tag" --create-tag="$tag" --branch "$GITHUB_SHA" \
   --prerelease --attach="$artifact"
 mkdir -m 0700 "$auth_home/readback"

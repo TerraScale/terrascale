@@ -10,6 +10,7 @@ public static class EngineExtensions
     public static IServiceCollection AddTerraBaseEngine(this IServiceCollection services, TerraBaseOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return services.AddSingleton<IStorageEngine>(new SqliteStorageEngine(options.DataDirectory));
+        // A factory registration lets the container own, and dispose, the engine.
+        return services.AddSingleton<IStorageEngine>(_ => new SqliteStorageEngine(options.DataDirectory));
     }
 }

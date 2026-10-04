@@ -60,8 +60,10 @@ public sealed class PeerTls : IDisposable
     {
         var ssl = new SslClientAuthenticationOptions
         {
-            RemoteCertificateValidationCallback = (_, certificate, _, _) =>
-                certificate is X509Certificate2 server && ChainsToAuthority(server),
+            // Replace only trust: a name mismatch or a missing certificate still fails.
+            RemoteCertificateValidationCallback = (_, certificate, _, errors) =>
+                (errors & ~SslPolicyErrors.RemoteCertificateChainErrors) == SslPolicyErrors.None
+                && certificate is X509Certificate2 server && ChainsToAuthority(server),
         };
         if (presentClientCertificate)
         {
@@ -93,6 +95,7 @@ public sealed class PeerTls : IDisposable
         chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
         chain.ChainPolicy.CustomTrustStore.Add(_authority);
         chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+        chain.ChainPolicy.ApplicationPolicy.Add(new Oid("1.3.6.1.5.5.7.3.1")); // TLS server authentication
         return chain.Build(certificate);
     }
 
@@ -108,7 +111,8 @@ public sealed class PeerTls : IDisposable
         }
 
         var serial = RandomNumberGenerator.GetBytes(16);
-        var certificate = request.Create(_authority, DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1), serial);
+        // Leaves reuse the authority's validity: a leaf may never outlive its issuer.
+        var certificate = request.Create(_authority, _authority.NotBefore, _authority.NotAfter, serial);
         return (certificate, key);
     }
 

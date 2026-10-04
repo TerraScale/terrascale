@@ -20,6 +20,7 @@ public enum TerraBaseListener
 /// <summary>
 /// Endpoint metadata naming the listener that serves an endpoint. Endpoints without it belong to
 /// <see cref="TerraBaseListener.Admin"/>. Add it with <c>Metadata(ListenerMetadata.Client)</c>.
+/// Requests on a connection that no TerraBase listener accepted are never served.
 /// </summary>
 /// <param name="Listener">The serving listener.</param>
 public sealed record ListenerMetadata(TerraBaseListener Listener)
@@ -66,7 +67,10 @@ public static class Listeners
         });
     }
 
-    /// <summary>Answers 404 when a request reaches an endpoint through a listener that does not serve it.</summary>
+    /// <summary>
+    /// Answers 404 when a request reaches an endpoint through a listener that does not serve it, or
+    /// arrives on a connection without a TerraBase listener tag.
+    /// </summary>
     public static WebApplication UseTerraBaseListeners(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -74,8 +78,8 @@ public static class Listeners
         app.Use((context, next) =>
         {
             var arrivedOn = context.Features.Get<IConnectionItemsFeature>()?.Items.TryGetValue(ListenerKey, out var tag) == true
-                ? (TerraBaseListener)tag!
-                : TerraBaseListener.Admin;
+                ? tag as TerraBaseListener?
+                : null;
             var servedBy = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>()?.Listener ?? TerraBaseListener.Admin;
             if (arrivedOn != servedBy)
             {

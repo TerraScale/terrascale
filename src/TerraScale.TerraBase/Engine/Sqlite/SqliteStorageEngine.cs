@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Data.Sqlite;
 
@@ -15,20 +16,38 @@ internal sealed class SqliteStorageEngine(string dataDirectory) : IStorageEngine
 {
     private const string FileExtension = ".db";
 
+    // Opened (and migrated) stores; a database is migrated once per process.
+    private readonly ConcurrentDictionary<DatabaseName, SqliteDatabaseStore> _stores = new();
+
     public string Name => "sqlite";
 
-    public async ValueTask<IDatabaseStore?> OpenDatabaseAsync(DatabaseName name, bool create, CancellationToken cancellationToken)
+    public async ValueTask<bool> CreateDatabaseAsync(DatabaseName name, CancellationToken cancellationToken)
     {
-        var path = Path.Combine(dataDirectory, name.Value + FileExtension);
-        if (!create && !File.Exists(path))
+        Directory.CreateDirectory(dataDirectory);
+        var path = PathOf(name);
+        bool created;
+        try
         {
-            return null;
+            // CreateNew is atomic in the file system: exactly one concurrent caller wins.
+            await using (new FileStream(path, FileMode.CreateNew, FileAccess.Write).ConfigureAwait(false))
+            {
+            }
+
+            created = true;
+        }
+        catch (IOException) when (File.Exists(path))
+        {
+            created = false;
         }
 
-        Directory.CreateDirectory(dataDirectory);
-        var store = new SqliteDatabaseStore(name, path);
-        await store.MigrateAsync(cancellationToken).ConfigureAwait(false);
-        return store;
+        await OpenStoreAsync(name, path, cancellationToken).ConfigureAwait(false);
+        return created;
+    }
+
+    public async ValueTask<IDatabaseStore?> OpenDatabaseAsync(DatabaseName name, CancellationToken cancellationToken)
+    {
+        var path = PathOf(name);
+        return File.Exists(path) ? await OpenStoreAsync(name, path, cancellationToken).ConfigureAwait(false) : null;
     }
 
     public async IAsyncEnumerable<DatabaseName> ListDatabasesAsync([EnumeratorCancellation] CancellationToken cancellationToken)
@@ -58,5 +77,20 @@ internal sealed class SqliteStorageEngine(string dataDirectory) : IStorageEngine
         // Pooled connections keep files open; release them so the data directory can be removed.
         SqliteConnection.ClearAllPools();
         return ValueTask.CompletedTask;
+    }
+
+    private string PathOf(DatabaseName name) => Path.Combine(dataDirectory, name.Value + FileExtension);
+
+    private async ValueTask<SqliteDatabaseStore> OpenStoreAsync(DatabaseName name, string path, CancellationToken cancellationToken)
+    {
+        if (_stores.TryGetValue(name, out var store))
+        {
+            return store;
+        }
+
+        // Concurrent first opens may both migrate; the migration is transactional and idempotent.
+        store = new SqliteDatabaseStore(name, path);
+        await store.MigrateAsync(cancellationToken).ConfigureAwait(false);
+        return _stores.GetOrAdd(name, store);
     }
 }

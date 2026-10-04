@@ -4,16 +4,8 @@ namespace TerraScale.TerraBase.Features.Documents;
 
 internal sealed class DocumentService(IStorageEngine engine) : IDocumentService
 {
-    public async ValueTask<bool> CreateDatabaseAsync(DatabaseName database, CancellationToken cancellationToken)
-    {
-        if (await engine.OpenDatabaseAsync(database, create: false, cancellationToken).ConfigureAwait(false) is not null)
-        {
-            return false;
-        }
-
-        await engine.OpenDatabaseAsync(database, create: true, cancellationToken).ConfigureAwait(false);
-        return true;
-    }
+    public ValueTask<bool> CreateDatabaseAsync(DatabaseName database, CancellationToken cancellationToken) =>
+        engine.CreateDatabaseAsync(database, cancellationToken);
 
     public async ValueTask<StoredDocument?> GetAsync(DocumentKey key, CancellationToken cancellationToken)
     {
@@ -61,8 +53,8 @@ internal sealed class DocumentService(IStorageEngine engine) : IDocumentService
         }
     }
 
-    public async ValueTask<IReadOnlyList<StoredDocument>?> ListAsync(
-        DatabaseName database, string collection, string? afterId, int limit, CancellationToken cancellationToken)
+    public async ValueTask<DocumentPage?> ListAsync(
+        DatabaseName database, string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken)
     {
         var transaction = await BeginAsync(database, write: false, cancellationToken).ConfigureAwait(false);
         if (transaction is null)
@@ -72,13 +64,13 @@ internal sealed class DocumentService(IStorageEngine engine) : IDocumentService
 
         await using (transaction.ConfigureAwait(false))
         {
-            return await transaction.ListAsync(collection, afterId, limit, cancellationToken).ConfigureAwait(false);
+            return await transaction.ListAsync(collection, afterId, limit, maxBytes, cancellationToken).ConfigureAwait(false);
         }
     }
 
     private async ValueTask<IStorageTransaction?> BeginAsync(DatabaseName database, bool write, CancellationToken cancellationToken)
     {
-        var store = await engine.OpenDatabaseAsync(database, create: false, cancellationToken).ConfigureAwait(false);
+        var store = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
         return store is null ? null : await store.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);
     }
 }

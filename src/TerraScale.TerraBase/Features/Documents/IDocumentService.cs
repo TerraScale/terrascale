@@ -23,7 +23,10 @@ public interface IDocumentService
     /// <summary>Deletes a document; <see langword="false"/> when it or its database does not exist.</summary>
     ValueTask<bool> DeleteAsync(DocumentKey key, CancellationToken cancellationToken);
 
-    /// <summary>Lists a page of documents in id order; <see langword="null"/> when the database does not exist.</summary>
-    ValueTask<IReadOnlyList<StoredDocument>?> ListAsync(
-        DatabaseName database, string collection, string? afterId, int limit, CancellationToken cancellationToken);
+    /// <summary>
+    /// Lists a page of documents in id order, bounded by <paramref name="limit"/> documents and
+    /// <paramref name="maxBytes"/> of JSON; <see langword="null"/> when the database does not exist.
+    /// </summary>
+    ValueTask<DocumentPage?> ListAsync(
+        DatabaseName database, string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken);
 }

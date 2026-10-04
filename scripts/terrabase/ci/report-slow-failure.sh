@@ -66,9 +66,17 @@ if len(data) > limit:
 ' "$1"
 }
 
+# Memory stays bounded whatever the log size: failure lines are picked by a
+# streaming grep (count and line length capped) and only the last 4 MiB is
+# redacted for the tail, minus its first, possibly partial, line. A secret
+# whose key sits before that cut is not seen with its key; the excerpt is
+# taken from well after it.
 if [[ -f $log ]]; then
-  redact <"$log" >"$work/redacted.log"
+  { grep -E '^failed |AssertionException|Expected |but (received|found)' "$log" || true; } |
+    sed -n '1,60p' | cut -c1-2000 | redact >"$work/failures.log"
+  tail -c 4194304 "$log" | sed '1d' | redact >"$work/redacted.log"
 else
+  : >"$work/failures.log"
   : >"$work/redacted.log"
 fi
 
@@ -89,7 +97,7 @@ fi
   echo '```text'
   if [[ -f $log ]]; then
     # sed reads all of its input, so no upstream command dies of SIGPIPE under pipefail.
-    grep -E '^failed |AssertionException|Expected |but (received|found)' "$work/redacted.log" | sed -n '1,60p' | cap 20000 || echo "(none recognized; see the log tail)"
+    if [[ -s $work/failures.log ]]; then cap 20000 <"$work/failures.log"; else echo "(none recognized; see the log tail)"; fi
   else
     echo "(the suite produced no log; see the run)"
   fi

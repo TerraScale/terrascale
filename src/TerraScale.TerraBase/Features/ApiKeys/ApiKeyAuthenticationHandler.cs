@@ -17,8 +17,9 @@ internal sealed class ApiKeyAuthenticationHandler(
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        // The scheme name is case-insensitive (RFC 9110); the secret is not.
         var header = Request.Headers.Authorization.ToString();
-        if (!header.StartsWith("Bearer ", StringComparison.Ordinal))
+        if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
             return AuthenticateResult.NoResult();
         }

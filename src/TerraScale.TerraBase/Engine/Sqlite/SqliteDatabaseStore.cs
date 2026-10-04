@@ -38,29 +38,45 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
         var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
         await using (connection.ConfigureAwait(false))
         {
-            var version = Convert.ToInt32(await ScalarAsync(connection, "PRAGMA user_version;", cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
-            if (version > SchemaVersion)
-            {
-                throw new InvalidOperationException($"database '{name}' has schema version {version}; this build supports up to {SchemaVersion}");
-            }
-
-            if (version == SchemaVersion)
+            if (await IsCurrentAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false))
             {
                 return;
             }
 
-            await ScalarAsync(connection, """
-                PRAGMA journal_mode = WAL;
-                CREATE TABLE IF NOT EXISTS documents (
-                    collection TEXT NOT NULL,
-                    id TEXT NOT NULL,
-                    version INTEGER NOT NULL,
-                    body TEXT NOT NULL,
-                    PRIMARY KEY (collection, id)
-                ) WITHOUT ROWID;
-                PRAGMA user_version = 1;
-                """, cancellationToken).ConfigureAwait(false);
+            // journal_mode cannot change inside a transaction; it is persistent and idempotent.
+            await ScalarAsync(connection, null, "PRAGMA journal_mode = WAL;", cancellationToken).ConfigureAwait(false);
+            var transaction = connection.BeginTransaction(deferred: false);
+            await using (transaction.ConfigureAwait(false))
+            {
+                // Another process or caller may have migrated while this one waited for the lock.
+                if (!await IsCurrentAsync(connection, transaction, cancellationToken).ConfigureAwait(false))
+                {
+                    await ScalarAsync(connection, transaction, """
+                        CREATE TABLE IF NOT EXISTS documents (
+                            collection TEXT NOT NULL,
+                            id TEXT NOT NULL,
+                            version INTEGER NOT NULL,
+                            body TEXT NOT NULL,
+                            PRIMARY KEY (collection, id)
+                        ) WITHOUT ROWID;
+                        PRAGMA user_version = 1;
+                        """, cancellationToken).ConfigureAwait(false);
+                }
+
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
+    }
+
+    // True when the schema is current; throws for a newer, unsupported schema.
+    private async Task<bool> IsCurrentAsync(SqliteConnection connection, SqliteTransaction? transaction, CancellationToken cancellationToken)
+    {
+        var version = Convert.ToInt32(
+            await ScalarAsync(connection, transaction, "PRAGMA user_version;", cancellationToken).ConfigureAwait(false),
+            System.Globalization.CultureInfo.InvariantCulture);
+        return version > SchemaVersion
+            ? throw new InvalidOperationException($"database '{name}' has schema version {version}; this build supports up to {SchemaVersion}")
+            : version == SchemaVersion;
     }
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
@@ -70,11 +86,13 @@ internal sealed class SqliteDatabaseStore(DatabaseName name, string path) : IDat
         return connection;
     }
 
-    private static async Task<object?> ScalarAsync(SqliteConnection connection, string sql, CancellationToken cancellationToken)
+    private static async Task<object?> ScalarAsync(
+        SqliteConnection connection, SqliteTransaction? transaction, string sql, CancellationToken cancellationToken)
     {
         var command = connection.CreateCommand();
         await using (command.ConfigureAwait(false))
         {
+            command.Transaction = transaction;
             command.CommandText = sql;
             return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         }

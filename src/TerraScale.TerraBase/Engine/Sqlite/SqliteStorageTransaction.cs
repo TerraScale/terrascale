@@ -41,18 +41,38 @@ internal sealed class SqliteStorageTransaction(SqliteConnection connection, Sqli
         }
     }
 
-    public async ValueTask<IReadOnlyList<StoredDocument>> ListAsync(string collection, string? afterId, int limit, CancellationToken cancellationToken)
+    public async ValueTask<DocumentPage> ListAsync(
+        string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken)
     {
         var command = Command("""
-            SELECT id, version, body FROM documents
+            SELECT id, version, body, length(CAST(body AS BLOB)) FROM documents
             WHERE collection = $collection AND id > $after
             ORDER BY id LIMIT $limit;
             """, collection);
         await using (command.ConfigureAwait(false))
         {
             command.Parameters.AddWithValue("$after", afterId ?? string.Empty);
-            command.Parameters.AddWithValue("$limit", limit);
-            return await ReadAsync(command, cancellationToken).ConfigureAwait(false);
+            // One extra row tells whether another page exists without reading its body.
+            command.Parameters.AddWithValue("$limit", limit + 1);
+            var documents = new List<StoredDocument>();
+            long bytes = 0;
+            var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            await using (reader.ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    var size = reader.GetInt64(3);
+                    if (documents.Count == limit || (documents.Count > 0 && bytes + size > maxBytes))
+                    {
+                        return new DocumentPage(documents, HasMore: true);
+                    }
+
+                    bytes += size;
+                    documents.Add(new StoredDocument(reader.GetString(0), reader.GetInt64(1), Encoding.UTF8.GetBytes(reader.GetString(2))));
+                }
+            }
+
+            return new DocumentPage(documents, HasMore: false);
         }
     }
 

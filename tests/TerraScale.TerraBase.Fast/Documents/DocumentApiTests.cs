@@ -36,6 +36,8 @@ public sealed class DocumentApiTests
         await Assert.That(read.RootElement.GetProperty("data").GetProperty("email").GetString()).IsEqualTo(person.email);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // The settings reached Program: the database lives in this server's own data directory.
+        await Assert.That(File.Exists(Path.Combine(server.DataDirectory, "shop.db"))).IsTrue();
     }
 
     [Test]
@@ -45,7 +47,8 @@ public sealed class DocumentApiTests
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
         using var client = tls.CreateClient(server.ClientAddress!, await server.IssueAsync("documents:read", "documents:write"));
         (await client.PutAsync(new Uri("/v1/databases/catalog", UriKind.Relative), null)).Dispose();
-        var ids = Enumerable.Range(0, 5).Select(i => $"item-{i}").ToList();
+        // An exact multiple of the page size: the last full page must already report no next page.
+        var ids = Enumerable.Range(0, 4).Select(i => $"item-{i}").ToList();
         foreach (var id in Faker.Random.Shuffle(ids))
         {
             (await client.PutAsJsonAsync(
@@ -54,9 +57,11 @@ public sealed class DocumentApiTests
         }
 
         var seen = new List<string>();
+        var pages = 0;
         string? after = null;
         do
         {
+            pages++;
             var query = after is null ? "?limit=2" : $"?limit=2&after={after}";
             using var page = JsonDocument.Parse(await client.GetStringAsync(
                 new Uri($"/v1/databases/catalog/collections/items/documents{query}", UriKind.Relative)));
@@ -65,8 +70,40 @@ public sealed class DocumentApiTests
         }
         while (after is not null);
 
+        await Assert.That(pages).IsEqualTo(2);
         await Assert.That(seen).IsEquivalentTo(ids);
         await Assert.That(seen).IsOrderedBy(id => id, StringComparer.Ordinal);
+    }
+
+    [Test]
+    public async Task Concurrent_creates_report_exactly_one_creation()
+    {
+        using var tls = new ClientTls();
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
+        using var client = tls.CreateClient(server.ClientAddress!, await server.IssueAsync("documents:write"));
+
+        var statuses = await Task.WhenAll(Enumerable.Range(0, 16).Select(async _ =>
+        {
+            using var response = await client.PutAsync(new Uri("/v1/databases/race", UriKind.Relative), null);
+            return response.StatusCode;
+        }));
+
+        await Assert.That(statuses.Count(status => status == HttpStatusCode.Created)).IsEqualTo(1);
+        await Assert.That(statuses.Count(status => status == HttpStatusCode.OK)).IsEqualTo(15);
+    }
+
+    [Test]
+    public async Task The_bearer_scheme_name_is_case_insensitive()
+    {
+        using var tls = new ClientTls();
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
+        var key = await server.IssueAsync("documents:write");
+        using var client = tls.CreateClient(server.ClientAddress!);
+        client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", $"bEaReR {key}");
+
+        using var response = await client.PutAsync(new Uri("/v1/databases/cased", UriKind.Relative), null);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
     }
 
     [Test]
@@ -98,6 +135,8 @@ public sealed class DocumentApiTests
         (await client.PutAsync(new Uri("/v1/databases/valid", UriKind.Relative), null)).Dispose();
 
         using var badName = await client.PutAsync(new Uri("/v1/databases/Not_Valid", UriKind.Relative), null);
+        using var deviceName = await client.PutAsync(new Uri("/v1/databases/con", UriKind.Relative), null);
+        using var trailingNewline = await client.PutAsync(new Uri("/v1/databases/valid%0A", UriKind.Relative), null);
         using var notObject = await client.PutAsync(
             new Uri("/v1/databases/valid/collections/c/documents/d", UriKind.Relative), JsonContent.Create(JsonArray));
         using var notJson = await client.PutAsync(
@@ -107,6 +146,8 @@ public sealed class DocumentApiTests
             JsonContent.Create(new { blob = new string('x', 1024 * 1024) }));
 
         await Assert.That(badName.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(deviceName.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(trailingNewline.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(notObject.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(notJson.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(tooLarge.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
