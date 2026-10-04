@@ -33,22 +33,28 @@ an automatic passive checkpoint after a commit when its frame count is
 configured WAL autocheckpoint is a separate engine policy. The numeric
 thresholds do not establish identical checkpoint timing or cost.
 SQLite uses existing repository dependency `rusqlite 0.40.2` with bundled
-SQLite. Turso uses the sibling TerraBase submodule's Rust binding
-`0.8.0-pre.13` at gitlink
-`64b8ef5742fc18937f9c89806c81e3f6475dc7a3`, with default features off.
+SQLite. Turso uses the Rust binding `0.8.1` from the sibling TerraBase
+checkout's `crates/turso` submodule (release v0.8.1, gitlink
+`8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a`), with default features off,
+exactly as TerraBase compiles it: the gitlink plus TerraBase's ordered
+`patches/turso` series, applied by TerraBase's `scripts/ci/prepare-turso.sh`.
 The SQLite library version and Turso's reported SQLite compatibility version
 are recorded separately; they are not the same engine or release version.
-The build script rejects a different gitlink or untracked Turso files and
-embeds the SHA-256 of the tracked diff and each changed tracked file. The
-current submodule has tracked changes in
-`core/mvcc/database/checkpoint_state_machine.rs`,
-`core/mvcc/persistent_storage/logical_log.rs`, and `core/storage/wal.rs`;
-the build receipt must identify their **actual** bytes when it runs. Do not
-call a dirty build a clean gitlink-only build.
+The build script hashes the whole Turso checkout, including files the patch
+series adds, through a fresh scratch Git index. Only the pinned tree's own
+`.gitattributes` apply; global, system, and `info/attributes` settings are
+ignored, and a configured filter driver is refused. It rejects any tree other than
+`4da45c6e8290634cff70f371d123b0564206e4b0` (the tree `prepare-turso.sh --tree`
+prints for that TerraBase revision). It embeds that tree, the SHA-256 of the
+patch diff, and the SHA-256 of each patched file in every receipt. Run
+`bash ../terrabase/scripts/ci/prepare-turso.sh` before building; a TerraBase
+revision that changes the patch series needs a matching pin update here.
 
 The [registered host diagnostic and completed scorecard](../bench/local-engine-crud-v1.md)
 fix the input bounds, alternating run order, source checks, and acceptance
-rules. This is separate from the v1 guest qualification matrix. The crate
+rules. That completed run used the earlier `0.8.0-pre.13` binding at gitlink
+`64b8ef5742fc18937f9c89806c81e3f6475dc7a3`; its receipts stay as recorded.
+This is separate from the v1 guest qualification matrix. The crate
 pins the repository's Rust 1.98.1 toolchain; older toolchains have not been
 verified. Its **private** `Cargo.lock` was generated under a lock-only
 resource lease. A compile check found and prompted a correction to an
@@ -80,7 +86,7 @@ nice -n 19 ionice -c 3 taskset -c "$CPU" \
   --environment-manifest "$LANE/environment.json" \
   --benchmark-revision <exact-ts-benchmark-commit> \
   --terrabase-revision <exact-terrabase-commit> \
-  --turso-revision 64b8ef5742fc18937f9c89806c81e3f6475dc7a3
+  --turso-revision 8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a
 ```
 
 Use `--engine turso` for the other lane, with a different fresh directory.

@@ -820,6 +820,7 @@ fn deleted_history_timeout_receipt(
     physical_fixture_state: Option<&Value>,
     active: ActiveScan,
 ) -> Value {
+    #[cfg_attr(not(feature = "terrabase"), allow(unused_mut))]
     let mut receipt = serde_json::json!({
         "schema_version": 1,
         "matrix_version": MATRIX_VERSION,
@@ -849,6 +850,9 @@ fn deleted_history_timeout_receipt(
         "matrix_sha256": hex_hash(include_bytes!("../../bench/terrabase-rust-acceptance-v1.md")),
         "dependency_lock_sha256": hex_hash(include_bytes!("../Cargo.lock")),
     });
+    // The embedded caller's storage sources exist only in the TerraBase
+    // revision it was written for; keep the SQLite-only build independent.
+    #[cfg(feature = "terrabase")]
     if engine == "terrabase-embedded" {
         receipt["adapter_source_sha256"] = Value::String(hex_hash(include_bytes!("terrabase.rs")));
         receipt["storage_source_sha256"] = Value::String(hex_hash(include_bytes!(
@@ -1449,13 +1453,36 @@ mod tests {
         assert_eq!(receipt["fixture_sha256"], "fixture-hash");
         assert_eq!(receipt["guest_manifest_sha256"], "manifest-hash");
         assert_eq!(receipt["binary_sha256"], "binary-hash");
-        assert!(receipt["adapter_source_sha256"].as_str().is_some());
-        assert!(receipt["storage_source_sha256"].as_str().is_some());
-        assert!(receipt["storage_run_source_sha256"].as_str().is_some());
-        assert!(receipt["storage_work_source_sha256"].as_str().is_some());
-        assert!(receipt["storage_floor_source_sha256"].as_str().is_some());
-        assert!(receipt["storage_api_sha256"].as_str().is_some());
-        assert!(receipt["core_types_sha256"].as_str().is_some());
+        let embedded = [
+            "adapter_source_sha256",
+            "storage_source_sha256",
+            "storage_run_source_sha256",
+            "storage_work_source_sha256",
+            "storage_floor_source_sha256",
+            "storage_api_sha256",
+            "core_types_sha256",
+        ];
+        for field in embedded {
+            // Embedded source hashes exist only in the feature-enabled build.
+            assert_eq!(
+                receipt[field].as_str().is_some(),
+                cfg!(feature = "terrabase"),
+                "{field}"
+            );
+        }
+        let sqlite = deleted_history_timeout_receipt(
+            &args,
+            "sqlite",
+            "binary-hash",
+            "fixture-hash",
+            "manifest-hash",
+            None,
+            active,
+        );
+        assert_eq!(sqlite["status"], "timed_out");
+        for field in embedded {
+            assert!(sqlite[field].is_null(), "{field}");
+        }
     }
 
     #[test]

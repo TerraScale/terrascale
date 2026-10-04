@@ -33,7 +33,7 @@ lint-three-way:
 	cargo clippy --locked --features three-way --bin p04-three-way -- -D warnings
 
 build:
-	cargo build --release --locked --bin terrabase-sqlite-baseline
+	cargo build --release --locked --bin terrabase-sqlite-baseline --bin throughput-floor
 
 build-guest:
 	CC_x86_64_unknown_linux_musl=$(MUSL_CC) CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=$(MUSL_CC) cargo build --release --locked --bin terrabase-sqlite-baseline --target x86_64-unknown-linux-musl
@@ -73,7 +73,7 @@ test-vm:
 	$(MAKE) -C ../firecracker-harness test-vm TEST_BINARY="$(TEST_BINARY)" RUN_ID="$(RUN_ID)" SUBJECT_REPO="$(SUBJECT_REPO)" HARNESS_BINARY="$(HARNESS_BINARY)" GUEST_AGENT_BINARY="$(GUEST_AGENT_BINARY)"
 
 fmt:
-	rustfmt --edition 2024 --check src/main.rs src/terrabase.rs src/analysis.rs src/p04_analysis_launcher.rs src/bin/p04_three_way.rs
+	rustfmt --edition 2024 --check src/main.rs src/terrabase.rs src/analysis.rs src/p04_analysis_launcher.rs src/bin/p04_three_way.rs src/bin/throughput_floor.rs
 
 format:
-	rustfmt --edition 2024 src/main.rs src/terrabase.rs src/analysis.rs src/p04_analysis_launcher.rs src/bin/p04_three_way.rs
+	rustfmt --edition 2024 src/main.rs src/terrabase.rs src/analysis.rs src/p04_analysis_launcher.rs src/bin/p04_three_way.rs src/bin/throughput_floor.rs

@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use turso_pinned::Builder;
 
-const PINNED_TURSO: &str = "64b8ef5742fc18937f9c89806c81e3f6475dc7a3";
+const PINNED_TURSO: &str = "8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a";
 const CACHE_KIB: i64 = 65_536;
 const PAGE_SIZE: i64 = 4_096;
 const SQLITE_WAL_AUTOCHECKPOINT: i64 = 1_000;
@@ -175,9 +175,10 @@ struct Receipt {
     benchmark_revision: String,
     terrabase_revision: String,
     pinned_turso_revision: &'static str,
-    turso_tracked_diff_sha256: &'static str,
-    turso_tracked_dirty: &'static str,
-    turso_tracked_file_inventory: &'static str,
+    turso_source_tree: &'static str,
+    turso_patch_diff_sha256: &'static str,
+    turso_patched: &'static str,
+    turso_patch_file_inventory: &'static str,
     configuration: EngineConfig,
 }
 
@@ -347,9 +348,10 @@ async fn run(args: &Args) -> Result<()> {
         benchmark_revision: args.benchmark_revision.clone(),
         terrabase_revision: args.terrabase_revision.clone(),
         pinned_turso_revision: PINNED_TURSO,
-        turso_tracked_diff_sha256: env!("TURSO_TRACKED_DIFF_SHA256"),
-        turso_tracked_dirty: env!("TURSO_TRACKED_DIRTY"),
-        turso_tracked_file_inventory: env!("TURSO_TRACKED_FILE_INVENTORY"),
+        turso_source_tree: env!("TURSO_SOURCE_TREE"),
+        turso_patch_diff_sha256: env!("TURSO_PATCH_DIFF_SHA256"),
+        turso_patched: env!("TURSO_PATCHED"),
+        turso_patch_file_inventory: env!("TURSO_PATCH_FILE_INVENTORY"),
         configuration,
     };
     let receipt_path = args.output.join("receipt.json");
@@ -462,7 +464,7 @@ async fn open_engine(args: &Args) -> Result<(OpenEngine, EngineConfig)> {
             connection.pragma_update("synchronous", "'full'").await?;
             connection.pragma_update("cache_size", -CACHE_KIB).await?;
             let config = EngineConfig {
-                engine_package_version: "turso 0.8.0-pre.13",
+                engine_package_version: "turso 0.8.1",
                 sqlite_compatibility_version: turso_text(&connection, "SELECT sqlite_version()")
                     .await?,
                 page_size: turso_int(&connection, "PRAGMA page_size").await?,

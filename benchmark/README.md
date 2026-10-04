@@ -3,15 +3,20 @@
 This repository holds the test environment, drivers, fixtures, raw evidence, and
 scoreboards for the **Rust** TerraBase engine. The acceptance contract is
 [`../terrabase/GOAL.md`](../terrabase/GOAL.md), especially sections 10 and 11.
-The [v1 matrix](bench/terrabase-rust-acceptance-v1.md) registers the required
-cases and thresholds before measurement. Its open rows are open.
+The [v2 matrix](bench/terrabase-rust-acceptance-v2.md) registers the required
+cases and the GOAL.md throughput floor: every applicable case must reach at
+least 0.40x tuned SQLite throughput, judged by the lower bound of a paired 95%
+confidence interval. It supersedes the [v1 matrix](bench/terrabase-rust-acceptance-v1.md)
+(1.05x win rule), which stays as history. Open rows are open.
 
 | Path | Purpose |
 | --- | --- |
 | `terra-rust/` | Rust benchmark driver and embedded SQLite baseline |
 | `https-document/` | Process-based HTTPS point-read diagnostic driver |
 | `firecracker-harness/` | Optional development microVM tooling and environment verification |
-| `bench/terrabase-rust-acceptance-v1.md` | Versioned required-case scoreboard |
+| `local-engine/` | Pinned Turso-vs-SQLite local CRUD driver |
+| `tests/fast.sh` | Fast suite run by CI |
+| `bench/terrabase-rust-acceptance-v2.md` | Current versioned required-case scoreboard (v1 kept as history) |
 | `bench/firecracker-harness/` | Firecracker environment receipts |
 | `bench/fixtures/` | Versioned seeds, data generators, dataset definitions, and fixture manifests |
 | `bench/<matrix-version>/<case>/<trial>/` | Matrix-qualified results, raw samples, receipts, and profiles |
@@ -51,6 +56,36 @@ contract. The `test-build`, `test-vm`, and `vm-*` Make targets remain available
 for optional Firecracker development work. Bare `make` in the root and harness
 directories prints help.
 
+## Fast suite and CI
+
+The drivers compile against a sibling TerraBase checkout (`../terrabase`) at
+the revision in [`terrabase.rev`](terrabase.rev), with its Turso v0.8.1
+submodule patched by TerraBase's `scripts/ci/prepare-turso.sh`. With that
+checkout in place, `make fast` runs the blocking Fast suite: `lint-fast`
+(format and strict Clippy for the SQLite-only `terra-rust` build,
+`local-engine`, and `https-document`), `build-fast` (release builds),
+and `test-fast` ([`tests/fast.sh`](tests/fast.sh)). The suite runs the real
+executables as processes: it checks `throughput-floor` verdicts and input
+rejections, and runs a 50-cycle SQLite and Turso CRUD smoke benchmark through
+`local-engine`, requiring both lanes to pass reopen and integrity checks with
+identical trace and final-state hashes. Smoke timings are not results.
+
+Forgejo CI ([`.forgejo/workflows/fast.yml`](.forgejo/workflows/fast.yml))
+runs the same targets on `terrascale-builder` in the `ts-builder` image on
+every pull request and push to `main`. `scripts/ci/checkout-terrabase.sh`
+fetches the pinned TerraBase revision with the `ORG_READ_TOKEN` secret.
+Bump `terrabase.rev` deliberately; a new Turso pin or patch series also needs
+the `local-engine` pin update. There is no Slow suite yet: no long-running
+benchmark check exists that could run on the shared runner without
+pretending to qualify a scoreboard row.
+
+The feature-gated embedded TerraBase caller (`check-engine`, `lint-engine`)
+is not in the Fast suite: it calls the retired custom storage engine's
+`tb-storage` API (immutable runs, `local.rs`/`run.rs`/`floor.rs`) and does not
+compile against the Turso-backed TerraBase at `terrabase.rev`. Porting it to
+the current engine is open work; until then every TerraBase comparison row
+stays `UNSUPPORTED`.
+
 `build` is a host artifact. `build-guest` produces the statically linked
 `terra-rust/target/x86_64-unknown-linux-musl/release/terrabase-sqlite-baseline`
 used by the optional guest image. The pinned Rust musl target and a musl C
@@ -64,10 +99,10 @@ guest harness;
 see [`firecracker-harness/README.md`](firecracker-harness/README.md) for its
 runner and output contract.
 
-Ordinary CI and product integration run as binaries and processes on
+CI and product integration run as binaries and processes on
 `terrascale-builder`; KVM and guest images are not prerequisites. The optional
 Firecracker harness remains useful for development experiments. The registered
-v1 matrix separately requires verified 4-vCPU, 8,192-MiB guests for
+matrix separately requires verified 4-vCPU, 8,192-MiB guests for
 hardware-comparable performance qualification, with swap disabled and separate
 service/load-generator guests where applicable. A host process diagnostic, or
 a run without that matrix evidence, leaves comparison rows open. Do not treat
@@ -92,12 +127,13 @@ Markdown table in `bench/` for each measured case or run series, as required by
 hashes, the matrix version, case, trial, environment manifest, engine,
 durability mode, primary metric, variance/confidence interval, and result
 status. Retain failed and negative experiments. Keep the SQLite scoreboard
-statuses distinct: win, loss, statistically inconclusive, unsupported, or not
-comparable, with the receipt and reason. Do not fill an open row from a mock,
+statuses distinct: `MEETS_FLOOR`, `BELOW_FLOOR`, `INCONCLUSIVE`,
+`UNSUPPORTED`, or `NOT_COMPARABLE`, with the receipt and reason; compute
+throughput verdicts with `terra-rust`'s `throughput-floor`. Do not fill an open row from a mock,
 diagnostic host run, historic report, or a SQLite-only measurement.
 
-The [matrix](bench/terrabase-rust-acceptance-v1.md) defines the pinned SQLite
-version, fair tuning and guarantees, minimum paired trials, significance
-threshold, required workload/resource axes, and full evidence standard. Changes
+The [matrix](bench/terrabase-rust-acceptance-v2.md) defines the pinned SQLite
+version, fair tuning and guarantees, minimum paired trials, floor
+criterion, required workload/resource axes, and full evidence standard. Changes
 to cases or thresholds require a new matrix version registered before evaluating
 a candidate.

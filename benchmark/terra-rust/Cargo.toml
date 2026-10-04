@@ -10,6 +10,10 @@ name = "p04-analysis-launcher"
 path = "src/p04_analysis_launcher.rs"
 
 [[bin]]
+name = "throughput-floor"
+path = "src/bin/throughput_floor.rs"
+
+[[bin]]
 name = "p04-three-way"
 path = "src/bin/p04_three_way.rs"
 required-features = ["three-way"]

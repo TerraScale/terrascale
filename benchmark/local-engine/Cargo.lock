@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "turso"
-version = "0.8.0-pre.13"
+version = "0.8.1"
 dependencies = [
  "thiserror",
  "tracing",
@@ -2158,7 +2158,7 @@ dependencies = [
 
 [[package]]
 name = "turso_core"
-version = "0.8.0-pre.13"
+version = "0.8.1"
 dependencies = [
  "aegis",
  "aes",
@@ -2229,7 +2229,7 @@ dependencies = [
 
 [[package]]
 name = "turso_ext"
-version = "0.8.0-pre.13"
+version = "0.8.1"
 dependencies = [
  "chrono",
  "getrandom 0.4.3",
@@ -2238,7 +2238,7 @@ dependencies = [
 
 [[package]]
 name = "turso_macros"
-version = "0.8.0-pre.13"
+version = "0.8.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2247,7 +2247,7 @@ dependencies = [
 
 [[package]]
 name = "turso_parser"
-version = "0.8.0-pre.13"
+version = "0.8.1"
 dependencies = [
  "bitflags",
  "memchr",
@@ -2260,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "turso_sdk_kit"
-version = "0.8.0-pre.13"
+version = "0.8.1"
 dependencies = [
  "bindgen",
  "env_logger",
@@ -2275,7 +2275,7 @@ dependencies = [
 
 [[package]]
 name = "turso_sdk_kit_macros"
-version = "0.8.0-pre.13"
+version = "0.8.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2284,7 +2284,7 @@ dependencies = [
 
 [[package]]
 name = "turso_sync_engine"
-version = "0.8.0-pre.13"
+version = "0.8.1"
 dependencies = [
  "base64",
  "bytes",
@@ -2305,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "turso_sync_sdk_kit"
-version = "0.8.0-pre.13"
+version = "0.8.1"
 dependencies = [
  "bindgen",
  "env_logger",
