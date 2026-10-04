@@ -6,7 +6,7 @@ FOR NOW WE MUST USE:
 TS_DASHBOARD_PRODUCTION_DEMO=1
 Everything must work in memory account creation and etc
 
-- Never add "Generated", "Co-Author" and similar to the PR or descript or commits
+- Never add AI attribution to commits, PR titles, or PR descriptions: no `Co-Authored-By:` trailers, no `🤖 Generated with [Claude Code]` or similar generated-by notices.
 
 ## Local CPU Priority
 
