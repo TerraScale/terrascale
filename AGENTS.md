@@ -150,7 +150,13 @@ Expected slices, mapped from the Rust crates. Each slice starts with its public 
 ## Build
 
 - Always use the repository `Makefile` when an equivalent Make target exists.
-- Analyzers and code style run in the build with warnings as errors (`Directory.Build.props`, `.editorconfig`). Do not suppress warnings without a documented justification next to the suppression.
+- Analyzers and code style run in the build with warnings as errors (`Directory.Build.props`, `.editorconfig`). `TreatWarningsAsErrors` MUST always be `true` for every project and configuration; never disable it, override it per project, or use `WarningsNotAsErrors`.
+- `NoWarn` is closed. The only allowed entries are:
+  - `NU1507;NU1801;EXTEXP0001` in `Directory.Build.props`;
+  - `CA1515;CA1707;CA2007;CS1591` for test projects in `Directory.Build.targets`.
+
+  Each entry has its reason in a comment next to it. Never add another `NoWarn` entry anywhere without asking a human first.
+- Never suppress warnings globally by other means either: no `GlobalSuppressions.cs` or assembly-level `[SuppressMessage]`, no `.editorconfig` severity lowered to `none`/`silent`/`suggestion` for a rule that is currently enforced, no `<WarningLevel>` reduction, and no `#pragma warning disable` outside generated code. When a single local suppression is truly required, ask a human first and document the justification next to it.
 - `make check` (formatting, build, fast suite) MUST pass before pushing.
 
 ## Benchmarks
