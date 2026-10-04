@@ -30,10 +30,11 @@ credential for short-lived access scoped to the selected branch and its
 keys in `NEXT_PUBLIC` settings. The deployed provider must accept the exact
 registered callback and authorize that branch. The starter subscribes
 with the schema-bound, read-only SQL builder over CDN-backed HTTP and writes
-posts through the published typed document API. Writes and logical
-document/history storage are billed; reads,
-queries, egress, delivery, fan-out, and subscribers are free. Write units are rounded up in 4 KiB increments and multiplied by selected
-Regions before consuming the organization’s shared allowance.
+posts through the published typed document API. Reads and writes
+consume operation units (each started 4 KiB read or written; writes count once
+per selected Region, reads only in the serving Region), and logical
+document/history storage counts in every selected Region, against the
+organization’s shared allowance.
 
 The CRUD, SQL, and reactive snippets run against a real sandbox branch
 pre-filled with the reader's key (D-56). If the sandbox or credentials are

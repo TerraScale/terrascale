@@ -614,7 +614,7 @@ for (const l of LOCALES) {
 export default defineConfig({
   title: 'TerraScale',
   description:
-    'Multi-region document database: leaderless CRDT replication, CDN-backed live queries, SQL you already know. Pay for writes and storage — reads, queries, egress, and delivery are free.',
+    'Multi-region document database: leaderless CRDT replication, CDN-backed live queries, SQL you already know. Metered in operation units and storage across selected regions, with hard plan allowances.',
   appearance: 'dark',
   lastUpdated: true,
   srcDir: '.',

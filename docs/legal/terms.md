@@ -34,8 +34,8 @@ durability apply from the first day of service.
 
 TerraScale is a multi-region document database: writes replicate across the
 Regions you select, reads are served near your users, and reactive queries
-stream live results over a CDN. Launch Regions are GRU (São Paulo), SFO, and
-FRA; you may select up to three Regions per database.
+stream live results over a CDN. Launch Regions are GRU (São Paulo), SFO (San Jose),
+and FRA (Frankfurt); you may select up to three Regions per database.
 
 ## Accounts and organizations
 
@@ -52,27 +52,22 @@ Sustained abuse may result in suspension.
 
 ## Pricing
 
-Writes and storage are the only billed dimensions.
+Plans are metered in operation units and storage across regions.
 
-- **One write** = one create, update, patch, or delete of at most 4 KiB
-  (`ceil(bytes / 4 KiB)` rounds larger documents up). A write is billed
-  once, no matter how many clients, views, or subscribers see it.
-- **Replication is priced honestly**: replicating a write to another
-  selected Region multiplies its 4 KiB write units before allowances. There is no free
-  per-region replication; the cost is shown up front, before you add a
-  region.
-- **Storage** = logical bytes (current documents plus retained history,
-  TTL-aware) multiplied by the number of regions holding the database.
-  Indexes and backups are not billed.
+- **One operation unit** is each started 4 KiB (4,096 bytes) of a logical
+  object successfully read or written. Lists, queries, and batches count
+  each item independently. Writes count once per selected Region; reads
+  count only in the serving Region. Failed, denied, invalid, throttled, and
+  not-found requests are not billed.
+- **Storage**: stored bytes count once in every selected Region. Indexes
+  and backups do not count toward storage.
 
-Free and unbilled: reads, queries, egress, CDN delivery, fan-out, concurrent
-subscribers, WebSocket connections, webhook delivery, catch-up and replay,
-and TTL expiry. Guards on these free dimensions are unbilled abuse limits,
-not charges.
+During Public Alpha, plans use hard allowances and there are no paid
+overages: new billable work stops at the allowance, while reads, exports,
+deletion, and usage reduction remain available. Guards are unbilled safety
+limits, not charges.
 
-Plan quotas, overage rates ($1 per 1M writes, $0.20 per GB-month per
-region), and per-plan limits are drafts awaiting measured economics and
-owner approval on the
+Plan prices, allowances, and per-plan limits are listed on the
 [Pricing & limits](/pricing/) page.
 
 ## Billing
@@ -126,11 +121,11 @@ see the marked draft tables in Privacy and the DPA.] See [Privacy
 Policy](./privacy.md) and [DPA](./dpa.md) for the full sub-processor list
 and security measures.
 
-## Free-tier reaper
+## Hobby-plan reaper
 
-Free databases pause after 30 idle days; a request resumes them. They may be deleted after 90 idle days with advance notices unless deletion protection is enabled. Paid databases are never idle-reaped. The final notice schedule requires owner approval.
+Hobby databases pause after 30 idle days; a request resumes them. They may be deleted after 90 idle days with advance notices unless deletion protection is enabled. Paid databases are never idle-reaped. The final notice schedule requires owner approval.
 
-Deletion protection is opt-in and disabled by default. An owner must explicitly disable it before customer deletion. Protection prevents automatic idle-Free deletion, but not idle pause, unpaid-storage deletion, or required-card-loss deletion. Once authorized deletion is accepted, access is revoked immediately and further billable usage stops. Previously incurred charges remain payable; asynchronous physical cleanup must not create new usage charges. Deletion progress continues until retained copies are removed. Physical completion timing and final notices require verified retention behavior and owner approval.
+Deletion protection is opt-in and disabled by default. An owner must explicitly disable it before customer deletion. Protection prevents automatic idle-Hobby deletion, but not idle pause, unpaid-storage deletion, or required-card-loss deletion. Once authorized deletion is accepted, access is revoked immediately and further billable usage stops. Previously incurred charges remain payable; asynchronous physical cleanup must not create new usage charges. Deletion progress continues until retained copies are removed. Physical completion timing and final notices require verified retention behavior and owner approval.
 
 See the draft [billing policy](/pricing/) for separate unpaid-storage and
 required-card grace periods. These exceptions are not overridden by protection.

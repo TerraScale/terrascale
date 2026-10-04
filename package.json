@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "vitepress dev docs",
-    "build": "vitepress build docs",
+    "build": "node scripts/canonical-data.mjs --build && vitepress build docs",
+    "canonical:check": "node scripts/canonical-data.mjs --check",
+    "canonical:sync": "node scripts/canonical-data.mjs --sync && node scripts/generate-pricing.mjs && node scripts/generate-llms.mjs && node scripts/i18n-sync.mjs",
     "preview": "npm run build && wrangler dev",
     "test": "npm run test:stub",
     "test:remote": "npm run test:local && node scripts/check-build.mjs --sandbox=remote",

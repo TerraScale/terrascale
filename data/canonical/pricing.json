@@ -1,0 +1,88 @@
+{
+  "$comment": "Canonical TerraScale plan catalog, served at https://terrascale.tech/pricing.json. Other TerraScale surfaces vendor this file and check it for drift.",
+  "version": 1,
+  "currency": "USD",
+  "metering": {
+    "operationUnit": {
+      "name": "Operation unit",
+      "bytes": 4096,
+      "definition": "One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written.",
+      "rules": [
+        "Lists, queries, and batches count each item independently.",
+        "Writes count once per selected region; reads count only in the serving region.",
+        "Failed, denied, invalid, throttled, and not-found requests are not billed."
+      ]
+    },
+    "storage": {
+      "name": "Storage across regions",
+      "definition": "Stored bytes count once in every selected region."
+    },
+    "allowances": {
+      "paidOverages": false,
+      "definition": "Plans use hard allowances during Public Alpha. New billable work stops at the allowance. Reads, exports, deletion, and usage reduction remain available."
+    }
+  },
+  "plans": [
+    {
+      "id": "hobby",
+      "name": "Hobby",
+      "available": true,
+      "priceMonthlyUsd": 0,
+      "priceAnnualUsd": 0,
+      "trialDays": null,
+      "limits": {
+        "projects": 1,
+        "databases": 1,
+        "members": 1,
+        "storageGb": 0.1,
+        "operationUnitsPerMonth": 100000
+      }
+    },
+    {
+      "id": "starter",
+      "name": "Starter",
+      "available": true,
+      "priceMonthlyUsd": 5,
+      "priceAnnualUsd": 50,
+      "trialDays": 30,
+      "limits": {
+        "projects": 5,
+        "databases": 5,
+        "members": 5,
+        "storageGb": 5,
+        "operationUnitsPerMonth": 1000000
+      }
+    },
+    {
+      "id": "pro",
+      "name": "Pro",
+      "available": true,
+      "priceMonthlyUsd": 50,
+      "priceAnnualUsd": 500,
+      "trialDays": 30,
+      "limits": {
+        "projects": 25,
+        "databases": 25,
+        "members": 25,
+        "storageGb": 25,
+        "operationUnitsPerMonth": 100000000
+      }
+    },
+    {
+      "id": "enterprise",
+      "name": "Enterprise",
+      "available": false,
+      "priceMonthlyUsd": 500,
+      "priceAnnualUsd": 5000,
+      "trialDays": null,
+      "billing": "Monthly support base plus metered usage.",
+      "limits": {
+        "projects": null,
+        "databases": null,
+        "members": null,
+        "storageGb": null,
+        "operationUnitsPerMonth": null
+      }
+    }
+  ]
+}

@@ -23,8 +23,8 @@ published are retained as non-runnable references.
   qualification.
 - **Regions and placement** — select regions per database; placement is the
   residency guarantee (`eu-only`, `br-only`, or an explicit list) and can
-  never be widened. Multiply 4 KiB write units by selected Regions before
-  consuming the organization’s shared allowance.
+  never be widened. Writes consume operation units once per selected Region
+  before consuming the organization’s shared allowance.
 - **Tenants** — the intended database-per-customer model, with
   tenant-scoped keys, per-tenant usage and
   branching. Tenant provisioning is awaiting its producer contract.

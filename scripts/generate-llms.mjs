@@ -10,7 +10,13 @@ const outPath = join(root, "docs", "public", "llms.txt");
 const check = process.argv.includes("--check");
 
 const base = "https://docs.terrascale.tech";
-const regions = ["gru", "sfo", "fra"];
+const canonicalRegions = JSON.parse(readFileSync(join(root, "data", "canonical", "regions.json"), "utf8")).regions;
+const regions = canonicalRegions.map((region) => region.id);
+const catalog = JSON.parse(readFileSync(join(root, "data", "canonical", "pricing.json"), "utf8"));
+const unit = catalog.metering.operationUnit;
+const planSummary = catalog.plans
+  .map((plan) => `${plan.name} $${plan.priceMonthlyUsd}/month${plan.available ? "" : " (unavailable during Public Alpha)"}`)
+  .join(", ");
 const routes = [
   ["/", "TerraScale docs home: what TerraScale is, quickstart with an unqualified five-minute target."],
   ["/getting-started", "Quickstart: create-terrascale-app to development write and live query; sign-in journey unqualified."],
@@ -19,13 +25,13 @@ const routes = [
   ["/concepts/replication", "Replication guarantees: causal sessions, conflict limits, RegionalDurable/GlobalDurable."],
   ["/concepts/sync", "Sync model: shared views, immutable delta log, CDN delivery."],
   ["/concepts/sql", "SQL: live subset, allow-list, typed builder, auto-indexing."],
-  ["/concepts/pricing-philosophy", "Pricing philosophy: writes + storage are the only billed dimensions."],
+  ["/concepts/pricing-philosophy", "Pricing philosophy: operation units and storage across regions are the two meters."],
   ["/guides/", "Guides overview."],
-  ["/pricing", "Pricing (draft, generated from checked-in pricing data): writes + storage billed, everything else free."],
+  ["/pricing", "Pricing (generated from the canonical https://terrascale.tech/pricing.json): plans, operation units, storage across regions."],
   ["/pricing/", "Pricing & limits: plans, quotas, guards, shared organization allowances."],
   ["/limits", "Limits and unbilled abuse guards, generated from the same source as pricing."],
   ["/snippets", "Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key; database-scoped branch, backup, and export routes are published, while tenant and project-scoped branch/backup fixtures await contracts and the export fixture awaits qualification."],
-  ["/blog/reads-are-free", "Launch post draft: Reads are free — how."],
+  ["/blog/reads-are-free", "Superseded launch post draft: Reads are free — how."],
   ["/blog/benchmarks", "Benchmark publication policy: no measured results published."],
   ["/blog/replication", "Draft: choosing durability across Regions."],
   ["/blog/database-per-customer", "Launch post draft: a database per customer."],
@@ -38,16 +44,12 @@ const txt = `# TerraScale docs — llms.txt (P-8)
 > causal replication across selected Regions, CDN-backed reactive
 > live queries, SQL over documents (SQLite dialect), per-document history
 > with deterministic conflict explanations, PITR/branching, and a database
-> per tenant. Pay only for writes (one write = one create/update/patch/delete
-> of <= 4 KiB, ceil(bytes/4 KiB); replicating to another selected region
-> multiplies its 4 KiB units by selected Regions before allowances) and storage (logical bytes x regions at
-> $/GB-month). Reads, queries, egress, CDN delivery, fan-out, subscribers,
-> WebSocket connections, webhook delivery, catch-up/replay, and TTL expiry
-> are unbilled within disclosed safety limits; reads, queries, and direct member read egress are
-> metered for unbilled abuse guards, while CDN-delivered reactive data has no
-> bandwidth guard.
-> SQL is the only query language (D-78). A write is billed once regardless of
-> views/subscribers (D-22).
+> per tenant. Usage is metered in operation units (each started 4 KiB read
+> or written; writes count once per selected region, reads only in the
+> serving region) and storage across regions. Plans use hard allowances with
+> no paid overages during Public Alpha.
+> SQL is the only query language (D-78). A write counts once per selected
+> region regardless of views/subscribers (D-22).
 
 Base URL: ${base}
 
@@ -55,16 +57,12 @@ Base URL: ${base}
 
 ${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
 
-## Pricing summary (draft; full tables in /pricing and /pricing/)
+## Pricing summary (canonical source: https://terrascale.tech/pricing.json; full tables in /pricing and /pricing/)
 
-- Billed: writes (4 KiB units multiplied by selected Regions before allowances) and storage
-  (logical bytes x regions at $/GB-month). Overage/PAYG: $1 per 1M writes,
-  $0.20 per GB-month per region.
-- Free/unbilled: reads, queries, egress, CDN delivery, fan-out, subscribers,
-  WebSocket connections, webhooks, catch-up/replay, TTL expiry. Reads, queries,
-  and direct member read egress are metered for unbilled abuse guards; none is
-  billed.
-- A write is billed once regardless of views/subscribers (D-22).
+- Plans: ${planSummary}.
+- ${unit.definition} ${unit.rules.join(" ")}
+- ${catalog.metering.storage.name}: ${catalog.metering.storage.definition}
+- ${catalog.metering.allowances.definition}
 
 ## Snippet harness
 
@@ -77,7 +75,7 @@ ${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
 
 ## API entry points
 
-Base domain terrascale.tech. Regions at launch: ${regions.map((region) => region.toUpperCase()).join(", ")}.
+Base domain terrascale.tech. Regions at launch: ${canonicalRegions.map((region) => `${region.id.toUpperCase()} (${region.name})`).join(", ")}.
 
 - Discovery: GET https://atlas.terrascale.tech/api/v1/discovery?database=…
   (optional branch, rev, stale) — served by ts-atlas, a metadata-only Worker:

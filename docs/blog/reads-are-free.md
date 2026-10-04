@@ -2,6 +2,14 @@
 
 > Draft. The final price sheet requires measured economics and owner approval.
 
+::: warning Superseded
+This draft predates the Public Alpha catalog. Reads are no longer free:
+reads and writes both consume operation units (each started 4 KiB read or
+written; writes count once per selected region, reads only in the serving
+region), and plans use hard allowances with no paid overages. See
+[pricing & limits](/pricing/) for the current model.
+:::
+
 Writes and logical storage are the only billed dimensions. Reads, queries,
 egress, reactive delivery, subscribers, replay, TTL expiry, and webhooks are
 unbilled within disclosed abuse and safety guards. Reaching a guard may

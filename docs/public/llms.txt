@@ -4,16 +4,12 @@
 > causal replication across selected Regions, CDN-backed reactive
 > live queries, SQL over documents (SQLite dialect), per-document history
 > with deterministic conflict explanations, PITR/branching, and a database
-> per tenant. Pay only for writes (one write = one create/update/patch/delete
-> of <= 4 KiB, ceil(bytes/4 KiB); replicating to another selected region
-> multiplies its 4 KiB units by selected Regions before allowances) and storage (logical bytes x regions at
-> $/GB-month). Reads, queries, egress, CDN delivery, fan-out, subscribers,
-> WebSocket connections, webhook delivery, catch-up/replay, and TTL expiry
-> are unbilled within disclosed safety limits; reads, queries, and direct member read egress are
-> metered for unbilled abuse guards, while CDN-delivered reactive data has no
-> bandwidth guard.
-> SQL is the only query language (D-78). A write is billed once regardless of
-> views/subscribers (D-22).
+> per tenant. Usage is metered in operation units (each started 4 KiB read
+> or written; writes count once per selected region, reads only in the
+> serving region) and storage across regions. Plans use hard allowances with
+> no paid overages during Public Alpha.
+> SQL is the only query language (D-78). A write counts once per selected
+> region regardless of views/subscribers (D-22).
 
 Base URL: https://docs.terrascale.tech
 
@@ -26,28 +22,24 @@ Base URL: https://docs.terrascale.tech
 - Replication guarantees: causal sessions, conflict limits, RegionalDurable/GlobalDurable.: https://docs.terrascale.tech/concepts/replication
 - Sync model: shared views, immutable delta log, CDN delivery.: https://docs.terrascale.tech/concepts/sync
 - SQL: live subset, allow-list, typed builder, auto-indexing.: https://docs.terrascale.tech/concepts/sql
-- Pricing philosophy: writes + storage are the only billed dimensions.: https://docs.terrascale.tech/concepts/pricing-philosophy
+- Pricing philosophy: operation units and storage across regions are the two meters.: https://docs.terrascale.tech/concepts/pricing-philosophy
 - Guides overview.: https://docs.terrascale.tech/guides/
-- Pricing (draft, generated from checked-in pricing data): writes + storage billed, everything else free.: https://docs.terrascale.tech/pricing
+- Pricing (generated from the canonical https://terrascale.tech/pricing.json): plans, operation units, storage across regions.: https://docs.terrascale.tech/pricing
 - Pricing & limits: plans, quotas, guards, shared organization allowances.: https://docs.terrascale.tech/pricing/
 - Limits and unbilled abuse guards, generated from the same source as pricing.: https://docs.terrascale.tech/limits
 - Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key; database-scoped branch, backup, and export routes are published, while tenant and project-scoped branch/backup fixtures await contracts and the export fixture awaits qualification.: https://docs.terrascale.tech/snippets
-- Launch post draft: Reads are free — how.: https://docs.terrascale.tech/blog/reads-are-free
+- Superseded launch post draft: Reads are free — how.: https://docs.terrascale.tech/blog/reads-are-free
 - Benchmark publication policy: no measured results published.: https://docs.terrascale.tech/blog/benchmarks
 - Draft: choosing durability across Regions.: https://docs.terrascale.tech/blog/replication
 - Launch post draft: a database per customer.: https://docs.terrascale.tech/blog/database-per-customer
 - Changelog.: https://docs.terrascale.tech/changelog
 
-## Pricing summary (draft; full tables in /pricing and /pricing/)
+## Pricing summary (canonical source: https://terrascale.tech/pricing.json; full tables in /pricing and /pricing/)
 
-- Billed: writes (4 KiB units multiplied by selected Regions before allowances) and storage
-  (logical bytes x regions at $/GB-month). Overage/PAYG: $1 per 1M writes,
-  $0.20 per GB-month per region.
-- Free/unbilled: reads, queries, egress, CDN delivery, fan-out, subscribers,
-  WebSocket connections, webhooks, catch-up/replay, TTL expiry. Reads, queries,
-  and direct member read egress are metered for unbilled abuse guards; none is
-  billed.
-- A write is billed once regardless of views/subscribers (D-22).
+- Plans: Hobby $0/month, Starter $5/month, Pro $50/month, Enterprise $500/month (unavailable during Public Alpha).
+- One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once per selected region; reads count only in the serving region. Failed, denied, invalid, throttled, and not-found requests are not billed.
+- Storage across regions: Stored bytes count once in every selected region.
+- Plans use hard allowances during Public Alpha. New billable work stops at the allowance. Reads, exports, deletion, and usage reduction remain available.
 
 ## Snippet harness
 
@@ -60,7 +52,7 @@ Base URL: https://docs.terrascale.tech
 
 ## API entry points
 
-Base domain terrascale.tech. Regions at launch: GRU, SFO, FRA.
+Base domain terrascale.tech. Regions at launch: GRU (São Paulo), SFO (San Jose), FRA (Frankfurt).
 
 - Discovery: GET https://atlas.terrascale.tech/api/v1/discovery?database=…
   (optional branch, rev, stale) — served by ts-atlas, a metadata-only Worker:

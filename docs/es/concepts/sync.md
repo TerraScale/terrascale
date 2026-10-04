@@ -44,8 +44,9 @@ changes.
 
 ## Billing and limits
 
-Reactive delivery, subscribers, catch-up, replay, and WebSocket delivery are
-unbilled. Shared-view and connection guards are disclosed safety limits;
-a guard never adds a charge. Writes and logical storage are billed under the
-organization’s plan, including selected Region multiplication. See
+Fan-out to subscribers does not multiply a write: authorization-equivalent
+subscribers share one view. Shared-view and connection guards are disclosed
+safety limits; a guard never adds a charge. Reads and writes consume
+operation units, and logical storage counts in every selected Region, under
+the organization’s plan. See
 [pricing and limits](/es/pricing/).
