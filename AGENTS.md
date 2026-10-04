@@ -1,6 +1,7 @@
 AI MAY EDIT THIS FILE ONLY WITH HUMAN PERMISSION! If a human or the user requests a change, the AI may edit this file. If the AI needs to change it, it MUST ask the user first.
 
 # Rules
+- Never add AI attribution to commits, PR titles, or PR descriptions: no `Co-Authored-By:` trailers, no `🤖 Generated with [Claude Code]` or similar generated-by notices.
 
 ## Local CPU Priority
 
