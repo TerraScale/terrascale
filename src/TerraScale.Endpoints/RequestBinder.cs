@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -324,17 +325,17 @@ internal static class RequestValues
         // metadata (source generation without reflection), so do not ask for it.
         if (property.CustomConverter is { } custom)
         {
-            return ToScalar(last, type, IsBuiltIn(custom));
+            return ToScalar(last, type, IsBuiltIn(custom), options, custom);
         }
 
         if (!options.TryGetTypeInfo(type, out var info))
         {
-            return ToScalar(last, type, builtIn: false);
+            return ToScalar(last, type, builtIn: false, options);
         }
 
         if (info.Kind != JsonTypeInfoKind.Enumerable || type == typeof(string) || !IsBuiltIn(info.Converter))
         {
-            return ToScalar(last, type, IsBuiltIn(options, type, info.Converter));
+            return ToScalar(last, type, IsBuiltIn(options, type, info.Converter), options);
         }
 
         // A route segment carries a collection as OpenAPI's default "simple" style: 1,2,3.
@@ -348,7 +349,7 @@ internal static class RequestValues
         var array = new JsonArray();
         foreach (var value in values)
         {
-            array.Add((JsonNode?)ToScalar(value, elementType, elementBuiltIn));
+            array.Add((JsonNode?)ToScalar(value, elementType, elementBuiltIn, options));
         }
 
         return array;
@@ -368,7 +369,7 @@ internal static class RequestValues
     // literals, booleans as literals, any Guid format TryParse accepts (route constraints allow
     // compact ones) in the "D" format System.Text.Json expects. Everything else, including char,
     // dates and enum names, stays a string.
-    private static JsonValue? ToScalar(string? raw, Type type, bool builtIn)
+    private static JsonValue? ToScalar(string? raw, Type type, bool builtIn, JsonSerializerOptions options, JsonConverter? propertyConverter = null)
     {
         if (raw is null)
         {
@@ -398,25 +399,75 @@ internal static class RequestValues
             return JsonValue.Create(guid);
         }
 
-        if (ToNumber(raw, target) is { } number)
+        if (target.IsEnum)
+        {
+            return ToEnum(raw, target, options, propertyConverter);
+        }
+
+        return ToNumber(raw, target) ?? JsonValue.Create(raw);
+    }
+
+    // A string-enum contract (JsonStringEnumConverter at any level) reads names itself, with its
+    // naming policy, member names and AllowIntegerValues rule, so it gets the raw string. The
+    // default numeric contract only reads numbers, so names and flag combinations ("Read, Write")
+    // parse like ASP.NET Core parameter binding and are sent as the underlying number.
+    private static JsonValue ToEnum(string raw, Type type, JsonSerializerOptions options, JsonConverter? propertyConverter)
+    {
+        if (ReadsEnumNames(type, options, propertyConverter))
+        {
+            return JsonValue.Create(raw);
+        }
+
+        if (ToNumber(raw, type) is { } number)
         {
             return number;
         }
 
-        // Enum names (and flag combinations such as "Read, Write") parse like ASP.NET Core parameter
-        // binding and are sent as the underlying number, which the default enum converter reads.
-        // ponytail: a JsonStringEnumConverter with AllowIntegerValues = false rejects that number;
-        // probe the converter per enum type if such contracts show up.
-        if (target.IsEnum && Enum.TryParse(target, raw, ignoreCase: true, out var named))
+        if (!Enum.TryParse(type, raw, ignoreCase: true, out var named))
         {
-            var culture = CultureInfo.InvariantCulture;
-            var value = Type.GetTypeCode(target) == TypeCode.UInt64
-                ? Convert.ToUInt64(named, culture).ToString(culture)
-                : Convert.ToInt64(named, culture).ToString(culture);
-            return (JsonValue)JsonNode.Parse(value)!;
+            return JsonValue.Create(raw);
         }
 
-        return JsonValue.Create(raw);
+        var culture = CultureInfo.InvariantCulture;
+        var value = Type.GetTypeCode(type) == TypeCode.UInt64
+            ? Convert.ToUInt64(named, culture).ToString(culture)
+            : Convert.ToInt64(named, culture).ToString(culture);
+        return (JsonValue)JsonNode.Parse(value)!;
+    }
+
+    private static readonly ConditionalWeakTable<JsonTypeInfo, StrongBox<bool>> EnumContracts = [];
+
+    private static bool ReadsEnumNames(Type type, JsonSerializerOptions options, JsonConverter? propertyConverter)
+    {
+        if (propertyConverter is not null)
+        {
+            // Subclasses count too: [JsonConverter] needs a parameterless one to pass options.
+            for (var converterType = propertyConverter.GetType(); converterType is not null; converterType = converterType.BaseType)
+            {
+                if (converterType == typeof(JsonStringEnumConverter)
+                    || (converterType.IsGenericType && converterType.GetGenericTypeDefinition() == typeof(JsonStringEnumConverter<>)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Options- and type-level converters are only visible through the contract, so serialize one
+        // defined value once per contract: a string-enum converter writes a string token.
+        if (!options.TryGetTypeInfo(type, out var info) || Enum.GetNames(type) is not [var first, ..])
+        {
+            return false;
+        }
+
+        if (!EnumContracts.TryGetValue(info, out var known))
+        {
+            known = new StrongBox<bool>(JsonSerializer.Serialize(Enum.Parse(type, first), info).StartsWith('"'));
+            EnumContracts.AddOrUpdate(info, known);
+        }
+
+        return known.Value;
     }
 
     // Parses like ASP.NET Core parameter binding (invariant culture; leading zeros, a sign and

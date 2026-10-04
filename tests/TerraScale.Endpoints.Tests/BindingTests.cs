@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Validation;
 
 namespace TerraScale.Endpoints.Tests;
@@ -1059,4 +1060,87 @@ public sealed class SixthEchoEndpoint : Endpoint<FilteredQuery, FilteredQuery>
     public override void Configure() => Post("/sixth/echo");
 
     public override ValueTask<FilteredQuery> HandleAsync(FilteredQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+/// <summary>Regressions for the seventh ts-reviewer pass on PR #8.</summary>
+public sealed class SeventhPassBindingTests
+{
+    [Test]
+    public async Task PropertyLevelStringEnumsWithoutIntegersBindNames()
+    {
+        await using var app = await StartAsync(_ => { }, EndpointRegistration.Create<StrictColorEndpoint>());
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/seventh/strict-color?color=Green")).IsEqualTo("""{"color":"Green"}""");
+    }
+
+    [Test]
+    public async Task ContractModifierStringEnumsWithoutIntegersBindNames()
+    {
+        // A converter instance from System.Text.Json itself, attached per property by a modifier.
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolver =
+                new DefaultJsonTypeInfoResolver
+                {
+                    Modifiers =
+                    {
+                        static contract =>
+                        {
+                            if (contract.Type == typeof(ColorQuery))
+                            {
+                                contract.Properties[0].CustomConverter = new JsonStringEnumConverter<Color>(namingPolicy: null, allowIntegerValues: false);
+                            }
+                        },
+                    },
+                }),
+            EndpointRegistration.Create<ColorEndpoint>());
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/colors?color=Green")).IsEqualTo("""{"color":"Green"}""");
+    }
+
+    [Test]
+    public async Task OptionsLevelStringEnumsWithoutIntegersBindNamesNullablesAndElements()
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options =>
+                options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(allowIntegerValues: false))),
+            EndpointRegistration.Create<ColorsEndpoint>());
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/seventh/colors?shade=Red&colors=Green&colors=Red"))
+            .IsEqualTo("""{"shade":"Red","colors":["Green","Red"]}""");
+    }
+
+    private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(endpoints);
+        configure(builder);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+/// <summary>Names only: numbers are rejected, so the binder must keep the string token.</summary>
+public sealed class StrictColorConverter() : JsonStringEnumConverter<Color>(namingPolicy: null, allowIntegerValues: false);
+
+public sealed record StrictColorQuery([property: JsonConverter(typeof(StrictColorConverter))] Color Color);
+
+public sealed class StrictColorEndpoint : Endpoint<StrictColorQuery, StrictColorQuery>
+{
+    public override void Configure() => Get("/seventh/strict-color");
+
+    public override ValueTask<StrictColorQuery> HandleAsync(StrictColorQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+public sealed record ColorsQuery(Color? Shade, List<Color> Colors);
+
+public sealed class ColorsEndpoint : Endpoint<ColorsQuery, ColorsQuery>
+{
+    public override void Configure() => Get("/seventh/colors");
+
+    public override ValueTask<ColorsQuery> HandleAsync(ColorsQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
 }
