@@ -139,5 +139,6 @@ substitute a fake service or fabricated evidence.
 
 ## Git and collaboration
 
+- Never add AI attribution to commits, PR titles, or PR descriptions: no `Co-Authored-By:` trailers, no `🤖 Generated with [Claude Code]` or similar generated-by notices.
 - When the human asks for a commit, commit and push exactly as asked — do not
   run tests, checks, or builds first.
