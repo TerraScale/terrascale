@@ -30,6 +30,10 @@ internal sealed class RequestBinder<TRequest>
     // case for names that stay unambiguous, so a case-sensitive contract with "id" and "ID" binds both.
     private readonly Dictionary<string, JsonPropertyInfo>? exact;
     private readonly Dictionary<string, JsonPropertyInfo>? folded;
+
+    // Every contract member name, for the serializer-equivalent duplicate check under
+    // case-insensitive names (the JSON parser only compares names exactly).
+    private readonly HashSet<string>? memberNames;
     private readonly IValidatableTypeInfo? validator;
     private readonly ValidationOptions? validationOptions;
 
@@ -52,6 +56,7 @@ internal sealed class RequestBinder<TRequest>
                     && member.Kind != JsonTypeInfoKind.None))];
             this.exact = new(StringComparer.Ordinal);
             this.folded = new(StringComparer.OrdinalIgnoreCase);
+            this.memberNames = new(this.typeInfo.Properties.Select(static property => property.Name), StringComparer.OrdinalIgnoreCase);
             var ambiguous = this.properties
                 .GroupBy(static property => property.Name, StringComparer.OrdinalIgnoreCase)
                 .Where(static group => group.Count() > 1)
@@ -194,11 +199,13 @@ internal sealed class RequestBinder<TRequest>
             }
         }
 
+        // The raw query keeps every key's spelling, as CollectParameters reads it; HttpRequest.Query
+        // would fold ?Id=x&id=7 into one "Id" key and miss the exact "id" member.
         if (request.QueryString.HasValue)
         {
-            foreach (var (key, _) in request.Query)
+            foreach (var pair in new QueryStringEnumerable(request.QueryString.Value))
             {
-                if (this.TryFind(key, out _))
+                if (this.TryFind(pair.DecodeName().Span, out _))
                 {
                     return true;
                 }
@@ -223,6 +230,7 @@ internal sealed class RequestBinder<TRequest>
             writer.WriteStartObject();
             if (document is not null)
             {
+                this.RejectCaseInsensitiveDuplicates(document.RootElement, options);
                 foreach (var member in document.RootElement.EnumerateObject())
                 {
                     if (!IsOverridden(member.Name, overrides, options))
@@ -277,7 +285,7 @@ internal sealed class RequestBinder<TRequest>
             var queried = new Dictionary<JsonPropertyInfo, List<string>>(ReferenceEqualityComparer.Instance);
             foreach (var pair in new QueryStringEnumerable(request.QueryString.Value))
             {
-                if (this.TryFind(pair.DecodeName().ToString(), out var property))
+                if (this.TryFind(pair.DecodeName().Span, out var property))
                 {
                     if (!queried.TryGetValue(property, out var values))
                     {
@@ -303,6 +311,26 @@ internal sealed class RequestBinder<TRequest>
         }
 
         return overrides;
+    }
+
+    // With case-insensitive names and AllowDuplicateProperties = false, the serializer rejects
+    // {"page":1,"Page":2}, but the JSON parser only compares exact names. Check the same way before
+    // overridden members are dropped, so parameters cannot hide a rejected body.
+    private void RejectCaseInsensitiveDuplicates(JsonElement root, JsonSerializerOptions options)
+    {
+        if (options.AllowDuplicateProperties || !options.PropertyNameCaseInsensitive)
+        {
+            return;
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var member in root.EnumerateObject())
+        {
+            if (this.memberNames!.Contains(member.Name) && !seen.Add(member.Name))
+            {
+                throw new BadHttpRequestException("The JSON request body contains duplicate properties.", StatusCodes.Status400BadRequest);
+            }
+        }
     }
 
     // A body member is replaced when the serializer would bind it to an overridden property:
@@ -362,6 +390,11 @@ internal sealed class RequestBinder<TRequest>
 
     private bool TryFind(string key, [NotNullWhen(true)] out JsonPropertyInfo? property) =>
         this.exact!.TryGetValue(key, out property) || this.folded!.TryGetValue(key, out property);
+
+    // Span lookups avoid allocating a string per query key.
+    private bool TryFind(ReadOnlySpan<char> key, [NotNullWhen(true)] out JsonPropertyInfo? property) =>
+        this.exact!.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(key, out property)
+        || this.folded!.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(key, out property);
 
     private static bool HasBody(HttpContext context) =>
         context.Request.ContentLength > 0

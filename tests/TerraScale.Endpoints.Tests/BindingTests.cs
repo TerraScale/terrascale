@@ -1465,3 +1465,83 @@ public sealed class DataBodyEndpoint : Endpoint<DataBody, string>
     public override ValueTask<string> HandleAsync(DataBody request, CancellationToken cancellationToken) =>
         ValueTask.FromResult($"{request.Page}:{string.Join(',', request.Data!.Select(pair => $"{pair.Key}={pair.Value}"))}");
 }
+
+/// <summary>Regressions for the eleventh ts-reviewer pass on PR #8.</summary>
+public sealed class EleventhPassBindingTests
+{
+    [Test]
+    [Arguments("/case?Id=ignored&id=7")]
+    [Arguments("/case?id=7&Id=ignored")]
+    public async Task AnAmbiguousQueryKeyDoesNotHideAnExactOne(string url)
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNameCaseInsensitive = false),
+            mapInGroup: false,
+            EndpointRegistration.Create<CaseEndpoint>());
+        using var client = Client(app);
+        using var request = new HttpRequestMessage(HttpMethod.Get, url)
+        {
+            Content = new StringContent("""{"id":1,"ID":2}""", Encoding.UTF8, "application/json"),
+        };
+        using var response = await client.SendAsync(request);
+        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("""{"id":7,"ID":2}""");
+    }
+
+    [Test]
+    public async Task CaseInsensitiveDuplicatesAreRejectedOnBothPaths()
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.AllowDuplicateProperties = false),
+            mapInGroup: false,
+            EndpointRegistration.Create<NestedEchoEndpoint>());
+        using var client = Client(app);
+        const string body = """{"page":1,"Page":2}""";
+        using var direct = await client.PostAsync("/nested-echo", new StringContent(body, Encoding.UTF8, "application/json"));
+        using var merged = await client.PostAsync("/nested-echo?page=3", new StringContent(body, Encoding.UTF8, "application/json"));
+        await Assert.That(direct.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(merged.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task OptionalAndDefaultedSegmentsKeepTheirQueryFallbackUnderAGroup()
+    {
+        // ApiExplorer's RelativePath keeps {id?} and {id=5}; only the OpenAPI path key drops the markers.
+        await using var app = await StartAsync(
+            _ => { },
+            mapInGroup: true,
+            EndpointRegistration.Create<RequiredOptionalIdEndpoint>(),
+            EndpointRegistration.Create<RequiredDefaultedIdEndpoint>());
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var paths = document.RootElement.GetProperty("paths");
+        foreach (var path in new[] { "/tenants/{tenantId}/tenth/optional/{id}", "/tenants/{tenantId}/tenth/defaulted/{id}" })
+        {
+            var parameters = paths.GetProperty(path).GetProperty("get").GetProperty("parameters").EnumerateArray()
+                .Select(parameter => $"{parameter.GetProperty("in").GetString()}:{parameter.GetProperty("name").GetString()}").ToArray();
+            await Assert.That(parameters).IsEquivalentTo(["path:tenantId", "path:id", "query:id"]);
+        }
+    }
+
+    private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, bool mapInGroup, params EndpointRegistration[] endpoints)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(endpoints);
+        configure(builder);
+        var app = builder.Build();
+        if (mapInGroup)
+        {
+            app.MapGroup("/tenants/{tenantId}").MapTerraScaleEndpoints();
+        }
+        else
+        {
+            app.MapTerraScaleEndpoints();
+        }
+
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
