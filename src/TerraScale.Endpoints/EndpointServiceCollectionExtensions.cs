@@ -195,22 +195,14 @@ public static class EndpointServiceCollectionExtensions
 
         // Properties the binder cannot read from a query string (nested objects, dictionaries) can
         // still come from a JSON body, so the body is only dropped when every property is covered.
-        var needsBody = false;
-        foreach (var property in properties)
+        var routeBound = route.Parameters.Select(parameter => Find(properties, parameter.Name)).ToHashSet();
+        var queryable = properties.Where(property => !routeBound.Contains(property) && RequestValues.CanBindFromString(property)).ToList();
+        var needsBody = properties.Any(property => !routeBound.Contains(property) && !RequestValues.CanBindFromString(property));
+        foreach (var property in queryable)
         {
-            if (route.Parameters.Any(parameter => string.Equals(parameter.Name, property.Name, StringComparison.OrdinalIgnoreCase)))
-            {
-                continue;
-            }
-
-            if (RequestValues.CanBindFromString(property))
-            {
-                await AddAsync(property.Name, ParameterLocation.Query, property, property.IsRequired).ConfigureAwait(false);
-            }
-            else
-            {
-                needsBody = true;
-            }
+            // The binder merges body, query and route values before checking required members, so
+            // with a body kept a required member may come from the body instead of the query.
+            await AddAsync(property.Name, ParameterLocation.Query, property, property.IsRequired && !needsBody).ConfigureAwait(false);
         }
 
         if (!needsBody)
@@ -233,16 +225,10 @@ public static class EndpointServiceCollectionExtensions
         }
     }
 
-    private static JsonPropertyInfo? Find(IReadOnlyList<JsonPropertyInfo> properties, string name)
-    {
-        foreach (var property in properties)
-        {
-            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
-            {
-                return property;
-            }
-        }
-
-        return null;
-    }
+    // Same resolution as the binder: exact JSON name first, then the only case-insensitive match.
+    private static JsonPropertyInfo? Find(IReadOnlyList<JsonPropertyInfo> properties, string name) =>
+        properties.FirstOrDefault(property => property.Name == name)
+        ?? (properties.Count(property => string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) == 1
+            ? properties.First(property => string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            : null);
 }

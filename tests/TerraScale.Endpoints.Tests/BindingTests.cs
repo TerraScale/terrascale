@@ -611,3 +611,141 @@ public sealed class MoneyEndpoint : Endpoint<MoneyQuery, string>
 /// <summary>Source-generated only, so there is no reflection fallback for types it does not list.</summary>
 [JsonSerializable(typeof(MoneyQuery))]
 internal sealed partial class MoneyJsonContext : JsonSerializerContext;
+
+/// <summary>Regressions for the third ts-reviewer pass on PR #8.</summary>
+public sealed class ThirdPassBindingTests
+{
+    [Test]
+    public async Task RequiredMembersAreOptionalQueryParametersWhenTheBodyIsKept()
+    {
+        await using var app = await StartAsync(_ => { });
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var get = document.RootElement.GetProperty("paths").GetProperty("/required-filter").GetProperty("get");
+        var name = get.GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "name");
+        await Assert.That(name.TryGetProperty("required", out var required) && required.GetBoolean()).IsFalse();
+        await Assert.That(get.TryGetProperty("requestBody", out _)).IsTrue();
+    }
+
+    [Test]
+    public async Task EmptyJsonBodiesBindParametersAndDefaults()
+    {
+        await using var app = await StartAsync(_ => { });
+        using var client = Client(app);
+        using var withParameters = await client.PostAsync("/nested-echo?page=4", new StringContent("", Encoding.UTF8, "application/json"));
+        using var withoutParameters = await client.PostAsync("/nested-echo", new StringContent("", Encoding.UTF8, "application/json"));
+        await Assert.That(await withParameters.Content.ReadAsStringAsync()).IsEqualTo("""{"page":4,"filter":null}""");
+        await Assert.That(await withoutParameters.Content.ReadAsStringAsync()).IsEqualTo("""{"page":1,"filter":null}""");
+    }
+
+    [Test]
+    public async Task QueryValuesNeverOverwriteNestedBodyObjects()
+    {
+        await using var app = await StartAsync(_ => { });
+        using var client = Client(app);
+        using var response = await client.PostAsync(
+            "/nested-echo?filter=x&page=2",
+            new StringContent("""{"filter":{"name":"body"}}""", Encoding.UTF8, "application/json"));
+        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("""{"page":2,"filter":{"name":"body"}}""");
+    }
+
+    [Test]
+    public async Task NullableValuesUseTheApplicationConverterOfTheUnderlyingType()
+    {
+        await using var app = await StartAsync(builder => builder.Services.ConfigureHttpJsonOptions(options =>
+            options.SerializerOptions.Converters.Add(new StringOnlyIntConverter())));
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/nullable-converted?limit=4&extra=5&extra=6"))
+            .IsEqualTo("""{"limit":4,"extra":[5,6]}""");
+    }
+
+    [Test]
+    public async Task CollectionRouteValuesUseTheSimpleStyle()
+    {
+        await using var app = await StartAsync(_ => { });
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/ids/1,2,3")).IsEqualTo("""{"ids":[1,2,3]}""");
+    }
+
+    [Test]
+    public async Task CaseSensitiveContractsBindTheExactlyNamedMember()
+    {
+        // System.Text.Json rejects "id" and "ID" together under case-insensitive names, so this
+        // contract only exists in case-sensitive apps.
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNameCaseInsensitive = false),
+            EndpointRegistration.Create<CaseEndpoint>());
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/case?ID=7")).IsEqualTo("""{"id":0,"ID":7}""");
+    }
+
+    private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(endpoints.Length > 0
+            ? endpoints
+            : [
+                EndpointRegistration.Create<RequiredFilterEndpoint>(),
+                EndpointRegistration.Create<NestedEchoEndpoint>(),
+                EndpointRegistration.Create<NullableConvertedEndpoint>(),
+                EndpointRegistration.Create<IdsEndpoint>()]);
+        configure(builder);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+public sealed class RequiredFilterQuery
+{
+    public required string Name { get; init; }
+
+    public NestedFilter? Filter { get; init; }
+}
+
+public sealed class RequiredFilterEndpoint : Endpoint<RequiredFilterQuery, string>
+{
+    public override void Configure() => Get("/required-filter");
+
+    public override ValueTask<string> HandleAsync(RequiredFilterQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request.Name);
+}
+
+public sealed class NestedEchoEndpoint : Endpoint<FilteredQuery, FilteredQuery>
+{
+    public override void Configure() => Post("/nested-echo");
+
+    public override ValueTask<FilteredQuery> HandleAsync(FilteredQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+public sealed record NullableConvertedQuery(int? Limit, List<int?>? Extra);
+
+public sealed class NullableConvertedEndpoint : Endpoint<NullableConvertedQuery, NullableConvertedQuery>
+{
+    public override void Configure() => Get("/nullable-converted");
+
+    public override ValueTask<NullableConvertedQuery> HandleAsync(NullableConvertedQuery request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(request);
+}
+
+public sealed record IdsQuery(int[] Ids);
+
+public sealed class IdsEndpoint : Endpoint<IdsQuery, IdsQuery>
+{
+    public override void Configure() => Get("/ids/{ids}");
+
+    public override ValueTask<IdsQuery> HandleAsync(IdsQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+public sealed record CaseQuery([property: JsonPropertyName("id")] int Lower, [property: JsonPropertyName("ID")] int Upper);
+
+public sealed class CaseEndpoint : Endpoint<CaseQuery, CaseQuery>
+{
+    public override void Configure() => Get("/case");
+
+    public override ValueTask<CaseQuery> HandleAsync(CaseQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}

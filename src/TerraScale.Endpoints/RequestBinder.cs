@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -19,7 +20,12 @@ namespace TerraScale.Endpoints;
 internal sealed class RequestBinder<TRequest>
 {
     private readonly JsonTypeInfo<TRequest> typeInfo;
-    private readonly Dictionary<string, JsonPropertyInfo>? properties;
+    private readonly JsonPropertyInfo[]? properties;
+
+    // Route and query keys resolve to bindable properties by exact JSON name first, then ignoring
+    // case for names that stay unambiguous, so a case-sensitive contract with "id" and "ID" binds both.
+    private readonly Dictionary<string, JsonPropertyInfo>? exact;
+    private readonly Dictionary<string, JsonPropertyInfo>? folded;
     private readonly IValidatableTypeInfo? validator;
     private readonly ValidationOptions? validationOptions;
 
@@ -28,10 +34,24 @@ internal sealed class RequestBinder<TRequest>
         this.typeInfo = EndpointJson.GetRequestTypeInfo<TRequest>(services);
         if (this.typeInfo.Kind == JsonTypeInfoKind.Object)
         {
-            this.properties = new(StringComparer.OrdinalIgnoreCase);
-            foreach (var property in this.typeInfo.Properties)
+            this.properties = [.. this.typeInfo.Properties];
+            this.exact = new(StringComparer.Ordinal);
+            this.folded = new(StringComparer.OrdinalIgnoreCase);
+            var ambiguous = this.properties
+                .GroupBy(static property => property.Name, StringComparer.OrdinalIgnoreCase)
+                .Where(static group => group.Count() > 1)
+                .Select(static group => group.Key)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // Nested objects and dictionaries cannot come from a string, so query and route values
+            // never overwrite them; they only bind from the JSON body.
+            foreach (var property in this.properties.Where(RequestValues.CanBindFromString))
             {
-                this.properties.TryAdd(property.Name, property);
+                this.exact.TryAdd(property.Name, property);
+                if (!ambiguous.Contains(property.Name))
+                {
+                    this.folded.TryAdd(property.Name, property);
+                }
             }
         }
 
@@ -44,8 +64,8 @@ internal sealed class RequestBinder<TRequest>
         }
     }
 
-    /// <summary>The bindable properties of an object request, for route and query parameter descriptions.</summary>
-    internal IReadOnlyList<JsonPropertyInfo>? Properties => this.properties?.Values.ToArray();
+    /// <summary>The properties of an object request, for route and query parameter descriptions.</summary>
+    internal IReadOnlyList<JsonPropertyInfo>? Properties => this.properties;
 
     internal bool Validates => this.validator is not null;
 
@@ -56,14 +76,16 @@ internal sealed class RequestBinder<TRequest>
             return EndpointJson.ReadBodyAsync(context, this.typeInfo, cancellationToken);
         }
 
+        // An empty body (Content-Length: 0) is no body, even with a JSON content type.
         var request = context.Request;
-        var hasJson = request.HasJsonContentType();
+        var hasBody = HasBody(context);
+        var hasJson = hasBody && request.HasJsonContentType();
         if (hasJson && !this.HasParameters(request))
         {
             return EndpointJson.ReadJsonAsync(context, this.typeInfo, cancellationToken);
         }
 
-        if (!hasJson && HasBody(context))
+        if (hasBody && !hasJson)
         {
             throw new BadHttpRequestException("Expected a JSON request body.", StatusCodes.Status415UnsupportedMediaType);
         }
@@ -150,7 +172,7 @@ internal sealed class RequestBinder<TRequest>
         {
             foreach (var (key, _) in routeValues)
             {
-                if (this.properties!.ContainsKey(key))
+                if (this.TryFind(key, out _))
                 {
                     return true;
                 }
@@ -161,7 +183,7 @@ internal sealed class RequestBinder<TRequest>
         {
             foreach (var (key, _) in request.Query)
             {
-                if (this.properties!.ContainsKey(key))
+                if (this.TryFind(key, out _))
                 {
                     return true;
                 }
@@ -183,13 +205,13 @@ internal sealed class RequestBinder<TRequest>
             {
                 foreach (var (key, values) in request.Query)
                 {
-                    this.Set(json, key, values);
+                    this.Set(json, key, values, fromRoute: false);
                 }
             }
 
             foreach (var (key, value) in request.RouteValues)
             {
-                this.Set(json, key, value?.ToString());
+                this.Set(json, key, value?.ToString(), fromRoute: true);
             }
         }
         catch (ArgumentException exception)
@@ -251,11 +273,14 @@ internal sealed class RequestBinder<TRequest>
         }
     }
 
-    private void Set(JsonObject json, string key, StringValues values)
+    private bool TryFind(string key, [NotNullWhen(true)] out JsonPropertyInfo? property) =>
+        this.exact!.TryGetValue(key, out property) || this.folded!.TryGetValue(key, out property);
+
+    private void Set(JsonObject json, string key, StringValues values, bool fromRoute)
     {
-        if (this.properties!.TryGetValue(key, out var property))
+        if (this.TryFind(key, out var property))
         {
-            json[property.Name] = RequestValues.ToJson(property, values);
+            json[property.Name] = RequestValues.ToJson(property, values, fromRoute);
         }
     }
 
@@ -280,9 +305,10 @@ internal static class RequestValues
                 && (!property.Options.TryGetTypeInfo(info.ElementType!, out var element) || element.Kind == JsonTypeInfoKind.None));
     }
 
-    internal static JsonNode? ToJson(JsonPropertyInfo property, StringValues values)
+    internal static JsonNode? ToJson(JsonPropertyInfo property, StringValues values, bool fromRoute)
     {
         var type = property.PropertyType;
+        var options = property.Options;
         var last = values.Count == 0 ? null : values[^1];
 
         // A property-level converter supplies the contract; the property type may have no standalone
@@ -292,18 +318,24 @@ internal static class RequestValues
             return ToScalar(last, type, IsBuiltIn(custom));
         }
 
-        if (!property.Options.TryGetTypeInfo(type, out var info))
+        if (!options.TryGetTypeInfo(type, out var info))
         {
             return ToScalar(last, type, builtIn: false);
         }
 
         if (info.Kind != JsonTypeInfoKind.Enumerable || type == typeof(string) || !IsBuiltIn(info.Converter))
         {
-            return ToScalar(last, type, IsBuiltIn(info.Converter));
+            return ToScalar(last, type, IsBuiltIn(options, type, info.Converter));
+        }
+
+        // A route segment carries a collection as OpenAPI's default "simple" style: 1,2,3.
+        if (fromRoute && values.Count == 1 && values[0] is { } segment)
+        {
+            values = segment.Split(',');
         }
 
         var elementType = info.ElementType!;
-        var elementBuiltIn = property.Options.TryGetTypeInfo(elementType, out var element) && IsBuiltIn(element.Converter);
+        var elementBuiltIn = options.TryGetTypeInfo(elementType, out var element) && IsBuiltIn(options, elementType, element.Converter);
         var array = new JsonArray();
         foreach (var value in values)
         {
@@ -312,6 +344,12 @@ internal static class RequestValues
 
         return array;
     }
+
+    // System.Text.Json wraps the converter of T for T?, which may be an application converter.
+    private static bool IsBuiltIn(JsonSerializerOptions options, Type type, JsonConverter converter) =>
+        IsBuiltIn(converter)
+        && (Nullable.GetUnderlyingType(type) is not { } underlying
+            || (options.TryGetTypeInfo(underlying, out var underlyingInfo) && IsBuiltIn(underlyingInfo.Converter)));
 
     // Application, type and property converters may read any token shape, so they get the raw
     // string; only System.Text.Json's own converters get typed tokens.
