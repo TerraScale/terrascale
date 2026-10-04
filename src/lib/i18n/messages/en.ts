@@ -143,7 +143,7 @@ export const en = {
     eyebrow: 'Pricing',
     titleLead: 'Simple pricing',
     titleAccent: 'That scales with YOU',
-    subtitle: 'Three plans for Public Alpha. Enterprise remains unavailable.',
+    subtitle: 'Hobby, Starter, and Pro for Public Alpha. Enterprise remains unavailable.',
     badge: 'Most Popular',
     toggleLabel: 'Billing cycle',
     monthly: 'Monthly',
@@ -152,14 +152,16 @@ export const en = {
     suffixMonthly: '/month',
     suffixAnnual: '/year',
     plans: {
+      hobby: {
+        description: 'Free plan to build and evaluate',
+        cta: 'Start with Hobby',
+      },
       starter: {
         description: 'Monthly plan with one eligible 30-day trial',
-        features: ['5 projects', '5 databases', '5 members', '5 GB across regions', '1,000,000 operation units/month'],
         cta: 'Choose Starter',
       },
       pro: {
         description: 'Monthly plan with one eligible 30-day trial',
-        features: ['25 projects', '25 databases', '25 members', '25 GB across regions', '100,000,000 operation units/month'],
         cta: 'Choose Pro',
       },
       enterprise: {
@@ -168,9 +170,16 @@ export const en = {
         cta: 'Contact for future access',
       },
     },
+    limits: {
+      projects: ['{n} project', '{n} projects'],
+      databases: ['{n} database', '{n} databases'],
+      members: ['{n} member', '{n} members'],
+      storage: '{n} across regions',
+      operationUnits: '{n} operation units/month',
+    },
     triad: [
       { title: 'Storage Across Regions', text: 'Stored bytes count once in every selected region' },
-      { title: 'Operation Units', text: 'Each started 4 KiB of document data counts as one unit' },
+      { title: 'Operation Units', text: 'Each started 4 KiB read or written counts as one unit' },
       { title: 'Hard Allowances', text: 'Reads, exports, deletion, and usage reduction remain available' },
     ],
     detailed: {
@@ -206,8 +215,8 @@ export const en = {
       subtitle: 'Get answers to common questions about our pricing and plans.',
       items: [
         {
-          q: 'What is a Database Operation?',
-          a: 'One Database Operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once per selected region; reads count only in the serving region. Failed, denied, invalid, throttled, and not-found requests are not billed.',
+          q: 'What is an operation unit?',
+          a: 'One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once per selected region; reads count only in the serving region. Failed, denied, invalid, throttled, and not-found requests are not billed.',
         },
         {
           q: 'What if I need more operations or storage?',
@@ -223,7 +232,7 @@ export const en = {
         },
         {
           q: 'What does the Enterprise plan include?',
-          a: 'Enterprise has a $500 monthly support base plus metered usage, but it is unavailable during Public Alpha.',
+          a: 'Enterprise has a ${enterprisePriceUsd} monthly support base plus metered usage, but it is unavailable during Public Alpha.',
         },
       ],
       footerTitle: 'Still have questions?',
@@ -307,7 +316,6 @@ export const en = {
     bandTitle: 'Flat regional pricing, metered by real use.',
     bandText:
       'Storage usage adds the bytes stored in every selected region. Estimated network distance, measured API latency, and replication health remain separate values.',
-    regions: ['São Paulo', 'San Jose', 'Frankfurt'],
   },
 
   notFound: {

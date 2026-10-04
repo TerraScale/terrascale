@@ -3,8 +3,13 @@
   import RouteLink from '@/components/RouteLink.svelte'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import { dict } from '@/lib/i18n'
+  import { publicAlphaCatalog } from '@/lib/site'
 
-  $: faqs = $dict.pricing.faq.items
+  const enterprisePriceUsd = String(publicAlphaCatalog.find((plan) => plan.slug === 'enterprise')?.price)
+  $: faqs = $dict.pricing.faq.items.map((item) => ({
+    ...item,
+    a: item.a.replace('{enterprisePriceUsd}', enterprisePriceUsd),
+  }))
 
   let open = 0
 
