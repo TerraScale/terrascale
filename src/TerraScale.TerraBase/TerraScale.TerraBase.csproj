@@ -22,5 +22,8 @@
     <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+    <PackageReference Include="NativeCompressions" />
+    <PackageReference Include="Ulid" />
+    <PackageReference Include="ZString" />
   </ItemGroup>
 </Project>

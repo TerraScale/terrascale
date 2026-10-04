@@ -51,6 +51,13 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
     <PackageVersion Include="Sentry.Extensions.Logging" Version="6.4.0" />
   </ItemGroup>
+  <!-- Cysharp performance primitives: native LZ4/Zstandard (inter-node gRPC
+       compression), ULID identifiers and allocation-free string building. -->
+  <ItemGroup Label="Performance primitives">
+    <PackageVersion Include="NativeCompressions" Version="0.6.1" />
+    <PackageVersion Include="Ulid" Version="1.4.1" />
+    <PackageVersion Include="ZString" Version="2.6.0" />
+  </ItemGroup>
   <ItemGroup Label="Integration tests">
     <PackageVersion Include="TUnit" Version="1.19.57" />
     <PackageVersion Include="Bogus" Version="35.6.5" />
