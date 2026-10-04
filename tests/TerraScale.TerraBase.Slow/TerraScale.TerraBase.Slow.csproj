@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The slow integration suite: comprehensive, expensive and exhaustive scenarios.
+       It runs independently and never blocks.
+       Test references and conventions come from Directory.Build.targets. -->
+  <PropertyGroup>
+    <RootNamespace>TerraScale.TerraBase.Slow</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+</Project>

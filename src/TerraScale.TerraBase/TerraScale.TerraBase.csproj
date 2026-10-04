@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>TerraScale.TerraBase</RootNamespace>
+    <AssemblyName>terrabase</AssemblyName>
+    <Version>0.1.0</Version>
+    <!-- Native AOT keeps the idle footprint small and turns on the trim and AOT
+         analyzers for every build, so incompatible code fails early. -->
+    <PublishAot>true</PublishAot>
+    <UserSecretsId />
+    <!-- HTTP endpoints, OpenAPI and Scalar from ../ts-libs (Directory.Build.targets). -->
+    <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Scalar.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+  </ItemGroup>
+</Project>

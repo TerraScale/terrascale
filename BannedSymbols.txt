@@ -1,0 +1,7 @@
+N:Newtonsoft.Json;Use System.Text.Json with a source-generated JsonSerializerContext.
+N:Newtonsoft.Json.Linq;Use System.Text.Json.Nodes or JsonDocument.
+N:Newtonsoft.Json.Converters;Use System.Text.Json.Serialization converters.
+N:Newtonsoft.Json.Serialization;Use System.Text.Json.Serialization.
+N:Newtonsoft.Json.Bson;BSON via Newtonsoft is not allowed; use a versioned TerraBase format.
+T:Microsoft.Extensions.DependencyInjection.NewtonsoftJsonMvcBuilderExtensions;Use System.Text.Json.
+T:Microsoft.Extensions.DependencyInjection.NewtonsoftJsonProtocolDependencyInjectionExtensions;Use System.Text.Json.

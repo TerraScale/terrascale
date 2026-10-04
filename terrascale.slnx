@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TerraScale.TerraBase/TerraScale.TerraBase.csproj" />
+  </Folder>
+  <Folder Name="/src/Tests/">
+    <Project Path="src/Tests/TerraScale.TerraBase.Fast/TerraScale.TerraBase.Fast.csproj" />
+    <Project Path="src/Tests/TerraScale.TerraBase.Slow/TerraScale.TerraBase.Slow.csproj" />
+  </Folder>
+</Solution>
