@@ -10,6 +10,7 @@ public sealed class GetWidgetEndpoint(WidgetStore store) : Endpoint<GetWidgetReq
         Summary("Gets a widget by id");
         Tags("Widgets");
         Produces<Widget>();
+        Produces(StatusCodes.Status404NotFound);
     }
 
     public override ValueTask<IResult> HandleAsync(GetWidgetRequest request, CancellationToken cancellationToken) =>

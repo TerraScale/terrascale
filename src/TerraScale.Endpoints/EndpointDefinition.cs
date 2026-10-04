@@ -11,7 +11,7 @@ public sealed class EndpointDefinition
     private readonly List<string> methods = [];
     private readonly List<string> tags = [];
     private readonly List<object> metadata = [];
-    private readonly List<(Type Type, int StatusCode, string ContentType)> responses = [];
+    private readonly List<(Type? Type, int StatusCode, string? ContentType)> responses = [];
     private string[]? acceptedContentTypes;
     private string[]? authorizationPolicies;
     private bool allowAnonymous;
@@ -155,6 +155,18 @@ public sealed class EndpointDefinition
         return this;
     }
 
+    /// <summary>Documents a response without a body, such as 404, in OpenAPI.</summary>
+    public EndpointDefinition Produces(int statusCode)
+    {
+        if (statusCode is < 100 or > 599)
+        {
+            throw new ArgumentOutOfRangeException(nameof(statusCode), "The response status code must be between 100 and 599.");
+        }
+
+        this.responses.Add((null, statusCode, null));
+        return this;
+    }
+
     /// <summary>Documents accepted request content in OpenAPI.</summary>
     public EndpointDefinition Accepts<TRequest>(params string[] contentTypes) =>
         this.Accepts(typeof(TRequest), contentTypes);
@@ -220,30 +232,9 @@ public sealed class EndpointDefinition
     {
         this.EnsureMappable();
 
-        // Object requests also bind from route and query values, so their JSON body is optional and
-        // routing must not answer 415 to a request that only carries route or query values. On
-        // body-less verbs every property is a parameter instead of a body.
-        var bodyless = this.methods.TrueForAll(static method => method is "GET" or "HEAD" or "DELETE" or "OPTIONS");
+        // Route and query parameters are described per operation by the OpenAPI transformer, which
+        // sees the final route (including any MapGroup prefix) and each HTTP method separately.
         var pattern = RoutePatternFactory.Parse(this.Route);
-        var parameters = new List<RequestParameter>();
-        foreach (var routeParameter in pattern.Parameters)
-        {
-            var property = requestProperties?.FirstOrDefault(
-                item => string.Equals(item.Name, routeParameter.Name, StringComparison.OrdinalIgnoreCase));
-            parameters.Add(new(routeParameter.Name, InPath: true, property?.PropertyType ?? typeof(string), Required: !routeParameter.IsOptional));
-        }
-
-        if (bodyless && requestProperties is not null)
-        {
-            requestType = null;
-            foreach (var property in requestProperties)
-            {
-                if (!parameters.Exists(parameter => string.Equals(parameter.Name, property.Name, StringComparison.OrdinalIgnoreCase)))
-                {
-                    parameters.Add(new(property.Name, InPath: false, property.PropertyType, property.IsRequired));
-                }
-            }
-        }
 
         // A RequestDelegate keeps mapping free of RequestDelegateFactory (reflection and runtime
         // code generation). The signature MethodInfo is what lets ApiExplorer and OpenAPI describe it.
@@ -264,10 +255,7 @@ public sealed class EndpointDefinition
             builder.WithDescription(this.Description);
         }
 
-        if (parameters.Count > 0)
-        {
-            builder.WithMetadata(new RequestParametersMetadata(parameters));
-        }
+        builder.WithMetadata(new RequestParametersMetadata(requestProperties ?? []));
 
         // Without tags OpenAPI would group the operation under the generic base class name.
         if (this.tags.Count > 0)
@@ -279,6 +267,8 @@ public sealed class EndpointDefinition
             builder.WithTags(literal.Content);
         }
 
+        // Object requests also bind from route and query values, so their JSON body is optional and
+        // routing must not answer 415 to a request that only carries route or query values.
         if (requestType is not null || this.acceptedContentTypes is not null)
         {
             builder.WithMetadata(new AcceptsMetadata(
@@ -296,7 +286,10 @@ public sealed class EndpointDefinition
 
         foreach (var response in this.responses)
         {
-            builder.WithMetadata(new ProducesResponseTypeMetadata(response.StatusCode, response.Type, [response.ContentType]));
+            builder.WithMetadata(new ProducesResponseTypeMetadata(
+                response.StatusCode,
+                response.Type ?? typeof(void),
+                response.ContentType is null ? null : [response.ContentType]));
         }
 
         if (this.allowAnonymous)
@@ -317,10 +310,8 @@ public sealed class EndpointDefinition
     }
 }
 
-/// <summary>Route and query parameters of an endpoint, added to its OpenAPI operation.</summary>
-internal sealed record RequestParametersMetadata(IReadOnlyList<RequestParameter> Parameters);
-
-internal sealed record RequestParameter(string Name, bool InPath, Type Type, bool Required);
+/// <summary>Marks a TerraScale endpoint and lists the request properties bindable from route and query values.</summary>
+internal sealed record RequestParametersMetadata(IReadOnlyList<JsonPropertyInfo> Properties);
 
 /// <summary>Marker request used by endpoints without a request body.</summary>
 public readonly record struct EmptyRequest;

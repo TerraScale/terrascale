@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Extensions.Validation;
+using Microsoft.Net.Http.Headers;
 
 namespace TerraScale.Endpoints;
 
@@ -173,44 +174,28 @@ internal sealed class RequestBinder<TRequest>
     {
         var options = this.typeInfo.Options;
         var nodeOptions = new JsonNodeOptions { PropertyNameCaseInsensitive = options.PropertyNameCaseInsensitive };
-        JsonObject json;
+        var json = hasJson ? await ReadObjectAsync(request, options, nodeOptions, cancellationToken).ConfigureAwait(false) : new JsonObject(nodeOptions);
+
         try
         {
-            // ponytail: assumes a UTF-8 body; ReadFromJsonAsync transcodes other charsets, this path does not.
-            json = !hasJson
-                ? new JsonObject(nodeOptions)
-                : await JsonNode.ParseAsync(
-                    request.Body,
-                    nodeOptions,
-                    new JsonDocumentOptions
-                    {
-                        AllowTrailingCommas = options.AllowTrailingCommas,
-                        CommentHandling = options.ReadCommentHandling,
-                        MaxDepth = options.MaxDepth,
-                    },
-                    cancellationToken).ConfigureAwait(false) switch
-                {
-                    JsonObject body => body,
-                    null => throw new BadHttpRequestException("A JSON request body is required.", StatusCodes.Status400BadRequest),
-                    _ => throw new BadHttpRequestException("The JSON request body must be an object.", StatusCodes.Status400BadRequest),
-                };
-        }
-        catch (JsonException exception)
-        {
-            throw new BadHttpRequestException("The JSON request body is invalid.", StatusCodes.Status400BadRequest, exception);
-        }
-
-        if (request.QueryString.HasValue)
-        {
-            foreach (var (key, values) in request.Query)
+            if (request.QueryString.HasValue)
             {
-                this.Set(json, key, values);
+                foreach (var (key, values) in request.Query)
+                {
+                    this.Set(json, key, values);
+                }
+            }
+
+            foreach (var (key, value) in request.RouteValues)
+            {
+                this.Set(json, key, value?.ToString());
             }
         }
-
-        foreach (var (key, value) in request.RouteValues)
+        catch (ArgumentException exception)
         {
-            this.Set(json, key, value?.ToString());
+            // JsonObject builds its property dictionary on the first write and rejects duplicate
+            // names (or names equal under case-insensitive matching) in the body at that point.
+            throw new BadHttpRequestException("The JSON request body contains duplicate properties.", StatusCodes.Status400BadRequest, exception);
         }
 
         try
@@ -227,6 +212,44 @@ internal sealed class RequestBinder<TRequest>
         }
     }
 
+    private static async ValueTask<JsonObject> ReadObjectAsync(
+        HttpRequest request,
+        JsonSerializerOptions options,
+        JsonNodeOptions nodeOptions,
+        CancellationToken cancellationToken)
+    {
+        // Like ReadFromJsonAsync, honor a non-UTF-8 charset by transcoding the body to UTF-8.
+        var encoding = MediaTypeHeaderValue.TryParse(request.ContentType, out var mediaType) ? mediaType.Encoding : null;
+        var transcoded = encoding is null || encoding.CodePage == Encoding.UTF8.CodePage
+            ? null
+            : Encoding.CreateTranscodingStream(request.Body, encoding, Encoding.UTF8, leaveOpen: true);
+        await using (transcoded)
+        {
+            var documentOptions = new JsonDocumentOptions
+            {
+                AllowTrailingCommas = options.AllowTrailingCommas,
+                CommentHandling = options.ReadCommentHandling,
+                MaxDepth = options.MaxDepth,
+            };
+            JsonNode? body;
+            try
+            {
+                body = await JsonNode.ParseAsync(transcoded ?? request.Body, nodeOptions, documentOptions, cancellationToken).ConfigureAwait(false);
+            }
+            catch (JsonException exception)
+            {
+                throw new BadHttpRequestException("The JSON request body is invalid.", StatusCodes.Status400BadRequest, exception);
+            }
+
+            return body switch
+            {
+                JsonObject value => value,
+                null => throw new BadHttpRequestException("A JSON request body is required.", StatusCodes.Status400BadRequest),
+                _ => throw new BadHttpRequestException("The JSON request body must be an object.", StatusCodes.Status400BadRequest),
+            };
+        }
+    }
+
     private void Set(JsonObject json, string key, StringValues values)
     {
         if (!this.properties!.TryGetValue(key, out var property))
@@ -234,39 +257,62 @@ internal sealed class RequestBinder<TRequest>
             return;
         }
 
+        // A property-level [JsonConverter] decides its own token shape, so it always gets the raw string.
+        var custom = property.CustomConverter is not null;
         var info = property.Options.GetTypeInfo(property.PropertyType);
         if (info.Kind == JsonTypeInfoKind.Enumerable && property.PropertyType != typeof(string))
         {
             var array = new JsonArray();
             foreach (var value in values)
             {
-                array.Add((JsonNode?)ToNode(value, info.ElementType!));
+                array.Add((JsonNode?)ToNode(value, info.ElementType!, custom));
             }
 
             json[property.Name] = array;
         }
         else
         {
-            json[property.Name] = ToNode(values.Count == 0 ? null : values[^1], property.PropertyType);
+            json[property.Name] = ToNode(values.Count == 0 ? null : values[^1], property.PropertyType, custom);
         }
     }
 
-    // Strings stay strings; anything else gets JSON number and boolean literals so the property's
-    // own converter does the parsing. Other text (guids, dates, enum names) stays a string.
-    private static JsonValue? ToNode(string? raw, Type type)
+    // Picks the JSON token the target type's built-in converter reads: numbers (and numeric enum
+    // values) as number literals, booleans as literals, any Guid format TryParse accepts (route
+    // constraints allow compact ones) re-written in the "D" format System.Text.Json expects.
+    // Everything else, including char, dates, enum names and custom converters, stays a string.
+    private static JsonValue? ToNode(string? raw, Type type, bool customConverter)
     {
         if (raw is null)
         {
             return null;
         }
 
-        if (type != typeof(string) && (raw is "true" or "false" || (raw.Length > 0 && (char.IsAsciiDigit(raw[0]) || raw[0] == '-'))))
+        if (customConverter)
+        {
+            return JsonValue.Create(raw);
+        }
+
+        var target = Nullable.GetUnderlyingType(type) ?? type;
+        if (target == typeof(bool) && bool.TryParse(raw, out var flag))
+        {
+            return JsonValue.Create(flag);
+        }
+
+        if (target == typeof(Guid) && Guid.TryParse(raw, out var guid))
+        {
+            return JsonValue.Create(guid);
+        }
+
+        // TypeCode SByte..Decimal covers every built-in number type and enums (by their underlying type).
+        if (Type.GetTypeCode(target) is >= TypeCode.SByte and <= TypeCode.Decimal
+            && raw.Length > 0
+            && (char.IsAsciiDigit(raw[0]) || raw[0] == '-'))
         {
             try
             {
-                if (JsonNode.Parse(raw) is JsonValue literal)
+                if (JsonNode.Parse(raw) is JsonValue { } number && number.GetValueKind() == JsonValueKind.Number)
                 {
-                    return literal;
+                    return number;
                 }
             }
             catch (JsonException)

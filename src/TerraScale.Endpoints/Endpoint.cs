@@ -59,11 +59,13 @@ public abstract class Endpoint<TRequest, TResponse> : EndpointBase
                 }
 
                 // Endpoints without a ValidateAsync override return the shared sentinel and stay synchronous.
+                // The binding was consumed through Result, so the continuation gets the bound value
+                // instead: a ValueTask backed by an IValueTaskSource may be awaited only once.
                 var request = binding.Result;
                 var rules = endpoint.ValidateAsync(request, cancellationToken);
                 return ReferenceEquals(rules, NoValidation)
                     ? EndpointJson.RespondAsync(context, endpoint.HandleAsync(request, cancellationToken), responseJson)
-                    : CompleteAsync(context, endpoint, binder, binding, rules, responseJson, cancellationToken);
+                    : CompleteAsync(context, endpoint, binder, new ValueTask<TRequest>(request), rules, responseJson, cancellationToken);
             },
             Signature,
             typeof(TRequest),
@@ -186,11 +188,13 @@ public abstract class Endpoint<TRequest> : EndpointBase
                 }
 
                 // Endpoints without a ValidateAsync override return the shared sentinel and stay synchronous.
+                // The binding was consumed through Result, so the continuation gets the bound value
+                // instead: a ValueTask backed by an IValueTaskSource may be awaited only once.
                 var request = binding.Result;
                 var rules = endpoint.ValidateAsync(request, cancellationToken);
                 return ReferenceEquals(rules, NoValidation)
                     ? EndpointSender.RespondAsync(context, endpoint.HandleAsync(request, cancellationToken), endpoint)
-                    : CompleteAsync(context, endpoint, binder, binding, rules, cancellationToken);
+                    : CompleteAsync(context, endpoint, binder, new ValueTask<TRequest>(request), rules, cancellationToken);
             },
             Signature,
             typeof(TRequest),

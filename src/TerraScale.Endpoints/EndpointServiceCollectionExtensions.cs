@@ -1,6 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.OpenApi;
+using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.OpenApi;
 
 namespace TerraScale.Endpoints;
@@ -157,27 +159,74 @@ public static class EndpointServiceCollectionExtensions
     }
 
     // ApiExplorer only sees parameters that RequestDelegateFactory describes, and endpoints map a
-    // plain RequestDelegate, so route and query parameters are added from endpoint metadata here.
+    // plain RequestDelegate, so route and query parameters are added here. The route comes from the
+    // final pattern (MapGroup prefixes included) and body-less methods get query parameters instead
+    // of a body, per operation, so an endpoint mapped to GET and POST is described correctly for both.
     private static async Task AddRequestParametersAsync(
         OpenApiOperation operation,
         OpenApiOperationTransformerContext context,
         CancellationToken cancellationToken)
     {
-        if (context.Description.ActionDescriptor.EndpointMetadata.OfType<RequestParametersMetadata>().FirstOrDefault() is not { } metadata)
+        var description = context.Description;
+        if (description.ActionDescriptor.EndpointMetadata.OfType<RequestParametersMetadata>().FirstOrDefault() is not { } metadata)
         {
             return;
         }
 
-        operation.Parameters ??= [];
-        foreach (var parameter in metadata.Parameters)
+        var properties = metadata.Properties;
+        var route = RoutePatternFactory.Parse("/" + description.RelativePath);
+        foreach (var routeParameter in route.Parameters)
         {
+            var type = Find(properties, routeParameter.Name)?.PropertyType ?? typeof(string);
+
+            // OpenAPI requires every path parameter to be required, even optional route segments.
+            await AddAsync(routeParameter.Name, ParameterLocation.Path, type, required: true).ConfigureAwait(false);
+        }
+
+        var method = description.HttpMethod ?? string.Empty;
+        var bodyless = HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsDelete(method) || HttpMethods.IsOptions(method);
+        if (properties.Count == 0 || !bodyless)
+        {
+            return;
+        }
+
+        operation.RequestBody = null;
+        foreach (var property in properties)
+        {
+            if (!route.Parameters.Any(parameter => string.Equals(parameter.Name, property.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                await AddAsync(property.Name, ParameterLocation.Query, property.PropertyType, property.IsRequired).ConfigureAwait(false);
+            }
+        }
+
+        async Task AddAsync(string name, ParameterLocation location, Type type, bool required)
+        {
+            operation.Parameters ??= [];
+            if (operation.Parameters.Any(parameter => parameter.In == location && string.Equals(parameter.Name, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
             operation.Parameters.Add(new OpenApiParameter
             {
-                Name = parameter.Name,
-                In = parameter.InPath ? ParameterLocation.Path : ParameterLocation.Query,
-                Required = parameter.Required,
-                Schema = await context.GetOrCreateSchemaAsync(parameter.Type, null, cancellationToken).ConfigureAwait(false),
+                Name = name,
+                In = location,
+                Required = required,
+                Schema = await context.GetOrCreateSchemaAsync(type, null, cancellationToken).ConfigureAwait(false),
             });
         }
+    }
+
+    private static JsonPropertyInfo? Find(IReadOnlyList<JsonPropertyInfo> properties, string name)
+    {
+        foreach (var property in properties)
+        {
+            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return property;
+            }
+        }
+
+        return null;
     }
 }

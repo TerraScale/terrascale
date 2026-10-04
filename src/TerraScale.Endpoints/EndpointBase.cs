@@ -45,6 +45,7 @@ public abstract class EndpointBase : IEndpoint
     protected EndpointDefinition Tags(params string[] tags) => this.Definition.WithTags(tags);
     protected EndpointDefinition Produces<T>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") =>
         this.Definition.Produces<T>(statusCode, contentType);
+    protected EndpointDefinition Produces(int statusCode) => this.Definition.Produces(statusCode);
     protected EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) => this.Definition.ProducesSse(statusCode);
     protected EndpointDefinition Accepts<T>(params string[] contentTypes) => this.Definition.Accepts<T>(contentTypes);
     protected EndpointDefinition AllowAnonymous() => this.Definition.AllowAnonymous();

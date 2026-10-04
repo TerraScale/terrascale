@@ -230,3 +230,199 @@ public sealed class RuleValidatedEndpoint(TakenNames names) : Endpoint<Validated
 
     public override ValueTask HandleAsync(ValidatedRequest request, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 }
+
+/// <summary>Regressions for review findings on PR #8.</summary>
+public sealed class BindingEdgeTests
+{
+    [Test]
+    public async Task CompactGuidsAndNumericCharsBindLikeMinimalApis()
+    {
+        await using var app = await StartAsync(mapInGroup: false);
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/guid-items/6f9619ff8b86d011b42d00c04fc964ff?initial=7"))
+            .IsEqualTo("""{"id":"6f9619ff-8b86-d011-b42d-00c04fc964ff","initial":"7"}""");
+    }
+
+    [Test]
+    public async Task MergedBodiesHonorTheCharset()
+    {
+        await using var app = await StartAsync(mapInGroup: false);
+        using var client = Client(app);
+        using var content = new StringContent("""{"name":"utf16"}""", Encoding.Unicode, "application/json");
+        using var response = await client.PutAsync("/items/7?page=2", content);
+        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("""{"id":7,"page":2,"name":"utf16","tags":[]}""");
+    }
+
+    [Test]
+    [Arguments("""{"name":"a","name":"b"}""")]
+    [Arguments("""{"name":"a","Name":"b"}""")]
+    public async Task DuplicateBodyPropertiesAreRejectedWhenMerging(string body)
+    {
+        await using var app = await StartAsync(mapInGroup: false);
+        using var client = Client(app);
+        using var response = await client.PutAsync("/items/7", new StringContent(body, Encoding.UTF8, "application/json"));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        await Assert.That(problem.RootElement.GetProperty("detail").GetString()).IsEqualTo("The JSON request body contains duplicate properties.");
+    }
+
+    [Test]
+    public async Task SingleUseBindingSourcesAreConsumedOnce()
+    {
+        await using var app = await StartAsync(mapInGroup: false);
+        using var client = Client(app);
+        using var valid = await client.PostAsync("/once", null);
+        await Assert.That(valid.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+    }
+
+    [Test]
+    public async Task GroupPrefixRouteValuesBind()
+    {
+        await using var app = await StartAsync(mapInGroup: true);
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/tenants/acme/items?page=2")).IsEqualTo("""{"tenantId":"acme","page":2}""");
+    }
+
+    [Test]
+    public async Task OpenApiUsesTheFinalRouteAndEachMethod()
+    {
+        await using var app = await StartAsync(mapInGroup: true);
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var paths = document.RootElement.GetProperty("paths");
+
+        var items = paths.GetProperty("/tenants/{tenantId}/items").GetProperty("get");
+        await Assert.That(Parameters(items)).IsEquivalentTo(["path:tenantId", "query:page"]);
+        await Assert.That(items.GetProperty("responses").TryGetProperty("404", out _)).IsTrue();
+
+        var mixed = paths.GetProperty("/tenants/{tenantId}/mixed");
+        await Assert.That(Parameters(mixed.GetProperty("get"))).IsEquivalentTo(["path:tenantId", "query:page"]);
+        await Assert.That(mixed.GetProperty("get").TryGetProperty("requestBody", out _)).IsFalse();
+        await Assert.That(Parameters(mixed.GetProperty("post"))).IsEquivalentTo(["path:tenantId"]);
+        await Assert.That(mixed.GetProperty("post").TryGetProperty("requestBody", out _)).IsTrue();
+
+        var optional = paths.GetProperty("/tenants/{tenantId}/optional/{id}").GetProperty("get").GetProperty("parameters");
+        await Assert.That(optional.EnumerateArray().All(parameter => parameter.GetProperty("in").GetString() != "path"
+            || parameter.GetProperty("required").GetBoolean())).IsTrue();
+    }
+
+    private static string[] Parameters(JsonElement operation) =>
+        operation.TryGetProperty("parameters", out var parameters)
+            ? [.. parameters.EnumerateArray().Select(item => $"{item.GetProperty("in").GetString()}:{item.GetProperty("name").GetString()}")]
+            : [];
+
+    private static async Task<WebApplication> StartAsync(bool mapInGroup)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(mapInGroup
+            ? [
+                EndpointRegistration.Create<TenantItemsEndpoint>(),
+                EndpointRegistration.Create<MixedItemsEndpoint>(),
+                EndpointRegistration.Create<OptionalItemEndpoint>()]
+            : [
+                EndpointRegistration.Create<GuidItemEndpoint>(),
+                EndpointRegistration.Create<PutItemEndpoint>(),
+                EndpointRegistration.Create<OnceBoundEndpoint>()]);
+        var app = builder.Build();
+        if (mapInGroup)
+        {
+            app.MapGroup("/tenants/{tenantId}").MapTerraScaleEndpoints();
+        }
+        else
+        {
+            app.MapTerraScaleEndpoints();
+        }
+
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+public sealed record GuidQuery(Guid Id, char Initial = 'a');
+
+public sealed class GuidItemEndpoint : Endpoint<GuidQuery, GuidQuery>
+{
+    public override void Configure() => Get("/guid-items/{id:guid}");
+
+    public override ValueTask<GuidQuery> HandleAsync(GuidQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+public sealed record TenantQuery(string TenantId, int Page = 1);
+
+public sealed class TenantItemsEndpoint : Endpoint<TenantQuery, TenantQuery>
+{
+    public override void Configure()
+    {
+        Get("/items");
+        Produces(StatusCodes.Status404NotFound);
+    }
+
+    public override ValueTask<TenantQuery> HandleAsync(TenantQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+public sealed class MixedItemsEndpoint : Endpoint<TenantQuery, TenantQuery>
+{
+    public override void Configure()
+    {
+        Verbs("GET", "POST");
+        Route("/mixed");
+    }
+
+    public override ValueTask<TenantQuery> HandleAsync(TenantQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+public sealed record OptionalQuery(int? Id);
+
+public sealed class OptionalItemEndpoint : Endpoint<OptionalQuery, OptionalQuery>
+{
+    public override void Configure() => Get("/optional/{id?}");
+
+    public override ValueTask<OptionalQuery> HandleAsync(OptionalQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
+}
+
+/// <summary>Binds through a single-use IValueTaskSource and has endpoint rules, the path that consumed the binding twice.</summary>
+public sealed class OnceBoundEndpoint : Endpoint<string>
+{
+    public override void Configure() => Post("/once");
+
+    protected override ValueTask<string> BindAsync(CancellationToken cancellationToken) => new(new SingleUseSource("bound"), 0);
+
+    protected override async IAsyncEnumerable<ValidationResult> ValidateAsync(
+        string request,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await Task.Yield();
+        yield break;
+    }
+
+    public override ValueTask HandleAsync(string request, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+
+    private sealed class SingleUseSource(string value) : System.Threading.Tasks.Sources.IValueTaskSource<string>
+    {
+        private bool consumed;
+
+        public string GetResult(short token)
+        {
+            if (this.consumed)
+            {
+                throw new InvalidOperationException("The binding was consumed twice.");
+            }
+
+            this.consumed = true;
+            return value;
+        }
+
+        public System.Threading.Tasks.Sources.ValueTaskSourceStatus GetStatus(short token) =>
+            System.Threading.Tasks.Sources.ValueTaskSourceStatus.Succeeded;
+
+        public void OnCompleted(
+            Action<object?> continuation,
+            object? state,
+            short token,
+            System.Threading.Tasks.Sources.ValueTaskSourceOnCompletedFlags flags) => continuation(state);
+    }
+}
