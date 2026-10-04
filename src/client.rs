@@ -448,14 +448,26 @@ impl TerraScaleClient {
         self.shared.native_router.clone()
     }
     #[must_use]
+    #[deprecated(
+        since = "0.2.0",
+        note = "the UUID/shard native routes are being removed; use terrascale::v1"
+    )]
     pub fn documents(&self) -> DocumentsClient {
         DocumentsClient::new(self.shared.clone())
     }
     #[must_use]
+    #[deprecated(
+        since = "0.2.0",
+        note = "the UUID/shard native routes are being removed; use terrascale::v1"
+    )]
     pub fn transactions(&self) -> TransactionsClient {
         TransactionsClient::new(self.shared.clone())
     }
     #[must_use]
+    #[deprecated(
+        since = "0.2.0",
+        note = "the UUID/shard native routes are being removed; use terrascale::v1"
+    )]
     pub fn subscriptions(&self) -> SubscriptionsClient {
         SubscriptionsClient::new(self.shared.clone())
     }

@@ -1,3 +1,4 @@
+#![allow(deprecated)] // Exercises the native API kept until v1 replaces it.
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

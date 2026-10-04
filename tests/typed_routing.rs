@@ -1,3 +1,4 @@
+#![allow(deprecated)] // Exercises the native API kept until v1 replaces it.
 use async_trait::async_trait;
 use serde_json::json;
 use std::{

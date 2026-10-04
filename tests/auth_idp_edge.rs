@@ -3,6 +3,8 @@
 //! retry/cancellation (D), pagination (E), webhook verification (F), and
 //! configuration (G). Matrix ids appear in the test names.
 
+#![allow(deprecated)] // Exercises the native API kept until v1 replaces it.
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
