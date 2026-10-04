@@ -67,31 +67,10 @@ for (const url of [
   'https://dash.terrascale.tech/register',
   'https://dash.terrascale.tech/login',
   'https://status.terrascale.tech',
-  'https://docs.terrascale.tech/legal/security/',
-  'https://docs.terrascale.tech/legal/terms/',
-  'https://docs.terrascale.tech/legal/terms/#acceptable-use',
-  'https://docs.terrascale.tech/legal/privacy/',
-  'https://docs.terrascale.tech/legal/dpa/',
-  'https://docs.terrascale.tech/legal/support/',
   'https://docs.terrascale.tech',
   'https://docs.terrascale.tech/changelog/',
 ]) {
   if (!site.includes(url)) failures.push(`site.ts: missing customer link ${url}`)
-}
-
-const expectedPolicyLinks = [
-  ['terms', 'https://docs.terrascale.tech/legal/terms/'],
-  ['privacy', 'https://docs.terrascale.tech/legal/privacy/'],
-  ['acceptableUse', 'https://docs.terrascale.tech/legal/terms/#acceptable-use'],
-  ['dataProcessingTerms', 'https://docs.terrascale.tech/legal/dpa/'],
-]
-const registrationPolicyBlock = site.match(/export const registrationPolicyLinks = \[([\s\S]*?)\] as const/)?.[1] ?? ''
-const actualPolicyLinks = [...registrationPolicyBlock.matchAll(/\{\s*key:\s*'([^']+)'\s*,\s*href:\s*'([^']+)'\s*\}/g)].map(([, key, href]) => [key, href])
-if (actualPolicyLinks.length !== expectedPolicyLinks.length || actualPolicyLinks.some(([key, href], index) => key !== expectedPolicyLinks[index][0] || href !== expectedPolicyLinks[index][1])) {
-  failures.push('site.ts: registration policy links must use the expected key-to-URL mapping.')
-}
-if (new Set(actualPolicyLinks.map(([, href]) => href)).size !== actualPolicyLinks.length) {
-  failures.push('site.ts: policy links must point to distinct canonical destinations.')
 }
 
 export function validateProductFooterLinks(siteSource) {

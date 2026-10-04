@@ -4,7 +4,7 @@ export const es: Messages = {
   meta: {
     title: 'TerraScale Public Alpha | Base de Documentos Regional',
     description:
-      'TerraScale Public Alpha ofrece una base de documentos tipada con replicación asíncrona en São Paulo, San Francisco y Falkenstein.',
+      'TerraScale Public Alpha ofrece una base de documentos tipada con replicación asíncrona en São Paulo, San Jose y Frankfurt.',
   },
 
   chrome: {
@@ -20,7 +20,7 @@ export const es: Messages = {
     status: 'Estado',
     login: 'Iniciar sesión',
     getStarted: 'Empezar',
-    prelaunch: 'Public Alpha el 7 de septiembre',
+    prelaunch: 'Public Alpha',
     toggleNav: 'Abrir menú de navegación',
     language: {
       trigger: 'Idioma',
@@ -58,18 +58,6 @@ export const es: Messages = {
           apiReference: 'Referencia de la API',
           status: 'Estado',
           community: 'Comunidad',
-          security: 'Seguridad',
-          support: 'Soporte',
-        },
-      },
-      legal: {
-        title: 'Legal',
-        links: {
-          terms: 'Términos',
-          privacy: 'Privacidad',
-          acceptableUse: 'Uso aceptable',
-          dataProcessingTerms: 'Términos de tratamiento de datos',
-          support: 'Soporte',
         },
       },
     },
@@ -87,9 +75,9 @@ export const es: Messages = {
     headlineLead: 'TerraScale',
     headlineAccent: 'Public Alpha',
     subtitle:
-      'Una base de documentos tipada con replicación asíncrona en São Paulo, San Francisco y Falkenstein. El endpoint global dirige a la región seleccionada saludable más cercana. Public Alpha no tiene porcentaje de disponibilidad ni SLA.',
+      'Una base de documentos tipada con replicación asíncrona en São Paulo, San Jose y Frankfurt. El endpoint global dirige a la región seleccionada saludable más cercana. Public Alpha no tiene porcentaje de disponibilidad ni SLA.',
     ctaPrimary: 'Registrarse en Public Alpha',
-    ctaPrelaunch: 'Public Alpha abre el 7 de septiembre',
+    ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Ver documentación',
     highlightsAria: 'Capacidades principales',
     highlights: ['Enrutamiento por región seleccionada', 'Replicación asíncrona', 'SDK tipados'],
@@ -114,7 +102,7 @@ export const es: Messages = {
       },
       {
         title: 'Regiones de lanzamiento',
-        text: 'Elige São Paulo, San Francisco o Falkenstein durante Public Alpha.',
+        text: 'Elige São Paulo, San Jose o Frankfurt durante Public Alpha.',
         bullets: ['sfo', 'fra', 'gru'],
       },
       {
@@ -147,11 +135,10 @@ export const es: Messages = {
     headlineAccent: 'TerraScale Public Alpha.',
     text: 'Starter y Pro ofrecen una prueba elegible de 30 días por método de pago verificado y organización.',
     ctaPrimary: 'Registrarse en Public Alpha',
-    ctaPrelaunch: 'Public Alpha abre el 7 de septiembre',
+    ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Hablar con ventas',
     perksAria: 'Detalles de planes',
     perks: ['Planes pagados mensuales', 'Sin excedentes pagados'],
-    policyLead: 'Revisa antes de verificar el pago:',
   },
 
   pricing: {
@@ -297,7 +284,7 @@ export const es: Messages = {
     titleLead: 'Infraestructura de base de datos',
     titleAccent: 'distribuida globalmente.',
     subtitle:
-      'TerraScale Public Alpha ofrece una base de documentos en São Paulo, San Francisco y Falkenstein con replicación asíncrona.',
+      'TerraScale Public Alpha ofrece una base de documentos en São Paulo, San Jose y Frankfurt con replicación asíncrona.',
     ctaPricing: 'Ver precios',
     ctaContact: 'Habla con nosotros',
     missionEyebrow: 'Misión',
@@ -322,7 +309,7 @@ export const es: Messages = {
     bandTitle: 'Precios regionales planos, medidos por el uso real.',
     bandText:
       'El almacenamiento suma los bytes en cada región seleccionada. Distancia de red estimada, latencia medida de API y salud de replicación siguen separadas.',
-    regions: ['São Paulo', 'San Francisco', 'Falkenstein'],
+    regions: ['São Paulo', 'San Jose', 'Frankfurt'],
   },
 
   notFound: {

@@ -16,10 +16,10 @@ export type Region = {
 
 export const REGIONS: readonly Region[] = [
   {
-    "id": "san-francisco",
-    "city": "San Francisco",
-    "lat": 37.77,
-    "lng": -122.42,
+    "id": "san-jose",
+    "city": "San Jose",
+    "lat": 37.34,
+    "lng": -121.89,
     "x": 16,
     "y": 21.650635094610966
   },
@@ -32,11 +32,11 @@ export const REGIONS: readonly Region[] = [
     "y": 45.033320996790806
   },
   {
-    "id": "falkenstein",
-    "city": "Falkenstein",
-    "lat": 50.48,
-    "lng": 12.37,
-    "x": 63.5,
+    "id": "frankfurt",
+    "city": "Frankfurt",
+    "lat": 50.11,
+    "lng": 8.68,
+    "x": 62.5,
     "y": 15.588457268119894
   }
 ] as const

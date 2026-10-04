@@ -12,7 +12,7 @@ export const claimInventory = [
   {
     id: 'regions',
     source: 'https://docs.terrascale.tech/guides/public-alpha-data-contract/',
-    patterns: [/São Paulo/, /San Francisco/, /Falkenstein/],
+    patterns: [/São Paulo/, /San Jose/, /Frankfurt/],
   },
   {
     id: 'routing',
@@ -47,7 +47,7 @@ export const prohibitedClaims = [
   { id: 'unverified-customer-count', pattern: /\b(?:thousands of|miles de|milhares de)\b/i, reason: 'Unverified customer-count claims are prohibited.' },
   { id: 'unsupported-availability', pattern: /(?:\b99[.,]9+\s*%|\b(?:uptime|availability|disponibilidad|disponibilidade|tiempo de actividad|tempo de atividade|SLA)\s+(?:guarantee|guaranteed|SLA|garantía|garantizado|garantizada|garantia|garantido|garantida)\b|\b(?:guaranteed|garantizado|garantizada|garantido|garantida)\s+(?:uptime|availability|disponibilidad|disponibilidade|tiempo de actividad|tempo de atividade)\b|\bsupport SLA\b|\bSLA de soporte\b|\bSLA de suporte\b)/i, reason: 'Unapproved availability or support SLA claims are prohibited.' },
   { id: 'retired-dashboard-path', pattern: /dash\.terrascale\.tech\/(?:signup|usage)\b/i, reason: 'Use the canonical dashboard registration URL.' },
-  { id: 'unsupported-region', pattern: /\b(?:Frankfurt|Guarulhos)\b/i, reason: 'Use the Public Alpha launch regions.' },
+  { id: 'unsupported-region', pattern: /\b(?:Falkenstein|San Francisco|Guarulhos)\b/i, reason: 'Use the Public Alpha launch region names: São Paulo, San Jose, and Frankfurt.' },
   { id: 'deferred-provider', pattern: /\b(?:Stripe|NATS JetStream)\b/i, reason: 'Do not advertise deferred products or providers.' },
   { id: 'deferred-queue-product', pattern: /\b(?:queue|queued|colas?|filas?|enfileir(?:ada|ado|ar))\b/i, reason: 'Do not advertise deferred queue products.' },
   { id: 'unsupported-consistency-or-latency', pattern: /\b(?<!sin promesa de )(?<!sem promessa de )(?:zero[- ]latency|latencia cero|latência zero|instant replication|replicaci[oó]n instant[aá]nea|replica[cç][aã]o instant[aâ]nea|bounded lag|lag acotado|retraso acotado|atraso limitado|majority writes?|quorum writes?|escrituras? de mayor[ií]a|escritas majorit[aá]rias|escrituras? de qu[oó]rum|escritas? de qu[oó]rum|serve from any region|serves? from any region|sirve? desde cualquier regi[oó]n|servir de cualquier regi[oó]n|atender de qualquer regi[aã]o)\b/i, reason: 'Unsupported consistency or latency claims are prohibited.' },
@@ -59,6 +59,7 @@ export const prohibitedClaims = [
   { id: 'deferred-queue-product-localized', pattern: /\b(?:filas?|fila)\b/i, reason: 'Do not advertise deferred queue products.' },
   { id: 'positive-paid-overages', pattern: /\b(?:(?:paid\s+overages?|overages?)\s+(?:are|remain|supported|available|included|offered)|excedentes?\s+(?:pagados?|pagos?)\s+(?:est[aá]\s+)?(?:disponibles?|dispon[ií]ve(?:l|is)))\b/i, reason: 'Paid overages are not available during Public Alpha.' },
   { id: 'positive-enterprise-availability', pattern: /\bEnterprise\b[\s:;,–—-]*(?:(?:is|remains|est[aá])\s+)?(?:available|disponibles?|dispon[ií]ve(?:l|is))\b/i, reason: 'Enterprise is not available during Public Alpha.' },
+  { id: 'draft-legal-link', pattern: /docs\.terrascale\.tech\/legal\//i, reason: 'Legal policies are unpublished drafts; do not link them until they are approved.' },
   { id: 'unpublished-terms-route', pattern: /href=["']\/terms["']/i, reason: 'The terms route must remain unpublished until approved.' },
 ]
 
@@ -108,6 +109,30 @@ const canonicalizeTermsHref = (value) => {
     return null
   }
   return pathname === '/terms' || pathname === '/terms/' ? url : null
+}
+
+// Guards authored content against accidental links to the unpublished legal
+// drafts: a substring check plus parsed, normalized href destinations.
+// Deliberate obfuscation by repository authors is out of scope.
+const draftLegalHost = 'docs.terrascale.tech'
+
+const canonicalizeDraftLegalHref = (value) => {
+  const decoded = normalizeClaimText(value).trim()
+  let url
+  try {
+    url = new URL(decoded, `${canonicalSiteOrigin}/`)
+  } catch {
+    return null
+  }
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, '')
+  if (hostname !== draftLegalHost) return null
+  let pathname
+  try {
+    pathname = normalizeRoutePath(url.pathname).toLowerCase()
+  } catch {
+    return null
+  }
+  return pathname === '/legal' || pathname.startsWith('/legal/') ? url : null
 }
 
 const sourceStartTags = (html) => {
@@ -273,6 +298,10 @@ const findRenderedClaimMatch = (rendered, claim) => {
     if (href) return [`href="${href}"`]
     return null
   }
+  if (claim.id === 'draft-legal-link') {
+    const href = rendered.hrefs.find((value) => canonicalizeDraftLegalHref(value))
+    if (href) return [`href="${href}"`]
+  }
   const values = [
     [rendered.raw, false],
     [rendered.text, true],
@@ -291,6 +320,10 @@ const findClaimMatch = (corpus, claim) => {
   if (claim.id === 'unpublished-terms-route') {
     const href = sourceHrefValues(corpus).find((value) => canonicalizeTermsHref(value))
     return href ? [`href="${href}"`] : null
+  }
+  if (claim.id === 'draft-legal-link') {
+    const href = sourceHrefValues(corpus).find((value) => canonicalizeDraftLegalHref(value))
+    if (href) return [`href="${href}"`]
   }
   return normalizeClaimText(corpus).match(claim.pattern)
 }

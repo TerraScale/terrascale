@@ -4,7 +4,7 @@ export const ptBr: Messages = {
   meta: {
     title: 'TerraScale Public Alpha | Banco de Documentos Regional',
     description:
-      'O TerraScale Public Alpha oferece um banco de documentos tipado com replicação assíncrona em São Paulo, San Francisco e Falkenstein.',
+      'O TerraScale Public Alpha oferece um banco de documentos tipado com replicação assíncrona em São Paulo, San Jose e Frankfurt.',
   },
 
   chrome: {
@@ -20,7 +20,7 @@ export const ptBr: Messages = {
     status: 'Status',
     login: 'Entrar',
     getStarted: 'Começar',
-    prelaunch: 'Public Alpha em 7 de setembro',
+    prelaunch: 'Public Alpha',
     toggleNav: 'Abrir menu de navegação',
     language: {
       trigger: 'Idioma',
@@ -58,18 +58,6 @@ export const ptBr: Messages = {
           apiReference: 'Referência da API',
           status: 'Status',
           community: 'Comunidade',
-          security: 'Segurança',
-          support: 'Suporte',
-        },
-      },
-      legal: {
-        title: 'Jurídico',
-        links: {
-          terms: 'Termos',
-          privacy: 'Privacidade',
-          acceptableUse: 'Uso aceitável',
-          dataProcessingTerms: 'Termos de tratamento de dados',
-          support: 'Suporte',
         },
       },
     },
@@ -87,9 +75,9 @@ export const ptBr: Messages = {
     headlineLead: 'TerraScale',
     headlineAccent: 'Public Alpha',
     subtitle:
-      'Um banco de documentos tipado com replicação assíncrona em São Paulo, San Francisco e Falkenstein. O endpoint global encaminha para a região selecionada saudável mais próxima. O Public Alpha não tem percentual de disponibilidade nem SLA.',
+      'Um banco de documentos tipado com replicação assíncrona em São Paulo, San Jose e Frankfurt. O endpoint global encaminha para a região selecionada saudável mais próxima. O Public Alpha não tem percentual de disponibilidade nem SLA.',
     ctaPrimary: 'Cadastre-se no Public Alpha',
-    ctaPrelaunch: 'Public Alpha abre em 7 de setembro',
+    ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Ver documentação',
     highlightsAria: 'Principais recursos',
     highlights: ['Roteamento por região selecionada', 'Replicação assíncrona', 'SDKs tipados'],
@@ -114,7 +102,7 @@ export const ptBr: Messages = {
       },
       {
         title: 'Regiões de lançamento',
-        text: 'Escolha São Paulo, San Francisco ou Falkenstein durante o Public Alpha.',
+        text: 'Escolha São Paulo, San Jose ou Frankfurt durante o Public Alpha.',
         bullets: ['sfo', 'fra', 'gru'],
       },
       {
@@ -147,11 +135,10 @@ export const ptBr: Messages = {
     headlineAccent: 'TerraScale Public Alpha.',
     text: 'Starter e Pro oferecem um teste elegível de 30 dias por método de pagamento verificado e organização.',
     ctaPrimary: 'Cadastre-se no Public Alpha',
-    ctaPrelaunch: 'Public Alpha abre em 7 de setembro',
+    ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Fale com vendas',
     perksAria: 'Detalhes dos planos',
     perks: ['Planos pagos mensais', 'Sem excedentes pagos'],
-    policyLead: 'Revise antes da verificação do pagamento:',
   },
 
   pricing: {
@@ -297,7 +284,7 @@ export const ptBr: Messages = {
     titleLead: 'Globalmente distribuída,',
     titleAccent: 'infraestrutura de banco de dados.',
     subtitle:
-      'O TerraScale Public Alpha oferece um banco de documentos em São Paulo, San Francisco e Falkenstein com replicação assíncrona.',
+      'O TerraScale Public Alpha oferece um banco de documentos em São Paulo, San Jose e Frankfurt com replicação assíncrona.',
     ctaPricing: 'Ver preços',
     ctaContact: 'Fale conosco',
     missionEyebrow: 'Missão',
@@ -322,7 +309,7 @@ export const ptBr: Messages = {
     bandTitle: 'Preços regionais fixos, medidos pelo uso real.',
     bandText:
       'O armazenamento soma os bytes em cada região selecionada. Distância de rede estimada, latência medida da API e saúde da replicação continuam separadas.',
-    regions: ['São Paulo', 'San Francisco', 'Falkenstein'],
+    regions: ['São Paulo', 'San Jose', 'Frankfurt'],
   },
 
   notFound: {

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { page } from '$app/stores'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
   import LanguageSelector from '@/components/LanguageSelector.svelte'
@@ -14,12 +13,10 @@
   $: columns = footerColumns.map((column) => ({
     column,
     title: $dict.footer.columns[column.key].title,
-    links: column.links
-      .filter((link) => !(link.key === 'acceptableUse' && $page.url.pathname === '/'))
-      .map((link) => ({
-        link,
-        name: ($dict.footer.columns[column.key].links as Record<string, string>)[link.key] ?? link.key,
-      })),
+    links: column.links.map((link) => ({
+      link,
+      name: ($dict.footer.columns[column.key].links as Record<string, string>)[link.key] ?? link.key,
+    })),
   }))
   $: socials = socialLinks.map((social) => ({
     social,
@@ -109,7 +106,7 @@
 
   .ts-footer__grid {
     display: grid;
-    grid-template-columns: 1.6fr repeat(4, 1fr);
+    grid-template-columns: 1.6fr repeat(3, 1fr);
     gap: 32px;
     margin-bottom: 28px;
   }
