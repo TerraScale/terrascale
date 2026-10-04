@@ -23,17 +23,12 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
-  # Keep in sync with fast.yml.
-  TS_LIBS_REV: 14674be372abd4809392343084f2de9238aff919
 
 jobs:
   slow:
     name: slow
     runs-on: terrascale-builder
     timeout-minutes: 90
-    permissions:
-      contents: read
-      issues: write
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -42,11 +37,6 @@ jobs:
           ref: ${{ forgejo.sha }}
           fetch-depth: 1
           persist-credentials: false
-
-      - name: Check out the pinned ts-libs revision
-        env:
-          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
-        run: bash scripts/ci/checkout-deps.sh
 
       - name: Use the persistent NuGet cache
         run: bash scripts/ci/nuget-cache.sh

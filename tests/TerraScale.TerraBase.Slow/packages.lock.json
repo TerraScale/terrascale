@@ -533,16 +533,9 @@
           "OpenTelemetry.Instrumentation.AspNetCore": "[1.15.2, )",
           "OpenTelemetry.Instrumentation.Runtime": "[1.15.1, )",
           "Scalar.AspNetCore": "[2.17.13, )",
-          "TerraScale.Endpoints": "[3.0.0-rc.1, )",
+          "TerraScale.Endpoints": "[3.0.23-rc.1, )",
           "Ulid": "[1.4.1, )",
           "ZString": "[2.6.0, )"
-        }
-      },
-      "terrascale.endpoints": {
-        "type": "Project",
-        "dependencies": {
-          "Microsoft.AspNetCore.OpenApi": "[11.0.0-rc.1.26425.128, )",
-          "Scalar.AspNetCore": "[2.17.13, )"
         }
       },
       "Google.Protobuf": {
@@ -761,6 +754,16 @@
         "requested": "[2.17.13, )",
         "resolved": "2.17.13",
         "contentHash": "+R0eJtJIIHW9owY61rIOgR2lywjZnjqUPAM7ll+lZYML7mZ4LxokG6wpAmkuyaLS1Ml4fI4kdAC2U6KkdrDDiA=="
+      },
+      "TerraScale.Endpoints": {
+        "type": "CentralTransitive",
+        "requested": "[3.0.23-rc.1, )",
+        "resolved": "3.0.23-rc.1",
+        "contentHash": "Ls3OzKFAKGeUBhi5q52mQsCC9FJBosPW0ZSy8tK9WItR6PnQQbenTfs1EYxzIA9d3VuCRFzsCTWeXUy+9acYeA==",
+        "dependencies": {
+          "Microsoft.AspNetCore.OpenApi": "11.0.0-rc.1.26425.128",
+          "Scalar.AspNetCore": "2.17.13"
+        }
       },
       "Ulid": {
         "type": "CentralTransitive",

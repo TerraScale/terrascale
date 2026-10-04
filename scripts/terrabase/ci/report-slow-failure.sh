@@ -17,7 +17,6 @@ export LC_ALL=C
 test "$#" -eq 1 || { echo "usage: $0 <slow-suite-log>" >&2; exit 2; }
 log=$1
 : "${GITHUB_SERVER_URL:?}" "${GITHUB_REPOSITORY:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_SHA:?}"
-: "${TS_LIBS_REV:=unknown}"
 title="Slow test suite failed"
 host=${GITHUB_SERVER_URL#https://}
 run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/${GITHUB_RUN_NUMBER:-$GITHUB_RUN_ID}"
@@ -60,9 +59,7 @@ fi
   echo "### Reproduce"
   echo '```sh'
   echo "git checkout $GITHUB_SHA"
-  echo "# ts-libs revision from .forgejo/workflows/slow.yml (TS_LIBS_REV), checked out as <dir>/ts-libs:"
-  echo "git -C <dir>/ts-libs checkout $TS_LIBS_REV"
-  echo "TerraScaleRoot=<dir> nice -n 19 make test-slow CONFIGURATION=Release"
+  echo "nice -n 19 make test-slow CONFIGURATION=Release"
   echo '```'
   echo
   echo "### Failing tests"

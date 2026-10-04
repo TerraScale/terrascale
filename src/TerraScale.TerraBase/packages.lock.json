@@ -127,6 +127,16 @@
         "resolved": "2.17.13",
         "contentHash": "+R0eJtJIIHW9owY61rIOgR2lywjZnjqUPAM7ll+lZYML7mZ4LxokG6wpAmkuyaLS1Ml4fI4kdAC2U6KkdrDDiA=="
       },
+      "TerraScale.Endpoints": {
+        "type": "Direct",
+        "requested": "[3.0.23-rc.1, )",
+        "resolved": "3.0.23-rc.1",
+        "contentHash": "Ls3OzKFAKGeUBhi5q52mQsCC9FJBosPW0ZSy8tK9WItR6PnQQbenTfs1EYxzIA9d3VuCRFzsCTWeXUy+9acYeA==",
+        "dependencies": {
+          "Microsoft.AspNetCore.OpenApi": "11.0.0-rc.1.26425.128",
+          "Scalar.AspNetCore": "2.17.13"
+        }
+      },
       "Ulid": {
         "type": "Direct",
         "requested": "[1.4.1, )",
@@ -410,13 +420,6 @@
         "contentHash": "um8YSWduhhuskTG2bHfZrBqMNQOydfU8pcseT+cu5RivOGyoUbCrGXxgoRNTmRYw2VbMWnEZVVFcneZT/5dsBg==",
         "dependencies": {
           "SQLitePCLRaw.core": "3.0.5"
-        }
-      },
-      "terrascale.endpoints": {
-        "type": "Project",
-        "dependencies": {
-          "Microsoft.AspNetCore.OpenApi": "[11.0.0-rc.1.26425.128, )",
-          "Scalar.AspNetCore": "[2.17.13, )"
         }
       }
     },

@@ -2,16 +2,11 @@
   <!-- Imported after every project file, so these rules can key on properties the
        projects set (UseTerraScaleEndpoints, IsTestProject). -->
 
-  <!-- TerraScale.Endpoints from ../ts-libs: opt in with <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>. -->
+  <!-- TerraScale.Endpoints, the ts-libs package (its analyzer does the compile-time endpoint
+       registration): opt in with <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>. -->
   <ItemGroup Condition="'$(UseTerraScaleEndpoints)' == 'true'">
-    <ProjectReference Include="$(TsLibsRoot)/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
-    <!-- Compile-time endpoint registration; the NuGet package ships this analyzer. -->
-    <ProjectReference Include="$(TsLibsRoot)/src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <PackageReference Include="TerraScale.Endpoints" />
   </ItemGroup>
-
-  <Target Name="EnsureTsLibs" BeforeTargets="CollectPackageReferences;BeforeBuild" Condition="'$(UseTerraScaleEndpoints)' == 'true' and !Exists('$(TsLibsRoot)/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj')">
-    <Error Text="ts-libs not found at '$(TsLibsRoot)'. Clone it next to terrabase or pass -p:TerraScaleRoot=&lt;dir containing ts-libs&gt;." />
-  </Target>
 
   <!-- Newtonsoft.Json is not allowed: System.Text.Json (source-generated) only.
        BannedSymbols.txt blocks its APIs in code; this blocks every Newtonsoft

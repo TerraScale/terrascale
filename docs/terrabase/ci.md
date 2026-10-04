@@ -4,18 +4,25 @@ Forgejo Actions on the `terrascale-builder` runner (ts-builder image, .NET SDK 1
 
 | Workflow | When | Jobs | Blocks merges/releases |
 | --- | --- | --- | --- |
-| `fast.yml` | push to `main`, pull requests, manual | `fast` and `release` in parallel, then `publish` (main only) | yes |
+| `fast.yml` | push to `main` or of a `v*` tag, pull requests, manual | `fast` and `release` in parallel, then `publish` (pushes only) | yes |
 | `slow.yml` | push to `main` (beside `fast.yml`), nightly 03:17 UTC, manual | `slow` | never |
 
 - **fast**: `make restore` (locked mode), `make fmt-check`, `make build CONFIGURATION=Release`,
   `make test-fast CONFIGURATION=Release`.
 - **release**: `scripts/ci/stage-release.sh` runs `make publish`, then smoke-runs the staged
   bytes: `/healthz` must report the csproj version, and an unknown setting must exit with 2.
-  On main pushes, `scripts/ci/retain-release.sh` uploads `terrabase-linux-amd64` to the
-  prerelease `ci-<sha>-run-<run id>` and reads it back.
-- **publish**: runs only after `fast` and `release` both pass. Reads the retained bytes back
-  against the release job's manifest and uploads `qualification.json`. A release without
-  `qualification.json` is incomplete and must not be deployed.
+  On a push to `main` or of a `v*` tag, `scripts/ci/release.sh draft` attaches those bytes
+  (`terrabase-linux-amd64` and `terrabase-linux-amd64.sha256`) to a draft release:
+  - `main`: prerelease `ci-<sha>-run-<run id>`;
+  - tag `v<Version>`: release `<tag>` with notes generated from the first-parent history since
+    the previous `v*` tag. The tag must match `<Version>` in the csproj and point at a commit on
+    `main`; a semantic-version prerelease tag (`v1.2.0-rc.1`) stays a prerelease.
+- **publish**: runs only after `fast` and `release` both pass, and publishes that draft
+  (`scripts/ci/release.sh publish`). A draft is visible only to repository writers and
+  Forgejo creates its missing tag only on publish, so a release that failed a gate never
+  appears. A rerun replaces a leftover draft; a published release is never replaced.
+  `scripts/ci/check-release.sh` proves this on every run first: it drives `release.sh` against
+  a fake release API in a scratch repository.
 - **slow**: `scripts/ci/check-reporter.sh` first proves that the failure reporter redacts and
   stays within its memory bound, then `make test-slow CONFIGURATION=Release` runs. A failure opens the issue "Slow test suite
   failed", or comments on it if it is already open (`scripts/ci/report-slow-failure.sh`).
@@ -25,7 +32,7 @@ Branch protection on `main` should require `Fast integration / fast` and
 
 ## Speed
 
-- `fast` and `release` run in parallel; `publish` only promotes bytes and never rebuilds.
+- `fast` and `release` run in parallel; `publish` only publishes the draft and never rebuilds.
 - NuGet downloads (`.nupkg`) persist in `/cache/nuget/terrabase/http-cache` on the runner.
   Each job extracts them into its own fresh packages folder, and locked restore checks every
   `.nupkg` against `packages.lock.json` (NU1403). A pull request therefore cannot plant files that a
@@ -34,6 +41,7 @@ Branch protection on `main` should require `Fast integration / fast` and
 
 ## Requirements
 
-- Secret `ORG_READ_TOKEN`: read access to the private `TerraScale/ts-libs`, checked out at
-  `TS_LIBS_REV`, and to this repository's release attachments for the read-back checks.
-- `TS_LIBS_REV` in both workflows pins `ts-libs`; bump them together.
+- No secrets. `TerraScale.Endpoints` (ts-libs) restores as a package from the TerraScale
+  Forgejo registry, which serves it without credentials; bump it in `Directory.Packages.props`.
+- Releases use the job token (`forgejo.token`), which can write releases on pushes only; pull
+  requests get a read-only job token.

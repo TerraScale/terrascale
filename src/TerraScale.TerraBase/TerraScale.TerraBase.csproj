@@ -11,7 +11,7 @@
     <PublishDocumentationFile>false</PublishDocumentationFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <UserSecretsId />
-    <!-- HTTP endpoints, OpenAPI and Scalar from ../ts-libs (Directory.Build.targets). -->
+    <!-- HTTP endpoints, OpenAPI and Scalar from the ts-libs TerraScale.Endpoints package (Directory.Build.targets). -->
     <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>
   </PropertyGroup>
 
