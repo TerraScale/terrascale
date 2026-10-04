@@ -1648,3 +1648,66 @@ public sealed class ReadOnlyIdsEndpoint : Endpoint<ReadOnlyIdsQuery, string>
 
     public override ValueTask<string> HandleAsync(ReadOnlyIdsQuery request, CancellationToken cancellationToken) => ValueTask.FromResult("read-only");
 }
+
+/// <summary>Regressions for the thirteenth ts-reviewer pass on PR #8.</summary>
+public sealed class ThirteenthPassBindingTests
+{
+    [Test]
+    public async Task GetterOnlySetsArePopulatedInputs()
+    {
+        await using var app = await StartAsync(
+            builder => builder.Services.ConfigureHttpJsonOptions(options =>
+                options.SerializerOptions.PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate),
+            EndpointRegistration.Create<SetsEndpoint>());
+        using var client = Client(app);
+        await Assert.That(await client.GetStringAsync("/thirteenth/sets?ids=1&ids=2&labels=x")).IsEqualTo("1,2|x");
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var names = document.RootElement.GetProperty("paths").GetProperty("/thirteenth/sets").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
+        await Assert.That(names).IsEquivalentTo(["ids", "labels"]);
+    }
+
+    [Test]
+    public async Task RouteSlotsDescribedByApiExplorerUseTheBoundPropertySchema()
+    {
+        await using var app = await StartAsync(_ => { }, EndpointRegistration.Create<IdsEndpoint>());
+        using var client = Client(app);
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var ids = document.RootElement.GetProperty("paths").GetProperty("/ids/{ids}").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "ids");
+        var schema = ids.GetProperty("schema");
+        await Assert.That(schema.GetProperty("type").ToString()).Contains("array");
+        await Assert.That(schema.GetProperty("items").GetProperty("type").ToString()).Contains("integer");
+        await Assert.That(ids.GetProperty("required").GetBoolean()).IsTrue();
+    }
+
+    private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints(endpoints);
+        configure(builder);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+        return app;
+    }
+
+    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+}
+
+public sealed class SetsQuery
+{
+    public HashSet<int> Ids { get; } = [];
+
+    public ISet<string> Labels { get; } = new HashSet<string>();
+}
+
+public sealed class SetsEndpoint : Endpoint<SetsQuery, string>
+{
+    public override void Configure() => Get("/thirteenth/sets");
+
+    public override ValueTask<string> HandleAsync(SetsQuery request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult($"{string.Join(',', request.Ids.Order())}|{string.Join(',', request.Labels.Order())}");
+}

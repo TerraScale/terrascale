@@ -390,27 +390,39 @@ internal sealed class RequestBinder<TRequest>
     }
 
     // Populate fills an existing instance only when its converter can add to it: objects, and mutable
-    // collections. Interfaces such as IReadOnlyList<T>/IEnumerable<T>, arrays and read-only or
-    // immutable collections are silently replaced or ignored instead.
-    // ponytail: mutable collections are recognized through IList/IDictionary, so a getter-only
-    // HashSet<T> is conservatively not an input; widen if populated sets show up.
+    // collections (ICollection<T>, ISet<T>, IList<T>, IDictionary<TKey, TValue> and their concrete
+    // types such as List<T> and HashSet<T>). IReadOnlyList<T>/IEnumerable<T>, arrays and read-only or
+    // immutable collections are silently replaced or ignored instead, so they are not inputs.
+    [UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "A trimmed interface list only hides a mutable collection interface, which makes the check conservative.")]
     private static bool IsPopulatable(JsonPropertyInfo property)
     {
         var type = property.PropertyType;
-        if (type.IsValueType || type.IsArray || type.IsInterface || !property.Options.TryGetTypeInfo(type, out var contract))
+        if (type.IsValueType || type.IsArray || !property.Options.TryGetTypeInfo(type, out var contract))
         {
             return false;
         }
 
-        return contract.Kind switch
+        if (contract.Kind == JsonTypeInfoKind.Object)
         {
-            JsonTypeInfoKind.Object => true,
-            JsonTypeInfoKind.Enumerable or JsonTypeInfoKind.Dictionary =>
-                (typeof(System.Collections.IList).IsAssignableFrom(type) || typeof(System.Collections.IDictionary).IsAssignableFrom(type))
-                && !(type.IsGenericType && type.GetGenericTypeDefinition() == typeof(System.Collections.ObjectModel.ReadOnlyCollection<>))
-                && type.Namespace != "System.Collections.Immutable",
-            _ => false,
-        };
+            return !type.IsInterface;
+        }
+
+        if (contract.Kind is not (JsonTypeInfoKind.Enumerable or JsonTypeInfoKind.Dictionary)
+            || type.Namespace == "System.Collections.Immutable"
+            || (type.IsGenericType && type.GetGenericTypeDefinition() is var definition
+                && (definition == typeof(System.Collections.ObjectModel.ReadOnlyCollection<>)
+                    || definition == typeof(System.Collections.ObjectModel.ReadOnlyDictionary<,>))))
+        {
+            return false;
+        }
+
+        return IsMutableCollection(type) || (!type.IsInterface && type.GetInterfaces().Any(IsMutableCollection));
+
+        static bool IsMutableCollection(Type candidate) =>
+            candidate == typeof(System.Collections.IList)
+            || candidate == typeof(System.Collections.IDictionary)
+            || (candidate.IsGenericType && candidate.GetGenericTypeDefinition() is var generic
+                && (generic == typeof(ICollection<>) || generic == typeof(IList<>) || generic == typeof(ISet<>) || generic == typeof(IDictionary<,>)));
     }
 
     private bool TryFind(string key, [NotNullWhen(true)] out JsonPropertyInfo? property) =>
